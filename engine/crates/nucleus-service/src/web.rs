@@ -3,7 +3,10 @@ use std::{convert::Infallible, sync::Arc};
 use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{
+        HeaderMap, StatusCode,
+        header::{AUTHORIZATION, HOST, ORIGIN},
+    },
     middleware::{self, Next},
     response::{
         IntoResponse, Response, Sse,
@@ -13,14 +16,16 @@ use axum::{
 };
 use futures_util::{Stream, stream};
 use nucleus_core::{
-    Answer, Authority, Brief, Command, Hold, Identity, Observation, Observed, Phase, PullRequest,
-    Question, Report, Role, Task, Verdict, WaitReason,
+    Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
+    Report, Role, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
-use crate::{Service, ServiceError, State as EngineState, now_ms, preflight};
+use crate::{
+    CommandOutcome, Preflight, Service, ServiceError, State as EngineState, now_ms, preflight,
+};
 
 #[cfg(test)]
 mod tests;
@@ -56,7 +61,36 @@ pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Contr
     controller
         .route("/v1/runs/{task}/{instance}/report", post(report))
         .layer(DefaultBodyLimit::max(64 * 1024))
+        .layer(middleware::from_fn_with_state(
+            api.clone(),
+            authorize_address,
+        ))
         .with_state(api)
+}
+
+async fn authorize_address(
+    State(api): State<Api>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let mut hosts = request.headers().get_all(HOST).iter();
+    let host = hosts
+        .next()
+        .and_then(|host| host.to_str().ok())
+        .ok_or(ApiError::Address)?;
+    let address = api.service.callback;
+    if hosts.next().is_some()
+        || (host != address.to_string() && host != format!("localhost:{}", address.port()))
+    {
+        return Err(ApiError::Address);
+    }
+    let mut origins = request.headers().get_all(ORIGIN).iter();
+    if let Some(origin) = origins.next()
+        && (origins.next().is_some() || origin != &format!("http://{host}"))
+    {
+        return Err(ApiError::Address);
+    }
+    Ok(next.run(request).await)
 }
 
 async fn authorize(
@@ -176,20 +210,20 @@ async fn next(
     let task = &row.task;
     let summary = Summary::read(task, row.version, &state);
     Ok(Json(NextView {
+        version: row.version,
         phase: summary.phase,
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
-        commands: command_options(task, &authority),
+        commands: command_options(task, &authority, &state.command_observation(&row)),
     }))
 }
 
-fn command_options(task: &Task, authority: &Authority) -> Vec<CommandView> {
-    let unknown = Observation {
-        host: Observed::Unknown,
-        forge: Observed::Unknown,
-        workspace: Observed::Unknown,
-    };
+fn command_options(
+    task: &Task,
+    authority: &Authority,
+    observation: &Observation,
+) -> Vec<CommandView> {
     let mut commands = vec![
         ("cancel", Command::Cancel),
         ("amend", Command::Amend(task.brief().text.clone())),
@@ -210,12 +244,9 @@ fn command_options(task: &Task, authority: &Authority) -> Vec<CommandView> {
         };
         commands.push(("answer", Command::Answer(answer)));
     }
-    let check = |command| match preflight(task, authority, &unknown, command) {
-        Ok(_) => CommandReadiness::Ready,
-        Err(ServiceError::Core(
-            nucleus_core::CommandError::MergedHeadRequired
-            | nucleus_core::CommandError::MergeAuthorityRequired,
-        )) => CommandReadiness::CheckRequired,
+    let check = |command| match preflight(&mut task.clone(), authority, observation, command) {
+        Ok(Preflight::Ready) => CommandReadiness::Ready,
+        Ok(Preflight::Pending) => CommandReadiness::Pending,
         Err(_) => CommandReadiness::Unavailable,
     };
     let moves = [
@@ -263,9 +294,17 @@ async fn command(
     Extension(authority): Extension<Authority>,
     Path(id): Path<String>,
     input: Result<Json<Command>, JsonRejection>,
-) -> Result<Json<Summary>, ApiError> {
-    let task = api.service.command(&id, &authority, body(input)?).await?;
-    Ok(Json(Summary::new(&task.task, task.version, None)))
+) -> Result<Response, ApiError> {
+    match api.service.command(&id, &authority, body(input)?).await? {
+        CommandOutcome::Applied(row) => {
+            Ok(Json(Summary::new(&row.task, row.version, None)).into_response())
+        }
+        CommandOutcome::Pending { version } => Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "pending", "version": version})),
+        )
+            .into_response()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -397,6 +436,7 @@ struct RunView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NextView {
+    version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
     next_check_at: Option<u64>,
@@ -416,12 +456,13 @@ struct CommandView {
 #[serde(rename_all = "snake_case")]
 enum CommandReadiness {
     Ready,
-    CheckRequired,
+    Pending,
     Unavailable,
 }
 
 enum ApiError {
     Unauthorized,
+    Address,
     Invalid,
     Service(ServiceError),
 }
@@ -436,11 +477,16 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "authentication failed".into()),
+            Self::Address => (
+                StatusCode::FORBIDDEN,
+                "request must use the engine's loopback address and origin".into(),
+            ),
             Self::Invalid => (StatusCode::BAD_REQUEST, "invalid request".into()),
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing => StatusCode::NOT_FOUND,
                     ServiceError::Input | ServiceError::Project => StatusCode::BAD_REQUEST,
+                    ServiceError::QuestionPlanner => StatusCode::FORBIDDEN,
                     ServiceError::Core(_)
                     | ServiceError::Store(nucleus_store::StoreError::StaleTask) => {
                         StatusCode::CONFLICT

@@ -5,8 +5,8 @@ use std::{
 };
 
 use nucleus_core::{
-    Action, CheckState, CloseWorkspace, Command, Forge, Head, Host, Launch, Observation, Observed,
-    Phase, Report, RetainedThread, Role, RunState, Task, WaitReason, Workspace, decide,
+    Action, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation, Observed, Phase,
+    Report, RetainedThread, Role, RunState, Task, WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -16,7 +16,7 @@ use nucleus_hosts::{
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
 
-use crate::{Service, ServiceError, event, now_ms, project::linked_checkout, ticket};
+use crate::{Service, ServiceError, active, event, now_ms, project::linked_checkout, ticket};
 
 pub(super) enum DispatchTarget<'a> {
     Run {
@@ -41,8 +41,12 @@ impl Service {
             &self.project.repository,
             &task.identity().id,
         )?;
-        let binding = self.binding(&checkout)?;
         let (forge, target) = self.read_forge(task, &checkout).await;
+        self.observe_commands(row, &forge).await?;
+        if !active(task) {
+            return Ok(Action::Nothing);
+        }
+        let binding = self.binding(&checkout)?;
         let mut observation = Observation {
             host: Observed::Unknown,
             forge,
@@ -118,32 +122,6 @@ impl Service {
             Some(None) => (Observed::Known(Forge::Absent), None),
             None => (Observed::Unknown, None),
         }
-    }
-
-    pub(super) async fn command_observation(
-        &self,
-        task: &Task,
-        command: &Command,
-    ) -> Result<Observation, ServiceError> {
-        let forge = if matches!(
-            command,
-            Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Answer(_)
-        ) {
-            let worktrees = self.worktrees()?;
-            let checkout = worktrees.checkout(
-                &self.project.checkout,
-                &self.project.repository,
-                &task.identity().id,
-            )?;
-            self.read_forge(task, &checkout).await.0
-        } else {
-            Observed::Unknown
-        };
-        Ok(Observation {
-            host: Observed::Unknown,
-            workspace: Observed::Unknown,
-            forge,
-        })
     }
 
     fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
@@ -232,7 +210,7 @@ impl Service {
             task,
             run,
             &credential,
-            &self.callback,
+            &format!("http://{}", self.callback),
         )?;
         self.save(row, updated, &event("run_reserved")).await?;
         Ok(Action::Launch { role, via })
@@ -653,7 +631,7 @@ mod tests {
         response::IntoResponse,
         routing::{get, post, put},
     };
-    use nucleus_core::{Authority, Entry, PullRequest, Review};
+    use nucleus_core::{Authority, Command, Entry, PullRequest, Review};
     use nucleus_forge::GitHub;
     use nucleus_hosts::{Dispatch, RunRequest};
     use serde_json::json;

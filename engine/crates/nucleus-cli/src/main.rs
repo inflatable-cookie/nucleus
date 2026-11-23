@@ -269,15 +269,15 @@ async fn report(path: &Path) -> Result<()> {
     {
         return Err("report ticket must be an owner-only regular file".into());
     }
-    let ticket: ReportTicket = from_reader(File::from(fd))?;
+    let ticket: ReportTicket = from_reader(File::from(fd)).map_err(|_| "invalid report ticket")?;
     let endpoint = ticket
         .endpoint
         .strip_prefix("http://")
-        .ok_or("bad callback endpoint")?
-        .parse()?;
-    loopback(endpoint)?;
-    let task = segment(&ticket.task)?;
-    let instance = segment(&ticket.instance)?;
+        .and_then(|address| address.parse().ok())
+        .ok_or("invalid report ticket")?;
+    loopback(endpoint).map_err(|_| "invalid report ticket")?;
+    let task = segment(&ticket.task).map_err(|_| "invalid report ticket")?;
+    let instance = segment(&ticket.instance).map_err(|_| "invalid report ticket")?;
     let report: Report = from_reader(io::stdin().lock())?;
     let path = format!("/v1/runs/{task}/{instance}/report");
     let response = request(

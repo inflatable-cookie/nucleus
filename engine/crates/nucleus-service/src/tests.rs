@@ -325,8 +325,11 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         results.as_slice(),
         [PassOutcome { task, result: Err(ServiceError::Store(StoreError::StaleTask)) }] if task == id
     ));
+    let CommandOutcome::Applied(moved) = moved else {
+        panic!("move must commit");
+    };
     assert_eq!(moved.version, stale.version + 1);
-    assert_eq!(service.task(id).await.expect("current row"), moved);
+    assert_eq!(service.task(id).await.expect("current row"), *moved);
     assert_eq!(
         service.state.lock().await.schedule.ready(Instant::now()),
         [id]

@@ -1,12 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use axum::{
     body::{Body, BodyDataStream, to_bytes},
     http::Request,
 };
 use futures_util::StreamExt;
-use nucleus_core::{Action, Entry, Forge, Host, RunState};
+use nucleus_core::{Action, Entry, Forge, Host, Observed, RunState};
 use nucleus_forge::GitHub;
+use nucleus_hosts::T3;
 use tower::ServiceExt;
 
 use super::*;
@@ -18,6 +19,8 @@ use crate::{
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 const BOARD_KEY: [u8; 32] = [2; 32];
 const PLANNER_KEY: [u8; 32] = [5; 32];
+const BOUND_KEY: [u8; 32] = [6; 32];
+const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[tokio::test]
 async fn http_reports_bind_the_task_instance_credential_and_role() {
@@ -26,13 +29,7 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     let (reviewer, reviewer_key, _) =
         reservation("reviewer", Entry::ReviewEntry, &service.project.start);
     for task in [&worker, &reviewer] {
-        service
-            .state
-            .lock()
-            .await
-            .store
-            .create(task, &event("fixture"))
-            .expect("seed row");
+        seed_task(&service, task).await;
     }
     let service = Arc::new(service);
     let api = router(
@@ -53,6 +50,8 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     let stream = get_as(&api, "/v1/events", &BOARD_KEY).await;
     let mut events = stream.into_body().into_data_stream();
     assert_event(&mut events, &["event: refresh"]).await;
+
+    reject_foreign_addresses(&api, &worker_path, worker_key.as_bytes(), &work).await;
 
     assert_eq!(
         post_json(&api, &worker_path, &BOARD_KEY, &work).await,
@@ -113,6 +112,62 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     assert!(value["run"].get("input").is_none());
 }
 
+async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32], work: &Value) {
+    for (method, path, key, payload) in [
+        ("GET", "/v1/tasks", &BOARD_KEY, None),
+        ("GET", "/v1/events", &BOARD_KEY, None),
+        (
+            "POST",
+            "/v1/tasks/worker/commands",
+            &BOARD_KEY,
+            Some(json!("cancel")),
+        ),
+        ("POST", worker_path, key, Some(work.clone())),
+    ] {
+        for (host, origin) in [
+            (
+                "engine.example.invalid:9",
+                "http://engine.example.invalid:9",
+            ),
+            (LOCAL_HOST, "http://engine.example.invalid"),
+            (LOCAL_HOST, "http://localhost:9"),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", host)
+                .header("origin", origin)
+                .header("authorization", format!("Bearer {}", hex::encode(key)))
+                .header("content-type", "application/json")
+                .body(
+                    payload
+                        .as_ref()
+                        .map_or_else(Body::empty, |json| Body::from(json.to_string())),
+                )
+                .expect("address probe");
+            let response = api.clone().oneshot(request).await.expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+        }
+    }
+    let local_alias = Request::get("/v1/settings")
+        .header("host", "localhost:9")
+        .header("origin", "http://localhost:9")
+        .header(
+            "authorization",
+            format!("Bearer {}", hex::encode(BOARD_KEY)),
+        )
+        .body(Body::empty())
+        .expect("same origin");
+    assert_eq!(
+        api.clone()
+            .oneshot(local_alias)
+            .await
+            .expect("response")
+            .status(),
+        StatusCode::OK
+    );
+}
+
 #[tokio::test]
 async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
@@ -130,33 +185,20 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
         task.reconcile(&observation),
         Action::Ask(Question::Accept { .. })
     ));
-    service
-        .state
-        .lock()
-        .await
-        .store
-        .create(&task, &event("fixture"))
-        .expect("seed");
-    let mut pull = forge_pull(&head);
-    pull["merged"] = json!(true);
-    pull["state"] = json!("closed");
-    pull["merge_commit_sha"] = json!(head);
-    let readable = Arc::new(AtomicBool::new(false));
-    let forge_ready = Arc::clone(&readable);
-    let (forge, server) = serve_forge(Router::new().route(
-        &format!("/repos/{REPOSITORY}/pulls/1"),
-        get(move || async move {
-            if forge_ready.load(Ordering::Relaxed) {
-                Json(pull).into_response()
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE.into_response()
-            }
-        }),
-    ))
-    .await;
+    task.command(
+        Command::Hold("Test the command independently of automatic close".into()),
+        &Authority::Operator {
+            actor: "operator".into(),
+        },
+        &observation,
+    )
+    .expect("hold fixture");
+    seed_task(&service, &task).await;
+    let (forge, readable, reads, server) = serve_merged_forge(&head).await;
     service.forge = forge;
+    let service = Arc::new(service);
     let api = router(
-        Arc::new(service),
+        Arc::clone(&service),
         [
             Controller {
                 credential: BOARD_KEY,
@@ -172,46 +214,229 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
             },
         ],
     );
-    for (key, availability) in [
-        (&BOARD_KEY, "check_required"),
-        (&PLANNER_KEY, "unavailable"),
-    ] {
-        let view = json_body(get_as(&api, "/v1/tasks/reviewer/next", key).await).await;
-        let commands = view["commands"].as_array().expect("commands");
-        assert!(
-            commands
-                .iter()
-                .any(|option| option["name"] == "answer" && option["preflight"] == availability),
-            "expected answer to be {availability} in {view}"
-        );
-        assert!(commands.iter().any(|option| option["name"] == "move"
-            && option["phase"] == "done"
-            && option["preflight"] == "check_required"));
-    }
+    let next_path = "/v1/tasks/reviewer/next";
+    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    assert_eq!(view["version"], 1);
+    expect_command(&view, "answer", None, "pending");
+    expect_command(&view, "move", Some("done"), "pending");
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"accept":{"head":head, "reason":"accepted exact merge"}}});
+    let pending = post_as(&api, path, &BOARD_KEY, &answer).await;
+    assert_eq!(pending.status(), StatusCode::ACCEPTED);
     assert_eq!(
-        post_json(&api, path, &BOARD_KEY, &answer).await,
-        StatusCode::CONFLICT
+        json_body(pending).await,
+        json!({"status":"pending","version":1})
     );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    let _ = service
+        .pass()
+        .await
+        .expect("read while forge is unavailable");
+    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    expect_command(&view, "answer", None, "pending");
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
-        StatusCode::CONFLICT
+        StatusCode::ACCEPTED
     );
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
     readable.store(true, Ordering::Relaxed);
-    assert_eq!(
-        post_json(&api, path, &PLANNER_KEY, &answer).await,
-        StatusCode::CONFLICT
-    );
+    let _ = service.pass().await.expect("refresh on pending wake");
+    let planner = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
+    expect_command(&planner, "answer", None, "unavailable");
+    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    assert_eq!(view["version"], 1);
+    expect_command(&view, "answer", None, "ready");
+    expect_command(&view, "move", Some("done"), "unavailable");
+    let planner_answer = post_json(&api, path, &PLANNER_KEY, &answer).await;
+    assert_eq!(planner_answer, StatusCode::CONFLICT);
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &answer).await,
         StatusCode::OK
     );
+    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    assert_eq!(view["version"], 2);
+    expect_command(&view, "move", Some("done"), "pending");
+    assert_eq!(
+        post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    let _ = service.pass().await.expect("refresh on the new revision");
+    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
+    expect_command(&view, "move", Some("done"), "ready");
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
         StatusCode::OK
     );
     server.abort();
+}
+
+async fn serve_merged_forge(
+    head: &nucleus_core::Head,
+) -> (
+    GitHub,
+    Arc<AtomicBool>,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let mut pull = forge_pull(head);
+    pull["merged"] = json!(true);
+    pull["state"] = json!("closed");
+    pull["merge_commit_sha"] = json!(head);
+    let readable = Arc::new(AtomicBool::new(false));
+    let forge_ready = Arc::clone(&readable);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let requests = Arc::clone(&reads);
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls/1"),
+        get(move || async move {
+            requests.fetch_add(1, Ordering::Relaxed);
+            if forge_ready.load(Ordering::Relaxed) {
+                Json(pull).into_response()
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
+        }),
+    ))
+    .await;
+    (forge, readable, reads, server)
+}
+
+#[tokio::test]
+async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let mut identity = reserved.identity().clone();
+    identity.origin_thread = Some("origin".into());
+    let mut task = Task::new(identity, "Synthetic change".into(), None);
+    let head = service.project.start.clone();
+    let forge = Observed::Known(Forge::Merged {
+        pr: nucleus_core::PullRequest {
+            url: PR.into(),
+            head: head.clone(),
+        },
+        commit: head.clone(),
+    });
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        workspace: Observed::Unknown,
+        forge: Observed::Unknown,
+    };
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    observation.forge = forge.clone();
+    assert!(matches!(
+        task.reconcile(&observation),
+        Action::Ask(Question::Accept { .. })
+    ));
+    let first = T3::prepare_notice("origin".into(), "notice-1".into(), "Accept merge")
+        .expect("origin notice");
+    assert!(task.bind_question_delivery(first));
+    seed_task(&service, &task).await;
+    let prior = service.task("worker").await.expect("original binding");
+    let replacement = T3::prepare_notice("responsible".into(), "notice-2".into(), "Accept merge")
+        .expect("rebound notice");
+    assert!(task.bind_question_delivery(replacement));
+    let row = service
+        .save(&prior, task, &event("fixture_rebound"))
+        .await
+        .expect("rebind");
+    service
+        .observe_commands(&row, &forge)
+        .await
+        .expect("exact merged observation");
+    let api = router(
+        Arc::new(service),
+        [
+            Controller {
+                credential: PLANNER_KEY,
+                authority: Authority::Planner {
+                    actor: "origin".into(),
+                },
+            },
+            Controller {
+                credential: BOUND_KEY,
+                authority: Authority::Planner {
+                    actor: "responsible".into(),
+                },
+            },
+        ],
+    );
+    let next_path = "/v1/tasks/worker/next";
+    let command_path = "/v1/tasks/worker/commands";
+    let answer = json!({"answer":{"accept":{"head":head, "reason":"Accepted the observed merge"}}});
+    let origin = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
+    expect_command(&origin, "answer", None, "unavailable");
+    assert_eq!(
+        post_json(&api, command_path, &PLANNER_KEY, &answer).await,
+        StatusCode::FORBIDDEN
+    );
+    let responsible = json_body(get_as(&api, next_path, &BOUND_KEY).await).await;
+    expect_command(&responsible, "answer", None, "ready");
+    assert_eq!(
+        post_json(&api, command_path, &BOUND_KEY, &answer).await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let task = Task::new(reserved.identity().clone(), "Synthetic change".into(), None);
+    seed_task(&service, &task).await;
+    let mut changes = service.changes();
+    assert!(service.state.lock().await.schedule.due("worker").is_none());
+    let result = service
+        .command(
+            "worker",
+            &Authority::Operator {
+                actor: "operator".into(),
+            },
+            Command::Move(Phase::Queued),
+        )
+        .await
+        .expect("equal move");
+    assert!(matches!(result, CommandOutcome::Applied(row) if row.version == 2 && row.task == task));
+    let change = changes.try_recv().expect("move invalidation");
+    assert_eq!(change.version, 2);
+    assert_eq!(change.task_id, "worker");
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .ready(tokio::time::Instant::now()),
+        ["worker"]
+    );
+}
+
+fn expect_command(view: &Value, name: &str, phase: Option<&str>, readiness: &str) {
+    assert!(
+        view["commands"]
+            .as_array()
+            .expect("commands")
+            .iter()
+            .any(|option| {
+                option["name"] == name
+                    && option["phase"].as_str() == phase
+                    && option["preflight"] == readiness
+            }),
+        "expected {name} {phase:?} to be {readiness} in {view}"
+    );
+}
+
+async fn seed_task(service: &Service, task: &Task) {
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(task, &event("fixture"))
+        .expect("seed task");
 }
 
 async fn json_body(response: Response) -> Value {
@@ -237,6 +462,7 @@ async fn get_as(api: &Router, path: &str, key: &[u8; 32]) -> Response {
     api.clone()
         .oneshot(
             Request::get(path)
+                .header("host", LOCAL_HOST)
                 .header("authorization", format!("Bearer {}", hex::encode(key)))
                 .body(Body::empty())
                 .expect("request"),
@@ -246,9 +472,14 @@ async fn get_as(api: &Router, path: &str, key: &[u8; 32]) -> Response {
 }
 
 async fn post_json(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> StatusCode {
+    post_as(api, target, key, body).await.status()
+}
+
+async fn post_as(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> Response {
     api.clone()
         .oneshot(
             Request::post(target)
+                .header("host", LOCAL_HOST)
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", hex::encode(key)))
                 .body(Body::from(body.to_string()))
@@ -256,5 +487,4 @@ async fn post_json(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> 
         )
         .await
         .expect("response")
-        .status()
 }
