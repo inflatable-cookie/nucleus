@@ -5,6 +5,7 @@ import {
   type BoardPalette,
   type BoardThemeSnapshot,
 } from "../../shared/web-theme";
+import { findT3BuiltInTheme } from "./board-theme-builtins";
 import type { T3RpcClient } from "./rpc";
 
 const themeSettings = z.object({
@@ -28,6 +29,7 @@ const themeRoles = z.object({
   sidebarRowSelected: themeColorSchema.optional(),
 });
 const themeDefinition = z.object({
+  id: z.string(),
   appearance: z.enum(["light", "dark"]),
   canvas: themeSeedSchema.optional(),
   accent: themeSeedSchema.optional(),
@@ -36,11 +38,13 @@ const themeDefinition = z.object({
     .object({ light: themeRoles.optional(), dark: themeRoles.optional() })
     .optional(),
 });
+export type T3ThemeDefinition = z.infer<typeof themeDefinition>;
+
 const themeEvent = z.object({
   type: z.literal("environmentThemesUpdated"),
   payload: z.object({ themes: z.array(z.unknown()) }),
 });
-const themeId = z.object({ id: z.string() });
+const themeId = themeDefinition.pick({ id: true });
 
 function boardColors(
   roles: z.infer<typeof themeRoles> | undefined,
@@ -71,7 +75,7 @@ function palette(
   return { colors: boardColors(roles), ...(seeds ? { seeds } : {}) };
 }
 
-/** One read per board load. The host publishes defaults and definitions, not renderer preferences. */
+/** Read the environment's defaults and published themes once per board load. */
 export async function readT3BoardTheme(
   rpc: T3RpcClient,
 ): Promise<BoardThemeSnapshot | null> {
@@ -84,38 +88,35 @@ export async function readT3BoardTheme(
       settings.defaultAppearance ||
       (id === "light" || id === "dark" ? id : "system");
     const snapshot: BoardThemeSnapshot = { appearance, themeId: id };
-    if (!id || id === "light" || id === "dark" || id === "system")
-      return snapshot;
+    if (id === "light" || id === "dark" || id === "system") return snapshot;
 
-    try {
-      const event = themeEvent.parse(
-        await rpc.readStream(
-          "subscribeServerConfig",
-          { environmentThemes: true, workspaceSnapshotsOnDemand: true },
-          (value) => themeEvent.safeParse(value).success,
-        ),
-      );
-      const selected = event.payload.themes.find(
-        (value) => themeId.safeParse(value).data?.id === id,
-      );
-      const definition = themeDefinition.safeParse(selected);
-      if (!definition.success) return snapshot;
-
-      const {
-        appearance: base,
-        canvas,
-        accent,
-        colors,
-        variants,
-      } = definition.data;
-      const seeds = canvas && accent ? { canvas, accent } : undefined;
-      snapshot.light =
-        base === "light" ? palette(colors, seeds) : palette(variants?.light);
-      snapshot.dark =
-        base === "dark" ? palette(colors, seeds) : palette(variants?.dark);
-    } catch {
-      // An older or unavailable theme stream can still supply a usable appearance.
+    let definition: T3ThemeDefinition | undefined;
+    if (id) {
+      try {
+        const event = themeEvent.parse(
+          await rpc.readStream(
+            "subscribeServerConfig",
+            { environmentThemes: true, workspaceSnapshotsOnDemand: true },
+            (value) => themeEvent.safeParse(value).success,
+          ),
+        );
+        const selected = event.payload.themes.find(
+          (value) => themeId.safeParse(value).data?.id === id,
+        );
+        definition = themeDefinition.safeParse(selected).data;
+      } catch {
+        // Older hosts can still supply settings when the theme stream is unavailable.
+      }
     }
+    definition ??= findT3BuiltInTheme(id ?? "t3-code");
+    if (!definition) return snapshot;
+
+    const { appearance: base, canvas, accent, colors, variants } = definition;
+    const seeds = canvas && accent ? { canvas, accent } : undefined;
+    snapshot.light =
+      base === "light" ? palette(colors, seeds) : palette(variants?.light);
+    snapshot.dark =
+      base === "dark" ? palette(colors, seeds) : palette(variants?.dark);
     return snapshot;
   } catch {
     return null;

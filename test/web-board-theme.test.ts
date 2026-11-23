@@ -106,19 +106,51 @@ test("T3 board opens re-read environment themes through the connected host, inde
 
   fake.controls.settings = themes.stock;
   const t3 = await pair("t3code");
-  assert.deepEqual(await readTheme(t3), {
-    themeId: null,
-    appearance: "dark",
-  });
+  const stock = await readTheme(t3);
+  assert.equal(stock?.themeId, null);
+  assert.equal(stock?.appearance, "dark");
+  assert.equal(stock?.light?.colors.surface0, "#fcfcfc");
+  assert.equal(stock?.light?.colors.accent, "#1b4ed8");
+  assert.equal(stock?.dark?.colors.surface0, "#000000");
+  assert.equal(stock?.dark?.colors.accent, "#346bf1");
   const stockBoard = await boardSnapshot(t3);
 
-  // No definition is inferred from a built-in id. A published definition with
-  // this id is synthetic coverage for a server that does return one.
-  fake.controls.settings = { defaultTheme: "ember", defaultAppearance: "dark" };
+  fake.controls.settings = {
+    defaultTheme: "t3-code",
+    defaultAppearance: "system",
+  };
   assert.deepEqual(await readTheme(t3), {
-    themeId: "ember",
+    ...stock,
+    themeId: "t3-code",
+    appearance: "system",
+  });
+
+  fake.controls.settings = { defaultTheme: "ember", defaultAppearance: "dark" };
+  const builtInEmber = await readTheme(t3);
+  assert.equal(builtInEmber?.themeId, "ember");
+  assert.equal(builtInEmber?.appearance, "dark");
+  assert.equal(
+    builtInEmber?.light?.colors.surface0,
+    "oklch(0.976527 0.002685 60.725)",
+  );
+  assert.equal(
+    builtInEmber?.dark?.colors.accent,
+    "oklch(0.762174 0.124117 52.082)",
+  );
+
+  fake.controls.settings.defaultTheme = "t3-ember";
+  assert.deepEqual(await readTheme(t3), {
+    ...builtInEmber,
+    themeId: "t3-ember",
+  });
+
+  fake.controls.settings.defaultTheme = "unknown-theme";
+  assert.deepEqual(await readTheme(t3), {
+    themeId: "unknown-theme",
     appearance: "dark",
   });
+
+  fake.controls.settings.defaultTheme = "ember";
   fake.controls.environmentThemes = [themes.ember, themes.seeded];
   const ember = await readTheme(await pair("t3code"));
   assert.deepEqual(ember?.dark?.colors, {
@@ -154,7 +186,7 @@ test("T3 board opens re-read environment themes through the connected host, inde
   });
   assert.equal(
     fake.requests.filter(({ tag }) => tag === "subscribeServerConfig").length,
-    4,
+    7,
   );
   assert.ok(
     fake.requests.some(
