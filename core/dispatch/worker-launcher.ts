@@ -511,6 +511,21 @@ export class WorkerLauncher {
       );
       const detail = error instanceof Error ? error.message : String(error);
       const current = this.store.task(task.id);
+      // Spec 068 §3: a create whose delivery is unknown is Nucleus's to settle,
+      // never a person's stop. It records the same wait every run launch does,
+      // and the quantum's creation lookup binds, relaunches or keeps waiting. It
+      // comes before the text classifiers: an unknown delivery that mentions a
+      // rate limit is still unknown, never requeued under a fresh run id.
+      if (
+        (error instanceof HostUnknownDeliveryError ||
+          isHostOperationTimeout(error)) &&
+        current.agentIntent &&
+        !current.agentId &&
+        current.runId === runId
+      ) {
+        waitOnUncertainCreation(this.resolution, current, "worker", runId, error);
+        return;
+      }
       const failure = classifyWorkerLaunchFailure(detail);
       // Task 646: a 429 at creation paces the provider group (short cool-down
       // in capacity state so new launches prefer other profiles) and requeues
@@ -574,19 +589,6 @@ export class WorkerLauncher {
           "transient_provider_retry_scheduled",
           `worker launch: one creation retry at ${retry.retryAt}; ${detail.slice(0, 1200)}`,
         );
-        return;
-      }
-      // Spec 068 §3: a create whose delivery is unknown is Nucleus's to settle,
-      // never a person's stop. It records the same wait every run launch does,
-      // and the quantum's creation lookup binds, relaunches or keeps waiting.
-      if (
-        (error instanceof HostUnknownDeliveryError ||
-          isHostOperationTimeout(error)) &&
-        current.agentIntent &&
-        !current.agentId &&
-        current.runId === runId
-      ) {
-        waitOnUncertainCreation(this.resolution, current, "worker", runId, error);
         return;
       }
       throw error;

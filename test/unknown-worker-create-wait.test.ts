@@ -89,6 +89,22 @@ for (const scenario of [
   });
 }
 
+test('an unknown create whose text mentions a rate limit is still unknown: never requeued under a fresh run id', async () => {
+  const f = fixture(() => new HostUnknownDeliveryError({ command: 'thread.create', guidance: 'Provider answered 429 Too Many Requests (rate limit); the create outcome is unknown.' }), { lateReply: false });
+  try {
+    const submitted = f.add();
+    await f.engine.wake();
+    await f.engine.quiesce();
+    const task = f.store.task(submitted.id);
+    assert.match(task.reason, /creation|Uncertain/i, task.reason);
+    assert.equal(task.phase, 'dispatching', task.reason);
+    assert.equal(task.agentIntent, true);
+    assert.equal(task.resolution.stop?.fact?.code, 'worker_lookup');
+    assert.equal(f.store.eventsAll(task.id).some(event => event.kind === 'rate_limit_launch_paced'), false);
+    assert.equal(f.creates(), 1);
+  } finally { await f.close(); }
+});
+
 test('a worker create that failed for another reason keeps its ordinary step failure', async () => {
   const f = fixture(() => new Error('synthetic adapter failure'), { lateReply: false });
   try {

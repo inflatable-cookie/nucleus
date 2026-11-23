@@ -38,6 +38,13 @@ import {
   liveWorkingParticipant,
   observeRecoveryParticipants,
 } from "./live-noop";
+import {
+  DEAD_PARTICIPANT_ATTEMPTS,
+  deadParticipantDetail,
+  threadGoneError,
+} from "./dead-participant";
+import { hostFaultHost, reportHostCallFailure } from "../host/adapter-routing";
+import { isTransportFailure } from "../../shared/transport";
 
 /**
  * How long a recovery episode may sit pending with no run before it escalates.
@@ -95,14 +102,33 @@ export class CoordinatorPass {
         action: import("../../shared/contracts").RecoveryActionBinding,
       ) => Promise<void>)
     | null = null;
-  /** Release the episode's coordinator run on proof that its agent is dead. */
-  private async releaseGoneCoordinator(t: Task, run: Run): Promise<boolean> {
+  /**
+   * Release the episode's coordinator run on proof that its agent is dead.
+   * Each head allows `DEAD_PARTICIPANT_ATTEMPTS` such releases, as batch A
+   * allows every other role; past that the task records a typed stop naming its
+   * explicit command, and the dead run stays bound so no coordinator cycles.
+   */
+  private async releaseGoneCoordinator(
+    t: Task,
+    run: Run,
+  ): Promise<"released" | "bounded" | "none"> {
     const prove = this.resolution.participantGoneProof;
-    if (!prove || !run.agentId) return false;
+    if (!prove || !run.agentId) return "none";
     const proof = await prove(t, run);
     if (!proof || this.resolution.stopped() || this.resolution.startsNoRuns())
-      return false;
-    return Boolean(this.episode.releaseGone(t, run, proof));
+      return "none";
+    if (
+      this.episode.goneReleasesAtHead(t, proof.head) >= DEAD_PARTICIPANT_ATTEMPTS
+    ) {
+      const latest = this.store.task(t.id);
+      const reason = `${deadParticipantDetail(proof)}. Nucleus already replaced this coordinator ${DEAD_PARTICIPANT_ATTEMPTS} times at this head; use run.start coordinator fresh replacing=${run.id} or run.release run=${run.id}`;
+      if (latest.reason !== reason)
+        this.resolution.waiting(latest, reason, "operator_needed", {
+          fact: { code: "participant_gone", subject: run.id },
+        });
+      return "bounded";
+    }
+    return this.episode.releaseGone(t, run, proof) ? "released" : "none";
   }
   async pass(taskId?: string) {
     if (
@@ -623,13 +649,34 @@ export class CoordinatorPass {
           } else if (!state) {
             if (run.completionReceivedAt) continue;
             if (observation.kind === "unobservable") {
+              const error = observation.error;
               // Spec 068 §3: a coordinator whose agent is provably gone is a
-              // dead participant like any other. The failed read is only a
-              // reason to look; the proof (its process gone, or its thread
-              // absent or removed on an exact read) is the authority, and
-              // anything short of it keeps the ordinary handling below.
-              if (await this.releaseGoneCoordinator(t, run)) continue;
-              throw observation.error;
+              // dead participant like any other, in the same order as the
+              // participant observation pass. A host answer that the thread is
+              // gone is only a reason to look; the proof (its process gone, or
+              // its thread absent or removed on an exact read) is the authority.
+              if (
+                threadGoneError(error) &&
+                (await this.releaseGoneCoordinator(t, run)) !== "none"
+              )
+                continue;
+              // Any other failed host call or a transport failure fails only
+              // this observation: its host's health takes the sample and the
+              // next pass observes the coordinator again.
+              const failedHost = hostFaultHost(error);
+              if (failedHost) {
+                reportHostCallFailure(this.resolution.adapter, failedHost, error);
+                continue;
+              }
+              if (isTransportFailure(error)) continue;
+              // A read the host could not answer still gets the proof; anything
+              // short of it keeps the ordinary handling below.
+              if (
+                !threadGoneError(error) &&
+                (await this.releaseGoneCoordinator(t, run)) !== "none"
+              )
+                continue;
+              throw error;
             }
           } else if (
             (!run.completion &&

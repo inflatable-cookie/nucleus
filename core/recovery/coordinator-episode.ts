@@ -1161,7 +1161,21 @@ export class CoordinatorEpisode {
                 updatedAt: now(),
               },
             }
-          : {}),
+          : // An escalation the closed episode raised over the underlying fault
+            // (an earlier pass could not read the thread) goes with it: the fault
+            // is reconciling again under the fresh coordinator.
+            incident &&
+              incident.status === "escalated" &&
+              episode.incidentId === incident.id
+            ? {
+                incident: {
+                  ...incident,
+                  status: "reconciling" as const,
+                  detail: summary,
+                  updatedAt: now(),
+                },
+              }
+            : {}),
       },
       current.coordinatorAgentId === run.agentId
         ? { coordinatorAgentId: "" }
@@ -1169,6 +1183,23 @@ export class CoordinatorEpisode {
       "participant_gone",
       JSON.stringify(proof),
     );
+  }
+  /** Coordinator runs already released as gone at this head (the per-cause bound). */
+  goneReleasesAtHead(t: Task, head: string | null): number {
+    return this.store
+      .eventsAll(t.id)
+      .filter((event) => event.kind === "participant_gone")
+      .filter((event) => {
+        try {
+          const detail = JSON.parse(event.detail) as {
+            role?: string;
+            head?: string | null;
+          };
+          return detail.role === "recovery" && (detail.head ?? null) === head;
+        } catch {
+          return false;
+        }
+      }).length;
   }
   save(t: Task, patch: Partial<RecoveryEpisode>) {
     const current = this.store.task(t.id);

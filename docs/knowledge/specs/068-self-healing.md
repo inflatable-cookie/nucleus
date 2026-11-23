@@ -273,9 +273,13 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   admission relaunches it. A live recorded process vetoes thread absence. A host
   answer that a thread is gone is no longer swallowed as a host fault. A
   coordinator run the pass cannot observe takes the same proof: on proof its run
-  is released, its episode closes and its binding clears, so the stop admits a
-  fresh coordinator under the coordinator cap. A failed or partial read and an
-  archived thread prove nothing, and the episode keeps its ordinary handling.
+  is released, its episode closes (with any escalation it raised over the
+  underlying fault) and its binding clears, so the stop admits a fresh
+  coordinator under the coordinator cap. A failed or partial read and an
+  archived thread prove nothing, and the episode keeps its ordinary handling; a
+  host fault or transport failure defers to the next pass. Three such releases
+  per head, as for every role; past that the task records a typed stop naming
+  `run.start coordinator fresh`.
 - **A dead retained worker means a fresh worker.** The revision launch retires a
   retained worker whose thread is gone and continues the same revision on a fresh
   one; a dead initial worker with a PR continues it the same way. `next` offers

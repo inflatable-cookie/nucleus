@@ -8,6 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { AGENT_NOT_FOUND, HostReadRefusalError } from '../core/host/errors';
+import { HostTransportFault } from '../core/host/adapter-routing';
+import { DEAD_PARTICIPANT_ATTEMPTS } from '../core/recovery/dead-participant';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runSchema, submissionSchema, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { taskStopVerbsFor } from '../shared/task-stop';
@@ -25,9 +28,10 @@ const worker = profile('worker', 'test/worker');
 const coordinator = profile('coordinator', 'test/coordinator');
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
-type Origin = 'absent' | 'deleted' | 'archived' | 'unreadable';
+type Origin = 'absent' | 'deleted' | 'archived' | 'unreadable' | 'transport';
 
-function fixture(origin: Origin) {
+function fixture(initial: Origin) {
+  let origin: Origin = initial;
   const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'ns-dead-coordinator-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
@@ -71,6 +75,7 @@ function fixture(origin: Origin) {
       updatedAt: minutesAgo(70), turnStartedAt: minutesAgo(71), activeTurnId: 'stalled-turn' }],
   ]);
   const createdRuns: Run[] = [];
+  let originReads = 0;
   const adapter = {
     hostId: 'host',
     profiles: async () => [worker, coordinator],
@@ -83,13 +88,16 @@ function fixture(origin: Origin) {
     createAgent: createTaskAgent,
     observe: async (id: string) => {
       if (id === 'coord-agent') {
+        if (origin === 'transport') throw new HostTransportFault('host', new Error('connection reset'));
         if (origin === 'unreadable') throw new HostReadRefusalError('host read refused: shell snapshot is stale');
         throw new Error(AGENT_NOT_FOUND);
       }
       return states.get(id) ?? { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' };
     },
     originAgent: async (id: string) => {
+      if (id === 'coord-agent') originReads++;
       if (id !== 'coord-agent') return { id, workspaceId: 'workspace', title: id, archived: false };
+      if (origin === 'transport') throw new HostTransportFault('host', new Error('connection reset'));
       if (origin === 'unreadable') throw new HostReadRefusalError('host read refused: shell snapshot is stale');
       if (origin === 'absent') return null;
       return { id, workspaceId: 'workspace', title: id, archived: origin === 'archived', deleted: origin === 'deleted' };
@@ -109,6 +117,8 @@ function fixture(origin: Origin) {
   engine.profiles = [worker, coordinator];
   return {
     store, engine, taskId: submitted.id, createdRuns,
+    setOrigin: (next: Origin) => { origin = next; },
+    originReads: () => originReads,
     current: () => store.task(submitted.id),
     events: (kind: string) => store.eventsAll(submitted.id).filter((event) => event.kind === kind),
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); },
@@ -157,3 +167,59 @@ for (const origin of ['unreadable', 'archived'] as const) {
     } finally { await f.close(); }
   });
 }
+
+test('a host transport fault defers the coordinator observation: no proof is read, nothing escalates', async () => {
+  const f = fixture('transport');
+  try {
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.store.run('coord-run')!.released, false);
+    assert.equal(f.current().resolution.recovery?.status, 'running');
+    assert.equal(f.events('participant_gone').length, 0);
+    assert.equal(f.events('recovery_escalated').length, 0, 'the next pass observes it again');
+    assert.equal(f.originReads(), 0, 'no proof is read on a host fault');
+  } finally { await f.close(); }
+});
+
+test('unreadable, then absent: the earlier escalation goes with the closed episode and the fresh coordinator reads as recovering', async () => {
+  const f = fixture('unreadable');
+  try {
+    // Right after a reboot the thread cannot be read: no proof, so the episode escalates as before.
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.current().resolution.recovery?.status, 'escalated');
+    const fault = f.current().resolution.incident;
+    assert.equal(fault?.status, 'escalated');
+    assert.equal(f.store.run('coord-run')!.released, false);
+    // A later pass reads the thread absent: the dead run releases.
+    f.setOrigin('absent');
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.store.run('coord-run')!.released, true);
+    const task = f.current();
+    assert.equal(task.resolution.recovery, null);
+    assert.equal(task.resolution.incident?.id, fault!.id, 'the underlying fault is kept');
+    assert.equal(task.resolution.incident?.status, 'reconciling', 'its escalation closed with the episode');
+    await f.engine.resolution.recovery.route(f.current());
+    assert.equal(f.createdRuns.filter((run) => run.role === 'recovery').length, 1, 'a fresh coordinator is launched');
+    const reading = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).activity;
+    assert.notEqual(reading?.state, 'needs_person', `${reading?.state}: ${reading?.detail}`);
+    assert.equal(reading?.state, 'recovering');
+  } finally { await f.close(); }
+});
+
+test(`past ${DEAD_PARTICIPANT_ATTEMPTS} gone coordinators at one head the task stops for a person with its command`, async () => {
+  const f = fixture('absent');
+  try {
+    const head = f.store.run('coord-run')!.head;
+    for (let index = 0; index < DEAD_PARTICIPANT_ATTEMPTS; index++)
+      f.store.event(f.taskId, 'participant_gone', JSON.stringify({ runId: `earlier-${index}`, role: 'recovery', head, evidence: 'thread_absent' }));
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.store.run('coord-run')!.released, false, 'the dead run stays bound, so no coordinator cycles');
+    assert.equal(f.events('participant_gone').length, DEAD_PARTICIPANT_ATTEMPTS, 'no further release');
+    const stop = f.current().resolution.stop;
+    assert.equal(stop?.reason, 'operator_needed');
+    assert.equal(stop?.fact?.code, 'participant_gone');
+    assert.equal(stop?.fact?.subject, 'coord-run');
+    assert.match(f.current().reason, /run\.start coordinator fresh replacing=coord-run/);
+    await f.engine.resolution.recovery.route(f.current());
+    assert.equal(f.createdRuns.length, 0, 'no fresh coordinator past the bound');
+  } finally { await f.close(); }
+});
