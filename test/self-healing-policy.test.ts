@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { budgetOutageIntervals } from "../core/scheduling/host-outage";
+import { budgetOutageIntervals, waitAgeMs } from "../core/scheduling/host-outage";
+import { REPOSITORY_CONTENTION_GRACE_MS, repositoryContentionNeedsAttention } from "../core/scheduling/repository-contention";
+import { automaticIncidentPending } from "../core/recovery/incident";
+import { HOST_OUTAGE_HISTORY_META_KEY } from "../shared/host-outage";
+import { Store, digest } from "../core/store/store";
 import {
   recordServiceAlive,
   recordServiceStart,
@@ -28,7 +32,7 @@ import { collectOwnerVerbFacts, ownerTaskNext } from "../core/verbs/owner-verbs"
 import type { Adapter } from "../core/host";
 import { OPERATOR_BOARD_CALLER, submissionSchema, taskControlInputSchema } from "../shared/contracts";
 import { TASK_PROGRESSING_REASON } from "../shared/task-detail-summary";
-import { AUTOMATIC_BUDGET_EXTENSION_DETAIL, taskBudget } from "../shared/task-budget";
+import { AUTOMATIC_BUDGET_EXTENSION_DETAIL, elapsedOutsideOutages, taskBudget } from "../shared/task-budget";
 import { QueueRuntime } from "../service/runtime-owner";
 import { fixture, tick } from "./support/responsible-lifecycle-fixture";
 import { callerCliFixture } from "./support/caller-cli-fixture";
@@ -548,3 +552,70 @@ test("a coordinator run that only sent messages is charged; one whose command ch
   } finally { void f.close(); }
 });
 const head40 = "c".repeat(40);
+
+test("every worker creation passes the run launch's budget gate: a first spend extends once, a second stops and creates nothing", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    // A dead initial worker's redispatch reaches the worker launcher with no live
+    // worker: the shape first dispatch, a resumed dispatch and failover all hand it.
+    const redispatch = (budgetExtensions: number) => {
+      spentTask(f, "dispatching", budgetExtensions);
+      // The limits an earlier extension granted are spent too.
+      f.store.update(f.submitted.id, { agentId: null, runId: null,
+        resolution: { ...f.current().resolution, budgetLimits: null } });
+    };
+    redispatch(0);
+    assert.equal(f.engine.resolution.holdForSpentBudget(f.current()), false, "the first spend is extended, so the start goes ahead");
+    assert.equal(f.events("budget_extended").length, 1);
+    assert.match(f.events("budget_extended")[0]!.detail, /^automatic: Spec 068 Decision 1/);
+
+    redispatch(1);
+    const intents = f.events("agent_intent").length;
+    await f.engine.launchAgentOnce(f.current());
+    const held = f.current();
+    assert.equal(held.resolution.stop?.reason, "budget", held.reason);
+    assert.equal(held.agentId, null, "no worker was created past the spent budget");
+    assert.equal(f.events("agent_intent").length, intents, "no creation was attempted");
+    assert.equal(f.events("budget_extended").length, 1, "no second automatic extension");
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, held));
+    assert.equal(next.activity?.state, "needs_person");
+    assert.ok(budgetCommand(next), `the stop carries run.start accepting budget: ${JSON.stringify(next.explicitCommands)}`);
+  } finally { await f.close(); }
+});
+
+test("a wait's age leaves out host outages and service downtime, so a restart never ages a stall window", () => {
+  const at = Date.parse("2026-11-23T12:00:00.000Z");
+  const ago = (minutes: number) => iso(at - minutes * MINUTE);
+  // Overlapping and open outages count once, and only inside the wait.
+  assert.equal(elapsedOutsideOutages(at - 60 * MINUTE, at, [
+    { since: ago(90), until: ago(40) }, { since: ago(45), until: ago(30) }, { since: ago(5), until: null },
+  ]), 25 * MINUTE);
+  assert.equal(elapsedOutsideOutages(Number.NaN, at, []), 0, "an unreadable start is no age");
+  assert.equal(elapsedOutsideOutages(at + MINUTE, at, []), 0, "a start in the future is no age");
+
+  const dir = mkdtempSync(join(tmpdir(), "wait-age-"));
+  const store = new Store(join(dir, "queue.sqlite"));
+  try {
+    // The service was down for 40 minutes and the task's host for 10 more.
+    store.setMeta(SERVICE_DOWNTIME_HISTORY_META_KEY, [{ since: ago(50), until: ago(10) }]);
+    store.setMeta(HOST_OUTAGE_HISTORY_META_KEY, { host: [{ since: ago(10), until: ago(0) }] });
+    assert.equal(waitAgeMs(store, "host", ago(60), at), 10 * MINUTE);
+    assert.equal(waitAgeMs(store, "other-host", ago(60), at), 20 * MINUTE, "another host's outage is not this task's");
+
+    // The automatic reconciliation window measures through the same age.
+    const incident = { status: "reconciling", action: "callback_reminder", createdAt: ago(60), updatedAt: ago(60) } as never;
+    assert.equal(automaticIncidentPending(incident, 15 * MINUTE, (since) => at - Date.parse(since)), false, "wall time alone ends the window");
+    assert.equal(automaticIncidentPending(incident, 15 * MINUTE, (since) => waitAgeMs(store, "host", since, at)), true, "downtime does not");
+
+    // A repository contention episode's grace ignores the downtime inside it.
+    const reason = "Integration checkout is dirty; preserve it and resolve before dispatch";
+    const leader = store.insert(submissionSchema.parse({ submissionId: "leader", title: "Leader", repoPath: "/repo",
+      planningCommit: "a".repeat(40), handoffPath: "leader.md", originAgentId: "origin" }), "host", "handoff", "a".repeat(40));
+    store.update(leader.id, { reason });
+    store.setMeta(`repositoryContention:${digest("/repo")}`, { taskId: leader.id, since: ago(45), reason });
+    assert.equal(repositoryContentionNeedsAttention(store, store.task(leader.id), reason, at), false,
+      "45 minutes by the wall clock, but none of it while the service and host were up");
+    assert.equal(repositoryContentionNeedsAttention(store, store.task(leader.id), reason, at + REPOSITORY_CONTENTION_GRACE_MS), true,
+      "the grace runs once both are up");
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

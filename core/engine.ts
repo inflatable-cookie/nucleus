@@ -3357,7 +3357,14 @@ export class Engine {
   launchAgent(task: Task): Promise<void> {
     return this.workerLauncher.launchAgent(task);
   }
-  launchAgentOnce(task: Task): Promise<void> {
+  /**
+   * Every worker creation passes here: a first dispatch, a dead worker's
+   * redispatch, a resumed dispatch and a failover. The budget gate is the one
+   * run launches pass (Spec 068 Decision 1), so a spent budget holds the worker
+   * whatever path starts it.
+   */
+  async launchAgentOnce(task: Task): Promise<void> {
+    if (this.resolution.holdForSpentBudget(task)) return;
     return this.workerLauncher.launchAgentOnce(task);
   }
   continuationOwnsReturn(taskId: string): boolean {

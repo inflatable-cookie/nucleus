@@ -281,6 +281,20 @@ function unionDuration(intervals: BudgetInterval[]): number {
   return Number.isFinite(start) ? total + end - start : total;
 }
 
+/**
+ * Wall time from `sinceMs` to `atMs` outside the given outages: the same host
+ * outage and service downtime list every budget read discounts. An open outage
+ * (`until` null) runs to `atMs`. Stall windows measure a wait's age with this, so
+ * time Nucleus or the task's host was down never makes a wait look stalled.
+ */
+export function elapsedOutsideOutages(sinceMs: number, atMs: number, outages: readonly BudgetHostOutage[]): number {
+  if (!Number.isFinite(sinceMs) || !(atMs > sinceMs)) return 0;
+  const down = unionDuration(outages
+    .map(outage => ({ start: Math.max(sinceMs, Date.parse(outage.since)), end: Math.min(atMs, outage.until ? Date.parse(outage.until) : atMs) }))
+    .filter(interval => Number.isFinite(interval.start) && Number.isFinite(interval.end)));
+  return atMs - sinceMs - down;
+}
+
 /** Paused time from stored interval events plus the Nucleus-owned clock's live segment. */
 export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "resolution">, at: number,
   budgetStart = Number.NEGATIVE_INFINITY, additionalIntervals: BudgetInterval[] = []): number {
