@@ -1,8 +1,9 @@
-import type { Decision, DecisionView, Task } from '../../../shared/contracts';
+import type { Decision, Task } from '../../../shared/contracts';
 import { clipDecisionQuestion, isOperatorOrigin, taskOwner, taskPlanner } from '../../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../../shared/lanes';
 import { Decisions } from '../../planning/decisions';
-import { establishEscalationWait, matchesEscalationWait } from './hold';
+import { digest } from '../../store/store-core';
+import { establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { plannerEscalationSuggestedVerbs } from './proof';
 import { plannerEscalations, type LadderEvent } from './records';
@@ -48,6 +49,25 @@ export function hasConcreteOperatorChoices(handoff?: OperatorEscalationHandoff):
 /** Stored-record check (no label matching): legacy placeholder decisions have fewer than two explicit options or stored choices. */
 export function isPlaceholderDecisionRecord(stored: Pick<Decision, 'choices' | 'options'>): boolean {
   return !stored.choices || stored.choices.length < 2 || stored.options.length < 2;
+}
+
+function readOperatorDecision(ladder: Ladder, taskId: string, decisionId: string): Decision | null {
+  try {
+    const decision = ladder.store.decision(decisionId);
+    return (decision.status === 'open' || decision.status === 'answered') && decision.links.tasks.includes(taskId)
+      && !isPlaceholderDecisionRecord(decision) ? decision : null;
+  } catch { return null; }
+}
+
+/** The last link or return distinguishes a deliberate replacement from a retry. */
+function escalationDecisionId(taskId: string, id: string, generation: number): string {
+  const hash = digest(JSON.stringify(['escalation decision', taskId, id, generation]));
+  // UUID version 8 with the RFC variant. Decision readers expect UUIDs.
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+function operatorWait(id: string, decisionId: string): EscalationWait {
+  return { kind: 'decision', target: decisionId, stopDetail: escalationWaitDetail.operator(id, decisionId) };
 }
 
 function isReturnQuestionId(questionId: string | undefined, escalationId: string): boolean {
@@ -102,11 +122,27 @@ export function operatorDecisionApplied(ladder: Ladder, taskId: string, id: stri
   if (!matchesEscalationWait(stop, id, { kind: 'decision', target: decisionId })) return false;
   try {
     const wait: { kind?: string; target?: string } = JSON.parse(waitEvent.detail.slice(id.length + 2));
-    if (wait.kind !== 'decision' || wait.target !== decisionId) return false;
-    const stored = ladder.store.decision(decisionId);
-    if (stored.status === 'withdrawn' || isPlaceholderDecisionRecord(stored)) return false;
-    return stored.links.tasks.includes(taskId);
+    return wait.kind === 'decision' && wait.target === decisionId && Boolean(readOperatorDecision(ladder, taskId, decisionId));
   } catch { return false; }
+}
+
+/** Complete a handoff left by the older writer after its link committed. */
+export function restoreLinkedOperatorWaits(ladder: Ladder, taskId: string, events: LadderEvent[]): boolean {
+  if (!events.some(event => event.kind === 'planner_escalation_decision_linked')) return false;
+  let restored = false;
+  for (const { id, decisionId, answered } of plannerEscalations(events)) {
+    if (!decisionId || answered) continue;
+    const linked = events.findLast(event => event.kind === 'planner_escalation_decision_linked'
+      && event.detail === `${id}: decision ${decisionId}`);
+    if (!linked || events.some(event => event.detail.startsWith(`${id}:`) && (
+      event.kind === 'planner_escalation_wake_intent' || (event.id > linked.id && (
+        event.kind === 'planner_escalation_wait' || event.kind === 'planner_escalation_wait_superseded'
+      ))
+    ))) continue;
+    if (!readOperatorDecision(ladder, taskId, decisionId)) continue;
+    if (establishEscalationWait(ladder, taskId, id, operatorWait(id, decisionId), linked.id)) restored = true;
+  }
+  return restored;
 }
 
 /** Return a bare classification or placeholder decision to the planner ladder without creating an operator card. */
@@ -231,56 +267,50 @@ export function classifyEscalationToOperator(
     returnEscalationToPlanner(ladder, t, id, reason, who, handoff);
     return;
   }
-  if (operatorDecisionApplied(ladder, t.id, id)) return;
-  const current = ladder.store.task(t.id);
-  let events = ladder.store.eventsAll(t.id);
-  if (!events.some(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`)))
-    ladder.store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
-  const classification = ladder.store.eventsAll(t.id).findLast(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`));
-  const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
-  let question = handoff?.question ?? `The blocker escalation ${id} on "${current.title}" needs the operator.`;
-  try { if (!handoff?.question && payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
-  question = clipDecisionQuestion(question);
-  const choices = handoff!.choices!.map(choice => ({ label: choice.label.trim(), consequence: choice.consequence.trim() }));
-  const recommended = handoff?.recommended?.trim() || choices[0]!.label;
-  const decisions = new Decisions(ladder.store);
-  const linkedEvent = events.findLast(event => event.kind === 'planner_escalation_decision_linked' && event.detail.startsWith(`${id}:`));
-  const linkedId = linkedEvent?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
-  let decision: DecisionView | null = null;
-  if (linkedId) {
-    try {
-      const candidate = decisions.get({ id: linkedId });
-      const stored = ladder.store.decision(linkedId);
-      if (candidate.links.tasks.includes(t.id) && stored.status !== 'withdrawn' && !isPlaceholderDecisionRecord(stored)) decision = candidate;
-    } catch { /* a lost target is repaired with a fresh linked decision below */ }
-  }
-  // A previous implementation could commit the decision row before recording
-  // its link. Reuse that exact escalation decision if it is still present.
-  if (!decision) decision = decisions.list({ task: t.id }).find(candidate => {
-    if (!candidate.links.tasks.includes(t.id) || !candidate.context?.includes(`escalation ${id} was classified as the operator's`))
-      return false;
-    try {
-      const stored = ladder.store.decision(candidate.id);
-      return stored.status !== 'withdrawn' && !isPlaceholderDecisionRecord(stored);
-    } catch { return false; }
-  }) ?? null;
-  if (!decision) decision = decisions.add({
-    question,
-    headline: handoff?.headline ?? `Blocker escalation on ${current.reference ?? current.id} needs the operator`,
-    choices,
-    options: choices.map(choice => choice.label),
-    recommended,
-    details: handoff?.details ?? null,
-    context: (handoff?.context ?? `The blocker ladder's escalation ${id} was classified as the operator's by the ${who}. Its one-line reason: ${reason}`).slice(0, 4000),
-    askedBy: current.agentId ?? 'nucleus',
-    project: { origin: normalizeRepositoryOrigin(current.repository ?? '') ?? current.repoPath, path: current.repoPath },
-    tasks: [current.id],
-    by: 'nucleus',
-  });
-  events = ladder.store.eventsAll(t.id);
-  if (!events.some(event => event.kind === 'planner_escalation_decision_linked' && event.detail === `${id}: decision ${decision!.id}`))
-    ladder.store.event(t.id, 'planner_escalation_decision_linked', `${id}: decision ${decision.id}`);
-  const wait = { kind: 'decision' as const, target: decision.id, stopDetail: escalationWaitDetail.operator(id, decision.id), stopReason: 'escalated' as const };
-  if (!establishEscalationWait(ladder, t.id, id, wait, classification?.id ?? 0))
-    throw Error(`Escalation ${id} could not establish its operator decision wait`);
+  const write = () => {
+    const store = ladder.store;
+    if (operatorDecisionApplied(ladder, t.id, id)) return;
+    const current = store.task(t.id);
+    const events = store.eventsAll(t.id);
+    let classification = events.findLast(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`));
+    if (!classification) {
+      store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
+      classification = store.eventsAll(t.id).at(-1);
+    }
+    const prior = events.findLast(event => event.detail.startsWith(`${id}:`)
+      && (event.kind === 'planner_escalation_decision_linked' || event.kind === 'planner_escalation_returned'));
+    const linkedId = prior?.kind === 'planner_escalation_decision_linked'
+      ? prior.detail.match(/decision ([0-9a-f-]{36})/)?.[1]
+      : undefined;
+    const decisionId = escalationDecisionId(t.id, id, prior?.id ?? 0);
+    const existing = (linkedId && readOperatorDecision(ladder, t.id, linkedId))
+      || readOperatorDecision(ladder, t.id, decisionId);
+    let target = existing?.id;
+    if (!target) {
+      const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
+      let question = handoff?.question ?? `The blocker escalation ${id} on "${current.title}" needs the operator.`;
+      try { if (!handoff?.question && payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
+      const choices = handoff!.choices!.map(choice => ({ label: choice.label.trim(), consequence: choice.consequence.trim() }));
+      const recommended = handoff?.recommended?.trim() || choices[0]!.label;
+      target = new Decisions(store).add({
+        question: clipDecisionQuestion(question),
+        headline: handoff?.headline ?? `Blocker escalation on ${current.reference ?? current.id} needs the operator`,
+        choices,
+        options: choices.map(choice => choice.label),
+        recommended,
+        details: handoff?.details ?? null,
+        context: (handoff?.context ?? `The blocker ladder's escalation ${id} was classified as the operator's by the ${who}. Its one-line reason: ${reason}`).slice(0, 4000),
+        askedBy: current.agentId ?? 'nucleus',
+        project: { origin: normalizeRepositoryOrigin(current.repository ?? '') ?? current.repoPath, path: current.repoPath },
+        tasks: [current.id],
+        by: 'nucleus',
+      }, decisionId).id;
+    }
+    if (linkedId !== target)
+      store.event(t.id, 'planner_escalation_decision_linked', `${id}: decision ${target}`);
+    if (!establishEscalationWait(ladder, t.id, id, operatorWait(id, target), classification?.id ?? 0))
+      throw Error(`Escalation ${id} could not establish its operator decision wait`);
+  };
+  if (ladder.store.db.isTransaction) write();
+  else ladder.store.transaction(write);
 }

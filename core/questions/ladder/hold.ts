@@ -39,7 +39,7 @@ export function escalationWaitState(id: string, wait: EscalationWait) {
 
 /** The wait event and the actual task stop are one durable state transition. */
 export function establishEscalationWait(ladder: Ladder, taskId: string, id: string, wait: EscalationWait, afterEventId = 0): boolean {
-  return ladder.store.transaction(() => {
+  const write = () => {
     const current = ladder.store.task(taskId);
     if (['done', 'cancelled'].includes(current.phase)) return false;
     const events = ladder.store.eventsAll(taskId);
@@ -51,7 +51,7 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
     }
     const { stopDetail, stopReason } = escalationWaitState(id, wait);
     const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
-    const matchesRecordedWait = recordedWait
+    const matchesRecordedWait = recordedWait && recordedWait.id > afterEventId
       && !events.some(event => event.kind === 'planner_escalation_wait_superseded' && event.id > recordedWait.id && event.detail.startsWith(`${id}:`))
       && (() => {
         try {
@@ -65,5 +65,6 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
     if (!matchesEscalationWait(current.resolution.stop, id, wait) || current.resolution.stop?.detail !== stopDetail)
       ladder.resolution.waiting(current, stopDetail, stopReason, { fact: escalationWaitFact(id, wait) });
     return matchesEscalationWait(ladder.store.task(taskId).resolution.stop, id, wait);
-  });
+  };
+  return ladder.store.db.isTransaction ? write() : ladder.store.transaction(write);
 }

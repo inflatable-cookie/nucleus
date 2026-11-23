@@ -1,1 +1,1 @@
-Restore an escalation's operator wait after a restart or repeated handoff while keeping its existing decision.
+Restore an escalation's operator wait after a restart or repeated handoff while keeping its existing decision. Record new handoffs atomically and recover older linked decisions whose wait was interrupted.

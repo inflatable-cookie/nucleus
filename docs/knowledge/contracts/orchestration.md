@@ -2432,7 +2432,10 @@ stale-version refusal once, with the original report binding rechecked.
 An escalation stop records the occurrence ID, wait kind and target. A planner
 stop names its holder when known. A decision stop names the exact decision ID,
 so a repeated handoff or a roll can restore the operator wait from the journal
-and keep the linked decision.
+and keep the linked decision. Creating a decision, linking it and recording its
+wait commit together. The decision identity is keyed to the escalation occurrence
+and handoff generation. Recovery can rebuild an older linked decision's missing
+wait while the link still owns the escalation.
 
 When the retained worker's own in-turn ask holds its turn, an escalation's
 worker direction is recorded once and the ask returns pending without being

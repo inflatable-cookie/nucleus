@@ -9,7 +9,7 @@ import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
 import { escalationWaitState, establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
-import { reconcileLegacyPlaceholderDecisions } from './operator';
+import { reconcileLegacyPlaceholderDecisions, restoreLinkedOperatorWaits } from './operator';
 import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
 import { routePlannerEscalation, routePlannerEscalationReturn } from './routing';
 import { escalationWaitDetail } from './waits';
@@ -184,7 +184,8 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
 /** Re-assert every recorded escalation wait, and wake the ones whose target settled. */
 export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise<void> {
   reconcileLegacyPlaceholderDecisions(ladder, task);
-  const events = ladder.store.eventsAll(task.id);
+  let events = ladder.store.eventsAll(task.id);
+  if (restoreLinkedOperatorWaits(ladder, task.id, events)) events = ladder.store.eventsAll(task.id);
   const waits = new Map(events.filter(item => item.kind === 'planner_escalation_wait')
     .map(event => [event.detail.slice(0, event.detail.indexOf(':')), event]));
   for (const [id, event] of waits) {
