@@ -1,5 +1,5 @@
 import { type Task } from '../../shared/contracts';
-import { git, githubRepositoryFromRemote, command } from '../git/index';
+import { git, githubRepositoryFromRemote, command, type SpawnGuard } from '../git/index';
 
 
 export async function repo(t: Task) {
@@ -8,7 +8,11 @@ export async function repo(t: Task) {
   if (!repository) throw new Error('Resolution requires a GitHub origin');
   return repository;
 }
-export const api = async (t: Task, endpoint: string, args: string[] = []) => JSON.parse(await command('gh', ['api', endpoint, ...args], t.repoPath, undefined, args.includes('--paginate') ? {maxBuffer: 32 * 1024 * 1024} : undefined));
+export const api = async (t: Task, endpoint: string, args: string[] = [], spawnGuard?: SpawnGuard) =>
+  JSON.parse(await command('gh', ['api', endpoint, ...args], t.repoPath, undefined, {
+    ...(args.includes('--paginate') ? { maxBuffer: 32 * 1024 * 1024 } : {}),
+    spawnGuard,
+  }));
 
 /** The real `gh` refusal reason lives in stderr, not in the "Command failed" argv echo. */
 export function commandErrorText(error: unknown): string {

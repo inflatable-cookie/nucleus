@@ -181,6 +181,12 @@ export async function gitHash(cwd: string, args: string[]): Promise<string> {
   });
 }
 
+/** Prepare and check a guarded `gh` invocation inside its acquired slot. */
+export type SpawnGuard = {
+  prepare?: () => Promise<void>;
+  check: () => void;
+};
+
 /**
  * The one Git and `gh` process runner: the environment, the spawn slot, the
  * output ceiling, the timeout ceiling and the failure classification every
@@ -189,9 +195,22 @@ export async function gitHash(cwd: string, args: string[]): Promise<string> {
  * A failed remote mutation is classified so its caller can keep a durable
  * intent, never so it can retry blindly.
  */
-export async function command(file: string, args: string[], cwd: string, extraEnv?: NodeJS.ProcessEnv, options?: { timeout?: number; maxBuffer?: number; trim?: boolean }): Promise<string> {
-  const run = () => withSpawnSlot(() => exec(file, args, { cwd, timeout: options?.timeout ?? 30000, maxBuffer: options?.maxBuffer ?? 1024 * 1024,
-    env: { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" } }));
+export async function command(
+  file: string,
+  args: string[],
+  cwd: string,
+  extraEnv?: NodeJS.ProcessEnv,
+  options?: { timeout?: number; maxBuffer?: number; trim?: boolean; spawnGuard?: SpawnGuard },
+): Promise<string> {
+  const guard = file === "gh" ? options?.spawnGuard : undefined;
+  let launched = false;
+  const run = () => withSpawnSlot(async () => {
+    if (guard?.prepare) await guard.prepare();
+    guard?.check();
+    launched = true;
+    return exec(file, args, { cwd, timeout: options?.timeout ?? 30000, maxBuffer: options?.maxBuffer ?? 1024 * 1024,
+      env: { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" } });
+  });
   try {
     const result = file === "git" ? await (async () => {
       const raw = await gitRun(cwd, args, options?.maxBuffer ?? 1024 * 1024, extraEnv as Record<string, string>, options?.timeout);
@@ -201,6 +220,7 @@ export async function command(file: string, args: string[], cwd: string, extraEn
     })() : await run();
     return options?.trim === false ? result.stdout : result.stdout.trim();
   } catch (error) {
+    if (guard && !launched) throw error;
     const namedError = nameOutputLimit(error, [file, ...args]);
     if (file === "gh" && isLoginSessionFault(namedError)) {
       notifyLoginSessionFault();

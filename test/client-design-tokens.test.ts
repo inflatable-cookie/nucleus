@@ -18,7 +18,7 @@ const SCREEN_DIRS = [join(root, 'client'), join(root, 'hosts/paseo/client')];
 const ALLOWLIST = new Set([
   'client/design.ts',
   'client/provider-logo-assets.ts',
-  'client/web/app.tsx',
+  'client/web/theme.ts',
 ]);
 
 const COMMENT = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;

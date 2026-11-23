@@ -95,7 +95,7 @@ export function heldReviewEntry(store:Store,fixture:ReturnType<typeof exactProof
 }
 
 /** A workerless review-entry task with a project owner, a dispatch fence and a revisable pushed head. */
-export function ownerRevisionFixture(){
+export function ownerRevisionFixture(states = new Map<string, AgentObservation>()){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'ns-owner-revision-'))),origin=hostedOrigin(root),repo=join(root,'repo'),workspace=join(root,'workspace');
   execFileSync('git',['init','--bare',origin],{stdio:'ignore'});execFileSync('git',['init','-b','main',repo],{stdio:'ignore'});
   runGit(repo,'config','user.name','Queue Fixture');runGit(repo,'config','user.email','queue@example.test');
@@ -121,7 +121,7 @@ export function ownerRevisionFixture(){
     ...(state.merged&&state.mergeCommit?{merge_commit_sha:state.mergeCommit}:{}),draft:false,
     head:{repo:{full_name:'example/repo'},ref:'feature/external',sha:state.prSha},base:{repo:{full_name:'example/repo'},ref:'main'},user:{login:state.prAuthor},html_url:'https://github.com/example/repo/pull/41'});
   const workspaceHead=()=>runGit(workspace,'rev-parse','HEAD');
-  const states=new Map<string,AgentObservation>([[owner,{id:owner,workspaceId:'origin-workspace',status:'idle',active:false,permissions:false,error:'',model:'openai/gpt-5',provider:'openai'}]]);
+  states.set(owner,{id:owner,workspaceId:'origin-workspace',status:'idle',active:false,permissions:false,error:'',model:'openai/gpt-5',provider:'openai'});
   const creates:Run[]=[];
   const tokens=new Map<string,string>();
   let store=new Store(join(root,'queue.sqlite'));

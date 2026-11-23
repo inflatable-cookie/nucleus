@@ -726,6 +726,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     archivedThreadNotFound: false,
     disconnectMutation: false,
     disconnectAfterEffect: false,
+    archiveChecksDelegatedTasks: false,
+    archiveClearsDelegation: true,
+    rejectedArchives: [] as string[],
     /** A launch thread commits, then its reply is lost to a dropped socket. */
     disconnectAfterLaunch: false,
     /** The next delegated launch times out before T3 creates its child. */
@@ -1454,6 +1457,22 @@ export async function t3Fake(t: TestContext, directory: string) {
           }
           return stream(opening);
         }
+        case "orchestration.getThreadFamily": {
+          const root =
+            threads.get(payload.threadId)?.thread.lineage?.rootThreadId;
+          return success({
+            snapshotSequence: controls.snapshotSequence,
+            threads: [...threads.values()]
+              .filter(
+                (p) =>
+                  !p.thread.archivedAt &&
+                  !p.thread.deletedAt &&
+                  (p.thread.id === payload.threadId ||
+                    (root && p.thread.lineage?.rootThreadId === root)),
+              )
+              .map(shell),
+          });
+        }
         case "orchestration.getArchivedShellSnapshot":
           controls.beforeArchiveRead();
           return success({
@@ -1829,9 +1848,71 @@ export async function t3Fake(t: TestContext, directory: string) {
             case "thread.stop":
               for (const run of p.runs) run.status = "cancelled";
               break;
-            case "thread.archive":
+            case "thread.archive": {
+              const previouslyRejected = controls.rejectedArchives.includes(
+                payload.commandId,
+              );
+              if (
+                previouslyRejected ||
+                (controls.archiveChecksDelegatedTasks &&
+                  p.subagents?.some(
+                    (task: Value) =>
+                      task.origin === "app_owned" &&
+                      task.childThreadId &&
+                      ["pending", "running", "waiting"].includes(task.status),
+                  ))
+              ) {
+                if (!previouslyRejected)
+                  controls.rejectedArchives.push(payload.commandId);
+                const generic = `Failed to dispatch orchestration command thread.archive (${payload.commandId}).`;
+                const message = previouslyRejected
+                  ? `Command ${payload.commandId} was previously rejected: ${generic}`
+                  : `Thread ${payload.threadId} has running delegated tasks. Wait for them or cancel them before archiving.`;
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    commandId: payload.commandId,
+                    commandType: payload.type,
+                    message,
+                    detail: message,
+                  },
+                });
+              }
               p.thread.archivedAt = STAMP;
+              if (controls.archiveClearsDelegation && p.thread.lineage?.parentThreadId) {
+                const parent = threads.get(p.thread.lineage.parentThreadId);
+                for (const task of parent?.subagents ?? []) {
+                  if (
+                    task.origin !== "app_owned" ||
+                    task.childThreadId !== payload.threadId ||
+                    !["pending", "running", "waiting"].includes(task.status)
+                  )
+                    continue;
+                  task.status = "failed";
+                  const item = parent?.turnItems.find(
+                    (row: Value) => row.subagentId === task.id,
+                  );
+                  if (item) item.status = "failed";
+                }
+                if (parent?.pendingBackgroundTasks)
+                  parent.pendingBackgroundTasks = parent.pendingBackgroundTasks.filter(
+                    (task: Value) => task.childThreadId !== payload.threadId,
+                  );
+              }
               break;
+            }
+            case "queued-run.cancel": {
+              const run = p.runs.find((row: Value) => row.id === payload.runId);
+              assert.equal(run?.status, "queued");
+              run.status = "cancelled";
+              const parent = threads.get(p.thread.lineage.parentThreadId);
+              const task = parent?.subagents?.find(
+                (row: Value) => row.id === p.thread.forkedFrom?.nodeId,
+              );
+              if (task && run.ordinal === 1) task.status = "cancelled";
+              break;
+            }
             case "thread.unarchive":
               if (!p.thread.archivedAt)
                 return failure({

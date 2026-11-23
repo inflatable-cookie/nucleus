@@ -1,8 +1,11 @@
-/**
- * The most participants one host keeps on demand at once. Demands expire after
- * one pass without use, so this only bounds a burst.
- */
-export const PASS_DEMAND_HOST_CAP = 64;
+type PageDemand = "owned-tools" | "timeline";
+
+export const PASS_DEMAND_BATCH_SIZE = 64;
+
+export type PassProofDemand = {
+  agentId: string;
+  page: PageDemand | null;
+};
 
 /**
  * Participants whose owned-tool proof a task quantum read from its pass's
@@ -13,37 +16,55 @@ export const PASS_DEMAND_HOST_CAP = 64;
  * first: it observes each demanded participant before its process snapshot and
  * warms its tool page ahead of the rotation and outside the candidate cap. The
  * reads stay on the host pass, under its deadlines; a quantum only registers.
- * Each use renews the demand; one that no quantum renewed since the last pass
- * expires, so a settled proof stops costing reads after one pass.
+ * Unserved demand carries forward. A completed attempt removes a demand unless
+ * a quantum renewed it while the pass was serving it.
  */
 export class PassDemand {
-  /** Per host: participant → renewed since the last host pass took the set. */
-  private readonly hosts = new Map<string, Map<string, boolean>>();
+  private readonly hosts = new Map<
+    string,
+    Map<string, { renewed: boolean; page: PageDemand | null }>
+  >();
 
   /** Ask the next host pass to observe and warm this participant first. */
-  request(host: string, agentId: string): void {
-    const demanded = this.hosts.get(host) ?? new Map<string, boolean>();
-    if (!demanded.has(agentId) && demanded.size >= PASS_DEMAND_HOST_CAP) {
-      const oldest = demanded.keys().next().value;
-      if (oldest !== undefined) demanded.delete(oldest);
-    }
-    demanded.set(agentId, true);
+  request(host: string, agentId: string, page: PageDemand | null): void {
+    const demanded = this.hosts.get(host) ?? new Map();
+    const previous = demanded.get(agentId);
+    demanded.set(agentId, {
+      renewed: true,
+      page:
+        previous?.page === "timeline"
+          ? "timeline"
+          : (page ?? previous?.page ?? null),
+    });
     this.hosts.set(host, demanded);
   }
 
   /**
-   * Start one host pass: drop demands that no quantum renewed since the last
-   * pass or that no live task on this host still has, and return the rest,
-   * oldest first, for this pass to serve.
+   * Start a host pass with the oldest queued demand. Move its head to the
+   * tail for next time so even a pass that can attempt only one read advances
+   * every waiting participant.
    */
-  take(host: string, live: ReadonlySet<string>): string[] {
+  take(host: string): PassProofDemand[] {
     const demanded = this.hosts.get(host);
     if (!demanded) return [];
-    for (const [agentId, renewed] of demanded) {
-      if (renewed && live.has(agentId)) demanded.set(agentId, false);
-      else demanded.delete(agentId);
+    const pending: PassProofDemand[] = [];
+    for (const [agentId, demand] of demanded) {
+      pending.push({ agentId, page: demand.page });
+      demand.renewed = false;
+      if (pending.length === PASS_DEMAND_BATCH_SIZE) break;
     }
+    const first = pending[0];
+    if (first) {
+      demanded.delete(first.agentId);
+      demanded.set(first.agentId, { renewed: false, page: first.page });
+    }
+    return pending;
+  }
+
+  served(host: string, agentId: string): void {
+    const demanded = this.hosts.get(host);
+    if (!demanded) return;
+    if (demanded.get(agentId)?.renewed === false) demanded.delete(agentId);
     if (!demanded.size) this.hosts.delete(host);
-    return [...demanded.keys()];
   }
 }

@@ -288,6 +288,7 @@ export class RunReservationAdmission {
             : {}),
         },
         "run_intent",
+        dispatchReason,
       );
       admitPhaseFacts(this.store, t.id);
       if (replacingReviewer)

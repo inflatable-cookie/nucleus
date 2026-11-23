@@ -46,8 +46,8 @@ export interface TaskRowProjection {
  *   blind; the next pass settles it from the same thread's archive fact.
  * - `refused` — a proven pre-send refusal. Nothing reached the host, and the same
  *   command identity may be sent again on a later pass.
- * - `unobserved` — the host accepted the archive, but the same thread is not archived;
- *   a settled receipt is never sent twice, so this is a person's own action to see.
+ * - `unobserved` — the host has yet to show a condition the archive needs, such as
+ *   the settlement of a delegated child.
  * - `mismatched` — the binding does not positively name this task's own parent thread.
  * - `shared` — two task records claim the same parent thread.
  * - `read_failed` — the host could not answer this parent's state this pass.

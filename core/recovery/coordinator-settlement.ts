@@ -10,6 +10,7 @@ import {
 } from "../verbs/owner-verbs";
 import {
   coordinatorActionPlan,
+  coordinatorActionAttempt,
   coordinatorReportMatches,
   recoverySettlementPatch,
 } from "./coordinator-report";
@@ -35,7 +36,10 @@ export type RecoverySettlementContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    "attention" | "openPlannerEscalation" | "recovery" | "update"
+    | "attention"
+    | "openPlannerEscalation"
+    | "recovery"
+    | "update"
   >;
 };
 export class RecoverySettlement {
@@ -172,13 +176,8 @@ export class RecoverySettlement {
 
     const claimKey = JSON.stringify([task.id, run.id, binding.eventId]);
     if (recoveryApplicationsInFlight.has(claimKey)) return;
-    const previousClaim = this.store
-      .eventsAll(task.id)
-      .some(
-        (event) =>
-          event.kind === "run_result_applying" && event.detail === claimKey,
-      );
-    if (previousClaim) {
+    const previous = coordinatorActionAttempt(this.store, task.id, claimKey);
+    if (previous === "run_result_applying") {
       const outcome = this.store.db
         .prepare("SELECT outcome FROM verb_outcomes WHERE taskId=? AND key=?")
         .get(task.id, `coordinator:${binding.eventId}`) as
@@ -200,12 +199,7 @@ export class RecoverySettlement {
         latest.resolution.recovery?.runId !== run.id ||
         latest.resolution.recovery.action?.eventId !== binding.eventId ||
         latest.resolution.recovery.action.status !== "pending" ||
-        this.store
-          .eventsAll(task.id)
-          .some(
-            (event) =>
-              event.kind === "run_result_applying" && event.detail === claimKey,
-          )
+        coordinatorActionAttempt(this.store, task.id, claimKey) === "run_result_applying"
       )
         return false;
       this.store.event(task.id, "run_result_applying", claimKey);

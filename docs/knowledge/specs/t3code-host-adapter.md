@@ -1366,12 +1366,19 @@ renderer resolves the seeds itself. Nucleus maps supplied roles to the board,
 uses its own surface steps for seeds, and fills missing roles from the board
 palette. A fixed environment appearance takes precedence over the browser's
 preference. A theme with one usable appearance uses that palette. An unavailable
-read or missing definition leaves a usable board palette.
+settings read or an unknown theme ID leaves the board's own palette.
+
+In both T3 appearances, the list and detail panes share the canvas and cards
+keep their own fills (Tom, 2026-11-23). The header and menu use the palette's
+sidebar shade, falling back to the canvas when the palette omits it. The menu
+uses foreground washes for hover and selection and marks the selected entry
+with a foreground bar.
 
 The planner ruled on 2026-11-23 that the board follows the environment defaults.
-T3 stores per-renderer choices and built-in palettes in its renderer. The board
-can use a built-in's colours only if the server supplies its definition. Exact
-parity with local T3 choices needs a supported T3 API.
+Published definitions take precedence over the built-in palettes copied from
+T3 Code and pinned to `0.1.12-nightly.20261122.5098`. An empty default theme
+uses the stock T3 Code palette in both appearances. Exact parity with a theme
+chosen locally in the T3 renderer's localStorage needs a supported T3 API.
 
 ### Native question answers
 
@@ -1775,15 +1782,27 @@ of it. The step is now independent:
   behind a steady stream of newer ones. One entry's fault never stops another's:
   only a host timeout ends the step, and the step records itself the way every
   other pass step does.
-- **An exact identity.** Only the record's own task and thread are touched: the
-  record must name the task, the thread must not be claimed by a second task
-  record, and it must not be the pinned Inbox thread or any recorded role, follow-up
-  or retired-agent thread. Nothing here sweeps planners, project agents or a
-  person's own threads, and an operator snooze on another thread is untouched.
-- **Release, then archive.** The finished parent's held turn is released first (a
-  local ACP call, so a thread that left observation is still released), then
-  `thread.archive` goes through the durable intent with the deterministic
-  parent-archive command id. T3's settled receipt for that exact thread marks the
+- **An exact identity.** The parent must be the record's own task thread, with a
+  single claimant and a current launch binding. The pass also checks custody of
+  each delegated child it archives. It checks the parent binding again before
+  dispatch and before writing the result to that binding.
+- **Release, then archive the children.** A fresh parent read after the ACP
+  release must show its active and queued runs and pending requests have cleared.
+  The pass reads each owned child by its exact thread ID. Active runs, pending
+  requests and background work from the provider, turn items or shell keep an
+  idle-looking child from being archived. A held delegated run is cancelled by
+  run ID on a later pass after a fresh read confirms its hold and the completion
+  delivery has been disposed. An idle child is archived by `thread.archive`.
+  If the next parent read still shows a live delegated record for an archived
+  child, the obligation waits for T3 to clear it and records that reason.
+- **Archive the parent last.** The dispatch gate reads the parent again before
+  every mutation. It checks the released hold, queued messages, requests and
+  delegated records against the decision that preceded the read. The parent
+  archive requires all its observed owned children archived or gone and all
+  live delegated records cleared. A fresh `orchestration.getThreadFamily`
+  read must also show an empty background roster on that parent. T3 derives
+  this roster from provider work and turn items beyond the timeline window.
+  T3's settled archive receipt for that exact thread marks the
   binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
   batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
   reading archived threads at all"). A thread T3 later shows live is a person's own
@@ -1791,16 +1810,20 @@ of it. The step is now independent:
 - **Unknown delivery is read, never resent blind.** A recorded intent whose
   delivery is unknown is settled by a fresh positive read of that parent: archived
   settles it, and a live thread is the read that lets the same command replay under
-  its own identity. A proven pre-send refusal may be re-sent the same way.
+  its own identity after any late-reply wait. A timed-out completion disposal
+  follows the same rule when a fresh parent read shows the wake is still owed.
+  Only T3's explicit replay of a rejected archive receipt permits a new
+  command ID. The binding records that
+  successor before delivery, after a fresh read shows the parent still needs
+  archive and the delegated records have cleared. A proven pre-send refusal
+  may be retried under its original identity after a fresh read. A refused
+  replay preserves any earlier unknown delivery.
 - **A typed, visible wait.** Every entry the step cannot settle is returned as a
-  typed wait (`unknown`, `refused`, `mismatched`, `shared`,
+  typed wait (`unknown`, `refused`, `unobserved`, `mismatched`, `shared`,
   `read_failed`) with the host's own reason. The pass writes it on the task
   (`parent_archive_uncertain` for unknown delivery, `parent_archive_wait`
   otherwise, one event per distinct reason) and the binding keeps the same state,
   so the record survives a roll. Reading the same wait again says nothing new.
-
-The three-day archived-thread retention pass and the workspace delete/archive
-rules are unchanged: this step archives a parent thread and nothing else.
 
 ## Composition and unsupported capabilities
 

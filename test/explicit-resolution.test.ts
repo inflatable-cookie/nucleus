@@ -14,8 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { mergeGate } from "../core/forge/merge";
-import { publishFormalReview } from "../core/forge/reviews";
+import { publishFormalReview, publishReviewOnce } from "../core/forge/reviews";
+import { ReviewPolicy, type ReviewPolicyHost } from "../core/review/review-policy";
 import { publishedReviewDecision } from "../core/intake/result-application";
+import type { ResolutionAdapter } from "../core/resolution";
 import { ordinaryReviewSource } from "../core/review/ordinary-review";
 import { git } from "../core/git/index";
 import { readGitCheckout, readGitRef } from "../core/git/git-identity";
@@ -30,7 +32,10 @@ import {
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
+  type Run,
+  type Task,
 } from "../shared/contracts";
+import { taskStopRecord } from "../shared/task-stop";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
@@ -38,6 +43,10 @@ import { hostRunProcessStartIdentity, startIdentityProves } from "../core/machin
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { operationInputHash } from "../core/store/store";
+import {
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../core/store/store-task-funnel";
 import {
   collectOwnerVerbFacts,
   ownerPendingEffects,
@@ -48,12 +57,14 @@ import {
   sendRunVia,
   type RunSendOwner,
 } from "../core/dispatch/run-launch/send";
+import { spawnGate, SPAWN_CONCURRENCY } from "../core/dispatch/spawn-gate";
 import { recoveryDispatchSnapshot } from "../core/recovery/recovery-context";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
 import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
+import { waitFor } from "./support/budgets";
 import { explicitOutcome } from "../bin/explicit-outcome.mjs";
 
 const head = "a".repeat(40);
@@ -128,6 +139,9 @@ async function fixture(
     }),
     stopAgentTurn: async (id: string) => {
       calls.push(`stop ${id}`);
+    },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      calls.push(`stop ${id} turn ${turnId}`);
     },
     archiveAgent: async (id: string) => {
       calls.push(`archive ${id}`);
@@ -601,9 +615,28 @@ test("an interrupted move is surfaced and can be cleared without inferring deliv
   assert.deepEqual(calls, []);
 });
 
+function withRecordedTurn(run: Run, turnId: string): Run {
+  assert.ok(run.agentId);
+  return {
+    ...run,
+    participantActivity: {
+      runId: run.id,
+      agentId: run.agentId,
+      turnId,
+      turnStartedAt: run.createdAt,
+      permission: null,
+      process: null,
+      tool: null,
+    },
+  };
+}
+
 test("run.release cancels a current revision on the retained worker thread", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
-  const revision = run("revision-run", "revision", "worker");
+  const revision = withRecordedTurn(
+    run("revision-run", "revision", "worker"),
+    "revision-turn",
+  );
   store.putRun(revision);
   store.update(current().id, {
     phase: "working",
@@ -618,11 +651,165 @@ test("run.release cancels a current revision on the retained worker thread", asy
     accept: ["live_turn", "unreported_result"],
   });
   assert.equal(result.explicitResolution?.status, "applied");
-  assert.deepEqual(calls, ["stop worker"]);
+  assert.deepEqual(calls, ["stop worker turn revision-turn"]);
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
 });
+
+test("next and run.release refuse a creation the host may still answer", async (t) => {
+  const { store, current, run, command, audit, runtime } = await fixture(t);
+  const coordinator = run("creating-coordinator", "recovery", null);
+  store.putRun(coordinator);
+  const stop = taskStopRecord(
+    "run_stalled",
+    "Coordinator creation is in flight",
+    null,
+    new Date().toISOString(),
+    [],
+    undefined,
+    { code: "creation_in_flight", subject: coordinator.id },
+  );
+  store.update(current().id, {
+    resolution: { ...current().resolution, currentRunId: coordinator.id, stop },
+  });
+  const offer = async () =>
+    (await runtime.taskNext({ taskId: current().id }))
+      .explicitCommands?.find(
+        (item) =>
+          item.action === "run.release" && item.args.run === coordinator.id,
+      );
+  assert.equal(await offer(), undefined);
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: coordinator.id,
+      accept: ["creation_in_flight", "live_turn", "unreported_result"],
+    }),
+    /may still be answered by the host/,
+  );
+  assert.equal(store.run(coordinator.id)?.released, false);
+  assert.equal(audit().length, 0);
+
+  store.update(current().id, {
+    resolution: { ...current().resolution, stop: null },
+  });
+  const available = await offer();
+  assert.ok(available);
+  assert.deepEqual(available.warnings, ["live_turn", "unreported_result"]);
+  const args = { action: available.action, run: available.args.run };
+  const probe = await command(args);
+  assert.deepEqual(
+    probe.explicitResolution?.warnings.map((warning) => warning.id),
+    available.warnings,
+  );
+  const applied = await command({ ...args, accept: available.warnings });
+  assert.equal(applied.explicitResolution?.status, "applied");
+});
+
+test("next offers release of an unbound initial worker once creation settles", async (t) => {
+  const { store, current, runtime, command } = await fixture(t);
+  const runId = "initial-worker";
+  const worker = store.update(
+    current().id,
+    { phase: "dispatching", agentIntent: true, runId, workspaceId: "workspace" },
+    "agent_intent",
+  );
+  store.setCredential(runId, "initial-worker-secret");
+  const attempt = readCreationAttempt(store, {
+    id: runId,
+    taskId: worker.id,
+    hostId: worker.hostId,
+    workspaceId: worker.workspaceId,
+    role: "worker",
+  });
+  assert.ok(attempt && !attempt.settlement);
+  const offers = async () =>
+    (await runtime.taskNext({ taskId: worker.id })).explicitCommands ?? [];
+  assert.equal(
+    (await offers()).some((item) => item.args.run === runId || item.args.replacing === runId),
+    false,
+  );
+  await assert.rejects(
+    command({
+      action: "run.release",
+      run: runId,
+      accept: ["live_turn", "unreported_result"],
+    }),
+    /may still be answered by the host/,
+  );
+  assert.doesNotThrow(() => store.authenticate(runId, "initial-worker-secret"));
+
+  settleCreationAttempt(store, attempt, "threw");
+  const offer = (await offers()).find(
+    (item) => item.action === "run.release" && item.args.run === runId,
+  );
+  assert.ok(offer);
+  assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
+  const result = taskControlTaskSchema.parse(
+    await callCatalogueMethod(runtime, "queue.task", {
+      ...offer.args,
+      caller: OPERATOR_BOARD_CALLER,
+      reason: "Release the settled creation",
+      accept: offer.warnings,
+    }),
+  );
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.equal(result.runId, null);
+  assert.throws(
+    () => store.authenticate(runId, "initial-worker-secret"),
+    /unauthorized callback/i,
+  );
+});
+
+for (const mode of [
+  "newer turn",
+  "thread-wide host",
+  "missing turn ID",
+] as const) {
+  test(`run.release leaves the native turn alone with a ${mode}`, async (t) => {
+    const exactStops: Array<{ id: string; turnId: string }> = [];
+    const f = await fixture(t, {
+      stopExactAgentTurn:
+        mode === "thread-wide host"
+          ? undefined
+          : async (id: string, turnId: string) => {
+              exactStops.push({ id, turnId });
+              throw Error("The requested turn ended. The newer turn is active");
+            },
+    });
+    const run = f.run("old-coordinator", "recovery", "coordinator");
+    f.store.putRun(
+      mode === "missing turn ID" ? run : withRecordedTurn(run, "old-turn"),
+    );
+    f.store.setCredential(run.id, "old-run-secret");
+    const response = await f.command({
+      action: "run.release",
+      run: run.id,
+      archive: true,
+      accept: ["live_turn", "unreported_result"],
+    });
+    assert.equal(response.explicitResolution?.status, "applied");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.throws(
+      () => f.store.authenticate(run.id, "old-run-secret"),
+      /unauthorized callback/i,
+    );
+    assert.deepEqual(
+      f.calls,
+      [],
+      "the thread-wide stop and archive are both untouched",
+    );
+    assert.deepEqual(
+      exactStops,
+      mode === "newer turn" ? [{ id: "coordinator", turnId: "old-turn" }] : [],
+    );
+    assert.match(
+      response.explicitResolution?.next ?? "",
+      /Turn cancellation could not be confirmed/,
+    );
+  });
+}
 
 test("run.release leaves another live revision using the same thread alone", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
@@ -652,7 +839,10 @@ test("run.release leaves another live revision using the same thread alone", asy
 test("the coordinator can release or clear its task records within its authority", async (t) => {
   const { store, current, run, command, audit, calls } = await fixture(t);
   const coordinator = run("recovery-run", "recovery", "coordinator");
-  const reviewer = run("review-run", "reviewer", "reviewer");
+  const reviewer = withRecordedTurn(
+    run("review-run", "reviewer", "reviewer"),
+    "reviewer-turn",
+  );
   store.putRun(coordinator);
   store.putRun(reviewer);
   store.update(current().id, {
@@ -734,7 +924,10 @@ test("the coordinator can release or clear its task records within its authority
     executionParticipants(current(), store.runs(current().id)).has("reviewer"),
     false,
   );
-  assert.deepEqual(calls, ["stop reviewer", "archive reviewer"]);
+  assert.deepEqual(calls, [
+    "stop reviewer turn reviewer-turn",
+    "archive reviewer",
+  ]);
 });
 
 test("record.clear retires an owned-tool hold and a stale escalation without using its snapshot", async (t) => {
@@ -807,14 +1000,18 @@ test("a new task reason keeps its own fact when a resolution update carries an o
 });
 
 test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolves uncertain reviewer in one step", async (t) => {
-  const { root, store, current, run, command, audit, calls, runtime } =
+  const { root, store, current, run, command, audit, calls, runtime, adapter } =
     await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
-  const stuck = run("stuck-reviewer", "reviewer", null);
-  store.putRun({ ...stuck, head: initialSha });
+  const stuck: Run = {
+    ...run("stuck-reviewer", "reviewer", null),
+    status: "intent",
+    head: initialSha,
+  };
+  store.putRun(stuck);
   store.setCredential(stuck.id, "old-secret");
   store.update(current().id, {
-    phase: "reviewing",
+    phase: "awaiting_review",
     prHead: initialSha,
     profile: profile("worker-author"),
     resolution: { ...current().resolution, currentRunId: stuck.id },
@@ -837,6 +1034,45 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
     agent: "fresh",
     replacing: stuck.id,
   };
+  const createRun = adapter.createRun;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let finishCreate!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finishCreate = resolve;
+  });
+  adapter.createRun = async () => {
+    markStarted();
+    await pending;
+    throw Error("Creation ended without binding an agent");
+  };
+  const nativeCreate = runtime.engine.withHost(host, () =>
+    runtime.engine.adapter.createRun!(current(), stuck, "old-secret"),
+  );
+  const settled = assert.rejects(nativeCreate, /Creation ended without binding/);
+  try {
+    await started;
+    assert.equal(current().resolution.stop, null);
+    assert.equal(readCreationAttempt(store, stuck)?.settlement, null);
+    const offers = (await runtime.taskNext({ taskId: current().id })).explicitCommands ?? [];
+    assert.equal(
+      offers.some((item) => item.args.run === stuck.id || item.args.replacing === stuck.id),
+      false,
+    );
+    await assert.rejects(
+      command({ ...args, accept: ["duplicate_thread", "creation_in_flight"] }),
+      /may still be answered by the host/,
+    );
+    assert.equal(store.run(stuck.id)?.released, false);
+    assert.doesNotThrow(() => store.authenticate(stuck.id, "old-secret"));
+    assert.equal(audit().length, 0);
+  } finally {
+    finishCreate();
+    await settled;
+    adapter.createRun = createRun;
+  }
   const probe = await command(args);
   assert.equal(probe.explicitResolution?.status, "warnings");
   assert.deepEqual(
@@ -939,7 +1175,7 @@ test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts 
   const pushed = await git(worktree, "rev-parse", "HEAD");
   await git(worktree, "push", "origin", current().branch);
   store.update(current().id, {
-    phase: "working",
+    phase: "awaiting_review",
     prHead: initialSha,
     profile: profile("worker-author"),
   });
@@ -965,7 +1201,7 @@ test("#1508: run.start reviewer head=<pushed> warns on head_mismatch and starts 
 
   const applied = await command({ ...args, accept: ["head_mismatch"] });
   assert.equal(applied.explicitResolution?.status, "applied");
-  assert.equal(applied.phase, "working");
+  assert.equal(applied.phase, "reviewing");
   const created = store.run(applied.explicitResolution!.runId!);
   assert.equal(created?.head, pushed);
   assert.equal(created?.status, "running");
@@ -1225,7 +1461,7 @@ test("message.send warns on queued and no_thread, delivers without changing task
   );
 });
 
-test("an uncertain-creation stall launches a coordinator that can resolve it with run.start", async (t) => {
+test("an uncertain-creation stall launches a coordinator that can replace its reviewer once eligible", async (t) => {
   const { root, store, current, run, command, runtime } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   const stuck = run("uncertain-rev", "reviewer", null);
@@ -1287,7 +1523,15 @@ test("an uncertain-creation stall launches a coordinator that can resolve it wit
     "coordinator launched for uncertain-creation stall",
   );
 
-  // The launched coordinator resolves the stall in one step with run.start.
+  await command({ action: "phase.set", to: "needs_attention", accept: ["live_runs"] });
+  if (withCoord.resolution.incident) {
+    await command({
+      action: "record.clear",
+      kind: "incident",
+      id: withCoord.resolution.incident.id,
+    });
+  }
+  // The launched coordinator can replace the uncertain reviewer.
   const coordCaller = formatAgentId(
     host,
     withCoord.resolution.recovery!.agentId!,
@@ -1344,7 +1588,7 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
     workspaceId: "workspace",
     workspaceIntent: true,
     prHead: firstSha,
-    phase: "working",
+    phase: "awaiting_review",
     profile: profile("worker-author"),
   });
   runtime.engine.profiles = [profile("rev-1")];
@@ -1396,11 +1640,11 @@ test("review fixes: reviewer head binds real checkout and updates prHead; retain
   assert.doesNotThrow(() => store.authenticate(revId, deliveredToken));
 });
 
-test("review fixes: late createRun acknowledgement does not overwrite replaced reviewer binding", async (t) => {
-  const { root, adapter, store, current, command, runtime } = await fixture(t);
+test("late createRun acknowledgement does not overwrite a newer reviewer binding", async (t) => {
+  const { root, adapter, store, current, run, command, runtime } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   store.update(current().id, {
-    phase: "reviewing",
+    phase: "awaiting_review",
     prHead: initialSha,
     profile: profile("worker-author"),
   });
@@ -1421,16 +1665,11 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   const firstEntered = new Promise<void>((resolve) => {
     notifyFirstEntered = resolve;
   });
-  let createCalls = 0;
-  adapter.createRun = async (_task, r) => {
-    createCalls++;
-    if (createCalls === 1) {
-      notifyFirstEntered();
-      return new Promise((resolve) => {
-        resolveFirst = resolve;
-      });
-    }
-    return { id: `replacement-${r.id.slice(0, 6)}`, workspaceId: "workspace" };
+  adapter.createRun = async () => {
+    notifyFirstEntered();
+    return new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
   };
 
   const firstPromise = command({
@@ -1442,22 +1681,40 @@ test("review fixes: late createRun acknowledgement does not overwrite replaced r
   const firstRun = store.runs(current().id)[0]!;
   assert.equal(firstRun.status, "intent");
 
-  const second = await command({
-    action: "run.start",
-    role: "reviewer",
-    agent: "fresh",
-    replacing: firstRun.id,
-    accept: ["duplicate_thread"],
+  // The task can advance independently of the outstanding native reply.
+  const newer = {
+    ...run("newer-reviewer", "reviewer", "newer-agent"),
+    head: initialSha,
+  };
+  try {
+    store.transaction(() => {
+      store.putRun(newer);
+      store.update(current().id, {
+        resolution: {
+          ...current().resolution,
+          currentRunId: newer.id,
+          reviewerAgentId: newer.agentId,
+        },
+      });
+    });
+  } finally {
+    resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
+  }
+
+  const first = await firstPromise;
+  assert.match(first.explicitResolution?.next ?? "", /on historical run only/);
+  assert.equal(store.run(firstRun.id)?.agentId, "late-first-agent");
+  assert.equal(store.run(firstRun.id)?.released, false);
+
+  const released = await command({
+    action: "run.release",
+    run: firstRun.id,
+    accept: ["live_turn", "unreported_result"],
   });
-  const secondRunId = second.explicitResolution!.runId!;
-  const replacementAgent = current().resolution.reviewerAgentId;
-  assert.ok(replacementAgent?.startsWith("replacement-"));
+  assert.equal(released.explicitResolution?.status, "applied");
 
-  resolveFirst({ id: "late-first-agent", workspaceId: "workspace" });
-  await firstPromise;
-
-  assert.equal(current().resolution.currentRunId, secondRunId);
-  assert.equal(current().resolution.reviewerAgentId, replacementAgent);
+  assert.equal(current().resolution.currentRunId, newer.id);
+  assert.equal(current().resolution.reviewerAgentId, newer.agentId);
   assert.equal(store.run(firstRun.id)?.released, true);
   assert.equal(store.run(firstRun.id)?.status, "superseded");
   assert.equal(store.run(firstRun.id)?.agentId, "late-first-agent");
@@ -1549,7 +1806,7 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   assert.equal(current().resolution.stop?.since, stopSince);
 
   // task.next exposes machine-readable explicitCommands.
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.start" && c.args.replacing === stuck.id,
@@ -1764,7 +2021,7 @@ test("review round 2: reviewer source custody refuses dirty checkout, warns two_
 });
 
 test("review round 2: replacing checks role and preserves live_turn/unreported_result; reviewer enforces model independence", async (t) => {
-  const { root, store, current, run, command, runtime } = await fixture(t);
+  const { root, store, current, run, command, runtime, calls } = await fixture(t);
   const { initialSha } = await attachGitCheckout(root, store, current().id);
   const liveWorker = run("live-worker-run", "revision", "worker-1");
   store.putRun({
@@ -1775,7 +2032,7 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
     profile: profile("author-p", "model-alpha"),
   });
   store.update(current().id, {
-    phase: "reviewing",
+    phase: "awaiting_review",
     prHead: initialSha,
     profile: profile("author-p", "model-alpha"),
   });
@@ -1835,7 +2092,10 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
       roles: ["reviewer"],
     },
   ]);
-  const liveRev = run("live-rev-run", "reviewer", "rev-agent-1");
+  const liveRev = withRecordedTurn(
+    run("live-rev-run", "reviewer", "rev-agent-1"),
+    "review-turn",
+  );
   store.putRun({ ...liveRev, active: true, status: "running" });
   const probe = await command({
     action: "run.start",
@@ -1848,6 +2108,17 @@ test("review round 2: replacing checks role and preserves live_turn/unreported_r
   assert.ok(ids.includes("live_turn"));
   assert.ok(ids.includes("unreported_result"));
   assert.ok(ids.includes("duplicate_thread"));
+  const replaced = await command({
+    action: "run.start",
+    role: "reviewer",
+    agent: "fresh",
+    replacing: liveRev.id,
+    accept: ids,
+  });
+  assert.equal(replaced.explicitResolution?.status, "applied");
+  assert.deepEqual(calls.filter((call) => call.startsWith("stop ")), [
+    "stop rev-agent-1 turn review-turn",
+  ]);
 });
 
 test("review round 2: delayed retained sendRunVia does not rotate binding back to replaced run", async (t) => {
@@ -2042,7 +2313,7 @@ test("review round 2: message.send reports host steer disposition and blocks que
     released: false,
   });
   store.putRun(execRun);
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.release" && c.args.run === execRun.id,
@@ -2134,7 +2405,7 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
     workspaceIntent: true,
     prUrl: "https://github.com/example/repo/pull/99",
     prHead: publishedSha,
-    phase: "reviewing",
+    phase: "awaiting_review",
     profile: profile("worker-a", "model-alpha"),
     agentId: "worker-1",
     agentActive: false,
@@ -2206,6 +2477,8 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   assert.equal(workerAfter.branch, branch);
   assert.equal(readGitRef(workerAfter, `refs/heads/${branch}`), unpushedSha);
 
+  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+
   // 2. Caller-supplied head differing from forge also warns head_mismatch and never writes it to prHead.
   const mismatchProbe = await command({
     action: "run.start",
@@ -2231,6 +2504,8 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
   const mismatchRun = store.run(mismatchApplied.explicitResolution!.runId!)!;
   assert.equal(mismatchRun.head, unpushedSha);
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
+
+  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
 
   // 3. Unreadable forge head returns head_mismatch; accepting starts on the checkout as it is and never records an unconfirmed prHead.
   forgeHead = "";
@@ -2259,6 +2534,8 @@ test("review round 4: coordinator one-step replacement on real Git worktree, unp
     unpushedSha,
   );
   forgeHead = publishedSha;
+
+  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
 
   // 4. Missing, unbound (null) and repo-aliasing checkouts all refuse as unavailable.
   store.update(current().id, { directory: join(root, "missing-worktree") });
@@ -2817,6 +3094,9 @@ process.stdout.write(JSON.stringify(entry.body));
     await git(worktree, "remote", "set-url", "origin", remote);
   }
 
+  // Finish the integration fixture before probing a new reviewer start.
+  await command({ action: "turn.release" });
+
   // 3. Checkout ahead of forge head (unpushed local commit): returns head_mismatch, never moves branch,
   // accepting starts on checkout as it is and never overwrites task.prHead.
   writeFileSync(join(worktree, "a.txt"), "v3-unpushed\n");
@@ -2852,6 +3132,8 @@ process.stdout.write(JSON.stringify(entry.body));
   assert.equal(readGitCheckout(worktree).head, unpushedSha);
   assert.equal(current().prHead, pushedSha);
 
+  await command({ action: "phase.set", to: "awaiting_review", accept: ["live_runs"] });
+
   // 4. Unreadable forge head: returns head_mismatch, accepting starts on checkout as it is without updating task.prHead.
   failForgeRead = true;
   const unreadableProbe = await command({
@@ -2881,7 +3163,7 @@ process.stdout.write(JSON.stringify(entry.body));
 
   // 5. Missing PR number/URL counts as unreadable forge head -> head_mismatch.
   failForgeRead = false;
-  store.update(current().id, { prUrl: null, resumePrNumber: null });
+  store.update(current().id, { phase: "awaiting_review", prUrl: null, resumePrNumber: null });
   const missingPrProbe = await command({
     action: "run.start",
     role: "reviewer",
@@ -2952,8 +3234,11 @@ test("review round 9: run.start never calls legacy verifyPr when verifyPrIdentit
 });
 
 /** The reviewer pool and task facts a `run.start reviewer fresh` needs. */
-async function reviewStartFixture(t: TestContext) {
-  const f = await fixture(t);
+async function reviewStartFixture(
+  t: TestContext,
+  adapterOverrides: Record<string, unknown> = {},
+) {
+  const f = await fixture(t, adapterOverrides);
   const { worktree, initialSha } = await attachGitCheckout(
     f.root,
     f.store,
@@ -2976,6 +3261,570 @@ async function reviewStartFixture(t: TestContext) {
     },
   ]);
   return { ...f, worktree, initialSha };
+}
+
+const freshReviewer = { action: "run.start", role: "reviewer", agent: "fresh" };
+
+function holdDispatch(f: Awaited<ReturnType<typeof reviewStartFixture>>) {
+  f.store.update(f.current().id, {
+    holds: {
+      dispatch: {
+        owner: planner,
+        reason: "The planner is resolving a scope question",
+        at: new Date().toISOString(),
+        generation: 1,
+        until: null,
+      },
+    },
+  });
+}
+
+async function ordinaryReviewerFixture(
+  t: TestContext,
+  verifyReview: ResolutionAdapter["verifyReview"] = async () => 101,
+  adapterOverrides: Partial<ResolutionAdapter> = {},
+) {
+  const publications: string[] = [];
+  const f = await reviewStartFixture(t, {
+    verifyPr: async (task: Task) => ({
+      head: task.prHead,
+      url: task.prUrl,
+      repository: "example/repo",
+      headRepository: "example/repo",
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "workspace",
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+    }),
+    publishReview: async (_store: unknown, _task: unknown, run: Run) => {
+      publications.push(run.id);
+      return 101;
+    },
+    verifyReview,
+    mergeGate: async (task: Task) => ({
+      head: task.prHead,
+      base: task.planningCommit,
+      wait: "",
+    }),
+    ...adapterOverrides,
+  });
+  const task = f.current();
+  f.store.update(task.id, { resumePrNumber: 1 });
+  f.store.patchRepository(
+    { path: task.repoPath, origin: null },
+    { reviewer: { login: "review-bot" } },
+  );
+  const engine = f.runtime.engine;
+  const report = async (run: Run, token: string, status: "ready_to_merge" | "changes_required" = "ready_to_merge") => {
+    const receipt = await engine.resolution.complete(
+      {
+        taskId: task.id,
+        runId: run.id,
+        eventId: "review-verdict",
+        status,
+        head: run.head,
+        summary: "Reviewed the requested source and its checks.",
+        reviewText: "Approved.",
+      },
+      token,
+    );
+    assert.equal(receipt.accepted, true);
+    const reported = f.store.run(run.id);
+    assert.ok(reported?.completion);
+    f.store.putRun({ ...reported, active: false, released: true, status: "finished" });
+  };
+  const seedReport = async (authored = false, status?: "changes_required") => {
+    const run = {
+      ...f.run("current-reviewer", "reviewer", "current-reader"),
+      head: f.initialSha,
+    };
+    f.store.putRun(run);
+    f.store.setCredential(run.id, "reviewer-ticket");
+    const current = f.current();
+    f.store.update(task.id, {
+      phase: "reviewing",
+      ...(authored ? { agentId: run.agentId } : {}),
+      resolution: {
+        ...current.resolution,
+        currentRunId: run.id,
+        reviewerAgentId: run.agentId,
+      },
+    });
+    await report(run, "reviewer-ticket", status);
+    return run;
+  };
+  const applyReport = (run: Run) =>
+    engine.withHost(host, () =>
+      engine.resolution.advanceCompletedRun(f.current(), f.store.run(run.id)!),
+    );
+  return { ...f, report, seedReport, applyReport, publications };
+}
+
+test("an explicit reviewer starts from needs_attention and its callback advances to merge", async (t) => {
+  const f = await ordinaryReviewerFixture(t);
+  f.store.update(f.current().id, { phase: "needs_attention" });
+  let token: string | undefined;
+  const createRun = f.adapter.createRun!;
+  f.adapter.createRun = async (...args) => {
+    token = args[2];
+    return createRun(...args);
+  };
+
+  const started = await f.command(freshReviewer);
+  assert.equal(started.phase, "reviewing");
+  assert.equal(started.explicitResolution?.status, "applied");
+  const run = f.store.run(started.explicitResolution!.runId!);
+  assert.ok(run);
+  assert.ok(token);
+  await f.report(run, token);
+  const engine = f.runtime.engine;
+  const advance = () =>
+    engine.withHost(host, () => engine.resolution.advance(f.current()));
+  await advance();
+
+  assert.equal(f.current().resolution.review?.runId, run.id);
+  assert.equal(f.current().resolution.review?.head, f.initialSha);
+  assert.equal(f.current().resolution.review?.reviewId, 101);
+  assert.ok(f.current().resolution.integrationTurn);
+  assert.deepEqual(f.publications, [run.id]);
+
+  f.store.setMeta("paused", false);
+  await advance();
+  assert.equal(f.current().phase, "merging", f.current().reason);
+});
+
+test("run.start reviewer refuses phases owned by integration and tasks with a recorded merge", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  for (const phase of ["verifying", "merging", "syncing", "closing"] as const) {
+    f.store.update(task.id, { phase });
+    await assert.rejects(f.command(freshReviewer), new RegExp(`task is ${phase}`));
+  }
+  f.store.update(task.id, {
+    phase: "blocked",
+    resolution: { ...task.resolution, mergedCommit: f.initialSha },
+  });
+  await assert.rejects(f.command(freshReviewer), /merge has been recorded/);
+  assert.deepEqual(f.store.runs(task.id), []);
+  assert.deepEqual(f.calls, []);
+});
+
+test("run.start reviewer refuses a parked merge intent or integration turn", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  const integrationTurn = { sequence: 1, acceptedAt: new Date().toISOString() };
+  const pendingMerge = {
+    mergeIntent: true,
+    mergeHead: task.prHead,
+    mergeBase: task.planningCommit,
+    mergeRequestedAt: integrationTurn.acceptedAt,
+    mergeResponseOutcome: "uncertain" as const,
+  };
+  const parked = { ...task.resolution, attention: true };
+  for (const resolution of [
+    { ...parked, ...pendingMerge, integrationTurn },
+    { ...parked, ...pendingMerge },
+    { ...parked, integrationTurn },
+  ]) {
+    f.store.update(task.id, { phase: "needs_attention", resolution });
+    const before = f.current();
+    await assert.rejects(
+      f.command(freshReviewer),
+      /Cannot start a reviewer while (a merge request is pending|the task holds an integration turn)/,
+    );
+    assert.equal(f.current().phase, before.phase);
+    assert.deepEqual(f.current().resolution, before.resolution);
+    assert.deepEqual(f.store.runs(task.id), []);
+  }
+  assert.deepEqual(f.calls, []);
+});
+
+test("run.start reviewer respects a dispatch hold placed by the board", async (t) => {
+  const f = await reviewStartFixture(t);
+  await f.command({
+    action: "hold",
+    kind: "dispatch",
+    reason: "Keep scheduled dispatch paused",
+  });
+  assert.equal(f.current().holds.dispatch?.owner, "operator");
+  await assert.rejects(f.command(freshReviewer), /Dispatch is held by operator/);
+  assert.deepEqual(f.store.runs(f.current().id), []);
+});
+
+test("next and run.start use the same phase and incident gate", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  const reader = { ...f.run("retained-reader", "reviewer", "reader"), head: f.initialSha };
+  f.store.putRun(reader);
+  const reviewing = {
+    ...task.resolution,
+    currentRunId: reader.id,
+    reviewerAgentId: reader.agentId,
+  };
+  const offers = () =>
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).explicitCommands?.filter(
+      (command) => command.action === "run.start" && command.args.role === "reviewer",
+    ) ?? [];
+
+  f.store.update(task.id, { resolution: reviewing });
+  assert.ok(offers().length > 0);
+  assert.ok(offers().every(({ args }) => args.version === f.current().version));
+
+  f.store.update(task.id, { phase: "working" });
+  assert.deepEqual(offers(), []);
+  await assert.rejects(f.command(freshReviewer), /task is working/);
+
+  const at = new Date().toISOString();
+  f.store.update(task.id, {
+    phase: "awaiting_review",
+    resolution: {
+      ...reviewing,
+      incident: {
+        id: "review-fault",
+        fingerprint: "review-fault",
+        role: "reviewer",
+        runId: reader.id,
+        cause: "repository_identity",
+        detail: "Rechecking repository identity",
+        status: "reconciling",
+        attempt: 1,
+        action: "exact_lookup",
+        createdAt: at,
+        updatedAt: at,
+      },
+    },
+  });
+  assert.deepEqual(offers(), []);
+  await assert.rejects(f.command(freshReviewer), /reconciling incident review-fault/);
+  assert.deepEqual(f.store.runs(task.id).map(({ id }) => id), [reader.id]);
+  assert.deepEqual(f.calls, []);
+});
+
+test("run.start reviewer refuses another owner's dispatch hold and an escalated incident", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  holdDispatch(f);
+  await assert.rejects(f.command(freshReviewer), /Dispatch is held by .*scope question/);
+  await f.command({
+    action: "record.clear",
+    kind: "hold",
+    id: "dispatch",
+    accept: ["hold_owner"],
+  });
+  const at = new Date().toISOString();
+  f.store.update(task.id, {
+    resolution: {
+      ...f.current().resolution,
+      incident: {
+        id: "review-fault",
+        fingerprint: "review-fault",
+        role: "reviewer",
+        runId: null,
+        cause: "repository_identity",
+        detail: "The recovery owner is investigating",
+        status: "escalated",
+        attempt: 1,
+        action: "",
+        createdAt: at,
+        updatedAt: at,
+      },
+    },
+  });
+  await assert.rejects(f.command(freshReviewer), /escalated incident review-fault/);
+  assert.deepEqual(f.store.runs(task.id), []);
+  assert.deepEqual(f.calls, []);
+});
+
+test("an open escalation still blocks a reviewer start and an ordinary verdict after its wait is retired", async (t) => {
+  const f = await ordinaryReviewerFixture(t);
+  const task = f.current();
+  f.store.update(task.id, { phase: "blocked" });
+  f.store.event(task.id, "planner_escalation", "scope: cause owner-decision; run worker");
+  f.store.event(task.id, "planner_escalation_wait", 'scope: {"kind":"decision","target":"scope"}');
+  f.store.event(task.id, "planner_escalation_wait_superseded", "scope: wait retired");
+  await assert.rejects(f.command(freshReviewer), /planner ladder.*scope/);
+  assert.equal(f.current().phase, "blocked");
+  assert.deepEqual(f.store.runs(task.id), []);
+
+  const run = await f.seedReport();
+  await f.applyReport(run);
+  assert.equal(f.current().resolution.review, null);
+  assert.deepEqual(f.publications, []);
+  await f.command({ action: "record.clear", kind: "escalation", id: "scope" });
+  await f.applyReport(run);
+  assert.equal(f.current().resolution.review?.runId, run.id);
+});
+
+test("an answered escalation with a live wait still blocks the reviewer start and offer", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  const reader = { ...f.run("uncertain-reviewer", "reviewer", null), head: f.initialSha };
+  f.store.putRun(reader);
+  const offersStart = () =>
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).explicitCommands?.some(
+      (command) => command.action === "run.start" && command.args.role === "reviewer",
+    ) ?? false;
+  assert.equal(offersStart(), true);
+
+  for (const kind of ["time", "decision"] as const) {
+    const id = `scope-${kind}`;
+    const target = kind === "time" ? new Date(Date.now() + 60_000).toISOString() : "decision-id";
+    f.store.event(task.id, "planner_escalation", `${id}: cause owner-decision; run worker`);
+    f.store.event(
+      task.id,
+      "planner_escalation_answer_pending",
+      `${id}: ${JSON.stringify({ who: planner, answer: "wait", control: { kind, target } })}`,
+    );
+    f.store.event(task.id, "planner_escalation_wait", `${id}: ${JSON.stringify({ kind, target })}`);
+    f.store.event(task.id, "planner_escalation_answered", `${id}: answered by planner: wait`);
+    f.store.event(task.id, "planner_escalation_applied", `${id}: waiting on ${target}`);
+    assert.equal(plannerEscalations(f.store.eventsAll(task.id)).find((item) => item.id === id)?.answered, true);
+
+    assert.equal(offersStart(), false);
+    await assert.rejects(f.command(freshReviewer), /planner ladder still owns escalation .*wait/);
+
+    f.store.event(task.id, "planner_escalation_woke", `${id}: wait settled`);
+    assert.equal(offersStart(), true);
+  }
+  assert.deepEqual(f.store.runs(task.id).map(({ id }) => id), [reader.id]);
+});
+
+test("comment publication rechecks verdict ownership after waiting for a gh process slot", async (t) => {
+  const f = await ordinaryReviewerFixture(t, undefined, { publishReview: publishReviewOnce });
+  const task = f.current();
+  const run = await f.seedReport();
+  f.store.patchRepository({ path: task.repoPath, origin: null }, { reviewer: null });
+  await git(task.repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+
+  const bin = join(f.root, "fake-bin");
+  mkdirSync(bin);
+  const userStarted = join(f.root, "user-started");
+  const releaseUser = join(f.root, "release-user");
+  const posted = join(f.root, "posted");
+  const gh = join(bin, "gh");
+  writeFileSync(gh, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "pr" && args[1] === "view") {
+  console.log(${JSON.stringify(JSON.stringify({
+    state: "OPEN",
+    isDraft: false,
+    headRefName: task.branch,
+    baseRefName: task.baseBranch,
+    headRefOid: run.head,
+    url: task.prUrl,
+  }))});
+} else if (args[0] === "api" && args[1] === "user") {
+  fs.writeFileSync(${JSON.stringify(userStarted)}, "");
+  const wait = setInterval(() => {
+    if (!fs.existsSync(${JSON.stringify(releaseUser)})) return;
+    clearInterval(wait);
+    console.log(JSON.stringify({ login: "fixture" }));
+  }, 10);
+} else if (args.includes("POST")) {
+  fs.writeFileSync(${JSON.stringify(posted)}, "");
+  const body = args.find((arg) => arg.startsWith("body=")).slice(5);
+  console.log(JSON.stringify({ id: 101, body, user: { login: "fixture" } }));
+} else {
+  process.exitCode = 1;
+}
+`);
+  chmodSync(gh, 0o755);
+  const path = process.env.PATH ?? "";
+  process.env.PATH = `${bin}:${path}`;
+
+  let releaseSlots!: () => void;
+  const slotsHeld = new Promise<void>((resolve) => { releaseSlots = resolve; });
+  const blockers = Array.from({ length: SPAWN_CONCURRENCY - 1 }, () =>
+    spawnGate.run(() => slotsHeld),
+  );
+  const application = f.applyReport(run).then(() => null, (error: unknown) => error);
+  let integrationTurn: Task["resolution"]["integrationTurn"] = null;
+  try {
+    await waitFor(() => existsSync(userStarted), 10_000, "the gh user lookup");
+    let allSlotsHeld = false;
+    blockers.push(spawnGate.run(() => {
+      allSlotsHeld = true;
+      return slotsHeld;
+    }));
+    writeFileSync(releaseUser, "");
+    await waitFor(() => allSlotsHeld && spawnGate.queued > 0, 10_000, "the queued gh POST");
+    await f.command({ action: "turn.take" });
+    integrationTurn = f.current().resolution.integrationTurn;
+    assert.ok(integrationTurn);
+  } finally {
+    writeFileSync(releaseUser, "");
+    releaseSlots();
+    await Promise.all(blockers);
+    await application;
+    process.env.PATH = path;
+  }
+  assert.equal(await application, null);
+  assert.equal(existsSync(posted), false);
+  assert.equal(f.store.getMeta(`reviewPublication:${run.id}`), undefined);
+  assert.deepEqual(f.current().resolution.integrationTurn, integrationTurn);
+});
+
+test("an ordinary callback from a source author never publishes a verdict", async (t) => {
+  const f = await ordinaryReviewerFixture(t);
+  const run = await f.seedReport(true);
+
+  await assert.rejects(f.applyReport(run), /reviewer authored this task/);
+  assert.deepEqual(f.publications, []);
+  assert.equal(f.store.run(run.id)?.completion?.reviewId, undefined);
+  assert.equal(f.current().resolution.review, null);
+});
+
+test("an ordinary verdict for a stale head is refused before publication", async (t) => {
+  const f = await ordinaryReviewerFixture(t);
+  const run = await f.seedReport();
+  f.store.update(f.current().id, { prHead: head });
+
+  await assert.rejects(f.applyReport(run), /stale for the current PR head/);
+  assert.deepEqual(f.publications, []);
+  assert.equal(f.current().resolution.review, null);
+});
+
+for (const change of ["discard the verdict", "switch to the author's model"] as const) {
+  test(`formal publication sends no POST if the reviewer can ${change} during credential lookup`, async (t) => {
+    let lookupStarted!: () => void;
+    let resolveCredential!: (token: string) => void;
+    const lookup = new Promise<void>((resolve) => { lookupStarted = resolve; });
+    const credential = new Promise<string>((resolve) => { resolveCredential = resolve; });
+    let reviewerModel = "reviewer-model";
+    const posts: string[] = [];
+    const policy = new ReviewPolicy({
+      observe: async (id: string) => ({
+        id,
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+        model: id === "worker-1" ? "author-model" : reviewerModel,
+      }),
+    } as ReviewPolicyHost);
+    const f = await ordinaryReviewerFixture(t, undefined, {
+      assertReviewIndependence: policy.assertReviewIndependence.bind(policy),
+      publishReview: (store, task, run, status, text, allowed, reviewer) =>
+        publishReviewOnce(store, task, run, status, text, allowed, reviewer, {
+          verifyPr: async () => ({ url: task.prUrl!, head: run.head }),
+          readToken: () => {
+            lookupStarted();
+            return credential;
+          },
+          runGh: async (_task, endpoint, args) => {
+            if (args.includes("POST")) posts.push(endpoint);
+            return {
+              id: 101,
+              user: { login: reviewer!.login },
+              body: args.find((arg) => arg.startsWith("body="))?.slice(5),
+              commit_id: run.head,
+              state: "APPROVED",
+            };
+          },
+        }),
+    });
+    const task = f.current();
+    f.store.update(task.id, {
+      agentId: "worker-1",
+      profile: profile("worker-author", "author-model"),
+    });
+    await git(task.repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+    const run = await f.seedReport();
+    f.store.putRun({ ...f.store.run(run.id)!, profile: profile("rev-1", "reviewer-model") });
+    const publishing = f.applyReport(run);
+    const outcome = publishing.then(() => null, (error: unknown) => error);
+    try {
+      await Promise.race([
+        lookup,
+        outcome.then((error) => { throw error ?? Error("No credential lookup"); }),
+      ]);
+      if (change === "discard the verdict") {
+        await f.command({ action: "phase.set", to: "needs_attention" });
+        const replacement = await f.command({
+          ...freshReviewer,
+          replacing: run.id,
+          accept: ["discard_reported_verdict"],
+        });
+        assert.equal(replacement.explicitResolution?.status, "applied");
+        assert.ok(f.store.run(run.id)?.replacedAt);
+      } else {
+        reviewerModel = "author-model";
+      }
+    } finally {
+      resolveCredential("fixture-token");
+    }
+    const error = await outcome;
+    if (change === "switch to the author's model")
+      assert.match(String(error), /model is not independent/);
+    else
+      assert.equal(error, null);
+    assert.deepEqual(posts, []);
+    assert.equal(f.store.getMeta(`reviewPublication:${run.id}`), undefined);
+    assert.equal(f.current().resolution.review, null);
+  });
+}
+
+for (const change of ["replace reviewer", "place dispatch hold", "change publication policy", "take the integration turn"] as const) {
+  test(`ordinary verdict cannot commit if the caller acts to ${change} during verification`, async (t) => {
+    let replacementId: string | undefined;
+    let verified = false;
+    let takenTurn: Task["resolution"]["integrationTurn"] = null;
+    const f = await ordinaryReviewerFixture(t, async (task, run, _completion, reviewer) => {
+      assert.equal(reviewer?.login, "review-bot");
+      verified = true;
+      switch (change) {
+        case "replace reviewer": {
+          await f.command({ action: "phase.set", to: "needs_attention" });
+          const replacement = await f.command({
+            ...freshReviewer,
+            replacing: run.id,
+            accept: ["discard_reported_verdict"],
+          });
+          assert.equal(replacement.explicitResolution?.status, "applied");
+          assert.ok(replacement.explicitResolution.warnings.some(
+            (warning) => warning.id === "discard_reported_verdict",
+          ));
+          replacementId = replacement.explicitResolution.runId!;
+          assert.ok(replacementId);
+          break;
+        }
+        case "place dispatch hold":
+          holdDispatch(f);
+          break;
+        case "change publication policy":
+          f.store.patchRepository({ path: task.repoPath, origin: null }, { reviewer: null });
+          break;
+        case "take the integration turn":
+          await f.command({ action: "turn.take" });
+          takenTurn = f.current().resolution.integrationTurn;
+          assert.ok(takenTurn);
+          break;
+      }
+      return 102;
+    });
+
+    const run = await f.seedReport(
+      false,
+      change === "take the integration turn" ? "changes_required" : undefined,
+    );
+    await f.applyReport(run);
+
+    assert.ok(verified);
+    assert.equal(f.current().resolution.currentRunId, replacementId ?? run.id);
+    assert.equal(f.current().resolution.review, null);
+    assert.deepEqual(f.current().resolution.integrationTurn, takenTurn);
+    if (replacementId) assert.ok(f.store.run(run.id)?.replacedAt);
+    assert.equal(f.store.run(run.id)?.completion?.reviewId, 101);
+    assert.ok(!f.store.eventsAll(f.current().id).some(
+      ({ kind }) => ["review_result_applied", "run_result_applied", "review_reconciled"].includes(kind),
+    ));
+  });
 }
 
 test("068: run.start reviewer fresh returns a clean checkout detached at the branch tip to its branch", async (t) => {

@@ -14,7 +14,7 @@ import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
 import { isQuantumDeadlineExceeded } from "./pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
-import { HostPass } from "./host-pass";
+import { HostPass, type HostPassContext } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
 import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
@@ -69,6 +69,7 @@ export type SweepContext = Pick<
   | "retiredObservationPlan"
   | "scheduleLane"
   | "scheduleLifecycleFollowUp"
+  | "scheduleOperation"
   | "scheduleTaskQuantum"
   | "settleQuiesce"
   | "startSweepChain"
@@ -89,6 +90,7 @@ export type SweepContext = Pick<
     Resolution,
     | "beginPassSnapshot"
     | "checkpoints"
+    | "completePassProof"
     | "delegation"
     | "delegateNativeQuestions"
     | "deliverDrainNotices"
@@ -100,6 +102,7 @@ export type SweepContext = Pick<
     | "endPassSnapshot"
     | "hostPassWarmBudgetMs"
     | "markPassTimelineBudgetExhausted"
+    | "passObservedBeforeProcesses"
     | "takePassProofs"
     | "observationTargets"
     | "observe"
@@ -140,8 +143,10 @@ export class Sweep {
           "store",
         ],
         [
+          "completePassProof",
           "hostPassWarmBudgetMs",
           "markPassTimelineBudgetExhausted",
+          "passObservedBeforeProcesses",
           "takePassProofs",
           "observationTargets",
           "primePassProcesses",
@@ -152,7 +157,9 @@ export class Sweep {
           "sealPassHost",
           "storePassTimelinePage",
         ],
-      ),
+      ) satisfies {
+        readonly resolution: Required<HostPassContext["resolution"]>;
+      },
     ));
   }
   /** The periodic store and engine chores, on their own cadence. */
@@ -458,6 +465,9 @@ export class Sweep {
       // Hosts whose health says they are away (down, or not yet read since the
       // service started): nothing in this pass walks their tasks again.
       const awayHosts = new Set<string>();
+      // Take the waiting set before warming starts. An operation that first
+      // misses during this pass has asked the following pass for its proof.
+      const proofRetries = this.engine.store.passProofOperations();
       const openDecisionsBefore = new Set(
         this.engine.store
           .listDecisions({ status: "open" })
@@ -517,10 +527,25 @@ export class Sweep {
           this.engine.hostHealth.passFailed(host, passed.callFault);
         } else {
           this.engine.hostHealth.answered(host);
+          if (this.engine.hostHealth.peek(host).state === "up")
+            passSnapshot?.completeHostPass(host);
         }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp)
           finishedCatchUp.set(id, task);
+      }
+      // Pre-send proof settlement is allowed while paused. Each verb still
+      // owns its own pause gate for any work the proof would allow it to start.
+      if (proofRetries.length && passSnapshot && !this.engine.stopped) {
+        const retries = proofRetries.flatMap((operation) =>
+          operation.taskId && passSnapshot.hostPassCompleted(operation.hostId)
+            ? [this.boundTaskQuantum(
+                this.engine.scheduleOperation(operation.id, passSnapshot),
+                operation.taskId,
+              )]
+            : [],
+        );
+        if (retries.length) await Promise.all(retries);
       }
       // A failed host already spent its per-pass observation budget; do not
       // query it again while refreshing project notice recipients.

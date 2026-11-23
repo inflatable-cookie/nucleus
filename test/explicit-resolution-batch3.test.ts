@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -8,11 +8,20 @@ import {
   OPERATOR_BOARD_CALLER,
   runSchema,
   submissionSchema,
+  taskControlInputSchema,
   taskControlTaskSchema,
   type Task,
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
+import { runPrompt } from "../core/dispatch/prompts";
+import {
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../core/store/store-task-funnel";
 import { requiredCheckPollMetaKey } from "../core/forge/index";
+import { externalMerge as observeExternalMerge, merged as observeForgeMerge } from "../core/forge/merge";
+import { git } from "../core/git/index";
+import { stopUnreviewedExternalMerge } from "../core/merge/external-merge-check";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
 import { profile } from "./support/fakes";
@@ -27,7 +36,7 @@ const PLANNER = formatAgentId(HOST, "live-planner");
 async function fixture(
   t: TestContext,
   resolutionOverrides: Record<string, unknown> = {},
-  { hostOnly = false }: { hostOnly?: boolean } = {},
+  { hostOnly = false, repoPath = REPO }: { hostOnly?: boolean; repoPath?: string } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "explicit-batch3-"));
   const adapter = {
@@ -44,7 +53,7 @@ async function fixture(
       {
         id: "live-planner",
         title: "Planner",
-        directory: REPO,
+        directory: repoPath,
         workspaceId: null,
       },
     ],
@@ -59,7 +68,7 @@ async function fixture(
       title: id,
       workspaceId: "ws-1",
       status: "idle",
-      directory: REPO,
+      directory: repoPath,
     }),
     listAgents: async () => [],
     createRun: async () => ({ id: "created-agent", workspaceId: "ws-1" }),
@@ -94,7 +103,7 @@ async function fixture(
   store.upsertProject({
     key: "example-batch3",
     name: "Example",
-    repositories: [{ origin: null, path: REPO }],
+    repositories: [{ origin: null, path: repoPath }],
   });
   store.setProjectPlanner({
     key: "example-batch3",
@@ -132,7 +141,7 @@ async function fixture(
       submissionSchema.parse({
         submissionId: `sub-${seq}`,
         title,
-        repoPath: REPO,
+        repoPath,
         planningCommit: HEAD,
         handoffPath: "handoff.md",
         originAgentId: PLANNER,
@@ -149,14 +158,15 @@ async function fixture(
     });
   };
 
-  const attachCoordinator = (taskId: string, agentId = "coord-1") => {
+  const attachCoordinator = (taskId: string, agentId: string | null = "coord-1") => {
     const at = new Date().toISOString();
+    const runId = `coord-run-${taskId}`;
     const run = runSchema.parse({
-      id: `coord-run-${taskId}`,
+      id: runId,
       taskId,
       role: "recovery",
-      status: "running",
-      active: true,
+      status: agentId ? "running" : "intent",
+      active: agentId ? true : null,
       released: false,
       agentId,
       hostId: HOST,
@@ -169,6 +179,17 @@ async function fixture(
       lastObservedAt: at,
       idleSince: at,
       completion: null,
+      participantActivity: agentId
+        ? {
+            runId,
+            agentId,
+            turnId: `turn-${agentId}`,
+            turnStartedAt: at,
+            permission: null,
+            process: null,
+            tool: null,
+          }
+        : null,
     });
     store.putRun(run);
     store.update(taskId, {
@@ -181,18 +202,23 @@ async function fixture(
           generation: run.generation,
           runId: run.id,
           agentId,
-          status: "running",
+          status: agentId ? "running" : "pending",
           summary: "",
           idleSince: null,
           incidentId: null,
         },
       },
     });
-    return formatAgentId(HOST, agentId);
+    return agentId ? formatAgentId(HOST, agentId) : undefined;
   };
 
-  const attachReadyReview = (taskId: string, head = HEAD) => {
+  const attachReadyReview = (
+    taskId: string,
+    head = HEAD,
+    status: "ready_to_merge" | "changes_required" = "ready_to_merge",
+  ) => {
     const at = new Date().toISOString();
+    const summary = status === "ready_to_merge" ? "Looks good" : "Handle the missing error case";
     const run = runSchema.parse({
       id: `rev-run-${taskId}`,
       taskId,
@@ -214,9 +240,10 @@ async function fixture(
         taskId,
         runId: `rev-run-${taskId}`,
         eventId: `ev-${taskId}`,
-        status: "ready_to_merge",
+        status,
         head,
-        summary: "Looks good",
+        summary,
+        ...(status === "changes_required" ? { reviewId: 101 } : {}),
       },
     });
     store.putRun(run);
@@ -227,13 +254,14 @@ async function fixture(
           taskId,
           runId: run.id,
           eventId: `ev-${taskId}`,
-          status: "ready_to_merge",
+          status,
           head,
-          summary: "Looks good",
+          summary,
           reviewId: 101,
         },
       },
     });
+    return run;
   };
 
   const callExplicit = async (
@@ -654,7 +682,7 @@ test("a coordinator cannot accept creation_in_flight: no second thread beside a 
         },
         coordinator,
       ),
-    /Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight/,
+    /Only the live responsible planner or operator board can accept creation_in_flight/,
   );
 });
 
@@ -723,6 +751,7 @@ test("merge.now and closeout.now read forge ports on the task's host, not the un
 
 test("closeout.now closes merged-but-parked task, enforces hard gate, and gates unverified_merge to operator board", async (t) => {
   let syncCalls = 0;
+  const stoppedTurns: Array<{ agentId: string; turnId: string }> = [];
   let mergedResult:
     | { merged: boolean; commit: string | null; head: string; base: string }
     | Error = new Error("GitHub offline");
@@ -742,6 +771,9 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
     syncMain: async () => {
       syncCalls += 1;
       return MERGED_COMMIT;
+    },
+    stopExactAgentTurn: async (agentId: string, turnId: string) => {
+      stoppedTurns.push({ agentId, turnId });
     },
   });
 
@@ -763,7 +795,27 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
       },
     },
   });
+  attachCoordinator(parked.id, null);
+  const hasCloseoutOffer = async () =>
+    (await runtime.taskNext({ taskId: parked.id })).explicitCommands?.some(
+      (item) => item.action === "closeout.now",
+    ) ?? false;
+  assert.equal(await hasCloseoutOffer(), false);
+  await assert.rejects(
+    callExplicit(
+      parked.id,
+      { action: "closeout.now", accept: ["live_runs"] },
+      OPERATOR_BOARD_CALLER,
+    ),
+    /may still be answered by the host/,
+  );
+  const pendingRun = store.run(`coord-run-${parked.id}`);
+  assert.ok(pendingRun && !pendingRun.released);
+  const attempt = readCreationAttempt(store, pendingRun);
+  assert.ok(attempt && !attempt.settlement);
+  settleCreationAttempt(store, attempt, "returned");
   const coordinator = attachCoordinator(parked.id);
+  assert.equal(await hasCloseoutOffer(), true);
   const warnedClose = await callExplicit(
     parked.id,
     { action: "closeout.now" },
@@ -786,6 +838,7 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
   assert.equal(closed.resolution.recoveryActive, false);
   assert.equal(closed.resolution.recovery?.status, "resolved");
   assert.ok(closed.resolution.integrationTurn);
+  assert.deepEqual(stoppedTurns, [{ agentId: "coord-1", turnId: "turn-coord-1" }]);
   assert.equal(
     store.runs(parked.id).some((r) => !r.released),
     false,
@@ -877,6 +930,460 @@ test("closeout.now closes merged-but-parked task, enforces hard gate, and gates 
   assert.equal(applied.phase, "syncing");
 });
 
+test("a planner explicitly accepts a verified external merge without a review and closes it out", async (t) => {
+  let observedHead = HEAD;
+  let observedCommit = MERGED_COMMIT;
+  let observedMerged = true;
+  let mergeRequests = 0;
+  let observedExternalOnly = false;
+  const { runtime, store, insertTask, attachCoordinator, callExplicit } = await fixture(t, {
+    merged: async (_task: Task, options?: { externalOnly: boolean }) => {
+      if (options?.externalOnly) observedExternalOnly = true;
+      return { merged: observedMerged, commit: observedMerged ? observedCommit : null, head: observedHead, base: "main" };
+    },
+    merge: async () => { mergeRequests++; },
+    syncMain: async () => MERGED_COMMIT,
+  });
+  runtime.engine.resolution.closeoutAuthority = async () => "queue";
+
+  const task = insertTask("Merged outside Nucleus without review", 39);
+  store.update(task.id, { phase: "reviewing" });
+  stopUnreviewedExternalMerge(
+    { store, resolution: runtime.engine.resolution },
+    store.task(task.id),
+    HEAD,
+    MERGED_COMMIT,
+  );
+  const command = (await runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
+    (entry) => entry.action === "closeout.now",
+  );
+  assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
+  assert.match(command?.note ?? "", /No reviewer verdict exists/);
+
+  const before = store.task(task.id);
+  const warned = await callExplicit(task.id, { action: "closeout.now" });
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.deepEqual(warned.explicitResolution?.warnings.map((entry) => entry.id), ["unreviewed_merge"]);
+  assert.match(warned.explicitResolution?.warnings[0]?.text ?? "", /No reviewer verdict exists/);
+  assert.deepEqual(store.task(task.id), before);
+  assert.equal(observedExternalOnly, true);
+
+  const acceptCloseout = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  await assert.rejects(
+    runtime.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move",
+      to: "closeout",
+      force: true,
+      caller: PLANNER,
+      taskId: task.id,
+      version: before.version,
+      reason: "A forced closeout still needs source acceptance",
+    })),
+    /closeout.now with accept \["unreviewed_merge"\]/,
+  );
+  observedHead = OTHER_HEAD;
+  await assert.rejects(callExplicit(task.id, acceptCloseout), /no applied review verdict/);
+  observedHead = HEAD;
+  observedCommit = OTHER_HEAD;
+  await assert.rejects(callExplicit(task.id, acceptCloseout), /no applied review verdict/);
+  observedCommit = MERGED_COMMIT;
+  await assert.rejects(
+    callExplicit(task.id, acceptCloseout, formatAgentId(HOST, "worker")),
+    /Explicit resolution requires/,
+  );
+
+  const coordinated = insertTask("Unreviewed merge with a coordinator", 41);
+  store.update(coordinated.id, {
+    phase: "blocked",
+    resolution: {
+      ...coordinated.resolution,
+      unreviewedMerge: { head: HEAD, commit: MERGED_COMMIT, prNumber: 41 },
+    },
+  });
+  const coordinator = attachCoordinator(coordinated.id);
+  await assert.rejects(
+    callExplicit(coordinated.id, acceptCloseout, coordinator),
+    /Only the live responsible planner or operator board can accept unreviewed_merge/,
+  );
+  assert.equal(store.task(coordinated.id).resolution.ownerAcceptances.length, 0);
+  const applied = await callExplicit(task.id, acceptCloseout);
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.phase, "syncing");
+  assert.equal(applied.resolution.mergedCommit, MERGED_COMMIT);
+  assert.equal(applied.resolution.review, null);
+  assert.equal(applied.resolution.mergedWithNone, true);
+  assert.equal(applied.resolution.ownerAcceptances.length, 1);
+  const acceptance = applied.resolution.ownerAcceptances[0];
+  assert.equal(acceptance?.kind, "external_merge_source");
+  assert.equal(acceptance?.head, HEAD);
+  assert.equal(acceptance?.mergedCommit, MERGED_COMMIT);
+  assert.equal(acceptance?.prNumber, 39);
+  assert.deepEqual(acceptance?.actor, { agentId: PLANNER, role: "planner" });
+  assert.deepEqual(acceptance?.authority, { kind: "planner", note: null });
+  assert.equal(acceptance?.reason, "Explicit resolution test");
+  assert.match(acceptance?.missingEvidence ?? "", /No reviewer verdict exists/);
+  assert.equal(acceptance?.review, null);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "owner_acceptance").length, 1);
+  assert.ok(store.eventsAll(task.id).some((event) => event.kind === "planner_escalation_resolved"));
+  await runtime.engine.scheduleTaskQuantum(task.id);
+  await runtime.engine.scheduleTaskQuantum(task.id);
+  assert.equal(store.task(task.id).phase, "done");
+
+  const open = insertTask("Unreviewed PR still open", 40);
+  store.update(open.id, { phase: "verifying" });
+  observedMerged = false;
+  await assert.rejects(
+    callExplicit(open.id, acceptCloseout),
+    /GitHub reports the PR is not merged/,
+  );
+  await assert.rejects(
+    callExplicit(open.id, { action: "merge.now", head: HEAD, accept: ["unreviewed_merge"] }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  assert.equal(store.task(open.id).resolution.mergeIntent, false);
+  assert.equal(mergeRequests, 0);
+
+  observedMerged = true;
+  store.update(open.id, {
+    phase: "merging",
+    resolution: {
+      ...store.task(open.id).resolution,
+      mergeIntent: true,
+      mergeHead: HEAD,
+    },
+  });
+  await assert.rejects(
+    callExplicit(open.id, acceptCloseout),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  assert.equal(store.task(open.id).resolution.ownerAcceptances.length, 0);
+});
+
+async function externalMergeFixture(t: TestContext, mode: "exact" | "advanced" | "squash" = "exact") {
+  const root = mkdtempSync(join(tmpdir(), "explicit-external-merge-"));
+  const repoPath = join(root, "repo");
+  const directory = join(root, "work");
+  const remote = join(root, "remote.git");
+  const { runtime, store, insertTask, attachReadyReview, callExplicit } = await fixture(
+    t,
+    { merged: observeForgeMerge, externalMerge: observeExternalMerge },
+    { repoPath },
+  );
+  const priorPath = process.env.PATH;
+  t.after(() => {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const task = insertTask("Externally merged source", 49);
+
+  await git(root, "init", "--bare", remote);
+  await git(root, "init", "-b", task.baseBranch, repoPath);
+  await git(repoPath, "config", "user.name", "Fixture");
+  await git(repoPath, "config", "user.email", "fixture@example.invalid");
+  await git(repoPath, "commit", "--allow-empty", "-m", "Base");
+  await git(repoPath, "remote", "add", "origin", remote);
+  await git(repoPath, "push", "origin", task.baseBranch);
+  const base = await git(repoPath, "rev-parse", "HEAD");
+  await git(repoPath, "worktree", "add", "-b", task.branch, directory);
+  await git(directory, "commit", "--allow-empty", "-m", "Task source");
+  const recordedHead = await git(directory, "rev-parse", "HEAD");
+  const sourceRef = "refs/pull/49/head";
+  let head: string;
+  let integration = repoPath;
+  if (mode === "squash") {
+    integration = join(root, "planner");
+    await git(directory, "push", remote, `HEAD:refs/heads/${task.branch}`);
+    await git(root, "clone", "--branch", task.baseBranch, remote, integration);
+    await git(integration, "config", "user.name", "Fixture");
+    await git(integration, "config", "user.email", "fixture@example.invalid");
+    await git(integration, "switch", task.branch);
+    writeFileSync(join(integration, "follow-up.txt"), "Planner follow-up\n");
+    await git(integration, "add", "follow-up.txt");
+    await git(integration, "commit", "-m", "Planner follow-up");
+    head = await git(integration, "rev-parse", "HEAD");
+    await git(integration, "switch", task.baseBranch);
+    await git(integration, "merge", "--squash", task.branch);
+    await git(integration, "commit", "-m", "Squash task PR");
+    await git(integration, "push", remote, `${head}:${sourceRef}`, `:refs/heads/${task.branch}`);
+  } else {
+    if (mode === "advanced") await git(directory, "commit", "--allow-empty", "-m", "Planner follow-up");
+    head = await git(directory, "rev-parse", "HEAD");
+    await git(repoPath, "merge", "--no-ff", "-m", "Merge task PR", task.branch);
+    await git(repoPath, "push", remote, `${head}:${sourceRef}`);
+  }
+  const commit = await git(integration, "rev-parse", "HEAD");
+
+  const bin = join(root, "bin");
+  const response = join(root, "pr.json");
+  const pr = {
+    number: 49,
+    html_url: task.prUrl,
+    state: "closed",
+    draft: false,
+    merged: true,
+    merge_commit_sha: commit,
+    base: { ref: task.baseBranch, repo: { full_name: "example/repo" } },
+    head: { ref: task.branch, sha: head, repo: { full_name: "example/repo" } },
+  };
+  const setPr = (patch: Partial<typeof pr> = {}) =>
+    writeFileSync(response, JSON.stringify({ ...pr, ...patch }));
+  setPr();
+  mkdirSync(bin);
+  writeFileSync(join(bin, "gh"), `#!/usr/bin/env node
+if (process.argv.slice(2).join(" ") !== "api repos/example/repo/pulls/49") process.exit(1);
+process.stdout.write(require("node:fs").readFileSync(${JSON.stringify(response)}));
+`, { mode: 0o755 });
+  writeFileSync(join(bin, "ssh"), `#!/usr/bin/env node
+process.exit(require("node:child_process").spawnSync("git-upload-pack", [${JSON.stringify(remote)}], { stdio: "inherit" }).status ?? 1);
+`, { mode: 0o755 });
+  process.env.PATH = `${bin}:${priorPath ?? ""}`;
+  await git(repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
+  const publishMerge = () => git(integration, "push", remote, task.baseBranch);
+  const setSourceRef = (sha: string) => git(integration, "push", remote, `+${sha}:${sourceRef}`);
+  const restoreRemoteBase = () => git(integration, "push", remote, `+${base}:refs/heads/${task.baseBranch}`);
+  store.update(task.id, { phase: "blocked", prHead: recordedHead, directory, workspaceId: "ws-1" });
+  return { runtime, store, task, attachReadyReview, callExplicit, pr, setPr, base, recordedHead, head, commit, publishMerge, setSourceRef, restoreRemoteBase, directory };
+}
+
+test("the planner can close out a parked external merge with outstanding published changes", async (t) => {
+  const { runtime, store, task, attachReadyReview, callExplicit, head, commit, publishMerge } = await externalMergeFixture(t);
+  await publishMerge();
+  const review = attachReadyReview(task.id, head, "changes_required");
+  store.event(task.id, "review_result_applied", review.id);
+  const reviewBefore = store.task(task.id).resolution.review;
+  stopUnreviewedExternalMerge(
+    { store, resolution: runtime.engine.resolution },
+    store.task(task.id),
+    head,
+    commit,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const command = (await runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
+    (entry) => entry.action === "closeout.now",
+  );
+  assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
+  assert.match(command?.note ?? "", /changes_required/);
+  const warned = await callExplicit(task.id, { action: "closeout.now" });
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.match(warned.explicitResolution?.warnings[0]?.text ?? "", /changes_required/);
+
+  const applied = await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] });
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.deepEqual(applied.resolution.review, reviewBefore);
+  assert.match(applied.resolution.ownerAcceptances[0]?.missingEvidence ?? "", /changes_required/);
+});
+
+test("closeout.now accepts the task PR's verified descendant with an already-advanced checkout", async (t) => {
+  const { runtime, store, task, attachReadyReview, callExplicit, pr, setPr, base, recordedHead, head, commit, publishMerge, setSourceRef } = await externalMergeFixture(t, "advanced");
+  const review = attachReadyReview(task.id, recordedHead);
+  store.event(task.id, "review_result_applied", review.id);
+  const before = store.task(task.id);
+  const input = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  await publishMerge();
+  const warned = await callExplicit(task.id, { action: "closeout.now" });
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  assert.match(warned.explicitResolution?.warnings[0]?.text ?? "", new RegExp(head));
+
+  const tree = await git(task.repoPath, "rev-parse", `${head}^{tree}`);
+  const unpublished = await git(task.repoPath, "commit-tree", tree, "-m", "Unpublished");
+  setPr({ merge_commit_sha: unpublished });
+  await assert.rejects(callExplicit(task.id, input), /merge commit is not on the task base/);
+  setPr({ head: { ...pr.head, sha: base } });
+  await setSourceRef(base);
+  await assert.rejects(callExplicit(task.id, input), /merged head does not descend from the recorded task source/);
+  setPr({ head: { ...pr.head, repo: { full_name: "some-fork/repo" } } });
+  await assert.rejects(callExplicit(task.id, input), /External merge identity does not match/);
+  assert.deepEqual(store.task(task.id), before);
+  setPr();
+  await setSourceRef(head);
+  await assert.rejects(
+    runtime.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move", to: "closeout", force: true, caller: PLANNER,
+      taskId: task.id, version: before.version, reason: "Close out the merged PR",
+    })),
+    /closeout\.now/,
+  );
+  const applied = await callExplicit(task.id, input);
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.prHead, before.prHead);
+  assert.equal(applied.resolution.mergeHead, head);
+  assert.equal(applied.resolution.mergedCommit, commit);
+  assert.equal(applied.resolution.ownerAcceptances[0]?.head, head);
+});
+
+test("closeout.now fetches the verified PR source for a descendant squash merge", async (t) => {
+  const { store, task, callExplicit, directory, recordedHead, head, commit, publishMerge, setSourceRef } = await externalMergeFixture(t, "squash");
+  await publishMerge();
+  await assert.rejects(git(directory, "cat-file", "-e", `${head}^{commit}`));
+  const input = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  const warned = await callExplicit(task.id, { action: "closeout.now" });
+  assert.equal(warned.explicitResolution?.status, "warnings");
+  const before = store.task(task.id);
+  await setSourceRef(recordedHead);
+  // The cached head object cannot satisfy a ref that now points elsewhere.
+  await assert.rejects(callExplicit(task.id, input), /PR source ref does not match the observed merged head/);
+  assert.deepEqual(store.task(task.id), before);
+  assert.equal(await git(directory, "for-each-ref", "refs/nucleus/pr-proof"), "");
+  await setSourceRef(head);
+
+  const applied = await callExplicit(task.id, input);
+  assert.equal(applied.explicitResolution?.status, "applied");
+  assert.equal(applied.resolution.mergeHead, head);
+  assert.equal(applied.resolution.mergedCommit, commit);
+  assert.equal(await git(directory, "rev-parse", "HEAD"), recordedHead);
+  assert.equal(await git(directory, "for-each-ref", "refs/nucleus/pr-proof"), "");
+});
+
+test("next offers closeout.now after the sweep observes a verified descendant merge", async (t) => {
+  const { runtime, store, task, callExplicit, directory, recordedHead, head, commit, publishMerge } = await externalMergeFixture(t, "squash");
+  await publishMerge();
+  const resolution = runtime.engine.resolution;
+  resolution.executionLease = async () => true;
+  const current = store.update(task.id, { agentId: "worker" });
+  assert.equal(await resolution.recoverExternalMerge(current), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const parked = store.task(task.id);
+  assert.equal(parked.phase, "blocked");
+  assert.equal(parked.prHead, recordedHead);
+  assert.equal(parked.resolution.mergedCommit, null);
+  assert.deepEqual(parked.resolution.unreviewedMerge, { prNumber: 49, head, commit, descendsFrom: recordedHead });
+  const next = await runtime.taskNext({ taskId: task.id });
+  const command = next.explicitCommands?.find((entry) => entry.action === "closeout.now");
+  assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
+  assert.ok(command?.note?.includes(head));
+  assert.equal(next.verbs.some((entry) => entry.available && entry.action === "move" && entry.args?.to === "review"), false);
+  const applied = await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] });
+  assert.equal(applied.resolution.mergeHead, head);
+  assert.equal(await git(directory, "rev-parse", "HEAD"), recordedHead);
+});
+
+test("a pre-dispatch review-entry park cannot acquire source acceptance through closeout.now", async (t) => {
+  const { runtime, store, task, callExplicit, directory, base, head, commit, publishMerge } = await externalMergeFixture(t);
+  await publishMerge();
+  const current = store.task(task.id);
+  const parked = store.update(task.id, {
+    entrypoint: "review",
+    phase: "needs_attention",
+    reviewEntry: {
+      operationId: "a".repeat(64), prNumber: 49, repository: "example/repo",
+      branch: current.branch, workspaceId: "ws-1", directory,
+      verifiedHead: head, verifiedBase: base, dispatchBase: null, planningCommit: base,
+      authority: PLANNER, checkedAt: new Date().toISOString(), preserveWorkspace: true,
+      workspaceMode: "isolated", briefDigest: null, briefVersion: null,
+      authorDeclaration: {
+        models: ["fixture/author"], githubAuthor: "fixture-author", authoringSystem: "fixture",
+        attestedBy: PLANNER, provenance: "Review entry fixture",
+      },
+    },
+    resolution: {
+      ...current.resolution, attention: true,
+      unreviewedMerge: { prNumber: 49, head, commit },
+    },
+  });
+  assert.deepEqual(store.runs(task.id), []);
+  assert.equal(parked.agentId, null);
+  const accept = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  for (const caller of [PLANNER, OPERATOR_BOARD_CALLER])
+    await assert.rejects(callExplicit(task.id, accept, caller), /no applied review verdict/);
+  const next = await runtime.taskNext({ taskId: task.id });
+  assert.equal(next.explicitCommands?.some((command) => command.action === "closeout.now") ?? false, false);
+  assert.deepEqual(store.task(task.id), parked);
+});
+
+test("a same-head merge removed from the base cannot park, appear in next, or be accepted", async (t) => {
+  const { runtime, store, task, callExplicit, publishMerge, restoreRemoteBase } = await externalMergeFixture(t);
+  await publishMerge();
+  const resolution = runtime.engine.resolution;
+  resolution.executionLease = async () => true;
+  resolution.externalMergeProbeMs = 0;
+  const current = store.update(task.id, { phase: "reviewing", agentId: "worker" });
+  assert.equal(await resolution.recoverExternalMerge(current), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const next = () => runtime.taskNext({ taskId: task.id });
+  const hasOffer = (plan: Awaited<ReturnType<typeof next>>) =>
+    plan.explicitCommands?.some((command) => command.action === "closeout.now") ?? false;
+  assert.equal(hasOffer(await next()), true);
+
+  await restoreRemoteBase();
+  assert.equal(hasOffer(await next()), false);
+  await assert.rejects(
+    callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] }),
+    /merge commit is not on the task base/,
+  );
+  assert.equal(store.task(task.id).resolution.ownerAcceptances.length, 0);
+  const parked = store.task(task.id);
+  const retry = store.update(task.id, {
+    phase: "reviewing",
+    resolution: { ...parked.resolution, stop: null, unreviewedMerge: null },
+  });
+  await resolution.recoverExternalMerge(retry);
+  assert.equal(store.task(task.id).resolution.unreviewedMerge, null);
+  assert.match(store.task(task.id).reason, /merge commit is not on the task base/);
+});
+
+test("a planner-accepted descendant resumes through the sweep and ordinary move after a sync failure", async (t) => {
+  const { runtime, store, task, callExplicit, directory, recordedHead, head, commit, publishMerge } = await externalMergeFixture(t, "squash");
+  await publishMerge();
+  const { engine } = runtime;
+  const { resolution } = engine;
+  engine.scheduleLifecycleFollowUp = () => false;
+  resolution.executionLease = async () => true;
+  Object.assign(resolution.adapter, { syncMain: async () => { throw Error("Fixture sync failed"); } });
+  store.update(task.id, { agentId: "worker" });
+  const accepted = await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] });
+  assert.equal(accepted.resolution.ownerAcceptances[0]?.actor.role, "planner");
+  await assert.rejects(resolution.closeout.advanceSyncing(store.task(task.id)), /Fixture sync failed/);
+  assert.ok(store.eventsAll(task.id).some((event) => event.kind === "main_sync_failed"));
+
+  const parked = store.update(task.id, { phase: "blocked" });
+  assert.equal(await resolution.recoverExternalMerge(parked), true);
+  assert.equal(store.task(task.id).phase, "syncing");
+
+  const retry = store.update(task.id, { phase: "blocked" });
+  const moved = await engine.performTaskControl(taskControlInputSchema.parse({
+    action: "move", to: "closeout", taskId: task.id, version: retry.version,
+    caller: PLANNER, reason: "Retry synchronization",
+  }));
+  assert.equal(moved.phase, "syncing");
+  assert.equal(moved.resolution.mergeHead, head);
+  assert.equal(moved.resolution.mergedCommit, commit);
+  assert.equal(moved.resolution.ownerAcceptances.length, 1);
+  assert.equal(await git(directory, "rev-parse", "HEAD"), recordedHead);
+});
+
+test("the closeout coordinator prompt attributes recorded closeout.now source acceptance", async (t) => {
+  for (const [caller, role] of [[PLANNER, "planner"], [OPERATOR_BOARD_CALLER, "operator"]] as const) {
+    await t.test(role, async (caseContext) => {
+      const { store, task, callExplicit, head, publishMerge } = await externalMergeFixture(caseContext);
+      await publishMerge();
+      await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] }, caller);
+      const current = store.task(task.id);
+      const run = runSchema.parse({
+        id: "closeout-run",
+        taskId: task.id,
+        role: "closeout",
+        status: "running",
+        active: true,
+        released: false,
+        agentId: "closeout-coordinator",
+        workspaceId: "ws-1",
+        generation: current.coordinatorGeneration,
+        head,
+        base: task.baseBranch,
+        profile: profile("coord", "test/coord"),
+        createdAt: new Date().toISOString(),
+        lastObservedAt: null,
+        idleSince: null,
+        completion: null,
+      });
+      const prompt = runPrompt(current, run, "/helper", "/ticket", true);
+      assert.match(prompt, new RegExp(`the ${role} .*closeout\\.now`));
+      assert.doesNotMatch(prompt, /move to=closeout/);
+    });
+  }
+});
+
 test("deleted levers: restart on merged-but-parked task refuses with closeout.now; stop on done task with turn refuses with turn.release", async (t) => {
   const { runtime, store, insertTask } = await fixture(t);
 
@@ -960,14 +1467,12 @@ test("review findings: exact-head gate ignores skipPRReview and pending proofs, 
   );
   mergedState = true;
   mergedBase = "main";
-  await assert.rejects(
-    () =>
-      callExplicit(skipped.id, {
-        action: "closeout.now",
-        accept: ["no_verdict"],
-      }),
-    /no applied review verdict or explicit operator source acceptance/,
-  );
+  const skippedWarning = await callExplicit(skipped.id, {
+    action: "closeout.now",
+    accept: ["no_verdict"],
+  });
+  assert.equal(skippedWarning.explicitResolution?.status, "warnings");
+  assert.deepEqual(skippedWarning.explicitResolution.warnings.map((warning) => warning.id), ["unreviewed_merge"]);
   store.update(skipped.id, {
     resolution: {
       ...store.task(skipped.id).resolution,
@@ -985,6 +1490,10 @@ test("review findings: exact-head gate ignores skipPRReview and pending proofs, 
   });
   await assert.rejects(
     () => callExplicit(skipped.id, { action: "merge.now", head: HEAD }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  await assert.rejects(
+    () => callExplicit(skipped.id, { action: "closeout.now", accept: ["unreviewed_merge"] }),
     /no applied review verdict or explicit operator source acceptance/,
   );
 
@@ -1373,6 +1882,9 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
     stopAgentTurn: async (id: string) => {
       stoppedAgents.push(id);
     },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      stoppedAgents.push(`${id} ${turnId}`);
+    },
   });
 
   // Ruling 1: auto-retry observing an earlier uncertain request must stop without sending when merge.now supersedes it.
@@ -1467,7 +1979,7 @@ test("planner rulings round 4: auto-retry stops when superseded by merge.now; cl
   );
   assert.equal(accepted.explicitResolution?.status, "applied");
   assert.equal(store.run(`coord-run-${liveCoordTask.id}`)?.released, true);
-  assert.deepEqual(stoppedAgents, ["coord-live"]);
+  assert.deepEqual(stoppedAgents, ["coord-live turn-coord-live"]);
 });
 
 test("review round 5: forced move and stale merge lookup preserve newer explicit accepted outcome; retained check poll does not block sent merge", async (t) => {
@@ -1557,6 +2069,9 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
     },
     stopAgentTurn: async (id: string) => {
       stoppedAgents.push(id);
+    },
+    stopExactAgentTurn: async (id: string, turnId: string) => {
+      stoppedAgents.push(`${id} ${turnId}`);
     },
   });
 
@@ -1691,7 +2206,7 @@ test("review round 5: forced move and stale merge lookup preserve newer explicit
   );
   assert.equal(selfAccepted.explicitResolution?.status, "applied");
   assert.equal(store.run(`coord-run-${selfCoordTask.id}`)?.released, true);
-  assert.deepEqual(stoppedAgents, ["coord-self"]);
+  assert.deepEqual(stoppedAgents, ["coord-self turn-coord-self"]);
   store.update(selfCoordTask.id, {
     phase: "done",
     resolution: {

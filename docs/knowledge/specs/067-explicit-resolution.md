@@ -95,19 +95,63 @@ No command changes anything it does not name.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
-| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
+| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. A reviewer start can enter `reviewing` from an eligible phase. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and forced stop of its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
-| `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `workspace_intent` (id: the task branch; [Spec 068](068-self-healing.md) batch A) releases an uncertain dispatch workspace creation that bound nothing and returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only: the workspace may exist on the host; `effect_may_land` joins it while the task's dispatch is in flight) |
+| `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|recovery\|attention\|run_pointer\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `workspace_intent` (id: the task branch; [Spec 068](068-self-healing.md) batch A) releases an uncertain dispatch workspace creation that bound nothing and returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only: the workspace may exist on the host; `effect_may_land` joins it while the task's dispatch is in flight) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
 | `message.send role=<worker\|reviewer\|coordinator\|planner> text` | Delivers to the role's bound thread now, steering into or queued after an active turn, and reports `delivered`, `queued` or `unknown`. Changes no task state. | `queued`, `no_thread` |
 | `merge.now head=<sha>` | Moves the task to `merging` (clearing attention and stop), requests GitHub's guarded merge of exactly that head now, and takes the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds`, `hold_owner` (planner or operator only) |
 | `turn.take` / `turn.release` | Takes or releases the repository integration turn for this task and wakes the tasks waiting on it. | `turn_held` (take displaces another task), `merge_in_flight` |
-| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
+| `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs`, `unreviewed_merge` (planner or operator only) |
+
+**Recovery settlement.** `record.clear kind=recovery id=<episode>` resolves
+the named episode and refuses its pending coordinator action. It also settles
+the incident and mechanical escalation identified by that episode, leaving
+independent incidents, recorded answers and reserved decisions in place.
+If an unreleased coordinator still owns the episode, use `run.release` on
+that run. Release keeps its completion and receipt and settles its matching
+episode even if the run already reported. Every release checks for an open
+creation reservation from the running service and for a host wait for a late
+reply. Both block release, including through replacement or closeout. `next`
+uses the same rule and offers release for an unbound initial worker once its
+creation wait has settled. Every release passes the recorded turn ID to an
+adapter that can stop that exact turn atomically. Without that capability or
+a recorded turn ID, the local release and credential revocation still apply,
+and the result explains why native cancellation was skipped.
+
+For legacy rows, `record.clear kind=recovery id=<taskId>` clears an orphaned
+recovery flag with no episode or unreleased coordinator.
+`record.clear kind=attention id=<taskId>` clears standalone attention once
+its live owners have settled. `record.clear kind=run_pointer id=<runId>`
+clears the current role pointer if its run row is missing. All three use the
+current task version. `next` shows eligible records and the same warnings
+the command applies, including `effect_may_land` for a claimed coordinator
+action with an unsettled outcome. The scheduler rechecks the task after
+settlement, including any pending verdict through ordinary exact-head intake.
+
+`run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
+`awaiting_review` or `changes_requested` when it reserves the run. These are the
+only eligible phases. Open escalations, active escalation waits, holds,
+incidents, escalated recovery episodes, merge requests, integration turns and
+recorded merges block the start. `next` uses the same eligibility check for its
+offers.
+
+Reviewer callbacks follow the ordinary verdict path. Accepting
+`discard_reported_verdict` records the displaced reviewer's replacement when
+the new run is reserved. After credential lookup, publication checks live
+reviewer independence and durable ownership before sending to the forge.
+Comment publication checks them after acquiring its `gh` process slot. The
+verdict transaction uses the same gate, which includes the reviewer binding,
+the exact head, discard, dispatch holds, publication policy and integration
+ownership.
 
 **Hard gates** (never accepted as warnings):
 
-- `merge.now` and `closeout.now` need an applied review verdict at that head or
-  an explicit operator source acceptance of it (AGENTS.md, Tom 2026-10-20).
+- `merge.now` needs an applied exact-head review, qualified owner acceptance
+  or explicit operator source acceptance. The operator-source rule was
+  introduced through an agent relay on 2026-10-20.
+- `closeout.now` uses the same evidence, or an explicit source disposition
+  for a verified external merge as described below.
 - `merge.now` refuses while an earlier merge request's outcome is unknown,
   unless a GitHub read in the same call shows the PR unmerged.
 
@@ -130,12 +174,42 @@ or a caller that is not a responsible planner for the project. The task's
 coordinator (its recovery run): every command, including
 `merge.now` and `closeout.now` (Tom, 2026-11-21: "Coordinators should get merge
 and closeout"), except accepting `hold_owner`, `route_policy`, `two_writers`,
-`creation_in_flight` (Spec 068 batch A follow-up) or `budget` (Spec 068 Decisions
-1 and 2: a second budget spend and the revision cap ask).
+`creation_in_flight` (Spec 068 batch A follow-up), `budget` (Spec 068 Decisions
+1 and 2: a second budget spend and the revision cap ask) or `unreviewed_merge`.
 The hard gates bind every caller. Workers and reviewers ask instead. A `critical` task: planner
 and operator only. Authority comes from the authenticated caller matching the registered thread;
 host observation (`routable`, `unverified`) never gates it, and only decides where a message is
 delivered (Planner direction, 2026-11-22). The same rule holds for force's caller gate.
+
+### External merge source acceptance
+
+Tom, 2026-11-23:
+
+> I have a scenario where the Underlay planner is trying to close compli-me 39 but nucleus refuses, claiming I need to do it manually. This shouldn't happen, the planner should be able to do it. It's merged but the task hasn't closed out.
+>
+> I'm saying that the compli-me scenario shouldn't need me to decide on it. I didn't make that rule, it was written by an earlier agent
+
+For a dispatched task whose externally merged PR lacks approval at the merged
+head, the responsible planner or operator board can run `closeout.now` with
+`accept: ["unreviewed_merge"]` and a reason. Nucleus verifies the task's own
+PR and confirms that the merge commit is on its base branch. The actual merged
+head must match or descend from the recorded source. To prove a descendant,
+Nucleus fetches the exact PR source ref and checks that it matches the merged
+head reported by GitHub before checking ancestry. Nucleus records that head
+in an `external_merge_source` disposition with the actor, authority, reason and
+missing evidence. The disposition applies only to closeout of that merge and
+carries no authority to merge code. A review-entry task that parked before
+dispatch still requires the qualified operator or authorized-relay route.
+
+For a parked merge, `next` runs the same preflight as `closeout.now` before
+offering the warning. Both require the merge commit to remain on the base
+branch. The warning names any outstanding `changes_required` verdict at the
+merged head. The verdict remains recorded, and the closeout prompt names the
+recorded actor and command.
+
+If synchronization stops after accepting a descendant merge, the sweep and
+`move to=closeout` re-observe the recorded merge and can verify it from the
+earlier clean task source.
 
 ## Normal flow keeps working, and stops being a lever
 
@@ -147,8 +221,8 @@ command instead:
 | Lever used today | Explicit command |
 | --- | --- |
 | `restart role=reviewer fresh` to get a new reviewer | `run.start reviewer fresh replacing=<run>` |
-| `restart role=reviewer` to make the reviewer report | `message.send reviewer` or `run.start reviewer retained` |
-| `move to=review` after a silent worker pushed | `run.start reviewer head=<sha>` |
+| `restart role=reviewer` to make the reviewer report | `message.send reviewer`, or `run.start reviewer retained` from an eligible phase |
+| `move to=review` after a silent worker pushed | `phase.set to=awaiting_review`, then `run.start reviewer head=<sha>` |
 | `move to=review` / `stop` to drop the integration turn | `turn.release` |
 | `move to=merge` to re-claim the turn | `turn.take` or `merge.now head=<sha>` |
 | forced `retry_effect` on a run or operation | `run.release` or `record.clear effect` |

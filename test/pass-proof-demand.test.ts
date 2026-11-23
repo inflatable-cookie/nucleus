@@ -8,7 +8,11 @@ import type {
   HostProcessFact,
   TimelinePage,
 } from "../core/host";
-import { HOST_PASS_WARM_CANDIDATE_CAP, runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
+import {
+  HOST_PASS_WARM_CANDIDATE_CAP,
+  runInTaskQuantumScope,
+} from "../core/scheduling/pass-snapshot";
+import { PASS_DEMAND_BATCH_SIZE, PassDemand } from "../core/scheduling/pass-demand";
 import { fakeAdapter, submission } from "./support/fakes";
 import { runSchema, type Task } from "../shared/contracts";
 
@@ -128,6 +132,10 @@ function fixture(
   options: {
     processes?: () => HostProcessFact[];
     workspaces: Map<string, string>;
+    archived?: ReadonlySet<string>;
+    beforeObserve?: (agentId: string) => void;
+    beforePage?: (agentId: string) => void;
+    shellReads?: string[];
   },
 ) {
   const store = new Store(":memory:");
@@ -136,6 +144,7 @@ function fixture(
   const merged: string[] = [];
   const adapter = fakeAdapter({
     hostId: HOST,
+    supportsCoordinatorRecovery: false,
     observationInventory: async (ids: readonly string[]) => {
       inventoryIds.push(...ids);
       return new Map(
@@ -146,15 +155,26 @@ function fixture(
       id,
       workspaceId: options.workspaces.get(id) ?? "",
       title: id,
-      archived: false,
+      archived: options.archived?.has(id) ?? false,
       deleted: false,
     }),
-    observe: async (id: string) =>
-      idle(id, options.workspaces.get(id) ?? ""),
+    observe: async (id: string) => {
+      options.beforeObserve?.(id);
+      const observation = idle(id, options.workspaces.get(id) ?? "");
+      return options.archived?.has(id)
+        ? { ...observation, status: "closed", archived: true }
+        : observation;
+    },
     agentTimelinePage: async (id: string) => {
       pageReads.push(id);
+      options.beforePage?.(id);
+      if (options.archived?.has(id)) throw Error("thread is no longer observed");
       return boundedPage(id);
     },
+    agentTimeline: options.shellReads && (async (id: string) => {
+      options.shellReads?.push(id);
+      return [];
+    }),
     hostProcessListing: async () => options.processes?.() ?? [],
     noLiveWorkspaceProcesses: async () => null,
     mergeGate: async () => ({ head: HEAD, base: "main", wait: "" }),
@@ -203,7 +223,7 @@ test("a merging task can advance with retained idle participants outside the war
   );
 });
 
-test("any quantum read of a pass timeline page registers demand, not only the owned-tool proof", async (t: TestContext) => {
+test("a quantum read of a pass timeline page registers demand", async (t: TestContext) => {
   const store = new Store(":memory:");
   t.after(() => store.close());
   const engine = new Engine(store, fakeAdapter({}) as unknown as Adapter, 60_000);
@@ -211,5 +231,79 @@ test("any quantum read of a pass timeline page registers demand, not only the ow
   const read = await runInTaskQuantumScope(30_000, () =>
     resolution.readPassTimelinePage("agent-continuation", 20, HOST));
   assert.equal(read.state, "unknown", "outside a pass the quantum gets no live read");
-  assert.deepEqual(resolution.takePassProofs(HOST, new Set(["agent-continuation"])), ["agent-continuation"]);
+  assert.deepEqual(resolution.takePassProofs(HOST), [
+    { agentId: "agent-continuation", page: "timeline" },
+  ]);
 });
+
+test("continuously renewed pass demand advances even when each pass can serve only its first entry", () => {
+  const demand = new PassDemand();
+  const agents = Array.from({ length: PASS_DEMAND_BATCH_SIZE + 2 }, (_, index) =>
+    `participant-${index}`,
+  );
+  const first = [];
+  for (const _ of agents) {
+    for (const id of agents) demand.request(HOST, id, "owned-tools");
+    first.push(demand.take(HOST)[0]?.agentId);
+  }
+  assert.deepEqual(first, agents);
+  const pending = demand.take(HOST);
+  assert.equal(pending.length, PASS_DEMAND_BATCH_SIZE);
+  for (const { agentId } of pending) demand.served(HOST, agentId);
+  const remaining = demand.take(HOST);
+  assert.equal(remaining.length, 2, "unserved demand survives without renewal");
+  for (const { agentId } of remaining) demand.served(HOST, agentId);
+  assert.deepEqual(demand.take(HOST), []);
+});
+
+test("a served demand disappears from the sweep when no task renews it", async (t) => {
+  const f = fixture(t, { workspaces: new Map() });
+  seedMergingTask(f.store, "one-shot-demand");
+  f.engine.taskQuantum = async () => {};
+  const agentId = "requested-once";
+  f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.ok(f.pageReads.includes(agentId));
+  assert.equal((await f.engine.auditPass(true)).fault, null);
+  assert.equal(f.pageReads.filter((id) => id === agentId).length, 1);
+  assert.deepEqual(f.engine.resolution.takePassProofs(HOST), []);
+});
+
+for (const duration of ["fast", "slow"]) {
+  test(`a sustained backlog of ${duration} demands leaves room for shell reads`, async (t) => {
+    const workspaces = new Map<string, string>();
+    const shellReads: string[] = [];
+    const warmBudgetMs = 10_000;
+    let nowMs = Date.now();
+    t.mock.method(Date, "now", () => nowMs);
+    const agents = new Set(
+      Array.from({ length: HOST_PASS_WARM_CANDIDATE_CAP + 4 }, (_, i) =>
+        `requested-${i}`,
+      ),
+    );
+    const f = fixture(t, {
+      workspaces,
+      shellReads,
+      beforePage(id) {
+        if (duration === "slow" && agents.has(id)) nowMs += warmBudgetMs / 2;
+      },
+    });
+    f.engine.resolution.hostPassWarmBudgetMs = warmBudgetMs;
+    f.engine.taskQuantum = async () => {};
+    const shell = seedMergingTask(f.store, "protected-shell");
+    for (const [id, workspace] of participantWorkspaces(shell))
+      workspaces.set(id, workspace);
+    f.store.update(shell.task.id, { phase: "working", completion: null });
+
+    for (let pass = 0; pass < 3; pass++) {
+      f.pageReads.length = 0;
+      shellReads.length = 0;
+      for (const agentId of agents)
+        f.engine.resolution.requestPassProof(HOST, agentId, "timeline");
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      assert.ok(agents.has(f.pageReads[0] ?? ""), "demand gets first use of its reservation");
+      assert.ok(shellReads.includes(shell.workerId), "shell had a warmed timeline");
+    }
+  });
+}

@@ -54,7 +54,26 @@ import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
 import { verifyBargeLeaseAndCustody } from "../../workspaces/barge-allocator";
 
-// Proof executors keep their own refusal path; every other creation waits for its lookup.
+/** Put unconsumed owner direction and named checks back on the task. */
+function unsentReviewIntent(task: Task, run: Run) {
+  if (run.role !== "reviewer" || task.prHead !== run.head) return {};
+  return {
+    ...(run.reviewReason && !task.resolution.pendingReviewReason
+      ? { pendingReviewReason: run.reviewReason }
+      : {}),
+    ...(run.proofRetry && !task.resolution.proofRetry
+      ? {
+          proofRetry: {
+            runId: run.proofRetry.forRunId,
+            head: run.proofRetry.head,
+            proofs: run.proofRetry.proofs,
+            at: run.createdAt,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * The detached reviewer round's PR identity (nucleus#1425). A recorded unreviewed external
  * merge of the task's PR binds its exact merged source; any other task keeps the strict
@@ -538,10 +557,12 @@ export class RunLaunchDeliver {
         }
       }
       if (this.store.run(run.id)?.explicitlyReleasedAt) return;
-      this.store.putRun({
-        ...this.store.run(run.id)!,
-        agentId,
-        status: "running",
+      this.store.transaction(() => {
+        this.store.putRun({
+          ...this.store.run(run.id)!,
+          agentId,
+          status: "running",
+        });
       });
       this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(
@@ -566,12 +587,16 @@ export class RunLaunchDeliver {
                 ...latestRun,
                 status: "superseded",
                 released: true,
+                releasedBeforeSend: true,
                 active: false,
               });
             if (!agentId) this.store.deleteCredential(run.id);
             const latest = this.store.task(t.id);
             if (latest.resolution.currentRunId === run.id)
-              this.resolution.update(latest, { currentRunId: null });
+              this.resolution.update(latest, {
+                currentRunId: null,
+                ...unsentReviewIntent(latest, run),
+              });
           });
           return;
         }
@@ -591,6 +616,7 @@ export class RunLaunchDeliver {
               ...latestRun,
               status: "superseded",
               released: true,
+              releasedBeforeSend: true,
               active: false,
             });
           if (!agentId) this.store.deleteCredential(run.id);
@@ -598,7 +624,7 @@ export class RunLaunchDeliver {
           if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { currentRunId: null, attention: false },
+              { currentRunId: null, attention: false, ...unsentReviewIntent(latest, run) },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
               "review_waiting_on_host_snapshot",
               error.detail,
@@ -626,6 +652,7 @@ export class RunLaunchDeliver {
               ...latestRun,
               status: "superseded",
               released: true,
+              releasedBeforeSend: true,
               active: false,
             });
           if (!agentId) this.store.deleteCredential(run.id);
@@ -633,7 +660,7 @@ export class RunLaunchDeliver {
           if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { currentRunId: null },
+              { currentRunId: null, ...unsentReviewIntent(latest, run) },
               { phase: role === "reviewer" ? "reviewing" : latest.phase },
               "launch_transient_read_wait",
               error.message,
@@ -670,11 +697,15 @@ export class RunLaunchDeliver {
             ...this.store.run(run.id)!,
             status: "superseded",
             released: true,
+            releasedBeforeSend: true,
           });
           this.store.deleteCredential(run.id);
           const current = this.store.task(t.id);
           if (current.resolution.currentRunId === run.id)
-            this.resolution.update(current, { currentRunId: null });
+            this.resolution.update(current, {
+              currentRunId: null,
+              ...unsentReviewIntent(current, run),
+            });
         });
         throw error;
       }
@@ -702,13 +733,18 @@ export class RunLaunchDeliver {
             ...this.store.run(run.id)!,
             status: "superseded",
             released: true,
+            releasedBeforeSend: true,
           });
           this.store.deleteCredential(run.id);
           const current = this.store.task(t.id);
           if (current.resolution.currentRunId === run.id)
             this.resolution.update(
               current,
-              { currentRunId: null, attention: true },
+              {
+                currentRunId: null,
+                attention: true,
+                ...unsentReviewIntent(current, run),
+              },
               { phase: "needs_attention", reason },
               tooLarge
                 ? "review_prompt_refused_before_send"

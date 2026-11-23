@@ -1102,6 +1102,7 @@ const moveRows: MoveRow[] = [
     name: "after its transition",
     setup: (f) => {
       atReview(f);
+      ready(f);
       finishedRecovery(f, false);
       f.adapter.externalMerge = async () =>
         ({ head, commit: "c".repeat(40) }) as never;

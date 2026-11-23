@@ -31,6 +31,7 @@ import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import {
   isDispositionActive,
+  mergeReviewEvidenceAt,
   taskControlInputSchema,
   taskNextVerbSchema,
   type Run,
@@ -117,9 +118,18 @@ export function qualifiedAcceptanceEligibility(
       refusal:
         "Moving to merge requires an accepted review at the current PR head",
     };
+  return acceptanceEvidenceAt(task, runs, task.prHead);
+}
+
+/** Derive which review evidence binds a source, independently of its merge state. */
+export function acceptanceEvidenceAt(
+  task: Task,
+  runs: Run[],
+  head: string,
+): AcceptanceEligibility {
   const review = task.resolution.review;
   if (review && review.status === "ready_to_merge")
-    return review.head === task.prHead
+    return review.head === head
       ? { available: false, refusal: MOVE_MERGE_ACCEPTANCE_REFUSAL }
       : {
           available: true,
@@ -135,7 +145,7 @@ export function qualifiedAcceptanceEligibility(
   });
   if (!review)
     return source("No reviewer verdict exists at the current PR head");
-  if (review.head !== task.prHead)
+  if (review.head !== head)
     return source(
       `The recorded ${review.status} review is at head ${review.head?.slice(0, 12) ?? "no head"}, not the current PR head`,
     );
@@ -507,6 +517,11 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         available: true,
         args: {},
         note: "This task never dispatched and its PR merged outside Nucleus: no reviewer, review, verification or proof exists at the merged head, and the merge is an observed fact, never acceptance. move closeout observes the merged head, branch and merge commit at the forge, proves the merged head descends from the intake and recorded source heads, and records your explicit operator source acceptance (qualification) of that exact head with the missing evidence; without it the task stays held.",
+      };
+    if (mergedRoute && reviewRequiredForTask(facts.store, task) && !mergeReviewEvidenceAt(task, mergedRoute.head))
+      return {
+        available: false,
+        refusal: "No review evidence binds the merged head; a responsible planner or the operator board can use closeout.now with accept [\"unreviewed_merge\"]",
       };
     if (task.resolution.mergedCommit) {
       const evidence = recordedCloseoutRefusal(

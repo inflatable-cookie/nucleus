@@ -43,6 +43,7 @@ import {
 } from "../dispatch/capacity";
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import {
+  DeferredPassReadError,
   HOST_PASS_WARM_BUDGET_MS,
   PASS_PROCESS_READ_DEADLINE_MS,
   PassSnapshot,
@@ -454,7 +455,7 @@ export class TaskWakes {
         operation.id,
         "op",
       );
-      if (episode && episode.exhaustedAt == null)
+      if (episode && episode.exhaustedAt == null && !episode.retryOnPass)
         this.armHostReadTransient(operation.id, episode.retryAt, "op");
     }
   }
@@ -692,27 +693,33 @@ export class TaskWakes {
       }
       return "exhausted";
     }
-    this.store.setMeta(key, next);
+    const retryOnPass =
+      operation && activeOld?.retryOnPass === true;
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
     ].filter(Boolean);
     const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
-    const visible = `${next.step ?? step} read incomplete${scopeText}; retrying automatically (attempt ${next.attempts}): ${detail}`;
+    const retry = retryOnPass ? "retrying after the next host pass" : "retrying automatically";
+    const visible = `${next.step ?? step} read incomplete${scopeText}; ${retry} (attempt ${next.attempts}): ${detail}`;
     if (operation) {
-      const current = this.store.operation(id);
-      if (current)
-        this.store.putOperation({
-          ...current,
-          state: "pending",
-          settledAt: null,
-          diagnostic: visible.slice(0, 4000),
-        });
+      this.store.transaction(() => {
+        this.store.setMeta(key, retryOnPass ? { ...next, retryOnPass: true } : next);
+        const current = this.store.operation(id);
+        if (current)
+          this.store.putOperation({
+            ...current,
+            state: "pending",
+            settledAt: null,
+            diagnostic: visible.slice(0, 4000),
+          });
+      });
     } else {
+      this.store.setMeta(key, next);
       const task = this.store.taskOrNull(id);
       if (task) this.resolution.waiting(task, visible, "external_unavailable");
     }
-    this.armHostReadTransient(id, next.retryAt, scope);
+    if (!retryOnPass) this.armHostReadTransient(id, next.retryAt, scope);
     return "wait";
   }
 
@@ -1002,17 +1009,16 @@ export class TaskWakes {
             hostId,
             async () => {
               try {
-                const listed = await adapter.hostProcessListing!();
-                return listed
-                  ? { state: "listed", processes: listed }
-                  : {
-                      state: "unknown",
-                      reason: "the host process listing is unreadable",
-                    };
+                const processes = await adapter.hostProcessListing!();
+                if (processes === null)
+                  return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
+                return { state: "listed", processes };
               } catch (error) {
+                const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+                  ...(deferred ? { deferred: true } : {}),
                 };
               }
             },

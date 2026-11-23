@@ -268,6 +268,7 @@ export class CoordinatorRoute {
     // coordinator could only start another thread beside the one a late reply
     // brings, so it is not admitted for that wait.
     if (t.resolution.stop?.fact?.code === "creation_in_flight") return null;
+    // Ordinary admission owns this wait and records its own bounded stop.
     let mechanicalStallDue = false;
     // Spec 068 §3 (nucleus#1552): a `run_stalled` stop names its own subject.
     // That participant can never pass an idleness lease while its host still

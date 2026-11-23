@@ -501,6 +501,10 @@ export abstract class HostPolicies extends MachinePorts {
     );
   }
 
+  assertReviewIndependence(task: Task, run: Run) {
+    return this.reviewPolicy.assertReviewIndependence(task, run);
+  }
+
   verifyReview(
     task: Task,
     run: Run,

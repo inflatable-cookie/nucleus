@@ -12,6 +12,7 @@ export interface T3ConnectionConfig {
 export class T3RpcError extends Error {
   readonly command?: string;
   late?: Promise<unknown>;
+  readonly rejectedReceipt?: true;
   /** The retained why: a known tag, a fixed shape name or an HTTP status. */
   readonly reason?: string;
 
@@ -26,7 +27,7 @@ export class T3RpcError extends Error {
     readonly method?: string,
     readonly remoteTag?: string,
     readonly delivery: "not_sent" | "unknown" = "unknown",
-    diagnostic?: { command?: unknown; reason?: unknown },
+    diagnostic?: { command?: unknown; reason?: unknown; rejectedReceipt?: true },
   ) {
     const command = safeCommand(diagnostic?.command);
     const reason = sanitizeHostFailureReason(diagnostic?.reason);
@@ -36,6 +37,7 @@ export class T3RpcError extends Error {
     this.name = "T3RpcError";
     this.command = command;
     this.reason = reason;
+    this.rejectedReceipt = diagnostic?.rejectedReceipt;
   }
 }
 
@@ -86,6 +88,7 @@ const METHOD_STREAM_VALUES: Readonly<Record<string, number>> = {
 type Pending = {
   method: string;
   command?: string;
+  commandId?: string;
   threadId?: string;
   accept?: (value: unknown) => boolean;
   /** A held subscription: every value is handed on and none settles it (nucleus Spec 069 batch 5). */
@@ -136,6 +139,8 @@ const DEFECT_SHAPES: readonly { shape: RegExp; name: string }[] = [
 ];
 export const T3_THREAD_NOT_FOUND_PROJECTION_REASON =
   "OrchestrationV2GetThreadProjectionError:thread_not_found";
+const T3_PARENT_ARCHIVE_REJECTED_REASON =
+  "OrchestrationV2DispatchCommandError:archive_receipt_rejected";
 
 const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
   {
@@ -209,6 +214,7 @@ function remoteFailure(
   cause: unknown,
   command?: string,
   requestedThreadId?: string,
+  commandId?: string,
 ): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0]))
     return new T3RpcError("remote", method, undefined, "unknown", { command });
@@ -254,6 +260,21 @@ function remoteFailure(
   if (!tag)
     return new T3RpcError("remote", method, undefined, "unknown", {
       command: reportedCommand ?? command,
+    });
+  if (
+    method === "orchestration.dispatchCommand" &&
+    command === "thread.archive" &&
+    commandId &&
+    reportedCommand === command &&
+    object(reason.error) &&
+    reason.error.commandId === commandId &&
+    message ===
+      `Command ${commandId} was previously rejected: Failed to dispatch orchestration command thread.archive (${commandId}).`
+  )
+    return new T3RpcError("remote", method, tag, "unknown", {
+      command,
+      reason: T3_PARENT_ARCHIVE_REJECTED_REASON,
+      rejectedReceipt: true,
     });
   if (
     tag === "OrchestrationV2GetThreadProjectionError" &&
@@ -668,6 +689,12 @@ export class T3RpcClient {
           command ??
           (method === "orchestration.launchThread" ? method : undefined),
         threadId,
+        commandId:
+          command === "thread.archive" &&
+          object(payload) &&
+          typeof payload.commandId === "string"
+            ? payload.commandId
+            : undefined,
         accept,
         ...(persistent ? { persistent: true } : {}),
         resolve,
@@ -747,6 +774,7 @@ export class T3RpcClient {
             frame.exit.cause,
             pending.command,
             pending.threadId,
+            pending.commandId,
           ),
           true,
         );

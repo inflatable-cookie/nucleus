@@ -692,7 +692,7 @@ export class RuntimeBoard {
     taskId?: string;
     reference?: string;
     caller?: "operator (board)";
-  }) {
+  }, externalCloseout?: import("../verbs/owner-facts").OwnerVerbFacts["externalCloseout"]) {
     this.context.markStoreAccess();
     const taskId = input.taskId
       ? this.context.store.resolveTaskId(input.taskId)
@@ -704,6 +704,7 @@ export class RuntimeBoard {
       const hostProfiles = this.context.engine.profilesFor?.(task.hostId);
       const facts = {
         ...this.ownerVerbFacts(task),
+        externalCloseout,
         creationGraceMs: this.context.engine.resolution?.graceMs,
         launchInFlight:
           this.context.engine.hostHealth?.launchInFlight(task.id) ?? false,

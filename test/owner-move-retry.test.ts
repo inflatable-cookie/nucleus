@@ -983,7 +983,19 @@ test("move closeout refuses an unmerged PR with nothing settled", async () => {
 test("move closeout releases a finished recovery run with its accepted action recorded not applied", async () => {
   const f = fixture();
   try {
-    dispatched(f);
+    dispatched(f, {
+      resolution: {
+        ...f.task().resolution,
+        review: {
+          taskId: f.taskId,
+          runId: "review-run",
+          eventId: "review-approved",
+          status: "ready_to_merge",
+          summary: "Approved at the merged head",
+          head,
+        },
+      },
+    });
     f.observations.set("worker-agent", {
       id: "worker-agent",
       workspaceId: "workspace",
@@ -2064,10 +2076,10 @@ test("a held restart loses its old stop after its target moves and the hold rele
   }
 });
 
-test("move closeout records the observed external merge and never mints a review", async () => {
+test("move closeout records the observed external merge when the submission skipped review", async () => {
   const f = fixture();
   try {
-    dispatched(f);
+    dispatched(f, { skipPRReview: true });
     f.observations.set("worker-agent", {
       id: "worker-agent",
       workspaceId: "workspace",

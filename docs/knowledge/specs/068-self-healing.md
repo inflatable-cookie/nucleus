@@ -231,20 +231,73 @@ pass. Every read inside a task quantum gets a deadline and returns "unknown" whe
 it misses (Spec 066 R1). This shares its approach with nucleus#1545 (async
 segregation) and Spec 067 batch 5 (host health).
 
-A pass snapshot clears an owned-tool hold only when the host pass observed the
-participant inactive before it captured the process table. A participant outside
-the pass inventory (the task-row worker, a released reviewer) had no such
-observation, and the warm cap could skip its tool page, so merges alternated
-between those two waits forever. A quantum that reads a participant's page or
-process snapshot now registers a demand, keyed by host and participant. The next
-host pass observes every demanded participant, and the rest of its task's
-participants, before its process snapshot, then warms their pages first, outside
-the warm cap but inside the pass budget. A demand that no quantum renews expires
-after one pass. The proof converges in two passes, and a snapshot taken before
-any inactivity proof still never clears a lease.
+The host pass shares process listings and warms timeline pages for diagnostics
+and lifecycle reads. Task quanta request missing pages by host and participant.
+Demand gets up to half the warming slots and time when shell reads are waiting,
+then the rotation shares the remaining capacity. Unserved demand stays queued.
+A sealed pass reports misses as unknown and each new pass collects its own
+snapshot.
 
-Reusing a previous pass's snapshot was rejected: it would carry reads across
-passes, and that snapshot predates the participant's observation too.
+[Spec 067](067-explicit-resolution.md) batch 6a removes the owned-tool proof from
+review admission and retires pre-send evidence replay. Missing tool timeline or
+process evidence does not hold an ordinary review send. An unsent reviewer
+reservation still preserves its instructions and named checks when a host read
+fails. Run release uses the recorded process identity, and workspace cleanup
+keeps the checkout ownership and source checks.
+
+### 7. Attention reaches the planner quickly
+
+Tom, 2026-11-23: "It takes way too long for a task to be marked as blocked or
+needing attention and for the planner to be notified of the situation." Ruling
+on the fix, same day: "the attention-latency fix should still queue messages,
+that's OK, I don't want steering messages butting in on conversations. I just
+want the time for a task needing attention to have its message sent when the
+planner is quiet to be faster."
+
+A measurement over 19–23 November (planner scratch, `attention-latency-2026-11-23`)
+found that most of the time passes before the planner message is sent, not in
+delivery:
+
+- **Silence.** A turn that ends without a report took 4.8 minutes median and
+  10.4 at p90 to reach the first reminder. A stalled active turn took about
+  20 minutes, the stall threshold.
+- **Blockers.** An explicit blocker report reached the blocked phase in 0.6
+  minutes median, 4.0 at p90 and 19 at worst. A classified blocker could also
+  sit with no next rung: nucleus#1524 waited three hours in "Waiting for
+  blocked-report classification".
+- **Recovery deadlines.** The three-minute no-start gate took 4.3 minutes
+  median and 10.4 at p90, because it waits for a sweep visit.
+- **Transient deferrals.** A quantum-deadline deferral under load became
+  `needs_attention` instead of staying Nucleus's move (papercut c7bb6bef).
+- **Delivery.** Once the ladder opened, T3 accepted the message in 3 seconds
+  median.
+
+The rules:
+
+- **Wake on facts.** A confirmed turn end, owned-process death, exact thread
+  absence or an authenticated callback wakes only the affected task at once.
+  The one-minute late-callback grace stays. The wall-clock stall threshold
+  stays only for a running tool whose state can't be observed. Tool output,
+  provider events and permissions renew activity. Release and termination
+  still need process identity and complete host evidence.
+- **Publish and route on receipt.** An authenticated blocker shows on the
+  board and opens its next ladder rung in the same step. A classified blocker
+  always has a next rung or a named owner, never a bare classification wait.
+  Recovery deadlines are due times that wake the task themselves, with the
+  sweep as backstop. A transient deferral stays Nucleus's move and retries on
+  the next pass.
+- **Queue, never steer.** Messages to a planner queue as today. Nothing
+  interrupts or steers a planner's running turn. When the planner thread is
+  idle, the send happens straight away and starts its turn. One delivery record
+  per message tracks routed, accepted, queued and turn started. A known
+  pre-send failure retries briefly or moves to the next rung. An unknown
+  outcome is looked up under its original command ID and is never resent
+  blindly.
+
+Targets on a healthy host with an idle planner: classified within one minute
+of a terminal fact (plus the callback grace), board update within 30 seconds
+of a blocker, and the planner message accepted within one minute of the task
+needing a person.
 
 ## Safety
 
@@ -282,6 +335,9 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 5a | direct PR (nucleus#1553 cancelled) | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. Built: see [Batch 5a as built](#batch-5a-as-built). | 1 |
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
+| 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
+| 7b | lead | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
+| 7c | lead | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 
 ### Batch A: dead agents and uncertain launches
 

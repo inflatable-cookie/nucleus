@@ -174,6 +174,10 @@ process.exit(1);
 `;
   writeFileSync(ghBin, ghScript);
   chmodSync(ghBin, 0o755);
+  writeFileSync(join(root, "ssh"),
+    `#!/usr/bin/env node
+process.exit(require("node:child_process").spawnSync("git-upload-pack", [${JSON.stringify(origin)}], { stdio: "inherit" }).status ?? 1);
+`, { mode: 0o755 });
 
   const oldPath = process.env.PATH;
   process.env.PATH = `${root}:${oldPath ?? ""}`;
@@ -609,12 +613,12 @@ test(
       const { finalHead, mergeCommit } = f.mergeExternally("changed-head");
       assert.notEqual(finalHead, f.head);
 
-      // Automatic probe rejects the mismatched head instead of recording unreviewedMerge for an unverified final head.
+      // Without the exact PR ref the sweep cannot verify and record the newer source.
       f.runtime.engine.resolution.externalMergeProbeMs = 0;
       assert.equal(await f.runtime.engine.resolution.recoverExternalMerge(f.current()), true);
       assert.equal(f.current().resolution.unreviewedMerge, null);
       assert.equal(f.current().resolution.mergedCommit, null);
-      assert.match(f.current().reason, /External merge head differs from recorded task work/);
+      assert.match(f.current().reason, /couldn't find remote ref refs\/pull\/41\/head/);
 
       // `move to=review` hits strict open-PR verification and refuses the merged PR.
       await assert.rejects(
@@ -653,7 +657,7 @@ test(
             caller: "origin-planner",
           }),
         ),
-        /External merge head differs from recorded task work/,
+        /couldn't find remote ref refs\/pull\/41\/head/,
       );
       assert.equal(f.current().resolution.mergedCommit, null);
       assert.equal(f.counts().mergeCalls, 0);

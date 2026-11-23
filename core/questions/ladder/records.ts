@@ -19,6 +19,8 @@ export type LadderEvent = {
   detail: string;
 };
 
+type LadderHistoryEvent = Omit<LadderEvent, "taskId">;
+
 export interface ReviewerConsult {
   /** The consult id, stable per cause occurrence. */
   id: string;
@@ -65,13 +67,13 @@ export interface PlannerEscalation {
 }
 
 const eventsOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
-): LadderEvent[] => events.filter((event) => event.kind === kind);
+): LadderHistoryEvent[] => events.filter((event) => event.kind === kind);
 
 /** The typed payload recorded beside one intent, or null when it is absent or unreadable. */
 const payloadOf = (
-  events: readonly LadderEvent[],
+  events: readonly LadderHistoryEvent[],
   kind: string,
   id: string,
 ): Record<string, unknown> | null => {
@@ -182,7 +184,7 @@ function readRoutingWait(text: string): PlannerEscalation["routingWait"] {
 }
 
 /** The planner escalations recorded on a task, in order. */
-export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
+export function plannerEscalations(events: readonly LadderHistoryEvent[]): PlannerEscalation[] {
   return eventsOf(events, "planner_escalation").map((intent) => {
     const id = intent.detail.split(":", 1)[0]!;
     const payload = payloadOf(events, "planner_escalation_payload", id);
@@ -266,6 +268,30 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
         activeDecision?.detail.match(/decision ([0-9a-f-]{36})/)?.[1] ?? null,
     };
   });
+}
+
+/** An answered escalation still owns its wait until the ladder settles it. */
+export function activePlannerEscalationWait(
+  events: readonly LadderEvent[],
+): string | null {
+  const retired = new Set<string>();
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    if (!event.kind.startsWith("planner_escalation_")) continue;
+    const id = event.detail.split(":", 1)[0]!;
+    if (event.kind === "planner_escalation_wait") {
+      if (!retired.has(id)) return id;
+    } else if (
+      [
+        "planner_escalation_woke",
+        "planner_escalation_wait_superseded",
+        "planner_escalation_resolved",
+      ].includes(event.kind)
+    ) {
+      retired.add(id);
+    }
+  }
+  return null;
 }
 
 /** The open (unsettled) escalation for one cause, if any: a repeated blocker attaches to it. */

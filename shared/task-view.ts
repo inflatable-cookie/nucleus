@@ -275,6 +275,28 @@ export function operatorSourceAcceptance(
   return null;
 }
 
+/** A source disposition for this observed merge occurrence, usable only in closeout. */
+export function externalMergeSourceAcceptance(
+  task: AcceptanceTask,
+): Extract<OwnerAcceptanceRecord, { kind: "external_merge_source" }> | null {
+  const { externalMerge, mergeHead, mergedCommit, ownerAcceptances } =
+    task.resolution;
+  if (!externalMerge || !mergeHead || !mergedCommit) return null;
+  const prNumber =
+    task.reviewEntry?.prNumber ??
+    task.resumePrNumber ??
+    task.completion?.prNumber;
+  for (const record of (ownerAcceptances ?? []).toReversed()) {
+    if (
+      record.kind === "external_merge_source" &&
+      record.head === mergeHead &&
+      record.mergedCommit === mergedCommit &&
+      record.prNumber === prNumber
+    ) return record;
+  }
+  return null;
+}
+
 /** The kinds of recorded evidence that let a merge count for a task (task 993). */
 export type MergeEvidenceKind =
   | "ready_to_merge"
@@ -333,18 +355,13 @@ export interface UnreviewedMergeRoute {
   commit: string;
 }
 
-/**
- * The recorded unreviewed external merge the fresh review route admits, or null
- * (nucleus#1425). Shared by `next`, the `move to=review` admission, the reviewer
- * launch and verdict publication, so the offer and every gate read one rule. It
- * holds only while the task still names the recorded PR and source head and no
- * merge is recorded, so a reconciled or re-headed task never routes again.
- */
-export function unreviewedMergeRoute(
+/** The parked merge still binds this PR and its recorded source. */
+export function unreviewedMergeObservation(
   task: AcceptanceTask,
 ): UnreviewedMergeRoute | null {
   const record = task.resolution.unreviewedMerge;
-  if (!record || !task.prHead || record.head !== task.prHead) return null;
+  if (!record || !task.prHead || (record.head !== task.prHead && record.descendsFrom !== task.prHead))
+    return null;
   if (
     task.resolution.mergedCommit ||
     task.resolution.mergeIntent ||
@@ -357,6 +374,12 @@ export function unreviewedMergeRoute(
     task.completion?.prNumber ??
     null;
   return prNumber === record.prNumber ? record : null;
+}
+
+/** Fresh review still requires the task checkout to name the exact merged source. */
+export function unreviewedMergeRoute(task: AcceptanceTask): UnreviewedMergeRoute | null {
+  const observed = unreviewedMergeObservation(task);
+  return observed?.head === task.prHead ? observed : null;
 }
 
 /**

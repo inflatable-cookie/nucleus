@@ -42,6 +42,7 @@ import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
   currentTaskQuantumScope,
+  DeferredPassReadError,
   isQuantumDeadlineExceeded,
   type BoundedReadResult,
   type CoveredObservationSnapshot,
@@ -49,7 +50,7 @@ import {
   type PassTimelinePageRead,
   type ProvenTerminalSnapshot,
 } from "./scheduling/pass-snapshot";
-import { PassDemand } from "./scheduling/pass-demand";
+import { PassDemand, type PassProofDemand } from "./scheduling/pass-demand";
 import {
   readHostUidProcesses,
   type HostProcessListRead,
@@ -93,6 +94,7 @@ import {
   type CheckObservation,
   type ReviewerSetting,
   type PublicationOutcome,
+  type ReviewPublicationGuard,
 } from "./forge/index";
 
 import {
@@ -133,6 +135,7 @@ import {
 } from "./review/review-continuation";
 
 import { Stalls } from "./recovery/stall";
+import { HostReadRefusalError } from "./host/errors";
 import { PrAdoption } from "./review/pr-adoption";
 import {
   ProviderRefusals,
@@ -316,7 +319,7 @@ export interface ResolutionAdapter {
     run: Run,
     status: string,
     text: string,
-    allowed?: () => boolean,
+    allowed?: ReviewPublicationGuard,
     reviewer?: ReviewerSetting,
   ): Promise<number | PublicationOutcome>;
   reconcileReviewPublication?(
@@ -325,8 +328,9 @@ export interface ResolutionAdapter {
     run: Run,
     reviewer: ReviewerSetting,
     reason: string,
-    allowed: () => boolean,
+    allowed: ReviewPublicationGuard,
   ): Promise<number>;
+  assertReviewIndependence?(task: Task, run: Run): Promise<void>;
   verifyReview(
     task: Task,
     run: Run,
@@ -337,7 +341,7 @@ export interface ResolutionAdapter {
     task: Task,
     acceptHead?: boolean,
     retainedSource?: boolean,
-  ): Promise<{ head: string; commit: string } | null>;
+  ): Promise<{ head: string; commit: string; descendsFrom?: string } | null>;
   mergeGate(
     task: Task,
     history?: CheckHistory,
@@ -365,11 +369,13 @@ export interface ResolutionAdapter {
   ): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
-  merged(task: Task): Promise<{
+  merged(task: Task, options?: { externalOnly: boolean }): Promise<{
     merged: boolean;
     commit: string | null;
     head: string;
     base: string;
+    /** externalOnly: the recorded source proven to be an ancestor of the observed head. */
+    descendsFrom?: string;
     proof?: { proven: boolean; detail: string };
   }>;
   syncMain(
@@ -488,7 +494,7 @@ export class Resolution {
   /** The currently active pass snapshot (sweep pass or wake-scoped), or null outside a pass. */
   currentPassSnapshot(): PassSnapshot | null {
     const scoped = currentTaskQuantumScope()?.snapshot;
-    if (scoped?.active) return scoped;
+    if (scoped) return scoped.active ? scoped : null;
     return this.passSnapshot?.active ? this.passSnapshot : null;
   }
 
@@ -556,13 +562,21 @@ export class Resolution {
   private readonly passDemand = new PassDemand();
 
   /** Ask the next host pass to observe `agentId` before its process snapshot and warm its tool page first. */
-  requestPassProof(hostId: string | null | undefined, agentId: string): void {
-    this.passDemand.request(this.passHostKey(hostId), agentId);
+  requestPassProof(
+    hostId: string | null | undefined,
+    agentId: string,
+    page: PassProofDemand["page"] = null,
+  ): void {
+    this.passDemand.request(this.passHostKey(hostId), agentId, page);
   }
 
-  /** The participants demanded on `hostId` that a live task still has, oldest first; unrenewed demands expire. */
-  takePassProofs(hostId: string, live: ReadonlySet<string>): string[] {
-    return this.passDemand.take(this.passHostKey(hostId), live);
+  /** The participant reads demanded on this host, in fair service order. */
+  takePassProofs(hostId: string): PassProofDemand[] {
+    return this.passDemand.take(this.passHostKey(hostId));
+  }
+
+  completePassProof(hostId: string, agentId: string): void {
+    this.passDemand.served(this.passHostKey(hostId), agentId);
   }
 
   /** Mark one host's timeline warming budget spent for this pass. */
@@ -597,21 +611,20 @@ export class Resolution {
   ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
-    const read = async (): Promise<HostProcessListRead> => {
+    const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
       if (this.adapter.hostProcessListing) {
         try {
-          const listed = await this.adapter.hostProcessListing();
-          return listed
-            ? { state: "listed", processes: listed }
-            : {
-                state: "unknown",
-                reason: "the host process listing is unreadable",
-              };
+          const processes = await this.adapter.hostProcessListing();
+          if (processes === null)
+            return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
+          return { state: "listed", processes };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
+          const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
           return {
             state: "unknown",
             reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+            ...(deferred ? { deferred: true } : {}),
           };
         }
       }
@@ -725,8 +738,13 @@ export class Resolution {
     // Any quantum that reads a participant's pass page (an owned-tool proof, a
     // continuation, an effect reconcile, a fence settlement) asks the next host
     // pass to observe that participant before its process snapshot and to warm
-    // its page first, so no reader is starved two passes running (Spec 068 §6).
-    if (inQuantum) this.requestPassProof(hostId, agentId);
+    // its page first. Demand skipped for budget carries forward (Spec 068 §6).
+    if (inQuantum)
+      this.requestPassProof(
+        hostId,
+        agentId,
+        options.requireCoveredObservation ? "owned-tools" : "timeline",
+      );
     const snapshot = this.currentPassSnapshot();
     if (snapshot)
       return snapshot.timelinePage(key, agentId, limit, read, deadlineMs, {
@@ -1636,6 +1654,7 @@ export class Resolution {
       "lease",
       "operatorReturn",
       "paused",
+      "resultApplication",
       "reviewerSetting",
       "store",
     ]),
@@ -1653,6 +1672,7 @@ export class Resolution {
       "claimIntegrationTurn",
       "continuedPrBinding",
       "continuedProgressWait",
+      "currentPassSnapshot",
       "deliverLaunchRun",
       "ensureIncident",
       "holdForSpentBudget",

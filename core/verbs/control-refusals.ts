@@ -1,4 +1,5 @@
 import {
+  externalMergeSourceAcceptance,
   mergeReviewEvidenceAt,
   isDispositionActive,
   type Task,
@@ -122,8 +123,8 @@ export function recordedCloseoutRefusal(
 ): string | null {
   const head = task.resolution.mergeHead;
   if (!head) return "The recorded merge has no exact head to verify";
-  return reviewRequired && !mergeReviewEvidenceAt(task, head)
-    ? "The merged head has no recorded exact-head review or operator source acceptance"
+  return reviewRequired && !mergeReviewEvidenceAt(task, head) && !externalMergeSourceAcceptance(task)
+    ? "The merged head has no recorded exact-head review or source acceptance; read next for closeout.now"
     : null;
 }
 
