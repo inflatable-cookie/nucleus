@@ -320,6 +320,25 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   received create never becomes a second thread. Three relaunches per role and
   head, the host-read hold no longer keeping the coordinator out, and T3's lookup
   reading only the create commands its ledger recorded as sent.
+- **Uncertain workspace creation settles the same way.** A first dispatch that
+  recorded its workspace intent and bound nothing (no worker, run or PR) is
+  looked up on its host: the host's workspace inventory, the expected worktree
+  directory, `git worktree list`, the task branch locally and on remotes, and
+  any Barge lease. One match binds it. A complete read proving none of it
+  exists, once this service has no create in flight for the task and the grace
+  period since the last attempt has passed, releases the intent so ordinary
+  dispatch creates it again; a Barge allocation intent is kept, so the same
+  request replays. Nucleus's own residue, a task branch with no commits past the
+  base, never pushed and with no worktree (papercut 703c357a), is removed at its
+  inspected head before the release; a branch with commits or a pushed ref is
+  never touched. A partial or failed read, or a create still running, waits with
+  its reason (fact `workspace_lookup`), read as Nucleus's move. A leftover with a
+  worktree directory, or conflicting evidence, goes to a person with the verb
+  its refusal names. Three automatic releases per task, counted since the last
+  explicit one; past that a typed stop names `record.clear kind=workspace_intent`
+  (Spec 067), which releases the intent without a proof after its
+  `workspace_may_exist` warning. A 2026-11-23 task cycled on the old
+  generic wait until a cancel and resubmit.
 - **`run_stalled` admits its coordinator**, and a stop naming a released run
   clears.
 - **A reported verdict is never dropped or stranded.** `run.start` warns

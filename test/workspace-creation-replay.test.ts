@@ -31,9 +31,10 @@ import type { Adapter } from "../core/host";
 /**
  * A dispatch that never became visible — a transport outage at the moment of the
  * create, for example — leaves `workspaceIntent` set with no workspace. The
- * automatic path must keep waiting rather than minting a second workspace, but an
- * operator may replay the *same* create once an exact lookup finds nothing,
- * because the create is keyed by a stable requestId, worktree slug and branch.
+ * automatic path settles it by lookup (Spec 068 batch A; see
+ * `uncertain-workspace-settle.test.ts`), and an operator may replay the *same*
+ * create once an exact lookup finds nothing, because the create is keyed by a
+ * stable requestId, worktree slug and branch.
  */
 
 const profile: Profile = {
@@ -285,8 +286,8 @@ test("recovery clears a proven orphan from its own parked stop and replays creat
     };
     await f.engine.wake();
     const current = f.store.task(submitted.id);
-    // Spec 067 batch 2 deletes proven-absence auto-replay; wake() leaves the
-    // parked orphan stop intact for explicit retry_effect or coordinator action.
+    // A leftover with a worktree directory is never removed automatically:
+    // wake() leaves the parked orphan stop for explicit retry_effect.
     assert.equal(current.phase, "needs_attention");
     assert.equal(removed, 0);
     assert.equal(f.calls.workspaces, 0);
@@ -1094,7 +1095,7 @@ test("a pause arriving during validation prevents pressure admission and its dur
   }
 });
 
-test("sweep replays one proven empty creation and refuses conflicting evidence", async () => {
+test("sweep releases a proven empty creation and leaves a worktree leftover or conflicting evidence to a person", async () => {
   for (const kind of ["absent", "partial", "conflicting"] as const) {
     const f = fixture([]);
     try {
@@ -1117,15 +1118,19 @@ test("sweep replays one proven empty creation and refuses conflicting evidence",
       };
       await f.engine.wake();
       const current = f.store.task(task.id);
-      // Spec 067 batch 2 deletes proven-absence sweep auto-replay: wake() never
-      // auto-replays uncertain workspace creations regardless of inspection kind.
-      assert.equal(current.workspaceIntent, true);
-      assert.equal(
-        f.store
-          .eventsAll(task.id)
-          .some((event) => event.kind === "workspace_creation_auto_replay"),
-        false,
-      );
+      // Spec 068 batch A: a complete absent read releases the intent and
+      // ordinary dispatch creates the workspace again; a leftover with a
+      // directory and conflicting evidence wait for a person, untouched.
+      const released = f.store
+        .eventsAll(task.id)
+        .filter((event) => event.kind === "workspace_intent_released");
+      assert.equal(released.length, kind === "absent" ? 1 : 0, kind);
+      if (kind === "absent") assert.equal(current.workspaceId, `ws-${task.id}`);
+      else {
+        assert.equal(current.workspaceIntent, true, kind);
+        assert.equal(current.workspaceId, null, kind);
+        assert.equal(current.phase, "needs_attention", kind);
+      }
       assert.equal(removed, 0);
     } finally {
       await f.close();
@@ -1195,27 +1200,6 @@ test("a shared GitHub outage leaves several dispatches waiting without launches 
     healthy = true;
     await f.engine.wake();
     assert.ok(f.calls.workspaces > 0);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a second proven empty creation remains with its owner", async () => {
-  const f = fixture([]);
-  try {
-    const task = f.uncertain({ phase: "dispatching" });
-    f.adapter.inspectWorkspaceCreation = async () => ({ kind: "absent" });
-    f.store.event(task.id, "workspace_creation_auto_replay", "absent");
-    await f.engine.wake();
-    assert.equal(f.calls.workspaces, 0);
-    assert.equal(f.store.task(task.id).workspaceIntent, true);
-    assert.equal(
-      f.store
-        .eventsAll(task.id)
-        .filter((event) => event.kind === "workspace_creation_auto_replay")
-        .length,
-      1,
-    );
   } finally {
     await f.close();
   }

@@ -342,6 +342,11 @@ test("a partial or failed read, a running create or an unfinished grace waits wi
       );
       assert.match(current.reason, item.reason, item.name);
       assert.match(current.reason, /record\.clear kind=workspace_intent/);
+      assert.equal(
+        ownerTaskNext(collectOwnerVerbFacts(f.store, current)).activity?.state,
+        "recovering",
+        item.name,
+      );
       assert.equal(f.events(task.id, WORKSPACE_INTENT_RELEASED).length, 0);
       assert.equal(f.calls.workspaces, 0, item.name);
     } finally {

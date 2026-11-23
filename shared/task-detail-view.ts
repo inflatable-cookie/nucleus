@@ -130,9 +130,18 @@ function factCopyForOperatorNeeded(
         nextLine:
           "Choose an action below to replace the uncertain run or release it after checking the host.",
       };
+    case "workspace_lookup":
+      return {
+        label: "Needs you",
+        tone: "danger",
+        headline: "The task’s workspace was never created",
+        explanation:
+          "Nucleus released and retried the workspace creation several times and found nothing to bind each time.",
+        nextLine:
+          "Check the host, then release the workspace intent below to requeue the task.",
+      };
     case "workspace_absent":
     case "workspace_orphan":
-    case "workspace_lookup":
       return {
         label: "Needs you",
         tone: "danger",
