@@ -6,7 +6,12 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
-import { acrossViews, openPlanning, openView, planningEntry } from "./support/inbox";
+import {
+  acrossViews,
+  openPlanning,
+  openView,
+  planningEntry,
+} from "./support/inbox";
 import { Store } from "../core/store/store";
 import {
   LEAD_PREVIEW_MAX,

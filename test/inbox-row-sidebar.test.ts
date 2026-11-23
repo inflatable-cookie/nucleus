@@ -319,7 +319,8 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
     );
 
     // A dimmed zero-count entry still shows the hover.
-    const leads = ui.query("Leads, 0");    assert.equal(leads.props.style.opacity, 0.55, "zero counts stay dimmed");
+    const leads = ui.query("Leads, 0");
+    assert.equal(leads.props.style.opacity, 0.55, "zero counts stay dimmed");
     leads.props.onHoverIn();
     const hovered = ui.query("Leads, 0");
     assert.equal(

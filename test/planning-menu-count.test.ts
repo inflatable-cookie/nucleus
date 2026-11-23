@@ -95,10 +95,7 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
       ui.press(/^Projects, /);
       await waitFor(row);
     }
-    ui.press(
-      row,
-      additive ? { nativeEvent: { shiftKey: true } } : undefined,
-    );
+    ui.press(row, additive ? { nativeEvent: { shiftKey: true } } : undefined);
   };
   try {
     // All projects: the six active lanes — reliability, host, activities,
@@ -189,7 +186,11 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
       "picking the entry closes the drawer",
     );
     // Narrow drills into the roadmap in place: project rows first, then the plan.
-    for (let i = 0; i < 400 && ui.all(/^Plan for |^Project row /).length === 0; i++)
+    for (
+      let i = 0;
+      i < 400 && ui.all(/^Plan for |^Project row /).length === 0;
+      i++
+    )
       await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(
       ui.all(/^Plan for |^Project row /).length > 0,

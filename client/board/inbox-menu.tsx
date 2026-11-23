@@ -28,7 +28,12 @@ function MenuEntry({
   value: number | null;
   loaded: boolean;
   onPress: () => void;
-  options: { icon?: string; hot?: boolean; dimmed?: boolean; countNoun?: string };
+  options: {
+    icon?: string;
+    hot?: boolean;
+    dimmed?: boolean;
+    countNoun?: string;
+  };
 }) {
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
@@ -144,7 +149,12 @@ export function InboxMenu({
     on: boolean,
     value: number | null,
     onPress: () => void,
-    options: { icon?: string; hot?: boolean; dimmed?: boolean; countNoun?: string } = {},
+    options: {
+      icon?: string;
+      hot?: boolean;
+      dimmed?: boolean;
+      countNoun?: string;
+    } = {},
   ) => (
     <MenuEntry
       key={key}
