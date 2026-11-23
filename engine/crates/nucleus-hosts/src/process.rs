@@ -42,6 +42,7 @@ pub(crate) struct Inventory {
 struct ProcessPaths {
     cwd: Option<PathBuf>,
     open_paths: Vec<PathBuf>,
+    ambiguous_path: bool,
 }
 
 impl Inventory {
@@ -53,6 +54,7 @@ impl Inventory {
                 ProcessPaths {
                     cwd: Some(PathBuf::from("/")),
                     open_paths: Vec::new(),
+                    ambiguous_path: false,
                 },
             )]),
         }
@@ -150,7 +152,7 @@ impl Inventory {
             {
                 return Ok(Activity::Busy);
             }
-            missing |= process.cwd.is_none();
+            missing |= process.cwd.is_none() || process.ambiguous_path;
         }
         Ok(if missing || self.processes.is_empty() {
             Activity::Unknown
@@ -186,7 +188,10 @@ fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError>
             [b'f', file @ ..] => is_cwd = file == b"cwd",
             [b'n', path @ ..] if path.starts_with(b"/") => {
                 let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
-                let path = PathBuf::from(OsStr::from_bytes(path));
+                let Some(path) = decode_lsof_path(path) else {
+                    process.ambiguous_path = true;
+                    continue;
+                };
                 if is_cwd {
                     if process.cwd.replace(path).is_some() {
                         return Err(HostError::Protocol);
@@ -199,6 +204,46 @@ fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError>
         }
     }
     Ok(rows)
+}
+
+fn decode_lsof_path(path: &[u8]) -> Option<PathBuf> {
+    if !path.iter().any(|&byte| matches!(byte, b'\\' | b'^')) {
+        return Some(PathBuf::from(OsStr::from_bytes(path)));
+    }
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut input = path.iter().copied().peekable();
+    while let Some(byte) = input.next() {
+        let byte = match byte {
+            // lsof also prints control bytes in caret notation, but leaves
+            // printable carets alone. This form cannot be inverted safely.
+            b'^' if matches!(input.peek(), Some(b'?'..=b'_')) => return None,
+            b'\\' => match input.next()? {
+                b'x' => hex_digit(input.next()?)? * 16 + hex_digit(input.next()?)?,
+                b'\\' => b'\\',
+                b'b' => 8,
+                b'f' => 12,
+                b'n' => b'\n',
+                b'r' => b'\r',
+                b't' => b'\t',
+                _ => return None,
+            },
+            other => other,
+        };
+        if byte == 0 {
+            return None;
+        }
+        decoded.push(byte);
+    }
+    Some(PathBuf::from(OsStr::from_bytes(&decoded)))
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostError> {
@@ -268,5 +313,75 @@ mod tests {
             capture("/usr/bin/false", &[]).await,
             Err(HostError::Uncertain)
         ));
+    }
+
+    #[tokio::test]
+    async fn escaped_unicode_checkout_cwd_is_busy() {
+        let directory = tempfile::Builder::new()
+            .prefix("unicode-é-")
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("checkout");
+        let checkout = directory.path().canonicalize().expect("canonical checkout");
+        let mut child = Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(&checkout)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fixture child");
+        let pid = child.id().expect("fixture PID");
+        let (listing, _) = capture(
+            "/usr/sbin/lsof",
+            &["-p", &pid.to_string(), "-n", "-P", "-F0pfn"],
+        )
+        .await
+        .expect("fixture lsof listing");
+        let user = geteuid().as_raw();
+        let census = format!("{pid} {user} S\n");
+        let inventory =
+            Inventory::from_listings(&listing, census.as_bytes(), user, 0).expect("inventory");
+        assert_eq!(
+            inventory.processes[&pid].cwd.as_deref(),
+            Some(checkout.as_path())
+        );
+        assert!(matches!(inventory.activity(&checkout), Ok(Activity::Busy)));
+        child.kill().await.expect("stop fixture child");
+    }
+
+    #[test]
+    fn lsof_fields_preserve_non_utf8_paths_and_leave_ambiguity_unknown() {
+        let directory = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("checkout");
+        let checkout = directory.path().canonicalize().expect("canonical checkout");
+        let listing = format!(
+            "p1\0\nfcwd\0n{}/nested\\xfe\\n\\\\name\0\n",
+            checkout.display()
+        );
+        let inventory =
+            Inventory::from_listings(listing.as_bytes(), b"1 501 S\n", 501, 0).expect("inventory");
+        let expected = checkout.join(OsStr::from_bytes(b"nested\xfe\n\\name"));
+        assert_eq!(
+            inventory.processes[&1].cwd.as_deref(),
+            Some(expected.as_path())
+        );
+        assert!(matches!(inventory.activity(&checkout), Ok(Activity::Busy)));
+
+        for field in [
+            br"/elsewhere/^A".as_slice(),
+            br"/elsewhere/\x0",
+            br"/elsewhere/\q",
+        ] {
+            let mut listing = b"p1\0\nfcwd\0n/elsewhere\0\nf7\0n".to_vec();
+            listing.extend(field);
+            listing.extend(b"\0\n");
+            let inventory =
+                Inventory::from_listings(&listing, b"1 501 S\n", 501, 0).expect("inventory");
+            assert!(matches!(
+                inventory.activity(&checkout),
+                Ok(Activity::Unknown)
+            ));
+        }
     }
 }

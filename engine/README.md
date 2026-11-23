@@ -162,7 +162,8 @@ and effects the task engine needs.
 - A pass shares one bounded process inventory across checkout checks. The Mac
   adapter cross-checks `lsof` against a PID enumeration of the local T3 user.
   An open file or working directory under the checkout is busy. An unaccounted
-  live PID, incomplete listing or warning leaves settlement unknown. Run the
+  live PID, undecodable path, incomplete listing or warning leaves settlement
+  unknown. Decode `lsof` escapes before comparing path bytes. Run the
   engine and T3 under the same local user with private task checkout roots.
   Use a fresh pass after a launch can have started new processes. Barge pools
   require the host-side inherited hold.
