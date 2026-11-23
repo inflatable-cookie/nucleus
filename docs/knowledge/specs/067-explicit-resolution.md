@@ -93,11 +93,26 @@ Each command takes `taskId` (or `reference`), `version`, `reason`, and
 
 No command changes anything it does not name.
 
+For `record.clear` and `run.release`, `next` previews the same local plan
+the command will read again on execution. It names the current record or run
+and its expected warnings, including cleanup that remains after `done` or
+`cancelled`. A read without a caller identity shows `hold_owner` for holds
+with a named owner. Open operator decisions and release GO questions stay
+with the operator. A prerequisite that cannot complete is the planner's to
+correct.
+
+After an applied settlement, the response lists remaining records, runs
+and the visible stop. Nucleus schedules a pass for the affected task and
+wakes repository dispatch if the task is queued. Legacy publication journal
+and merge response clears call for checking the original GitHub write
+before retrying, so those clears do not schedule a pass. The preview uses
+local facts and supplies no result for a process, host or forge operation.
+
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
 | `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
-| `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `workspace_intent` (id: the task branch; [Spec 068](068-self-healing.md) batch A) releases an uncertain dispatch workspace creation that bound nothing and returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only: the workspace may exist on the host; `effect_may_land` joins it while the task's dispatch is in flight) |
+| `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `wait` accepts the stored prerequisite wait ID while it is open, or after release while it still blocks a pre-merge revision. `workspace_intent` uses the task branch as its ID and releases an uncertain dispatch workspace creation that bound nothing ([Spec 068](068-self-healing.md) batch A). It returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold, planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only, the workspace may exist on the host and `effect_may_land` joins it while the task's dispatch is in flight) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
 | `message.send role=<worker\|reviewer\|coordinator\|planner> text` | Delivers to the role's bound thread now, steering into or queued after an active turn, and reports `delivered`, `queued` or `unknown`. Changes no task state. | `queued`, `no_thread` |
 | `merge.now head=<sha>` | Moves the task to `merging` (clearing attention and stop), requests GitHub's guarded merge of exactly that head now, and takes the integration turn if free. | `turn_held`, `checks` (non-required checks failed or pending), `holds`, `hold_owner` (planner or operator only) |

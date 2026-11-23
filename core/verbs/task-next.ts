@@ -1,6 +1,10 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
-import { releaseWarnings } from "./explicit-resolution";
+import {
+  previewRecordClear,
+  previewRunRelease,
+  type RecordClearTarget,
+} from "./explicit-resolution";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
@@ -13,6 +17,7 @@ import { workerStepLabel } from "../../shared/demand";
 import { holdOwnerOf } from "../../shared/contracts";
 import {
   holdsOf,
+  OPERATOR_BOARD_CALLER,
   taskNextVerbSchema,
   taskVisibleReason,
   REVISION_BUDGET,
@@ -36,12 +41,14 @@ import {
 } from "./owner-facts";
 import type { OwnerVerbFacts } from "./owner-facts";
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from "../../shared/schema/settings";
-import { taskStopVerbs } from "../../shared/task-stop";
+import { stopNamesRun, taskStopVerbs } from "../../shared/task-stop";
+import { prerequisiteCannotComplete } from "../../shared/wait-state";
 import { reviewResultFencesRun } from "../review/review-continuation";
-import {
-  unboundDispatchWorkspace,
-  workspaceLookupStop,
-} from "../recovery/workspace-lookup";
+import { plannerEscalations } from "../questions/ladder/records";
+import { openProofOnlyGo } from "../qa/proof-only-go";
+import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { workspaceLookupStop } from "../recovery/workspace-lookup";
+import { ownerPendingEffects } from "./owner-effects";
 
 /** One reviewer run's own recorded verdict with the publication evidence it carries. */
 type RecordedVerdict = {
@@ -464,7 +471,19 @@ export function assembleOwnerTaskNext(
   const task = planned.task;
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
-  const stop = ownerTaskStop(facts);
+  const escalations = facts.events.some(
+    (event) => event.kind === "planner_escalation",
+  )
+    ? plannerEscalations(
+        facts.events.map((event) => ({ ...event, taskId: task.id })),
+      ).filter((escalation) => !escalation.answered)
+    : [];
+  const stop = ownerWaitStop(
+    facts,
+    ownerTaskStop(facts),
+    escalations,
+    verbs.some((verb) => verb.action === "set_dependencies" && verb.available),
+  );
   if (stop)
     stop.suggestedVerbs = stop.suggestedVerbs.filter((verb) =>
       verbs.some((view) => view.verb === verb && view.available),
@@ -486,6 +505,7 @@ export function assembleOwnerTaskNext(
       verbs.some((view) => view.verb === verb && view.available),
     );
   }
+  const explicitCommands = explicitCommandsFor(facts, stop, escalations);
   return {
     taskId: task.id,
     paused: facts.store.getMeta<boolean>("paused") ?? true,
@@ -542,9 +562,7 @@ export function assembleOwnerTaskNext(
         : {}),
     },
     verbs,
-    ...(explicitCommandsFor(facts, stop).length
-      ? { explicitCommands: explicitCommandsFor(facts, stop) }
-      : {}),
+    ...(explicitCommands.length ? { explicitCommands } : {}),
     // Task 645: the durable owner no-automatic-retry rule stays visible until an
     // owner control lifts it. Task detail carries the same fields on resolution.
     ...(task.resolution.noAutomaticRetry
@@ -602,6 +620,73 @@ export function assembleOwnerTaskNext(
   };
 }
 
+function ownerWaitStop(
+  facts: OwnerVerbFacts,
+  stop: TaskNext["stop"],
+  escalations: ReturnType<typeof plannerEscalations>,
+  canSetDependencies: boolean,
+): TaskNext["stop"] {
+  const { store, task } = facts;
+  if (["done", "cancelled"].includes(task.phase)) return stop;
+  const since = stop?.since ?? task.updatedAt;
+  const decisionId = facts.activityWaitContext
+    ? facts.activityWaitContext.decisionId
+    : store.listDecisions({ status: "open", task: task.id })[0]?.id;
+  if (decisionId && (!stop || ["wait", "attention"].includes(stop.kind)))
+    return {
+      kind: "wait",
+      reason: "operator_needed",
+      detail: `The operator needs to answer decision ${decisionId} with decision.answer.`,
+      owner: "operator",
+      evidence: `Open decision ${decisionId}`,
+      suggestedVerbs: [],
+      since,
+    };
+  const proofGo = openProofOnlyGo(task, facts.runs, facts.events);
+  if (proofGo && stop?.kind !== "hold")
+    return {
+      kind: "wait",
+      reason: "escalated",
+      detail: "Awaiting the operator's GO to run the qualification.",
+      owner: "operator",
+      evidence: `Release GO question ${proofGo}`,
+      suggestedVerbs: [],
+      since,
+    };
+  if (stop?.reason === "interactive") return { ...stop, owner: "operator" };
+  if (stop && task.resolution.stop?.fact?.code === "consult")
+    return { ...stop, owner: "reviewer" };
+  if (
+    stop?.reason === "escalated" &&
+    escalations.some(({ id }) => id === task.resolution.stop?.fact?.subject)
+  )
+    return { ...stop, owner: "planner" };
+
+  const wait = task.prerequisiteWait?.releasedAt ? null : task.prerequisiteWait;
+  const waitsFor = wait?.waitsFor ?? (canSetDependencies ? task.dependsOn : []);
+  if (
+    !waitsFor.length ||
+    (stop && !["attention", "wait"].includes(stop.kind)) ||
+    (task.resolution.stop && stop?.reason !== "prerequisite")
+  )
+    return stop;
+  const dependency =
+    facts.activityWaitContext?.dependencyWait ??
+    store.dependencyWait({ dependsOn: waitsFor });
+  if (!prerequisiteCannotComplete(dependency)) return stop;
+  return {
+    kind: "attention",
+    reason: "prerequisite",
+    detail: wait
+      ? `${dependency} Clear the wait with record.clear kind=wait id=${wait.id}.`
+      : `${dependency} Correct the dependency list with set_dependencies.`,
+    owner: "planner",
+    evidence: dependency,
+    suggestedVerbs: [],
+    since,
+  };
+}
+
 /** The retirement count and the fixed per-task replacement ceiling. */
 function taskNextReplacementView(
   task: Task,
@@ -616,9 +701,11 @@ function taskNextReplacementView(
 function explicitCommandsFor(
   facts: OwnerVerbFacts,
   stop: TaskNext["stop"],
+  escalations: ReturnType<typeof plannerEscalations>,
 ): TaskNextExplicitCommand[] {
   const { task, runs } = facts;
-  if (task.removedAt || ["done", "cancelled"].includes(task.phase)) return [];
+  if (task.removedAt) return [];
+  const terminal = ["done", "cancelled"].includes(task.phase);
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [];
   const push = (command: TaskNextExplicitCommand) => {
@@ -629,6 +716,71 @@ function explicitCommandsFor(
       commands.push(command);
     }
   };
+  const inFlight =
+    task.resolution.stop?.fact?.code === "creation_in_flight"
+      ? task.resolution.stop.fact.subject
+      : undefined;
+  const offerRelease = (runId: string, note: string) => {
+    if (runId === inFlight) return;
+    const preview = previewRunRelease(facts.store, task, runId);
+    if (!preview || preview.run?.explicitlyReleasedAt) return;
+    push({
+      action: "run.release",
+      args: { action: "run.release", ...base, run: runId },
+      fill: ["reason"],
+      note,
+      warnings: preview.warnings.map((warning) => warning.id),
+    });
+  };
+  for (const { target, note } of recordClearTargets(facts, escalations)) {
+    const preview = previewRecordClear(facts, {
+      ...target,
+      // Reads without an authenticated caller list the foreign-owner warning
+      // whenever there is a named holder. The command checks the actual caller.
+      caller: facts.operatorBoard ? OPERATOR_BOARD_CALLER : undefined,
+    });
+    if (!preview || "refusal" in preview) continue;
+    push({
+      action: "record.clear",
+      args: { action: "record.clear", ...base, ...target },
+      fill: ["reason"],
+      note,
+      warnings: preview.warnings.map((warning) => warning.id),
+    });
+  }
+  for (const run of runs) {
+    const boundRecovery =
+      run.role === "recovery" &&
+      task.resolution.recovery?.runId === run.id &&
+      task.resolution.recovery.status !== "resolved";
+    const named =
+      stopNamesRun(task, run.id) ||
+      task.resolution.restartSlotHold?.fromRunId === run.id;
+    if (
+      (!run.released &&
+        (terminal ||
+          run.completion ||
+          ["uncertain", "stopped", "finished", "superseded"].includes(
+            run.status,
+          ) ||
+          (run.status === "intent" && run.agentId) ||
+          named ||
+          (boundRecovery && Boolean(stop)))) ||
+      (terminal && facts.store.hostRun(run.id)?.state === "running")
+    )
+      offerRelease(
+        run.id,
+        `Release ${run.role} run ${run.id} and settle its local run binding.`,
+      );
+  }
+  if (
+    task.runId &&
+    !runs.some((run) => run.id === task.runId) &&
+    (task.agentIntent ||
+      (terminal && task.agentId && task.agentActive !== false))
+  )
+    offerRelease(task.runId, `Release the initial worker run ${task.runId}.`);
+  if (terminal) return commands;
 
   // A reviewer that reported a verdict at the current head which is not applied
   // yet is a finished review (bovine-accelerator#6863): any offer to replace it
@@ -654,10 +806,6 @@ function explicitCommandsFor(
 
   // Spec 068 §3: a create the host may still answer offers no replacement and no
   // release: either would let a second thread stand beside the late one.
-  const inFlight =
-    task.resolution.stop?.fact?.code === "creation_in_flight"
-      ? task.resolution.stop.fact.subject
-      : undefined;
   for (const run of runs) {
     if (run.released || run.completion || run.agentId) continue;
     if (!["intent", "uncertain"].includes(run.status)) continue;
@@ -677,12 +825,10 @@ function explicitCommandsFor(
         note: `Replace uncertain ${role} run ${run.id} with a fresh run in one step.`,
       });
     }
-    push({
-      action: "run.release",
-      args: { action: "run.release", ...base, run: run.id },
-      fill: ["reason"],
-      note: `Release uncertain ${role ?? run.role} run ${run.id} without starting a replacement.`,
-    });
+    offerRelease(
+      run.id,
+      `Release uncertain ${role ?? run.role} run ${run.id}.`,
+    );
   }
 
   if (task.agentIntent && !task.agentId && task.runId !== inFlight) {
@@ -700,21 +846,23 @@ function explicitCommandsFor(
     });
   }
 
-  if (stop?.reason === "run_stalled" || task.resolution.stalledTurnStop) {
+  if (
+    stop?.reason === "run_stalled" ||
+    task.resolution.stop?.reason === "run_stalled" ||
+    task.resolution.stalledTurnStop
+  ) {
     const stalledRunId =
       task.resolution.stalledTurnStop?.runId ??
       task.resolution.currentRunId ??
       task.runId;
-    if (stalledRunId) {
+    if (stalledRunId && stalledRunId !== inFlight) {
       const stored = runs.find((r) => r.id === stalledRunId);
       const role = stored ? startRoleFor(stored.role) : "worker";
       const label = role ?? stored?.role ?? "worker";
-      push({
-        action: "run.release",
-        args: { action: "run.release", ...base, run: stalledRunId },
-        fill: ["reason"],
-        note: `Release stalled ${label} run ${stalledRunId}.`,
-      });
+      offerRelease(
+        stalledRunId,
+        `Release stalled ${label} run ${stalledRunId}.`,
+      );
       if (role) {
         push({
           action: "run.start",
@@ -868,54 +1016,105 @@ function explicitCommandsFor(
     });
   }
 
-  // Spec 068 batch A: an uncertain workspace creation the lookup holds (its
-  // wait, its typed stop or the legacy generic wait) can be released
-  // explicitly. An ordinary populate in progress offers nothing: no dispatch
-  // may be in flight, as for any create that may still answer.
-  if (
-    unboundDispatchWorkspace(task) &&
-    workspaceLookupStop(task.resolution.stop) &&
-    !facts.launchInFlight
-  ) {
-    push({
-      action: "record.clear",
-      args: {
-        action: "record.clear",
-        ...base,
-        kind: "workspace_intent",
-        id: task.branch,
-      },
-      fill: ["reason"],
-      note: `Release the uncertain workspace creation for ${task.branch} and requeue the task; the workspace may exist on the host.`,
-    });
-  }
-
-  if (task.resolution.stop) {
-    push({
-      action: "record.clear",
-      args: {
-        action: "record.clear",
-        ...base,
-        kind: "stop",
-        id: task.resolution.stop.since,
-      },
-      fill: ["reason"],
-      note: `Clear the ${task.resolution.stop.reason} stop record.`,
-    });
-  }
-
   return commands.map((command) => {
-    const warnings = expectedWarnings(facts, command);
+    const warnings = expectedStartWarnings(facts, command);
     return warnings ? { ...command, warnings } : command;
   });
 }
 
+function recordClearTargets(
+  facts: OwnerVerbFacts,
+  escalations: ReturnType<typeof plannerEscalations>,
+): Array<{ target: RecordClearTarget; note: string }> {
+  const { store, task } = facts;
+  const state = task.resolution;
+  const targets: Array<{ target: RecordClearTarget; note: string }> = [];
+  const add = (kind: RecordClearTarget["kind"], id: string, note: string) =>
+    targets.push({ target: { kind, id }, note });
+  const holds = holdsOf(task);
+  if (holds.dispatch && !state.ownerStop)
+    add("hold", "dispatch", "Release the recorded dispatch hold.");
+  if (holds.merge) add("hold", "merge", "Release the recorded merge hold.");
+  if (state.ownerStop)
+    add(
+      "owner_stop",
+      state.ownerStop.operationId ?? state.ownerStop.recordedAt,
+      "Retire the recorded owner stop. Its dispatch hold is a separate record.",
+    );
+  if (state.deferredVerb)
+    add(
+      "deferred_verb",
+      state.deferredVerb.at,
+      "Retire the saved owner command.",
+    );
+  if (state.hostWait)
+    add("host_wait", state.hostWait.hostId, "Clear the stored host wait.");
+  if (state.incident && state.incident.status !== "resolved")
+    add("incident", state.incident.id, "Clear the recorded incident.");
+  for (const escalation of escalations)
+    add(
+      "escalation",
+      escalation.id,
+      "Close the open escalation and its follow-up prompts.",
+    );
+  if (task.prerequisiteWait)
+    add(
+      "wait",
+      task.prerequisiteWait.id,
+      task.prerequisiteWait.releasedAt
+        ? "Clear the released prerequisite wait that still blocks revision."
+        : "Clear this recorded prerequisite wait.",
+    );
+  if (state.stop)
+    add(
+      "stop",
+      state.stop.since,
+      `Clear the ${state.stop.reason} stop record.`,
+    );
+  if (
+    workspaceLookupStop(state.stop) &&
+    (!facts.launchInFlight || state.stop?.reason === "operator_needed")
+  )
+    add(
+      "workspace_intent",
+      task.branch,
+      `Release uncertain workspace creation for ${task.branch} and requeue the task.`,
+    );
+
+  for (const effect of blockingRecoveryEffects(store, task)) {
+    // The unresolved merge request still owns the observation and exact-head gates.
+    if (effect.kind !== "merge-response")
+      add(
+        "effect",
+        `${effect.kind}.${effect.identity}`,
+        effect.kind === "publication"
+          ? `Retire the stored publication journal. Inspect the PR for the original publication. ${effect.reason}.`
+          : `Retire this recorded effect. ${effect.reason}.`,
+      );
+  }
+  for (const notice of facts.notices)
+    if (notice.kind === "attention" && notice.status === "pending")
+      add(
+        "effect",
+        `attention-notice.${notice.id}`,
+        "Retire the pending attention notice.",
+      );
+  if (facts.events.some((event) => event.kind === "owned_tool_hold"))
+    for (const effect of ownerPendingEffects(facts))
+      if (effect.kind === "owned_tool")
+        add(
+          "effect",
+          effect.effect,
+          `Retire the recorded tool hold. ${effect.summary}`,
+        );
+  return targets;
+}
+
 /**
- * The warning IDs an explicit command will name, read from the same stored state
- * the command reads (papercut ee6e634c). Null when only the command's own
- * preflight can tell (integration and message commands).
+ * The warning IDs a start can name from stored facts. Other commands may
+ * require their own preflight or already carry the warnings from their preview.
  */
-function expectedWarnings(
+function expectedStartWarnings(
   facts: OwnerVerbFacts,
   command: TaskNextExplicitCommand,
 ): ResolutionWarningId[] | null {
@@ -929,15 +1128,6 @@ function expectedWarnings(
         replacing: args.replacing as string | undefined,
         head: args.head as string | undefined,
       }).map((warning) => warning.id);
-    if (command.action === "run.release")
-      return releaseWarnings(store, task, String(args.run)).map(
-        (warning) => warning.id,
-      );
-    if (command.action === "record.clear" && args.kind === "stop") return [];
-    if (command.action === "record.clear" && args.kind === "workspace_intent")
-      return facts.launchInFlight
-        ? ["workspace_may_exist", "effect_may_land"]
-        : ["workspace_may_exist"];
   } catch {
     return null;
   }

@@ -45,9 +45,10 @@ import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
 import { now, type Store } from "../store/store";
+import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
-import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
-import { splitOwnerEffectKey } from "./owner-effects";
+import { collectOwnerVerbFacts, type OwnerVerbFacts } from "./owner-facts";
+import { ownerPendingEffects, splitOwnerEffectKey } from "./owner-effects";
 
 import {
   messageSendPlan,
@@ -511,11 +512,19 @@ export function releaseWarnings(
   task: Task,
   runId: string,
 ): Warning[] {
+  return previewRunRelease(store, task, runId)?.warnings ?? [];
+}
+
+/** Read the named run and its local release facts. Host contact belongs to finish. */
+export function previewRunRelease(store: Store, task: Task, runId: string) {
   const run = store.run(runId);
+  const initial = !run && task.runId === runId;
+  if (run ? run.taskId !== task.id : !initial) return null;
   const completion = run ? run.completion : task.completion;
   const process = store.hostRun(runId);
+  const live = releasedRunLive(task, run);
   const warnings: Warning[] = [];
-  if (releasedRunLive(task, run) || process?.state === "running")
+  if (live || process?.state === "running")
     warnings.push({
       id: "live_turn",
       text: "This run may have a live turn. Stopping a worker may lose uncommitted changes.",
@@ -528,7 +537,16 @@ export function releaseWarnings(
           ? "Only this reviewer's first verdict at the current exact head can still be accepted."
           : "Any later report from this run will be refused.",
     });
-  return warnings;
+  return {
+    run,
+    initial,
+    agentId: run ? run.agentId : task.agentId,
+    hostId: run?.hostId ?? task.hostId,
+    completion,
+    live,
+    process,
+    warnings,
+  };
 }
 
 export function releasePlan(
@@ -537,16 +555,10 @@ export function releasePlan(
   input: Extract<ExplicitResolution, { action: "run.release" }>,
 ): Plan {
   const store = engine.store;
-  const run = store.run(input.run);
-  const initial = !run && task.runId === input.run;
-  if ((!run || run.taskId !== task.id) && !initial)
-    return missing("run", input.run);
-  const agentId = run ? run.agentId : task.agentId;
-  const hostId = run?.hostId ?? task.hostId;
-  const completion = run ? run.completion : task.completion;
-  const live = releasedRunLive(task, run);
-  const process = store.hostRun(input.run);
-  const warnings = releaseWarnings(store, task, input.run);
+  const preview = previewRunRelease(store, task, input.run);
+  if (!preview) return missing("run", input.run);
+  const { run, initial, agentId, hostId, completion, live, process, warnings } =
+    preview;
 
   return {
     warnings,
@@ -700,27 +712,64 @@ export function releasePlan(
   };
 }
 
-function clearPlan(
-  engine: Engine,
-  task: Task,
-  input: Extract<ExplicitResolution, { action: "record.clear" }>,
-): Plan {
-  const { id, kind } = input;
-  const store = engine.store;
+type ClearInput = Extract<ExplicitResolution, { action: "record.clear" }>;
+export type RecordClearTarget = Pick<ClearInput, "kind" | "id">;
+type ClearPlan = {
+  warnings: Warning[];
+  apply(reason: string): ExplicitChange;
+};
+
+function clearPlan(engine: Engine, task: Task, input: ClearInput): Plan {
+  const preview = previewRecordClear(
+    {
+      store: engine.store,
+      task,
+      launchInFlight: engine.hostHealth.launchInFlight(task.id),
+    },
+    input,
+  );
+  if (preview) {
+    if ("refusal" in preview) throw Error(preview.refusal);
+    return {
+      warnings: preview.warnings,
+      apply: () => preview.apply(input.reason),
+    };
+  }
+  // Modern host waits are derived from health and end on reconnect.
+  if (
+    input.kind === "host_wait" &&
+    input.id === task.hostId &&
+    engine.inFlightHostWait(task)
+  )
+    throw Error(
+      `The host wait on ${input.id} is read from the host's health, not stored on the task; it clears when the host reconnects, and there is no record to clear`,
+    );
+  return missing(input.kind, input.id);
+}
+
+/** Build a local plan from durable records. Only apply may write. */
+export function previewRecordClear(
+  {
+    store,
+    task,
+    launchInFlight,
+  }: Pick<OwnerVerbFacts, "store" | "task" | "launchInFlight">,
+  { id, kind, caller }: RecordClearTarget & Pick<ClearInput, "caller">,
+): ClearPlan | { refusal: string } | null {
   const r = task.resolution;
   const stop = r.stop;
   const patch = (
     before: unknown,
     fields: Partial<Task>,
     warnings: Warning[] = [],
-  ): Plan => ({ warnings, apply: () => ({ before, patch: fields }) });
+  ): ClearPlan => ({ warnings, apply: () => ({ before, patch: fields }) });
   const clearStop = { stop: null };
   const clearStopPatch = {
     resolution: { ...r, ...clearStop },
     reason: TASK_PROGRESSING_REASON,
   };
   const ownerWarning = (owner: string | null): Warning[] =>
-    owner && owner !== input.caller
+    owner && owner !== caller
       ? [{ id: "hold_owner", text: `This hold belongs to ${owner}.` }]
       : [];
   switch (kind) {
@@ -728,7 +777,13 @@ function clearPlan(
       if (stop?.since === id) return patch(stop, clearStopPatch);
       break;
     case "wait":
-      if (task.prerequisiteWait?.id === id && !task.prerequisiteWait.releasedAt)
+      if (
+        task.prerequisiteWait?.id === id &&
+        (!task.prerequisiteWait.releasedAt ||
+          (prerequisiteWaitBlocksPhase(task) &&
+            !r.mergeIntent &&
+            !r.mergedCommit))
+      )
         return patch(task.prerequisiteWait, { prerequisiteWait: null });
       if (stop?.since === id && isWaitingTaskStop(stop.reason))
         return patch(stop, clearStopPatch);
@@ -757,12 +812,6 @@ function clearPlan(
             ? { reason: TASK_PROGRESSING_REASON }
             : {}),
         });
-      // Spec 069 §3: a host wait is worked out from the host's health when read;
-      // no record is stored to clear, and it ends when the host reconnects.
-      if (id === task.hostId && engine.inFlightHostWait(task))
-        throw Error(
-          `The host wait on ${id} is read from the host's health, not stored on the task; it clears when the host reconnects, and there is no record to clear`,
-        );
       break;
     case "owner_stop":
       if (
@@ -797,11 +846,11 @@ function clearPlan(
       if (!escalation) break;
       return {
         warnings: [],
-        apply() {
+        apply(reason) {
           store.event(
             task.id,
             "planner_escalation_resolved",
-            `${id}: ${input.reason}`,
+            `${id}: ${reason}`,
           );
           closeEscalationFollowups(store, task.id, id);
           return {
@@ -815,7 +864,7 @@ function clearPlan(
       };
     }
     case "effect":
-      return clearEffect(engine, task, id, input.reason);
+      return clearEffect(store, task, id);
     case "workspace_intent":
       // Spec 068 batch A: release an uncertain dispatch workspace creation
       // without a proof. The task returns to queued and ordinary dispatch
@@ -826,16 +875,16 @@ function clearPlan(
         const ownStop =
           !stop || stop.reason === "lifecycle" || workspaceLookupStop(stop);
         if (!ownStop)
-          throw Error(
-            `The task's ${stop.reason} stop is not the workspace lookup's and stays: ${stop.detail}. Settle that stop first (record.clear kind=stop id=${stop.since} clears it), then release the workspace intent`,
-          );
+          return {
+            refusal: `The task's ${stop.reason} stop is not the workspace lookup's and stays: ${stop.detail}. Settle that stop first (record.clear kind=stop id=${stop.since} clears it), then release the workspace intent`,
+          };
         const warnings: Warning[] = [
           {
             id: "workspace_may_exist",
             text: `The workspace for ${task.branch} may exist on the host; the next dispatch binds or recreates the same branch and worktree.`,
           },
         ];
-        if (engine.hostHealth.launchInFlight(task.id))
+        if (launchInFlight)
           warnings.push({
             id: "effect_may_land",
             text: "This task's dispatch is still in flight; its create may still complete.",
@@ -863,16 +912,14 @@ function clearPlan(
       }
       break;
   }
-  return missing(kind, id);
+  return null;
 }
 
 function clearEffect(
-  engine: Engine,
+  store: Store,
   task: Task,
   id: string,
-  reason: string,
-): Plan {
-  const store = engine.store;
+): ClearPlan | null {
   const warning: Warning = {
     id: "effect_may_land",
     text: "The original effect may still complete or repeat.",
@@ -881,9 +928,10 @@ function clearEffect(
   const key = effect?.identity ?? id;
   const kind = effect?.kind;
   if (kind === "hook" || kind === "merged_task_retention") {
-    const hook = store
-      .hookEvents(task.id)
-      .find((item) => item.id === key || item.eventId === key);
+    const hooks = store.hookEvents(task.id);
+    const hook =
+      hooks.find((item) => item.id === key) ??
+      hooks.find((item) => item.eventId === key);
     if (hook && !["result", "published", "superseded"].includes(hook.state))
       return {
         warnings: [warning],
@@ -904,7 +952,7 @@ function clearEffect(
   if (operation?.taskId === task.id && unfinished(operation)) {
     return {
       warnings: [warning],
-      apply() {
+      apply(reason) {
         settleOperation(store, operation, reason);
         return { before: operation };
       },
@@ -916,7 +964,7 @@ function clearEffect(
   if (notice && ["pending", "intent", "uncertain"].includes(notice.status)) {
     return {
       warnings: [warning],
-      apply() {
+      apply(reason) {
         store.putNotice({
           ...notice,
           status: "superseded",
@@ -939,7 +987,7 @@ function clearEffect(
             text: "The recorded tool process may still be writing.",
           },
         ],
-        apply() {
+        apply(reason) {
           store.event(
             task.id,
             "owned_tool_settled",
@@ -974,7 +1022,7 @@ function clearEffect(
         continue;
       return {
         warnings: [warning],
-        apply() {
+        apply(reason) {
           store.putRun({
             ...run,
             reviewDeliveries: run.reviewDeliveries?.map((item) =>
@@ -1058,5 +1106,5 @@ function clearEffect(
         },
       }),
     };
-  return missing("effect", id);
+  return null;
 }

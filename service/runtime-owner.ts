@@ -2395,11 +2395,47 @@ export class QueueRuntime {
       request.action === "turn.release" ||
       request.action === "merge.now" ||
       request.action === "closeout.now"
-    )
-      return resolveExplicitly(this.engine, request, (task) => {
+    ) {
+      const settlement =
+        request.action === "run.release" || request.action === "record.clear";
+      // These legacy clears remove the journal used to observe the original
+      // write. An immediate recheck could treat that write as a fresh one.
+      const observeOriginal =
+        request.action === "record.clear" &&
+        request.kind === "effect" &&
+        /^(?:publication\.|review_publication\.|merge-response\.merge-response$)/.test(
+          request.id,
+        );
+      const result = await resolveExplicitly(this.engine, request, (task) => {
         if (task.removedAt)
           return "The scheduler leaves this removed task alone.";
         const next = this.taskNext({ taskId: task.id });
+        if (settlement) {
+          const remaining =
+            next.explicitCommands?.flatMap(({ action, args }) =>
+              action === "record.clear"
+                ? [`record.clear kind=${args.kind} id=${args.id}`]
+                : action === "run.release"
+                  ? [`run.release run=${args.run}`]
+                  : [],
+            ) ?? [];
+          const stop = next.stop
+            ? `Current stop (${next.stop.reason}${next.stop.owner ? `, owner ${next.stop.owner}` : ""}). ${next.stop.detail}`
+            : "";
+          return [
+            stop,
+            remaining.length
+              ? `Remaining records and runs are ${remaining.join(", ")}.`
+              : "",
+            observeOriginal
+              ? "Check GitHub for the original write before retrying."
+              : next.paused
+                ? "The scheduler waits for Nucleus to resume."
+                : `The scheduler rechecks this ${task.phase} task.`,
+          ]
+            .filter(Boolean)
+            .join(" ");
+        }
         if (next.paused) return "The scheduler waits for Nucleus to resume.";
         if (next.stop)
           return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
@@ -2412,6 +2448,19 @@ export class QueueRuntime {
           return `The scheduler checks the ${next.activeRun.role} run for progress.`;
         return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
       });
+      if (
+        settlement &&
+        !observeOriginal &&
+        result.explicitResolution?.status === "applied"
+      ) {
+        void this.engine.cleanContext(() => this.engine.wakeTask(result.id));
+        if (result.phase === "queued")
+          void this.engine.cleanContext(() =>
+            this.engine.wakeRepository(result.repoPath),
+          );
+      }
+      return result;
+    }
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {

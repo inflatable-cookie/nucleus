@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -27,7 +28,19 @@ import {
   runSchema,
   submissionSchema,
   taskControlTaskSchema,
+  type Task,
 } from "../shared/contracts";
+import type { ResolutionWarningId } from "../shared/schema/task-control";
+import type { RecordClearTarget } from "../core/verbs/explicit-resolution";
+import { incidentSchema } from "../shared/incident";
+import { hookRecordSchema } from "../shared/hooks";
+import {
+  ownerStopRecordSchema,
+  resolutionSchema,
+} from "../shared/schema/resolution";
+import { taskStopRecord } from "../shared/task-stop";
+import { prerequisiteWaitBlocksPhase } from "../core/store/store-prerequisites";
+import { reviewPublicationKey } from "../core/review/review-publication";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
 import { executionParticipants } from "../core/machine/execution-participants";
@@ -236,7 +249,7 @@ async function fixture(
   const command = async (args: Record<string, unknown>) =>
     taskControlTaskSchema.parse(
       await callCatalogueMethod(runtime, "queue.task", {
-        reference: task.reference,
+        ...("taskId" in args ? {} : { reference: task.reference }),
         version: current().version,
         caller: OPERATOR_BOARD_CALLER,
         reason: "Settle the recorded occurrence",
@@ -3000,4 +3013,651 @@ test("068: run.release returns the checkout its settled round left detached to t
       (event) => event.kind === "task_checkout_reattached",
     ),
   );
+});
+
+test("next previews exact planner record settlements and reports what's left", async (t) => {
+  const stamp = "2026-11-23T10:00:00.000Z";
+  type Case = RecordClearTarget & {
+    warnings?: ResolutionWarningId[];
+    observeOriginal?: boolean;
+    settled: () => boolean;
+  };
+  type Fixture = Awaited<ReturnType<typeof fixture>>;
+  const hold = {
+    owner: "another-planner",
+    reason: "Pause dispatch",
+    at: stamp,
+    generation: 1,
+    until: null,
+  };
+  const patch = (f: Fixture, change: Partial<Task["resolution"]>) =>
+    f.store.update(f.current().id, {
+      resolution: { ...f.current().resolution, ...change },
+    });
+  const notice = (taskId: string, id: string) => ({
+    id,
+    taskId,
+    agentId: "owner",
+    text: "Delivery unknown",
+    status: "uncertain" as const,
+    error: "",
+    kind: "attention" as const,
+    recipientAgentId: "",
+    workspaceId: null,
+    sources: [],
+    originEntry: true,
+  });
+  const cases: Record<string, (f: Fixture) => Case> = {
+    "stored stop": (f) => {
+      patch(f, {
+        stop: taskStopRecord("lifecycle", "A local wait", null, stamp),
+      });
+      return {
+        kind: "stop",
+        id: stamp,
+        settled: () => f.current().resolution.stop === null,
+      };
+    },
+    "foreign hold": (f) => {
+      f.store.update(f.current().id, {
+        holds: { dispatch: hold, merge: hold },
+      });
+      return {
+        kind: "hold",
+        id: "dispatch",
+        warnings: ["hold_owner"],
+        settled: () =>
+          !f.current().holds?.dispatch && Boolean(f.current().holds?.merge),
+      };
+    },
+    "owner stop under a hold": (f) => {
+      f.store.update(f.current().id, { holds: { dispatch: hold } });
+      patch(f, {
+        ownerStop: ownerStopRecordSchema.parse({
+          operationId: "stop-operation",
+          taskVersion: f.current().version,
+          role: "worker",
+          reason: "Cancellation has not returned",
+          caller: hold.owner,
+          recordedAt: stamp,
+          targetRunIds: ["old-run"],
+          cancellations: [
+            {
+              runId: "old-run",
+              role: "worker",
+              agentId: "old-worker",
+              workspaceId: null,
+              turnId: "old-turn",
+              effectId: "stop-effect",
+              status: "uncertain",
+            },
+          ],
+        }),
+      });
+      return {
+        kind: "owner_stop",
+        id: "stop-operation",
+        warnings: ["hold_owner", "effect_may_land"],
+        settled: () =>
+          f.current().resolution.ownerStop === null &&
+          Boolean(f.current().holds?.dispatch),
+      };
+    },
+    "deferred verb": (f) => {
+      patch(f, {
+        deferredVerb: {
+          at: stamp,
+          input: { action: "move" },
+          why: "held",
+          target: null,
+        },
+      });
+      return {
+        kind: "deferred_verb",
+        id: stamp,
+        settled: () => f.current().resolution.deferredVerb === null,
+      };
+    },
+    "legacy host wait": (f) => {
+      patch(f, { hostWait: { hostId: host, since: stamp } });
+      return {
+        kind: "host_wait",
+        id: host,
+        settled: () => f.current().resolution.hostWait === null,
+      };
+    },
+    "escalated incident beneath a stop": (f) => {
+      patch(f, {
+        stop: taskStopRecord(
+          "operator_needed",
+          "Independent stop",
+          null,
+          stamp,
+        ),
+        incident: incidentSchema.parse({
+          id: "incident",
+          role: "worker",
+          createdAt: stamp,
+          updatedAt: stamp,
+          status: "escalated",
+        }),
+      });
+      return {
+        kind: "incident",
+        id: "incident",
+        settled: () =>
+          f.current().resolution.incident === null &&
+          f.current().resolution.stop?.since === stamp,
+      };
+    },
+    "open escalation": (f) => {
+      for (const id of ["old", "other"])
+        f.store.event(
+          f.current().id,
+          "planner_escalation",
+          `${id}: cause uncertain`,
+        );
+      return {
+        kind: "escalation",
+        id: "old",
+        settled: () => {
+          const occurrences = plannerEscalations(
+            f.store.eventsAll(f.current().id),
+          );
+          return (
+            occurrences.find((e) => e.id === "old")?.answered === true &&
+            occurrences.find((e) => e.id === "other")?.answered === false
+          );
+        },
+      };
+    },
+    "cancelled prerequisite": (f) => {
+      const dependency = f.store.insert(
+        submissionSchema.parse({
+          submissionId: "cancelled",
+          title: "Cancelled prerequisite",
+          repoPath: repo,
+          planningCommit: head,
+          handoffPath: "handoff.md",
+          originAgentId: "owner",
+        }),
+        host,
+        "Handoff",
+        head,
+      );
+      f.store.update(dependency.id, { phase: "cancelled" });
+      f.store.update(f.current().id, {
+        phase: "changes_requested",
+        runId: "worker",
+      });
+      const { prerequisiteWait } = f.store.setPrerequisiteWait(
+        f.current(),
+        [dependency.id],
+        "Needs prerequisite",
+      );
+      assert.ok(prerequisiteWait);
+      const next = f.runtime.taskNext({ taskId: f.current().id });
+      assert.equal(next.stop?.owner, "planner");
+      assert.match(next.stop?.detail ?? "", /cancelled.*record\.clear/);
+      return {
+        kind: "wait",
+        id: prerequisiteWait.id,
+        settled: () =>
+          f.current().prerequisiteWait === null &&
+          f.store.task(dependency.id).phase === "cancelled",
+      };
+    },
+    "released wait still blocks revision": (f) => {
+      const waitId = randomUUID();
+      f.store.update(f.current().id, {
+        phase: "changes_requested",
+        runId: "worker",
+        prerequisiteWait: {
+          id: waitId,
+          waitsFor: [randomUUID()],
+          releasedAt: stamp,
+          reason: "No author instruction",
+        },
+      });
+      assert.equal(prerequisiteWaitBlocksPhase(f.current()), true);
+      return {
+        kind: "wait",
+        id: waitId,
+        settled: () => !prerequisiteWaitBlocksPhase(f.current()),
+      };
+    },
+    "attention notice on a terminal task": (f) => {
+      f.store.update(f.current().id, { phase: "done" });
+      f.store.putNotice(notice(f.current().id, "late-notice"));
+      return {
+        kind: "effect",
+        id: "attention-notice.late-notice",
+        warnings: ["effect_may_land"],
+        settled: () =>
+          f.store.notices(f.current().id).find((n) => n.id === "late-notice")
+            ?.status === "superseded",
+      };
+    },
+    "unfinished operation": (f) => {
+      const task = f.current();
+      const { payload, key } = taskControlOperation({
+        action: "route",
+        role: "reviewer",
+        profileId: "next",
+        now: true,
+        reason: "Choose a reviewer route",
+        taskId: task.id,
+        version: task.version,
+      });
+      const accepted = f.store.acceptOperation({
+        key,
+        kind: "task_control",
+        taskId: task.id,
+        inputHash: operationInputHash(payload),
+        payload,
+      });
+      assert.ok("operation" in accepted);
+      const { id } = accepted.operation;
+      return {
+        kind: "effect",
+        id: `operation.${id}`,
+        warnings: ["effect_may_land"],
+        settled: () => f.store.operation(id)?.state === "failed",
+      };
+    },
+    "finished hook cleanup": (f) => {
+      f.store.update(f.current().id, { phase: "done" });
+      const hook = hookRecordSchema.parse({
+        id: "finished-hook-record",
+        taskId: f.current().id,
+        hookId: "policy",
+        event: "task.finished",
+        eventId: "e".repeat(48),
+        occurrence: 1,
+        mode: "read_only",
+        delivery: "advisory",
+        state: "failed",
+        manifest: {
+          path: ".paseo/queue.json",
+          commit: head,
+          digest: `sha256:${"a".repeat(64)}`,
+        },
+        program: {
+          kind: "repository",
+          executable: {
+            path: ".paseo/hooks/policy",
+            commit: head,
+            digest: `sha256:${"c".repeat(64)}`,
+          },
+          argv: [],
+        },
+        instruction: null,
+        baseBranch: "main",
+        baseCommit: head,
+        attempt: 1,
+        timeoutMs: 30000,
+        maxOutputBytes: 65536,
+        allowedPaths: [],
+        commitSubject: null,
+        eventDigest: "b".repeat(64),
+        eventPayload: null,
+        workspace: null,
+        processId: null,
+        result: null,
+        commit: null,
+        remote: null,
+        summary: "",
+        error: "",
+        createdAt: stamp,
+        updatedAt: stamp,
+        reconciledAt: null,
+      });
+      f.store.putHookEvent(hook);
+      return {
+        kind: "effect",
+        id: `hook.${hook.id}`,
+        warnings: ["effect_may_land"],
+        settled: () =>
+          f.store.hookEvents(f.current().id)[0]?.state === "superseded",
+      };
+    },
+    "owned tool": (f) => {
+      f.store.event(
+        f.current().id,
+        "owned_tool_hold",
+        JSON.stringify({
+          runId: "tool-run",
+          reason: "Tool still owns the checkout",
+        }),
+      );
+      return {
+        kind: "effect",
+        id: "owned_tool.tool-run",
+        warnings: ["owned_tool"],
+        settled: () =>
+          f.store
+            .eventsAll(f.current().id)
+            .some((event) => event.kind === "owned_tool_settled"),
+      };
+    },
+    "uncertain run delivery": (f) => {
+      f.store.putRun(f.run("uncertain-delivery", "reviewer", null));
+      return {
+        kind: "effect",
+        id: "run-delivery.uncertain-delivery",
+        warnings: ["effect_may_land"],
+        settled: () =>
+          f.store.run("uncertain-delivery")?.status === "stopped" &&
+          f.store.run("uncertain-delivery")?.released === false,
+      };
+    },
+    "uncertain review delivery": (f) => {
+      const reviewer = f.run("retained-review", "reviewer", "reviewer");
+      const delivery = (digit: string) => ({
+        authorizationId: `authorization-${digit}`,
+        operationId: `operation-${digit}`,
+        deliveryId: `ns-review-${digit.repeat(64)}`,
+        taskId: f.current().id,
+        runId: reviewer.id,
+        head,
+        checkpointOrdinal: 1,
+        taskVersion: f.current().version,
+        briefVersion: null,
+        briefDigest: null,
+        reason: "Continue reviewing",
+        instruction: "Resume at the checkpoint",
+        createdAt: stamp,
+        status: "uncertain",
+      });
+      const first = delivery("1");
+      f.store.putRun(
+        runSchema.parse({
+          ...reviewer,
+          reviewDeliveries: [first, delivery("2")],
+        }),
+      );
+      return {
+        kind: "effect",
+        id: `review-delivery.${first.deliveryId}`,
+        warnings: ["effect_may_land"],
+        settled: () =>
+          f.store
+            .run(reviewer.id)
+            ?.reviewDeliveries?.map((item) => item.status)
+            .join() === "refused,uncertain",
+      };
+    },
+    "stored publication journal": (f) => {
+      f.store.update(f.current().id, {
+        runId: "old-publication",
+        agentActive: false,
+      });
+      f.store.setMeta(reviewPublicationKey("old-publication"), {
+        state: "uncertain",
+      });
+      return {
+        kind: "effect",
+        id: "publication.old-publication",
+        warnings: ["effect_may_land"],
+        observeOriginal: true,
+        settled: () =>
+          f.store.getMeta(reviewPublicationKey("old-publication")) == null,
+      };
+    },
+    "held project validation": (f) => {
+      patch(f, {
+        projectValidation: resolutionSchema.shape.projectValidation.parse({
+          argv: ["check"],
+          digest: "validation-digest",
+          exitCode: null,
+          durationMs: 0,
+          outputTail: "",
+          base: head,
+          head,
+          state: "hold",
+        }),
+      });
+      return {
+        kind: "effect",
+        id: "project-validation.project-validation",
+        warnings: ["effect_may_land"],
+        settled: () =>
+          f.current().resolution.projectValidation?.state === "superseded",
+      };
+    },
+  };
+  for (const [name, seed] of Object.entries(cases)) {
+    await t.test(name, async (subtest) => {
+      const f = await fixture(subtest);
+      f.store.setProjectPlanner({
+        key: "example",
+        agentId: planner,
+        setBy: "operator",
+      });
+      const id = f.current().id;
+      const wake = subtest.mock.method(
+        f.runtime.engine,
+        "wakeTask",
+        async () => {},
+      );
+      const {
+        settled,
+        warnings = [],
+        observeOriginal = false,
+        ...target
+      } = seed(f);
+      f.store.putNotice(notice(id, "independent-notice"));
+      const before = f.current();
+      const read = () => f.runtime.taskNext({ taskId: id });
+      const find = () =>
+        read().explicitCommands?.find(
+          (offer) =>
+            offer.action === "record.clear" &&
+            offer.args.kind === target.kind &&
+            offer.args.id === target.id,
+        );
+      const offer = find();
+      assert.ok(offer);
+      assert.deepEqual(offer.args, {
+        action: "record.clear",
+        taskId: id,
+        version: before.version,
+        ...target,
+      });
+      assert.deepEqual(offer.warnings, warnings);
+      assert.equal(f.audit().length, 0);
+      assert.deepEqual(f.calls, []);
+      if (warnings.length) {
+        const probe = await f.command({ ...offer.args, caller: planner });
+        assert.equal(probe.explicitResolution?.status, "warnings");
+        assert.deepEqual(
+          probe.explicitResolution?.warnings.map((warning) => warning.id),
+          warnings,
+        );
+        assert.deepEqual(f.current(), before);
+        assert.equal(wake.mock.callCount(), 0);
+      }
+      const result = await f.command({
+        ...offer.args,
+        accept: warnings,
+        caller: planner,
+      });
+      assert.equal(result.explicitResolution?.status, "applied");
+      assert.equal(result.phase, before.phase);
+      assert.ok(settled());
+      assert.equal(find(), undefined);
+      assert.match(
+        result.explicitResolution.next,
+        /attention-notice\.independent-notice/,
+      );
+      assert.deepEqual(
+        wake.mock.calls.map(({ arguments: args }) => args),
+        observeOriginal ? [] : [[id]],
+      );
+      if (observeOriginal)
+        assert.match(
+          result.explicitResolution.next,
+          /Check GitHub for the original write/,
+        );
+      assert.equal(
+        (await f.command({ ...offer.args, accept: warnings, caller: planner }))
+          .explicitResolution?.status,
+        "stale",
+      );
+      await assert.rejects(
+        f.command({
+          ...offer.args,
+          version: f.current().version,
+          caller: planner,
+          accept: warnings,
+        }),
+        /No current/,
+      );
+      const independent = f.store
+        .notices(id)
+        .find((n) => n.id === "independent-notice");
+      assert.equal(independent?.status, "uncertain");
+      assert.equal(f.audit().length, 1);
+      assert.equal(JSON.parse(f.audit()[0]!.detail).source, "project_planner");
+      if (target.id === "late-notice") {
+        f.store.putNotice({
+          ...notice(id, "late-notice"),
+          error: "Late delivery observer",
+        });
+        assert.equal(
+          f.store.notices(id).find((n) => n.id === "late-notice")?.status,
+          "superseded",
+        );
+      }
+    });
+  }
+});
+
+test("next previews bound and terminal run releases without displacing a healthy run", async (t) => {
+  for (const terminal of [false, true]) {
+    await t.test(
+      terminal ? "terminal cleanup" : "bound coordinator",
+      async (subtest) => {
+        const f = await fixture(subtest);
+        const { store, current, run, runtime } = f;
+        store.setProjectPlanner({
+          key: "example",
+          agentId: planner,
+          setBy: "operator",
+        });
+        const stuck = run("bound-coordinator", "recovery", "coordinator");
+        const healthy = run("healthy-review", "reviewer", "reviewer");
+        store.putRun(stuck);
+        store.putRun(healthy);
+        const healthyBefore = store.run(healthy.id);
+        store.update(current().id, {
+          phase: terminal ? "cancelled" : "needs_attention",
+          resolution: {
+            ...current().resolution,
+            currentRunId: healthy.id,
+            recoveryActive: true,
+            recovery: {
+              id: "bound-episode",
+              key: "key",
+              generation: 1,
+              runId: stuck.id,
+              agentId: stuck.agentId,
+              status: "running",
+              summary: "A stale coordinator binding",
+              idleSince: null,
+              incidentId: null,
+            },
+          },
+        });
+        const read = () => runtime.taskNext({ taskId: current().id });
+        const releases = () =>
+          read().explicitCommands?.filter(
+            (item) => item.action === "run.release",
+          ) ?? [];
+        const offer = releases().find((item) => item.args.run === stuck.id);
+        assert.ok(offer);
+        if (!terminal) assert.deepEqual(releases(), [offer]);
+        else
+          assert.ok(
+            read().explicitCommands?.every(
+              (item) => item.action !== "run.start",
+            ),
+          );
+        assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
+        assert.deepEqual(f.calls, []);
+        const wake = subtest.mock.method(
+          runtime.engine,
+          "wakeTask",
+          async () => {},
+        );
+        const probe = await f.command({ ...offer.args, caller: planner });
+        assert.equal(probe.explicitResolution?.status, "warnings");
+        assert.deepEqual(
+          probe.explicitResolution?.warnings.map((w) => w.id),
+          offer.warnings,
+        );
+        assert.equal(wake.mock.callCount(), 0);
+        const apply = {
+          ...offer.args,
+          caller: planner,
+          accept: offer.warnings,
+        };
+        const result = await f.command(apply);
+        assert.equal(result.explicitResolution?.status, "applied");
+        assert.equal(store.run(stuck.id)?.released, true);
+        assert.notEqual(
+          releases().some((item) => item.args.run === stuck.id),
+          true,
+        );
+        assert.equal(
+          (await f.command(apply)).explicitResolution?.status,
+          "stale",
+        );
+        await f.command({ ...apply, version: current().version });
+        assert.equal(current().resolution.currentRunId, healthy.id);
+        assert.deepEqual(store.run(healthy.id), healthyBefore);
+        assert.deepEqual(f.calls, ["stop coordinator"]);
+      },
+    );
+  }
+});
+
+test("next names the operator's genuine decision and the planner's dependency correction", async (t) => {
+  const f = await fixture(t);
+  const task = f.current();
+  const prerequisite = f.store.insert(
+    submissionSchema.parse({
+      submissionId: "before-dispatch",
+      title: "Prerequisite",
+      repoPath: repo,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "owner",
+    }),
+    host,
+    "Handoff",
+    head,
+  );
+  f.store.update(prerequisite.id, { phase: "cancelled" });
+  f.store.update(task.id, { dependsOn: [prerequisite.id] });
+  const read = () => f.runtime.taskNext({ taskId: task.id });
+  assert.equal(read().stop?.owner, "planner");
+  assert.ok(
+    read().verbs.some(
+      (item) => item.action === "set_dependencies" && item.available,
+    ),
+  );
+  const decision = f.runtime.decisions.add({
+    askedBy: planner,
+    tasks: [task.id],
+    question: "May the task change scope?",
+  });
+  const next = read();
+  assert.equal(next.stop?.owner, "operator");
+  assert.match(
+    next.stop?.detail ?? "",
+    new RegExp(`decision ${decision.id} with decision\\.answer`),
+  );
+  assert.ok(!next.explicitCommands?.some((item) => item.args.kind === "stop"));
+  assert.equal(f.store.decision(decision.id).status, "open");
 });
