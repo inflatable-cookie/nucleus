@@ -45,6 +45,7 @@ import {
   type PassTimelinePageRead,
   type ProvenTerminalSnapshot,
 } from "./scheduling/pass-snapshot";
+import { PassDemand } from "./scheduling/pass-demand";
 import {
   readHostUidProcesses,
   type HostProcessListRead,
@@ -546,6 +547,22 @@ export class Resolution {
         agentId,
       ) ?? null
     );
+  }
+
+  /**
+   * Participants whose owned-tool proof read this pass's shared snapshot; they
+   * outlive the pass so the next host pass serves them first (Spec 068 §6).
+   */
+  private readonly passDemand = new PassDemand();
+
+  /** Ask the next host pass to observe `agentId` before its process snapshot and warm its tool page first. */
+  requestPassProof(hostId: string | null | undefined, agentId: string): void {
+    this.passDemand.request(this.passHostKey(hostId), agentId);
+  }
+
+  /** The participants demanded on `hostId` that a live task still has, oldest first; unrenewed demands expire. */
+  takePassProofs(hostId: string, live: ReadonlySet<string>): string[] {
+    return this.passDemand.take(this.passHostKey(hostId), live);
   }
 
   /** Mark one host's timeline warming budget spent for this pass. */

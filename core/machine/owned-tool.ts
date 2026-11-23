@@ -93,6 +93,9 @@ export class OwnedTools {
           { requireCoveredObservation: true },
         );
         onRead?.(read);
+        // This proof reads the pass's page: the next host pass warms it first,
+        // so a page the rotation skips is never missed two passes running.
+        this.resolution.requestPassProof?.(hostId, id);
         if (read.state === "unknown")
           throw new DeferredPassReadError(read.reason);
         return read.value;
@@ -165,6 +168,20 @@ export class OwnedTools {
    *   changed since that pre-process observation.
    */
   private processSnapshotPredatesEvidence(
+    read: PassProcessRead,
+    hostId: string | null | undefined,
+    agentId: string,
+    turn?: ObservedTurnState | null,
+    entries?: TimelineEntry[],
+  ): string | null {
+    // This proof reads the pass's process snapshot: ask the next host pass to
+    // observe the participant before its snapshot, so the freshness rule can
+    // hold there. The demand renews on every use and expires once unused.
+    if (read.fromPassSnapshot) this.resolution.requestPassProof?.(hostId, agentId);
+    return this.snapshotPredates(read, hostId, agentId, turn, entries);
+  }
+
+  private snapshotPredates(
     read: PassProcessRead,
     hostId: string | null | undefined,
     agentId: string,

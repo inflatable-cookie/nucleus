@@ -100,6 +100,7 @@ export type SweepContext = Pick<
     | "endPassSnapshot"
     | "hostPassWarmBudgetMs"
     | "markPassTimelineBudgetExhausted"
+    | "takePassProofs"
     | "observationTargets"
     | "observe"
     | "origins"
@@ -141,6 +142,7 @@ export class Sweep {
         [
           "hostPassWarmBudgetMs",
           "markPassTimelineBudgetExhausted",
+          "takePassProofs",
           "observationTargets",
           "primePassProcesses",
           "primePassTimeline",

@@ -231,6 +231,21 @@ pass. Every read inside a task quantum gets a deadline and returns "unknown" whe
 it misses (Spec 066 R1). This shares its approach with nucleus#1545 (async
 segregation) and Spec 067 batch 5 (host health).
 
+A pass snapshot clears an owned-tool hold only when the host pass observed the
+participant inactive before it captured the process table. A participant outside
+the pass inventory (the task-row worker, a released reviewer) had no such
+observation, and the warm cap could skip its tool page, so merges alternated
+between those two waits forever. A quantum that reads a participant's page or
+process snapshot now registers a demand, keyed by host and participant. The next
+host pass observes every demanded participant, and the rest of its task's
+participants, before its process snapshot, then warms their pages first, outside
+the warm cap but inside the pass budget. A demand that no quantum renews expires
+after one pass. The proof converges in two passes, and a snapshot taken before
+any inactivity proof still never clears a lease.
+
+Reusing a previous pass's snapshot was rejected: it would carry reads across
+passes, and that snapshot predates the participant's observation too.
+
 ## Safety
 
 These rules stay:
