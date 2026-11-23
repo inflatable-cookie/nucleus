@@ -41,17 +41,31 @@ export type PassProcessRead = HostProcessListRead & {
   fromPassSnapshot: boolean;
 };
 
-/** Proof that a cached timeline page was captured after the agent was terminal in its workspace. */
+/**
+ * Proof that a cached timeline page was captured after the agent was terminal
+ * in its workspace. For a non-archived (`closed`) resumable thread, `closedUpdatedAt`
+ * ties the page to that exact closure so a later resume + re-close cannot reuse it.
+ */
 export type ProvenTerminalSnapshot = {
   archived: boolean;
   workspaceId: string;
+  closedUpdatedAt?: string | null;
 };
 
-/** Timeline-page read annotated with snapshot provenance and terminal proof. */
+/** Participant observation identity covered by a warmed tool-timeline page. */
+export type CoveredObservationSnapshot = {
+  updatedAt?: string | null;
+  status?: string;
+  archived?: boolean;
+};
+
+/** Timeline-page read annotated with snapshot provenance, capture time and freshness proofs. */
 export type PassTimelinePageRead =
   BoundedReadResult<HostTimelinePage | null> & {
+    capturedAt?: number;
     fromPassSnapshot: boolean;
     provenTerminal?: ProvenTerminalSnapshot;
+    coveredObservation?: CoveredObservationSnapshot;
   };
 
 /**
@@ -119,16 +133,17 @@ type CachedTimelinePageEntry = {
 /**
  * One sweep pass's shared observation snapshot (Spec 068 §6, Spec 066 R1).
  *
- * Process-table and timeline reads collected during a host pass (or coalesced
- * on first demand within that pass) are shared across every task quantum in
- * that pass for the same host. The pass expires the snapshot when it finishes,
- * so a later pass or an out-of-pass quantum never reads stale data.
+ * Process-table and timeline reads collected during a host pass are shared
+ * across every task quantum in that pass for the same host. Once a host pass
+ * finishes (`sealHost`), task-lane timeline misses return explicit `unknown`
+ * rather than starting new timeline RPCs on exclusive task lanes. The pass
+ * expires the snapshot when it finishes so stale reads never cross passes.
  */
 export class PassSnapshot {
   private isActive = true;
   private readonly hostInventories = new Map<
     string,
-    ReadonlyMap<string, HostObservation>
+    Map<string, HostObservation>
   >();
   private readonly processReads = new Map<string, Promise<PassProcessRead>>();
   private readonly timelineReads = new Map<
@@ -140,6 +155,7 @@ export class PassSnapshot {
     CachedTimelinePageEntry[]
   >();
   private readonly timelineBudgetExhausted = new Map<string, string>();
+  private readonly sealedHosts = new Set<string>();
 
   /** True only while the owning sweep pass is still running. */
   get active(): boolean {
@@ -154,6 +170,17 @@ export class PassSnapshot {
     this.timelineReads.clear();
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
+    this.sealedHosts.clear();
+  }
+
+  /**
+   * Seal a host after its `HostPass` completes priming. Task quanta on a sealed
+   * host read only cached timeline snapshots and receive explicit `unknown` on
+   * cache misses instead of issuing new timeline RPCs in task lanes.
+   */
+  sealHost(hostId: string | null | undefined): void {
+    if (!this.isActive) return;
+    this.sealedHosts.add(hostKeyOf(hostId));
   }
 
   /**
@@ -167,7 +194,28 @@ export class PassSnapshot {
     inventory: ReadonlyMap<string, HostObservation> | null,
   ): void {
     if (!this.isActive || !inventory) return;
-    this.hostInventories.set(hostKeyOf(hostId), inventory);
+    const key = hostKeyOf(hostId);
+    const merged =
+      this.hostInventories.get(key) ?? new Map<string, HostObservation>();
+    for (const [id, obs] of inventory) merged.set(id, obs);
+    this.hostInventories.set(key, merged);
+  }
+
+  /**
+   * Record one exact pre-process observation (such as an archived or gone
+   * retained participant omitted from live inventory) before `processSnapshot`.
+   */
+  recordHostObservation(
+    hostId: string | null | undefined,
+    agentId: string,
+    observation: HostObservation,
+  ): void {
+    if (!this.isActive) return;
+    const key = hostKeyOf(hostId);
+    const map =
+      this.hostInventories.get(key) ?? new Map<string, HostObservation>();
+    map.set(agentId, observation);
+    this.hostInventories.set(key, map);
   }
 
   /** The pre-process observation for `agentId` on `hostId`, or null if none was captured. */
@@ -244,9 +292,8 @@ export class PassSnapshot {
 
   /**
    * Read or share one agent's bounded timeline snapshot for this pass.
-   * Transport/refusal errors are not cached as values: if the underlying read
-   * rejects before the deadline, the entry is evicted so a caller's own error
-   * classification sees it.
+   * On a sealed host, a cache miss returns explicit `unknown` without starting
+   * an inline RPC in the task lane.
    */
   timeline(
     hostId: string | null | undefined,
@@ -254,6 +301,7 @@ export class PassSnapshot {
     limit: number | undefined,
     read: () => Promise<HostTimelineEntry[] | null>,
     deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
+    options: { allowMissFetch?: boolean } = {},
   ): Promise<BoundedReadResult<HostTimelineEntry[] | null>> {
     const run = () => boundedRead("agent timeline", read, deadlineMs);
     if (!this.isActive) return run();
@@ -264,6 +312,13 @@ export class PassSnapshot {
     const exhausted = this.timelineBudgetExhausted.get(hostKey);
     if (exhausted)
       return Promise.resolve({ state: "unknown", reason: exhausted });
+    if (this.sealedHosts.has(hostKey) && !options.allowMissFetch) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline was not captured in this host pass; waiting for the next pass",
+      });
+    }
     const promise = run().catch((error) => {
       if (this.timelineReads.get(key) === promise)
         this.timelineReads.delete(key);
@@ -274,11 +329,34 @@ export class PassSnapshot {
   }
 
   /**
+   * Store an already-read (e.g. expanded) timeline page into this pass snapshot
+   * for `agentId` on `hostId`.
+   */
+  storeTimelinePage(
+    hostId: string | null | undefined,
+    agentId: string,
+    limit: number | undefined,
+    settled: PassTimelinePageRead,
+  ): void {
+    if (!this.isActive) return;
+    const hostKey = hostKeyOf(hostId);
+    const agentKey = `${hostKey}\0${agentId}`;
+    const entries = this.timelinePageReads.get(agentKey) ?? [];
+    entries.push({
+      limit,
+      promise: Promise.resolve(settled),
+      settled,
+    });
+    this.timelinePageReads.set(agentKey, entries);
+  }
+
+  /**
    * Read or share one agent's bounded timeline page snapshot for this pass.
    * A cached page for the same `(host, agentId)` covers a request when either
    * its limit matches, its settled page is complete (`hasOlder === false`, no
    * gap/reset/staleCursor), or its limit is at least as wide as requested.
-   * Transport/refusal errors are evicted on rejection rather than cached.
+   * On a sealed host, a cache miss returns explicit `unknown` instead of
+   * starting a timeline RPC in the task lane.
    */
   timelinePage(
     hostId: string | null | undefined,
@@ -286,24 +364,32 @@ export class PassSnapshot {
     limit: number | undefined,
     read: () => Promise<HostTimelinePage | null>,
     deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-    options: { provenTerminal?: ProvenTerminalSnapshot } = {},
+    options: {
+      provenTerminal?: ProvenTerminalSnapshot;
+      coveredObservation?: CoveredObservationSnapshot;
+      allowMissFetch?: boolean;
+    } = {},
   ): Promise<PassTimelinePageRead> {
-    const run = (fromPassSnapshot: boolean): Promise<PassTimelinePageRead> =>
-      boundedRead("agent timeline page", read, deadlineMs).then((result) => ({
-        ...result,
-        fromPassSnapshot,
-        ...(options.provenTerminal
-          ? { provenTerminal: options.provenTerminal }
-          : {}),
-      }));
+    const run = (fromPassSnapshot: boolean): Promise<PassTimelinePageRead> => {
+      const capturedAt = Date.now();
+      return boundedRead("agent timeline page", read, deadlineMs).then(
+        (result) => ({
+          ...result,
+          capturedAt,
+          fromPassSnapshot,
+          ...(options.provenTerminal
+            ? { provenTerminal: options.provenTerminal }
+            : {}),
+          ...(options.coveredObservation
+            ? { coveredObservation: options.coveredObservation }
+            : {}),
+        }),
+      );
+    };
     if (!this.isActive) return run(false);
     const hostKey = hostKeyOf(hostId);
     const agentKey = `${hostKey}\0${agentId}`;
     const entries = this.timelinePageReads.get(agentKey) ?? [];
-    // Reuse a matching or wider/complete cached page for the same agent in this pass.
-    // When the caller supplies a terminal proof (e.g. HostPass warming after proving
-    // closure), only reuse an entry that already carries a terminal proof so we never
-    // mask a post-closure page behind an earlier pre-closure one.
     const match = entries.find((entry) => {
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
@@ -332,6 +418,14 @@ export class PassSnapshot {
         reason: exhausted,
         fromPassSnapshot: true,
       });
+    if (this.sealedHosts.has(hostKey) && !options.allowMissFetch) {
+      return Promise.resolve({
+        state: "unknown",
+        reason:
+          "agent timeline page was not captured in this host pass; waiting for the next pass",
+        fromPassSnapshot: true,
+      });
+    }
     const entry: CachedTimelinePageEntry = {
       limit,
       promise: Promise.resolve({

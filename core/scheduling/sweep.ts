@@ -107,6 +107,9 @@ export type SweepContext = Pick<
     | "primePassTimelinePage"
     | "raiseOperatorQuestions"
     | "recordPassHostInventory"
+    | "recordPassHostObservation"
+    | "sealPassHost"
+    | "storePassTimelinePage"
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
@@ -142,6 +145,9 @@ export class Sweep {
           "primePassTimeline",
           "primePassTimelinePage",
           "recordPassHostInventory",
+          "recordPassHostObservation",
+          "sealPassHost",
+          "storePassTimelinePage",
         ],
       ),
     ));

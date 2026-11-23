@@ -20,11 +20,14 @@ import {
 import {
   SHELL_NOTICE_MS,
   TOOL_TIMELINE_LIMIT,
+  TOOL_TIMELINE_READ_BUDGET,
   noTurnLive,
 } from "../recovery/stall";
+import { executionParticipants } from "../machine/execution-participants";
 import {
   HOST_PASS_WARM_BUDGET_MS,
   HOST_PASS_WARM_CANDIDATE_CAP,
+  QUANTUM_READ_DEADLINE_MS,
   boundedRead,
 } from "./pass-snapshot";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
@@ -110,6 +113,9 @@ export type HostPassContext = Pick<
         | "primePassTimeline"
         | "primePassTimelinePage"
         | "recordPassHostInventory"
+        | "recordPassHostObservation"
+        | "sealPassHost"
+        | "storePassTimelinePage"
       >
     >;
 };
@@ -356,6 +362,8 @@ export class HostPass {
    */
   private readonly terminalOperationCursor = new Map<string, number>();
   private readonly lastRunProcessSweep = new Map<string, number>();
+  /** Per-host rotating offset so timeline warming stays fair across passes. */
+  private readonly warmOffset = new Map<string, number>();
 
   async run(host: string): Promise<HostPassResult> {
     // The pass's own task list is what the host's thread observation is scoped to:
@@ -434,47 +442,6 @@ export class HostPass {
       );
       for (const wait of waits ?? []) this.recordParentArchiveWait(host, wait);
     });
-    if (this.adapter.hostProcessListing) {
-      const historical =
-        Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
-      if (historical) this.lastRunProcessSweep.set(host, Date.now());
-      // Process cleanup has its own durable intent and host lane. A slow
-      // local probe says nothing about this host's transport or task visits.
-      // Its initial scan shares this host pass's bounded process snapshot so
-      // cleanup and task quanta read the process table at most once per pass.
-      let usedPassSnapshot = false;
-      const primePass = this.context.resolution.primePassProcesses;
-      void this.context
-        .scheduleLane(
-          `cleanup:${host}`,
-          LANE_PRIORITY_AUDIT,
-          () =>
-            sweepSettledRunProcesses(this.store, host, {
-              pendingOnly: !historical,
-              readProcesses: async () => {
-                if (!usedPassSnapshot && primePass) {
-                  usedPassSnapshot = true;
-                  const read = await primePass(host);
-                  return read.state === "listed" ? read.processes : null;
-                }
-                return this.adapter.hostProcessListing!();
-              },
-            }),
-          {
-            coalesce: historical
-              ? "historical-run-process-cleanup"
-              : "settled-run-process-cleanup",
-          },
-        )
-        .catch((error) => {
-          if (this.context.stopped) return;
-          const detail = error instanceof Error ? error.message : String(error);
-          this.store.setMeta(
-            "hostPassError",
-            `${host}/settledRunProcesses: ${detail}`.slice(0, 2000),
-          );
-        });
-    }
     // Read one rotating page, including unresolved rows, so an unprovable
     // submission cannot starve later work. Settled occurrences stay history.
     await this.step(host, "settleTerminalOperations", () => {
@@ -771,31 +738,17 @@ export class HostPass {
     // the process table so owned-tool proofs can verify whether a participant
     // was already idle before the process snapshot was taken (Spec 068 §6).
     this.context.resolution.recordPassHostInventory?.(host, observed);
-    // Spec 068 §6 / Spec 066 R1: one shared process-table snapshot per host
-    // pass, bounded by its deadline. Task quanta on this host read the pass's
-    // snapshot instead of each spawning `ps`/`lsof`/env reads in the task lane.
-    if (
-      this.adapter.hostProcessListing &&
-      this.context.resolution.primePassProcesses &&
-      tasks.some(
-        (task) =>
-          !task.removedAt && !["done", "cancelled"].includes(task.phase),
-      )
-    ) {
-      await yieldToLoop();
-      if (!this.context.stopped) {
-        await this.step(host, "processSnapshot", () =>
-          this.context.resolution.primePassProcesses!(host),
-        );
-      }
-    }
-    // Spec 068 §6: pre-read timelines needed by this host's tasks into the
-    // pass's shared snapshot under a single bounded per-host budget and
-    // candidate cap so a slow host never stalls healthy hosts' task visits.
+    // Live inventories (such as Paseo's) omit archived agents. Collect exact
+    // terminal observations for retained participants missing from `observed`
+    // BEFORE `processSnapshot` runs so archived/gone participants can clear
+    // their scratch-process proof against the scan that follows.
+    const hostTasks = presented();
+    const activeTasks = hostTasks.filter(
+      (task) => !task.removedAt && !["done", "cancelled"].includes(task.phase),
+    );
     const warmBudgetMs =
       this.context.resolution.hostPassWarmBudgetMs ?? HOST_PASS_WARM_BUDGET_MS;
     const warmDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
-    let warmed = 0;
     const budgetRemaining = (): number => {
       const remaining = warmDeadlineAt - Date.now();
       if (remaining <= 0) {
@@ -807,6 +760,161 @@ export class HostPass {
       }
       return remaining;
     };
+    const perCandidateCap = (count: number): number => {
+      const remaining = budgetRemaining();
+      if (remaining <= 0) return 0;
+      return count > 1
+        ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
+        : remaining;
+    };
+    const rotate = <T>(items: T[], offset: number): T[] => {
+      if (items.length <= 1) return items;
+      const start = offset % items.length;
+      return start === 0
+        ? items
+        : [...items.slice(start), ...items.slice(0, start)];
+    };
+    const passOffset = this.warmOffset.get(host) ?? 0;
+    this.warmOffset.set(host, passOffset + 1);
+
+    if (
+      this.adapter.originAgent &&
+      this.context.resolution.recordPassHostObservation &&
+      activeTasks.length
+    ) {
+      const observedMap = observed as ReadonlyMap<
+        string,
+        AgentObservation
+      > | null;
+      const missingRetained: Array<{ agentId: string; workspaceId: string }> =
+        [];
+      const seenRetained = new Set<string>();
+      for (const task of activeTasks) {
+        for (const [agentId, workspaceId] of executionParticipants(
+          task,
+          this.store.runs(task.id),
+        )) {
+          if (observedMap?.has(agentId) || seenRetained.has(agentId)) continue;
+          seenRetained.add(agentId);
+          missingRetained.push({ agentId, workspaceId });
+        }
+      }
+      if (missingRetained.length) {
+        const orderedRetained = rotate(missingRetained, passOffset).slice(
+          0,
+          HOST_PASS_WARM_CANDIDATE_CAP,
+        );
+        await this.step(host, "retainedTerminalObservations", async () => {
+          for (const candidate of orderedRetained) {
+            await yieldToLoop();
+            if (this.context.stopped) return;
+            const cap = perCandidateCap(orderedRetained.length);
+            if (cap <= 0) return;
+            const originRead = await boundedRead(
+              "origin agent observation",
+              () => this.context.host.originAgent(candidate.agentId),
+              Math.min(cap, QUANTUM_READ_DEADLINE_MS),
+            ).catch(() => ({
+              state: "unknown" as const,
+              reason: "origin read failed",
+            }));
+            if (originRead.state === "unknown") continue;
+            const origin = originRead.value;
+            if (!origin || origin.deleted === true) {
+              this.context.resolution.recordPassHostObservation!(
+                host,
+                candidate.agentId,
+                {
+                  id: candidate.agentId,
+                  workspaceId: origin?.workspaceId ?? candidate.workspaceId,
+                  status: "gone",
+                  active: false,
+                  activeTurnId: null,
+                  permissions: false,
+                  error: "",
+                  archived: true,
+                },
+              );
+            } else if (origin.archived === true) {
+              this.context.resolution.recordPassHostObservation!(
+                host,
+                candidate.agentId,
+                {
+                  id: candidate.agentId,
+                  workspaceId: origin.workspaceId,
+                  status: "closed",
+                  active: false,
+                  activeTurnId: null,
+                  permissions: false,
+                  error: "",
+                  archived: true,
+                },
+              );
+            }
+          }
+        });
+      }
+    }
+    // Spec 068 §6 / Spec 066 R1: one shared process-table snapshot per host
+    // pass, bounded by its deadline. Captured AFTER inventory and retained
+    // terminal observations so every pre-process observation predates the scan.
+    if (
+      this.adapter.hostProcessListing &&
+      this.context.resolution.primePassProcesses &&
+      activeTasks.length
+    ) {
+      await yieldToLoop();
+      if (!this.context.stopped) {
+        await this.step(host, "processSnapshot", () =>
+          this.context.resolution.primePassProcesses!(host),
+        );
+      }
+    }
+    // Schedule settled-run process cleanup AFTER `processSnapshot` so cleanup's
+    // initial scan shares the already-primed pass snapshot instead of racing
+    // ahead of inventory and terminal observation collection.
+    if (this.adapter.hostProcessListing) {
+      const historical =
+        Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
+      if (historical) this.lastRunProcessSweep.set(host, Date.now());
+      let usedPassSnapshot = false;
+      const primePass = this.context.resolution.primePassProcesses;
+      void this.context
+        .scheduleLane(
+          `cleanup:${host}`,
+          LANE_PRIORITY_AUDIT,
+          () =>
+            sweepSettledRunProcesses(this.store, host, {
+              pendingOnly: !historical,
+              readProcesses: async () => {
+                if (!usedPassSnapshot && primePass) {
+                  usedPassSnapshot = true;
+                  const read = await primePass(host);
+                  return read.state === "listed" ? read.processes : null;
+                }
+                return this.adapter.hostProcessListing!();
+              },
+            }),
+          {
+            coalesce: historical
+              ? "historical-run-process-cleanup"
+              : "settled-run-process-cleanup",
+          },
+        )
+        .catch((error) => {
+          if (this.context.stopped) return;
+          const detail = error instanceof Error ? error.message : String(error);
+          this.store.setMeta(
+            "hostPassError",
+            `${host}/settledRunProcesses: ${detail}`.slice(0, 2000),
+          );
+        });
+    }
+    // Spec 068 §6: pre-read timelines needed by this host's tasks into the
+    // pass's shared snapshot under a single bounded per-host budget, rotating
+    // candidate order across passes so a persistently slow candidate cannot
+    // starve healthy candidates on the same host.
+    let warmed = 0;
     const canWarmMore = (): boolean =>
       !this.context.stopped &&
       warmed < HOST_PASS_WARM_CANDIDATE_CAP &&
@@ -819,14 +927,15 @@ export class HostPass {
       canWarmMore()
     ) {
       // Delivery timelines are primed ONLY after proving the agent is already
-      // terminal (archived or closed) in its recorded workspace, preserving
-      // the pre-closure ordering required before settling a negative delivery.
+      // terminal (archived or closed) in its recorded workspace, carrying
+      // `closedUpdatedAt` for resumable closed threads so an earlier closure
+      // can never settle a later resumed turn's delivery as absent.
       const deliveryCandidates: Array<{
         agentId: string;
         workspaceId: string;
       }> = [];
       const seenDelivery = new Set<string>();
-      for (const task of tasks) {
+      for (const task of hostTasks) {
         if (task.removedAt) continue;
         for (const run of this.store.runs(task.id)) {
           if (
@@ -846,16 +955,17 @@ export class HostPass {
         }
       }
       if (deliveryCandidates.length) {
+        const orderedDelivery = rotate(deliveryCandidates, passOffset);
         await this.step(host, "timelineDeliverySnapshot", async () => {
-          for (const candidate of deliveryCandidates) {
+          for (const candidate of orderedDelivery) {
             await yieldToLoop();
             if (!canWarmMore()) return;
-            const originRemaining = budgetRemaining();
-            if (originRemaining <= 0) return;
+            const originCap = perCandidateCap(orderedDelivery.length);
+            if (originCap <= 0) return;
             const originRead = await boundedRead(
               "origin agent observation",
               () => this.context.host.originAgent(candidate.agentId),
-              originRemaining,
+              originCap,
             ).catch(() => ({
               state: "unknown" as const,
               reason: "origin read failed",
@@ -868,13 +978,14 @@ export class HostPass {
             if (!origin || origin.workspaceId !== candidate.workspaceId)
               continue;
             const archived = origin.archived === true;
+            let closedUpdatedAt: string | null | undefined;
             if (!archived) {
-              const obsRemaining = budgetRemaining();
-              if (obsRemaining <= 0) return;
+              const obsCap = perCandidateCap(orderedDelivery.length);
+              if (obsCap <= 0) return;
               const obsRead = await boundedRead(
                 "participant observation",
                 () => this.context.host.observe(candidate.agentId),
-                obsRemaining,
+                obsCap,
               ).catch(() => ({
                 state: "unknown" as const,
                 reason: "observe failed",
@@ -893,17 +1004,19 @@ export class HostPass {
                 state.permissions
               )
                 continue;
+              closedUpdatedAt = state.updatedAt ?? null;
             }
-            const pageRemaining = budgetRemaining();
-            if (pageRemaining <= 0) return;
+            const pageCap = perCandidateCap(orderedDelivery.length);
+            if (pageCap <= 0) return;
             warmed++;
             const pageRead = await this.context.resolution
               .primePassTimelinePage!(candidate.agentId, 100, host, {
               provenTerminal: {
                 archived,
                 workspaceId: candidate.workspaceId,
+                ...(archived ? {} : { closedUpdatedAt }),
               },
-              deadlineMs: pageRemaining,
+              deadlineMs: pageCap,
             }).catch(() => null);
             if (pageRead?.state === "unknown" && budgetRemaining() <= 0) return;
           }
@@ -916,16 +1029,42 @@ export class HostPass {
       canWarmMore()
     ) {
       // Pre-warm tool timeline pages at TOOL_TIMELINE_LIMIT (200) for
-      // historical proof executor runs and settled non-terminal participants
-      // so owned-tool and proof-settlement reads hit the host pass snapshot.
-      const toolCandidates = new Set<string>();
+      // historical proof executor runs and non-terminal participants,
+      // expanding partial pages inside HostPass so task quanta never start
+      // timeline RPCs on their exclusive lanes.
+      const toolCandidates: Array<{
+        agentId: string;
+        coveredObservation?: {
+          updatedAt?: string | null;
+          status?: string;
+          archived?: boolean;
+        };
+      }> = [];
+      const seenTool = new Set<string>();
+      const addTool = (
+        agentId: string,
+        state?: AgentObservation | null,
+      ): void => {
+        if (seenTool.has(agentId)) return;
+        seenTool.add(agentId);
+        toolCandidates.push({
+          agentId,
+          ...(state
+            ? {
+                coveredObservation: {
+                  updatedAt: state.updatedAt ?? null,
+                  status: state.status,
+                  archived: state.archived,
+                },
+              }
+            : {}),
+        });
+      };
       const observedMap = observed as ReadonlyMap<
         string,
         AgentObservation
       > | null;
-      for (const task of tasks) {
-        if (task.removedAt || ["done", "cancelled"].includes(task.phase))
-          continue;
+      for (const task of activeTasks) {
         const runs = this.store.runs(task.id);
         for (const run of runs) {
           if (
@@ -936,38 +1075,98 @@ export class HostPass {
               (item) => item.runId === run.id && item.status === "running",
             )
           )
-            toolCandidates.add(run.agentId);
+            addTool(run.agentId, observedMap?.get(run.agentId));
         }
         if (observedMap) {
           if (task.agentId) {
             const state = observedMap.get(task.agentId);
-            if (state && noTurnLive(state)) toolCandidates.add(task.agentId);
+            if (state && noTurnLive(state)) addTool(task.agentId, state);
           }
           for (const run of runs) {
             if (!run.released && run.agentId) {
               const state = observedMap.get(run.agentId);
-              if (state && noTurnLive(state)) toolCandidates.add(run.agentId);
+              if (state && noTurnLive(state)) addTool(run.agentId, state);
             }
           }
+        } else if (
+          ["merging", "syncing", "awaiting_review", "needs_attention"].includes(
+            task.phase,
+          ) ||
+          Boolean(task.completion)
+        ) {
+          for (const [agentId] of executionParticipants(task, runs))
+            addTool(agentId, null);
         }
       }
-      if (toolCandidates.size) {
+      if (toolCandidates.length) {
+        const orderedTools = rotate(toolCandidates, passOffset);
         await this.step(host, "timelineToolSnapshot", async () => {
-          for (const agentId of toolCandidates) {
+          for (const candidate of orderedTools) {
             await yieldToLoop();
             if (!canWarmMore()) return;
-            const remaining = budgetRemaining();
-            if (remaining <= 0) return;
+            const cap = perCandidateCap(orderedTools.length);
+            if (cap <= 0) return;
             warmed++;
-            const read = await this.context.resolution.primePassTimelinePage!(
-              agentId,
+            const firstRead = await this.context.resolution
+              .primePassTimelinePage!(
+              candidate.agentId,
               TOOL_TIMELINE_LIMIT,
               host,
               {
-                deadlineMs: remaining,
+                coveredObservation: candidate.coveredObservation,
+                deadlineMs: cap,
               },
             ).catch(() => null);
-            if (read?.state === "unknown" && budgetRemaining() <= 0) return;
+            if (firstRead?.state === "unknown") {
+              if (budgetRemaining() <= 0) return;
+              continue;
+            }
+            // If the 200-entry page is partial (`hasOlder === true` and not
+            // bounded), expand it here in HostPass within the remaining budget
+            // so the task lane does not issue widening RPCs.
+            let page = firstRead?.state === "ok" ? firstRead.value : null;
+            let limit = TOOL_TIMELINE_LIMIT;
+            for (
+              let step = 1;
+              step < TOOL_TIMELINE_READ_BUDGET &&
+              page &&
+              page.hasOlder === true &&
+              page.projection !== "bounded" &&
+              !page.gap &&
+              !page.staleCursor &&
+              !page.reset &&
+              budgetRemaining() > 0 &&
+              !this.context.stopped;
+              step++
+            ) {
+              limit = Math.max(limit, page.entries.length) * 2;
+              const expandCap = perCandidateCap(orderedTools.length);
+              if (expandCap <= 0) break;
+              const expanded = await boundedRead(
+                "agent timeline page",
+                () =>
+                  this.context.host.agentTimelinePage(candidate.agentId, limit),
+                expandCap,
+              ).catch(() => ({
+                state: "unknown" as const,
+                reason: "expand failed",
+              }));
+              if (expanded.state === "unknown") break;
+              this.context.resolution.storePassTimelinePage?.(
+                host,
+                candidate.agentId,
+                limit,
+                {
+                  ...expanded,
+                  capturedAt: Date.now(),
+                  fromPassSnapshot: true,
+                  ...(candidate.coveredObservation
+                    ? { coveredObservation: candidate.coveredObservation }
+                    : {}),
+                },
+              );
+              page = expanded.value;
+            }
           }
         });
       }
@@ -995,24 +1194,29 @@ export class HostPass {
           shellAgents.push(agentId);
       }
       if (shellAgents.length) {
+        const orderedShells = rotate(shellAgents, passOffset);
         await this.step(host, "timelineShellSnapshot", async () => {
-          for (const agentId of shellAgents) {
+          for (const agentId of orderedShells) {
             await yieldToLoop();
             if (!canWarmMore()) return;
-            const remaining = budgetRemaining();
-            if (remaining <= 0) return;
+            const cap = perCandidateCap(orderedShells.length);
+            if (cap <= 0) return;
             warmed++;
             const read = await this.context.resolution.primePassTimeline!(
               agentId,
               host,
               undefined,
-              remaining,
+              cap,
             ).catch(() => null);
             if (read?.state === "unknown" && budgetRemaining() <= 0) return;
           }
         });
       }
     }
+    // Seal this host's timeline snapshot now that HostPass finished warming so
+    // task-lane cache misses return explicit unknown instead of starting new
+    // timeline RPCs inside exclusive task lanes (Spec 068 §6).
+    this.context.resolution.sealPassHost?.(host);
     const retired = await this.context.observeRetiredWorkers(
       retiredPlan,
       observed,

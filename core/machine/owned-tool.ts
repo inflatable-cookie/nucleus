@@ -1,4 +1,7 @@
-import { observeRunningTool, recordActivityTool } from "../telemetry/task-activity-observation";
+import {
+  observeRunningTool,
+  recordActivityTool,
+} from "../telemetry/task-activity-observation";
 import type { Run, Task } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
 import { agentSettled } from "./agent-settled";
@@ -36,6 +39,7 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
   type PassProcessRead,
+  type PassTimelinePageRead,
 } from "../scheduling/pass-snapshot";
 
 /** The owned-tool events this proof reads and writes. */
@@ -67,7 +71,10 @@ export class OwnedTools {
       this.resolution.passProcessReadTimeoutMs ?? PASS_PROCESS_READ_DEADLINE_MS
     );
   }
-  private timelineHost(hostId?: string | null) {
+  private timelineHost(
+    hostId?: string | null,
+    onRead?: (read: PassTimelinePageRead) => void,
+  ) {
     if (!this.resolution.readPassTimelinePage) return this.resolution.host;
     return {
       agentTimelinePage: async (id: string, limit?: number) => {
@@ -77,6 +84,7 @@ export class OwnedTools {
           hostId,
           this.readDeadlineMs,
         );
+        onRead?.(read);
         if (read.state === "unknown") throw new Error(read.reason);
         return read.value;
       },
@@ -184,7 +192,10 @@ export class OwnedTools {
    * reading half of the owned-tool proof: it never settles anything and never
    * reads absent, unreadable or inconclusive evidence as a live job.
    */
-  async ownedJobWait(agentId: string, binding?: { taskId: string; runId: string }): Promise<string | null> {
+  async ownedJobWait(
+    agentId: string,
+    binding?: { taskId: string; runId: string },
+  ): Promise<string | null> {
     if (!this.adapter.agentTimelinePage) return null;
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     try {
@@ -198,8 +209,18 @@ export class OwnedTools {
     }
     if ("issue" in read) return null;
     if (binding)
-      recordActivityTool(this.store, binding.taskId, binding.runId, agentId, null,
-        observeRunningTool(read.entries, null, entry => !turnBoundTool(entry)));
+      recordActivityTool(
+        this.store,
+        binding.taskId,
+        binding.runId,
+        agentId,
+        null,
+        observeRunningTool(
+          read.entries,
+          null,
+          (entry) => !turnBoundTool(entry),
+        ),
+      );
     const running = runningOwnedTool(read.entries);
     return running
       ? `${running.name} (${running.kind}) has been running since ${running.since}`
@@ -290,9 +311,12 @@ export class OwnedTools {
         ? "owned tool evidence is unavailable: this adapter offers no tool timeline"
         : null;
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
+    let lastPageRead: PassTimelinePageRead | null = null;
     try {
       read = await readToolTimeline(
-        this.timelineHost(boundRun?.hostId ?? task?.hostId),
+        this.timelineHost(boundRun?.hostId ?? task?.hostId, (pageRead) => {
+          lastPageRead = pageRead;
+        }),
         agentId,
         this.readDeadlineMs,
       );
@@ -344,6 +368,25 @@ export class OwnedTools {
       return hold;
     }
     if (!liveToolIssueFact(read.entries)) {
+      // Spec 068 §6: a warmed tool page with no live call may only clear a
+      // hold when a fresh observation proves no newer turn occurred since the
+      // page was captured (matching `coveredObservation.updatedAt`).
+      const pageMeta = lastPageRead as PassTimelinePageRead | null;
+      if (pageMeta?.fromPassSnapshot) {
+        const freshTurn = await observedTurnState(
+          this.resolution.host,
+          agentId,
+          this.readDeadlineMs,
+        );
+        const coveredUpdatedAt = pageMeta.coveredObservation?.updatedAt ?? null;
+        if (
+          !noTurnLive(freshTurn) ||
+          !coveredUpdatedAt ||
+          freshTurn?.updatedAt !== coveredUpdatedAt
+        ) {
+          return "owned tool evidence is inconclusive: cached tool timeline predates the participant's latest observation; waiting for the next host pass";
+        }
+      }
       if (options.taskId)
         for (const runId of runIds)
           this.recordOwnedToolSettlement(
@@ -438,6 +481,7 @@ export class OwnedTools {
                 options.workspaceId!,
                 runIds,
                 runtime,
+                processes,
               ),
             this.readDeadlineMs,
           );
@@ -613,18 +657,6 @@ export class OwnedTools {
       runs: taskRuns,
       bbThreads,
     });
-    const workspaceRead = await boundedRead(
-      "workspace process probe",
-      () =>
-        this.adapter.noLiveWorkspaceProcesses!(workspaceId, runIds, runtime),
-      this.readDeadlineMs,
-    );
-    if (workspaceRead.state === "unknown") return workspaceRead.reason;
-    const workspaceIssue = workspaceRead.value;
-    if (workspaceIssue !== null)
-      return (
-        workspaceIssue || "the workspace process probe returned no verdict"
-      );
     const processHostId = boundRun?.hostId ?? task.hostId;
     const processRead = await this.readProcesses(processHostId);
     const processes =
@@ -636,6 +668,23 @@ export class OwnedTools {
       agentId,
     );
     if (predates) return predates;
+    const workspaceRead = await boundedRead(
+      "workspace process probe",
+      () =>
+        this.adapter.noLiveWorkspaceProcesses!(
+          workspaceId,
+          runIds,
+          runtime,
+          processes,
+        ),
+      this.readDeadlineMs,
+    );
+    if (workspaceRead.state === "unknown") return workspaceRead.reason;
+    const workspaceIssue = workspaceRead.value;
+    if (workspaceIssue !== null)
+      return (
+        workspaceIssue || "the workspace process probe returned no verdict"
+      );
     for (const directory of new Set(temporaryDirectories)) {
       const issue = workspaceToolProcessIssue(
         processes,

@@ -476,7 +476,12 @@ export function releaseRunFromRecordedCompletion(
 ): void {
   const latest = store.run(run.id);
   if (!latest || latest.released || !latest.completion) return;
-  store.putRun({ ...latest, status: "finished", released: true, active: false });
+  store.putRun({
+    ...latest,
+    status: "finished",
+    released: true,
+    active: false,
+  });
   store.event(
     taskId,
     "run_released_from_recorded_completion",
@@ -535,7 +540,11 @@ export class RunRelease {
           !run.mergeRetirement &&
           (task.resolution.recovery?.runId !== run.id ||
             (!run.completionReceivedAt &&
-              !this.store.receiptHash(run.completion.eventId, task.id, run.id))) &&
+              !this.store.receiptHash(
+                run.completion.eventId,
+                task.id,
+                run.id,
+              ))) &&
           run.completion.status === "escalate",
       );
     if (!runs.length) return;
@@ -1089,16 +1098,23 @@ export class RunRelease {
    * writes nothing.
    */
   async supersededIdleFence(run: Run): Promise<string | null> {
+    const deadlineMs =
+      this.engine.resolution?.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
     let state: Awaited<ReturnType<Adapter["observe"]>> | null = null;
     try {
-      state = await this.engine.host.observe(run.agentId!);
+      const read = await boundedRead(
+        "superseded run observation",
+        () => this.engine.host.observe(run.agentId!),
+        deadlineMs,
+      );
+      state = read.state === "ok" ? read.value : null;
     } catch {
       state = null;
     }
     if (!state) {
-      // A missing or throwing live observation is unobservable. A thread its
-      // host reports archived or gone is the stopped proof the ordinary archive
-      // path accepts, so that one case no longer holds it.
+      // A missing, timed-out, or throwing live observation is unobservable. A
+      // thread its host reports archived or gone is the stopped proof the
+      // ordinary archive path accepts, so that one case no longer holds it.
       if (!(await this.threadArchivedOrGone(run.agentId!)))
         return "its agent is unobservable";
     } else {
@@ -1131,10 +1147,19 @@ export class RunRelease {
     return null;
   }
 
-  /** The host's own answer that this thread is archived or gone; an unreadable one proves nothing. */
+  /** The host's own answer that this thread is archived or gone; an unreadable or timed-out one proves nothing. */
   async threadArchivedOrGone(agentId: string): Promise<boolean> {
     try {
-      const origin = await this.engine.host.originAgent(agentId);
+      const deadlineMs =
+        this.engine.resolution?.quantumReadTimeoutMs ??
+        QUANTUM_READ_DEADLINE_MS;
+      const read = await boundedRead(
+        "origin agent observation",
+        () => this.engine.host.originAgent(agentId),
+        deadlineMs,
+      );
+      if (read.state === "unknown") return false;
+      const origin = read.value;
       return !origin || origin.archived === true;
     } catch {
       return false;

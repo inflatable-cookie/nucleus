@@ -827,6 +827,484 @@ test("a slow host warming backlog hits its per-host budget and stops without sta
   );
 });
 
+test("a warmed empty tool page never clears a lease after a newer turn changes updatedAt", async (t) => {
+  const t0 = new Date(Date.now() - 60_000).toISOString();
+  const t1 = new Date(Date.now() - 5_000).toISOString();
+  let currentUpdatedAt = t0;
+
+  const f = engineFixture(t, {
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-warmed",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: currentUpdatedAt,
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+  });
+  const { task, runId, agentId } = seedFinishedWorkerTask(f.store, "warmed");
+
+  // Warm the empty tool page while the participant is idle at `t0`.
+  const snap = f.engine.resolution.beginPassSnapshot();
+  await f.engine.resolution.primePassTimelinePage(agentId, 200, HOST, {
+    coveredObservation: { updatedAt: t0, status: "idle", archived: false },
+  });
+
+  // Between warming and the merge lease check, the participant runs another
+  // turn and returns to idle at `t1`.
+  currentUpdatedAt = t1;
+
+  const hold = await f.engine.resolution.ownedToolHold(agentId, {
+    taskId: task.id,
+    runId,
+    runIds: [runId],
+    workspaceId: task.workspaceId!,
+    requireCompleteEvidence: true,
+  });
+  f.engine.resolution.endPassSnapshot(snap);
+
+  assert.ok(
+    hold && /predates the participant's latest observation/i.test(hold),
+    `warmed empty page must not clear after a newer turn, got: ${hold}`,
+  );
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "owned_tool_settled").length,
+    0,
+  );
+});
+
+test("an archived participant omitted from live inventory clears scratch process proof via host pass terminal lookup", async (t) => {
+  const agentId = "agent-archived";
+  const workspaceId = "ws-archived";
+  const runId = "33333333-3333-4333-8333-333333333333";
+  let processListings = 0;
+
+  const f = engineFixture(t, {
+    // Paseo live inventory deliberately omits archived agents.
+    observationInventory: async () => new Map<string, AgentObservation>(),
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId,
+      archived: true,
+      deleted: false,
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId,
+      status: "closed",
+      archived: true,
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    }),
+    hostProcessListing: async () => {
+      processListings++;
+      return [];
+    },
+    noLiveWorkspaceProcesses: async (
+      _ws: string,
+      _runs: readonly string[],
+      _runtime?: unknown,
+      prelisted?: HostProcessFact[] | null,
+    ) => {
+      assert.ok(
+        Array.isArray(prelisted),
+        "noLiveWorkspaceProcesses receives the shared pass process list without rescanning",
+      );
+      return null;
+    },
+  });
+
+  const inserted = f.store.insert(
+    submission({ submissionId: "sub-archived", title: "Archived participant" }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "needs_attention",
+    workspaceId,
+    directory: "/tmp/synthetic-archived",
+    temporaryDirectory: "/tmp/synthetic-archived-scratch",
+    agentId,
+    runId,
+    reason: "Waiting on retired custody proof",
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: runId,
+      taskId: task.id,
+      role: "revision",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId,
+      workspaceId,
+      hostId: HOST,
+      temporaryDirectory: "/tmp/synthetic-archived-scratch",
+      profile: null,
+      status: "stopped",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: new Date().toISOString(),
+      active: false,
+      idleSince: new Date().toISOString(),
+      completion: null,
+      released: false,
+    }),
+  );
+
+  let holdDuringPass: string | null = "not-checked";
+  const originalQuantum = f.engine.taskQuantum.bind(f.engine);
+  f.engine.taskQuantum = async (taskId: string) => {
+    if (taskId === task.id) {
+      holdDuringPass = await f.engine.resolution.ownedToolHold(agentId, {
+        requireCompleteEvidence: true,
+        allowRetired: true,
+        runId,
+        runIds: [runId],
+        taskId: task.id,
+        workspaceId,
+      });
+    }
+    return originalQuantum(taskId);
+  };
+
+  await f.engine.auditPass(true);
+  assert.equal(
+    holdDuringPass,
+    null,
+    "archived participant omitted from live inventory clears via pre-process exact terminal lookup",
+  );
+  assert.equal(
+    processListings,
+    1,
+    "process table was scanned once for the pass and reused by noLiveWorkspaceProcesses",
+  );
+});
+
+test("a closed resumable thread that resumes and closes again cannot reuse an earlier closure page for negative delivery", async (t) => {
+  const runId = "44444444-4444-4444-8444-444444444444";
+  const agentId = "agent-resumable-closed";
+  const workspaceId = "ws-resumable-closed";
+  const firstClosureAt = new Date(Date.now() - 30_000).toISOString();
+  const secondClosureAt = new Date(Date.now() - 1_000).toISOString();
+
+  const f = engineFixture(t, {
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId,
+      archived: false,
+      deleted: false,
+    }),
+    observe: async (id: string) => ({
+      id,
+      workspaceId,
+      status: "closed",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: secondClosureAt,
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+  });
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-resumable-closed",
+      title: "Resumable closed delivery",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "needs_attention",
+    workspaceId,
+    directory: "/tmp/synthetic-resumable-closed",
+    agentId,
+    runId,
+    reason: "Uncertain released run",
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: runId,
+      taskId: task.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId,
+      workspaceId,
+      hostId: HOST,
+      profile: null,
+      status: "uncertain",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: new Date().toISOString(),
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: true,
+    }),
+  );
+
+  // Pass snapshot holds a page proven terminal at `firstClosureAt`, while the
+  // current closed observation reports `secondClosureAt` after a resumed turn.
+  const snap = f.engine.resolution.beginPassSnapshot();
+  await f.engine.resolution.primePassTimelinePage(agentId, 100, HOST, {
+    provenTerminal: {
+      archived: false,
+      workspaceId,
+      closedUpdatedAt: firstClosureAt,
+    },
+  });
+
+  await assert.rejects(
+    f.engine.resolution.reconcileUncertainRunDelivery(task.id, runId),
+    /predates agent closure/,
+    "negative settlement must refuse a page from an earlier closure of a resumable thread",
+  );
+  f.engine.resolution.endPassSnapshot(snap);
+
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "run_delivery_not_delivered").length,
+    0,
+  );
+});
+
+test("supersededIdleFence bounds hung observe, and sealed host passes treat task-lane timeline misses as unknown", async (t) => {
+  let observeTimer: ReturnType<typeof setTimeout> | undefined;
+  t.after(() => {
+    if (observeTimer) clearTimeout(observeTimer);
+  });
+
+  let timelineCalls = 0;
+  const f = engineFixture(t, {
+    observe: () =>
+      new Promise<AgentObservation>((resolve) => {
+        observeTimer = setTimeout(
+          () =>
+            resolve({
+              id: "agent-superseded",
+              workspaceId: "ws-superseded",
+              status: "idle",
+              active: false,
+              activeTurnId: null,
+              permissions: false,
+              error: "",
+            }),
+          60_000,
+        );
+        observeTimer.unref?.();
+      }),
+    originAgent: () =>
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 60_000);
+        timer.unref?.();
+        t.after(() => clearTimeout(timer));
+      }),
+    agentTimelinePage: async () => {
+      timelineCalls++;
+      return toolTimelinePage([]);
+    },
+  });
+  f.engine.resolution.quantumReadTimeoutMs = 30;
+
+  const { task } = seedFinishedWorkerTask(f.store, "superseded");
+  const run = runSchema.parse({
+    id: "run-superseded",
+    taskId: task.id,
+    role: "reviewer",
+    generation: 1,
+    head: HEAD,
+    base: HEAD,
+    agentId: "agent-superseded",
+    workspaceId: "ws-superseded",
+    hostId: HOST,
+    profile: null,
+    status: "stopped",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: new Date().toISOString(),
+    active: false,
+    idleSince: new Date().toISOString(),
+    completion: null,
+    released: false,
+  });
+  f.store.putRun(run);
+
+  // `supersededIdleFence` must return an explicit unobservable hold inside the deadline.
+  const fence = await (
+    f.engine as unknown as {
+      runRelease: {
+        supersededIdleFence(r: typeof run): Promise<string | null>;
+      };
+    }
+  ).runRelease.supersededIdleFence(run);
+  assert.equal(fence, "its agent is unobservable");
+
+  // Once a host is sealed after HostPass warming, task-lane timeline misses
+  // return explicit unknown without issuing any timeline RPC.
+  const snap = f.engine.resolution.beginPassSnapshot();
+  f.engine.resolution.sealPassHost(HOST);
+  const miss = await f.engine.resolution.readPassTimelinePage(
+    "agent-unprimed",
+    200,
+    HOST,
+  );
+  f.engine.resolution.endPassSnapshot(snap);
+  assert.equal(miss.state, "unknown");
+  assert.equal(
+    timelineCalls,
+    0,
+    "sealed host pass must not start a new timeline RPC on a task-lane miss",
+  );
+});
+
+test("persistently slow first warming candidate does not starve a healthy candidate across passes", async (t) => {
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  const runSlow = "55555555-5555-4555-8555-555555555555";
+  const runFast = "66666666-6666-4666-8666-666666666666";
+  const f = engineFixture(t, {
+    originAgent: async (id: string) => {
+      if (id === "agent-slow-first") {
+        return new Promise((resolve) => {
+          const timer = setTimeout(
+            () =>
+              resolve({
+                id,
+                workspaceId: "ws-slow-first",
+                archived: true,
+                deleted: false,
+              }),
+            60_000,
+          );
+          timer.unref?.();
+          timers.push(timer);
+        });
+      }
+      return {
+        id,
+        workspaceId: "ws-fast-second",
+        archived: true,
+        deleted: false,
+      };
+    },
+    agentTimelinePage: async (id: string) => {
+      if (id === "agent-fast-second") {
+        return toolTimelinePage([
+          {
+            timestamp: new Date().toISOString(),
+            item: {
+              type: "user_message",
+              messageId: `ns-run-${runFast}`,
+              text: "prompt",
+            },
+          },
+        ]);
+      }
+      return toolTimelinePage([]);
+    },
+  });
+  f.engine.resolution.hostPassWarmBudgetMs = 60;
+  f.engine.resolution.quantumReadTimeoutMs = 40;
+
+  const slowInserted = f.store.insert(
+    submission({ submissionId: "sub-slow-first", title: "Slow first" }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const slowTask = f.store.update(slowInserted.id, {
+    phase: "needs_attention",
+    workspaceId: "ws-slow-first",
+    directory: "/tmp/synthetic-slow-first",
+    agentId: "agent-slow-first",
+    runId: runSlow,
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: runSlow,
+      taskId: slowTask.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-slow-first",
+      workspaceId: "ws-slow-first",
+      hostId: HOST,
+      profile: null,
+      status: "uncertain",
+      createdAt: new Date(Date.now() - 10_000).toISOString(),
+      lastObservedAt: new Date().toISOString(),
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: true,
+    }),
+  );
+
+  const fastInserted = f.store.insert(
+    submission({ submissionId: "sub-fast-second", title: "Fast second" }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const fastTask = f.store.update(fastInserted.id, {
+    phase: "needs_attention",
+    workspaceId: "ws-fast-second",
+    directory: "/tmp/synthetic-fast-second",
+    agentId: "agent-fast-second",
+    runId: runFast,
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: runFast,
+      taskId: fastTask.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-fast-second",
+      workspaceId: "ws-fast-second",
+      hostId: HOST,
+      profile: null,
+      status: "uncertain",
+      createdAt: new Date(Date.now() - 10_000).toISOString(),
+      lastObservedAt: new Date().toISOString(),
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: true,
+    }),
+  );
+
+  // Run two passes: rotating candidate order guarantees the healthy second
+  // task settles even while the first candidate hangs every pass.
+  await f.engine.auditPass(true);
+  await f.engine.auditPass(true);
+
+  assert.equal(
+    f.store
+      .events(fastTask.id)
+      .filter((event) => event.kind === "run_delivery_reconciled").length,
+    1,
+    "healthy candidate settles across passes without being starved by a persistently slow first candidate",
+  );
+});
+
 test("boundedRead propagates errors thrown before deadline and swallows late rejections after timeout", async () => {
   await assert.rejects(
     boundedRead(
@@ -849,14 +1327,42 @@ test("boundedRead propagates errors thrown before deadline and swallows late rej
   await new Promise((resolve) => setTimeout(resolve, 20));
 });
 
-test("timing: sweep task quantum with a 60 s process double completes inside its bound with unknown hold", async (t) => {
+test("timing: sweep merge quantum with a 60 s process double records unknown hold inside its bound", async (t) => {
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
   t.after(() => {
     if (slowTimer) clearTimeout(slowTimer);
   });
 
   let processListingAttempts = 0;
+  let mergeAttempts = 0;
+  const updatedAt = new Date(Date.now() - 60_000).toISOString();
   const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-timing-merge",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-timing-merge",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt,
+    }),
     hostProcessListing: () => {
       processListingAttempts++;
       return new Promise<HostProcessFact[]>((resolve) => {
@@ -865,37 +1371,68 @@ test("timing: sweep task quantum with a 60 s process double completes inside its
       });
     },
     agentTimelinePage: async () =>
-      toolTimelinePage([runningShellEntry("call-timing")]),
+      toolTimelinePage([runningShellEntry("call-timing-merge")]),
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during merge verification");
+    },
+    merge: async () => {
+      mergeAttempts++;
+      return "merged-commit";
+    },
   });
+  f.store.setMeta("paused", false);
   f.engine.resolution.passProcessReadTimeoutMs = 250;
   f.engine.resolution.quantumReadTimeoutMs = 250;
+  f.engine.resolution.hostPassWarmBudgetMs = 500;
 
-  const { task, runId, agentId } = seedFinishedWorkerTask(
-    f.store,
-    "timing-slow",
+  // Seed a real `merging` task whose production quantum enters
+  // `resolution.advance` -> `mergeGates.advanceMerging` -> `executionLease` -> `ownedToolHold`.
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-timing-merge",
+      title: "Timing merge task",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
   );
-
-  let quantumCompleted = false;
-  let observedHold: string | null = null;
-  const originalQuantum = f.engine.taskQuantum.bind(f.engine);
-  f.engine.taskQuantum = async (taskId: string) => {
-    await originalQuantum(taskId);
-    if (taskId === task.id) {
-      observedHold = await f.engine.resolution.ownedToolHold(agentId, {
-        taskId: task.id,
-        runId,
-        runIds: [runId],
-        workspaceId: task.workspaceId!,
-        requireCompleteEvidence: true,
-      });
-      quantumCompleted = true;
-    }
-  };
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-timing-merge",
+    directory: "/tmp/synthetic-timing-merge",
+    agentId: "agent-timing-merge",
+    runId: "run-timing-merge",
+    prUrl: "https://github.com/example/repo/pull/99",
+    prHead: HEAD,
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: updatedAt },
+      mergeIntent: true,
+      mergeHead: HEAD,
+      mergeRequestedAt: updatedAt,
+      review: {
+        eventId: "ev-timing-merge",
+        taskId: inserted.id,
+        runId: "rev-timing-merge",
+        reviewId: 901,
+        status: "ready_to_merge",
+        head: HEAD,
+        summary: "ok",
+      },
+    },
+  });
 
   const started = performance.now();
   const pass = await f.engine.auditPass(true);
   const elapsedMs = performance.now() - started;
 
+  const after = f.store.task(task.id);
   assert.equal(pass.fault, null, "audit pass completed without engine fault");
   assert.equal(pass.covered, true, "audit pass covered the target task");
   assert.equal(
@@ -904,13 +1441,15 @@ test("timing: sweep task quantum with a 60 s process double completes inside its
     "the slow 60 s process listing double was attempted once for the pass",
   );
   assert.equal(
-    quantumCompleted,
-    true,
-    "the target task quantum ran and completed",
+    mergeAttempts,
+    0,
+    "production merge path did not merge past an unknown process proof",
   );
-  assert.ok(
-    observedHold && /unreadable|unknown|timed out/i.test(observedHold),
-    `target quantum must hold with unknown/unreadable process fact, got: ${observedHold}`,
+  assert.equal(after.phase, "merging");
+  assert.match(
+    after.reason,
+    /Merge waits for participant agent-timing-merge:.*unreadable|unknown|timed out/i,
+    `production quantum must record the unknown owned-tool merge wait itself, got: ${after.reason}`,
   );
   assert.equal(
     f.store

@@ -40,7 +40,11 @@ const execFileAsync = promisify(execFile);
 
 /** What a host process-table read proved: the table, or why there is none. */
 export type HostProcessListRead =
-  | { state: "listed"; processes: HostProcessFact[]; enumeratedPids?: ReadonlySet<number> }
+  | {
+      state: "listed";
+      processes: HostProcessFact[];
+      enumeratedPids?: ReadonlySet<number>;
+    }
   | { state: "unknown"; reason: string };
 
 /**
@@ -196,7 +200,13 @@ async function linuxProcesses(
     );
     for (const fact of facts) if (fact) listed.push(fact);
   }
-  return { state: "listed", processes: listed, enumeratedPids: new Set(entries.filter(entry => /^\d+$/.test(entry)).map(Number)) };
+  return {
+    state: "listed",
+    processes: listed,
+    enumeratedPids: new Set(
+      entries.filter((entry) => /^\d+$/.test(entry)).map(Number),
+    ),
+  };
 }
 
 async function darwinProcesses(

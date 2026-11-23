@@ -63,6 +63,7 @@ export class WorkspaceContinuation {
     workspaceId: string,
     runIds: readonly string[],
     runtime: ParticipantRuntime = {},
+    prelistedProcesses?: HostProcessFact[] | null,
   ): Promise<string | null> {
     if (!runIds.length)
       return "the participant has no recorded run identity for process proof";
@@ -72,7 +73,10 @@ export class WorkspaceContinuation {
     const directory = workspace.current()?.workspaceDirectory;
     if (!directory)
       return "the participant workspace directory is unreadable for process proof";
-    const processes = await this.host.hostProcessListing();
+    const processes =
+      prelistedProcesses !== undefined
+        ? prelistedProcesses
+        : await this.host.hostProcessListing();
     if (!processes) return "the host process listing is unreadable";
     return workspaceToolProcessIssue(processes, directory, runIds, runtime);
   }

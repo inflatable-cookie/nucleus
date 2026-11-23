@@ -31,6 +31,7 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
   type BoundedReadResult,
+  type CoveredObservationSnapshot,
   type PassProcessRead,
   type PassTimelinePageRead,
   type ProvenTerminalSnapshot,
@@ -476,6 +477,39 @@ export class Resolution {
     );
   }
 
+  /** Record one exact pre-process observation (e.g. an archived participant) before `processSnapshot`. */
+  recordPassHostObservation(
+    hostId: string,
+    agentId: string,
+    observation: HostObservation,
+  ): void {
+    this.currentPassSnapshot()?.recordHostObservation(
+      this.passHostKey(hostId),
+      agentId,
+      observation,
+    );
+  }
+
+  /** Seal one host after its `HostPass` finishes warming so task-lane timeline misses return unknown. */
+  sealPassHost(hostId: string): void {
+    this.currentPassSnapshot()?.sealHost(this.passHostKey(hostId));
+  }
+
+  /** Store an already-expanded timeline page into the active pass snapshot. */
+  storePassTimelinePage(
+    hostId: string,
+    agentId: string,
+    limit: number | undefined,
+    pageRead: PassTimelinePageRead,
+  ): void {
+    this.currentPassSnapshot()?.storeTimelinePage(
+      this.passHostKey(hostId),
+      agentId,
+      limit,
+      pageRead,
+    );
+  }
+
   /** The pre-process observation captured for `agentId` on `hostId` in this pass, if any. */
   passObservedBeforeProcesses(
     hostId: string | null | undefined,
@@ -606,7 +640,10 @@ export class Resolution {
     limit?: number,
     hostId?: string | null,
     deadlineMs: number = this.quantumReadTimeoutMs,
-    options: { provenTerminal?: ProvenTerminalSnapshot } = {},
+    options: {
+      provenTerminal?: ProvenTerminalSnapshot;
+      coveredObservation?: CoveredObservationSnapshot;
+    } = {},
   ): Promise<PassTimelinePageRead> {
     const key = this.passHostKey(hostId);
     const read = () => this.host.agentTimelinePage(agentId, limit);
@@ -620,12 +657,17 @@ export class Resolution {
         deadlineMs,
         options,
       );
+    const capturedAt = Date.now();
     return boundedRead("agent timeline page", read, deadlineMs).then(
       (result) => ({
         ...result,
+        capturedAt,
         fromPassSnapshot: false,
         ...(options.provenTerminal
           ? { provenTerminal: options.provenTerminal }
+          : {}),
+        ...(options.coveredObservation
+          ? { coveredObservation: options.coveredObservation }
           : {}),
       }),
     );
@@ -638,6 +680,7 @@ export class Resolution {
     hostId: string,
     options: {
       provenTerminal?: ProvenTerminalSnapshot;
+      coveredObservation?: CoveredObservationSnapshot;
       deadlineMs?: number;
     } = {},
   ): Promise<PassTimelinePageRead> {
@@ -2678,7 +2721,10 @@ export class Resolution {
     return this.ownedTools.ownedToolHold(agentId, options);
   }
   /** Positive evidence that the agent's own detached job is still running, or null. */
-  ownedJobWait(agentId: string, binding?: { taskId: string; runId: string }): Promise<string | null> {
+  ownedJobWait(
+    agentId: string,
+    binding?: { taskId: string; runId: string },
+  ): Promise<string | null> {
     return this.ownedTools.ownedJobWait(agentId, binding);
   }
 

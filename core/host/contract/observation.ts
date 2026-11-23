@@ -89,5 +89,6 @@ export interface HostObservation {
     workspaceId: string,
     runIds: readonly string[],
     runtime?: ParticipantRuntime,
+    processes?: HostProcessFact[] | null,
   ): Promise<string | null>;
 }

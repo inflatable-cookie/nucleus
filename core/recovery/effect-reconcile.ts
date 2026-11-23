@@ -186,6 +186,7 @@ export class EffectReconcile {
         `Reviewer dispatch ${run.id} remains uncertain; agent workspace identity changed`,
       );
     const archived = identity.archived;
+    let closedUpdatedAt: string | null = null;
     if (!archived) {
       const observedRead = await boundedRead(
         "participant observation",
@@ -208,6 +209,7 @@ export class EffectReconcile {
         throw new Error(
           `Reviewer dispatch ${run.id} remains uncertain; its agent is not proven closed or archived`,
         );
+      closedUpdatedAt = observed.updatedAt ?? null;
     }
     const pageRead: PassTimelinePageRead = this.resolution.readPassTimelinePage
       ? await this.resolution.readPassTimelinePage(
@@ -253,14 +255,27 @@ export class EffectReconcile {
         `Reviewer dispatch ${run.id} remains uncertain; timeline contains ${messageId}`,
       );
     // Spec 068 §6: never settle a negative delivery from a pass-snapshot page
-    // that was not captured after proving this agent terminal in its workspace.
-    if (
-      pageRead.fromPassSnapshot &&
-      pageRead.provenTerminal?.workspaceId !== run.workspaceId
-    )
-      throw new Error(
-        `Reviewer dispatch ${run.id} remains uncertain; cached timeline predates agent closure`,
-      );
+    // that was not captured after proving this exact closure/archive. For a
+    // resumable `closed` thread, require matching `closedUpdatedAt` so an
+    // earlier closure cannot settle a later resumed turn as absent.
+    if (pageRead.fromPassSnapshot) {
+      const terminal = pageRead.provenTerminal;
+      const matchesTerminal = archived
+        ? Boolean(
+            terminal?.archived === true &&
+              terminal.workspaceId === run.workspaceId,
+          )
+        : Boolean(
+            terminal &&
+              terminal.workspaceId === run.workspaceId &&
+              closedUpdatedAt &&
+              terminal.closedUpdatedAt === closedUpdatedAt,
+          );
+      if (!matchesTerminal)
+        throw new Error(
+          `Reviewer dispatch ${run.id} remains uncertain; cached timeline predates agent closure`,
+        );
+    }
     const latestTask = this.store.task(taskId),
       latest = this.store.run(runId);
     if (
@@ -321,6 +336,7 @@ export class EffectReconcile {
         `Run ${runId} remains uncertain; its agent workspace identity changed`,
       );
     const archived = origin.archived;
+    let closedUpdatedAt: string | null = null;
     if (!archived) {
       const observedRead = await boundedRead(
         "participant observation",
@@ -343,6 +359,7 @@ export class EffectReconcile {
         throw new Error(
           `Run ${runId} remains uncertain; its agent is not proven closed or archived`,
         );
+      closedUpdatedAt = observed.updatedAt ?? null;
     }
     const pageRead: PassTimelinePageRead = this.resolution.readPassTimelinePage
       ? await this.resolution.readPassTimelinePage(
@@ -382,16 +399,26 @@ export class EffectReconcile {
     );
     // Spec 068 §6: positive presence is monotonic, but a negative settlement
     // (`run_delivery_not_delivered`) requires a page proven captured after
-    // agent closure/archive in this workspace so a message appended before
-    // closure is never permanently missed.
-    if (
-      !found &&
-      pageRead.fromPassSnapshot &&
-      pageRead.provenTerminal?.workspaceId !== run.workspaceId
-    )
-      throw new Error(
-        `Run ${runId} remains uncertain; cached timeline predates agent closure`,
-      );
+    // this exact closure/archive in this workspace so a message appended on a
+    // resumed turn before a later closure is never permanently missed.
+    if (!found && pageRead.fromPassSnapshot) {
+      const terminal = pageRead.provenTerminal;
+      const matchesTerminal = archived
+        ? Boolean(
+            terminal?.archived === true &&
+              terminal.workspaceId === run.workspaceId,
+          )
+        : Boolean(
+            terminal &&
+              terminal.workspaceId === run.workspaceId &&
+              closedUpdatedAt &&
+              terminal.closedUpdatedAt === closedUpdatedAt,
+          );
+      if (!matchesTerminal)
+        throw new Error(
+          `Run ${runId} remains uncertain; cached timeline predates agent closure`,
+        );
+    }
     const latestTask = this.store.task(taskId),
       latestRun = this.store.run(runId);
     if (
