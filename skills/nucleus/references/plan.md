@@ -115,8 +115,10 @@ Leads are never authority.
   optional `body`, `lanes` and `author`. Update with `lead.edit` (the current `version`); list with
   `lead.list` (by `repository`, `lane` or `state`, open by default).
 - A deliberate deferral ("not now: spreadsheet marking, waiting on the Marking
-  Hub design") is an open lead, so nobody re-proposes it without seeing why
-  it waits.
+  Hub design") is a parked lead: `lead.park` with its `version`, the reason and,
+  when known, `revisitAt`. It stays open, so nobody re-proposes it without seeing
+  why it waits, and it leaves the to-do list until its recheck comes due. Return it
+  early with `lead.unpark` (`id`, `version`). An edit, promotion or drop unparks too.
 - Resolve every lead:
   - write the brief into it and promote it with `lead.promote-task` (see
     [brief](brief.md));

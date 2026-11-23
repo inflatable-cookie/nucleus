@@ -15,6 +15,7 @@ import {
 } from "./briefs";
 import { MAX_TITLE_LENGTH } from "./task-common";
 import { operationAcceptanceSchema } from "../operations";
+import { leadParkSchema, leadRecheckSchema } from "./parking";
 
 /** Spec 026: a triage lead body is long-form Markdown, up to 1 MB. */
 export const LEAD_BODY_MAX = 1_000_000;
@@ -78,6 +79,9 @@ export const leadReopenSchema = z
 
 export type LeadReopen = z.infer<typeof leadReopenSchema>;
 
+export { leadParkSchema, leadRecheckSchema } from "./parking";
+export type { LeadPark, LeadRecheck } from "./parking";
+
 export const leadSchema = z
   .object({
     id: z.string(),
@@ -112,6 +116,9 @@ export const leadSchema = z
     baseBranch: gitBranchNameSchema.default("main"),
     dropReason: z.string().nullable(),
     reopens: z.array(leadReopenSchema).default([]),
+    // Optional, not defaulted: an unparked lead's stored record keeps its exact bytes, so its digests do not move.
+    parked: leadParkSchema.nullable().optional(),
+    recheck: leadRecheckSchema.nullable().optional(),
     targets: z.array(leadTargetSchema),
     source: z
       .object({ file: z.string(), contentKey: z.string() })
@@ -153,6 +160,8 @@ export const leadActionsSchema = z
     approve: z.string().nullable(),
     drop: z.string().nullable(),
     reopen: z.string().nullable(),
+    park: z.string().nullable(),
+    unpark: z.string().nullable(),
     promoteTo: z.string().nullable(),
     promote: z.array(
       z.object({ origin: z.string(), reason: z.string().nullable() }).strict(),
@@ -253,7 +262,10 @@ export const leadImportReportSchema = z
 export type LeadListFacts = Pick<
   Lead,
   "id" | "title" | "state" | "lanes" | "repositories"
->;
+> & {
+  /** Nucleus#1543: a parked lead is off the to-do list and out of every count. */
+  parked?: { revisitAt: string | null } | null;
+};
 
 /**
  * Spec 026 board read: one narrow card per planning-list row — list metadata, a bounded body
@@ -289,6 +301,14 @@ export const boardLeadSchema = z
     ),
     /** When the lead was raised: the row's age (nucleus#1515). */
     createdAt: z.string().optional(),
+    /** Nucleus#1543: parked leads leave the to-do list; the card shows the reason and the recheck date. */
+    parked: z
+      .object({ reason: z.string(), revisitAt: z.string().nullable() })
+      .strict()
+      .nullable()
+      .default(null),
+    /** Nucleus#1543: a due recheck the planner has not acted on yet. */
+    recheck: z.object({ reason: z.string() }).strict().nullable().default(null),
   })
   .strict();
 

@@ -246,6 +246,18 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
+    name: "lead.park",
+    contract: contracts.leadPark,
+    method: "parkLead",
+    mutating: true,
+  },
+  {
+    name: "lead.unpark",
+    contract: contracts.leadUnpark,
+    method: "unparkLead",
+    mutating: true,
+  },
+  {
     name: "lead.promote",
     contract: contracts.leadPromote,
     method: "promoteLead",

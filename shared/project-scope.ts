@@ -149,7 +149,9 @@ export type ProjectSelectorRow = {
   dormant: boolean;
 };
 /** The selector's two row groups: active rows first, then Dormant (nucleus#1529; parking is retired). */
-export function projectSelectorRowGroup(row: Pick<ProjectSelectorRow, "dormant">): number {
+export function projectSelectorRowGroup(
+  row: Pick<ProjectSelectorRow, "dormant">,
+): number {
   return row.dormant ? 1 : 0;
 }
 /** Selector popover rows: every project matching the filter box, with its primary repository and counts.
@@ -327,6 +329,8 @@ export function planningLaneLeads(
   return leads.filter(
     (lead) =>
       lead.state === "open" &&
+      // A parked lead is off the to-do list and out of every count (Nucleus#1543).
+      !lead.parked &&
       lead.lanes.includes(lane) &&
       lead.repositories.some((repo) => contains(repo.path, repo.origin)),
   );
