@@ -17,7 +17,7 @@ import {
   ownedWorkspacePath,
   ownedBbWorkspacePath,
   populateOwnedWorktree,
-  registeredCheckoutOnlyMissingFiles,
+  registeredCheckoutRepair,
   removeOrphanCheckout,
   repoCommonDir,
   sameWorkspacePath,
@@ -664,10 +664,11 @@ export class WorkspaceLifecycle {
       }
     }
     const registrationPath = this.orphanRegistrationPath(fresh, common);
-    const registration =
-      registrationPath === ownedPath
-        ? await this.samePathRegistration(fresh, ownedPath, registrationPath)
-        : null;
+    const mayAdopt =
+      registrationPath && sameWorkspacePath(registrationPath, ownedPath);
+    const registration = mayAdopt
+      ? await this.samePathRegistration(fresh, ownedPath, registrationPath)
+      : null;
     const adopted =
       registration?.kind === "reuse" && registration.reuse.adopted
         ? registration.reuse
@@ -675,7 +676,7 @@ export class WorkspaceLifecycle {
     const state = await classifyWorkspaceCreation({
       task,
       ownedPath,
-      allowEmptyOwnedDirectory: Boolean(adopted),
+      registration: adopted ? "present" : mayAdopt ? "possible" : undefined,
       legacyPaths: this.legacyPaths(task, common).filter(
         (path) => path !== ownedPath,
       ),
@@ -691,20 +692,21 @@ export class WorkspaceLifecycle {
             this.creationStep(task, `worktree_inspection_${step}`, work)
         : undefined,
     });
-    if (
-      adopted &&
-      (state.kind === "absent" ||
-        (state.kind === "partial" &&
-          (!state.orphan.directory ||
-            (state.orphan.directory === ownedPath &&
-              (await registeredCheckoutOnlyMissingFiles(ownedPath))))))
-    )
-      return {
-        kind: "registered_incomplete",
-        directory: ownedPath,
-        workspaceId: adopted.id,
-      };
-    return state;
+    if (!adopted || (state.kind !== "absent" && state.kind !== "partial"))
+      return state;
+    if (state.kind === "partial" && state.orphan.directory) {
+      if (!sameWorkspacePath(state.orphan.directory, ownedPath)) return state;
+      if (!(await registeredCheckoutRepair(ownedPath)))
+        return {
+          kind: "conflicting",
+          evidence: `${ownedPath} has checkout changes that cannot be safely repaired`,
+        };
+    }
+    return {
+      kind: "registered_incomplete",
+      directory: ownedPath,
+      workspaceId: adopted.id,
+    };
   }
   async populateTaskWorktree(task: Task) {
     const fresh = this.latestTask(task);
@@ -816,8 +818,11 @@ export class WorkspaceLifecycle {
     directory: string,
     orphanPath?: string | null,
   ): Promise<RegistrationDecision> {
+    const mayAdopt = Boolean(
+      orphanPath && sameWorkspacePath(orphanPath, directory),
+    );
     if (!this.host.externalWorkspaceCatalog) {
-      if (orphanPath === directory)
+      if (mayAdopt)
         throw new HostReadRefusalError(
           "Workspace registration inventory could not be read",
         );
@@ -839,7 +844,7 @@ export class WorkspaceLifecycle {
       ? catalog.entries.find(
           (entry) =>
             entry.workspaceId === task.workspaceId &&
-            entry.directory === directory,
+            sameWorkspacePath(entry.directory, directory),
         )
       : undefined;
     const aliases = catalog.entries.filter(
@@ -848,8 +853,8 @@ export class WorkspaceLifecycle {
     const candidate = aliases.length === 1 ? aliases[0] : undefined;
     if (
       candidate &&
-      orphanPath === directory &&
-      candidate.directory === directory &&
+      mayAdopt &&
+      sameWorkspacePath(candidate.directory, directory) &&
       !task.workspaceId &&
       !task.directory
     ) {
@@ -860,8 +865,12 @@ export class WorkspaceLifecycle {
         );
       if (!bridge.workspaceBoundByOtherTask(task.id, candidate.workspaceId)) {
         if (
-          [directory, dirname(directory)].some((path) =>
-            lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink(),
+          [orphanPath, directory, candidate.directory].some(
+            (path) =>
+              path &&
+              [path, dirname(path)].some((part) =>
+                lstatSync(part, { throwIfNoEntry: false })?.isSymbolicLink(),
+              ),
           )
         )
           throw new CheckoutRefusalError(

@@ -15,6 +15,7 @@ export type {
  */
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   realpathSync,
@@ -141,7 +142,17 @@ function observedWorkspacePath(path: string): string {
 export function sameWorkspacePath(a: string, b: string): boolean {
   if (a === b) return true;
   try {
-    return observedWorkspacePath(a) === observedWorkspacePath(b);
+    const left = observedWorkspacePath(a),
+      right = observedWorkspacePath(b);
+    if (left === right) return true;
+    const leftStat = statSync(left, { throwIfNoEntry: false, bigint: true });
+    const rightStat = statSync(right, { throwIfNoEntry: false, bigint: true });
+    return Boolean(
+      leftStat &&
+        rightStat &&
+        leftStat.dev === rightStat.dev &&
+        leftStat.ino === rightStat.ino,
+    );
   } catch (error) {
     throw new WorkspaceObservationUnavailableError(
       `Workspace identity could not be checked: ${String(error)}`,
@@ -380,8 +391,8 @@ export async function classifyWorkspaceCreation(input: {
     | "proofOnly"
   >;
   ownedPath: string;
-  /** A proved registration may precede even the first file in its checkout. */
-  allowEmptyOwnedDirectory?: boolean;
+  /** Confirm the checkout's own HEAD before reuse. A present registration may precede population. */
+  registration?: "possible" | "present";
   /** Previous Queue allocation paths remain part of the same creation intent. */
   legacyPaths?: string[];
   /** Prove a matched external checkout before inspecting its contents. */
@@ -403,6 +414,7 @@ export async function classifyWorkspaceCreation(input: {
   initLock?: HostInitLockRule | null;
 }): Promise<WorkspaceCreationState> {
   const { task, ownedPath } = input;
+  const registered = input.registration === "present";
   const paths = [...new Set([ownedPath, ...(input.legacyPaths ?? [])])];
   if (!input.skipProcessScan) {
     for (const path of paths) {
@@ -433,6 +445,7 @@ export async function classifyWorkspaceCreation(input: {
   const matched = parseWorktreeList(listing).filter(
     (tree) =>
       paths.includes(tree.path) ||
+      (input.registration && sameWorkspacePath(ownedPath, tree.path)) ||
       tree.path.split("/").at(-1) === slug ||
       Boolean(ref && tree.branch === ref),
   );
@@ -468,7 +481,12 @@ export async function classifyWorkspaceCreation(input: {
       kind: "unknown",
       evidence: `the task branch ${task.branch} could not be read`,
     };
-  const existingPaths = paths.filter((path) => existsSync(path));
+  const existingPaths = paths.filter(
+    (path, index) =>
+      existsSync(path) &&
+      (!input.registration ||
+        !paths.slice(0, index).some((prior) => sameWorkspacePath(path, prior))),
+  );
   if (existingPaths.length > 1)
     return {
       kind: "conflicting",
@@ -515,7 +533,7 @@ export async function classifyWorkspaceCreation(input: {
   }
 
   const emptyOwned =
-    input.allowEmptyOwnedDirectory &&
+    registered &&
     (!existsSync(ownedPath) || readdirSync(ownedPath).length === 0);
   if (
     emptyOwned &&
@@ -530,6 +548,9 @@ export async function classifyWorkspaceCreation(input: {
     tree?.path ??
     existingPaths.find((path) => !emptyOwned || path !== ownedPath) ??
     null;
+  const emptyCheckout = Boolean(
+    directory && emptyOwned && sameWorkspacePath(directory, ownedPath),
+  );
   if (
     tree &&
     existingPaths.length &&
@@ -541,7 +562,7 @@ export async function classifyWorkspaceCreation(input: {
     };
   if (
     directory &&
-    !(emptyOwned && directory === ownedPath) &&
+    !emptyCheckout &&
     !(await sameCommonDir(task.repoPath, directory))
   )
     return {
@@ -549,10 +570,19 @@ export async function classifyWorkspaceCreation(input: {
       evidence: `${directory} does not share the task repository`,
     };
 
+  if (input.registration && directory && !emptyCheckout) {
+    const [checkoutHead, checkoutRef] = (
+      await git(directory, "rev-parse", "HEAD", "--symbolic-full-name", "HEAD")
+    ).split("\n");
+    if (checkoutRef !== (ref ?? "HEAD") || checkoutHead !== head)
+      return {
+        kind: "conflicting",
+        evidence: `${directory} is on ${checkoutRef} at ${checkoutHead}, which does not match the task checkout`,
+      };
+  }
+
   const dirty =
-    directory &&
-    !(emptyOwned && directory === ownedPath) &&
-    existsSync(directory)
+    directory && !emptyCheckout && existsSync(directory)
       ? await queueCheckoutStatus(directory, "status", "--porcelain").catch(
           () => "unreadable",
         )
@@ -591,7 +621,7 @@ export async function classifyWorkspaceCreation(input: {
     !initializing &&
     !dirty &&
     directory &&
-    !(emptyOwned && directory === ownedPath) &&
+    !emptyCheckout &&
     existsSync(directory)
   )
     return { kind: "found_done", directory };
@@ -664,7 +694,7 @@ export async function populateOwnedWorktree(input: {
   const started = Date.now();
   const state = await classifyWorkspaceCreation({
     ...input,
-    allowEmptyOwnedDirectory: Boolean(input.confirmRegistration),
+    registration: input.confirmRegistration ? "present" : undefined,
     remoteWhenAbsent: Boolean(input.confirmRegistration),
   });
   if (state.kind === "found_done")
@@ -696,11 +726,16 @@ export async function populateOwnedWorktree(input: {
   const partial =
     state.kind === "partial" &&
     input.confirmRegistration &&
-    (state.orphan.directory === input.ownedPath ||
-      state.orphan.directory === null)
+    (!state.orphan.directory ||
+      sameWorkspacePath(state.orphan.directory, input.ownedPath))
       ? state.orphan
       : null;
   if (state.kind !== "absent" && !partial)
+    throw new Error(workspaceCreationRefusal(state));
+  const repair = partial?.directory
+    ? await registeredCheckoutRepair(input.ownedPath)
+    : null;
+  if (partial?.directory && !repair)
     throw new Error(workspaceCreationRefusal(state));
   if (input.confirmRegistration) {
     await input.confirmRegistration();
@@ -710,45 +745,33 @@ export async function populateOwnedWorktree(input: {
     if (expired) throw expired;
   }
   input.admit?.();
-  if (
-    partial?.directory &&
-    existsSync(input.ownedPath) &&
-    readdirSync(input.ownedPath).length
-  ) {
-    if (!(await registeredCheckoutOnlyMissingFiles(input.ownedPath)))
-      throw new Error(workspaceCreationRefusal(state));
-    const expired = expiredQuantumDeadlineError(
-      "registered worktree population",
-    );
-    if (expired) throw expired;
+  if (repair === "missing_index") {
+    // A two-tree merge from HEAD to itself fills an absent index and preserves staged edits.
+    await gitBulk(input.ownedPath, "read-tree", "-m", "-u", "HEAD", "HEAD");
+  } else if (repair === "missing_files") {
     // Default checkout-index skips existing files, including edits made after the status read.
     await gitBulk(input.ownedPath, "checkout-index", "--all");
-    return {
-      directory: input.ownedPath,
-      populated: true,
-      budgetMs: WORKSPACE_POPULATE_BUDGET_MS,
-      elapsedMs: Date.now() - started,
-    };
+  } else {
+    mkdirSync(dirname(input.ownedPath), { recursive: true, mode: 0o700 });
+    input.admit?.();
+    const startPoint =
+      partial && !input.task.proofOnly
+        ? input.task.branch
+        : taskCheckoutTarget(input.task);
+    await gitBulk(
+      input.task.repoPath,
+      "worktree",
+      "add",
+      ...(partial?.directory ? ["--force"] : []),
+      ...(input.task.proofOnly
+        ? ["--detach"]
+        : partial
+          ? []
+          : ["-b", input.task.branch]),
+      input.ownedPath,
+      startPoint,
+    );
   }
-  mkdirSync(dirname(input.ownedPath), { recursive: true, mode: 0o700 });
-  input.admit?.();
-  const startPoint =
-    partial && !input.task.proofOnly
-      ? input.task.branch
-      : taskCheckoutTarget(input.task);
-  await gitBulk(
-    input.task.repoPath,
-    "worktree",
-    "add",
-    ...(partial?.directory ? ["--force"] : []),
-    ...(input.task.proofOnly
-      ? ["--detach"]
-      : partial
-        ? []
-        : ["-b", input.task.branch]),
-    input.ownedPath,
-    startPoint,
-  );
   return {
     directory: input.ownedPath,
     populated: true,
@@ -757,16 +780,27 @@ export async function populateOwnedWorktree(input: {
   };
 }
 
-export async function registeredCheckoutOnlyMissingFiles(
+export async function registeredCheckoutRepair(
   directory: string,
-): Promise<boolean> {
-  if (!existsSync(directory) || readdirSync(directory).length === 0)
-    return true;
+): Promise<"empty" | "missing_index" | "missing_files" | null> {
+  const files = existsSync(directory) ? readdirSync(directory) : [];
+  if (!files.length) return "empty";
+  if (files.length === 1 && files[0] === ".git") {
+    const index = await git(
+      directory,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "index",
+    );
+    // A staged deletion has an index. An interrupted checkout can have no index at all.
+    if (!lstatSync(index, { throwIfNoEntry: false })) return "missing_index";
+  }
   const status = await queueCheckoutStatusEntries(directory);
-  return (
-    status.length > 0 &&
+  return status.length &&
     status.every((entry) => entry.index === " " && entry.worktree === "D")
-  );
+    ? "missing_files"
+    : null;
 }
 
 export async function removeOrphanCheckout(

@@ -2,6 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,9 +24,12 @@ import {
 } from "../core/workspaces/workspace-allocation";
 import { createAdapter, createHost } from "../hosts/t3code";
 import { t3WorkspaceId } from "../hosts/t3code/state";
-import { submissionSchema, type Task } from "../shared/contracts";
+import { submissionSchema } from "../shared/contracts";
 
-async function fixture(t: TestContext, path: "owned" | "foreign" = "owned") {
+async function fixture(
+  t: TestContext,
+  path: "owned" | "foreign" | "aliased" = "owned",
+) {
   const root = realpathSync(
     mkdtempSync(join(tmpdir(), "t3-workspace-adoption-")),
   );
@@ -93,9 +97,22 @@ async function fixture(t: TestContext, path: "owned" | "foreign" = "owned") {
     path === "foreign"
       ? join(root, "foreign", `ns-${task.id}`)
       : workspacePathInRoot(workspaceRoot, await repoCommonDir(repo), task.id);
+  const caseAlias = join(root, "WORKSPACES");
+  mkdirSync(workspaceRoot);
+  const registeredDirectory =
+    path !== "aliased"
+      ? directory
+      : existsSync(caseAlias)
+        ? directory.replace(workspaceRoot, caseAlias)
+        : `${root}/./${directory.slice(root.length + 1)}`;
   const projectId = "synthetic-project",
-    id = t3WorkspaceId(projectId, directory);
-  const registration = { id, directory, projectId, title: task.title };
+    id = t3WorkspaceId(projectId, registeredDirectory);
+  const registration = {
+    id,
+    directory: registeredDirectory,
+    projectId,
+    title: task.title,
+  };
   // The registration was persisted by a previous process, whose task binding never landed.
   writeFileSync(
     statePath,
@@ -109,15 +126,25 @@ async function fixture(t: TestContext, path: "owned" | "foreign" = "owned") {
     }),
     { mode: 0o600 },
   );
-  const checkout = () =>
-    git(repo, "worktree", "add", "-b", task.branch, directory, head);
-  const retry = (current: Task = store.task(task.id)) =>
+  const checkout = (...options: string[]) =>
+    git(
+      repo,
+      "worktree",
+      "add",
+      ...options,
+      "-b",
+      task.branch,
+      directory,
+      head,
+    );
+  const retry = (discard?: boolean) =>
     engine.performTaskControl({
       taskId: task.id,
-      version: current.version,
+      version: store.task(task.id).version,
       action: "retry_effect",
       effect: "workspace_creation",
       reason: "Reconcile the interrupted workspace registration",
+      discard,
     });
   const adoptionEvents = () =>
     store
@@ -141,6 +168,7 @@ async function fixture(t: TestContext, path: "owned" | "foreign" = "owned") {
     adapter,
     engine,
     task,
+    root,
     insert,
     directory,
     id,
@@ -198,6 +226,95 @@ test("workspace_creation retry fills missing files in a partial registered check
     readFileSync(join(f.directory, "tracked.txt"), "utf8"),
     "fixture\n",
   );
+});
+
+test("an interrupted checkout with no index is populated from HEAD", async (t) => {
+  const f = await fixture(t);
+  await f.checkout("--no-checkout");
+  const index = await git(
+    f.directory,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "index",
+  );
+  assert.equal(existsSync(index), false);
+  assert.equal(
+    await git(f.directory, "status", "--porcelain"),
+    "D  tracked.txt",
+  );
+  await f.retry();
+  await f.assertAdopted();
+  assert.equal(existsSync(index), true);
+  assert.equal(
+    readFileSync(join(f.directory, "tracked.txt"), "utf8"),
+    "fixture\n",
+  );
+});
+
+test("an edited checkout is preserved even when it looks interrupted", async (t) => {
+  const f = await fixture(t);
+  await f.checkout("--no-checkout");
+  const edited = join(f.directory, "tracked.txt");
+  writeFileSync(edited, "user edit\n");
+  const status = await git(f.directory, "status", "--porcelain");
+  await assert.rejects(
+    f.retry(true),
+    /checkout changes that cannot be safely repaired/,
+  );
+  assert.equal(readFileSync(edited, "utf8"), "user edit\n");
+  assert.equal(await git(f.directory, "status", "--porcelain"), status);
+  assert.equal(f.store.task(f.task.id).workspaceId, null);
+});
+
+test("an intentional staged deletion is not a missing index", async (t) => {
+  const f = await fixture(t);
+  await f.checkout();
+  await git(f.directory, "rm", "tracked.txt");
+  await assert.rejects(
+    f.retry(),
+    /checkout changes that cannot be safely repaired/,
+  );
+  assert.equal(
+    await git(f.directory, "status", "--porcelain"),
+    "D  tracked.txt",
+  );
+  assert.equal(f.store.task(f.task.id).workspaceId, null);
+});
+
+test("the checkout's branch wins over a stale worktree inventory entry", async (t) => {
+  const f = await fixture(t);
+  await f.checkout();
+  const foreign = join(f.root, "foreign-branch");
+  await git(
+    f.task.repoPath,
+    "worktree",
+    "add",
+    "-b",
+    "foreign",
+    foreign,
+    "main",
+  );
+  writeFileSync(join(f.directory, ".git"), readFileSync(join(foreign, ".git")));
+  assert.ok(
+    (await git(f.task.repoPath, "worktree", "list", "--porcelain")).includes(
+      `worktree ${f.directory}\nHEAD ${f.task.planningCommit}\nbranch refs/heads/${f.task.branch}`,
+    ),
+  );
+  await assert.rejects(
+    f.retry(),
+    /refs\/heads\/foreign.*does not match the task checkout/,
+  );
+  assert.equal(await git(f.directory, "branch", "--show-current"), "foreign");
+  assert.equal(f.store.task(f.task.id).workspaceId, null);
+});
+
+test("catalogue aliases of the owned directory resolve to one registration", async (t) => {
+  const f = await fixture(t, "aliased");
+  await f.checkout();
+  await f.retry();
+  await f.retry();
+  await f.assertAdopted();
 });
 
 test("another task's active or historical binding prevents adoption", async (t) => {
