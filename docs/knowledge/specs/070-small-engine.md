@@ -59,7 +59,16 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
    - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
    - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
-8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, load, budgets and usage levels), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped.
+8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, load, budgets and usage levels), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
+   - each project's name;
+   - its repositories (origin, path, base branch);
+   - its slot limit;
+   - per-repository merge checks (command and timeout), with an optional required reviewer;
+   - its planner, shown as resolved and never typed in by hand;
+   - an archived toggle.
+
+   It drops agent registration and the preferred and responsible thread fields (planners resolve live, ruling 2), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Moving a repository between projects becomes one reassign action. Editing autosaves, one noun per control, with explanations only in help popovers.
+
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
@@ -69,6 +78,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
    - Host calls have a fixed concurrency cap per host. An unavailable host backs off to a due time and is never retried in a loop.
    - Views update by push (task and version invalidations), never by polling. Nothing a viewer does causes a host call.
+12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
+   - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
+   - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
+   - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
+   - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
 
 ## The model
 
@@ -225,15 +239,41 @@ Cargo builds" rule for the `engine/` workspace only:
 2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
    to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
-   takes no new work.
+   takes no new work. Planning records move into the new service (ruling 12).
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
    skill and the contracts are rewritten for the new commands.
 
 A task never moves between engines.
 
+## Planning model (milestone 3)
+
+Planning is plain record-keeping in the Rust service. It never calls a host (ruling 11), and it replaces about 35 TypeScript commands with these records and verbs.
+
+**Records**
+
+| Record | Fields |
+|---|---|
+| Lane | key, title, aim, document (Markdown), status `open`, `done` or `dropped`, with a closing note |
+| Plan | the project's ordered lane keys, each with horizon `now`, `next` or `later`, a "done when" line and a status note |
+| Item | kind `lead` or `papercut`, title, body, lanes, state `open`, `parked` (with a reason and an optional revisit date), `promoted` (with the task ID) or `dropped`, and the author |
+| Decision | an operator question with options and the answer, shown in the Inbox |
+
+**Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
+
+**What gets simpler**
+
+- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A planner's promotion is the authorization. The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
+- **A task needs no item.** `task.add` takes a brief and puts it straight on the board (ruling 12).
+- **Concurrency is checked only where edits collide.** A lane document and the plan carry one version number for optimistic writes. Other records use last write wins, with history kept. There are no digest fences.
+- **No ceremony records.** Lane keeps, drain prompts and idle marks are gone. The board shows a lane with no open tasks, and a plan with no `now` lane is idle. Notes are short sentences with no hard 200-character cap.
+- **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
+- **Triage and milestone QA records are not ported** (ruling 12).
+
+The import maps leads and papercuts to items by kind, carries open, parked and dropped states with their history, and links promoted ones to their tasks.
+
 ## Out of scope until milestone 3
 
-- Papercuts, leads, decisions, plans and milestone QA records keep their current
-  store and CLI. The engine reads leads only to admit a promoted task.
+- Papercuts, leads, decisions and plans keep their current store and CLI until they
+  move in (ruling 12). Until then the engine reads leads only to admit a promoted task.
 - Usage levels, model selection and budgets carry over as plain settings, not as new
   state. They're part of milestone 2's settings (ruling 8).
