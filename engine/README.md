@@ -2,9 +2,9 @@
 
 [Spec 070](../docs/knowledge/specs/070-small-engine.md) owns the model. Milestone 1
 runs one synthetic task from work through closeout on T3. The Rust engine is off
-by default, uses its own settings and database, and admits only the explicitly
-configured fixture repository. The planner checks the run by hand. The board
-switch starts in milestone 2.
+by default and uses its own settings and database. Fixture mode scopes dispatch
+to the authorized fixture repository. The planner checks the run by hand. The
+board switch starts in milestone 2.
 
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
@@ -521,3 +521,14 @@ and push remotes and the native project's registered checkout before dispatch.
 One process holds the engine profile's write lock. Use
 a real guarded merge and verify task state, exact heads, T3 turn settlement,
 merge commit and worktree disposition by hand with the planner.
+
+## Binding one real project
+
+The `serve --project` file pins one GitHub repository, canonical local checkout,
+base branch and T3 project ID. Existing files default to fixture mode. Set
+`"mode": "project"` explicitly for a real project and name its Rust ACP provider
+in `acpProvider`. Real dispatch waits for configured profiles.
+
+The native write gate verifies both origin remotes against the configured
+repository and confirms that the exact T3 project is active at the pinned
+checkout. Role threads use the task's ACP parent in project mode.

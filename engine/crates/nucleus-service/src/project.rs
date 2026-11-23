@@ -152,6 +152,7 @@ fn matches_origin(repository: &str, url: &str) -> bool {
     let url = url.strip_suffix(".git").unwrap_or(url);
     url.strip_prefix("https://github.com/")
         .or_else(|| url.strip_prefix("git@github.com:"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
         .is_some_and(|origin| origin.eq_ignore_ascii_case(repository))
 }
 
@@ -200,5 +201,165 @@ impl GitPolicy for LocalGit {
 
     fn refresh_credential(&self, _rejected: &GitCredential) -> Option<GitCredential> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use nucleus_core::{Entry, Task};
+    use nucleus_forge::GitHub;
+    use nucleus_hosts::{Binding, HostError};
+    use serde_json::json;
+
+    use super::*;
+    use crate::{
+        pass::DispatchTarget,
+        tests::{fixture, git, native_fixture},
+    };
+
+    #[test]
+    fn fixture_files_keep_their_scope_and_project_mode_verifies_both_remotes() {
+        let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
+        let mut legacy = serde_json::to_value(&service.project).expect("fixture configuration");
+        legacy
+            .as_object_mut()
+            .expect("project object")
+            .remove("mode");
+        let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
+        assert_eq!(project.mode, ProjectMode::Fixture);
+        project.verify().expect("old fixture is still accepted");
+
+        project.repository = "example/greeter".into();
+        git(
+            &project.checkout,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "ssh://git@github.com/example/greeter.git",
+            ],
+        );
+        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+
+        project.mode = ProjectMode::Project;
+        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        project.acp_provider = Some("fixture-acp".into());
+        project.verify().expect("explicit repository mode");
+
+        git(
+            &project.checkout,
+            &[
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                "git@github.com:example/other.git",
+            ],
+        );
+        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        git(
+            &project.checkout,
+            &[
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                "git@github.com:EXAMPLE/greeter.git",
+            ],
+        );
+        project
+            .verify()
+            .expect("both GitHub remotes identify the bound repository");
+        git(
+            &project.checkout,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/example/other.git",
+            ],
+        );
+        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+    }
+
+    #[tokio::test]
+    async fn native_write_gate_requires_the_explicit_project_at_its_registered_checkout() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
+        service.project.mode = ProjectMode::Project;
+        service.project.repository = "example/greeter".into();
+        service.project.host_project = "greeter-project".into();
+        service.project.acp_provider = Some("fixture-acp".into());
+        let root = service.project.checkout.clone();
+        git(
+            &root,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/example/greeter.git",
+            ],
+        );
+        let retargeted = Arc::new(AtomicBool::new(false));
+        let moved = Arc::clone(&retargeted);
+        let (host, server) = native_fixture(move |request| {
+            assert_eq!(request["tag"], "orchestration.subscribeShell");
+            let registered = if moved.load(Ordering::Relaxed) { Path::new("/other/checkout") } else { &root };
+            json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                {"kind":"snapshot","snapshot":{"projects":[{"id":"greeter-project","workspaceRoot":registered}]}},
+                {"kind":"synchronized"},
+            ]})
+        }).await;
+        service.host = host;
+        let task = Task::new(
+            Identity {
+                id: "greeter".into(),
+                reference: "fixture#1".into(),
+                repository: service.project.repository.clone(),
+                base: service.project.base.clone(),
+                entry: Entry::Brief,
+                origin_thread: None,
+            },
+            "Add a synthetic greeting.".into(),
+            None,
+        );
+        let worktrees = service.worktrees().expect("worktrees");
+        let checkout = worktrees
+            .checkout(
+                &service.project.checkout,
+                &service.project.repository,
+                &task.identity().id,
+            )
+            .expect("bound checkout");
+        checkout.allocate(&service.project.start).expect("allocate");
+        let binding = Binding {
+            project_id: service.project.host_project.clone(),
+            worktree_path: checkout.path().to_str().expect("checkout path").into(),
+            branch: checkout.branch().into(),
+        };
+        let gate = || {
+            service.dispatch_gate(
+                &task,
+                DispatchTarget::Run {
+                    frozen: &binding,
+                    checkout: &checkout,
+                    launch: false,
+                },
+            )
+        };
+        assert_eq!(
+            gate().await.expect("verified native destination"),
+            Some(false)
+        );
+        retargeted.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            gate().await,
+            Err(ServiceError::Host(HostError::Binding))
+        ));
+        server.abort();
     }
 }

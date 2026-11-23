@@ -10,7 +10,7 @@ use nucleus_core::{
 use nucleus_hosts::{HostError, RoleProfile, TaskHost};
 use nucleus_store::Profiles;
 
-use crate::{Service, ServiceError, State, now_ms};
+use crate::{ProjectMode, Service, ServiceError, State, now_ms};
 
 pub(super) struct SelectedLaunch {
     pub(super) intent: ProfileLaunch,
@@ -40,7 +40,10 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Option<SelectedLaunch>, ServiceError> {
         if self.state.lock().await.settings.profiles.is_none() {
-            return Ok(None);
+            return match self.project.mode {
+                ProjectMode::Fixture => Ok(None),
+                ProjectMode::Project => Err(ServiceError::ProfileConfiguration),
+            };
         }
         if role == Role::Reviewer && task.threads().profile(Role::Worker).is_none() {
             return Err(ProfileLaunchError::OpaqueAuthor.into());

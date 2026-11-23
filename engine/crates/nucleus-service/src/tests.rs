@@ -104,7 +104,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     (home, service)
 }
 
-fn git(root: &Path, args: &[&str]) -> String {
+pub(super) fn git(root: &Path, args: &[&str]) -> String {
     let output = Process::new("git")
         .current_dir(root)
         .args(args)

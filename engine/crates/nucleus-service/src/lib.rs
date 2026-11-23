@@ -70,6 +70,8 @@ pub enum ServiceError {
     AcpBinding,
     #[error(transparent)]
     Profile(#[from] nucleus_core::profiles::ProfileLaunchError),
+    #[error("project dispatch requires a configured Profiles domain")]
+    ProfileConfiguration,
     #[error("authentication failed")]
     AcpUnauthorized,
     #[error("local I/O failed")]
@@ -314,7 +316,7 @@ impl Service {
                     state.settings.profiles.is_some(),
                 )
             };
-            if !enabled {
+            if !enabled || (!configured && self.project.mode == ProjectMode::Project) {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
             if !configured {
@@ -455,7 +457,9 @@ impl Service {
             Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
             Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
-            Err(ServiceError::Profile(_)) => Some(WaitReason::Capacity),
+            Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
+                Some(WaitReason::Capacity)
+            }
             _ => None,
         };
         let mut state = self.state.lock().await;
