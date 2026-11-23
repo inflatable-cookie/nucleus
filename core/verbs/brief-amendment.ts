@@ -167,8 +167,11 @@ export class BriefAmendmentDelivery {
     text: string,
   ): Promise<void> {
     const hostId = task.hostId ?? intent.hostId;
-    if (!hostId || !this.engine.resolution.originHostAvailable(hostId)) return;
+    if (!hostId) return;
     await this.engine.resolution.withHost(hostId, async () => {
+      // Availability is read in the host's own context: the ordinary pass that
+      // retries a pending intent runs in none, where only the legacy primary answers.
+      if (!this.engine.resolution.originHostAvailable(hostId)) return;
       const send =
         this.engine.adapter.steerOrNotify ?? this.engine.adapter.enqueueMessage;
       if (!send) return;

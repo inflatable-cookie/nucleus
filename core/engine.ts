@@ -419,6 +419,8 @@ export class Engine {
   ) => import("../shared/host-selection").HostSelection | undefined = () =>
     undefined;
   hostAvailable: (id: string) => boolean = () => true;
+  /** Diagnostic tripwire for a host port read with no host context (`routeHostAdapter`). */
+  unboundPortRead?: (port: string) => void;
   /** Registered, online host suitable for authenticated ingress; may not be a work host. */
   hostIngressAvailable: (id: string) => boolean = () => true;
   /**

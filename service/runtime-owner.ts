@@ -2335,8 +2335,10 @@ export class QueueRuntime {
     input: z.infer<typeof import("../shared/contracts").stopThreads.input>,
   ): Promise<z.infer<typeof import("../shared/contracts").stopThreads.output>> {
     await this.started;
-    if (!this.connected() || this.startError)
-      throw new Error(this.startError || "Daemon is disconnected");
+    // Any connected host may own a live turn: the legacy primary's connection
+    // alone refused this control on every install without Paseo.
+    if (!this.anyHostConnected() || this.startError)
+      throw new Error(this.startError || "All hosts are disconnected");
     return this.engine.stopActiveThreads(input);
   }
 
@@ -2447,8 +2449,8 @@ export class QueueRuntime {
 
   async bulkDisposition(input: BulkDispositionRequest) {
     await this.started;
-    if (!this.connected() || this.startError)
-      throw new Error(this.startError || "Daemon is disconnected");
+    if (!this.anyHostConnected() || this.startError)
+      throw new Error(this.startError || "All hosts are disconnected");
     return this.engine.startBulkDisposition(input);
   }
 

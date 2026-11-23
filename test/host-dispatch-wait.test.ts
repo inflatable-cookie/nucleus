@@ -246,6 +246,9 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     engine.lifecycle.enqueuePass = async () => {};
     engine.resolution.observe = async () => {};
     engine.scheduleTaskQuantum = async () => {};
+    // The branch-PR step reads on each task's own host now: held, so only the
+    // host pass's own requests are counted below.
+    engine.reconcile = async () => {};
     for (const method of [
       "deliverNotices",
       "deliverQueuedMessages",

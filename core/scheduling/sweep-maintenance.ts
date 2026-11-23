@@ -1,4 +1,5 @@
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { purgeReportingFiles } from "../intake/reporting-files";
 import type { Engine } from "../engine";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
@@ -135,7 +136,14 @@ export class SweepMaintenance {
         // Task 1496: compact telemetry for still-present finished history, bounded per pass.
         this.store.seedRetainedTelemetry(at);
         this.store.purgeOldTasks(at, (taskId, runIds) => {
-          this.context.adapter.purgeReportingFiles?.(taskId, runIds);
+          // Every host's run tickets live in the service's own data directory
+          // (the helper path T3, BB and Paseo adapters are given), so they are
+          // removed here without a host connection; only this task's go.
+          purgeReportingFiles(
+            join(dirname(this.store.path), "worker-report.mjs"),
+            taskId,
+            runIds,
+          );
           void this.context.removeSiblings(taskId);
           try {
             removeTaskProofFiles(this.store.task(taskId));
