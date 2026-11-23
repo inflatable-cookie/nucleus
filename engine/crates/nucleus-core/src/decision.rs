@@ -114,7 +114,8 @@ pub enum CloseWorkspace {
     RemoveClean { head: Head },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WaitReason {
     Hold,
     Question,
@@ -129,6 +130,7 @@ pub enum WaitReason {
     ForgeUnknown,
     WorkspaceUnknown,
     ChecksPending,
+    Capacity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

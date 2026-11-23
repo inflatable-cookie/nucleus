@@ -26,6 +26,7 @@ fn task(entry: Entry) -> Task {
             repository: "example/fixture".into(),
             base: "main".into(),
             entry,
+            origin_thread: None,
         },
         "Add the greeting".into(),
         (entry == Entry::ReviewEntry).then(|| pr('a')),

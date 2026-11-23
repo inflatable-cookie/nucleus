@@ -11,6 +11,6 @@ pub use decision::{
 };
 pub use model::{
     Acceptance, Authority, Brief, CallbackCredential, Entry, Head, Hold, Identity, InvalidHead,
-    LaunchInputs, Phase, PreparedLaunch, PullRequest, Question, Repair, Report, Review, Role, Run,
-    Task, Threads, Verdict,
+    LaunchInputs, Phase, PreparedLaunch, PullRequest, Question, QuestionDelivery, Repair, Report,
+    Review, Role, Run, Task, Threads, Verdict,
 };

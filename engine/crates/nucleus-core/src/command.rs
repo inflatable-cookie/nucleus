@@ -11,7 +11,8 @@ use crate::model::{
     OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     Move(Phase),
     Answer(Answer),
@@ -21,7 +22,8 @@ pub enum Command {
     Release,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Answer {
     Work(String),
     Retry,
@@ -92,6 +94,7 @@ impl Task {
                 self.question = Some(OpenQuestion {
                     head: self.pr.as_ref().map(|pr| pr.head.clone()),
                     question: question.clone(),
+                    delivery: None,
                 });
             }
             Action::Launch { .. }
@@ -148,6 +151,23 @@ impl Task {
         } else {
             false
         }
+    }
+
+    /// Retire the authority for the exact head GitHub refused as mismatched.
+    /// The next review still needs a fresh open PR and clean checkout.
+    #[must_use]
+    pub fn merge_head_mismatched(&mut self, attempted: &Head) -> bool {
+        if self.phase != Phase::Merging
+            || self.run.is_some()
+            || !self.approves(attempted)
+            || !self.pr.as_ref().is_some_and(|pr| &pr.head == attempted)
+        {
+            return false;
+        }
+        self.verdict = None;
+        self.phase = Phase::Reviewing;
+        self.attempts = 0;
+        true
     }
 
     /// Reserve a new run before sending it to T3. The task assigns a new instance

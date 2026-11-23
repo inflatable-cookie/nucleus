@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version = "1.95"
 publish.workspace = true
 
+[features]
+loopback-fixture = []
+
 [dependencies]
 httpdate = "1"
 nucleus-core = { path = "../nucleus-core" }

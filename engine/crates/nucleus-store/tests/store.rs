@@ -35,6 +35,7 @@ fn task(id: &str, reference: &str) -> Task {
             repository: "example/fixture".into(),
             base: "main".into(),
             entry: Entry::Brief,
+            origin_thread: None,
         },
         "Add a greeting".into(),
         None,
@@ -91,6 +92,31 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
         .expect("history before cursor");
     assert_eq!(older.len(), 1);
     assert_eq!(older[0].content.kind, "accepted");
+}
+
+#[test]
+fn a_row_that_returns_to_the_same_task_still_invalidates_old_decisions() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open store");
+    let initial = task("1", "fixture#1");
+    store.create(&initial, &event("admitted")).expect("admit");
+    let stale = store.row("1").expect("row").expect("versioned row");
+    let mut working = initial.clone();
+    let _ = working.reconcile(&observation());
+    let next = store
+        .save_row(&stale, &working, &event("working"))
+        .expect("advance");
+    let current = store.row("1").expect("row").expect("advanced row");
+    assert_eq!(current.version, next);
+    store
+        .save_row(&current, &initial, &event("moved back"))
+        .expect("move back");
+    assert!(matches!(
+        store.save_row(&stale, &working, &event("stale")),
+        Err(StoreError::StaleTask)
+    ));
+    assert_eq!(store.get("1").expect("read row"), Some(initial));
 }
 
 #[test]

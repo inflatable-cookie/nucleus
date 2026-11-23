@@ -185,6 +185,7 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
             repository: "example/fixture".into(),
             base: "main".into(),
             entry: Entry::ReviewEntry,
+            origin_thread: None,
         },
         "Synthetic task".into(),
         Some(pr.clone()),
@@ -399,12 +400,12 @@ async fn an_unsent_revoked_reservation_clears_without_contacting_t3() {
 
 #[tokio::test]
 async fn same_head_revoked_replay_interrupts_only_the_reserved_run() {
-    revoked_replay(false).await;
+    Box::pin(revoked_replay(false)).await;
 }
 
 #[tokio::test]
 async fn superseded_review_replay_archives_after_exact_stop() {
-    revoked_replay(true).await;
+    Box::pin(revoked_replay(true)).await;
 }
 
 #[tokio::test]
@@ -607,4 +608,58 @@ async fn revoked_replay(archive: bool) {
             json!({"type":"thread.archive", "threadId":THREAD, "commandId":format!("{instance}-archive")})
         );
     }
+}
+
+#[tokio::test]
+async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
+    use crate::NoticeState;
+
+    let directory = checkout_fixture();
+    let binding = binding(directory.path());
+    let mut notice = T3::prepare_notice(THREAD.into(), "fixture-question".into(), "Please decide")
+        .expect("notice");
+    let probe = "orchestration.subscribeThread";
+    let command = "orchestration.dispatchCommand";
+    let blank = snapshot(&binding, &notice.command, "queued", false);
+    let mut settled = blank.clone();
+    settled["projection"]["runs"] = json!([]);
+    settled["projection"]["thread"]["settledOverride"] = json!("settled");
+    let mut unsettled = settled.clone();
+    unsettled["projection"]["thread"]["settledOverride"] = json!("active");
+    let started = snapshot(&binding, &notice.command, "running", false);
+    let (client, server) = server(vec![
+        (probe, Response::Snapshot(settled.clone())),
+        (probe, Response::Snapshot(settled)),
+        (command, Response::Success),
+        (probe, Response::Snapshot(unsettled)),
+        (command, Response::Success),
+        (probe, Response::Snapshot(blank)),
+        (probe, Response::Snapshot(started)),
+    ])
+    .await;
+    let permit = client
+        .authorize_notice(&notice)
+        .await
+        .expect("read planner")
+        .expect("authorized");
+    permit.record(&mut notice).expect("persist native marker");
+    client
+        .send_notice(&notice, permit)
+        .await
+        .expect("queue planner notice");
+    assert_eq!(
+        client.notice_state(&notice).await.expect("queued"),
+        NoticeState::Queued
+    );
+    assert_eq!(
+        client.notice_state(&notice).await.expect("started"),
+        NoticeState::Started
+    );
+    let frames = server.await.expect("fixture trace");
+    let wake: Value = serde_json::from_str(frames[2].payload.get()).expect("unsettle wire");
+    assert_eq!(wake["type"], "thread.unsettle");
+    assert_eq!(wake["threadId"], THREAD);
+    assert_eq!(frames[4].payload.get(), notice.payload.as_str());
+    let payload: Value = serde_json::from_str(&notice.payload).expect("message wire");
+    assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
 }

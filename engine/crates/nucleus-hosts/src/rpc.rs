@@ -4,7 +4,11 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, Url, header::HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::Mutex, time};
+use tokio::{
+    net::TcpStream,
+    sync::{Mutex, mpsc},
+    time,
+};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
@@ -106,6 +110,47 @@ impl Rpc {
         reply
     }
 
+    pub(crate) async fn watch_threads(
+        &self,
+        hints: &mpsc::Sender<String>,
+    ) -> Result<(), HostError> {
+        let socket = time::timeout(DEADLINE, self.connect())
+            .await
+            .map_err(|_| HostError::Timeout)??;
+        let mut connection = Connection { socket, next_id: 0 };
+        connection.send(json!({"_tag":"Request", "id":"1", "tag":"orchestration.subscribeShell", "headers":[],
+            "payload":{"omitIdleSubagents":true,"omitOlderSettled":true}})).await?;
+        loop {
+            let frames = time::timeout(Duration::from_mins(1), connection.frames())
+                .await
+                .map_err(|_| HostError::Timeout)??;
+            for frame in frames {
+                match frame["_tag"].as_str() {
+                    Some("Ping") => connection.send(json!({"_tag":"Pong"})).await?,
+                    Some("Pong") => {}
+                    Some("Chunk") if frame["requestId"] == "1" || frame["requestId"] == 1 => {
+                        connection
+                            .send(json!({"_tag":"Ack","requestId":"1"}))
+                            .await?;
+                        for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            let thread = match item["kind"].as_str() {
+                                Some("thread.updated") => item["thread"]["id"].as_str(),
+                                Some("thread.removed") => item["threadId"].as_str(),
+                                _ => None,
+                            };
+                            if let Some(thread) = thread {
+                                hints
+                                    .try_send(thread.into())
+                                    .map_err(|_| HostError::Uncertain)?;
+                            }
+                        }
+                    }
+                    _ => return Err(HostError::Protocol),
+                }
+            }
+        }
+    }
+
     async fn connect(&self) -> Result<Socket, HostError> {
         #[derive(Deserialize)]
         struct Ticket {
@@ -157,6 +202,26 @@ struct Connection {
 }
 
 impl Connection {
+    async fn frames(&mut self) -> Result<Vec<Value>, HostError> {
+        let message = self
+            .socket
+            .next()
+            .await
+            .ok_or(HostError::Unavailable)?
+            .map_err(|_| HostError::Unavailable)?;
+        let Message::Text(text) = message else {
+            return match message {
+                Message::Ping(_) | Message::Pong(_) => Ok(Vec::new()),
+                _ => Err(HostError::Unavailable),
+            };
+        };
+        let value = serde_json::from_str(&text).map_err(|_| HostError::Protocol)?;
+        Ok(match value {
+            Value::Array(frames) => frames,
+            frame => vec![frame],
+        })
+    }
+
     async fn call(
         &mut self,
         method: &str,
@@ -184,24 +249,7 @@ impl Connection {
         .await?;
         let mut snapshot = None;
         for _ in 0..MAX_MESSAGES {
-            let message = self
-                .socket
-                .next()
-                .await
-                .ok_or(HostError::Unavailable)?
-                .map_err(|_| HostError::Unavailable)?;
-            let Message::Text(text) = message else {
-                match message {
-                    Message::Ping(_) | Message::Pong(_) => continue,
-                    _ => return Err(HostError::Unavailable),
-                }
-            };
-            let raw: Value = serde_json::from_str(&text).map_err(|_| HostError::Protocol)?;
-            let frames = match raw {
-                Value::Array(frames) => frames,
-                frame => vec![frame],
-            };
-            for frame in frames {
+            for frame in self.frames().await? {
                 let tag = frame["_tag"].as_str().ok_or(HostError::Protocol)?;
                 if tag == "Ping" {
                     self.send(json!({"_tag":"Pong"})).await?;

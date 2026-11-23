@@ -3,6 +3,7 @@
 mod launch;
 mod process;
 mod projection;
+mod questions;
 mod rpc;
 #[cfg(test)]
 mod t3_tests;
@@ -16,14 +17,25 @@ use std::{
 
 pub use launch::{Binding, Dispatch, RoleProfile, RunRequest};
 use launch::{Method, Wire, message_id};
-use nucleus_core::{Host, RetainedThread, Run, RunState};
+use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
+pub use questions::{NoticeAuthorization, NoticeState, PlannerThread};
 use rpc::{Read, Reply, Rpc};
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
+
+pub struct LaunchRequest<'a> {
+    pub binding: Binding,
+    pub via: &'a Launch,
+    pub profile: &'a RoleProfile,
+    pub title: String,
+    pub instance: &'a str,
+    pub started_at: u64,
+    pub text: String,
+}
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum HostError {
@@ -88,6 +100,11 @@ impl ReplayAuthorization {
 /// The service serializes commands and effects for each task and persists
 /// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
+    /// Prepare the host's immutable launch inputs and native identity.
+    /// # Errors
+    /// Returns an error when the launch is unsupported or cannot be encoded.
+    fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError>;
+
     fn observe_retained(
         &self,
         binding: &Binding,
@@ -152,6 +169,16 @@ impl T3 {
         }
     }
 
+    /// Stream thread change hints over a socket independent of exact reads.
+    /// # Errors
+    /// Returns an error on disconnect or if the listener missed a hint.
+    pub async fn watch_threads(
+        &self,
+        hints: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<(), HostError> {
+        self.rpc.watch_threads(hints).await
+    }
+
     /// Check the host protocol and the configured role profiles before admission.
     ///
     /// # Errors
@@ -178,6 +205,33 @@ impl T3 {
                 .any(|provider| available(provider, profile))
         }) {
             return Err(HostError::Configuration);
+        }
+        Ok(())
+    }
+
+    /// Verify that the selected project is active at the expected local root.
+    /// This configuration read is independent of cycle observations.
+    ///
+    /// # Errors
+    /// Returns an error when the project or snapshot cannot be verified.
+    pub async fn check_project(&self, id: &str, root: &str) -> Result<(), HostError> {
+        let Reply::Value(snapshot) = self.rpc.call(
+            "orchestration.subscribeShell",
+            json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true}),
+            Read::Snapshot,
+        ).await? else { return Err(HostError::Protocol) };
+        let projects = snapshot
+            .pointer("/snapshot/projects")
+            .and_then(Value::as_array)
+            .ok_or(HostError::Protocol)?;
+        let mut matched = projects.iter().filter(|project| project["id"] == id);
+        let project = matched.next().ok_or(HostError::Binding)?;
+        if matched.next().is_some()
+            || project["workspaceRoot"] != root
+            || !project["archivedAt"].is_null()
+            || !project["deletedAt"].is_null()
+        {
+            return Err(HostError::Binding);
         }
         Ok(())
     }
@@ -255,6 +309,25 @@ impl T3Pass<'_> {
 }
 
 impl TaskHost for T3Pass<'_> {
+    fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError> {
+        let (dispatch, thread) = match request.via {
+            Launch::Create => (
+                Dispatch::Create {
+                    title: request.title,
+                    profile: request.profile.clone(),
+                },
+                format!("thread:{}", request.instance),
+            ),
+            Launch::Continue { thread } => (Dispatch::Continue, thread.clone()),
+            Launch::SendPrepared => return Err(HostError::Binding),
+        };
+        RunRequest {
+            binding: request.binding,
+            dispatch,
+            text: request.text,
+        }
+        .inputs(request.instance, thread, request.started_at)
+    }
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
         let projection = self.host.thread(binding, thread).await?;
         let state = if self.quiet(binding, projection.as_ref()).await? {
