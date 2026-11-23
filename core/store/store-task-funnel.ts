@@ -79,6 +79,18 @@ export type CreationAttempt = CreationReservation & {
 };
 type CreationJournal = Pick<TaskFunnelServices, "db" | "event" | "transaction">;
 
+/**
+ * Journal a new creation attempt for an existing run (Spec 068 §3): a relaunch
+ * under the same run id, and so the same host command id, after a lookup proved
+ * the earlier attempt produced no agent.
+ */
+export function reserveCreationAttempt(
+  store: CreationJournal,
+  binding: CreationBinding,
+): void {
+  reserveCreation(store, binding);
+}
+
 function reserveCreation(store: CreationJournal, binding: CreationBinding) {
   const reservation: CreationReservation = {
     ...binding,

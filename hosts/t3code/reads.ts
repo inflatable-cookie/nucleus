@@ -1060,23 +1060,20 @@ export class T3Reads {
 
   /**
    * A creation lookup (Spec 068 §3). A launch record names a candidate whose
-   * existence T3 still needs to confirm, and the launch's own command id names
-   * the child thread T3 derives from it, so a create whose reply was lost (and
-   * whose record was dropped) is still found. The live shell is brought inside
+   * existence T3 still needs to confirm, and `derived` names the child threads
+   * T3 derives from the create commands the ledger recorded as sent, so a create
+   * whose reply was lost (and whose record was dropped) is still found. The live shell is brought inside
    * its freshness bound first, so an empty answer is a complete one: a stale or
    * unreadable shell throws instead of answering absent. Each candidate the shell
    * does not list takes one fresh exact read by id; nothing reads the archived
    * inventory.
    */
-  async findRunAgents(labels: Record<string, string>) {
+  async findRunAgents(
+    labels: Record<string, string>,
+    derived: readonly string[] = [],
+  ) {
     this.core.requireConnection();
     await this.readShell();
-    const run = labels[WIRE_LABEL_KEYS.run];
-    const derived = run
-      ? [`ns-run-${run}`, `ns-run-${run}-socket`, `ns-agent-${run}`, `ns-agent-${run}-socket`].map(
-          (command) => `thread:delegated-task:${command}`,
-        )
-      : [];
     const found = [];
     for (const id of new Set([...this.matchingAgentIds(labels), ...derived])) {
       const listed = this.live.row(id);

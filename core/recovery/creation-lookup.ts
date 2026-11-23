@@ -1,8 +1,10 @@
 import { now, type Store } from "../store/store";
+import { randomBytes } from "node:crypto";
 import {
   creationProducerId,
   creationTermination,
   readCreationAttempt,
+  reserveCreationAttempt,
   type CreationBinding,
 } from "../store/store-task-funnel";
 import { threadRunningReason } from "../intake/thread-waits";
@@ -21,13 +23,16 @@ import type { Resolution } from "../resolution";
  *
  * - exactly one match in the run's own workspace binds it;
  * - no match, on a complete read, once the creation attempt has ended (its call
- *   settled or its service was replaced) and the grace period has passed,
- *   releases the creation, and ordinary admission relaunches the role once;
+ *   settled or its service was replaced), the grace period has passed and the
+ *   host holds no create command that may still answer, relaunches the creation
+ *   once under the same run id, so the host's command id is the same and a
+ *   create the host did receive dedupes there instead of becoming a second
+ *   thread;
  * - a partial or failed read, a match outside the workspace or more than one
  *   match keeps waiting with the reason named, and the task's coordinator may be
  *   admitted for it as for any mechanical stall.
  *
- * Releases are bounded per role (`CREATION_LOOKUP_ATTEMPTS`); past the bound the
+ * Relaunches are bounded per role and head (`CREATION_LOOKUP_ATTEMPTS`); past the bound the
  * task records a typed stop naming its explicit command. The coordinator's own
  * creations keep their existing lookup in the coordinator episode.
  */
@@ -45,9 +50,13 @@ export type CreationLookupContext = Pick<
   | "update"
 >;
 
+/** A run relaunches under its own id, through the ordinary delivery path. */
+export type RunCreationContext = CreationLookupContext &
+  Pick<Resolution, "deliverLaunchRun" | "launchingRuns" | "paused">;
+
 export type CreationSettlement =
   | "bound"
-  | "released"
+  | "relaunched"
   | "waiting"
   | "stopped"
   | "skipped";
@@ -103,14 +112,23 @@ async function lookUp(
   };
 }
 
-/** Releases this sweep already made for one role on this task (the per-role bound). */
-function absentReleases(store: Store, taskId: string, role: string): number {
+/** Relaunches this sweep already made for one role at one head (the per-cause bound). */
+function relaunchesAtHead(
+  store: Store,
+  taskId: string,
+  role: string,
+  head: string | null,
+): number {
   return store
     .eventsAll(taskId)
-    .filter((event) => event.kind === "creation_absent_released")
+    .filter((event) => event.kind === "creation_relaunched")
     .filter((event) => {
       try {
-        return (JSON.parse(event.detail) as { role?: string }).role === role;
+        const detail = JSON.parse(event.detail) as {
+          role?: string;
+          head?: string | null;
+        };
+        return detail.role === role && (detail.head ?? null) === head;
       } catch {
         return false;
       }
@@ -149,7 +167,7 @@ function stopOn(
   runId: string,
 ): CreationSettlement {
   const command = roleCommand(role as Run["role"]);
-  const reason = `Uncertain ${role} creation ${runId} found no thread after ${CREATION_LOOKUP_ATTEMPTS} automatic relaunches; use ${command ? `run.start ${command} fresh replacing=${runId} or ` : ""}run.release run=${runId}`;
+  const reason = `Uncertain ${role} creation ${runId} found no thread after ${CREATION_LOOKUP_ATTEMPTS} automatic relaunches at this head; use ${command ? `run.start ${command} fresh replacing=${runId} or ` : ""}run.release run=${runId}`;
   const current = ctx.store.task(task.id);
   if (current.reason !== reason)
     ctx.waiting(current, reason, "operator_needed", {
@@ -186,7 +204,7 @@ const uncertainRun = (run: Run | null | undefined): run is Run =>
  * a proof executor keeps its owner-activated path.
  */
 export async function settleRunCreation(
-  ctx: CreationLookupContext,
+  ctx: RunCreationContext,
   task: Task,
   run: Run,
 ): Promise<CreationSettlement> {
@@ -198,8 +216,10 @@ export async function settleRunCreation(
     !["reviewer", "revision", "closeout"].includes(run.role)
   )
     return "skipped";
-  if (dispatchBlocked(task) || !run.workspaceId) return "skipped";
-  if (!ctx.hostAvailable(task, run)) return "skipped";
+  if (dispatchBlocked(task) || !run.workspaceId || ctx.paused())
+    return "skipped";
+  if (!ctx.hostAvailable(task, run) || ctx.launchingRuns.has(run.id))
+    return "skipped";
   // Captured before the read: only an attempt that had already ended counts.
   const ended = creationTermination(store, run, ctx.graceMs);
   const lookup = await lookUp(ctx, run, run);
@@ -258,42 +278,70 @@ export async function settleRunCreation(
     });
     return "bound";
   }
-  // Absent on a complete read after the attempt ended and its grace passed.
-  if (absentReleases(store, task.id, run.role) >= CREATION_LOOKUP_ATTEMPTS)
+  // Absent on a complete read, after the attempt ended, its grace passed and the
+  // host holds no create command that may still answer: relaunch the same run,
+  // so the host's command id is the same and a create T3 did receive dedupes.
+  if (
+    relaunchesAtHead(store, task.id, run.role, run.head) >=
+    CREATION_LOOKUP_ATTEMPTS
+  )
     return stopOn(ctx, current, run.role, run.id);
-  store.transaction(() => {
+  const token = randomBytes(24).toString("hex");
+  const relaunched = store.transaction(() => {
     const fresh = store.run(run.id);
-    if (!uncertainRun(fresh)) return;
-    store.putRun({
-      ...fresh,
-      status: "superseded",
-      released: true,
-      active: false,
-      absentProvenAt: now(),
+    if (!uncertainRun(fresh)) return null;
+    reserveCreationAttempt(store, {
+      id: fresh.id,
+      taskId: fresh.taskId,
+      hostId: fresh.hostId,
+      workspaceId: fresh.workspaceId,
+      role: fresh.role,
     });
-    store.deleteCredential(run.id);
+    store.setCredential(fresh.id, token);
+    store.putRun({ ...fresh, status: "intent" });
     const latestTask = store.task(task.id);
-    const resolution = { ...latestTask.resolution };
-    if (resolution.currentRunId === run.id) resolution.currentRunId = null;
-    if (resolution.stop?.fact?.subject === run.id) resolution.stop = null;
-    if (resolution.incident?.runId === run.id) resolution.incident = null;
     store.update(
       latestTask.id,
-      {
-        resolution,
-        ...(latestTask.reason === latestTask.resolution.stop?.detail
-          ? { reason: `Uncertain ${run.role} creation ${run.id} produced no thread; relaunching` }
-          : {}),
-      },
-      "creation_absent_released",
+      latestTask.resolution.stop?.fact?.subject === run.id
+        ? { resolution: { ...latestTask.resolution, stop: null } }
+        : {},
+      "creation_relaunched",
       JSON.stringify({
         runId: run.id,
         role: run.role,
+        head: run.head,
         terminatedBy: ended!.terminatedBy,
       }),
     );
+    return store.run(run.id)!;
   });
-  return "released";
+  if (!relaunched) return "skipped";
+  ctx.launchingRuns.add(run.id);
+  try {
+    await ctx.onTaskHost(relaunched, () =>
+      ctx.deliverLaunchRun(store.task(task.id), relaunched.role, {
+        agentId: null,
+        profile: relaunched.profile,
+        group: relaunched.profileGroup ?? null,
+        workspaceId: relaunched.workspaceId,
+        firstReviewEntryWorker: false,
+        nonDeliveryReplacement: false,
+        run: relaunched,
+        token,
+      }),
+    );
+  } catch (error) {
+    // The delivery records its own uncertain or refused settlement; the next
+    // pass looks the creation up again.
+    store.event(
+      task.id,
+      "creation_relaunch_failed",
+      `${run.id}: ${(error instanceof Error ? error.message : String(error)).slice(0, 2000)}`,
+    );
+  } finally {
+    ctx.launchingRuns.delete(run.id);
+  }
+  return "relaunched";
 }
 
 /** Settle the initial worker's uncertain creation (its binding lives on the task row). */
@@ -347,7 +395,8 @@ export async function settleWorkerCreation(
     );
     return "bound";
   }
-  if (absentReleases(store, current.id, "worker") >= CREATION_LOOKUP_ATTEMPTS)
+  const head = current.prHead ?? current.planningCommit ?? null;
+  if (relaunchesAtHead(store, current.id, "worker", head) >= CREATION_LOOKUP_ATTEMPTS)
     return stopOn(ctx, current, "worker", runId);
   store.transaction(() => {
     store.deleteCredential(runId);
@@ -358,7 +407,9 @@ export async function settleWorkerCreation(
         restartRunId: runId,
         runId: null,
         phase: "dispatching",
-        reason: `Uncertain worker creation ${runId} produced no thread; relaunching`,
+        // The launcher reuses this run id (restartRunId), so the host's create
+        // command keeps its id and a create T3 did receive dedupes there.
+        reason: `Uncertain worker creation ${runId} produced no thread; relaunching it`,
         briefRuns: current.briefRuns.filter((item) => item.runId !== runId),
         laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(
           (item) => item.runId !== runId,
@@ -371,9 +422,14 @@ export async function settleWorkerCreation(
             : {}),
         },
       },
-      "creation_absent_released",
-      JSON.stringify({ runId, role: "worker", terminatedBy: ended!.terminatedBy }),
+      "creation_relaunched",
+      JSON.stringify({
+        runId,
+        role: "worker",
+        head,
+        terminatedBy: ended!.terminatedBy,
+      }),
     );
   });
-  return "released";
+  return "relaunched";
 }

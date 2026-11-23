@@ -234,6 +234,14 @@ export interface T3IntentContext {
 export interface EffectOptions {
   /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
   resendUnknownAfterRead?: boolean;
+  /**
+   * Spec 068 §3: the caller proved on a complete read (the live shell inside its
+   * bound plus an exact read by id) that the thread this command creates is
+   * absent. A timed-out command whose late reply can no longer land may then be
+   * resent under its own command id. A reply still awaited in this process
+   * always keeps the command unknown.
+   */
+  resendTimedOutAfterAbsentRead?: boolean;
   /** Retry only a recorded local pre-send refusal, keeping the same payload and command identity. */
   retryRefusedBeforeSend?: boolean;
   /** Guidance that rides an unknown delivery when the remote text names no known method. */
@@ -262,6 +270,11 @@ export interface ResponseEffect {
 export class T3IntentLedger {
   private readonly awaitingLate = new Set<string>();
   constructor(private readonly core: T3IntentContext) {}
+
+  /** Whether this process still awaits a late reply for this command (Spec 068 §3). */
+  lateReplyPossible(key: string): boolean {
+    return this.awaitingLate.has(key);
+  }
 
   /** Only our recorded delete can retire presentation work; external disappearance cannot. */
   confirmedDeletion(state: T3State, id: string): string | undefined {
@@ -419,7 +432,8 @@ export class T3IntentLedger {
       );
     if (
       prior?.status === "unknown" &&
-      (prior.timedOut || this.awaitingLate.has(key))
+      (this.awaitingLate.has(key) ||
+        (prior.timedOut && !options.resendTimedOutAfterAbsentRead))
     )
       throw new HostUnknownDeliveryError(prior.diagnostic);
     if (
@@ -546,9 +560,12 @@ export class T3IntentLedger {
           });
           return result;
         });
+        // A late failure (T3's own refusal, or the connection ending) also ends
+        // the wait for a reply on this connection: what the command did is then
+        // read, never assumed, and a resend keeps the same command id.
         void unknown.late.then(
           () => this.awaitingLate.delete(key),
-          () => {},
+          () => this.awaitingLate.delete(key),
         );
       }
       try {

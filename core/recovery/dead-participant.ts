@@ -459,6 +459,10 @@ export async function retireGoneRetainedWorker(
   const current = store.task(task.id);
   const agentId = current.agentId;
   if (!agentId || current.phase !== "changes_requested") return false;
+  // One owner at a time, as for a release: a coordinator run or recovery episode
+  // owns the task's next move.
+  if (dispatchBlocked(current) || coordinatorOwnsTask(store, current))
+    return false;
   // The retained worker is serving an unreleased run: that run's own observation
   // owns its death, never this launch.
   if (

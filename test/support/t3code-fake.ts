@@ -728,6 +728,11 @@ export async function t3Fake(t: TestContext, directory: string) {
     disconnectAfterLaunch: false,
     /** The next delegated launch times out before T3 creates its child. */
     timeoutDelegatedLaunch: false,
+    /**
+     * The next delegated launch is processed this many milliseconds late: T3
+     * creates its child and answers after the caller's deadline (a late reply).
+     */
+    lateDelegatedLaunchMs: 0,
     /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
     unsettleFaults: [] as Array<"drops" | "lands">,
     /** Thread reads that still show a settled thread after an unsettle command (a delayed apply). */
@@ -1149,6 +1154,20 @@ export async function t3Fake(t: TestContext, directory: string) {
       clearInterval(shellTimer);
     });
     const handle = (request: Value) => {
+      if (
+        controls.lateDelegatedLaunchMs > 0 &&
+        request._tag === "Request" &&
+        request.tag === "orchestration.dispatchCommand" &&
+        (request.payload as Value | undefined)?.type === "delegated_task.request"
+      ) {
+        const delay = controls.lateDelegatedLaunchMs;
+        controls.lateDelegatedLaunchMs = 0;
+        setTimeout(() => {
+          handleFrame(request);
+          publishShell();
+        }, delay);
+        return;
+      }
       handleFrame(request);
       publishShell();
     };

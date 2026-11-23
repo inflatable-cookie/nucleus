@@ -600,8 +600,34 @@ export class T3CodeHost implements Host {
   async findAgents(labels: Record<string, string>) {
     return await this.reads.findAgents(labels);
   }
+  /**
+   * Spec 068 §3: a creation lookup. The create commands a run could have sent
+   * are `ns-run-<run>` and `ns-agent-<run>` (and their socket retries); only the
+   * ones the ledger recorded are read, by the child thread id T3 derives from
+   * each. While one of them may still return a late reply the lookup refuses,
+   * so an empty answer never stands in for a create T3 has yet to answer.
+   */
   async findRunAgents(labels: Record<string, string>) {
-    return await this.reads.findRunAgents(labels);
+    const sent = this.sentCreateCommands(labels[WIRE_LABEL_KEYS.run]);
+    if (sent.some((command) => this.intents.lateReplyPossible(command)))
+      throw new HostReadRefusalError(
+        "T3Code may still answer this run's create command; its lookup waits",
+      );
+    return await this.reads.findRunAgents(
+      labels,
+      sent.map((command) => `thread:delegated-task:${command}`),
+    );
+  }
+  /** The create command ids the ledger holds for one run. */
+  private sentCreateCommands(run: string | undefined): string[] {
+    if (!run) return [];
+    const intents = this.state.read().intents;
+    return [
+      `ns-run-${run}`,
+      `ns-run-${run}-socket`,
+      `ns-agent-${run}`,
+      `ns-agent-${run}-socket`,
+    ].filter((command) => Boolean(intents[command]));
   }
   /** The retention pass's archived inventory; see `T3Reads.archivedThreads`. */
   async archivedThreads() {

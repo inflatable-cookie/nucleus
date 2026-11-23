@@ -270,10 +270,13 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   retained worker whose thread is gone and continues the same revision on a fresh
   one; a dead initial worker with a PR continues it the same way. `next` offers
   `run.start worker fresh`.
-- **Uncertain creation settles by lookup for every role**, with a bound of three
-  automatic relaunches per role, the host-read hold no longer keeping the
-  coordinator out, and T3's lookup also finding a created thread whose reply was
-  lost.
+- **Uncertain creation settles by lookup for every role.** A create that may
+  still answer (a late reply on a live connection) keeps the run waiting; a
+  complete absent read after that relaunches the same run under the same host
+  command id, which T3 resends only after reading the derived child absent, so a
+  received create never becomes a second thread. Three relaunches per role and
+  head, the host-read hold no longer keeping the coordinator out, and T3's lookup
+  reading only the create commands its ledger recorded as sent.
 - **`run_stalled` admits its coordinator**, and a stop naming a released run
   clears.
 - **A reported verdict is never dropped or stranded.** `run.start` warns

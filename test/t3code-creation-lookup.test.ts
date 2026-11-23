@@ -27,6 +27,13 @@ async function fixture(t: TestContext, input: { timeoutMs?: number } = {}) {
     { id: "nucleus-thread-lookup-0", taskId: "task-lookup", runId: "run-recorded" },
   ];
   const state = storedHostState({ directory, threads });
+  // The ledger holds one create command whose reply was lost: it was sent, so
+  // the child thread T3 derives from its id is a lookup candidate.
+  (state.intents as Record<string, unknown>)["ns-run-run-lost-reply"] = {
+    payload: "{}",
+    status: "unknown",
+    timedOut: true,
+  };
   const workspaceId = Object.keys(state.workspaces)[0]!;
   const statePath = join(root, "state.json");
   writeFileSync(statePath, JSON.stringify(state), { mode: 0o600 });
@@ -60,9 +67,17 @@ test("a created thread whose reply and launch record were lost is found by its d
   ]);
 });
 
-test("no thread on a complete, fresh read is an empty answer", async (t) => {
-  const { host } = await fixture(t);
+test("no thread on a complete, fresh read is an empty answer, and an unsent command is never read", async (t) => {
+  const { server, host } = await fixture(t);
+  await host.reads.shell();
+  const reads = () =>
+    server.requests.filter((request) => request.tag === "orchestration.subscribeThread")
+      .length;
+  const before = reads();
   assert.deepEqual(await host.findRunAgents(labels("run-never-created")), []);
+  assert.equal(reads(), before, "no exact read for a command never sent");
+  assert.deepEqual(await host.findRunAgents(labels("run-lost-reply")), []);
+  assert.equal(reads() - before, 1, "one exact read for the sent command");
 });
 
 test("a shell past its freshness bound that cannot reopen never answers absent", async (t) => {

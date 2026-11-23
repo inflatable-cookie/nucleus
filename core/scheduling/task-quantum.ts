@@ -500,7 +500,7 @@ export class TaskQuantum {
           !bound && latest.agentIntent && !latest.agentId && latest.workspaceId
             ? await settleWorkerCreation(this.context.resolution, latest)
             : "skipped";
-        if (settled === "released")
+        if (settled === "relaunched")
           this.context.cleanContext(() => {
             void this.context.wakeRepository(latest.repoPath);
           });

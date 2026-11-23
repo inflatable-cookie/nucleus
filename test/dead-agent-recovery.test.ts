@@ -915,7 +915,7 @@ test("uncertain creation: the one thread the lookup finds is bound", async () =>
   }
 });
 
-test("uncertain creation: absent on a complete read after the grace releases it and relaunches once", async () => {
+test("uncertain creation: absent on a complete read after the grace relaunches the same run once", async () => {
   const f = fixture();
   try {
     const run = uncertainReviewer(f);
@@ -923,13 +923,18 @@ test("uncertain creation: absent on a complete read after the grace releases it 
     await f.engine.wake();
     await f.engine.wake();
 
-    assert.equal(f.store.run(run.id)!.released, true);
-    assert.ok(f.store.run(run.id)!.absentProvenAt);
-    assert.equal(f.events("creation_absent_released").length, 1);
+    assert.equal(f.events("creation_relaunched").length, 1);
     const relaunched = f.createdRuns.filter((candidate) => candidate.role === "reviewer");
     assert.equal(relaunched.length, 1, "exactly one relaunch");
-    assert.equal(f.current().resolution.currentRunId, relaunched[0]!.id);
-    assert.doesNotMatch(f.current().reason, new RegExp(run.id), "the old run's reason is gone");
+    assert.equal(
+      relaunched[0]!.id,
+      run.id,
+      "under the same run id, so the host's create command keeps its id",
+    );
+    assert.equal(f.store.run(run.id)!.released, false);
+    assert.equal(f.store.run(run.id)!.agentId, `agent-${run.id}`);
+    assert.equal(f.current().resolution.currentRunId, run.id);
+    assert.doesNotMatch(f.current().reason, /Uncertain/, "the old run's reason is gone");
   } finally {
     await f.close();
   }
@@ -985,8 +990,8 @@ test("uncertain creation: past the attempt bound the task records a typed stop w
     for (let index = 0; index < 3; index++)
       f.store.event(
         f.submitted.id,
-        "creation_absent_released",
-        JSON.stringify({ runId: `earlier-${index}`, role: "reviewer" }),
+        "creation_relaunched",
+        JSON.stringify({ runId: run.id, role: "reviewer", head: run.head }),
       );
 
     await f.engine.wake();
@@ -1059,7 +1064,7 @@ test("uncertain worker creation: absent after the grace relaunches the worker on
     uncertainWorker(f);
     await f.engine.wake();
     await f.engine.wake();
-    assert.equal(f.events("creation_absent_released").length, 1);
+    assert.equal(f.events("creation_relaunched").length, 1);
     // The relaunch reuses the released run id (restartRunId), under a new attempt.
     assert.equal(f.events("creation_attempt_reserved").length, 2);
     assert.equal(f.current().phase, "working");

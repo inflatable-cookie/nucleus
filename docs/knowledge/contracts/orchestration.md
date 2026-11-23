@@ -2065,7 +2065,8 @@ review or merge credit; live participants and unsettled effects remain fences.
   `run.start <role> fresh replacing=<run>`. Process facts ported from
   nucleus#1552.
 - A changes_requested task whose retained worker thread is positively gone
-  retires that worker before the revision launch (`retained_worker_gone`, with
+  (and no coordinator run or recovery episode owns the task) retires that
+  worker before the revision launch (`retained_worker_gone`, with
   the proof) and continues the same revision on a fresh worker, which becomes
   the retained worker. Past the worker replacement ceiling it records an
   `operator_needed` stop naming `run.start worker fresh` instead. `next` offers
@@ -2182,21 +2183,32 @@ review or merge credit; live participants and unsettled effects remain fences.
 - Every uncertain creation settles by lookup ([Spec 068](../specs/068-self-healing.md)
   §3; `core/recovery/creation-lookup.ts`): the initial worker, revision,
   reviewer and closeout runs here, the coordinator's in the recovery sweep
-  below. The observation pass looks the creation up by its launch labels (on T3
-  the live shell inside its freshness bound plus one exact read by id per
-  candidate, including the child thread id its command derives, so a lost reply
-  is still found). Exactly one match in the run's own workspace binds it
-  (`creation_bound_by_lookup`). No match on a complete read, once the attempt
-  has ended (its call settled or its service was replaced) and the grace has
-  passed, releases the creation (`creation_absent_released`, `absentProvenAt`)
-  and ordinary admission relaunches it once. A partial or failed read, a match
-  outside the workspace or several matches keeps a `lifecycle` wait (fact
-  `creation_lookup` or `worker_lookup`) whose reason names why and when the
-  grace ends, and the coordinator may be admitted for it as for any mechanical
-  stall; the host-read hold never keeps it out. Each role gets three automatic
-  releases; past that the task records an `operator_needed` stop naming
-  `run.start <role> fresh replacing=<run>` or `run.release run=<run>`. Nothing
-  is ever resent blind: a release follows only a complete absent read.
+  below. The observation pass (the task quantum for the initial worker) looks
+  the creation up by its launch labels, and never while its own launch is in
+  flight. On T3 the lookup reads the live shell inside its freshness bound plus
+  one exact read by id for each candidate: the launch records, and the child
+  thread T3 derives from each create command the adapter's ledger recorded as
+  sent (`ns-run-<run>`, `ns-agent-<run>` and their socket retries), so a lost
+  reply is still found and a command never sent costs no read. While a create
+  command may still return a late reply (a timed-out call on a live
+  connection) the lookup refuses, so the run waits: an empty read is never
+  absence while the host may still answer. Exactly one match in the run's own
+  workspace binds it (`creation_bound_by_lookup`). No match on a complete read,
+  once the attempt has ended (its call settled or its service was replaced),
+  the grace has passed and no reply can land, relaunches the creation once
+  under the same run id (`creation_relaunched`): the run's own credential is
+  renewed, a new attempt is journaled, and ordinary delivery sends the create
+  again with the same host command id. On T3 that resend goes through the
+  ledger only after a complete read proves the derived child absent, and a
+  child T3 does hold is adopted instead, so a create T3 did receive never
+  becomes a second thread (the child thread id derives from the command id).
+  A partial or failed read, a match outside the workspace or several matches
+  keeps a `lifecycle` wait (fact `creation_lookup` or `worker_lookup`) whose
+  reason names why and when the grace ends, and the coordinator may be
+  admitted for it as for any mechanical stall; the host-read hold never keeps
+  it out. Each role gets three automatic relaunches at one head; past that the
+  task records an `operator_needed` stop naming
+  `run.start <role> fresh replacing=<run>` or `run.release run=<run>`.
 - For an agentless recovery (coordinator) run, the recovery sweep still uses a
   complete exact lookup on the recorded host and workspace: a single exact match
   binds in the sweep, while a zero result after grace (when the attempt settled
@@ -3585,7 +3597,7 @@ after the task finishes.
 | `reviewer_report_request_intent` | `requestReviewerReport` | The owner action names the unknown request and directs the owner to its retained thread. No sweep reads a delivery receipt. | No |
 | `route_stop_intent` | `RouteControls.stopRouteRun` | Replay of the same durable control observes the recorded turn before doing anything. No standalone terminal reader for the event. | Operation replay only |
 | `run_build_output_intent` | `RunCallbackIntake.completeBuildOutput`; initial worker intake records the same row with its completion | Lifecycle schedules `settleRunBuildOutputs` after run release. The handler proves ownership and idle participants or confirms authoritative absence. | Done and cancelled |
-| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` settles the creation by lookup (`creation-lookup.ts`): one match binds, a complete absent read after the grace releases it for one relaunch, a partial read waits. Lifecycle abandons an agentless reservation at terminal phase without a new launch. | Agentless reservation settlement only |
+| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` settles the creation by lookup (`creation-lookup.ts`): one match binds, a complete absent read after the grace with no late reply possible relaunches the same run under the same command id, a partial read or a create that may still answer waits. Lifecycle abandons an agentless reservation at terminal phase without a new launch. | Agentless reservation settlement only |
 | `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
 | `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
 | `task_branch_cleanup_intent` | `attemptBranchCleanup` | The terminal cleanup pass observes the recorded branch locally and on the forge before acting, then records the delete, a keep with its cause, or a retry with its deadline. `retry_effect branch_cleanup.<branch>` is the owner exit. | Yes, while the record waits or is unconfirmed |

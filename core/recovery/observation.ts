@@ -57,6 +57,7 @@ export type ObservationContext = Pick<
   | "hostAvailable"
   | "hostReadTransientFailure"
   | "clearHostReadTransient"
+  | "deliverLaunchRun"
   | "inventoryHostMatches"
   | "launchingRuns"
   | "onTaskHost"

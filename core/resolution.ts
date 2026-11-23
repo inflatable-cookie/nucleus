@@ -1049,6 +1049,7 @@ export class Resolution {
       "hostAvailable",
       "hostReadTransientFailure",
       "clearHostReadTransient",
+      "deliverLaunchRun",
       "inventoryHostMatches",
       "launchingRuns",
       "onTaskHost",

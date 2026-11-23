@@ -928,6 +928,13 @@ export class ResultApplication {
     }
     let c = run.completion;
     if (run.ordinaryDetached) {
+      // A pass that read this reviewer as current before another pass settled it
+      // has nothing left to do, and must never stop a turn for it.
+      if (
+        run.role === "reviewer" &&
+        this.store.task(t.id).resolution.currentRunId !== run.id
+      )
+        return;
       // Spec 068 §3: a reviewer that already reported owns no live work; its
       // leftover turn is driven to settlement instead of failing custody.
       if (
