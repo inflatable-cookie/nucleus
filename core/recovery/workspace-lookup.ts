@@ -14,13 +14,16 @@ import {
   worktreeLinksForClearedIntent,
 } from "../workspaces/worktree-links";
 import { isTransportFailure } from "../../shared/transport";
+import type { TaskStopRecord } from "../../shared/task-stop";
+import { expiredQuantumDeadlineError } from "../scheduling/pass-snapshot";
 
 /**
  * Spec 068 batch A: an uncertain workspace creation settles by lookup, as an
  * uncertain agent creation does.
  *
- * A task whose dispatch recorded `workspaceIntent` but never bound a workspace
- * (the service stopped mid-populate, or the create call never answered) is
+ * A task whose dispatch (its first, or a re-dispatch after a host move that left
+ * no PR) recorded `workspaceIntent` but never bound a workspace (the service
+ * stopped mid-populate, or the create call never answered) is
  * looked up on its host: the host's workspace inventory, the expected worktree
  * directory, the `git worktree list` entry, the task branch (local and remote)
  * and any workspace allocation lease (Barge). Then:
@@ -117,6 +120,28 @@ export function workspaceIntentReleasePatch(task: Task): Partial<Task> {
   return { workspaceIntent: false, ...worktreeLinksForClearedIntent(task) };
 }
 
+/** The generic wait the quantum recorded before this lookup existed. */
+export const LEGACY_WORKSPACE_WAIT =
+  "Workspace creation is uncertain; inspect the host and resolve explicitly";
+
+/**
+ * Whether a stop is this lookup's own: its lifecycle wait, its typed stop past
+ * the bound, or the legacy generic wait. Any other stop belongs to its owner.
+ */
+export function workspaceLookupStop(
+  stop: TaskStopRecord | null | undefined,
+): boolean {
+  return Boolean(
+    stop &&
+      (stop.fact?.code === "workspace_lookup" ||
+        (stop.reason === "lifecycle" && stop.detail === LEGACY_WORKSPACE_WAIT)),
+  );
+}
+
+/** The typed stop past the release bound, which a transient read never replaces. */
+const boundStop = (stop: TaskStopRecord | null | undefined): boolean =>
+  stop?.reason === "operator_needed" && stop.fact?.code === "workspace_lookup";
+
 /** Text for the typed stop past the bound, naming its explicit command. */
 export function workspaceReleaseBoundReason(task: Task): string {
   return `Workspace creation for ${task.branch} found nothing to bind after ${WORKSPACE_RELEASE_ATTEMPTS} automatic releases; inspect the host, then use record.clear kind=workspace_intent id=${task.branch} to release it again, or cancel the task`;
@@ -141,9 +166,10 @@ function waitOn(
   const current = ctx.store.task(task.id);
   const stop = current.resolution.stop;
   if (
-    stop &&
-    stop.reason !== "lifecycle" &&
-    stop.fact?.code !== "workspace_lookup"
+    (stop &&
+      stop.reason !== "lifecycle" &&
+      stop.fact?.code !== "workspace_lookup") ||
+    boundStop(stop)
   )
     return "waiting";
   const reason = `Uncertain workspace creation for ${current.branch}: ${why}; Nucleus looks it up again on the next pass (record.clear kind=workspace_intent id=${current.branch} releases it now)`;
@@ -176,10 +202,12 @@ function bind(
 }
 
 /**
- * A first dispatch's workspace intent with nothing bound yet: no worker, run,
- * completion or PR identity, so releasing the intent loses nothing.
+ * A dispatch's workspace intent with nothing bound yet and nothing to lose: no
+ * worker, run, completion or PR identity. That is a first dispatch, or a
+ * re-dispatch after a host move that left no PR; a task with a PR identity
+ * keeps its continuation path, since its branch carries work.
  */
-export function uncertainFirstWorkspace(task: Task): boolean {
+export function unboundDispatchWorkspace(task: Task): boolean {
   return (
     task.workspaceIntent &&
     !task.workspaceId &&
@@ -203,7 +231,8 @@ export async function settleWorkspaceCreation(
   task: Task,
 ): Promise<WorkspaceSettlement> {
   const { store, adapter } = ctx;
-  if (!uncertainFirstWorkspace(task) || dispatchBlocked(task)) return "skipped";
+  if (!unboundDispatchWorkspace(task) || dispatchBlocked(task))
+    return "skipped";
   // This service's own first dispatch owns a create still in flight.
   if (ctx.hostHealth.launchInFlight(task.id)) return "skipped";
   const paused = startsNoRuns(store, ctx.stopped);
@@ -249,7 +278,10 @@ export async function settleWorkspaceCreation(
     ReturnType<NonNullable<typeof adapter.inspectWorkspaceCreation>>
   >;
   try {
-    state = await adapter.inspectWorkspaceCreation(task);
+    // A branch absent locally is also looked up on its push remote.
+    state = await adapter.inspectWorkspaceCreation(task, {
+      remoteWhenAbsent: true,
+    });
   } catch (error) {
     if (routedError(error)) throw error;
     return paused
@@ -317,6 +349,9 @@ export async function settleWorkspaceCreation(
         task,
         `its empty branch ${state.orphan.branch} cannot be removed on this host`,
       );
+    // An abandoned quantum (its deadline passed) never removes anything.
+    const expired = expiredQuantumDeadlineError("empty branch removal");
+    if (expired) throw expired;
     try {
       // Re-inspects first and deletes the ref only at the head it proved.
       await adapter.removeOrphanWorkspace(current, state.orphan);

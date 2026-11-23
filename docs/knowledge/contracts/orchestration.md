@@ -1616,15 +1616,17 @@ request identities and stored committed-handoff rows are not rewritten.
   replay.
 - Reconciliation inventories the Paseo listing, `git worktree list`, the owned
   path, the task branch and a live `git worktree add` scan before bind or retry:
-  found-done binds once. A first dispatch's create read complete and absent,
-  once this service has no create in flight for the task and the grace period
-  since its last attempt has passed, releases its intent, and ordinary dispatch
-  creates it again (`workspace_intent_released`, Spec 068 batch A). Nucleus's own
-  task branch with no commits past the base, never pushed and with no worktree,
-  is removed first at its inspected head. Three automatic releases per task,
+  found-done binds once. A dispatch's create with nothing bound and no PR
+  identity, read complete and absent (a branch absent locally is also read on
+  its remotes; any failed read is unknown), once this service has no dispatch
+  in flight for the task and the grace period since its last attempt has
+  passed, releases its intent, and ordinary dispatch creates it again
+  (`workspace_intent_released`, Spec 068 batch A). Nucleus's own task branch
+  with no commits past the base, never pushed, with no worktree and checked out
+  nowhere, is removed first at its inspected head. Three automatic releases per task,
   counted since the last explicit one; past that a typed stop names
   `record.clear kind=workspace_intent`, which releases the intent without a
-  proof. Running or unreadable work waits with its reason; authored, published,
+  proof and refuses while another owner's stop holds the task. Running or unreadable work waits with its reason; authored, published,
   foreign-locked or conflicting leftovers, and leftovers with a worktree
   directory, remain with their owner.
 - `retry_effect workspace_creation` with `discard` removes an unpublished,

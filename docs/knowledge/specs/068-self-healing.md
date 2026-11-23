@@ -320,25 +320,35 @@ and the gaps the 2026-11-22 T3 crash and reboot showed:
   received create never becomes a second thread. Three relaunches per role and
   head, the host-read hold no longer keeping the coordinator out, and T3's lookup
   reading only the create commands its ledger recorded as sent.
-- **Uncertain workspace creation settles the same way.** A first dispatch that
-  recorded its workspace intent and bound nothing (no worker, run or PR) is
-  looked up on its host: the host's workspace inventory, the expected worktree
-  directory, `git worktree list`, the task branch locally and on remotes, and
-  any Barge lease. One match binds it. A complete read proving none of it
-  exists, once this service has no create in flight for the task and the grace
-  period since the last attempt has passed, releases the intent so ordinary
-  dispatch creates it again; a Barge allocation intent is kept, so the same
-  request replays. Nucleus's own residue, a task branch with no commits past the
-  base, never pushed and with no worktree (papercut 703c357a), is removed at its
-  inspected head before the release; a branch with commits or a pushed ref is
-  never touched. A partial or failed read, or a create still running, waits with
-  its reason (fact `workspace_lookup`), read as Nucleus's move. A leftover with a
-  worktree directory, or conflicting evidence, goes to a person with the verb
-  its refusal names. Three automatic releases per task, counted since the last
-  explicit one; past that a typed stop names `record.clear kind=workspace_intent`
-  (Spec 067), which releases the intent without a proof after its
-  `workspace_may_exist` warning. A 2026-11-23 task cycled on the old
-  generic wait until a cancel and resubmit.
+- **Uncertain workspace creation settles the same way.** A dispatch that
+  recorded its workspace intent and bound nothing, with no worker, run or PR
+  identity, is looked up on its host. That is a first dispatch, or a re-dispatch
+  after a host move that left no PR; a task with a PR identity keeps its
+  continuation path. The lookup reads the host's workspace inventory, the
+  expected worktree directory, `git worktree list`, the task branch locally,
+  then on remotes when it is absent locally, and any Barge lease. One match
+  binds it. A complete read proving none of it exists, once this service has no
+  dispatch in flight for the task and the grace period since the last attempt
+  has passed, releases the intent so ordinary dispatch creates it again; a
+  Barge allocation intent is kept, so the same request replays. Nucleus's own
+  residue, a task branch with no commits past the base, never pushed, with no
+  worktree and checked out nowhere (papercut 703c357a), is removed at its
+  inspected head before the release, and never by a quantum past its deadline;
+  a branch with commits or a pushed ref is never touched. A partial or failed
+  read (a branch or remote that could not be read is unknown, never absence),
+  or a create still running, waits with its reason (fact `workspace_lookup`),
+  read as Nucleus's move. A leftover with a worktree directory, or conflicting
+  evidence, goes to a person with the verb its refusal names. Three automatic
+  releases per task, counted since the last explicit one; past that a typed
+  stop names `record.clear kind=workspace_intent` (Spec 067), and a transient
+  read failure never replaces that stop. The command releases the intent
+  without a proof after its `workspace_may_exist` warning (`effect_may_land` too
+  while a dispatch is in flight). It clears only the lookup's own stop or a
+  lifecycle wait, and refuses, naming it, any other owner's stop (a hold, an
+  escalation, a budget or host wait). `next` offers it only while the lookup
+  holds the task (its wait, its typed stop or the legacy generic wait) and no
+  dispatch is in flight, so an ordinary populate offers nothing. A 2026-11-23
+  task cycled on the old generic wait until a cancel and resubmit.
 - **`run_stalled` admits its coordinator**, and a stop naming a released run
   clears.
 - **A reported verdict is never dropped or stranded.** `run.start` warns

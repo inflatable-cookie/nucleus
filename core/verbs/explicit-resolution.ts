@@ -35,9 +35,10 @@ import {
 } from "../questions/responsible-thread-resolver";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import {
-  uncertainFirstWorkspace,
+  unboundDispatchWorkspace,
   WORKSPACE_INTENT_RELEASED,
   workspaceIntentReleasePatch,
+  workspaceLookupStop,
 } from "../recovery/workspace-lookup";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
@@ -816,10 +817,18 @@ function clearPlan(
     case "effect":
       return clearEffect(engine, task, id, input.reason);
     case "workspace_intent":
-      // Spec 068 batch A: release an uncertain first workspace creation without
-      // a proof. The task returns to queued and ordinary dispatch creates or
-      // binds the same branch and worktree.
-      if (id === task.branch && uncertainFirstWorkspace(task)) {
+      // Spec 068 batch A: release an uncertain dispatch workspace creation
+      // without a proof. The task returns to queued and ordinary dispatch
+      // creates or binds the same branch and worktree. Only the lookup's own
+      // stop (or a lifecycle wait) clears with it; another owner's stop is
+      // named and refused, so a hold, escalation, budget or host wait stays.
+      if (id === task.branch && unboundDispatchWorkspace(task)) {
+        const ownStop =
+          !stop || stop.reason === "lifecycle" || workspaceLookupStop(stop);
+        if (!ownStop)
+          throw Error(
+            `The task's ${stop.reason} stop is not the workspace lookup's and stays: ${stop.detail}. Settle that stop first (record.clear kind=stop id=${stop.since} clears it), then release the workspace intent`,
+          );
         const warnings: Warning[] = [
           {
             id: "workspace_may_exist",
@@ -829,7 +838,7 @@ function clearPlan(
         if (engine.hostHealth.launchInFlight(task.id))
           warnings.push({
             id: "effect_may_land",
-            text: "This task's first dispatch is still in flight; its create may still complete.",
+            text: "This task's dispatch is still in flight; its create may still complete.",
           });
         return {
           warnings,
@@ -846,7 +855,7 @@ function clearPlan(
                 ...released,
                 phase: "queued",
                 reason: "Workspace intent released; requeued for dispatch",
-                resolution: { ...r, stop: null, attention: false },
+                resolution: stop ? { ...r, stop: null, attention: false } : r,
               },
             };
           },

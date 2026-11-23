@@ -36,6 +36,8 @@ export interface HostWorkspaces {
     options?: {
       skipProcessScan?: boolean;
       skipRemoteCheck?: boolean;
+      /** Also read the push remote when the task branch is absent locally. */
+      remoteWhenAbsent?: boolean;
       progress?: boolean;
     },
   ): Promise<WorkspaceCreationState>;

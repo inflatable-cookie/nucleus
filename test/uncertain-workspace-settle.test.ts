@@ -26,6 +26,12 @@ import {
 } from "../core/verbs/owner-verbs";
 import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
+  classifyWorkspaceCreation,
+  removeOrphanCheckout,
+} from "../core/workspaces/workspace-allocation";
+import { createBargeAllocationIntent } from "../core/workspaces/barge-allocator";
+import { overrideBargeCommandRunnerForTest } from "../core/workspaces/barge-cli";
+import {
   WORKSPACE_INTENT_RELEASED,
   WORKSPACE_RELEASE_ATTEMPTS,
 } from "../core/recovery/workspace-lookup";
@@ -118,8 +124,12 @@ function fixture(options: { graceMs?: number; realInspection?: boolean } = {}) {
     ...(options.realInspection === false
       ? {}
       : {
-          inspectWorkspaceCreation: (task: Task) =>
-            host.inspectWorkspaceCreation(task),
+          inspectWorkspaceCreation: (
+            task: Task,
+            options?: Parameters<
+              NonNullable<Adapter["inspectWorkspaceCreation"]>
+            >[1],
+          ) => host.inspectWorkspaceCreation(task, options),
           removeOrphanWorkspace: (
             task: Task,
             orphan: Parameters<
@@ -188,6 +198,7 @@ function fixture(options: { graceMs?: number; realInspection?: boolean } = {}) {
     adapter,
     calls,
     repo,
+    host,
     incidentShape,
     events,
     close: async () => {
@@ -491,5 +502,283 @@ test("record.clear kind=workspace_intent refuses a task with nothing uncertain",
     assert.equal(f.store.task(task.id).workspaceIntent, true);
   } finally {
     await f.close();
+  }
+});
+
+test("a branch only a remote holds is never released, and an unreadable remote waits", async () => {
+  for (const shape of ["tracking", "published", "unreadable"] as const) {
+    const f = fixture();
+    const remote = mkdtempSync(join(tmpdir(), "ns-ws-settle-remote-"));
+    try {
+      const task = f.incidentShape();
+      if (shape === "unreadable") {
+        f.repo.run("remote", "add", "origin", join(remote, "missing.git"));
+      } else {
+        execFileSync("git", ["init", "-q", "--bare", remote]);
+        f.repo.run("remote", "add", "origin", remote);
+        f.repo.run("branch", task.branch);
+        f.repo.run("push", "-q", "origin", task.branch);
+        f.repo.run("branch", "-D", task.branch);
+        if (shape === "published")
+          f.repo.run("update-ref", "-d", `refs/remotes/origin/${task.branch}`);
+      }
+      await f.engine.wake();
+      const current = f.store.task(task.id);
+      assert.equal(current.workspaceIntent, true, shape);
+      assert.equal(f.events(task.id, WORKSPACE_INTENT_RELEASED).length, 0);
+      if (shape === "unreadable") {
+        assert.equal(current.phase, "dispatching");
+        assert.match(current.reason, /the remote for .* could not be read/);
+      } else {
+        assert.equal(current.phase, "needs_attention", shape);
+        assert.match(
+          current.reason,
+          shape === "tracking" ? /exists on a remote/ : /published to origin/,
+        );
+      }
+    } finally {
+      await f.close();
+      rmSync(remote, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a dispatch in flight is left alone: no lookup, no release, no offer", async () => {
+  const f = fixture();
+  try {
+    const task = f.incidentShape();
+    f.engine.hostHealth.launchStarted("host", task.id);
+    await f.engine.wake();
+    const held = f.store.task(task.id);
+    assert.equal(held.workspaceIntent, true);
+    assert.equal(f.events(task.id, WORKSPACE_INTENT_RELEASED).length, 0);
+    assert.equal(held.reason, task.reason, "no lookup wait replaces it");
+    const next = ownerTaskNext({
+      ...collectOwnerVerbFacts(f.store, held),
+      launchInFlight: true,
+    });
+    assert.equal(
+      next.explicitCommands?.some((c) => c.args.kind === "workspace_intent"),
+      false,
+    );
+    const warned = await resolveExplicitly(
+      f.engine,
+      explicitResolutionSchema.parse({
+        action: "record.clear",
+        taskId: task.id,
+        version: held.version,
+        kind: "workspace_intent",
+        id: task.branch,
+        reason: "Probe",
+        caller: OPERATOR_BOARD_CALLER,
+      }),
+      () => "",
+    );
+    assert.deepEqual(
+      warned.explicitResolution?.warnings.map((warning) => warning.id),
+      ["workspace_may_exist", "effect_may_land"],
+    );
+    f.engine.hostHealth.launchSettled(task.id);
+    await f.engine.wake();
+    assert.equal(f.events(task.id, WORKSPACE_INTENT_RELEASED).length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("next offers the release only while the lookup holds the task", async () => {
+  const f = fixture();
+  try {
+    const task = f.incidentShape();
+    const offered = (current: Task) =>
+      ownerTaskNext(
+        collectOwnerVerbFacts(f.store, current),
+      ).explicitCommands?.some(
+        (command) => command.args.kind === "workspace_intent",
+      ) ?? false;
+    assert.equal(offered(task), true, "the legacy generic wait");
+    const populating = f.store.update(task.id, {
+      reason: "Creating isolated workspace",
+      resolution: { ...task.resolution, stop: null },
+    });
+    assert.equal(
+      offered(populating),
+      false,
+      "an ordinary populate in progress",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("record.clear kind=workspace_intent keeps another owner's stop and names it", async () => {
+  for (const reason of ["held", "escalated"] as const) {
+    const f = fixture();
+    try {
+      const task = f.incidentShape();
+      const stop = {
+        reason,
+        detail: `A ${reason} stop owned elsewhere`,
+        since: new Date(Date.now() + 1000).toISOString(),
+        suggestedVerbs: [],
+      };
+      const current = f.store.update(task.id, {
+        resolution: { ...task.resolution, stop },
+      });
+      const stored = f.store.task(task.id).resolution.stop;
+      await assert.rejects(
+        () =>
+          resolveExplicitly(
+            f.engine,
+            explicitResolutionSchema.parse({
+              action: "record.clear",
+              taskId: task.id,
+              version: current.version,
+              kind: "workspace_intent",
+              id: task.branch,
+              reason: "Probe",
+              accept: ["workspace_may_exist"],
+              caller: OPERATOR_BOARD_CALLER,
+            }),
+            () => "",
+          ),
+        new RegExp(
+          `${reason} stop is not the workspace lookup's.*record\\.clear kind=stop id=${stop.since.replace(/\./g, "\\.")}`,
+        ),
+      );
+      const after = f.store.task(task.id);
+      assert.deepEqual(after.resolution.stop, stored, reason);
+      assert.equal(after.resolution.stop?.reason, reason);
+      assert.equal(after.workspaceIntent, true, reason);
+      assert.equal(after.phase, "dispatching", reason);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test("the typed stop past the bound survives a transient read failure", async () => {
+  const f = fixture();
+  try {
+    const task = f.incidentShape();
+    for (let i = 0; i < WORKSPACE_RELEASE_ATTEMPTS; i++)
+      f.store.event(
+        task.id,
+        WORKSPACE_INTENT_RELEASED,
+        JSON.stringify({ automatic: true, branch: task.branch }),
+      );
+    await f.engine.wake();
+    const stopped = f.store.task(task.id).resolution.stop;
+    assert.equal(stopped?.reason, "operator_needed");
+    f.adapter.inspectWorkspaceCreation = async () => ({
+      kind: "unknown",
+      evidence: "Git worktree inventory could not be read",
+    });
+    await f.engine.wake();
+    assert.deepEqual(f.store.task(task.id).resolution.stop, stopped);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a branch-only orphan checked out in a worktree is never deleted", async () => {
+  const f = fixture();
+  const elsewhere = mkdtempSync(join(tmpdir(), "ns-ws-settle-elsewhere-"));
+  try {
+    const task = f.incidentShape();
+    f.repo.run("branch", task.branch);
+    const head = f.repo.run("rev-parse", task.branch);
+    f.repo.run("worktree", "add", "-q", join(elsewhere, "tree"), task.branch);
+    await assert.rejects(
+      () =>
+        removeOrphanCheckout(
+          task,
+          { directory: null, branch: task.branch, head, lockReason: "partial" },
+          null,
+        ),
+      /is checked out at/,
+    );
+    assert.equal(f.repo.run("rev-parse", task.branch), head);
+  } finally {
+    await f.close();
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test("a Barge allocation whose lease Barge never granted is released, and its request is kept for the replay", async (t) => {
+  const f = fixture();
+  const requests: string[] = [];
+  overrideBargeCommandRunnerForTest(async (input) => {
+    requests.push(input.argv.join(" "));
+    return {
+      exitCode: 4,
+      stdout: "",
+      stderr: JSON.stringify({
+        schema: "barge.error/1",
+        error: { kind: "not_found", message: "no lease for that request" },
+      }),
+    };
+  });
+  t.after(() => overrideBargeCommandRunnerForTest(null));
+  try {
+    const task = f.incidentShape();
+    const allocation = createBargeAllocationIntent({
+      task,
+      sequence: 1,
+      baseSha: f.repo.base,
+    });
+    f.store.update(task.id, { workspaceAllocation: allocation });
+    await f.engine.wake();
+    assert.ok(
+      requests.some((argv) =>
+        argv.includes(`lease get --request ${allocation.requestId}`),
+      ),
+      "the lease was read by its request id",
+    );
+    const released = f.events(task.id, WORKSPACE_INTENT_RELEASED);
+    assert.equal(released.length, 1);
+    assert.equal(
+      f.store.task(task.id).workspaceAllocation?.requestId,
+      allocation.requestId,
+      "the same request replays",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a failed read of the local task branch is unknown, never absence", async () => {
+  const repo = gitRepo();
+  try {
+    const task = {
+      id: "synthetic",
+      repoPath: repo.dir,
+      branch: "ns-synthetic",
+      baseBranch: "main",
+      planningBase: repo.base,
+      planningCommit: repo.base,
+      proofOnly: undefined,
+    };
+    const state = await classifyWorkspaceCreation({
+      task,
+      ownedPath: join(repo.dir, "..", "never-created"),
+      skipProcessScan: true,
+      step: async (name, work) => {
+        if (name === "git_rev_parse") throw new Error("ref store unreadable");
+        return work();
+      },
+    });
+    assert.deepEqual(state, {
+      kind: "unknown",
+      evidence: "the task branch ns-synthetic could not be read",
+    });
+    const absent = await classifyWorkspaceCreation({
+      task,
+      ownedPath: join(repo.dir, "..", "never-created"),
+      skipProcessScan: true,
+    });
+    assert.deepEqual(absent, { kind: "absent" });
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
   }
 });

@@ -1,5 +1,5 @@
 import { settleWorkerCreation } from "../recovery/creation-lookup";
-import { uncertainFirstWorkspace } from "../recovery/workspace-lookup";
+import { unboundDispatchWorkspace } from "../recovery/workspace-lookup";
 import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
@@ -538,7 +538,7 @@ export class TaskQuantum {
         });
         return;
       }
-      if (uncertainFirstWorkspace(task)) {
+      if (unboundDispatchWorkspace(task)) {
         // Spec 068 batch A: an uncertain workspace creation settles by lookup
         // (bind, release for ordinary dispatch, or a named wait), bounded by a
         // typed stop naming record.clear kind=workspace_intent.
