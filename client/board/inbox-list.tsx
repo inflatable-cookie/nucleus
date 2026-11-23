@@ -47,6 +47,8 @@ import {
 import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
+import type { BoardView } from "./inbox-menu";
+import { rustPhaseLabels, rustQuestionText, rustTaskLabel, rustWaitText, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -277,7 +279,15 @@ export type InboxListProps = {
   state: UiQueueState | undefined;
   stateError: unknown;
   inbox: InboxBoard;
-  view: Exclude<InboxView, "planning">;
+  view: Exclude<BoardView, "planning">;
+  rust?: {
+    tasks: RustTask[] | undefined;
+    error: unknown;
+    retry: () => void;
+    selected: string | null;
+    onSelect: (id: string) => void;
+    projectName: (task: RustTask) => string;
+  };
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
   /** Per project, the queued tasks the board holds back; the Queue list reads them as pages. */
@@ -304,14 +314,16 @@ export type InboxListProps = {
   pipeline: PipelineState;
 };
 
-const viewTitles: Record<Exclude<InboxView, "planning">, string> = {
+const viewTitles: Record<Exclude<BoardView, "planning">, string> = {
   needs: "Needs you",
   leads: "Leads",
   papercuts: "Papercuts",
   queue: "Queue",
   working: "Working",
   review: "In review",
+  merging: "Merging",
   closing: "Closing",
+  history: "History",
 };
 /**
  * The inbox list (Tom, 2026-11-21): the open menu view's cards in one scrolling
@@ -324,6 +336,7 @@ export function InboxList({
   stateError,
   inbox,
   view,
+  rust,
   leadsLoading,
   decisions,
   queuedHidden,
@@ -359,7 +372,8 @@ export function InboxList({
     setPapercutShown,
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
-  const sections = inboxSections(board, view);
+  const legacyView = view === "merging" || view === "history" ? null : view;
+  const sections = legacyView ? inboxSections(board, legacyView) : [];
   // Nucleus#1543: parked leads and papercuts sit under one collapsed row at the end of their list.
   const parked =
     view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
@@ -658,17 +672,20 @@ export function InboxList({
     for (const item of queuedHidden) placeHeld(item.repoPath);
     return rows;
   };
-  const viewCount = counts[view];
+  const viewCount = (legacyView ? counts[legacyView] : 0) + (rust?.tasks?.length ?? 0);
   const title = viewTitles[view];
   const total =
     sections.reduce((sum, section) => sum + section.cards.length, 0) +
     (view === "queue"
       ? queuedHidden.reduce((sum, item) => sum + item.hidden, 0)
       : 0);
+  const readState = rust && !rust.tasks
+    ? (rust.error ? "failed" : "loading")
+    : legacyView ? boardRead : "loaded";
   const countText =
-    boardRead === "loaded"
+    readState === "loaded"
       ? `${viewCount} item${viewCount === 1 ? "" : "s"}`
-      : boardRead === "failed"
+      : readState === "failed"
         ? "Not loaded"
         : "Loading…";
   return (
@@ -772,6 +789,7 @@ export function InboxList({
         scrollEventThrottle={16}
       >
         <BoardCardVariantContext.Provider value="row">
+          {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
           {view === "queue" ? (
             <View style={{ gap: space.xxs }}>{queuedList()}</View>
           ) : (
@@ -825,7 +843,7 @@ export function InboxList({
           )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {(boardRead !== "loaded" || (total === 0 && parked.length === 0)) && (
+        {((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length && parked.length === 0)) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."
@@ -842,4 +860,39 @@ export function InboxList({
       </ScrollView>
     </View>
   );
+}
+
+const rustPageSize = 25;
+
+function RustListRows({ c, rust, view }: {
+  c: Colors;
+  rust: NonNullable<InboxListProps["rust"]>;
+  view: InboxListProps["view"];
+}) {
+  const [limit, setLimit] = useState(rustPageSize);
+  const tasks = rust.tasks ?? [];
+  const remaining = tasks.length - limit;
+  return <>
+    {tasks.slice(0, limit).map((task) => {
+      const reference = rustTaskLabel(task);
+      const question = view === "needs" ? task.question : null;
+      const title = question ? rustQuestionText(question) : reference;
+      const wait = rustWaitText(task);
+      return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
+        title={title} label={question ? `${reference}, ${title}` : title} meta={question ? reference : null}
+        project={<CardProject c={c} name={rust.projectName(task)} />}
+        status={wait || view === "history" ? {
+          tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
+          state: question ? "Question" : rustPhaseLabels[task.phase], detail: question ? null : wait,
+        } : null}
+        selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
+    })}
+    {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}
+      label={`Show ${remaining} more task${remaining === 1 ? "" : "s"}`} onPress={() => setLimit((current) => current + rustPageSize)} />}
+    {Boolean(rust.error) && <BoardCard c={c} selected={false} title="Could not load engine tasks"
+      label="Retry loading engine tasks" onPress={rust.retry}
+      status={{ state: "Retry", tone: "warning" }} />}
+    {!rust.tasks && !rust.error &&
+      <Text style={{ ...muted(c), textAlign: "center", padding: space.md }}>Loading engine tasks…</Text>}
+  </>;
 }

@@ -100,6 +100,7 @@ import {
   type WebBoardHost,
   type WebBoardOptions,
 } from "../web/web-board";
+import { configuredRustBoard, RustBoardProxy } from "../web/rust-board";
 
 export {
   SERVICE_BUILD,
@@ -456,8 +457,18 @@ export class QueueService {
     const configuredPort = this.options.webBoard?.port ?? configuredWebPort();
     const sessionFile = join(this.dataDir, "web-sessions.json");
     await this.migrateWebSessions(sessionFile);
+    const engine = configuredRustBoard(process.env);
+    let rustBoard: RustBoardProxy | null = null;
+    if (engine) {
+      try {
+        rustBoard = new RustBoardProxy(engine);
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : "Invalid Rust board configuration.");
+      }
+    }
     const web = new WebBoard({
       host: this.webHost(),
+      rustBoard,
       bundleDir: defaultWebBundleDir(),
       ...this.options.webBoard,
       port: configuredPort,

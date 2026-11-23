@@ -11,6 +11,6 @@ const root = createRoot(document.getElementById("root")!);
 root.render(<p>Connecting to the Nucleus board…</p>);
 const validLink = !!token && Number.isFinite(expiresAt) && expiresAt > 0;
 void pairWebSession(validLink ? token! : undefined).then(
-  () => root.render(<WebApp />),
+  session => root.render(<WebApp rustBoard={session.rustBoard} />),
   error => root.render(<p role="alert">{error instanceof Error ? error.message : String(error)}. Open a fresh board link using nucleus ui.</p>),
 );

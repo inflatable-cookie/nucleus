@@ -4,6 +4,7 @@ import { inboxViews, type InboxView } from "../../shared/inbox-board";
 import { Icon } from "../shell";
 import { useFocusVisible } from "../focus-modality";
 import type { Colors } from "../controls";
+import type { RustExtraView } from "../web/rust-board";
 import {
   hoverSurface,
   navigationTextOpacity,
@@ -16,6 +17,7 @@ import {
 } from "../design";
 
 export type InboxMenuCounts = Record<InboxView, number>;
+export type BoardView = InboxView | RustExtraView;
 
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
@@ -172,15 +174,26 @@ export function InboxMenu({
   view,
   counts,
   loaded,
+  rust,
   onSelect,
 }: {
   c: Colors;
-  view: InboxView;
+  view: BoardView;
   counts: InboxMenuCounts;
   loaded: boolean;
-  onSelect: (view: InboxView) => void;
+  rust?: { totals: Partial<Record<BoardView, number>> };
+  onSelect: (view: BoardView) => void;
 }) {
-  const count = (id: InboxView) => counts[id];
+  const entries: readonly { id: BoardView; label: string; icon: string }[] = rust
+    ? [...inboxViews.slice(0, -1), { id: "merging", label: "Merging", icon: "GitMerge" },
+        ...inboxViews.slice(-1), { id: "history", label: "History", icon: "History" }]
+    : inboxViews;
+  const count = (id: BoardView) => {
+    const rustTotal = rust?.totals[id];
+    if (id === "merging" || id === "history") return rustTotal ?? null;
+    if (rust && ["needs", "queue", "working", "review", "closing"].includes(id) && rustTotal === undefined) return null;
+    return counts[id] + (rustTotal ?? 0);
+  };
   const item = (
     key: string,
     label: string,
@@ -200,7 +213,7 @@ export function InboxMenu({
       label={label}
       on={on}
       value={value}
-      loaded={loaded}
+      loaded={loaded || key === "merging" || key === "history"}
       onPress={onPress}
       options={options}
     />
@@ -216,7 +229,7 @@ export function InboxMenu({
       style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={{ padding: space.xs, gap: 2 }}
     >
-      {inboxViews.map((entry) => (
+      {entries.map((entry) => (
         <React.Fragment key={entry.id}>
           {(entry.id === "planning" || entry.id === "working") &&
             divider(`${entry.id}-divider`)}
