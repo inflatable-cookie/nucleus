@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 pub use brief::{BriefPolicy, BriefPolicyError, ProfileRequest};
 pub(crate) use launch::{BoundProfile, applied_changes};
-pub use launch::{LaunchPolicy, ProfileLaunch, ProfileLaunchError, decide_profile_launch};
+pub use launch::{
+    LaunchPolicy, ProfileLaunch, ProfileLaunchError, decide_profile_launch, decide_weighted_launch,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

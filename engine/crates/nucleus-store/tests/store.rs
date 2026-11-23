@@ -1,8 +1,12 @@
 use std::path::Path;
 
 use nucleus_core::{
-    Action, Answer, Authority, Command, Entry, Forge, Host, Identity, LaunchInputs, Observation,
-    Observed, Phase, PullRequest, RunState, Task, Workspace,
+    Action, Answer, Authority, CheckState, Command, Entry, Forge, Host, Identity, LaunchInputs,
+    Observation, Observed, Phase, PullRequest, Role, RunState, Task, Workspace,
+    profiles::{
+        Candidate, Capability, LaunchPolicy, Profile, Provider, RotationCounts, UsageLevel, Weight,
+        decide_profile_launch, decide_weighted_launch,
+    },
 };
 use nucleus_store::{
     EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile, StorageError, Store,
@@ -230,7 +234,8 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
+        "DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
+         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
     let store = Store::open(&storage).expect("migrate version two");
@@ -245,6 +250,176 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
         .expect("slot index"),
         1
     );
+}
+
+fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Task) {
+    let initial = task(id, id);
+    let mut identity = initial.identity().clone();
+    let head = "a".repeat(40).parse().expect("synthetic head");
+    let pr = PullRequest {
+        url: "https://github.com/example/fixture/pull/1".into(),
+        head,
+    };
+    let mut observation = observation();
+    observation.forge = Observed::Known(Forge::Absent);
+    let mut task = match role {
+        Role::Worker => initial,
+        Role::Reviewer => {
+            identity.entry = Entry::ReviewEntry;
+            observation.forge = Observed::Known(Forge::Open {
+                pr: pr.clone(),
+                checks: CheckState::Ready,
+            });
+            observation.workspace = Observed::Known(Workspace::Clean(pr.head.clone()));
+            Task::new(identity, "Review the greeting".into(), Some(pr))
+        }
+    };
+    let _ = task.reconcile(&observation);
+    store.create(&task, &event("admitted")).expect("admit");
+    let row = row(store, id);
+    let profile = Profile {
+        id: "greeting".into(),
+        capability: Capability::Worker,
+        weight: Weight::More,
+        provider: Provider::Codex,
+        model: "different-model".into(),
+        effort: None,
+    };
+    let counts = store
+        .rotation_counts(role, &profile.id, "shared-subscription")
+        .unwrap_or_default();
+    let policy = LaunchPolicy {
+        usage: UsageLevel::Normal,
+        candidates: &[Candidate {
+            profile: &profile,
+            enabled: true,
+            available: true,
+            group_available: true,
+            supported_efforts: &[],
+            counts,
+        }],
+        planner_brief: true,
+        author_models: &["fixture-author-model"],
+    };
+    let intent = if counts == RotationCounts::default() {
+        decide_weighted_launch(&task, &observation, &policy, 42)
+    } else {
+        decide_profile_launch(&task, &observation, &policy)
+    }
+    .expect("eligible choice")
+    .expect("launch decision");
+    task.reserve_profile_launch(
+        &observation,
+        LaunchInputs {
+            thread: format!("fixture-thread-{id}"),
+            started_at: 42,
+            input: "synthetic launch".into(),
+        },
+        &[1; 32],
+        intent,
+    )
+    .expect("freeze profiled launch");
+    (row, task)
+}
+
+#[test]
+fn an_empty_usage_store_allows_a_profiled_launch() {
+    let root = tempfile::tempdir().expect("scratch");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open");
+    let group = "shared-subscription";
+    assert_eq!(
+        store.rotation_counts(Role::Worker, "greeting", group),
+        Some(RotationCounts::default())
+    );
+    let (prior, task) = profile_reservation(&mut store, "initial", Role::Worker);
+    store
+        .save_profile_launch(&prior, &task, &event("run_reserved"), group)
+        .expect("launch from an empty history");
+    let mut sent = row(&store, "initial");
+    let instance = task.run().expect("run").launch().instance.clone();
+    sent.task.record_send(&instance, 43).expect("record send");
+    let prior = row(&store, "initial");
+    store
+        .save_row(&prior, &sent.task, &event("run_sent"))
+        .expect("send marker does not charge again");
+    assert_eq!(
+        store.rotation_counts(Role::Worker, "greeting", group),
+        Some(RotationCounts {
+            profile_recent: 1,
+            group_recent: 1,
+            profile_lifetime: 1,
+            group_lifetime: 1,
+        })
+    );
+}
+
+#[test]
+fn reopening_keeps_the_role_window_and_lifetime_counts() {
+    let root = tempfile::tempdir().expect("scratch");
+    let storage = fixture_storage(root.path());
+    let group = "shared-subscription";
+    let mut store = Store::open(&storage).expect("open");
+    for i in 0..54 {
+        let role = if i < 52 { Role::Worker } else { Role::Reviewer };
+        let (prior, task) = profile_reservation(&mut store, &i.to_string(), role);
+        store
+            .save_profile_launch(&prior, &task, &event("run_reserved"), group)
+            .expect("charge frozen instance");
+    }
+    drop(store);
+    let store = Store::open(&storage).expect("reopen");
+    for (role, recent, lifetime) in [(Role::Worker, 50, 52), (Role::Reviewer, 2, 2)] {
+        assert_eq!(
+            store.rotation_counts(role, "greeting", group),
+            Some(RotationCounts {
+                profile_recent: recent,
+                group_recent: 50,
+                profile_lifetime: lifetime,
+                group_lifetime: 54,
+            })
+        );
+    }
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("inspect");
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM profile_assignments", [], |row| row
+            .get::<_, u32>(0))
+            .expect("bounded history"),
+        52
+    );
+}
+
+#[test]
+fn history_failure_does_not_lose_the_launch_or_leave_a_partial_charge() {
+    let root = tempfile::tempdir().expect("scratch");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open");
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("inspect");
+    db.execute_batch(
+        "CREATE TRIGGER fail_charge BEFORE INSERT ON profile_assignment_totals
+         BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
+    )
+    .expect("fail the second usage write");
+    let (prior, task) = profile_reservation(&mut store, "fallback", Role::Worker);
+    store
+        .save_profile_launch(&prior, &task, &event("run_reserved"), "shared-subscription")
+        .expect("usage failure leaves task writes available");
+    assert_eq!(row(&store, "fallback").task, task);
+    assert_eq!(
+        store.rotation_counts(Role::Worker, "greeting", "shared-subscription"),
+        Some(RotationCounts::default())
+    );
+    db.execute("DROP TABLE profile_assignment_totals", [])
+        .expect("make the rotation read unavailable");
+    assert_eq!(
+        store.rotation_counts(Role::Worker, "greeting", "shared-subscription"),
+        None
+    );
+    let (prior, task) = profile_reservation(&mut store, "unreadable", Role::Worker);
+    store
+        .save_profile_launch(&prior, &task, &event("run_reserved"), "shared-subscription")
+        .expect("unreadable rotation falls back to weights");
+    assert_eq!(row(&store, "unreadable").task, task);
 }
 
 #[test]

@@ -2,11 +2,12 @@
 
 mod settings;
 mod settings_domains;
+mod usage;
 mod volume;
 
 use std::{collections::BTreeMap, time::Duration};
 
-use nucleus_core::{Phase, Task};
+use nucleus_core::{Phase, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -24,7 +25,7 @@ pub use settings_domains::{
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
@@ -53,6 +54,8 @@ pub enum StoreError {
     IdentityChanged,
     #[error("task changed since it was read")]
     StaleTask,
+    #[error("profile assignment requires a new frozen launch")]
+    NoProfileLaunch,
     #[error("could not encode task state")]
     Encode(#[from] serde_json::Error),
     #[error("engine database operation failed")]
@@ -123,11 +126,12 @@ impl Store {
                 tx.execute_batch(include_str!("schema.sql"))?;
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.execute(ACP_SESSIONS, [])?;
+                tx.execute_batch(usage::SCHEMA)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1..=3) => {
+            (APPLICATION_ID, 1..=4) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -135,7 +139,10 @@ impl Store {
                 if version < 3 {
                     tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 }
-                tx.execute(ACP_SESSIONS, [])?;
+                if version < 4 {
+                    tx.execute(ACP_SESSIONS, [])?;
+                }
+                tx.execute_batch(usage::SCHEMA)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -304,10 +311,49 @@ impl Store {
         task: &Task,
         event: &EventDraft,
     ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, None)
+    }
+
+    /// Commit a newly frozen profiled launch and charge its subscription group.
+    /// The launch stays valid if the optional rotation history cannot be written.
+    ///
+    /// # Errors
+    /// Returns an error on a stale row, a task without a fresh profile reservation,
+    /// or failure to commit the task and its audit event.
+    pub fn save_profile_launch(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        group: &str,
+    ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, Some(group))
+    }
+
+    /// Read Spec 053 counts for one candidate from the local engine database.
+    /// `None` means the history could not be read and selection should use its
+    /// weights alone. An empty history returns zero counts.
+    #[must_use]
+    pub fn rotation_counts(
+        &self,
+        role: Role,
+        profile: &str,
+        group: &str,
+    ) -> Option<RotationCounts> {
+        usage::counts(&self.connection, role, profile, group).ok()
+    }
+
+    fn save(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        group: Option<&str>,
+    ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
         }
-        let tx = self
+        let mut tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row = load(&tx, &task.identity().id)?.ok_or(StoreError::StaleTask)?;
@@ -333,6 +379,20 @@ impl Store {
             }
         }
         append(&tx, &task.identity().id, event)?;
+        if let Some(group) = group {
+            let launch = task
+                .run()
+                .filter(|run| !run.revoked() && run.last_send_at_ms().is_none())
+                .filter(|_| row.task.run().is_none())
+                .map(nucleus_core::Run::launch)
+                .ok_or(StoreError::NoProfileLaunch)?;
+            let profile = launch.profile().ok_or(StoreError::NoProfileLaunch)?;
+            if let Ok(history) = tx.savepoint()
+                && usage::record(&history, launch, &profile.id, group, event.at).is_ok()
+            {
+                let _ = history.commit();
+            }
+        }
         tx.commit()?;
         Ok(row.version + 1)
     }
