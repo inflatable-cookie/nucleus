@@ -80,10 +80,19 @@ export class WorkspaceContinuation {
         ? prelistedProcesses
         : await this.host.hostProcessListing();
     if (!listed) return "the host process listing is unreadable";
-    // The host listing carries working directories only; this proof reads open files itself.
+    // The host listing carries working directories only. A holder the cwd
+    // listing already shows is final; otherwise open files are read under the
+    // workspace directory alone, never host-wide.
     let processes = listed;
     if (prelistedProcesses === undefined) {
-      const opened = await readOpenFileFacts(listed);
+      const cwdIssue = workspaceToolProcessIssue(
+        listed,
+        directory,
+        runIds,
+        runtime,
+      );
+      if (cwdIssue) return cwdIssue;
+      const opened = await readOpenFileFacts(listed, [directory]);
       if (opened.state === "unknown") return opened.reason;
       processes = opened.processes;
     }

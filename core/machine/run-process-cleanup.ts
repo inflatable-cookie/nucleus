@@ -495,21 +495,6 @@ async function sweep(
   const tableLiveness = listedProcessLiveness(facts);
   const dataHome = dirname(store.path);
   const live = facts.filter(isLiveProcess);
-  // Open files are read here for the holder and coverage checks below, never on the listing.
-  const openRead = await readOpenFileFacts(live);
-  const openLive = openRead.state === "listed" ? openRead.processes : [];
-  // A working directory that shows a holder needs no open-file read, so an
-  // open-file deadline never hides a live process the cwd listing has observed.
-  const holderLive = openRead.state === "listed" ? openRead.processes : live;
-  const incomplete =
-    openRead.state === "unknown"
-      ? openRead.reason
-      : incompleteRunProcessScan({
-            processes: openLive,
-            cwdComplete: facts.cwdComplete,
-          })
-        ? "process working-directory or open-file coverage is incomplete"
-        : null;
   // The one ownership question this table answers: what init owns outright.
   const rooted = new Set(
     live
@@ -836,14 +821,30 @@ async function sweep(
       if (!store.getMeta<CleanupRun>(key(run.id)))
         store.queueRunProcessCleanup({ ...run, hostId });
       const provider = records.get(run.id)?.provider;
-      const holders = runWorkProcesses({
-        live: holderLive,
-        byPid: table.byPid,
-        directories: [run.directory, run.temporaryDirectory],
-        infrastructure,
-        providers:
-          provider && !providerHosts.has(provider.pid) ? [provider] : [],
-      });
+      const runDirectories = [run.directory, run.temporaryDirectory];
+      const holdersOf = (processes: readonly HostProcessFact[]) =>
+        runWorkProcesses({
+          live: processes,
+          byPid: table.byPid,
+          directories: runDirectories,
+          infrastructure,
+          providers:
+            provider && !providerHosts.has(provider.pid) ? [provider] : [],
+        });
+      // Working directories first: a holder they show needs no open-file read,
+      // so an open-file deadline never hides a live process. Otherwise open
+      // files are read only under this run's own directories.
+      let openLive = live;
+      let holders = holdersOf(live);
+      if (!holders.length) {
+        const opened = await readOpenFileFacts(live, runDirectories);
+        if (opened.state === "unknown") {
+          deferReason(store, run, opened.reason);
+          continue;
+        }
+        openLive = opened.processes;
+        holders = holdersOf(openLive);
+      }
       if (holders.length) {
         deferReason(
           store,
@@ -852,8 +853,17 @@ async function sweep(
         );
         continue;
       }
-      if (incomplete) {
-        deferReason(store, run, incomplete);
+      if (
+        incompleteRunProcessScan({
+          processes: openLive,
+          cwdComplete: facts.cwdComplete,
+        })
+      ) {
+        deferReason(
+          store,
+          run,
+          "process working-directory or open-file coverage is incomplete",
+        );
         continue;
       }
       if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) {

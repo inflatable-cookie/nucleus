@@ -1792,9 +1792,10 @@ request identities and stored committed-handoff rows are not rewritten.
   Open files come from a separate read, and each decision asks only for the
   directories it guards: a participant lease reads its scratch roots, the
   workspace archive and release custody read the workspace and run scratch, one
-  `lsof +D` pass per existing directory. Only the background run-process sweep
-  still reads every open file of the uid, about 18 MB on a busy workstation. A
-  working directory that already shows a holder needs no open-file read, so an
+  `lsof +D` pass per existing directory. The run-process sweep reads a run's own
+  directories the same way, so no decision reads every open file of the uid
+  (about 18 MB on a busy workstation). A working directory that already shows a
+  holder needs no open-file read, so an
   open-file deadline never hides a live process the cwd listing has observed. A
   read whose `ps`, cwd or open-file pass overruns its deadline is unknown and
   names that deadline; it is never reported as incomplete coverage, so a busy
