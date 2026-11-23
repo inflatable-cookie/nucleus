@@ -26,6 +26,43 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[tokio::test]
+async fn admission_commits_when_t3_is_unreachable() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let response = post_as(
+        &api,
+        "/v1/tasks",
+        &PLANNER_KEY,
+        &json!({
+            "id":"fixture-admit", "reference":"fixture-admit", "brief":"Implement the brief"
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(json_body(response).await["phase"], "queued");
+    let pass = service.pass().await.expect("scheduled profile check");
+    assert!(matches!(
+        pass.as_slice(),
+        [crate::PassOutcome {
+            result: Err(ServiceError::Host(nucleus_hosts::HostError::Unavailable)),
+            ..
+        }]
+    ));
+    assert_eq!(
+        service
+            .task("fixture-admit")
+            .await
+            .expect("committed row")
+            .version,
+        1
+    );
+}
+
+#[tokio::test]
 async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (task, _, _) = reservation("worker", Entry::Brief, &service.project.start);
@@ -405,28 +442,7 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
 async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let head = service.project.start.clone();
-    let (mut task, _, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
-    observation.host = Observed::Known(Host::Current {
-        instance: task.run().expect("review").launch().instance.clone(),
-        state: RunState::Ended,
-    });
-    observation.forge = Observed::Known(Forge::Merged {
-        pr: task.pull_request().expect("bound pull request").clone(),
-        commit: head.clone(),
-    });
-    assert!(matches!(
-        task.reconcile(&observation),
-        Action::Ask(Question::Accept { .. })
-    ));
-    task.command(
-        Command::Hold("Test the command independently of automatic close".into()),
-        &Authority::Operator {
-            actor: "operator".into(),
-        },
-        &observation,
-    )
-    .expect("hold fixture");
-    seed_task(&service, &task).await;
+    seed_held_acceptance(&service, &head).await;
     let (forge, readable, reads, server) = serve_merged_forge(&head).await;
     service.forge = forge;
     let service = Arc::new(service);
@@ -471,6 +487,22 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     );
     assert_eq!(reads.load(Ordering::Relaxed), 1);
     readable.store(true, Ordering::Relaxed);
+    assert!(service.forge_until.load(Ordering::Relaxed) > now_ms());
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .ready(tokio::time::Instant::now())
+            .is_empty()
+    );
+    // Move past the synthetic outage without making the test wait on the clock.
+    service.forge_until.store(0, Ordering::Relaxed);
+    assert_eq!(
+        post_json(&api, path, &BOARD_KEY, &answer).await,
+        StatusCode::ACCEPTED
+    );
     let _ = service.pass().await.expect("refresh on pending wake");
     let planner = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
     expect_command(&planner, "answer", None, "unavailable");
@@ -803,6 +835,31 @@ fn planner_controller(credential: [u8; 32], actor: &str) -> Controller {
             actor: actor.into(),
         },
     }
+}
+
+async fn seed_held_acceptance(service: &Service, head: &nucleus_core::Head) {
+    let (mut task, _, mut observation) = reservation("reviewer", Entry::ReviewEntry, head);
+    observation.host = Observed::Known(Host::Current {
+        instance: task.run().expect("review").launch().instance.clone(),
+        state: RunState::Ended,
+    });
+    observation.forge = Observed::Known(Forge::Merged {
+        pr: task.pull_request().expect("bound pull request").clone(),
+        commit: head.clone(),
+    });
+    assert!(matches!(
+        task.reconcile(&observation),
+        Action::Ask(Question::Accept { .. })
+    ));
+    task.command(
+        Command::Hold("Test the command independently of automatic close".into()),
+        &Authority::Operator {
+            actor: "operator".into(),
+        },
+        &observation,
+    )
+    .expect("hold fixture");
+    seed_task(service, &task).await;
 }
 
 async fn seed_task(service: &Service, task: &Task) {

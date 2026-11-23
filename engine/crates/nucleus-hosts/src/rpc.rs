@@ -14,7 +14,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
-use crate::HostError;
+use crate::{HostError, T3_RETRY_DELAY};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -43,7 +43,50 @@ pub(crate) struct Rpc {
     base: Url,
     bearer: HeaderValue,
     http: Client,
-    socket: Mutex<Option<Connection>>,
+    socket: Mutex<Slot>,
+}
+
+struct Slot {
+    connection: Option<Connection>,
+    retry_at: time::Instant,
+}
+
+/// A shell delta that can wake an exact read. It never proves run state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadHint {
+    pub thread: String,
+    change: Option<Value>,
+}
+
+impl ThreadHint {
+    fn read(item: &Value) -> Option<Self> {
+        match item["kind"].as_str()? {
+            "thread.updated" => {
+                let thread = &item["thread"];
+                Some(Self {
+                    thread: thread["id"].as_str()?.into(),
+                    change: Some(json!([
+                        item["location"],
+                        thread["status"],
+                        thread["activeRunId"],
+                        thread["latestRunId"],
+                        thread["latestRunStartedAt"],
+                        thread["latestRunCompletedAt"],
+                        thread["latestUserMessageAt"],
+                        thread["pendingRuntimeRequest"]["id"],
+                        thread["pendingBackgroundTasks"].as_array().map(Vec::len),
+                        thread["archivedAt"],
+                        thread["settledAt"],
+                    ])),
+                })
+            }
+            "thread.removed" => Some(Self {
+                thread: item["threadId"].as_str()?.into(),
+                change: None,
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl Rpc {
@@ -85,7 +128,10 @@ impl Rpc {
             base,
             bearer,
             http,
-            socket: Mutex::new(None),
+            socket: Mutex::new(Slot {
+                connection: None,
+                retry_at: time::Instant::now(),
+            }),
         })
     }
 
@@ -96,28 +142,37 @@ impl Rpc {
         read: Read,
     ) -> Result<Reply, HostError> {
         let mut slot = self.socket.lock().await;
-        let mut connection = match slot.take() {
-            Some(connection) => connection,
-            None => Connection {
-                socket: time::timeout(DEADLINE, self.connect())
-                    .await
-                    .map_err(|_| HostError::Timeout)??,
-                next_id: 0,
-            },
-        };
-        let reply = time::timeout(DEADLINE, connection.call(method, payload, read))
-            .await
-            .map_err(|_| HostError::Timeout)
-            .and_then(std::convert::identity);
-        if reply.is_ok() {
-            *slot = Some(connection);
+        if time::Instant::now() < slot.retry_at {
+            return Err(HostError::Deferred {
+                until: slot.retry_at,
+            });
         }
-        reply
+        let result = async {
+            let mut connection = match slot.connection.take() {
+                Some(connection) => connection,
+                None => Connection {
+                    socket: time::timeout(DEADLINE, self.connect())
+                        .await
+                        .map_err(|_| HostError::Timeout)??,
+                    next_id: 0,
+                },
+            };
+            let reply = time::timeout(DEADLINE, connection.call(method, payload, read))
+                .await
+                .map_err(|_| HostError::Timeout)??;
+            slot.connection = Some(connection);
+            Ok(reply)
+        }
+        .await;
+        if matches!(result, Err(HostError::Unavailable | HostError::Timeout)) {
+            slot.retry_at = time::Instant::now() + T3_RETRY_DELAY;
+        }
+        result
     }
 
     pub(crate) async fn watch_threads(
         &self,
-        hints: &mpsc::Sender<String>,
+        hints: &mpsc::Sender<ThreadHint>,
     ) -> Result<(), HostError> {
         let socket = time::timeout(DEADLINE, self.connect())
             .await
@@ -138,15 +193,8 @@ impl Rpc {
                             .send(json!({"_tag":"Ack","requestId":"1"}))
                             .await?;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
-                            let thread = match item["kind"].as_str() {
-                                Some("thread.updated") => item["thread"]["id"].as_str(),
-                                Some("thread.removed") => item["threadId"].as_str(),
-                                _ => None,
-                            };
-                            if let Some(thread) = thread {
-                                hints
-                                    .try_send(thread.into())
-                                    .map_err(|_| HostError::Uncertain)?;
+                            if let Some(hint) = ThreadHint::read(item) {
+                                hints.try_send(hint).map_err(|_| HostError::Uncertain)?;
                             }
                         }
                     }
@@ -325,5 +373,55 @@ impl Connection {
             .send(Message::Text(text.into()))
             .await
             .map_err(|_| HostError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn shell_hints_ignore_transcript_updates_but_keep_lifecycle_changes() {
+        let running = json!({"kind":"thread.updated","location":"active","thread":{
+            "id":"fixture","status":"running","activeRunId":"run","visibleItemCount":1
+        }});
+        let mut revised = running.clone();
+        revised["thread"]["visibleItemCount"] = json!(2);
+        revised["thread"]["updatedAt"] = json!("2026-11-23T20:00:00Z");
+        assert_eq!(ThreadHint::read(&running), ThreadHint::read(&revised));
+        revised["thread"]["pendingRuntimeRequest"] = json!({"id":"permission"});
+        assert_ne!(ThreadHint::read(&running), ThreadHint::read(&revised));
+        revised["thread"]["pendingRuntimeRequest"] = Value::Null;
+        revised["thread"]["activeRunId"] = Value::Null;
+        revised["thread"]["status"] = json!("completed");
+        assert_ne!(ThreadHint::read(&running), ThreadHint::read(&revised));
+    }
+
+    #[tokio::test]
+    async fn a_transport_failure_defers_other_rpc_calls() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listen");
+        let address = listener.local_addr().expect("endpoint");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("request");
+            let mut request = [0; 1024];
+            assert!(stream.read(&mut request).await.expect("ticket request") > 0);
+            stream
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .expect("reply");
+        });
+        let rpc = Rpc::new(&format!("http://{address}"), "fixture").expect("client");
+        assert!(matches!(
+            rpc.call("server.getConfig", json!({}), Read::One).await,
+            Err(HostError::Unavailable)
+        ));
+        assert!(
+            matches!(rpc.call("server.getConfig", json!({}), Read::One).await,
+            Err(HostError::Deferred { until }) if until > time::Instant::now())
+        );
+        server.await.expect("server");
     }
 }

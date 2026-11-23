@@ -80,6 +80,20 @@ Append audit history in the state transaction. The pass loop schedules active
 rows. API history
 and live notifications may read the event log.
 
+Admission and edits commit locally and wake the scheduler. The scheduler
+checks role profiles once in a batch that contains due queued tasks. One
+cycle runs at a time, with at most one GitHub request and one exact T3 RPC
+in flight. A separate T3 shell subscription supplies shared wake hints.
+Repeated transcript updates and reconnects leave existing deadlines in place.
+Running turns have a 45-second exact-read backstop. A lifecycle change,
+callback or command can wake the task sooner.
+
+An exact read that still shows a live turn needs no forge read unless a
+command is waiting on forge evidence. Launches, settlement and native writes
+still use fresh evidence. T3 transport failures and GitHub outages defer
+requests for 15 seconds, and GitHub rate limits retain their supplied deadline.
+The API serves task views from the store and memory and pushes invalidations.
+
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
 unknown read yields a wait before any action that depends on it. Optional and

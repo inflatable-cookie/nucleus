@@ -25,12 +25,14 @@ pub use projection::RunActivity;
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
 };
+pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
+pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub struct LaunchRequest<'a> {
     pub binding: Binding,
@@ -50,6 +52,8 @@ pub enum HostError {
     Unavailable,
     #[error("the host read or mutation timed out")]
     Timeout,
+    #[error("the host deferred requests until {until:?}")]
+    Deferred { until: tokio::time::Instant },
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
@@ -261,12 +265,12 @@ impl T3 {
     /// Returns an error on disconnect or if the listener missed a hint.
     pub async fn watch_threads(
         &self,
-        hints: &tokio::sync::mpsc::Sender<String>,
+        hints: &tokio::sync::mpsc::Sender<ThreadHint>,
     ) -> Result<(), HostError> {
         self.rpc.watch_threads(hints).await
     }
 
-    /// Check the host protocol and the configured role profiles before admission.
+    /// Check the host protocol and configured role profiles for queued tasks.
     ///
     /// # Errors
     /// Returns an error if the configuration is unreadable or a profile is unavailable.

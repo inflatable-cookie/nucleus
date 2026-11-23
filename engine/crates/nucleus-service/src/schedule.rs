@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
+use nucleus_core::WaitReason;
+use nucleus_hosts::T3_RETRY_DELAY;
 use nucleus_store::Store;
 use tokio::time::Instant;
 
@@ -8,6 +10,24 @@ use crate::ServiceError;
 const SCAN_PAGE: u32 = 32;
 const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
+
+pub(crate) const fn delay(wait: Option<WaitReason>) -> Duration {
+    match wait {
+        Some(
+            WaitReason::Running
+            | WaitReason::Starting
+            | WaitReason::Input
+            | WaitReason::Permission
+            | WaitReason::IdleWithoutTerminalRun
+            | WaitReason::Hold,
+        ) => Duration::from_secs(45),
+        Some(WaitReason::HostUnknown | WaitReason::RetainedThreadBusy | WaitReason::Question) => {
+            T3_RETRY_DELAY
+        }
+        Some(WaitReason::ChecksPending) => Duration::from_secs(15),
+        _ => Duration::from_secs(3),
+    }
+}
 
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Instant>,

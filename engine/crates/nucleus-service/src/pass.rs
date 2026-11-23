@@ -1,12 +1,12 @@
 use std::{
     path::Path,
     sync::atomic::Ordering,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use nucleus_core::{
     Action, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation, Observed, Phase,
-    Report, RetainedThread, Role, RunState, Task, WaitReason, Workspace, decide,
+    Report, RetainedThread, Role, Run, RunState, Task, WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -35,6 +35,29 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         self.project.scope(task.identity())?;
+        let forge_requested = self
+            .state
+            .lock()
+            .await
+            .forge_requested
+            .contains(&task.identity().id);
+        if !active(task) && !forge_requested {
+            return Ok(Action::Nothing);
+        }
+        let run_host = if let Some(run) = task.run().filter(|run| !run.revoked()) {
+            let (state, error) = self.read_current_run(row, run, host).await?;
+            if !forge_requested
+                && run.last_send_at_ms().is_some()
+                && task.question().is_none()
+                && let Some(wait) = waiting_on_run(task, &state, error)
+            {
+                self.observe_commands(row, &Observed::Unknown).await?;
+                return wait.map_err(ServiceError::Host);
+            }
+            Some((state, error))
+        } else {
+            None
+        };
         let worktrees = self.worktrees()?;
         let checkout = worktrees.checkout(
             &self.project.checkout,
@@ -47,7 +70,7 @@ impl Service {
         };
         self.observe_commands(row, &forge).await?;
         if !active(task) {
-            return Ok(Action::Nothing);
+            return forge_error.map_or(Ok(Action::Nothing), |error| Err(error.into()));
         }
         let binding = self.binding(&checkout)?;
         let mut observation = Observation {
@@ -70,24 +93,14 @@ impl Service {
             self.project.verify()?;
             observation.workspace = seen(checkout.allocate(&pr.head));
         }
-        let (host_result, activity) = if let Some(run) = task.run() {
-            match host.observe_run(run, now_ms()).await {
-                Ok(seen) => (Ok(Observed::Known(seen.host)), seen.activity),
-                Err(error) => (Err(error), None),
-            }
-        } else {
-            (read_retained(host, task, &binding).await, None)
+        let (host_state, host_error) = match run_host {
+            Some(read) => read,
+            None => match read_retained(host, task, &binding).await {
+                Ok(state) => (state, None),
+                Err(error) => (Observed::Unknown, Some(error)),
+            },
         };
-        if task.run().is_some() {
-            self.observe_activity(row, activity).await?;
-        }
-        let host_error = match host_result {
-            Ok(state) => {
-                observation.host = state;
-                None
-            }
-            Err(error) => Some(error),
-        };
+        observation.host = host_state;
 
         match decide(task, &observation) {
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
@@ -111,8 +124,25 @@ impl Service {
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => {
                 Err(error.into())
             }
+            Action::Wait(_) if forge_requested && let Some(error) = forge_error => {
+                Err(error.into())
+            }
             action => self.apply(row, &observation, action).await,
         }
+    }
+
+    async fn read_current_run(
+        &self,
+        row: &TaskRow,
+        run: &Run,
+        host: &impl TaskHost,
+    ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
+        let (state, activity, error) = match host.observe_run(run, now_ms()).await {
+            Ok(seen) => (Observed::Known(seen.host), seen.activity, None),
+            Err(error) => (Observed::Unknown, None, Some(error)),
+        };
+        self.observe_activity(row, activity).await?;
+        Ok((state, error))
     }
 
     async fn read_forge(
@@ -569,6 +599,32 @@ impl Service {
     }
 }
 
+fn waiting_on_run(
+    task: &Task,
+    state: &Observed<Host>,
+    error: Option<HostError>,
+) -> Option<Result<Action, HostError>> {
+    match decide(
+        task,
+        &Observation {
+            host: state.clone(),
+            forge: Observed::Unknown,
+            workspace: Observed::Unknown,
+        },
+    ) {
+        Action::Wait(WaitReason::HostUnknown) => error.map(Err),
+        action @ Action::Wait(
+            WaitReason::Running
+            | WaitReason::Starting
+            | WaitReason::IdleWithoutTerminalRun
+            | WaitReason::Permission
+            | WaitReason::Input
+            | WaitReason::Hold,
+        ) => Some(Ok(action)),
+        _ => None,
+    }
+}
+
 async fn read_retained(
     host: &impl TaskHost,
     task: &Task,
@@ -597,10 +653,13 @@ fn current(task: &Task, state: RunState) -> Result<Host, ServiceError> {
 }
 
 fn capture_forge<T>(service: &Service, result: Result<T, ForgeError>) -> Result<T, ForgeError> {
-    result.inspect_err(|error| {
-        if let ForgeError::Deferred { until } = error {
-            defer(service, *until);
+    result.inspect_err(|error| match error {
+        ForgeError::Deferred { until } => defer(service, *until),
+        ForgeError::Http(_) => defer(service, SystemTime::now() + Duration::from_secs(15)),
+        ForgeError::Status(status) if status.is_server_error() => {
+            defer(service, SystemTime::now() + Duration::from_secs(15));
         }
+        _ => {}
     })
 }
 
@@ -668,6 +727,84 @@ mod tests {
         Due, fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation,
         serve_forge,
     };
+
+    #[tokio::test]
+    async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let head = service.project.start.clone();
+        let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
+        service.forge = forge;
+        let worktrees = service.worktrees().expect("worktrees");
+        let checkout = worktrees
+            .checkout(
+                &service.project.checkout,
+                &service.project.repository,
+                "reviewer",
+            )
+            .expect("checkout");
+        let (mut task, _) = frozen_review(&service, &checkout, &head);
+        let instance = task.run().expect("run").launch().instance.clone();
+        task.record_send(&instance, 1).expect("send recorded");
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed");
+        let binding = service.binding(&checkout).expect("binding");
+        let (host, native_server) = native_fixture(move |req| {
+            assert_eq!(req["tag"], "orchestration.subscribeThread");
+            json!({"_tag":"Chunk","requestId":req["id"],"values":[
+                {"kind":"snapshot","snapshotSequence":1,"projection":{
+                    "thread":{"id":req["payload"]["threadId"],"projectId":binding.project_id,
+                        "worktreePath":binding.worktree_path,"branch":binding.branch},
+                    "runs":[{"id":"native","status":"running","userMessageId":format!("{instance}-message")}],
+                    "messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                }},
+                {"kind":"synchronized"}
+            ]})
+        }).await;
+        service.host = host;
+
+        let outcomes = service.pass().await.expect("exact run read");
+        assert!(matches!(
+            outcomes.as_slice(),
+            [crate::PassOutcome {
+                result: Ok(Action::Wait(WaitReason::Running)),
+                ..
+            }]
+        ));
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
+        let due = service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due("reviewer")
+            .expect("backstop");
+        assert!(due > tokio::time::Instant::now() + Duration::from_secs(40));
+        let authority = Authority::Operator {
+            actor: "fixture".into(),
+        };
+        assert!(matches!(
+            service
+                .command("reviewer", &authority, Command::Amend("next".into()))
+                .await,
+            Ok(crate::CommandOutcome::Pending { .. })
+        ));
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
+        let _ = service.pass().await.expect("command evidence wake");
+        assert_eq!(forge_reads.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            service
+                .command("reviewer", &authority, Command::Amend("next".into()))
+                .await,
+            Ok(crate::CommandOutcome::Applied(_))
+        ));
+        forge_server.abort();
+        native_server.abort();
+    }
 
     #[tokio::test]
     async fn review_recovers_its_checkout_before_creating_a_reservation() {
