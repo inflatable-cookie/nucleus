@@ -3878,8 +3878,9 @@ after the task finishes.
 - Settlement runs in the task's serial lane before the next run launches.
   A callback wake with pending run-bound cleanup can prefetch participant
   evidence on the task's host before entering the lane, even while the task is
-  still reviewing. A busy reported run's direct observation carries into its
-  own quantum while that run is unchanged.
+  still reviewing. A prefetched busy observation can keep an unchanged run's
+  lease busy. Release and other lifecycle effects require a fresh observation
+  in the task lane.
   Missing evidence leaves the settlement pending for a later pass. A skip is
   final for an unsafe root. Records cover runs in queue-owned workspaces since
   this rule took effect.

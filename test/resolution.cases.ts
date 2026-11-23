@@ -74,7 +74,10 @@ import { runPrompt } from "../core/dispatch/prompts";
 import { dispatchBlocked } from "../core/dispatch/capacity";
 import { pipelineBoard, pipelineColumn } from "../shared/pipeline-board";
 import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-contention";
-import { currentTaskQuantumScope } from "../core/scheduling/pass-snapshot";
+import {
+  currentTaskQuantumScope,
+  type PassSnapshot,
+} from "../core/scheduling/pass-snapshot";
 import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
 import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
@@ -17753,6 +17756,92 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
           ),
         );
       } finally {
+        t.mock.timers.reset();
+        await f.close();
+      }
+    });
+  }
+  for (const newerTurn of [true, false]) {
+    const scenario = newerTurn ? "a newer reviewer turn" : "the reported reviewer turn";
+    await t.test(`grace-expired wake rechecks ${scenario} after prefetch`, async (t) => {
+      const f = fixture(false, false, undefined, true);
+      let unblock!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        unblock = resolve;
+      });
+      try {
+        await f.engine.wake();
+        const run = f.run();
+        assert.ok(run?.agentId, f.current().reason);
+        f.engine.completionFollowUpDelays = [];
+        t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+        let turnId = "reporting-turn";
+        let turnStartedAt = new Date(Date.now() - 1_000).toISOString();
+        const receipt = f.engine.resolution.complete(
+          {
+            eventId: "grace-expired-review",
+            taskId: f.task.id,
+            runId: run.id,
+            status: "changes_required",
+            reviewResponsibility: "author",
+            summary: "Fix the defect",
+            head: run.head,
+            reviewCommentId: 1,
+          },
+          f.tokens.get(run.id)!,
+        );
+        assert.equal(receipt.accepted, true);
+        t.mock.timers.tick(120_000);
+
+        const held = f.engine.control(() => gate, `task:${f.task.id}`);
+        let queued = false;
+        let wakeSnapshot: PassSnapshot | undefined;
+        const observations: string[] = [];
+        const observe = f.adapter.observe.bind(f.adapter);
+        f.adapter.observe = async (id) => {
+          if (id !== run.agentId) return observe(id);
+          if (!queued || currentTaskQuantumScope()?.snapshot === wakeSnapshot)
+            observations.push(turnId);
+          return {
+            id,
+            workspaceId: run.workspaceId,
+            status: "running",
+            active: true,
+            permissions: false,
+            error: "",
+            activeTurnId: turnId,
+            turnStartedAt,
+          };
+        };
+        const schedule = f.engine.scheduleTaskQuantum.bind(f.engine);
+        t.mock.method(
+          f.engine,
+          "scheduleTaskQuantum",
+          (id: string, snapshot?: PassSnapshot) => {
+            const work = schedule(id, snapshot);
+            if (id === f.task.id && !queued) {
+              queued = true;
+              wakeSnapshot = snapshot;
+              if (newerTurn) {
+                turnId = "newer-turn";
+                turnStartedAt = new Date().toISOString();
+              }
+              unblock();
+            }
+            return work;
+          },
+        );
+        await Promise.all([held, f.engine.wakeTask(f.task.id)]);
+        assert.ok(wakeSnapshot, "the queued wake prefetched a snapshot");
+        assert.equal(f.store.run(run.id)?.released, !newerTurn);
+        assert.deepEqual(observations.slice(0, 2), ["reporting-turn", turnId]);
+        if (newerTurn) {
+          assert.equal(f.store.run(run.id)?.participantActivity?.turnId, turnId);
+          assert.equal(f.current().resolution.currentRunId, run.id);
+        }
+        t.diagnostic(`reviewer observations in one wake: ${observations.length}`);
+      } finally {
+        unblock();
         t.mock.timers.reset();
         await f.close();
       }

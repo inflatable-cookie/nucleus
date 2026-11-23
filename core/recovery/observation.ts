@@ -34,6 +34,7 @@ import {
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { hostFaultHost, reportHostCallFailure } from "../host/adapter-routing";
+import { admissionOf } from "../host/admission";
 import { HostReadRefusalError } from "../host";
 import { readHostReadTransientEpisode } from "./host-read-transient";
 import { runsUnchangedSince } from "./observation-advance";
@@ -227,14 +228,41 @@ export class Observation {
       if (this.resolution.stopped()) return;
       let run = this.store.run(original.id)!;
       const task = this.store.task(run.taskId);
-      const wakeObservation = completedTaskId
-        ? currentTaskQuantumScope()?.snapshot?.observedBusyWakeParticipant(run)
-        : undefined;
-      const observationStartedAt = wakeObservation?.at ?? now();
+      const observationStartedAt = now();
       try {
         if (isDispositionActive(task) || isDispositionComplete(task)) continue;
         if (!this.resolution.hostAvailable(task, run)) {
           this.settleUnobservableCompletion(run, observationStartedAt);
+          continue;
+        }
+        const wakeObservation = completedTaskId
+          ? currentTaskQuantumScope()?.snapshot?.observedBusyWakeParticipant(run)
+          : undefined;
+        const stalledStop = task.resolution.stalledTurnStop;
+        if (
+          wakeObservation &&
+          run.completionReceivedAt &&
+          wakeObservation.state.status === "running" &&
+          !wakeObservation.state.permissions &&
+          !wakeObservation.state.error &&
+          (!stalledStop || stalledStop.status === "completed") &&
+          task.resolution.stop?.reason !== "external_unavailable" &&
+          !readHostReadTransientEpisode(this.store, task.id, "task") &&
+          !completedTurnCanRelease(
+            run,
+            { kind: "observed", state: wakeObservation.state },
+            observationStartedAt,
+            this.graceMs,
+          )
+        ) {
+          // The prefetched sample can keep the lease busy. It cannot prove
+          // which turn still owns the host or authorize a lifecycle effect.
+          this.store.putRun({
+            ...run,
+            active: true,
+            idleSince: null,
+            lastObservedAt: wakeObservation.at,
+          });
           continue;
         }
         if (
@@ -296,19 +324,20 @@ export class Observation {
         let state: AgentObservation;
         try {
           const cached =
-            wakeObservation?.state ??
-            (run.completion || reviewInProgress(run)
+            run.completion || reviewInProgress(run)
               ? null
-              : (inventory?.get(run.agentId) ?? null));
+              : (inventory?.get(run.agentId) ?? null);
           if (cached) {
             state = cached;
           } else {
             const read = await boundedRead(
               "retained run observation",
               () =>
-                this.resolution.onTaskHost(run, () =>
-                  this.resolution.host.observe(run.agentId!),
-                ),
+                this.resolution.onTaskHost(run, () => {
+                  if (wakeObservation)
+                    admissionOf(this.adapter)?.invalidate(run.agentId!);
+                  return this.resolution.host.observe(run.agentId!);
+                }),
               this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
             );
             if (read.state === "unknown") continue;
