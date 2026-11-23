@@ -242,6 +242,10 @@ export const taskDecisionFactSchema = z
       // Spec 068 §3: the host may still answer the run's own create command, so
       // the creation waits for that answer; nothing replaces it meanwhile.
       "creation_in_flight",
+      // Spec 068 batch A: a first dispatch's workspace creation is uncertain and
+      // settles by lookup; past its release bound it is a typed stop naming
+      // record.clear kind=workspace_intent. Its subject is the task branch.
+      "workspace_lookup",
     ]),
     subject: z.string().min(1).max(240).optional(),
   })

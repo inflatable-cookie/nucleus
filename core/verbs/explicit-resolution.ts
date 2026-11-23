@@ -34,6 +34,11 @@ import {
   registeredAs,
 } from "../questions/responsible-thread-resolver";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
+import {
+  uncertainFirstWorkspace,
+  WORKSPACE_INTENT_RELEASED,
+  workspaceIntentReleasePatch,
+} from "../recovery/workspace-lookup";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
@@ -810,6 +815,44 @@ function clearPlan(
     }
     case "effect":
       return clearEffect(engine, task, id, input.reason);
+    case "workspace_intent":
+      // Spec 068 batch A: release an uncertain first workspace creation without
+      // a proof. The task returns to queued and ordinary dispatch creates or
+      // binds the same branch and worktree.
+      if (id === task.branch && uncertainFirstWorkspace(task)) {
+        const warnings: Warning[] = [
+          {
+            id: "workspace_may_exist",
+            text: `The workspace for ${task.branch} may exist on the host; the next dispatch binds or recreates the same branch and worktree.`,
+          },
+        ];
+        if (engine.hostHealth.launchInFlight(task.id))
+          warnings.push({
+            id: "effect_may_land",
+            text: "This task's first dispatch is still in flight; its create may still complete.",
+          });
+        return {
+          warnings,
+          apply() {
+            const released = workspaceIntentReleasePatch(task);
+            store.event(
+              task.id,
+              WORKSPACE_INTENT_RELEASED,
+              JSON.stringify({ automatic: false, branch: task.branch }),
+            );
+            return {
+              before: { workspaceIntent: true, stop },
+              patch: {
+                ...released,
+                phase: "queued",
+                reason: "Workspace intent released; requeued for dispatch",
+                resolution: { ...r, stop: null, attention: false },
+              },
+            };
+          },
+        };
+      }
+      break;
   }
   return missing(kind, id);
 }

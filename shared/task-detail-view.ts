@@ -132,6 +132,7 @@ function factCopyForOperatorNeeded(
       };
     case "workspace_absent":
     case "workspace_orphan":
+    case "workspace_lookup":
       return {
         label: "Needs you",
         tone: "danger",
@@ -1011,6 +1012,7 @@ export function explicitCommandLabel(cmd: TaskNextExplicitCommand): string {
       if (kind === "escalation") return "Clear the escalation";
       if (kind === "incident") return "Clear the incident";
       if (kind === "effect") return "Clear the stuck effect";
+      if (kind === "workspace_intent") return "Release the workspace intent";
       return "Clear the stuck record";
     }
     case "phase.set": {

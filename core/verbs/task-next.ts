@@ -38,6 +38,7 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from "../../shared/schema/settings";
 import { taskStopVerbs } from "../../shared/task-stop";
 import { reviewResultFencesRun } from "../review/review-continuation";
+import { uncertainFirstWorkspace } from "../recovery/workspace-lookup";
 
 /** One reviewer run's own recorded verdict with the publication evidence it carries. */
 type RecordedVerdict = {
@@ -864,6 +865,22 @@ function explicitCommandsFor(
     });
   }
 
+  // Spec 068 batch A: an uncertain first workspace creation can always be
+  // released explicitly; the next dispatch binds or recreates it.
+  if (uncertainFirstWorkspace(task)) {
+    push({
+      action: "record.clear",
+      args: {
+        action: "record.clear",
+        ...base,
+        kind: "workspace_intent",
+        id: task.branch,
+      },
+      fill: ["reason"],
+      note: `Release the uncertain workspace creation for ${task.branch} and requeue the task; the workspace may exist on the host.`,
+    });
+  }
+
   if (task.resolution.stop) {
     push({
       action: "record.clear",
@@ -908,6 +925,8 @@ function expectedWarnings(
         (warning) => warning.id,
       );
     if (command.action === "record.clear" && args.kind === "stop") return [];
+    if (command.action === "record.clear" && args.kind === "workspace_intent")
+      return ["workspace_may_exist"];
   } catch {
     return null;
   }

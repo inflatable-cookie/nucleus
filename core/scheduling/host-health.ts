@@ -195,6 +195,13 @@ export class HostHealth {
     this.entry(hostId, at).launching.add(taskId);
   }
 
+  /** Whether this service has the task's first dispatch in flight on any host. */
+  launchInFlight(taskId: string): boolean {
+    for (const entry of this.hosts.values())
+      if (entry.launching.has(taskId)) return true;
+    return false;
+  }
+
   /** The task's first dispatch returned, launched or not. */
   launchSettled(taskId: string): void {
     for (const entry of this.hosts.values()) entry.launching.delete(taskId);

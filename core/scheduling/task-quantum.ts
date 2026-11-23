@@ -1,4 +1,5 @@
 import { settleWorkerCreation } from "../recovery/creation-lookup";
+import { uncertainFirstWorkspace } from "../recovery/workspace-lookup";
 import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
@@ -76,6 +77,7 @@ export type TaskQuantumContext = Pick<
   | "reconcileBlockedEffects"
   | "reconcileClosedRetainedReviewer"
   | "recoverExistingWorkspace"
+  | "settleWorkspaceCreation"
   | "scheduleLane"
   | "settleFinishedRuns"
   | "settleHistoricalProofExecutions"
@@ -536,7 +538,16 @@ export class TaskQuantum {
         });
         return;
       }
-      if (
+      if (uncertainFirstWorkspace(task)) {
+        // Spec 068 batch A: an uncertain workspace creation settles by lookup
+        // (bind, release for ordinary dispatch, or a named wait), bounded by a
+        // typed stop naming record.clear kind=workspace_intent.
+        const settled = await this.context.settleWorkspaceCreation(task);
+        if (settled === "released")
+          this.context.cleanContext(() => {
+            void this.context.wakeRepository(task.repoPath);
+          });
+      } else if (
         (task.workspaceIntent && !task.workspaceId) ||
         (task.agentIntent && !task.agentId)
       ) {
