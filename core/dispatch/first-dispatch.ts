@@ -1,4 +1,8 @@
 import {
+  isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
+} from "../scheduling/pass-snapshot";
+import {
   effectiveDefaultHostKind,
   type HostKind,
 } from "../../shared/host-kind";
@@ -364,6 +368,8 @@ export class FirstDispatch {
         "checkout siblings refreshed on prerequisite release",
       );
     }
+    let workspaceAdmission: Task | undefined;
+    let workspacePort: "populateTaskWorktree" | "createWorkspace" | undefined;
     try {
       if (!task.workspaceId)
         await this.adapter.preflightWorkspaceStorage?.(task);
@@ -528,6 +534,7 @@ export class FirstDispatch {
       if (!admitted) return;
       const prepared = this.store.task(task.id);
       if (!prepared.workspaceId) {
+        workspaceAdmission = prepared;
         let freshlyPopulated = false;
         if (this.adapter.populateTaskWorktree) {
           const started = Date.now();
@@ -540,6 +547,7 @@ export class FirstDispatch {
             }),
           );
           try {
+            workspacePort = "populateTaskWorktree";
             const populated = await this.adapter.populateTaskWorktree(prepared);
             freshlyPopulated = populated.populated;
             this.store.event(
@@ -553,6 +561,7 @@ export class FirstDispatch {
               }),
             );
           } catch (error) {
+            propagateQuantumDeferral(error);
             const detail =
               error instanceof GitBulkCommandError
                 ? {
@@ -578,6 +587,7 @@ export class FirstDispatch {
           }
         }
         const populatedTask = this.store.task(task.id);
+        workspacePort = "createWorkspace";
         const workspace = await this.adapter.createWorkspace(populatedTask, {
           freshlyPopulated,
         });
@@ -587,6 +597,7 @@ export class FirstDispatch {
           workspace,
           "workspace_created",
         );
+        workspaceAdmission = undefined;
       }
       if (!this.context.stopped) {
         const current = this.store.task(task.id);
@@ -597,6 +608,23 @@ export class FirstDispatch {
       // The workspace exists now: project its title from the recorded phase.
       this.context.enqueueTitle(task.id);
     } catch (error) {
+      if (
+        workspaceAdmission &&
+        isQuantumDeadlineExceeded(error) &&
+        error.preSend &&
+        error.label === workspacePort &&
+        this.store.task(task.id).version === workspaceAdmission.version
+      ) {
+        // This port was never entered. Return the reservation to admission;
+        // an in-flight populate or registration keeps its lookup intent.
+        this.store.update(task.id, {
+          phase: "queued",
+          workspaceIntent: task.workspaceIntent,
+          worktreeLinks: task.worktreeLinks,
+          reason: task.reason,
+          reasonFact: task.reasonFact,
+        });
+      }
       this.context.noteStepFailure(task.id, error);
     }
   }

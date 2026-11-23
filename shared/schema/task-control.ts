@@ -217,7 +217,7 @@ export const explicitResolutionSchema = z.preprocess(
 export type ExplicitResolution = z.infer<typeof explicitResolutionSchema>;
 export type ResolutionWarningId = z.infer<typeof resolutionWarningId>;
 const resolutionResultSchema = z.object({
-  status: z.enum(["applied", "warnings", "stale"]),
+  status: z.enum(["applied", "warnings", "stale", "retry"]),
   warnings: z.array(z.object({ id: resolutionWarningId, text: z.string() })),
   next: z.string(),
   runId: z.string().optional(),

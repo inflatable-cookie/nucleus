@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../../scheduling/pass-snapshot";
 import { admitPhaseFacts } from "../../scheduling/phase-latency";
 import {
   parseAgentId,
@@ -59,7 +60,10 @@ async function announceReportReady(
       .some((event) => event.kind === "report_ready_planner_notice_intent")
   )
     return;
-  const project = store.projectFor(current.repoPath, normalizeRepositoryOrigin(current.repository ?? ""));
+  const project = store.projectFor(
+    current.repoPath,
+    normalizeRepositoryOrigin(current.repository ?? ""),
+  );
   const { rungs } = await resolution.plannerRungsFor(current);
   const planner = rungs[0]?.agentId;
   if (!planner || store.task(current.id).phase !== "report_ready") return;
@@ -109,6 +113,7 @@ async function verifiedPrIdentity(
   try {
     pr = await engine.adapter.verifyPr(current, c.prNumber!);
   } catch (error) {
+    propagateQuantumDeferral(error);
     const handled = engine.store.transaction(() => {
       const latest = engine.store.task(current.id);
       if (
@@ -197,7 +202,8 @@ export async function acceptWorkerResult(
   const stopAttention =
     current.resolution.attention &&
     (awaitedReminder ||
-      (current.reasonFact?.code === "callback_missing" && current.reasonFact.subject === "worker"));
+      (current.reasonFact?.code === "callback_missing" &&
+        current.reasonFact.subject === "worker"));
   // The blocked hook above waited on I/O: a push-back recorded meanwhile owns this return.
   if (
     c.status !== "ready_for_review" &&

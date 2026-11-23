@@ -543,7 +543,7 @@ export class WorkerLauncher {
             });
           }
         }
-        return;
+        throw error;
       }
       // Record the exact-lookup window now: automatic reconciliation owns the fault before any coordinator can engage.
       this.resolution.ensureIncident(

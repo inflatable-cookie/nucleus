@@ -1,3 +1,4 @@
+import { settleTaskQuantum } from "../scheduling/pass-snapshot";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import {
   holdsOf,
@@ -246,9 +247,9 @@ export async function plannerAuthority(
   );
   if (last) {
     const tasks =
-      engine.resolution.responsibleThreads.taskIndex().byProject.get(
-        project.key,
-      ) ?? [];
+      engine.resolution.responsibleThreads
+        .taskIndex()
+        .byProject.get(project.key) ?? [];
     const accepted = last.candidates.some((candidate) => {
       if (!isCaller(candidate)) return false;
       const native =
@@ -315,9 +316,7 @@ async function authority(
   caller: string | undefined,
 ): Promise<Source> {
   if (caller === OPERATOR_BOARD_CALLER) return "operator_board";
-  const planner = caller
-    ? await plannerAuthority(engine, task, caller)
-    : null;
+  const planner = caller ? await plannerAuthority(engine, task, caller) : null;
   if (planner?.ok) return "project_planner";
   const recovery = task.resolution.recovery;
   const run = recovery?.runId ? engine.store.run(recovery.runId) : null;
@@ -382,7 +381,9 @@ export async function resolveExplicitly(
       const custody = await engine.onTaskHost(run ?? before, () =>
         readRunProcessCustody({
           store,
-          readProcesses: engine.resolution.readPassProcesses.bind(engine.resolution),
+          readProcesses: engine.resolution.readPassProcesses.bind(
+            engine.resolution,
+          ),
           task: before,
           run,
           runId: input.run,
@@ -420,7 +421,9 @@ export async function resolveExplicitly(
     if (task.removedAt) throw Error("Task was removed from the queue");
     const releasing =
       input.action === "run.release" ? store.run(input.run) : null;
-    const plannerOnly = input.accept.filter((id) => PLANNER_ONLY_WARNINGS.has(id));
+    const plannerOnly = input.accept.filter((id) =>
+      PLANNER_ONLY_WARNINGS.has(id),
+    );
     if (source === "coordinator" && plannerOnly.length)
       throw Error(
         `Only the live responsible planner or operator board can accept ${plannerOnly.join(", ")}`,
@@ -496,10 +499,12 @@ export async function resolveExplicitly(
         releasing?.role === "recovery",
     };
   });
+  const finish = "finish" in result ? result.finish : undefined;
+  const finishOutcome = finish
+    ? await settleTaskQuantum(() => onHost(finish))
+    : undefined;
   const finished =
-    "finish" in result && result.finish
-      ? await onHost(() => result.finish!())
-      : undefined;
+    finishOutcome?.kind === "settled" ? finishOutcome.value : undefined;
   const latestTask = result.status === "applied" ? store.task(id) : result.task;
   const next = describeNext(latestTask);
   const deliveryNote = finished?.delivery
@@ -868,7 +873,8 @@ export function recoverySettlementOffers(
       });
   }
   for (const run of runs) {
-    if (run.role !== "recovery" || releaseRefusal(store, task, run.id)) continue;
+    if (run.role !== "recovery" || releaseRefusal(store, task, run.id))
+      continue;
     offers.push({
       action: "run.release",
       args: { action: "run.release", ...base, run: run.id },
@@ -913,7 +919,9 @@ export function releaseWarnings(
         process?.state === "running" && process.processGroupId
           ? `Recorded process group ${process.processGroupId} may still be running.`
           : null,
-      ].filter(Boolean).join(" "),
+      ]
+        .filter(Boolean)
+        .join(" "),
     });
   if (!completion && !run?.released)
     warnings.push({
@@ -928,7 +936,9 @@ export function releaseWarnings(
     if (episode?.runId === runId && episode.action?.status === "pending")
       warnings.push(...pendingRecoveryWarnings(store, task, episode));
     else if (completion)
-      warnings.push(...coordinatorClaimWarnings(store, task, runId, completion.eventId));
+      warnings.push(
+        ...coordinatorClaimWarnings(store, task, runId, completion.eventId),
+      );
   }
   return warnings;
 }
@@ -1080,7 +1090,8 @@ export function releasePlan(
         const onHost = async () => {
           if (live) {
             const stopped = await attempt("Turn cancellation", async () => {
-              const observed = await engine.host.observeParticipant(agentId)
+              const observed = await engine.host
+                .observeParticipant(agentId)
                 .catch(() => null);
               if (
                 workspaceId &&

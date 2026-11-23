@@ -111,6 +111,30 @@ export function isQuantumDeadlineExceeded(
 }
 
 /**
+ * Failure handlers preserve the deadline signal for the quantum owner. They
+ * may settle their own send reservation first when its delivery is known.
+ */
+export function propagateQuantumDeferral(error: unknown): void {
+  if (isQuantumDeadlineExceeded(error)) throw error;
+}
+
+export type TaskQuantumOutcome<T> =
+  | { kind: "settled"; value: T }
+  | { kind: "deferred"; error: QuantumDeadlineExceededError };
+
+/** Settle a task quantum without treating a missed deadline as a failed step. */
+export async function settleTaskQuantum<T>(
+  work: () => Promise<T> | T,
+): Promise<TaskQuantumOutcome<T>> {
+  try {
+    return { kind: "settled", value: await work() };
+  } catch (error) {
+    if (!isQuantumDeadlineExceeded(error)) throw error;
+    return { kind: "deferred", error };
+  }
+}
+
+/**
  * Typed sentinel thrown by pass-snapshot-backed timeline adapters when a
  * timeline page was not captured in the host pass, exceeded its pass budget,
  * or timed out inside `PassSnapshot`. Consumers carry this as a typed
@@ -267,21 +291,24 @@ export type CoveredObservationSnapshot = {
 
 /** A matching observation still needs process proof before it can settle tools. */
 export function isTerminalParticipant(
-  observation: Partial<
-    Pick<
-      HostObservation,
-      "active" | "activeTurnId" | "permissions" | "status" | "archived"
-    >
-  > | null | undefined,
+  observation:
+    | Partial<
+        Pick<
+          HostObservation,
+          "active" | "activeTurnId" | "permissions" | "status" | "archived"
+        >
+      >
+    | null
+    | undefined,
 ): boolean {
   return Boolean(
     observation &&
-    observation.active === false &&
-    observation.activeTurnId === null &&
-    observation.permissions === false &&
-    (observation.archived === true ||
-      observation.status === "closed" ||
-      observation.status === "gone"),
+      observation.active === false &&
+      observation.activeTurnId === null &&
+      observation.permissions === false &&
+      (observation.archived === true ||
+        observation.status === "closed" ||
+        observation.status === "gone"),
   );
 }
 
@@ -324,40 +351,18 @@ export async function boundedRead<T>(
       reason: `${label} timed out after 0 ms`,
     };
   }
-  let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Invoke `work()` synchronously so caller stack frames stay intact and no
   // extra microtask turn sits ahead of the underlying host/process call.
-  let pending: Promise<T>;
-  try {
-    pending = Promise.resolve(work());
-  } catch (error) {
-    if (isQuantumDeadlineExceeded(error)) {
-      return { state: "unknown", reason: error.message };
-    }
-    return Promise.reject(error);
-  }
+  const pending = Promise.resolve(work());
   // Prevent a late rejection after the deadline has already settled from
   // escaping as an unhandled rejection.
   pending.catch(() => {});
   try {
     return await Promise.race([
-      pending.then(
-        (value): BoundedReadResult<T> => {
-          settled = true;
-          return { state: "ok", value };
-        },
-        (error): BoundedReadResult<T> => {
-          if (isQuantumDeadlineExceeded(error)) {
-            settled = true;
-            return { state: "unknown", reason: error.message };
-          }
-          throw error;
-        },
-      ),
+      pending.then((value): BoundedReadResult<T> => ({ state: "ok", value })),
       new Promise<BoundedReadResult<T>>((resolve) => {
         timer = setTimeout(() => {
-          settled = true;
           resolve({
             state: "unknown",
             reason: `${label} timed out after ${boundMs} ms`,
@@ -368,9 +373,6 @@ export async function boundedRead<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    if (!settled) {
-      /* work rejected before deadline; caller receives the rejection */
-    }
   }
 }
 
@@ -401,11 +403,14 @@ export class PassSnapshot {
     Map<string, HostObservation>
   >();
   private readonly processReads = new Map<string, Promise<PassProcessRead>>();
-  private readonly directProcessReads = new Map<string, {
-    read: Promise<PassProcessRead>;
-    beforeScan: ReadonlyMap<string, ObservedTurnState>;
-    invalidated?: true;
-  }>();
+  private readonly directProcessReads = new Map<
+    string,
+    {
+      read: Promise<PassProcessRead>;
+      beforeScan: ReadonlyMap<string, ObservedTurnState>;
+      invalidated?: true;
+    }
+  >();
   private readonly timelineReads = new Map<
     string,
     Promise<BoundedReadResult<HostTimelineEntry[] | null>>
@@ -597,7 +602,8 @@ export class PassSnapshot {
         if (cached.invalidated)
           return {
             state: "unknown",
-            reason: "the direct process listing was invalidated; waiting for the next host pass",
+            reason:
+              "the direct process listing was invalidated; waiting for the next host pass",
             capturedAt: scan.capturedAt,
             fromPassSnapshot: true,
             deferred: true,
@@ -608,7 +614,9 @@ export class PassSnapshot {
           directBeforeScan: cached.beforeScan.get(agentId) ?? null,
         };
       });
-    const beforeScan = new Map<string, ObservedTurnState>(this.hostInventories.get(key));
+    const beforeScan = new Map<string, ObservedTurnState>(
+      this.hostInventories.get(key),
+    );
     if (participant) beforeScan.set(agentId, participant);
     const listing = read();
     this.directProcessReads.set(key, { read: listing, beforeScan });
@@ -721,8 +729,7 @@ export class PassSnapshot {
     const agentKey = `${hostKey}\0${agentId}`;
     const entries = this.timelinePageReads.get(agentKey) ?? [];
     const compatible = (entry: CachedTimelinePageEntry): boolean => {
-      if (options.cacheOnly && entry.settled?.state === "unknown")
-        return true;
+      if (options.cacheOnly && entry.settled?.state === "unknown") return true;
       if (options.provenTerminal && !entry.settled?.provenTerminal)
         return false;
       if (

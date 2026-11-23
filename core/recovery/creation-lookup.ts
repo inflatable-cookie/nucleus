@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { now, type Store } from "../store/store";
 import { randomBytes } from "node:crypto";
 import {
@@ -116,6 +117,7 @@ async function lookUp(
       return { kind: "unreadable", why: read.reason };
     found = read.value;
   } catch (error) {
+    propagateQuantumDeferral(error);
     if (error instanceof HostCreateInFlightError) return { kind: "in_flight" };
     return {
       kind: "unreadable",
@@ -438,6 +440,7 @@ export async function settleRunCreation(
       }),
     );
   } catch (error) {
+    propagateQuantumDeferral(error);
     // The delivery records its own uncertain or refused settlement; the next
     // pass looks the creation up again.
     store.event(

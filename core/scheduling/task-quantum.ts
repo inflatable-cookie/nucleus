@@ -13,9 +13,11 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
-  isQuantumDeadlineExceeded,
+  currentTaskQuantumScope,
+  propagateQuantumDeferral,
   runInTaskQuantumScope,
   runOutsideTaskQuantumScope,
+  settleTaskQuantum,
 } from "./pass-snapshot";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileUsageGate } from "../dispatch/usage-gate";
@@ -222,22 +224,22 @@ export class TaskQuantum {
     const budgetMs =
       this.context.resolution.quantumReadBudgetMs ??
       QUANTUM_TOTAL_READ_BUDGET_MS;
-    return runInTaskQuantumScope(budgetMs, async () => {
-      const task = this.reconcileProfileAdmission(
-        this.context.store.task(taskId),
-      );
-      const quantum = { pausedForPrerequisiteWait: false };
-      // One pass, one worktree-validation scan: every read this quantum makes for
-      // the same task worktree and selector argv shares it, and the next quantum
-      // reads again (task 450).
-      this.context.resolution.beginValidationScanPass();
-      try {
+    const visit = () =>
+      runInTaskQuantumScope(budgetMs, async () => {
+        const task = this.reconcileProfileAdmission(
+          this.context.store.task(taskId),
+        );
+        const quantum = { pausedForPrerequisiteWait: false };
+        // One pass, one worktree-validation scan: every read this quantum makes for
+        // the same task worktree and selector argv shares it, and the next quantum
+        // reads again (task 450).
+        this.context.resolution.beginValidationScanPass();
         await this.context.quantumSteps(taskId, task, quantum);
-      } finally {
         if (!quantum.pausedForPrerequisiteWait)
           await this.context.quantumFinish(taskId);
-      }
-    });
+      });
+    if (currentTaskQuantumScope()) return visit();
+    await settleTaskQuantum(visit);
   }
 
   async quantumSteps(
@@ -578,7 +580,6 @@ export class TaskQuantum {
         else await this.context.launchAgent(current);
       }
     } catch (error) {
-      if (isQuantumDeadlineExceeded(error)) return;
       this.context.noteStepFailure(task.id, error);
     }
   }
@@ -693,13 +694,15 @@ export class TaskQuantum {
             Boolean(this.context.store.getMeta("paused")),
           );
       } catch (error) {
-        if (!isQuantumDeadlineExceeded(error)) {
-          this.context.noteStepFailure(taskId, error);
-        }
+        this.context.noteStepFailure(taskId, error);
       }
     }
-    await archiveFinishedThreads(this.context.store, this.context.adapter, taskId).catch((error) => {
-      if (isQuantumDeadlineExceeded(error)) return;
+    await archiveFinishedThreads(
+      this.context.store,
+      this.context.adapter,
+      taskId,
+    ).catch((error) => {
+      propagateQuantumDeferral(error);
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",
@@ -714,7 +717,7 @@ export class TaskQuantum {
       this.context.adapter,
       taskId,
     ).catch((error) => {
-      if (isQuantumDeadlineExceeded(error)) return;
+      propagateQuantumDeferral(error);
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",

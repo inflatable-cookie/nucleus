@@ -231,6 +231,13 @@ pass. Every read inside a task quantum gets a deadline and returns "unknown" whe
 it misses (Spec 066 R1). This shares its approach with nucleus#1545 (async
 segregation) and Spec 067 batch 5 (host health).
 
+When the shared task-quantum deadline expires, the scheduler ends the visit and
+tries the step on a later pass. Deadline exhaustion creates no task stop,
+incident, or escalation. An explicit task command deferred before its effect
+returns `retry` and leaves no failed command record. When a send may already
+have reached the host or forge, its recorded intent remains available for
+observation before any retry.
+
 The host pass shares process listings and warms timeline pages for diagnostics
 and lifecycle reads. Task quanta request missing pages by host and participant.
 Demand gets up to half the warming slots and time when shell reads are waiting,

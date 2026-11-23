@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import type { Task } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { dispatchBlocked } from "../dispatch/capacity";
@@ -224,6 +225,7 @@ export async function settleWorkspaceCreation(
   try {
     found = await adapter.findWorkspaces(task);
   } catch (error) {
+    propagateQuantumDeferral(error);
     if (routedError(error)) throw error;
     return paused
       ? "skipped"
@@ -266,6 +268,7 @@ export async function settleWorkspaceCreation(
       remoteWhenAbsent: true,
     });
   } catch (error) {
+    propagateQuantumDeferral(error);
     if (routedError(error)) throw error;
     return paused
       ? "skipped"
@@ -352,6 +355,7 @@ export async function settleWorkspaceCreation(
       // Re-inspects first and deletes the ref only at the head it proved.
       await adapter.removeOrphanWorkspace(current, state.orphan);
     } catch (error) {
+      propagateQuantumDeferral(error);
       if (routedError(error)) throw error;
       return waitOn(
         ctx,

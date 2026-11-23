@@ -164,7 +164,7 @@ export async function settleArchive(
           ...(effect.op ? { op: effect.op } : {}),
         } satisfies ArchiveEffect);
       }
-      return;
+      throw error;
     }
     // A breaker deferral reached no Paseo call. Deferred is a wait, not
     // uncertainty: the withdrawn intent stays retryable, and the unchanged wait

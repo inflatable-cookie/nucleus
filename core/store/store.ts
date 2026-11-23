@@ -2535,6 +2535,9 @@ export class Store {
   operation(id: string): QueueOperation | null {
     return this.operationsStore.operation(id);
   }
+  withdrawOperation(operation: QueueOperation): void {
+    this.operationsStore.withdrawOperation(operation);
+  }
   operationPayload(id: string): unknown {
     return this.operationsStore.operationPayload(id);
   }
@@ -2685,10 +2688,7 @@ export class Store {
    * a queued review-entry task that never dispatched is the one shape whose own PR may have
    * merged outside Queue before any reviewer existed.
    */
-  reviewEntryUnrunBeforeFirstRun(
-    task: Task,
-    operationId?: string,
-  ): boolean {
+  reviewEntryUnrunBeforeFirstRun(task: Task, operationId?: string): boolean {
     return reviewEntryUnrun(this.reviewEntryFacts, task, operationId);
   }
   /** The dependency boundary; `store-prerequisites.ts` owns its admission rules. */
