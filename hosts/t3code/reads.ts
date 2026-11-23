@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
-import type { HostThread, HostTimelinePage } from "../../shared/host";
+import type {
+  HostParticipantObservation,
+  HostThread,
+  HostTimelinePage,
+} from "../../shared/host";
 import {
   hostFailureRefusalDetail,
   HostReadRefusalError,
@@ -38,10 +42,17 @@ import {
  * What one thread snapshot is for. Observation needs the thread record, its runs
  * and its runtime requests; a window read needs the newest bounded suffix of the
  * timeline; a transcript read needs every turn item and refuses a bounded window
- * that left history behind. No read requests a full snapshot.
+ * that left history behind. Custody requires a full snapshot for all provider
+ * sessions, including those a bounded window can omit.
  */
-export type ThreadReadKind = "observation" | "window" | "transcript";
+export type ThreadReadKind = "observation" | "window" | "transcript" | "custody";
 export type Projection = z.infer<typeof projection>;
+
+function backgroundTasks(threads: NonNullable<Projection["providerThreads"]>) {
+  return threads.flatMap((thread) =>
+    (thread.pendingBackgroundTasks ?? []).map((task) => `${task.kind} ${task.taskId}`),
+  );
+}
 /**
  * One thread snapshot as the nightly answered it: the projection it sent and
  * whether its own window left earlier history behind (`hasMoreHistory`).
@@ -529,6 +540,26 @@ export class T3Reads {
     );
     return family.threads.find((row) => row.id === threadId);
   }
+  async observeParticipant(
+    id: string,
+  ): Promise<HostParticipantObservation | null> {
+    this.core.requireConnection();
+    // Bounded projections can omit older idle provider sessions, and the
+    // shell roster covers only the active session. Require all sessions here.
+    const { projection } = await this.readFreshSnapshot(id, "custody");
+    if (projection.thread.deletedAt || !projection.providerThreads) return null;
+    const row = rowFromProjection(projection);
+    return {
+      id: row.id,
+      workspaceId: this.threadWorkspace(row),
+      status: shellThreadStatus(row),
+      active: rowActive(row),
+      permissions: row.pendingRuntimeRequest !== null,
+      activeTurnId: row.activeRunId,
+      updatedAt: projection.updatedAt,
+      pendingBackgroundTasks: backgroundTasks(projection.providerThreads),
+    };
+  }
   /** `readListRow` for a caller outside this module. */
   async readListRowById(threadId: string): Promise<ShellRow | undefined> {
     return await this.readListRow(threadId);
@@ -752,7 +783,7 @@ export class T3Reads {
   ): Promise<ThreadSnapshotRead> {
     // Whether T3's live shell lists the thread as this read starts: an answer for
     // one it does not list is kept (see `absent`).
-    const unlisted =
+    const unlisted = kind !== "custody" &&
       this.live.live && !this.live.row(threadId) && !this.written.has(threadId);
     const epoch = this.forgetEpoch(threadId);
     const keep = (answer: { read: ThreadSnapshotRead } | { error: unknown }) => {
@@ -803,7 +834,7 @@ export class T3Reads {
         {
           threadId,
           requestCompletionMarker: true,
-          acceptBoundedSnapshot: true,
+          acceptBoundedSnapshot: kind !== "custody",
         },
         (value) => {
           const item = decode(
@@ -819,7 +850,7 @@ export class T3Reads {
             const complete = decode(threadSnapshot, item, "subscribeThread");
             const coverage = threadSnapshotCoverage(complete);
             if (
-              kind === "transcript" &&
+              (kind === "transcript" || kind === "custody") &&
               (coverage.paged || coverage.omitsTurnItems)
             )
               throw new T3CompatibilityError(
@@ -1461,12 +1492,7 @@ export class T3Reads {
       startCursor: oldest ? { epoch: id, seq: oldest.item.ordinal } : null,
       endCursor: newest ? { epoch: id, seq: newest.item.ordinal } : null,
       projection: "bounded",
-      pendingBackgroundTasks: read.projection.providerThreads.flatMap(
-        (thread) =>
-          (thread.pendingBackgroundTasks ?? []).map(
-            (task) => `${task.kind} ${task.taskId}`,
-          ),
-      ),
+      pendingBackgroundTasks: backgroundTasks(read.projection.providerThreads),
     };
   }
 

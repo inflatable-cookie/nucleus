@@ -6,7 +6,7 @@ import {
 } from "../git/index";
 import { checkoutRunScratchPlacement, runTemporaryDirectory, type RunScratchPlacement } from "../workspaces/run-scratch";
 import { findWorktreeValidation, type WorktreeValidationScan } from "../workspaces/worktree-validation";
-import type { HostProcessFact } from "../host/types";
+import type { HostProcessTable } from "../host/types";
 import { readHostProcessTable } from "../host/process-table";
 
 /**
@@ -86,7 +86,7 @@ export class MachinePorts {
    * An adapter that protects its own runtime overrides this and marks it
    * (`HostProcessFact.protectedRuntime`) before the table reaches a sweep.
    */
-  async hostProcessListing(): Promise<HostProcessFact[] | null> {
+  async hostProcessListing(): Promise<HostProcessTable | null> {
     return readHostProcessTable();
   }
 }

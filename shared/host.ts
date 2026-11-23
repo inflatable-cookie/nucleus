@@ -84,6 +84,8 @@ export interface Host {
   originAgent(id: AgentId): Promise<OriginAgent | null>;
   /** One agent's native state; an unreadable agent is a refused read, never an idle one. */
   observe(id: AgentId): Promise<HostObservation>;
+  /** Exact thread state and complete background roster, independent of timeline coverage. */
+  observeParticipant?(id: AgentId): Promise<HostParticipantObservation | null>;
   /** `null` means the inventory could not be walked to its end; a missing identity is unknown, not inactive. */
   observationInventory(
     ids: readonly AgentId[],
@@ -450,6 +452,14 @@ export interface HostObservation {
   /** Absolute MCP ticket path this session was started with, when the host reports it. */
   mcpBindingPath?: string | null;
 }
+
+export type HostParticipantObservation = Pick<
+  HostObservation,
+  "id" | "workspaceId" | "status" | "active" | "permissions" | "updatedAt"
+> & {
+  activeTurnId: string | null;
+  pendingBackgroundTasks: readonly string[];
+};
 
 export interface HostTimelineEntry {
   timestamp: string;

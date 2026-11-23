@@ -17,7 +17,7 @@ import type {
   RunUsageStreamEvent,
   ProcessSearch,
   WorkspaceCreationState,
-  HostProcessFact,
+  HostProcessTable,
 } from "../../../core/host";
 import { capPaseoTitle } from "./titles";
 import { paseoRuntimeListing, readPaseoDaemonPid } from "./protected-runtime";
@@ -760,7 +760,7 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
      * exists but cannot name the daemon is ambiguous, so the listing is null and
      * every sweep that needs it stays fenced.
      */
-    hostProcessListing = async (): Promise<HostProcessFact[] | null> =>
+    hostProcessListing = async (): Promise<HostProcessTable | null> =>
       paseoRuntimeListing(await readHostProcessTable(), readPaseoDaemonPid());
     async observe(id: string): Promise<AgentObservation> {
       const agent = this.api.agents.ref(id);

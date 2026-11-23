@@ -21,6 +21,8 @@ import {
 import { HostFacade } from "../core/host/host-facade";
 import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
 import { readProcessSubset } from "../core/machine/host-process-listing";
+import { workspaceToolProcessIssue } from "../core/recovery/stall";
+import type { HostProcessTable } from "../core/host/types";
 import { observeAssignedThread } from "../core/dispatch/run-launch/assigned-thread";
 import type { LaunchThreadContext } from "../core/dispatch/launch";
 import { fakeAdapter, submission } from "./support/fakes";
@@ -4689,7 +4691,7 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
   assert.equal(workerAfter.resolution.stop, null);
 });
 
-test("ownedToolHold and executionLease return typed deferred on all four paths under timeout and uncaptured snapshot, while a real live tool still holds", async (t) => {
+test("owned-tool custody reads missed process scans directly and defers unknown evidence", async (t) => {
   const idleAt = new Date(Date.now() - 60_000).toISOString();
   const baseObs = (
     id: string,
@@ -4759,6 +4761,8 @@ test("ownedToolHold and executionLease return typed deferred on all four paths u
   {
     let slowProcess = false;
     let slowWorkspaceProbe = false;
+    let processes: HostProcessTable | null = [];
+    let scans = 0;
     const f = engineFixture(t, {
       observe: async (id: string) =>
         baseObs(id, "ws-p1", { status: "closed", archived: true }),
@@ -4769,12 +4773,18 @@ test("ownedToolHold and executionLease return typed deferred on all four paths u
         deleted: false,
       }),
       hostProcessListing: async () => {
+        scans++;
         if (slowProcess) await new Promise(() => {});
-        return [];
+        return processes;
       },
-      noLiveWorkspaceProcesses: async () => {
+      noLiveWorkspaceProcesses: async (
+        _workspace: string,
+        runIds: readonly string[],
+        _runtime: unknown,
+        listing: HostProcessFact[],
+      ) => {
         if (slowWorkspaceProbe) await new Promise(() => {});
-        return null;
+        return workspaceToolProcessIssue(listing, "/tmp/synthetic-p1", runIds);
       },
     });
     f.engine.resolution.quantumReadTimeoutMs = 40;
@@ -4782,22 +4792,63 @@ test("ownedToolHold and executionLease return typed deferred on all four paths u
     const runId = "11111111-1111-4111-8111-111111111001";
     const task = seedLeaseTask(f, "p1", "agent-p1", "ws-p1", runId);
 
-    // 1a. Uncaptured pass snapshot inside task quantum
-    const uncaptured = await runInTaskQuantumScope(500, () =>
-      f.engine.resolution.ownedToolHold("agent-p1", {
+    const proof = (participant = task) =>
+      f.engine.resolution.ownedToolHold(participant.agentId!, {
         requireCompleteEvidence: true,
         allowRetired: true,
-        runId,
-        runIds: [runId],
-        taskId: task.id,
+        runId: participant.runId!,
+        taskId: participant.id,
         workspaceId: "ws-p1",
-      }),
-    );
-    assert.equal(uncaptured.kind, "deferred");
+      });
+
+    // 1a. A sealed pass missed its listing. Read after observing the archive.
+    const missedScan = async <T>(work: (snapshot: PassSnapshot) => Promise<T>) => {
+      const snapshot = f.engine.resolution.beginPassSnapshot();
+      snapshot.sealHost(HOST);
+      try {
+        return await runInTaskQuantumScope(500, () => work(snapshot), snapshot);
+      } finally {
+        f.engine.resolution.endPassSnapshot(snapshot);
+      }
+    };
+    const other = seedLeaseTask(f, "p1-other", "agent-p1-other", "ws-p1", "run-p1-other");
+    await missedScan(async (snapshot) => {
+      snapshot.recordHostObservation(HOST, other.agentId!,
+        baseObs(other.agentId!, "ws-p1", { status: "closed", archived: true }));
+      const verdicts = await Promise.all([proof(), proof(other)]);
+      assert.deepEqual(verdicts.map((proof) => proof.kind), ["clear", "clear"]);
+      assert.equal(scans, 1, "participants share one direct scan in the same host pass");
+    });
+    await missedScan(async () => {
+      assert.equal((await proof()).kind, "clear");
+      assert.equal((await proof(other)).kind, "deferred", "the scan did not cover the other participant's observation");
+    });
+    processes = [{
+      pid: 42,
+      ppid: 1,
+      pgid: 42,
+      uid: 501,
+      startIdentity: "synthetic-start",
+      command: "synthetic-detached-command",
+      cwd: task.directory,
+    }];
+    const busy = await missedScan(() => proof());
+    assert.equal(busy.kind, "hold");
+    assert.match(busy.reason, /process 42 remains/);
+
+    processes = Object.assign([], { cwdComplete: false });
+    const partial = await missedScan(() => proof());
+    assert.equal(partial.kind, "deferred");
+    assert.match(partial.reason, /incomplete working-directory coverage/);
+
+    processes = null;
+    const unreadable = await missedScan(() => proof());
+    assert.equal(unreadable.kind, "deferred");
+    processes = [];
     const leaseUncaptured = await runInTaskQuantumScope(500, () =>
       f.engine.resolution.executionLease(f.store.task(task.id)),
     );
-    assert.equal(leaseUncaptured, false);
+    assert.equal(leaseUncaptured, true);
     assert.equal(f.store.task(task.id).resolution.stop, null);
 
     // 1b. Quantum timeout on process listing & workspace probe
@@ -4913,13 +4964,13 @@ test("ownedToolHold and executionLease return typed deferred on all four paths u
           }),
         snap,
       );
-      assert.equal(uncapturedBounded.kind, "deferred");
+      assert.equal(uncapturedBounded.kind, "clear");
       const leaseUncapturedBounded = await runInTaskQuantumScope(
         500,
         () => f.engine.resolution.executionLease(f.store.task(task.id)),
         snap,
       );
-      assert.equal(leaseUncapturedBounded, false);
+      assert.equal(leaseUncapturedBounded, true);
       assert.equal(f.store.task(task.id).resolution.stop, null);
     } finally {
       f.engine.resolution.endPassSnapshot(snap);

@@ -83,6 +83,8 @@ export function custodyProofDeferral(
   }
   const { scan, beforeScan, entries } = read;
   if (scan.state === "unknown" && scan.deferred) return defer(scan.reason);
+  if (scan.state === "listed" && scan.cwdComplete === false)
+    return defer("the host process listing has incomplete working-directory coverage");
   if (!scan.fromPassSnapshot || scan.state !== "listed") return null;
   if (entries?.some((entry) => Date.parse(entry.timestamp) > scan.capturedAt))
     return defer(
