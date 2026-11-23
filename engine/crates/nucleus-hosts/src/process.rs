@@ -2,7 +2,10 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     io,
-    os::unix::ffi::OsStrExt,
+    os::{
+        fd::{AsRawFd, OwnedFd},
+        unix::ffi::OsStrExt,
+    },
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -10,13 +13,14 @@ use std::{
 
 use futures_util::future::try_join3;
 use rustix::{
-    fs::{FileType, Mode, stat},
+    fs::{FileType, Mode, OFlags, open, stat},
     io::Errno,
     process::{Pid, geteuid, test_kill_process},
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
+    sync::Mutex,
     time,
 };
 
@@ -36,12 +40,12 @@ pub(crate) enum Activity {
 /// until a separate process enumeration proves their PIDs have exited.
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
+    scoped: Mutex<HashMap<PathBuf, Result<Activity, HostError>>>,
 }
 
 #[derive(Default)]
 struct ProcessPaths {
     cwd: Option<PathBuf>,
-    open_paths: Vec<PathBuf>,
     ambiguous_path: bool,
 }
 
@@ -53,10 +57,10 @@ impl Inventory {
                 1,
                 ProcessPaths {
                     cwd: Some(PathBuf::from("/")),
-                    open_paths: Vec::new(),
                     ambiguous_path: false,
                 },
             )]),
+            scoped: Mutex::default(),
         }
     }
 
@@ -64,7 +68,16 @@ impl Inventory {
         let user = geteuid().as_raw();
         let (listing, _) = capture(
             "/usr/sbin/lsof",
-            &["-a", "-u", &user.to_string(), "-n", "-P", "-F0pfn"],
+            &[
+                "-a",
+                "-u",
+                &user.to_string(),
+                "-d",
+                "cwd",
+                "-n",
+                "-P",
+                "-F0pfn",
+            ],
         )
         .await?;
         // The later inventory includes any new PID lsof did not see. A zombie
@@ -86,8 +99,11 @@ impl Inventory {
             .collect::<Vec<_>>()
             .join(",");
         if !missing.is_empty()
-            && let Ok((listing, _)) =
-                capture("/usr/sbin/lsof", &["-p", &missing, "-n", "-P", "-F0pfn"]).await
+            && let Ok((listing, _)) = capture(
+                "/usr/sbin/lsof",
+                &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
+            )
+            .await
             && let Ok(paths) = process_paths(&listing)
         {
             for (pid, paths) in paths {
@@ -124,31 +140,20 @@ impl Inventory {
                 live.insert(pid, by_pid.remove(&pid).unwrap_or_default());
             }
         }
-        Ok(Self { processes: live })
+        Ok(Self {
+            processes: live,
+            scoped: Mutex::default(),
+        })
     }
 
     pub(crate) fn activity(&self, path: &Path) -> Result<Activity, HostError> {
-        let user = geteuid().as_raw();
-        if !path.is_absolute()
-            || path.canonicalize().ok().as_deref() != Some(path)
-            || !path.ancestors().take(2).any(|directory| {
-                stat(directory).is_ok_and(|metadata| {
-                    FileType::from_raw_mode(metadata.st_mode) == FileType::Directory
-                        && metadata.st_uid == user
-                        && !Mode::from_raw_mode(metadata.st_mode)
-                            .intersects(Mode::RWXG | Mode::RWXO)
-                })
-            })
-        {
-            return Err(HostError::Binding);
-        }
+        verify_root(path)?;
         let mut missing = false;
         for process in self.processes.values() {
             if process
                 .cwd
-                .iter()
-                .chain(&process.open_paths)
-                .any(|candidate| candidate.starts_with(path))
+                .as_ref()
+                .is_some_and(|cwd| cwd.starts_with(path))
             {
                 return Ok(Activity::Busy);
             }
@@ -160,6 +165,42 @@ impl Inventory {
             Activity::Quiet
         })
     }
+
+    pub(crate) async fn activity_for(
+        &self,
+        checkout: &Path,
+        scratch: &Path,
+    ) -> Result<Activity, HostError> {
+        match (self.activity(checkout)?, self.activity(scratch)?) {
+            (Activity::Busy, _) | (_, Activity::Busy) => return Ok(Activity::Busy),
+            (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
+            (Activity::Quiet, Activity::Quiet) => {}
+        }
+        let mut scoped = self.scoped.lock().await;
+        if let Some(activity) = scoped.get(checkout) {
+            return *activity;
+        }
+        let activity = scoped_activity(checkout, scratch).await;
+        scoped.insert(checkout.to_path_buf(), activity);
+        activity
+    }
+}
+
+fn verify_root(path: &Path) -> Result<(), HostError> {
+    let user = geteuid().as_raw();
+    if !path.is_absolute()
+        || path.canonicalize().ok().as_deref() != Some(path)
+        || !path.ancestors().take(2).any(|directory| {
+            stat(directory).is_ok_and(|metadata| {
+                FileType::from_raw_mode(metadata.st_mode) == FileType::Directory
+                    && metadata.st_uid == user
+                    && !Mode::from_raw_mode(metadata.st_mode).intersects(Mode::RWXG | Mode::RWXO)
+            })
+        })
+    {
+        return Err(HostError::Binding);
+    }
+    Ok(())
 }
 
 fn gone(pid: u32) -> bool {
@@ -186,18 +227,14 @@ fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError>
                 is_cwd = false;
             }
             [b'f', file @ ..] => is_cwd = file == b"cwd",
-            [b'n', path @ ..] if path.starts_with(b"/") => {
+            [b'n', path @ ..] if is_cwd && path.starts_with(b"/") => {
                 let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
                 let Some(path) = decode_lsof_path(path) else {
                     process.ambiguous_path = true;
                     continue;
                 };
-                if is_cwd {
-                    if process.cwd.replace(path).is_some() {
-                        return Err(HostError::Protocol);
-                    }
-                } else {
-                    process.open_paths.push(path);
+                if process.cwd.replace(path).is_some() {
+                    return Err(HostError::Protocol);
                 }
             }
             _ => {}
@@ -246,7 +283,127 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
+struct Witness<'a> {
+    path: &'a Path,
+    fd: OwnedFd,
+}
+
+impl<'a> Witness<'a> {
+    fn open(path: &'a Path) -> Result<Self, HostError> {
+        let fd = open(
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| HostError::Uncertain)?;
+        Ok(Self { path, fd })
+    }
+}
+
+async fn scoped_activity(checkout: &Path, scratch: &Path) -> Result<Activity, HostError> {
+    let mut witnesses = vec![Witness::open(checkout)?];
+    if scratch != checkout {
+        witnesses.push(Witness::open(scratch)?);
+    }
+    let mut args: Vec<&OsStr> = ["-n", "-P", "-V", "-F0pfn"]
+        .into_iter()
+        .map(OsStr::new)
+        .collect();
+    for witness in &witnesses {
+        args.extend([OsStr::new("+D"), witness.path.as_os_str()]);
+    }
+    let listing = read_listing("/usr/sbin/lsof", &args).await?;
+    // Keep the directory descriptors open while lsof runs. They are dropped
+    // with the witnesses before the pass can authorize worktree removal.
+    Ok(scoped_listing(&listing, &witnesses).unwrap_or(Activity::Unknown))
+}
+
+fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<Activity> {
+    let end = listing.output.iter().rposition(|&byte| byte == 0)?;
+    let diagnostics = listing.output[end + 1..].strip_prefix(b"\n")?;
+    // Darwin lsof exits 1 for any closed descendant found by +D. With -V,
+    // distinguish these explicit search misses from all other failures.
+    match listing.exit {
+        Some(0) if diagnostics.is_empty() => {}
+        Some(1) if closed_paths(diagnostics, witnesses) => {}
+        _ => return None,
+    }
+    let mut seen = vec![false; witnesses.len()];
+    let mut pid = None;
+    let mut fd = None;
+    let mut busy = false;
+    for field in listing.output[..end].split(|&byte| byte == 0) {
+        let field = field.strip_prefix(b"\n").unwrap_or(field);
+        match field {
+            [b'p', value @ ..] if fd.is_none() => {
+                pid = Some(std::str::from_utf8(value).ok()?.parse::<u32>().ok()?);
+            }
+            [b'f', value @ ..] if pid.is_some() && fd.is_none() && !value.is_empty() => {
+                fd = Some(value);
+            }
+            [b'n', name @ ..] if name.starts_with(b"/") => {
+                let descriptor = fd.take()?;
+                let path = decode_lsof_path(name)?;
+                let witness = witnesses.iter().position(|witness| {
+                    pid == Some(std::process::id())
+                        && std::str::from_utf8(descriptor)
+                            .ok()
+                            .and_then(|fd| fd.parse().ok())
+                            == Some(witness.fd.as_raw_fd())
+                        && path == witness.path
+                });
+                if let Some(index) = witness {
+                    if std::mem::replace(&mut seen[index], true) {
+                        return None;
+                    }
+                } else {
+                    busy = true;
+                }
+            }
+            _ => return None,
+        }
+    }
+    if fd.is_some() || !seen.into_iter().all(|found| found) {
+        return None;
+    }
+    Some(if busy {
+        Activity::Busy
+    } else {
+        Activity::Quiet
+    })
+}
+
+fn closed_paths(diagnostics: &[u8], witnesses: &[Witness<'_>]) -> bool {
+    diagnostics.strip_suffix(b"\n").is_some_and(|lines| {
+        lines.split(|&byte| byte == b'\n').all(|line| {
+            line.strip_prefix(b"lsof: no file use located: ")
+                .and_then(decode_lsof_path)
+                .is_some_and(|path| {
+                    path.is_absolute()
+                        && witnesses
+                            .iter()
+                            .any(|witness| path.starts_with(witness.path))
+                })
+        })
+    })
+}
+
+struct Listing {
+    exit: Option<i32>,
+    output: Vec<u8>,
+    pid: u32,
+}
+
 async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostError> {
+    let listing = read_listing(command, args).await?;
+    if listing.exit == Some(0) && !listing.output.is_empty() {
+        Ok((listing.output, listing.pid))
+    } else {
+        Err(HostError::Uncertain)
+    }
+}
+
+async fn read_listing(command: &str, args: &[impl AsRef<OsStr>]) -> Result<Listing, HostError> {
     let mut child = Command::new(command)
         .args(args)
         .env("LC_ALL", "C")
@@ -266,8 +423,12 @@ async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostErr
     .await
     .map_err(|_| HostError::Timeout)?
     .map_err(|_| HostError::Uncertain)?;
-    if status.success() && stderr.is_empty() && !stdout.is_empty() {
-        Ok((stdout, pid))
+    if stderr.is_empty() {
+        Ok(Listing {
+            exit: status.code(),
+            output: stdout,
+            pid,
+        })
     } else {
         Err(HostError::Uncertain)
     }
@@ -313,6 +474,51 @@ mod tests {
             capture("/usr/bin/false", &[]).await,
             Err(HostError::Uncertain)
         ));
+    }
+
+    #[test]
+    fn a_missing_witness_is_incomplete() {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let witnesses = [
+            Witness::open(checkout.path()).expect("open checkout"),
+            Witness::open(scratch.path()).expect("open scratch"),
+        ];
+        let listing = Listing {
+            exit: Some(1),
+            output: format!(
+                "p{}\0\nf{}\0n{}\0\nlsof: no file use located: {}/closed\n",
+                std::process::id(),
+                witnesses[0].fd.as_raw_fd(),
+                checkout.path().display(),
+                scratch.path().display(),
+            )
+            .into_bytes(),
+            pid: 0,
+        };
+        assert!(scoped_listing(&listing, &witnesses).is_none());
+    }
+
+    #[tokio::test]
+    async fn scopes_distinguish_closed_descendants_from_nested_open_files() {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let checkout = checkout.path().canonicalize().expect("canonical checkout");
+        let scratch = scratch.path().canonicalize().expect("canonical scratch");
+        let nested = checkout.join("nested");
+        std::fs::create_dir(&nested).expect("nested directory");
+        let path = nested.join("tool-file");
+        std::fs::File::create(&path).expect("file initially closed");
+        assert!(matches!(
+            scoped_activity(&checkout, &scratch).await,
+            Ok(Activity::Quiet)
+        ));
+        let held = std::fs::File::open(&path).expect("open file outside process cwd");
+        assert!(matches!(
+            scoped_activity(&checkout, &scratch).await,
+            Ok(Activity::Busy)
+        ));
+        drop(held);
     }
 
     #[tokio::test]
@@ -373,7 +579,7 @@ mod tests {
             br"/elsewhere/\x0",
             br"/elsewhere/\q",
         ] {
-            let mut listing = b"p1\0\nfcwd\0n/elsewhere\0\nf7\0n".to_vec();
+            let mut listing = b"p1\0\nfcwd\0n".to_vec();
             listing.extend(field);
             listing.extend(b"\0\n");
             let inventory =

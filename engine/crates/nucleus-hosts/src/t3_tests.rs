@@ -2,7 +2,7 @@ use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use crate::{
     Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
-    TaskHost, process::Inventory,
+    TaskHost,
 };
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
@@ -32,9 +32,7 @@ const NATIVE_RUN: &str = "fixture-native-turn";
 const LATE_REPLY_MS: u64 = 600_000;
 
 fn quiet_pass(client: &T3) -> T3Pass<'_> {
-    let pass = client.pass();
-    assert!(pass.processes.set(Ok(Inventory::quiet_fixture())).is_ok());
-    pass
+    client.fixture_pass()
 }
 
 fn checkout_fixture() -> tempfile::TempDir {
@@ -328,7 +326,7 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
         .spawn()
         .expect("fixture child");
     let run = task.run().expect("run");
-    let pass = client.pass();
+    let pass = client.pass(checkout.path());
     assert_eq!(
         pass.observe_run(run, 2).await.expect("busy checkout"),
         Host::Current {
@@ -573,7 +571,10 @@ async fn revoked_replay(archive: bool) {
         .last_send_at_ms()
         .expect("first send time");
     assert!(matches!(
-        client.pass().authorize_send(task.run().expect("run")).await,
+        client
+            .pass(checkout.path())
+            .authorize_send(task.run().expect("run"))
+            .await,
         Err(HostError::Uncertain)
     ));
     revoke(&mut task, &observation);

@@ -221,7 +221,7 @@ impl Service {
     pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
         self.storage.database().verify()?;
         let ids = self.due_tasks().await?;
-        let host = self.host.pass();
+        let host = self.host.pass(self.storage.scratch().path());
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             let row = match self.task(&id).await {

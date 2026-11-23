@@ -179,9 +179,13 @@ also check the open PR and clean checkout after native authorization.
   items. Pending tasks and active command, tool and subagent items keep the
   thread busy. An omitted or windowed roster leaves settlement unknown.
   [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
-- A pass shares one bounded process inventory across checkout checks. The Mac
-  adapter cross-checks `lsof` against a PID enumeration of the local T3 user.
-  An open file or working directory under the checkout is busy. An unaccounted
+- A pass shares one bounded cwd census across checkout checks. The Mac adapter
+  cross-checks cwd-only `lsof` against the local T3 user's PIDs, then checks open
+  files recursively under the checkout and engine scratch. It holds both
+  directory descriptors during that scan and requires each in the reply.
+  Darwin `lsof` can exit 1 for closed descendants. For that status, a quiet
+  result requires explicit `-V` search misses and both descriptors.
+  An open file or working directory in either scope is busy. An unaccounted
   live PID, undecodable path, incomplete listing or warning leaves settlement
   unknown. Decode `lsof` escapes before comparing path bytes. Run the
   engine and T3 under the same local user with private task checkout roots.

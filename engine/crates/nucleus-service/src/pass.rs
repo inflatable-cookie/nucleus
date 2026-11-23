@@ -669,9 +669,8 @@ mod tests {
                 .expect("seed");
             let row = service.task("reviewer").await.expect("reviewing row");
             assert_eq!(row.task.phase(), Phase::Reviewing);
-            let step = Box::pin(service.advance(&row, &service.host.pass()))
-                .await
-                .expect("pass");
+            let host = service.host.pass(service.storage.scratch().path());
+            let step = Box::pin(service.advance(&row, &host)).await.expect("pass");
             let next = service.task("reviewer").await.expect("result row");
             if available {
                 assert_eq!(
@@ -913,7 +912,7 @@ mod tests {
                 .store
                 .create(&task, &event("fixture"))
                 .expect("seed merge");
-            let host = service.host.pass();
+            let host = service.host.pass(service.storage.scratch().path());
             let row = service.task("reviewer").await.expect("old approval");
             assert_eq!(
                 Box::pin(service.advance(&row, &host))
