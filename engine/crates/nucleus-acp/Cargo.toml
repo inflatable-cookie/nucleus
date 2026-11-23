@@ -1,0 +1,28 @@
+[package]
+name = "nucleus-acp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+getrandom = "0.3"
+hex = "0.4"
+longhorn-redact.workspace = true
+nucleus-core = { path = "../nucleus-core" }
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+axum = "0.8.9"
+futures-util = "0.3"
+tempfile = "3"
+tokio = { version = "1", features = ["net", "process"] }
+
+[lints]
+workspace = true

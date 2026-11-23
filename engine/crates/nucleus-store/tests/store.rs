@@ -229,8 +229,10 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
-    db.execute_batch("DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;")
-        .expect("restore version two schema");
+    db.execute_batch(
+        "DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
+    )
+    .expect("restore version two schema");
     let store = Store::open(&storage).expect("migrate version two");
     assert_eq!(row(&store, "1"), TaskRow { task, version: 1 });
     assert_eq!(store.history("1", None, 1).expect("audit").len(), 1);

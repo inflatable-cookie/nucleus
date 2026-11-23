@@ -1,5 +1,6 @@
 //! Service entry points for the isolated Rust task engine.
 
+mod acp;
 mod pass;
 mod presentation;
 mod project;
@@ -54,10 +55,20 @@ pub enum ServiceError {
     Input,
     #[error("the question is assigned to a different planner")]
     QuestionPlanner,
+    #[error("planner authority is not yet known. Retry shortly.")]
+    PlannerAuthorityUnknown,
+    #[error("the caller is no longer the responsible planner for this task")]
+    PlannerAuthorityRefused,
+    #[error("a task effect is still in progress. Retry shortly.")]
+    EffectInProgress,
     #[error("an isolated engine is already serving this profile or its lock is unreadable")]
     ProfileLock,
     #[error("the callback configuration or ticket is invalid")]
     Ticket,
+    #[error("the ACP binding could not be saved")]
+    AcpBinding,
+    #[error("authentication failed")]
+    AcpUnauthorized,
     #[error("local I/O failed")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -101,6 +112,8 @@ struct State {
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
+    planner_authority: Option<question::PlannerAuthority>,
+    planner_authority_epoch: u64,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<ThreadHint>>>,
 }
 
@@ -176,6 +189,8 @@ impl Service {
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
+                planner_authority: None,
+                planner_authority_epoch: 0,
                 thread_tasks: BTreeMap::new(),
             }),
             pass_lock: Mutex::new(()),
@@ -257,35 +272,46 @@ impl Service {
                 let mut state = self.state.lock().await;
                 track(&mut state, &row.task);
             }
-            let profile_check = if row.task.phase() == Phase::Queued
-                && row.task.run().is_none()
-                && row.task.hold().is_none()
-                && row.task.question().is_none()
-            {
-                *profiles
-                    .get_or_init(|| async {
-                        self.host
-                            .check(&[&self.project.worker, &self.project.reviewer])
-                            .await
-                    })
-                    .await
-            } else {
-                Ok(())
-            };
-            let result = match profile_check {
-                Ok(()) => Box::pin(self.advance(&row, &host)).await,
-                Err(error) => Err(ServiceError::Host(error)),
-            };
+            let result = Box::pin(self.advance_due_task(&row, &host, &profiles)).await;
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
     }
 
+    async fn advance_due_task(
+        &self,
+        row: &TaskRow,
+        host: &impl nucleus_hosts::TaskHost,
+        profiles: &OnceCell<Result<(), HostError>>,
+    ) -> Result<Action, ServiceError> {
+        if row.task.phase() == Phase::Queued
+            && row.task.run().is_none()
+            && row.task.hold().is_none()
+            && row.task.question().is_none()
+        {
+            (*profiles
+                .get_or_init(|| async {
+                    self.host
+                        .check(&[&self.project.worker, &self.project.reviewer])
+                        .await
+                })
+                .await)?;
+        }
+        self.advance(row, host).await
+    }
+
     /// Use native thread changes to advance due times. Exact reads still own
     /// every decision, and the due queue stays live across stream failures.
     pub async fn watch_host(&self) {
         let _subscription = self.watch_lock.lock().await;
+        tokio::join!(
+            self.watch_thread_hints(),
+            Box::pin(self.watch_planner_authority())
+        );
+    }
+
+    async fn watch_thread_hints(&self) {
         loop {
             let (sender, mut hints) = mpsc::channel(128);
             let watch = self.host.watch_threads(&sender);
@@ -296,12 +322,16 @@ impl Service {
                     Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
             }
+            self.state.lock().await.invalidate_planner_authority();
             tokio::time::sleep(T3_RETRY_DELAY).await;
         }
     }
 
     async fn wake_from_host(&self, hint: ThreadHint) {
         let mut state = self.state.lock().await;
+        if hint.closed() {
+            state.planner_thread_closed(&hint.thread);
+        }
         let State {
             thread_tasks,
             schedule,
@@ -462,14 +492,46 @@ impl Service {
         authority: &Authority,
         command: Command,
     ) -> Result<CommandOutcome, ServiceError> {
-        let _fence = self.fence(id).await;
+        self.command_with_session(id, authority, command, None)
+            .await
+    }
+
+    async fn command_with_session(
+        &self,
+        id: &str,
+        authority: &Authority,
+        command: Command,
+        session: Option<&acp::WriteAccess>,
+    ) -> Result<CommandOutcome, ServiceError> {
+        let fence = self.task_fence(id).await;
+        let local_planner_answer = matches!(
+            (&command, authority),
+            (Command::Answer(_), Authority::Planner { .. })
+        );
+        let _fence = if session.is_some() || local_planner_answer {
+            fence
+                .try_lock_owned()
+                .map_err(|_| ServiceError::EffectInProgress)?
+        } else {
+            fence.lock_owned().await
+        };
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
+        if let Some(session) = session {
+            if acp::writer_controller(&state, id, &session.credential) != Some(session.controller) {
+                return Err(ServiceError::AcpUnauthorized);
+            }
+            if let Authority::Planner { actor } = authority
+                && !matches!(command, Command::Answer(_))
+            {
+                state.check_planner_authority(&prior.task, actor)?;
+            }
+        }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
         let explicit_move = matches!(command, Command::Move(_));
-        match preflight(&mut task, authority, &observation, command)? {
+        match state.preflight(&mut task, authority, &observation, command)? {
             Preflight::Ready => {
                 let version = if explicit_move || prior.task != task {
                     let mut audit = event("command");
@@ -535,11 +597,12 @@ impl Service {
     }
 
     async fn fence(&self, id: &str) -> OwnedMutexGuard<()> {
-        let fence = {
-            let mut state = self.state.lock().await;
-            Arc::clone(state.fences.entry(id.into()).or_default())
-        };
-        fence.lock_owned().await
+        self.task_fence(id).await.lock_owned().await
+    }
+
+    async fn task_fence(&self, id: &str) -> Arc<Mutex<()>> {
+        let mut state = self.state.lock().await;
+        Arc::clone(state.fences.entry(id.into()).or_default())
     }
 
     async fn effect(&self, expected: &TaskRow) -> Result<OwnedMutexGuard<()>, ServiceError> {
@@ -817,28 +880,38 @@ fn active(task: &Task) -> bool {
     ) || task.run().is_some()
 }
 
-fn preflight(
-    task: &mut Task,
-    actor: &Authority,
-    observation: &Observation,
-    command: Command,
-) -> Result<Preflight, ServiceError> {
-    let awaiting_planner = if let (Command::Answer(_), Authority::Planner { actor }) =
-        (&command, actor)
-    {
-        match task.question_delivery() {
-            Some(binding) if binding.thread != *actor => return Err(ServiceError::QuestionPlanner),
-            Some(_) => false,
-            None => true,
+impl State {
+    fn preflight(
+        &self,
+        task: &mut Task,
+        actor: &Authority,
+        observation: &Observation,
+        command: Command,
+    ) -> Result<Preflight, ServiceError> {
+        let planner_answer = match (&command, actor) {
+            (Command::Answer(_), Authority::Planner { actor }) => Some(actor.as_str()),
+            _ => None,
+        };
+        let awaiting_planner = if let Some(actor) = planner_answer {
+            match task.question_delivery() {
+                Some(binding) if binding.thread != actor => {
+                    return Err(ServiceError::QuestionPlanner);
+                }
+                Some(_) => false,
+                None => true,
+            }
+        } else {
+            false
+        };
+        let ready = match task.command(command, actor, observation) {
+            Ok(()) if !awaiting_planner => Preflight::Ready,
+            Ok(()) | Err(CommandError::HeadUnverified) => Preflight::Pending,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(actor) = planner_answer {
+            self.check_planner_authority(task, actor)?;
         }
-    } else {
-        false
-    };
-    match task.command(command, actor, observation) {
-        Ok(()) if awaiting_planner => Ok(Preflight::Pending),
-        Ok(()) => Ok(Preflight::Ready),
-        Err(CommandError::HeadUnverified) => Ok(Preflight::Pending),
-        Err(error) => Err(error.into()),
+        Ok(ready)
     }
 }
 
