@@ -189,7 +189,7 @@ impl GitHub {
             .retry(reqwest::retry::never())
             .timeout(Duration::from_secs(15))
             .build()?;
-        Ok(Self { origin, client })
+        Ok(Self { client, origin })
     }
 
     /// Find the open PR on a task branch before a worker report is available.

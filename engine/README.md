@@ -188,6 +188,7 @@ apply to manual commands.
   and the reviewed `sha`. On a lost response or head mismatch, read the PR
   again. Use `merged` and its merge commit for readback, including squash merges.
   An externally merged head with no verdict requires recorded human acceptance.
+  [GitHub's exact-head merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
 
 ## Board
 
