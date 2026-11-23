@@ -93,9 +93,14 @@ async function verifyReviewComment(t: Task, run: Run, result: Completion, runtim
 }
 
 
+/** Observe external evidence before sending, then check durable ownership synchronously. */
+export type ReviewPublicationGuard = (() => boolean) & {
+  observe?: () => Promise<void>;
+};
+
 // Accepted reports are immutable. Reconcile a reviewer-supplied marker only when
 // it already proves precisely this task/run/head/verdict; never rewrite findings.
-export async function publishReview(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime):Promise<number> {
+export async function publishReview(store:Store,t:Task,run:Run,status:string,text:string,allowed:ReviewPublicationGuard=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime):Promise<number> {
   return (await publishReviewOnce(store,t,run,status,text,allowed,reviewer,runtime)).id;
 }
 /**
@@ -120,7 +125,7 @@ function singleFlightPublication(runId: string, begin: () => Promise<Publication
   return flight;
 }
 /** The adapter entry point: the publication ID and whether this call posted it. */
-export function publishReviewOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime,recoveryReason?:string):Promise<PublicationOutcome> {
+export function publishReviewOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:ReviewPublicationGuard=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime,recoveryReason?:string):Promise<PublicationOutcome> {
   return singleFlightPublication(run.id, () => reviewer
     ? publishFormalReviewOnce(store,t,run,status,text,reviewer,allowed,runtime,recoveryReason)
     : publishReviewCommentOnce(store,t,run,status,text,allowed));
@@ -146,7 +151,7 @@ function earliestPublication<T extends { id?: unknown; submitted_at?: unknown }>
     return Number(left.id) - Number(right.id);
   })[0]!;
 }
-async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true):Promise<PublicationOutcome> {
+async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:ReviewPublicationGuard=()=>true):Promise<PublicationOutcome> {
   const pr=await reviewSourcePr(t,verifyPr);if(pr.head!==run.head)throw Error('Review is stale for the current PR head');
   const body=reviewPublicationBody(t,run,status,text,store.run(run.id)?.completion?.verdicts??[]);
   const key=reviewPublicationKey(run.id),hash=digest(body),previous=store.getMeta<{hash:string;commentId?:number}>(key);
@@ -167,6 +172,7 @@ async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string
     const earliest=earliestPublication(matches) as {id:number};
     store.setMeta(key,{hash,commentId:earliest.id});return {id:earliest.id,published:false};
   }
+  if (allowed.observe) await allowed.observe();
   if(!allowed())throw Error('Paused before review publication');
   const claim=claimReviewPublication(store,run.id,hash,'comment');
   if(claim.kind==='settled')return verifyComment(claim.id);
@@ -281,10 +287,10 @@ async function formalIdentity(task: Task, reviewer: ReviewerSetting, runtime: Fo
   const gh = runtime.runGh ?? formalGh;
   return { name, org, token, gh };
 }
-export async function publishFormalReview(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: () => boolean = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<number> {
+export async function publishFormalReview(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: ReviewPublicationGuard = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<number> {
   return (await publishReviewOnce(store, t, run, status, text, allowed, reviewer, runtime, recoveryReason)).id;
 }
-async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: () => boolean = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<PublicationOutcome> {
+async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: ReviewPublicationGuard = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<PublicationOutcome> {
   const pr = await reviewSourcePr(t, runtime.verifyPr ?? verifyPr);
   if (pr.head !== run.head) throw new Error('Review is stale for the current PR head');
   const body = reviewPublicationBody(t, run, status, text, store.run(run.id)?.completion?.verdicts ?? []);
@@ -321,7 +327,6 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
     }
     // Observe before every resend. A transient POST failure uses the existing
     // bounded lifecycle backoff; an owner retry also proves absence again.
-    const attemptKey = `reviewPublicationRecovery:${run.id}`;
     const currentPr = await reviewSourcePr(t, runtime.verifyPr ?? verifyPr);
     if (currentPr.head !== run.head) throw new Error('Review is stale for the current PR head');
     const second = await formalCall(org, token, () => listFormalReviews(t, name, token, gh));
@@ -333,9 +338,8 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
       store.setMeta(key, { hash, reviewId: review.id });
       return { id: review.id, published: false };
     }
-    if (!allowed()) throw taskChanged('Task changed before review publication recovery');
-    store.setMeta(attemptKey, { hash, head: run.head, login: reviewer.login, reason: recoveryReason, attemptedAt: new Date().toISOString() });
   }
+  if (allowed.observe) await allowed.observe();
   if (!allowed()) throw new Error('Paused before review publication');
   if (!previous) {
     // Task 704: the durable single-flight claim. Only the pass that writes the
@@ -346,7 +350,10 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
       await awaitRecordedPublication(store, key);
       return publishFormalReviewOnce(store, t, run, status, text, reviewer, allowed, runtime, recoveryReason);
     }
-  } else store.setMeta(key, { hash, ...(previous.transientFailure ? { transientFailure: true } : {}) });
+  } else {
+    store.setMeta(`reviewPublicationRecovery:${run.id}`, { hash, head: run.head, login: reviewer.login, reason: recoveryReason, attemptedAt: new Date().toISOString() });
+    store.setMeta(key, { hash, ...(previous.transientFailure ? { transientFailure: true } : {}) });
+  }
   let review: FormalReview;
   try { review = await formalCall(org, token, () => gh(t, `repos/${name}/pulls/${taskPrNumber(t)}/reviews`,
     ['-X', 'POST', '-f', `body=${body}`, '-f', `commit_id=${run.head}`, '-f', `event=${reviewEventForStatus(status)}`], token), true) as FormalReview;
@@ -362,7 +369,7 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
   store.setMeta(key, { hash, reviewId: review.id });
   return { id: review.id as number, published: true };
 }
-export async function reconcileFormalReviewPublication(store: Store, t: Task, run: Run, reviewer: ReviewerSetting, reason: string, allowed: () => boolean, runtime: FormalReviewRuntime = {}): Promise<number> {
+export async function reconcileFormalReviewPublication(store: Store, t: Task, run: Run, reviewer: ReviewerSetting, reason: string, allowed: ReviewPublicationGuard, runtime: FormalReviewRuntime = {}): Promise<number> {
   const result = run.completion;
   if (!reason.trim() || run.role !== 'reviewer' || !run.released || run.status !== 'finished' || !result?.reviewText || !['ready_to_merge', 'changes_required'].includes(result.status) || result.runId !== run.id || result.taskId !== t.id || result.head !== run.head)
     throw new Error('Publication recovery requires the original released accepted reviewer verdict');

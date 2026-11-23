@@ -93,6 +93,7 @@ import {
   type CheckObservation,
   type ReviewerSetting,
   type PublicationOutcome,
+  type ReviewPublicationGuard,
 } from "./forge/index";
 
 import {
@@ -320,7 +321,7 @@ export interface ResolutionAdapter {
     run: Run,
     status: string,
     text: string,
-    allowed?: () => boolean,
+    allowed?: ReviewPublicationGuard,
     reviewer?: ReviewerSetting,
   ): Promise<number | PublicationOutcome>;
   reconcileReviewPublication?(
@@ -329,8 +330,9 @@ export interface ResolutionAdapter {
     run: Run,
     reviewer: ReviewerSetting,
     reason: string,
-    allowed: () => boolean,
+    allowed: ReviewPublicationGuard,
   ): Promise<number>;
+  assertReviewIndependence?(task: Task, run: Run): Promise<void>;
   verifyReview(
     task: Task,
     run: Run,
@@ -1661,6 +1663,7 @@ export class Resolution {
       "lease",
       "operatorReturn",
       "paused",
+      "resultApplication",
       "reviewerSetting",
       "store",
     ]),

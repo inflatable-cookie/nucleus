@@ -1,7 +1,11 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { releaseWarnings } from "./explicit-resolution";
-import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
+import {
+  reviewerStartRefusal,
+  runStartPolicyStop,
+  runStartWarnings,
+} from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
@@ -465,6 +469,7 @@ export function assembleOwnerTaskNext(
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
   const stop = ownerTaskStop(facts);
+  const explicitCommands = explicitCommandsFor(facts, stop);
   if (stop)
     stop.suggestedVerbs = stop.suggestedVerbs.filter((verb) =>
       verbs.some((view) => view.verb === verb && view.available),
@@ -542,9 +547,7 @@ export function assembleOwnerTaskNext(
         : {}),
     },
     verbs,
-    ...(explicitCommandsFor(facts, stop).length
-      ? { explicitCommands: explicitCommandsFor(facts, stop) }
-      : {}),
+    ...(explicitCommands.length ? { explicitCommands } : {}),
     // Task 645: the durable owner no-automatic-retry rule stays visible until an
     // owner control lifts it. Task detail carries the same fields on resolution.
     ...(task.resolution.noAutomaticRetry
@@ -621,7 +624,14 @@ function explicitCommandsFor(
   if (task.removedAt || ["done", "cancelled"].includes(task.phase)) return [];
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [];
+  const reviewerRefusal = reviewerStartRefusal(task, facts.events);
   const push = (command: TaskNextExplicitCommand) => {
+    if (
+      command.action === "run.start" &&
+      command.args.role === "reviewer" &&
+      reviewerRefusal
+    )
+      return;
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
     if (
       !commands.some((c) => `${c.action}:${JSON.stringify(c.args)}` === sig)

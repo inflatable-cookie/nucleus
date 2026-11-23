@@ -2,7 +2,6 @@ import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { sameCallerIdentity } from "../../shared/agent-identity";
 import {
   authorModelKey,
   queueAuthorModelKey,
@@ -13,7 +12,6 @@ import {
   WORKER_REPLACEMENT_CEILING,
   holdOwnerOf,
   holdsOf,
-  isOperatorOrigin,
   runSchema,
   type Profile,
   type Run,
@@ -52,7 +50,7 @@ import {
   readGitCheckout,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
-import { plannerEscalations } from "../questions/ladder/records";
+import { plannerEscalations, type LadderEvent } from "../questions/ladder/records";
 import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
@@ -188,18 +186,17 @@ export function phaseSetPlan(
   };
 }
 
-const reviewerStartTransitions: readonly Task["phase"][] = [
+const reviewerStartPhases: readonly Task["phase"][] = [
   "needs_attention",
   "blocked",
   "awaiting_review",
   "changes_requested",
 ];
 
-function assertReviewerStartAllowed(
-  engine: Engine,
+export function reviewerStartRefusal(
   task: Task,
-  caller: string | undefined,
-): void {
+  events: LadderEvent[],
+): string | null {
   const {
     mergedCommit,
     unreviewedMerge,
@@ -209,45 +206,31 @@ function assertReviewerStartAllowed(
     recovery,
   } = task.resolution;
   if (mergedCommit || unreviewedMerge)
-    throw Error("Cannot start a reviewer after a merge has been recorded.");
-  if (
-    ["verifying", "merging", "syncing", "closing", "done", "cancelled"].includes(
-      task.phase,
-    )
-  )
-    throw Error(`Cannot start a reviewer while the task is ${task.phase}.`);
+    return "Cannot start a reviewer after a merge has been recorded.";
+  if (!reviewerStartPhases.includes(task.phase))
+    return `Cannot start a reviewer while the task is ${task.phase}.`;
   if (mergeIntent || integrationTurn) {
     const blocker = mergeIntent
       ? "a merge request is pending"
       : "the task holds an integration turn";
-    throw Error(`Cannot start a reviewer while ${blocker}.`);
+    return `Cannot start a reviewer while ${blocker}.`;
   }
-  const { dispatch } = holdsOf(task);
-  if (dispatch) {
-    const owner = holdOwnerOf(task, dispatch.owner);
-    const sameOperator = isOperatorOrigin(owner) && isOperatorOrigin(caller);
-    if (
-      !sameOperator &&
-      !sameCallerIdentity(
-        owner,
-        caller,
-        task.originHostId,
-        engine.legacyPaseoHostId(),
-      )
-    )
-      throw Error(
-        `Dispatch is held by ${owner}: ${dispatch.reason}. Release the hold before starting a reviewer.`,
-      );
+  const { dispatch, merge } = holdsOf(task);
+  const hold = dispatch ?? merge;
+  if (hold) {
+    const kind = dispatch ? "Dispatch" : "Merge";
+    return `${kind} is held by ${holdOwnerOf(task, hold.owner)}: ${hold.reason}. Release the hold before starting a reviewer.`;
   }
-  const escalation = plannerEscalations(engine.store.eventsAll(task.id)).find(
+  const escalation = plannerEscalations(events).find(
     (item) => !item.answered,
   );
   if (escalation)
-    throw Error(`The planner ladder still owns escalation ${escalation.id}.`);
-  if (incident?.status === "escalated")
-    throw Error(`The recovery owner must settle escalated incident ${incident.id}.`);
+    return `The planner ladder still owns escalation ${escalation.id}.`;
+  if (incident)
+    return `The recovery owner must clear ${incident.status} incident ${incident.id}.`;
   if (recovery?.status === "escalated")
-    throw Error(`The recovery owner must settle escalated episode ${recovery.id}.`);
+    return `The recovery owner must settle ${recovery.status} episode ${recovery.id}.`;
+  return null;
 }
 
 export function messageSendPlan(
@@ -563,8 +546,10 @@ export async function preflightExplicitRunStart(
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
-  if (input.role === "reviewer")
-    assertReviewerStartAllowed(engine, task, input.caller);
+  const refusal =
+    input.role === "reviewer" &&
+    reviewerStartRefusal(task, engine.store.eventsAll(task.id));
+  if (refusal) throw Error(refusal);
   // Spec 068 §4: every run.start launches into the task checkout, so the one
   // reattach step runs first. It moves no commit and names its refusal instead
   // of leaving a detached checkout unexplained.
@@ -899,8 +884,10 @@ export function runStartPlan(
   preflight?: ExplicitRunStartPreflight,
 ): ExplicitPlan {
   const store = engine.store;
-  if (input.role === "reviewer")
-    assertReviewerStartAllowed(engine, task, input.caller);
+  const refusal =
+    input.role === "reviewer" &&
+    reviewerStartRefusal(task, store.eventsAll(task.id));
+  if (refusal) throw Error(refusal);
   const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
     runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {
@@ -1029,7 +1016,7 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      if (runRole === "reviewer" && reviewerStartTransitions.includes(task.phase))
+      if (runRole === "reviewer")
         patch.phase = "reviewing";
       // Only record a forge-confirmed PR head when the task checkout already
       // matches it (e.g. #1508 where the worker pushed from the task checkout).

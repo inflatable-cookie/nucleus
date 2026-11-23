@@ -85,7 +85,7 @@ export class ReviewPolicy {
       :originReason||(busyEntries.length?'Workspace has an active turn or permission request':'');
     return {directory:workspace.directory,originWorkspaceId:origin.workspaceId,busyReason,busyTransient:!owned};
   }
-  async verifyReview(task: Task, run: Run, result: import("../../shared/contracts").Completion, reviewer?: import("../forge/index").ReviewerSetting) {
+  async assertReviewIndependence(task: Task, run: Run) {
     const authorId = task.agentId ?? task.retiredWorkers.at(-1)?.agentId;
     const worker = authorId ? await this.host.observe(authorId) : null, reviewerObservation = await this.host.observe(run.agentId!);
     const model = authorModelKey;
@@ -123,6 +123,10 @@ export class ReviewPolicy {
       // same-model request stays refused for the current author's model.
       throw new Error("Underlying review model is not independent of the worker");
     }
+  }
+
+  async verifyReview(task: Task, run: Run, result: Completion, reviewer?: forge.ReviewerSetting) {
+    await this.assertReviewIndependence(task, run);
     return forge.verifyReview(task, run, result, reviewer);
   }
   async continueWorker(task: Task, intentId: string, text: string, issueBinding?: () => { runId: string; token: string }) {

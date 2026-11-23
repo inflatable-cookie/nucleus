@@ -13,7 +13,7 @@ import {
   readCreationAttempt,
   settleCreationAttempt,
 } from "../core/store/store-task-funnel";
-import { runStartPlan } from "../core/verbs/explicit-run-start";
+import { runStartPlan, runStartWarnings } from "../core/verbs/explicit-run-start";
 import {
   AGENT_NOT_FOUND,
   HostCreateInFlightError,
@@ -1019,20 +1019,22 @@ test("uncertain creation: a create the host may still answer waits on its own ca
     assert.equal(activity?.state, "nucleus");
     assert.equal(activity?.detail, "Waiting for the host to answer a launch");
     assert.equal(activity?.role, "reviewer");
-    // A replacement started anyway warns creation_in_flight, which only the
-    // planner or operator board may accept.
     const task = f.current();
-    const warnings = runStartPlan(f.engine, task, {
+    const input = {
       action: "run.start",
       taskId: task.id,
       version: task.version,
       reason: "replace the reviewer",
-      accept: [],
       caller: "operator_board",
       role: "reviewer",
       agent: "fresh",
       replacing: run.id,
-    }).warnings.map((item) => item.id);
+    } as const;
+    assert.throws(
+      () => runStartPlan(f.engine, task, { ...input, accept: [] }),
+      /Cannot start a reviewer while the task is reviewing/,
+    );
+    const warnings = runStartWarnings(f.store, task, input).map((item) => item.id);
     assert.ok(warnings.includes("creation_in_flight"), warnings.join(", "));
 
     // Once the host answers, the ordinary lookup binds the late thread.
@@ -1220,6 +1222,7 @@ test("replacing a reviewer that reported a verdict at the current head warns bef
         head,
       },
     });
+    f.store.update(f.submitted.id, { phase: "awaiting_review" });
     const task = f.current();
     const input = {
       action: "run.start" as const,

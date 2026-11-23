@@ -105,19 +105,18 @@ No command changes anything it does not name.
 | `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
 
 `run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
-`awaiting_review` or `changes_requested` when it reserves the run. It refuses
-while an escalation is open, another owner holds dispatch, or an escalated
-recovery incident or episode owns the task. The operator at the board owns
-dispatch holds placed by the board. A reviewer start also refuses in
-`verifying`, `merging`, `syncing`, `closing` and after a recorded merge.
-A pending merge request or retained integration turn blocks reviewer starts
-even when the task is parked.
+`awaiting_review` or `changes_requested` when it reserves the run. These are the
+only eligible phases. An open escalation, any hold or incident, an escalated
+recovery episode, a merge request, an integration turn, or a recorded merge
+blocks the start. `next` uses the same eligibility check for its offers.
 
-Reviewer callbacks follow the ordinary verdict path, with authorship checked
-before publication. Accepting `discard_reported_verdict` records the displaced
-reviewer's replacement when the new run is reserved. The verdict transaction
-rechecks the reviewer binding, whether the verdict was discarded, dispatch
-holds and the current review publication policy before granting credit.
+Reviewer callbacks follow the ordinary verdict path. Accepting
+`discard_reported_verdict` records the displaced reviewer's replacement when
+the new run is reserved. After credential lookup, publication checks live
+reviewer independence and durable ownership before sending to the forge. The
+verdict transaction uses the same gate, which includes the reviewer binding,
+the exact head, discard, dispatch holds, publication policy and integration
+ownership.
 
 **Hard gates** (never accepted as warnings):
 
@@ -162,8 +161,8 @@ command instead:
 | Lever used today | Explicit command |
 | --- | --- |
 | `restart role=reviewer fresh` to get a new reviewer | `run.start reviewer fresh replacing=<run>` |
-| `restart role=reviewer` to make the reviewer report | `message.send reviewer` or `run.start reviewer retained` |
-| `move to=review` after a silent worker pushed | `run.start reviewer head=<sha>` |
+| `restart role=reviewer` to make the reviewer report | `message.send reviewer`, or `run.start reviewer retained` from an eligible phase |
+| `move to=review` after a silent worker pushed | `phase.set to=awaiting_review`, then `run.start reviewer head=<sha>` |
 | `move to=review` / `stop` to drop the integration turn | `turn.release` |
 | `move to=merge` to re-claim the turn | `turn.take` or `merge.now head=<sha>` |
 | forced `retry_effect` on a run or operation | `run.release` or `record.clear effect` |
