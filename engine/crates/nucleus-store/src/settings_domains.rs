@@ -1,86 +1,11 @@
 use std::{collections::BTreeMap, net::IpAddr, path::PathBuf};
 
 use longhorn_config::{DomainIssue, StorageClass};
+use nucleus_core::profiles::{Profile, UsageLevel};
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::settings::SettingsValue;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    Mechanical,
-    #[default]
-    Worker,
-    Heavyweight,
-    Frontier,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Weight {
-    Fewest,
-    Fewer,
-    #[default]
-    Default,
-    More,
-    Most,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UsageLevel {
-    Low,
-    #[default]
-    Normal,
-    High,
-    ExtraHigh,
-    Maximum,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Provider {
-    Codex,
-    Claude,
-    Pi,
-    Grok,
-    Cursor,
-    Opencode,
-    Copilot,
-    Omp,
-    Antigravity,
-    Muse,
-    Fx,
-    Kiro,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Effort {
-    Off,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-    Ultra,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Profile {
-    pub id: String,
-    #[serde(default)]
-    pub capability: Capability,
-    #[serde(default)]
-    pub weight: Weight,
-    pub provider: Provider,
-    pub model: String,
-    #[serde(default, alias = "thinkingOptionId")]
-    pub effort: Option<Effort>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

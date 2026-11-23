@@ -313,7 +313,7 @@ impl Service {
         );
         let binding = self.binding(checkout)?;
         let parent = if let Some(provider) = &self.project.acp_provider {
-            if !self.launch_capacity(&task.identity().id).await? {
+            if !self.launch_capacity(&task.identity().id, false).await? {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
             match self
@@ -1132,9 +1132,13 @@ mod tests {
                 .create(&task, &event("fixture"))
                 .expect("seed");
             let row = service.task("reviewer").await.expect("revoked row");
-            let result = service
-                .stop_run(&row, &checkout, observation, &service.host.fixture_pass())
-                .await;
+            let result = Box::pin(service.stop_run(
+                &row,
+                &checkout,
+                observation,
+                &service.host.fixture_pass(),
+            ))
+            .await;
             if retargeted {
                 assert!(matches!(
                     result,
@@ -1449,7 +1453,7 @@ mod tests {
                 .await
                 .expect("fixture version");
             let result = if revoked {
-                service.stop_run(&row, &checkout, cached, &host).await
+                Box::pin(service.stop_run(&row, &checkout, cached, &host)).await
             } else {
                 service.send_prepared(&row, &checkout, cached, &host).await
             };

@@ -1266,37 +1266,7 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
     .await;
     service.host = host;
     service.project.acp_provider = Some("fixture-acp".into());
-    let head = service.project.start.clone();
-    seed_held_acceptance(&service, &head).await;
-    let actor = Authority::Operator {
-        actor: "fixture".into(),
-    };
-    let first = service.task("reviewer").await.expect("seeded task");
-    let forge = Observed::Known(Forge::Merged {
-        pr: first.task.pull_request().expect("bound PR").clone(),
-        commit: head.clone(),
-    });
-    for command in [
-        Command::Answer(Answer::Accept {
-            head,
-            reason: "Fixture acceptance".into(),
-        }),
-        Command::Move(Phase::Done),
-    ] {
-        let row = service.task("reviewer").await.expect("current row");
-        service
-            .observe_commands(&row, &forge)
-            .await
-            .expect("merge observation");
-        assert!(matches!(
-            service
-                .command("reviewer", &actor, command)
-                .await
-                .expect("applied command"),
-            CommandOutcome::Applied(_)
-        ));
-    }
-    let mut row = service.task("reviewer").await.expect("done task");
+    let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
     {
         let mut state = service.state.lock().await;
@@ -1332,6 +1302,40 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
     assert_eq!(outcomes.len(), 1);
     assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
     native.abort();
+}
+
+async fn fixture_at_done(service: &Service) -> (nucleus_store::TaskRow, Observed<Forge>) {
+    let head = service.project.start.clone();
+    seed_held_acceptance(service, &head).await;
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let first = service.task("reviewer").await.expect("seeded task");
+    let forge = Observed::Known(Forge::Merged {
+        pr: first.task.pull_request().expect("bound PR").clone(),
+        commit: head.clone(),
+    });
+    for command in [
+        Command::Answer(Answer::Accept {
+            head,
+            reason: "Fixture acceptance".into(),
+        }),
+        Command::Move(Phase::Done),
+    ] {
+        let row = service.task("reviewer").await.expect("current row");
+        service
+            .observe_commands(&row, &forge)
+            .await
+            .expect("merge observation");
+        assert!(matches!(
+            service
+                .command("reviewer", &actor, command)
+                .await
+                .expect("applied command"),
+            CommandOutcome::Applied(_)
+        ));
+    }
+    (service.task("reviewer").await.expect("done task"), forge)
 }
 
 #[tokio::test]
@@ -1554,4 +1558,212 @@ async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -
         )
         .await
         .expect("settings response")
+}
+
+#[tokio::test]
+async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    service.project.acp_provider = Some("fixture-acp".into());
+    let (mut first, merged) = fixture_at_done(&service).await;
+    {
+        let mut state = service.state.lock().await;
+        first.version = state
+            .store
+            .save_row(&first, &first.task, &event("role_threads_archived"))
+            .expect("first receipt");
+        assert!(
+            state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("first Done is archived")
+        );
+    }
+    let second = reopen_and_finish_review(&service, &first, &merged).await;
+    {
+        let state = service.state.lock().await;
+        assert!(
+            !state
+                .store
+                .archive_confirmed("reviewer")
+                .expect("awaits new receipt")
+        );
+        assert_eq!(
+            state
+                .store
+                .archive_due_ids(None, 10)
+                .expect("restart archive scan"),
+            ["reviewer"]
+        );
+    }
+    let child = second
+        .task
+        .threads()
+        .get(nucleus_core::Role::Reviewer)
+        .expect("new child");
+    let (host, parent, archived, native) = archive_roster_fixture(&service, child).await;
+    service.host = host;
+    for _ in 0..2 {
+        assert!(matches!(
+            service.archive_done(&second).await.expect("archive effect"),
+            Action::Wait(WaitReason::Stopping)
+        ));
+    }
+    assert!(matches!(
+        service
+            .archive_done(&second)
+            .await
+            .expect("archive readback"),
+        Action::Nothing
+    ));
+    assert_eq!(
+        *archived.lock().expect("archive writes"),
+        [child, parent.as_str()]
+    );
+    let state = service.state.lock().await;
+    assert!(
+        state
+            .store
+            .archive_confirmed("reviewer")
+            .expect("new Done is archived")
+    );
+    assert!(
+        state
+            .store
+            .archive_due_ids(None, 10)
+            .expect("post-close restart")
+            .is_empty()
+    );
+    native.abort();
+}
+
+async fn reopen_and_finish_review(
+    service: &Service,
+    done: &nucleus_store::TaskRow,
+    merged: &Observed<Forge>,
+) -> nucleus_store::TaskRow {
+    let head = service.project.start.clone();
+    let role = nucleus_core::Role::Reviewer;
+    let old_thread = done.task.threads().get(role).expect("prior review");
+    let mut observation = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: done.task.pull_request().expect("PR").clone(),
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Known(Host::Retained {
+            thread: old_thread.into(),
+            state: RetainedThread::Gone,
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+    };
+    let mut task = done.task.clone();
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    task.command(Command::Move(Phase::Reviewing), &actor, &observation)
+        .expect("reopen");
+    task.command(Command::Release, &actor, &observation)
+        .expect("release hold");
+    let reopened = service
+        .save(done, task.clone(), &event("command"))
+        .await
+        .expect("reopened task");
+    let instance = task.next_launch_instance().expect("new launch");
+    let credential = task
+        .reserve_launch(
+            &observation,
+            LaunchInputs {
+                thread: format!("thread:delegated-task:{instance}"),
+                started_at: 2,
+                input: "fixture-only wire".into(),
+            },
+            &[4; 32],
+        )
+        .expect("reserve new child");
+    task.record_send(&instance, 3).expect("send marker");
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::Review {
+            head,
+            decision: Review::Approve,
+            summary: "Synthetic review of the reopened task".into(),
+        },
+    )
+    .expect("new review report");
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Merging)
+    );
+    observation.forge = merged.clone();
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Closing)
+    );
+    observation.workspace = Observed::Known(nucleus_core::Workspace::Absent);
+    assert!(task.finish_close(&observation));
+    service
+        .save(&reopened, task, &event("closed_checkout_absent"))
+        .await
+        .expect("second Done")
+}
+
+async fn archive_roster_fixture(
+    service: &Service,
+    new_child: &str,
+) -> (
+    T3,
+    String,
+    Arc<std::sync::Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let worktrees = service.worktrees().expect("worktree scope");
+    let checkout = worktrees
+        .checkout(
+            &service.project.checkout,
+            &service.project.repository,
+            "reviewer",
+        )
+        .expect("reviewer path");
+    let parent_id = nucleus_hosts::parent_thread(checkout.path());
+    let parent = parent_id.clone();
+    let path = checkout.path().to_owned();
+    let branch = checkout.branch().to_owned();
+    let project_root = service.project.checkout.clone();
+    let child = new_child.to_owned();
+    let archived = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let writes = Arc::clone(&archived);
+    let (host, native) = crate::tests::native_fixture(move |request| {
+        if request["tag"] == "orchestration.dispatchCommand" {
+            let payload = &request["payload"];
+            assert_eq!(payload["type"], "thread.archive");
+            let target = payload["threadId"].as_str().expect("archive destination");
+            writes.lock().expect("archive log").push(target.into());
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{}}});
+        }
+        let mut snapshot = json!({"kind":"snapshot","snapshotSequence":16});
+        match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => snapshot["snapshot"] = json!({"projects":[{"id":"local-fixture","workspaceRoot":project_root}]}),
+            Some("orchestration.subscribeThread") => {
+                let id = request["payload"]["threadId"].as_str().expect("thread ID");
+                let is_parent = id == parent;
+                let archived = writes.lock().expect("archive log").iter().any(|value| value == id);
+                snapshot["projection"] = json!({
+                    "thread":{"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
+                        "parentThreadId":(!is_parent).then_some(&parent),
+                        "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
+                        "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z"),
+                        "archivedAt":archived.then_some("2026-11-23T16:10:00Z")},
+                    "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],
+                    "subagents":[{"id":"new-child","childThreadId":child,"origin":"app_owned"}]
+                });
+            }
+            _ => panic!("unexpected archive read"),
+        }
+        json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
+    }).await;
+    (host, parent_id, archived, native)
 }

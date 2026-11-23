@@ -18,8 +18,8 @@ pub use settings::{
     SettingsValue, StorageError, VerifiedBackup,
 };
 pub use settings_domains::{
-    Capability, DispatchSettings, Effort, Hosts, NamedProfile, Profile, Profiles, ProjectSettings,
-    Projects, RepositorySettings, T3Settings, UsageLevel, Weight,
+    DispatchSettings, Hosts, NamedProfile, Profiles, ProjectSettings, Projects, RepositorySettings,
+    T3Settings,
 };
 pub use volume::{PinnedVolume, StorageDirectory};
 
@@ -29,6 +29,13 @@ const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
+const CURRENT_ARCHIVE_RECEIPT: &str = "EXISTS (
+  SELECT 1 FROM events AS receipt
+  WHERE receipt.task_id = tasks.id AND receipt.kind = 'role_threads_archived'
+  AND receipt.sequence > COALESCE((
+    SELECT max(sequence) FROM events WHERE task_id = tasks.id AND kind = 'entered_done'
+  ), 0)
+)";
 const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id),
   reader BLOB NOT NULL CHECK (length(reader) = 32),
@@ -194,11 +201,10 @@ impl Store {
         after: Option<&str>,
         limit: u32,
     ) -> Result<Vec<String>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done'
-             AND NOT EXISTS (SELECT 1 FROM events WHERE task_id = tasks.id AND kind = 'role_threads_archived')
-             ORDER BY tasks.id LIMIT ?2",
-        )?;
+        let mut query = self.connection.prepare_cached(&format!(
+            "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done' AND run IS NULL
+             AND NOT {CURRENT_ARCHIVE_RECEIPT} ORDER BY tasks.id LIMIT ?2",
+        ))?;
         let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -208,7 +214,7 @@ impl Store {
     /// Returns an error if audit history cannot be read.
     pub fn archive_confirmed(&self, id: &str) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
-            "SELECT EXISTS (SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'role_threads_archived')",
+            &format!("SELECT EXISTS (SELECT 1 FROM tasks WHERE id = ?1 AND phase = 'done' AND {CURRENT_ARCHIVE_RECEIPT})"),
             [id], |row| row.get(0),
         )?)
     }
@@ -314,6 +320,17 @@ impl Store {
                 "UPDATE acp_sessions SET writer = NULL WHERE task_id = ?1",
                 [&task.identity().id],
             )?;
+            if row.task.phase() != Phase::Done {
+                append(
+                    &tx,
+                    &task.identity().id,
+                    &EventDraft {
+                        at: event.at,
+                        kind: "entered_done".into(),
+                        detail: String::new(),
+                    },
+                )?;
+            }
         }
         append(&tx, &task.identity().id, event)?;
         tx.commit()?;

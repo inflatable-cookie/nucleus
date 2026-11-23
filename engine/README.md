@@ -380,13 +380,14 @@ new message to the retained child. [T3 delegated task command](https://github.co
 The service continues to see its role thread and exact run. Verify reattach
 after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
-In the parenting slice, reaching Done schedules archival through the same
-native write gate. Confirm the children are archived or gone, then take a
+Reaching Done schedules archival through the same native write gate after any
+revoked run settles. Confirm the children are archived or gone, then take a
 fresh, complete parent read that proves its turn and background work have ended.
 Busy or unknown reads schedule a recheck. Confirm that the parent is archived
-or gone and append an audit receipt for that Done revision. Restart recovery
-can skip rows with matching receipts without contacting T3. The engine never
-settles a task thread.
+or gone before appending the archive receipt. The restart scan skips the task
+when the receipt follows its latest transition into Done. Reopening and
+finishing the task schedules a new archive pass. Archival never settles a task
+thread.
 
 Set `acpProvider` in the isolated project's configuration to the registered T3
 ACP provider for the Rust `nucleus-acp` binary. Configure the provider's

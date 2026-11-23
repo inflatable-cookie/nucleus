@@ -295,7 +295,10 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
         profiles: &OnceCell<Result<(), HostError>>,
     ) -> Result<Action, ServiceError> {
-        if row.task.phase() == Phase::Done && self.project.acp_provider.is_some() {
+        if row.task.phase() == Phase::Done
+            && row.task.run().is_none()
+            && self.project.acp_provider.is_some()
+        {
             return self.archive_done(row).await;
         }
         if row.task.phase() == Phase::Queued
@@ -455,6 +458,7 @@ impl Service {
         let current = self.lookup(&state, id)?;
         let archive_due = self.project.acp_provider.is_some()
             && current.task.phase() == Phase::Done
+            && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
         if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
             state.set_wait(id, None);
