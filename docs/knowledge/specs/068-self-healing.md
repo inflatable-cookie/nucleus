@@ -357,6 +357,30 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   unless the command applied, and names the warnings only a planner or the
   operator board may accept. `next` lists each command's expected warnings.
 
+### Acceptance
+
+`test/spec068-crash-acceptance.test.ts` crashes one board of 17 tasks in one
+step: the service stops mid-pass, every thread vanishes or goes stale, the T3
+connection drops and some creates have unknown delivery. A new service owner
+then runs the real Engine over the real T3 client on the fake Nightly, on a
+shifted clock, with no owner, planner or operator command. It checks one thread
+per run, one live run per role and head, exact-head verdicts and merges, no
+resend without a complete absent read, the orphan bound, and budgets that skip
+the downtime.
+
+Fifteen tasks end correctly. Four gaps stay open, each a `todo` subtest:
+
+- A recovery episode whose coordinator thread is gone escalates to the planner
+  instead of releasing the run as gone (`core/recovery/coordinator-pass.ts`; the
+  batch A gap above).
+- A dead initial worker's redispatch starts a fresh worker past a spent budget,
+  because first dispatch has no budget gate (`core/recovery/dead-participant.ts`).
+- An unknown first-dispatch create records an `operator_needed` stop until its
+  lookup settles it (`core/dispatch/worker-launcher.ts`).
+- The mechanical stall window counts service downtime, so after a restart an
+  ordinary checks-pending wait admits a coordinator
+  (`core/recovery/coordinator-route.ts`).
+
 ## Decisions
 
 Tom accepted the planner's recommendations on 2026-11-22 ("Sounds good, let's
