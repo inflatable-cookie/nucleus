@@ -73,6 +73,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
    - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
+   - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
 
 ## The model
 
@@ -234,6 +235,32 @@ Cargo builds" rule for the `engine/` workspace only:
    skill and the contracts are rewritten for the new commands.
 
 A task never moves between engines.
+
+## Planning model (milestone 3)
+
+Planning is plain record-keeping in the Rust service. It never calls a host (ruling 11), and it replaces about 35 TypeScript commands with these records and verbs.
+
+**Records**
+
+| Record | Fields |
+|---|---|
+| Lane | key, title, aim, document (Markdown), status `open`, `done` or `dropped`, with a closing note |
+| Plan | the project's ordered lane keys, each with horizon `now`, `next` or `later`, a "done when" line and a status note |
+| Item | kind `lead` or `papercut`, title, body, lanes, state `open`, `parked` (with a reason and an optional revisit date), `promoted` (with the task ID) or `dropped`, and the author |
+| Decision | an operator question with options and the answer, shown in the Inbox |
+
+**Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
+
+**What gets simpler**
+
+- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A planner's promotion is the authorization. The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
+- **A task needs no item.** `task.add` takes a brief and puts it straight on the board (ruling 12).
+- **Concurrency is checked only where edits collide.** A lane document and the plan carry one version number for optimistic writes. Other records use last write wins, with history kept. There are no digest fences.
+- **No ceremony records.** Lane keeps, drain prompts and idle marks are gone. The board shows a lane with no open tasks, and a plan with no `now` lane is idle. Notes are short sentences with no hard 200-character cap.
+- **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
+- **Triage and milestone QA records are not ported** (ruling 12).
+
+The import maps leads and papercuts to items by kind, carries open, parked and dropped states with their history, and links promoted ones to their tasks.
 
 ## Out of scope until milestone 3
 
