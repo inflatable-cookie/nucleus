@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { planningFixture } from "./support/planning-fixture";
+import { planningEntry } from "./support/inbox";
 
 /**
  * nucleus#1531: the Planning read view, rendered through the real board from a real stored
@@ -60,7 +61,8 @@ test("1531 wide: the list groups projects with a status line in words, and the f
   const board = await mountBoard(false);
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor(
       "Status for roadmap: 1 need you · 2 lanes in progress · 4 tasks live",
     );
@@ -183,7 +185,8 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
   const board = await mountBoard(false);
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor("Open lane BB as a host");
     assert.equal(ui.get("Roadmap").props.style.flexDirection, "row");
     ui.press("Open lane BB as a host");
@@ -237,7 +240,8 @@ test("1531 wide: a project whose only record is a new lane shows that lane's tim
   );
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor("Project row dormant");
     assert.match(
       textOf(ui.get("Project row dormant")),
@@ -253,7 +257,8 @@ test("1531 wide: an idle project shows its reason instead of a focus, and a dorm
   const board = await mountBoard(false);
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor("Project row idle");
     ui.press("Project row idle");
     assert.match(
@@ -278,7 +283,8 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
   const board = await mountBoard(false);
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor("Open lane Queue reliability");
     ui.press("Open lane Queue reliability");
     await waitFor(/^Open task Spec 067 batch 2/);
@@ -350,7 +356,8 @@ test("1531 medium: the roadmap opens in place of the list, and the lane page ope
   const board = await mountBoard(true);
   const { ui, waitFor } = board;
   try {
-    ui.press("Planning");
+    await waitFor(planningEntry);
+    ui.press(planningEntry);
     await waitFor("Project row roadmap");
     assert.equal(
       ui.query(/^Plan for /),

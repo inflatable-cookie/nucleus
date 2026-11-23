@@ -1,0 +1,1 @@
+The Planning entry in the inbox board menu now shows the number of open (active) lanes in the selected projects, like every other menu entry. A lane two selected projects list counts once, and the entry dims at zero.
