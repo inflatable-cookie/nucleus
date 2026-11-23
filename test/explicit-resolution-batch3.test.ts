@@ -27,6 +27,7 @@ const PLANNER = formatAgentId(HOST, "live-planner");
 async function fixture(
   t: TestContext,
   resolutionOverrides: Record<string, unknown> = {},
+  { hostOnly = false }: { hostOnly?: boolean } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "explicit-batch3-"));
   const adapter = {
@@ -116,7 +117,9 @@ async function fixture(
     startCursor: null,
     endCursor: null,
   });
-  Object.assign(resAdapter, resolutionOverrides);
+  // `hostOnly` leaves the unbound fallback as the service composes it, so a
+  // forge read made outside the task's host context finds no port.
+  if (!hostOnly) Object.assign(resAdapter, resolutionOverrides);
   Object.assign(
     adapter as unknown as Record<string, unknown>,
     resolutionOverrides,
@@ -614,6 +617,69 @@ test("merge.now enforces both hard gates even with accept, warns on turn_held/ch
   assert.equal(mergeCalls, 1);
   assert.equal(applied.resolution.mergeResponseOutcome, "accepted");
   assert.equal(applied.resolution.mergeHead, HEAD);
+});
+
+test("merge.now and closeout.now read forge ports on the task's host, not the unbound fallback", async (t) => {
+  const calls: string[] = [];
+  let mergedState = false;
+  const { runtime, store, insertTask, attachReadyReview, callExplicit } =
+    await fixture(
+      t,
+      {
+        merged: async (task: Task) => {
+          calls.push(`merged:${task.id}`);
+          return {
+            merged: mergedState,
+            commit: mergedState ? MERGED_COMMIT : null,
+            head: HEAD,
+            base: "main",
+          };
+        },
+        verifyPrIdentity: async () => {
+          calls.push("verifyPrIdentity");
+        },
+        requiredChecks: async () => {
+          calls.push("requiredChecks");
+          return { head: HEAD };
+        },
+        merge: async () => {
+          calls.push("merge");
+        },
+      },
+      { hostOnly: true },
+    );
+  // The service's fallback carries no forge ports; only the bound host does.
+  assert.equal(
+    (runtime.engine.resolution.adapter as { merged?: unknown }).merged,
+    undefined,
+  );
+
+  const task = insertTask("host-bound merge", 30);
+  assert.equal(task.hostId, HOST);
+  store.update(task.id, { phase: "verifying" });
+  attachReadyReview(task.id, HEAD);
+  const merged = await callExplicit(task.id, {
+    action: "merge.now",
+    head: HEAD,
+  });
+  assert.equal(merged.explicitResolution?.status, "applied");
+  assert.equal(merged.phase, "merging");
+  assert.deepEqual(calls, [
+    `merged:${task.id}`,
+    "verifyPrIdentity",
+    "requiredChecks",
+    "merge",
+  ]);
+
+  const parked = insertTask("host-bound closeout", 31);
+  attachReadyReview(parked.id, HEAD);
+  store.update(parked.id, { phase: "needs_attention" });
+  mergedState = true;
+  calls.length = 0;
+  const closed = await callExplicit(parked.id, { action: "closeout.now" });
+  assert.equal(closed.explicitResolution?.status, "applied");
+  assert.equal(closed.resolution.mergedCommit, MERGED_COMMIT);
+  assert.ok(calls.includes(`merged:${parked.id}`));
 });
 
 test("closeout.now closes merged-but-parked task, enforces hard gate, and gates unverified_merge to operator board", async (t) => {

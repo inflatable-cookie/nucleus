@@ -34,6 +34,13 @@ export type RepositoryChecksPolicy = z.infer<typeof repositoryChecksPolicySchema
 
 export const DEFAULT_REPOSITORY_CHECKS_POLICY: RepositoryChecksPolicy = "all";
 
+/**
+ * Spec 068 Decision 3: a participant's tool command with no output for this many
+ * minutes is terminated. A null setting keeps the default.
+ */
+export const DEFAULT_TOOL_QUIET_LIMIT_MINUTES = 30;
+export const repositoryToolQuietLimitSchema = z.number().int().min(5).max(1440);
+
 export const repositorySettingsSchema = z.object({
   repository: projectRepositorySchema,
   scratchNamespace: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/).nullable().default(null),
@@ -48,6 +55,8 @@ export const repositorySettingsSchema = z.object({
   hostKind: hostKindSchema.nullable().default(null),
   /** Optional workspace provider override; null keeps Queue's local git-worktree default. */
   workspaceProvider: workspaceProviderSchema.nullable().default(null),
+  /** Spec 068: minutes a tool command may go without output before it is terminated; null is the default. */
+  toolQuietLimitMinutes: repositoryToolQuietLimitSchema.nullable().default(null),
   note: z.string().max(4000).default(""),
   updatedAt: z.string(),
   revision: z.number().int().nonnegative().default(0),
@@ -75,6 +84,7 @@ export const repositorySetInputSchema = z.object({
   [RETIRED_VALIDATION_POLICY_FIELD]: z.unknown().optional(),
   checksPolicy: repositoryChecksPolicySchema.nullable().optional(),
   workspaceProvider: workspaceProviderSchema.nullable().optional(),
+  toolQuietLimitMinutes: repositoryToolQuietLimitSchema.nullable().optional(),
   hostKind: hostKindSchema.nullable().optional(),
   note: z.string().max(4000).optional(),
 }).strict().superRefine((input, ctx) => {

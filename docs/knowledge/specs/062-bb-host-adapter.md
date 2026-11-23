@@ -1021,6 +1021,9 @@ worktree and the exact registered project, and an unreadable project read propag
 Archive writes only the handle's durable marker, so the unmanaged environment, shared project and
 other task handles remain untouched. The socket service exposes the existing reverse operation channel
 to the adapter through the authenticated owner socket; operation faults remain per request.
+An operation refused before its request is written (the executor offline, or the service connection
+failing first) is a connection precondition refusal: a durable operation that fails on it settles
+failed with a reconciled effect, never as an uncertain delivery.
 
 Tests: `test/bb-workspace-custody.test.ts` covers creation, handle identity, lookup, archive isolation,
 archived-handle reuse, missing directories, unregistered projects and unreadable reads;

@@ -16,7 +16,6 @@ export {
   REVIEWER_CONSULT_TIMEOUT_MS,
   consultContinuationInstruction,
   escalationContinuationInstruction,
-  escalationChoiceBinding,
   escalationVerbChoices,
   plannerEscalationChoicesFor,
   plannerEscalationQuestion,
@@ -61,6 +60,7 @@ export {
   plannerEscalationOwnerSuffix,
   plannerEscalationSuggestedVerbs,
 } from "./proof";
+export { closeEscalationFollowups } from "./continuation";
 export {
   hasConcreteOperatorChoices,
   isPlaceholderDecisionRecord,

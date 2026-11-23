@@ -46,7 +46,8 @@ rules: each lane must list the record's repository and be `active` or `paused`.
 
 Operations (RPC, CLI and skill): `lead.add`, `lead.edit`, `lead.get`,
 `lead.list` (by repository, lane and state, open by default), `lead.set-lanes`,
-`lead.drop` with a reason, `lead.reopen` with a reason, and `lead.import`.
+`lead.drop` with a reason, `lead.reopen` with a reason, `lead.park` and
+`lead.unpark` (see parked leads below), and `lead.import`.
 `lead.add` and `lead.import` take
 a repository as the origin string `papercut.list` uses or as `{origin, path}`;
 `lead.add` also accepts `repository` for one origin, and `lead.import` ignores
@@ -674,10 +675,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   single-select nucleus#1421; compact header nucleus#1476). A single project
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
-  every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project. Rows sort active projects first,
-  then the Dormant group (nucleus#1529; parking is retired, 2026-11-22); inside each group the most
-  tasks come first, then the most recent activity, then the name, so quiet
+  every project with a filter box, its primary repository and counts of active
+  work and total work (`<active> / <total>`, where total adds open leads and
+  papercuts), with a checkbox per project. Its accessible name spells out both
+  counts. Rows sort active projects first, then the Dormant group (nucleus#1529;
+  parking is retired, 2026-11-22); inside each group the highest total comes
+  first, then the most recent activity, then the name, so quiet
   projects settle low without leaving their group. The picker's one top row holds the
   project search at its remaining width and, beside it, a Clear project selection
   icon button (a folder with an X, the same icon-only `Button` style and height as
@@ -688,9 +691,9 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   total covers every non-terminal task in the project's member repositories and
   adds the hidden portion of each repository's queued snapshot after subtracting
   rendered queued cards, so it includes work beyond the first queue page without
-  counting visible cards twice. The compact total appears beside the project name
-  and in its accessible label, including when the total is zero. It is computed
-  from the current board snapshot and stays independent of selector filtering and
+  counting visible cards twice. The active / total count appears beside the
+  project name and in its accessible label, including when both are zero. It is
+  computed from the current board snapshot and stays independent of selector filtering and
   selection. A plain click
   replaces the selection with that project (clicking the sole selected project
   keeps it selected) and closes the picker; Shift-click toggles just that project
@@ -1107,8 +1110,8 @@ record's next condition (a deferred revisit time). The digest covers the lead
 version, title, body, lanes, tags, state and base branch, so an edit or a
 lane move makes the record eligible again.
 
-**Batches.** Eligible records are open, not tagged `hold` (an intentional hold
-is never triaged automatically), and either unassessed, changed since their
+**Batches.** Eligible records are open, not parked (a parked lead waits for its
+recheck, see parked leads below), and either unassessed, changed since their
 decision, or deferred past their revisit time. The oldest eligible records come
 first, at most eight to a batch. A project holds at most one outstanding batch;
 records that change while it is outstanding wait for the next one. The sweep
@@ -1132,7 +1135,7 @@ decision per record:
 | --- | --- | --- |
 | `promote` | `reason` | Checks the brief if needed, approves the current version with `by` as approver, then promotes it with `by` as promoting agent through the ordinary operations. A papercut promotes through `papercut.promote-task`. A record already linked to a task settles without another promotion. |
 | `close` | `reason`, `closure` (`duplicate`, `fixed` or `out_of_scope`), `canonical` | Drops a lead with the closure, reason and canonical target as its drop reason, or closes a papercut as `deprecated` (duplicate) or `completed` (fixed, out of scope), with the same text as its note. The filing text is kept. |
-| `defer` | `reason`, `revisitAt` (a future ISO time) | Records the reason and the time. The record stays open and is eligible again when the time is due. |
+| `defer` | `reason`, `revisitAt` (a future ISO time) | Parks the record with the reason and the time (parked leads below). It returns to the to-do list, and is eligible again, when the time is due. |
 | `operator` | `reason`, `question` | Records the question for the operator, shown as `operatorQuestions` in `triage.get`. The record stays open. |
 
 `out_of_scope` closure needs `canonical` to name the plan rule that supports it.
@@ -1165,3 +1168,38 @@ completed batches. Open a batch to see proposed and applied outcomes, their
 reasons, canonical targets, revisit times, operator questions and links to
 recorded tasks. The batched `queue.plans` read refreshes when triage changes.
 Use `triage.get` for the source version and digest needed by `triage.apply`.
+
+## Revision: parked leads (nucleus#1543, 2026-11-22)
+
+Tom, 2026-11-22: a lead can be taken off the to-do list with a reason and a date to
+check again, because some wait on a capability Nucleus cannot provide. Papercuts are
+leads and park the same way. The first use is a T3 board lead that waits on the host.
+
+- **Record.** A lead carries `parked`: `{reason, revisitAt, by, at}`, where
+  `revisitAt` is an ISO time or null. It stays `open`. A park with no date waits
+  until someone unparks it. A due park unparks the lead and sets `recheck`
+  (`{reason, at}`); the lead then reads "Due for a recheck" with that reason until a
+  park, unpark, edit, promotion or drop clears it.
+- **Verbs.** `lead.park` takes `id`, `version`, `reason`, an optional `revisitAt` and
+  `author`. `lead.unpark` takes `id` and `version`. The version is the one the caller
+  read, so a stale call is refused. Parking changes no content: the content version,
+  check and approval stay as they were. A re-park replaces the record. A park needs an
+  open lead and a future revisit time.
+- **Leaving the list.** Parked leads and papercuts leave the Leads and Papercuts
+  lists, the menu and list counts, the planning tab's open-lead counts, lane drain
+  checks and triage batches. Each list ends with a collapsed "Parked (N)" row; expanded,
+  a card shows its reason and "check again <date>" in place of the status line.
+- **Unparking.** An edit, a promotion (question, knowledge or task) or a drop unparks.
+  When `revisitAt` passes, the sweep unparks the lead once and writes one durable
+  `lead_recheck` notice to the project's planner: "Parked lead <title> is due for a
+  recheck: <reason>". The notice follows the ordinary project-planner delivery. The
+  lead returns to its list whether or not a planner is registered.
+- **Triage.** `defer` parks the record with its reason and revisit time. Triage has no
+  separate defer state, and a parked record is never batched.
+- **Hold tag.** The `hold` tag is retired. On open, each lead still tagged `hold`
+  loses the tag. An open lead also becomes parked with the reason "Held before
+  parking existed" and no revisit time; a lead in any other state only loses the tag.
+  The `leadParkingMigration` record lists each lead it changed and whether it parked.
+- **Lead screen.** Park takes a reason and an optional "Check again on" day, two weeks
+  out by default, from More actions. A parked lead shows its state and an Unpark
+  control. The explanation sits in a `?` popover, not in the labels.

@@ -286,6 +286,8 @@ export class Engine {
         "hostAvailable",
         "launchAgent",
         "launchProofOnly",
+        "moveToReview",
+        "moveToWork",
         "note",
         "noteStepFailure",
         "observeOwnerStop",

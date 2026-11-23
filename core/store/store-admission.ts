@@ -435,6 +435,8 @@ export class StoreAdmission {
       // the cleanup safe for fresh stores and repeat opens.
       this.hooks.migration.dropSubscriptionUsageStorage();
       this.hooks.migration.retireRoutingApprovals();
+      // Nucleus#1543: the `hold` tag becomes a park, once per lead, on every open.
+      this.hooks.migration.migrateHoldTagsToParked();
       this.db.exec("COMMIT");
     } catch (error) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");

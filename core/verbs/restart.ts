@@ -129,14 +129,6 @@ export class RestartControls {
     // instead of leaving an unresolved effect that fences the next owner verb.
     if ("refusal" in parked)
       throw new RestartRefusal(parkedRestartRefusal(role, parked.refusal));
-    if (parked.kind === "answer") {
-      if (!this.engine.isOwnerCall())
-        throw Error(
-          "Answering an escalation is the owner's decision; a coordinator's restart cannot answer it",
-        );
-      this.engine.rejectFenced(task, "escalation answer");
-      return this.resolution.resolveEscalation(task, reason, true);
-    }
     if (operationId) {
       const operation = this.store.operation(operationId);
       if (
@@ -501,7 +493,7 @@ export class RestartControls {
       task.resolution.mergedCommit
     ) {
       // A finished or merged task restarts no run; a merged one still re-runs its
-      // parked step (a closeout resynchronization), and either answers an escalation.
+      // parked step (a closeout resynchronization).
       const parked = parkedRestart(
         collectOwnerVerbFacts(
           this.store,
@@ -512,9 +504,8 @@ export class RestartControls {
       );
       if (
         "kind" in parked &&
-        (parked.kind === "answer" ||
-          (task.resolution.mergedCommit &&
-            !["done", "cancelled"].includes(task.phase)))
+        task.resolution.mergedCommit &&
+        !["done", "cancelled"].includes(task.phase)
       )
         return this.engine.restartParked(
           input,

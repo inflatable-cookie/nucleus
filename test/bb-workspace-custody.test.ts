@@ -7,6 +7,8 @@ import { Store } from "../core/store/store";
 import { createBbWorkspaceAdapter } from "../service/bb-host";
 import { workspaceHandleForPath, type HostOperationName, type HostOperationOutcome } from "../shared/host-operation";
 import type { Task } from "../shared/contracts";
+import { typedPreSendRefusal } from "../core/planning/operation-failure";
+import { isTransportFailure } from "../shared/transport";
 
 const hostId = "bb:0123456789abcdef0123456789abcdef";
 const outcome = (operation: HostOperationName, value: unknown): HostOperationOutcome => ({ operation, at: "2026-11-16T00:00:00.000Z", calls: {}, value });
@@ -56,7 +58,11 @@ test("an offline BB host releases the reservation so a later create can retry", 
   });
   const request = task("Synthetic task", repositoryRoot, directory);
   try {
-    await assert.rejects(adapter.createWorkspace!(request), /operation was not sent: BB host executor is offline/);
+    const offline = await adapter.createWorkspace!(request).then(() => assert.fail("an offline host must refuse"), (error: unknown) => error);
+    assert.match(String(offline), /operation was not sent: BB host executor is offline/);
+    // The connection precondition is a proven pre-send refusal, and still a transport failure for the callers that wait on one.
+    assert.equal(typedPreSendRefusal(offline), true);
+    assert.equal(isTransportFailure(offline), true);
     assert.deepEqual(store.getMeta("bbWorkspaces"), {}, "an offline pre-send failure removes its reservation");
     assert.equal(writes, 0);
     online = true;

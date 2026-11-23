@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  HOST_CONNECTION_REFUSAL,
+  type HostConnectionRefusal,
+} from "../../core/host/errors";
 
 const id = z.string().min(1);
 const date = z.string().min(1);
@@ -439,6 +443,21 @@ export class T3CompatibilityError extends Error {
     super(`T3Code compatibility check failed: ${field}`);
     this.name = "T3CompatibilityError";
   }
+}
+/**
+ * The adapter's connection precondition refused a call before any request:
+ * no authenticated connection, or a changed durable host identity. It stays a
+ * `T3CompatibilityError` with the same name and words, so every caller and the
+ * transport classification read it as before, and it carries the host
+ * connection-refusal brand, so a failed operation settles it as a proven
+ * pre-send refusal. Every other compatibility failure can follow a call and
+ * keeps no brand.
+ */
+export class T3ConnectionRefusalError
+  extends T3CompatibilityError
+  implements HostConnectionRefusal
+{
+  readonly [HOST_CONNECTION_REFUSAL] = true as const;
 }
 export function decode<T>(schema: z.ZodType<T>, value: unknown, at: string): T {
   const result = schema.safeParse(value);

@@ -203,11 +203,16 @@ export async function resolveExplicitly(
     input.action === "message.send"
       ? await resolveMessageTarget(engine, before, input.role)
       : null;
+  // Every preflight, plan, apply and finish reads host and forge ports through
+  // the routed adapter, which serves only the ambient host. Outside a host
+  // context it falls back to the unbound adapter, which carries no forge ports,
+  // so each phase runs on the task's own host.
+  const onHost = <T>(fn: () => T): T => engine.onTaskHost(before, fn);
   const runStartPreflight =
     input.action === "run.start" &&
     input.version === before.version &&
     !before.removedAt
-      ? await preflightExplicitRunStart(engine, before, input)
+      ? await onHost(() => preflightExplicitRunStart(engine, before, input))
       : undefined;
   const integrationPreflight =
     (input.action === "turn.take" ||
@@ -216,7 +221,7 @@ export async function resolveExplicitly(
       input.action === "closeout.now") &&
     input.version === before.version &&
     !before.removedAt
-      ? await preflightExplicitIntegration(engine, before, input)
+      ? await onHost(() => preflightExplicitIntegration(engine, before, input))
       : undefined;
   const result = store.transaction(() => {
     const task = store.task(id);
@@ -243,15 +248,13 @@ export async function resolveExplicitly(
     )
       throw Error("Only the operator board can accept unverified_merge");
 
-    const inHost = <T>(fn: () => T): T =>
-      task.hostId ? engine.withHost(task.hostId, fn) : fn();
-    const plan =
+    const plan = engine.onTaskHost(task, () =>
       input.action === "run.release"
         ? releasePlan(engine, task, input)
         : input.action === "record.clear"
           ? clearPlan(engine, task, input)
           : input.action === "run.start"
-            ? inHost(() => runStartPlan(engine, task, input, runStartPreflight))
+            ? runStartPlan(engine, task, input, runStartPreflight)
             : input.action === "phase.set"
               ? phaseSetPlan(engine, task, input)
               : input.action === "message.send"
@@ -267,12 +270,12 @@ export async function resolveExplicitly(
                           task,
                           input,
                           integrationPreflight,
-                        );
+                        ),
+    );
     if (plan.warnings.some((warning) => !input.accept.includes(warning.id)))
       return reply("warnings", plan.warnings);
 
-    const { patch, before } =
-      input.action === "run.start" ? inHost(() => plan.apply()) : plan.apply();
+    const { patch, before } = engine.onTaskHost(task, () => plan.apply());
     const {
       caller,
       accept,
@@ -307,7 +310,10 @@ export async function resolveExplicitly(
       finish: plan.finish,
     };
   });
-  const finished = "finish" in result ? await result.finish?.() : undefined;
+  const finished =
+    "finish" in result && result.finish
+      ? await onHost(() => result.finish!())
+      : undefined;
   const latestTask = result.status === "applied" ? store.task(id) : result.task;
   const next = describeNext(latestTask);
   const deliveryNote = finished?.delivery
@@ -456,7 +462,8 @@ export function releasePlan(
         run?.id ?? input.run,
       );
       const reattachRefused = reattachRefusal(reattach);
-      if (reattachRefused) issues.push(`Checkout reattach: ${reattachRefused}.`);
+      if (reattachRefused)
+        issues.push(`Checkout reattach: ${reattachRefused}.`);
       if (process?.pid && process.processGroupId && process.startIdentity) {
         await attempt("Process-group stop", () => {
           signalProcessGroupByLeader(
@@ -472,7 +479,9 @@ export function releasePlan(
         // Stop the released turn without dropping the retained worker binding.
         const releasedRetainedTurn =
           current.runId === task.runId &&
-          (initial || (run?.role === "revision" && task.resolution.currentRunId === run.id));
+          (initial ||
+            (run?.role === "revision" &&
+              task.resolution.currentRunId === run.id));
         if (
           (current.agentId === agentId && !releasedRetainedTurn) ||
           threadServesAnotherTask(store, current, agentId)

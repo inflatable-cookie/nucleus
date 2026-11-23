@@ -22,7 +22,7 @@ import { createOwnedCloseoutWorktree } from "../../core/workspaces/workspace-con
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
 export { T3CodeHost, type T3CodeConfig } from "./adapter";
-export { T3CompatibilityError } from "./contracts";
+export { T3CompatibilityError, T3ConnectionRefusalError } from "./contracts";
 export { T3TransientReadError } from "./reads";
 export { T3RpcError, T3RpcClient } from "./rpc";
 export function createHost(config: T3CodeConfig): T3CodeHost {
@@ -451,6 +451,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         answers,
       );
     }
+    /**
+     * Spec 068 Decision 4: T3 answers a task run's permission request natively
+     * (`runtime-request.respond`), so Nucleus declines it and task runs keep the
+     * profile's runtime mode rather than a forced non-interactive one.
+     */
     answerNativePermission(
       agent: string,
       workspace: string,

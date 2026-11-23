@@ -22,10 +22,17 @@ import {
   inboxCounts,
   inboxSections,
   leadsCards,
+  parkedCards,
   type InboxView,
 } from "../../shared/inbox-board";
 import { useRpc } from "../shell";
-import { DropdownSelect, muted, row, type Colors } from "../controls";
+import {
+  Disclosure,
+  DropdownSelect,
+  muted,
+  row,
+  type Colors,
+} from "../controls";
 import { projectName } from "./text";
 import {
   BoardCard,
@@ -340,6 +347,10 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const sections = inboxSections(board, view);
+  // Nucleus#1543: parked leads and papercuts sit under one collapsed row at the end of their list.
+  const parked =
+    view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
+  const [parkedOpen, setParkedOpen] = useState(false);
   const listMeasurements = useRef<{
     view: typeof view;
     viewportHeight: number;
@@ -763,6 +774,18 @@ export function InboxList({
               );
             })
           )}
+          {parked.length > 0 && (
+            <View style={{ gap: space.xxs }}>
+              <Disclosure
+                c={c}
+                label={`Parked (${parked.length})`}
+                accessibilityLabel={`Parked, ${parked.length} ${view === "papercuts" ? "papercut" : "lead"}${parked.length === 1 ? "" : "s"}`}
+                expanded={parkedOpen}
+                onToggle={() => setParkedOpen(!parkedOpen)}
+              />
+              {parkedOpen && parked.map(renderCard)}
+            </View>
+          )}
           {queuedPending && (
             <Text
               style={{ ...muted(c), textAlign: "center", padding: space.md }}
@@ -789,7 +812,7 @@ export function InboxList({
           )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {(boardRead !== "loaded" || total === 0) && (
+        {(boardRead !== "loaded" || (total === 0 && parked.length === 0)) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."

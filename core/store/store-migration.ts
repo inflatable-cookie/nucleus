@@ -22,13 +22,17 @@ export const PROFILE_OPTION_MIGRATION_KEY = "profileOptionMigration";
 
 /** The record of the capability bracket migration's first run and of every run that changed something (nucleus#1385). */
 export const CAPABILITY_BRACKET_MIGRATION_KEY = "capabilityBracketMigration";
+/** The record of the hold-tag migration: each lead that became a park, and when (nucleus#1543). */
+export const LEAD_PARKING_MIGRATION_KEY = "leadParkingMigration";
 export const ROUTING_APPROVAL_MIGRATION_KEY = "routingApprovalMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
   retainedArchiveKeys: () => Set<string>;
   pruneThreadArchiveKeys: () => void;
-  withdrawDecision: (input: Parameters<Decisions["withdrawInTransaction"]>[0]) => void;
+  withdrawDecision: (
+    input: Parameters<Decisions["withdrawInTransaction"]>[0],
+  ) => void;
 }
 
 /**
@@ -82,7 +86,11 @@ export class StoreMigration {
    * record's; an unrecognised value stays as stored and is listed.
    */
   migrateCapabilityBrackets(): void {
-    const record: CapabilityBracketMigration = { at: new Date().toISOString(), changes: [], unknown: [] };
+    const record: CapabilityBracketMigration = {
+      at: new Date().toISOString(),
+      changes: [],
+      unknown: [],
+    };
     const stored = this.core.getMeta<unknown[]>("pool");
     if (Array.isArray(stored)) {
       const { pool, changes, unknown } = migratePoolCapabilities(stored);
@@ -95,17 +103,31 @@ export class StoreMigration {
         "SELECT id, json_extract(data,'$.resolution.workerClimb.from') AS climbFrom, json_extract(data,'$.resolution.workerClimb.to') AS climbTo FROM tasks WHERE json_type(data,'$.resolution.workerClimb')='object'",
       )
       .all() as Array<{ id: string; climbFrom: unknown; climbTo: unknown }>;
-    const update = this.db.prepare("UPDATE tasks SET data=json_set(data,?,?) WHERE id=?");
+    const update = this.db.prepare(
+      "UPDATE tasks SET data=json_set(data,?,?) WHERE id=?",
+    );
     for (const row of climbs) {
-      for (const [field, value] of [["from", row.climbFrom], ["to", row.climbTo]] as const) {
+      for (const [field, value] of [
+        ["from", row.climbFrom],
+        ["to", row.climbTo],
+      ] as const) {
         const result = bracketFor(value);
         if (result === "keep") continue;
         if (result === "unknown") {
-          record.unknown.push({ id: row.id, field: `resolution.workerClimb.${field}`, value });
+          record.unknown.push({
+            id: row.id,
+            field: `resolution.workerClimb.${field}`,
+            value,
+          });
           continue;
         }
         update.run(`$.resolution.workerClimb.${field}`, result.to, row.id);
-        record.changes.push({ id: row.id, field: `resolution.workerClimb.${field}`, from: String(value), to: result.to });
+        record.changes.push({
+          id: row.id,
+          field: `resolution.workerClimb.${field}`,
+          from: String(value),
+          to: result.to,
+        });
       }
     }
     const offsets = this.core.getMeta<unknown>("demandRoleOffsets");
@@ -113,17 +135,24 @@ export class StoreMigration {
       record.droppedDemandRoleOffsets = offsets;
       this.core.deleteMeta("demandRoleOffsets");
     }
-    const previous = this.core.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY);
+    const previous = this.core.getMeta<CapabilityBracketMigration>(
+      CAPABILITY_BRACKET_MIGRATION_KEY,
+    );
     const changed = record.changes.length > 0 || offsets !== undefined;
     // A run that finds a different set of unknown values records them too, so a
     // value written after the first run is listed; the same set rewrites nothing.
-    const unknownMoved = JSON.stringify(previous?.unknown ?? []) !== JSON.stringify(record.unknown);
+    const unknownMoved =
+      JSON.stringify(previous?.unknown ?? []) !==
+      JSON.stringify(record.unknown);
     if (previous !== undefined && !changed && !unknownMoved) return;
     // A later run keeps what earlier runs noted: their conversions and the
     // dropped role offsets stay in the one record; `unknown` is the current scan.
     if (previous) {
       record.changes = [...(previous.changes ?? []), ...record.changes];
-      if (record.droppedDemandRoleOffsets === undefined && previous.droppedDemandRoleOffsets !== undefined)
+      if (
+        record.droppedDemandRoleOffsets === undefined &&
+        previous.droppedDemandRoleOffsets !== undefined
+      )
         record.droppedDemandRoleOffsets = previous.droppedDemandRoleOffsets;
     }
     this.core.setMeta(CAPABILITY_BRACKET_MIGRATION_KEY, record);
@@ -137,7 +166,10 @@ export class StoreMigration {
   retireRoutingApprovals(): void {
     const grants = this.core.getMeta<unknown>("routingGrants");
     const droppedGrants = Array.isArray(grants) ? grants.length : 0;
-    const decisions = [...this.db.prepare(`
+    const decisions = [
+      ...this.db
+        .prepare(
+          `
       SELECT id, json_extract(data, '$.version') AS version
       FROM decisions
       WHERE status = 'open' AND id IN (
@@ -151,7 +183,10 @@ export class StoreMigration {
         FROM tasks, json_each(tasks.data, '$.profileRequests') AS request
         WHERE request.type = 'object'
       )
-    `).iterate(JSON.stringify(Array.isArray(grants) ? grants : []))];
+    `,
+        )
+        .iterate(JSON.stringify(Array.isArray(grants) ? grants : [])),
+    ];
     // The old approval flow could turn a legacy preference into a request
     // itself. Keep the preference, but give direct routing only to requests
     // somebody actually made.
@@ -161,26 +196,41 @@ export class StoreMigration {
         AND json_type(data,'$.profileRequests.worker.requestedBy') IS NULL
         AND EXISTS (SELECT 1 FROM events WHERE taskId=tasks.id AND kind='routing_preference_requested')
     `);
-    for (const [table, prefix] of [["tasks", "$.profileRequests"], ["outcomes", "$.routing.profileRequests"]]) {
-      const fields = ["worker", "reviewer", "coordinator"].map((role) => `${prefix}.${role}.signoff`);
-      this.db.prepare(
-        `UPDATE ${table} SET data=json_remove(data, ?, ?, ?)
+    for (const [table, prefix] of [
+      ["tasks", "$.profileRequests"],
+      ["outcomes", "$.routing.profileRequests"],
+    ]) {
+      const fields = ["worker", "reviewer", "coordinator"].map(
+        (role) => `${prefix}.${role}.signoff`,
+      );
+      this.db
+        .prepare(
+          `UPDATE ${table} SET data=json_remove(data, ?, ?, ?)
         WHERE json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL OR json_type(data, ?) IS NOT NULL`,
-      ).run(...fields, ...fields);
+        )
+        .run(...fields, ...fields);
     }
     const withdrawn: string[] = [];
     for (const { id, version } of decisions) {
       if (typeof id !== "string" || typeof version !== "number")
-        throw Error("A retired routing decision is missing its stored identity");
+        throw Error(
+          "A retired routing decision is missing its stored identity",
+        );
       this.hooks.withdrawDecision({
-        id, version, withdrawnBy: "queue",
-        reason: "Overtaken by the 2026-11-22 ruling that explicit profile requests apply directly.",
+        id,
+        version,
+        withdrawnBy: "queue",
+        reason:
+          "Overtaken by the 2026-11-22 ruling that explicit profile requests apply directly.",
       });
       withdrawn.push(id);
     }
 
     if (grants !== undefined) this.core.deleteMeta("routingGrants");
-    const previous = this.core.getMeta<{ droppedGrants: number; withdrawn: string[] }>(ROUTING_APPROVAL_MIGRATION_KEY);
+    const previous = this.core.getMeta<{
+      droppedGrants: number;
+      withdrawn: string[];
+    }>(ROUTING_APPROVAL_MIGRATION_KEY);
     if (previous && grants === undefined && !withdrawn.length) return;
     this.core.setMeta(ROUTING_APPROVAL_MIGRATION_KEY, {
       at: new Date().toISOString(),
@@ -296,6 +346,69 @@ export class StoreMigration {
           AND (json_extract(data,'$.error') LIKE 'delivery failed:%' OR EXISTS (
             SELECT 1 FROM events WHERE events.taskId=task_messages.fromTaskId AND events.kind='agent_message_sent'
               AND instr(events.detail,task_messages.id || ':')=1 AND events.detail LIKE '%; delivered'))`);
+    });
+  }
+
+  /**
+   * Nucleus#1543 (Tom, 2026-11-22): a park replaces the `hold` tag. Every lead still tagged `hold`
+   * loses the tag. An open lead also becomes parked with the reason "Held before parking existed"
+   * and no recheck date; a lead in any other state only loses the tag, since only open leads park.
+   * Idempotent on every open: a clean store is scanned and left as it was, and the record lists
+   * each lead the migration changed, with whether it was parked.
+   */
+  migrateHoldTagsToParked(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT id, data FROM leads WHERE EXISTS (SELECT 1 FROM json_each(leads.data,'$.tags') WHERE value='hold')",
+      )
+      .all();
+    if (!rows.length) return;
+    const at = new Date().toISOString();
+    const update = this.db.prepare("UPDATE leads SET data=? WHERE id=?");
+    const changes: Array<{
+      id: string;
+      title: string;
+      state: string;
+      parked: boolean;
+    }> = [];
+    for (const row of rows) {
+      // The raw record is rewritten as it is stored, so a stripped body stays stripped.
+      const lead = JSON.parse(String(row.data)) as {
+        title: string;
+        state: string;
+        tags: string[];
+        parked?: unknown;
+      };
+      const parks = lead.state === "open" && !lead.parked;
+      const next = {
+        ...lead,
+        tags: lead.tags.filter((tag) => tag !== "hold"),
+        ...(parks
+          ? {
+              parked: {
+                reason: "Held before parking existed",
+                revisitAt: null,
+                by: "migration",
+                at,
+              },
+            }
+          : {}),
+      };
+      update.run(JSON.stringify(next), String(row.id));
+      changes.push({
+        id: String(row.id),
+        title: lead.title,
+        state: lead.state,
+        parked: parks,
+      });
+    }
+    this.core.advanceLeadRevision();
+    const previous = this.core.getMeta<{ at: string; changes: typeof changes }>(
+      LEAD_PARKING_MIGRATION_KEY,
+    );
+    this.core.setMeta(LEAD_PARKING_MIGRATION_KEY, {
+      at,
+      changes: [...(previous?.changes ?? []), ...changes],
     });
   }
 

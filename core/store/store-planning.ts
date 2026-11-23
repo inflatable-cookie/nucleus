@@ -6,6 +6,8 @@ import {
   storedDecisionSchema,
   laneSchema,
   LEAD_PREVIEW_MAX,
+  leadParkSchema,
+  leadRecheckSchema,
   leadSchema,
   leadVersionMetadataSchema,
   leadVersionSchema,
@@ -55,7 +57,7 @@ type PlanLane = Pick<Lane, "key" | "status" | "closedAt" | "repositories">;
  * tag list) still fails as it does there (live #377: older rows had no `tags`).
  */
 const BOARD_LEAD_FACTS =
-  "json_extract(data,'$.id','$.title','$.state','$.version','$.repositories','$.lanes','$.tags','$.targets','$.check.ok','$.papercut.area')";
+  "json_extract(data,'$.id','$.title','$.state','$.version','$.repositories','$.lanes','$.tags','$.targets','$.check.ok','$.papercut.area','$.parked','$.recheck')";
 
 const BOARD_LEAD_PRESENCE =
   "json_array(json_type(data,'$.lanes'),json_type(data,'$.tags'),json_type(data,'$.check'),json_type(data,'$.approval'),json_type(data,'$.papercut'),json_type(data,'$.papercut.area'))";
@@ -75,6 +77,8 @@ type BoardLeadFacts = z.infer<typeof boardLeadFactsSchema> & {
   checkOk: boolean | null;
   approved: boolean;
   papercutArea: string | null;
+  parked: Pick<NonNullable<Lead["parked"]>, "reason" | "revisitAt"> | null;
+  recheck: { reason: string } | null;
 };
 
 function boardLeadFacts(facts: string, presence: string): BoardLeadFacts {
@@ -89,6 +93,8 @@ function boardLeadFacts(facts: string, presence: string): BoardLeadFacts {
     targets,
     checkOk,
     papercutArea,
+    parked,
+    recheck,
   ] = JSON.parse(facts) as unknown[];
   const [lanesType, tagsType, checkType, approvalType, papercutType, areaType] =
     JSON.parse(presence) as Array<string | null>;
@@ -126,6 +132,9 @@ function boardLeadFacts(facts: string, presence: string): BoardLeadFacts {
     )
       ? (papercutArea as string | null)
       : null,
+    // Nucleus#1543: a park or a due recheck reads as its record or none, never as a guess.
+    parked: leadParkSchema.nullable().parse(parked ?? null),
+    recheck: leadRecheckSchema.nullable().parse(recheck ?? null),
   };
 }
 
@@ -156,6 +165,10 @@ function boardLeadRow(
         repository: target.repository,
       })),
     ...(typeof createdAt === "string" ? { createdAt } : {}),
+    parked: lead.parked
+      ? { reason: lead.parked.reason, revisitAt: lead.parked.revisitAt }
+      : null,
+    recheck: lead.recheck ? { reason: lead.recheck.reason } : null,
   };
 }
 
@@ -275,7 +288,11 @@ export class StorePlanning {
       .map(papercutFromLead);
   }
 
-  updatePapercut(record: Papercut): Papercut {
+  /** `unpark` clears a park for a promotion or a close (Nucleus#1543); other papercut writes keep it. */
+  updatePapercut(
+    record: Papercut,
+    options: { unpark?: boolean } = {},
+  ): Papercut {
     const value = papercutSchema.parse(record);
     const current = this.lead(value.id);
     const mapped = leadFromPapercut(value);
@@ -308,6 +325,7 @@ export class StorePlanning {
       targets,
       source: mapped.source,
       createdAt: mapped.createdAt,
+      ...(options.unpark ? { parked: null, recheck: null } : {}),
       updatedAt: stamp,
       closedAt: mapped.closedAt,
     });
@@ -1052,6 +1070,16 @@ export class StorePlanning {
     return this.core.db
       .prepare(
         "SELECT data FROM lead_read AS leads WHERE state='open' ORDER BY rowid",
+      )
+      .all()
+      .map((row) => leadSchema.parse(JSON.parse(String(row.data))));
+  }
+
+  /** Nucleus#1543: the open leads parked now. A parked record is rare, so the due check reads them all. */
+  parkedLeads(): Lead[] {
+    return this.core.db
+      .prepare(
+        "SELECT data FROM lead_read AS leads WHERE state='open' AND json_type(data,'$.parked')='object' ORDER BY rowid",
       )
       .all()
       .map((row) => leadSchema.parse(JSON.parse(String(row.data))));

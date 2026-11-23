@@ -26,17 +26,40 @@ export type InboxView = (typeof inboxViews)[number]["id"];
 
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
 
-/** Leads: the Triage column's leads. A papercut-tagged lead is a papercut, never a lead here. */
+/**
+ * Leads: the Triage column's leads on the to-do list. A papercut-tagged lead is a papercut, never a
+ * lead here, and a parked lead is off the list until it is unparked (Nucleus#1543).
+ */
 export function leadsCards(board: PipelineBoard): PipelineCard[] {
   return board.cards.Triage.filter(
-    (card) => card.kind === "lead" && triageKind(card.value) === "lead",
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === "lead" &&
+      !card.value.parked,
   );
 }
 
-/** Papercuts: the Triage column's papercut-tagged leads, their own list (Tom, 2026-11-21). */
+/** Papercuts: the Triage column's papercut-tagged leads on the to-do list, their own list (Tom, 2026-11-21). */
 export function papercutCards(board: PipelineBoard): PipelineCard[] {
   return board.cards.Triage.filter(
-    (card) => card.kind === "lead" && triageKind(card.value) === "papercut",
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === "papercut" &&
+      !card.value.parked,
+  );
+}
+
+/** Nucleus#1543: the parked leads or papercuts of one list, shown under Parked at its end. */
+export function parkedCards(
+  board: PipelineBoard,
+  view: "leads" | "papercuts",
+): PipelineCard[] {
+  const kind = view === "leads" ? "lead" : "papercut";
+  return board.cards.Triage.filter(
+    (card) =>
+      card.kind === "lead" &&
+      triageKind(card.value) === kind &&
+      Boolean(card.value.parked),
   );
 }
 

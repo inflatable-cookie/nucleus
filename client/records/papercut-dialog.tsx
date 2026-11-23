@@ -2,32 +2,106 @@ import { useEffect, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "../shell";
-import { Button, DetailSection, Field, controlFrame, controlText, muted, row, type Colors } from "../controls";
+import {
+  Button,
+  DetailSection,
+  Field,
+  controlFrame,
+  controlText,
+  muted,
+  row,
+  type Colors,
+} from "../controls";
 import * as api from "../../shared/contracts";
 import { type CapabilityLevel, type Papercut } from "../../shared/contracts";
 import { operationStateLabel } from "../../shared/operations";
-import { DetailField, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
+import {
+  DetailField,
+  RecordNotice,
+  type BoardAct,
+  type RecordNoticeValue,
+} from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
+import { ParkPanel } from "../park-controls";
 import { type as typeScale, space } from "../design";
 
-const papercutPromoteReason = (cut: Papercut) => cut.state === "open" ? undefined : cut.state === "promoted" ? "Already promoted" : "Papercut is closed";
-const papercutCloseReason = (cut: Papercut) => cut.state === "closed" ? "Already closed" : undefined;
+const papercutPromoteReason = (cut: Papercut) =>
+  cut.state === "open"
+    ? undefined
+    : cut.state === "promoted"
+      ? "Already promoted"
+      : "Papercut is closed";
+const papercutCloseReason = (cut: Papercut) =>
+  cut.state === "closed" ? "Already closed" : undefined;
 
 /** The papercut detail dialog. It owns its edit form, chosen complexity and close note. */
-export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordNotice, setRecordNotice, laneName, onClose, c, inline = false }: { inline?: boolean; id: string; compact: boolean; busy: boolean; act: BoardAct; recordNotice: RecordNoticeValue | null; setRecordNotice: (notice: RecordNoticeValue | null) => void; laneName: (key: string) => string; onClose: () => void; c: Colors }) {
-  const fetchPapercut = useRpc(api.papercutGet), editPapercut = useRpc(api.papercutEdit), promotePapercut = useRpc(api.papercutPromoteTask), closePapercut = useRpc(api.papercutClose);
-  const [closeNote,setCloseNote] = useState("");
+export function PapercutDialog({
+  id: openPapercutId,
+  compact,
+  busy,
+  act,
+  recordNotice,
+  setRecordNotice,
+  laneName,
+  onClose,
+  c,
+  inline = false,
+}: {
+  inline?: boolean;
+  id: string;
+  compact: boolean;
+  busy: boolean;
+  act: BoardAct;
+  recordNotice: RecordNoticeValue | null;
+  setRecordNotice: (notice: RecordNoticeValue | null) => void;
+  laneName: (key: string) => string;
+  onClose: () => void;
+  c: Colors;
+}) {
+  const fetchPapercut = useRpc(api.papercutGet),
+    editPapercut = useRpc(api.papercutEdit),
+    promotePapercut = useRpc(api.papercutPromoteTask),
+    closePapercut = useRpc(api.papercutClose);
+  const parkLead = useRpc(api.leadPark),
+    unparkLead = useRpc(api.leadUnpark);
+  const [closeNote, setCloseNote] = useState("");
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
-  const [papercutComplexity, setPapercutComplexity] = useState<CapabilityLevel | null>(null);
-  const [papercutEditing,setPapercutEditing] = useState(false);
-  const [papercutEdit,setPapercutEdit] = useState({title:"",area:"",happened:"",impact:"",fix:""});
-  const papercutDetailQuery = useQuery({queryKey:["nucleus","papercut",openPapercutId],queryFn:()=>fetchPapercut({id:openPapercutId!}),enabled:Boolean(openPapercutId),refetchInterval:4000});
+  const [papercutComplexity, setPapercutComplexity] =
+    useState<CapabilityLevel | null>(null);
+  const [papercutEditing, setPapercutEditing] = useState(false);
+  const [papercutEdit, setPapercutEdit] = useState({
+    title: "",
+    area: "",
+    happened: "",
+    impact: "",
+    fix: "",
+  });
+  const papercutDetailQuery = useQuery({
+    queryKey: ["nucleus", "papercut", openPapercutId],
+    queryFn: () => fetchPapercut({ id: openPapercutId! }),
+    enabled: Boolean(openPapercutId),
+    refetchInterval: 4000,
+  });
   const papercutDetail = papercutDetailQuery.data;
   useEffect(() => {
-    if (papercutDetail && !papercutEditing) setPapercutEdit({ title: papercutDetail.title, area: papercutDetail.area ?? "", happened: papercutDetail.happened, impact: papercutDetail.impact, fix: papercutDetail.fix ?? "" });
-  }, [papercutDetail?.id, papercutDetail?.version, papercutEditing, openPapercutId]);
+    if (papercutDetail && !papercutEditing)
+      setPapercutEdit({
+        title: papercutDetail.title,
+        area: papercutDetail.area ?? "",
+        happened: papercutDetail.happened,
+        impact: papercutDetail.impact,
+        fix: papercutDetail.fix ?? "",
+      });
+  }, [
+    papercutDetail?.id,
+    papercutDetail?.version,
+    papercutEditing,
+    openPapercutId,
+  ]);
   // Each papercut starts with no complexity chosen.
-  useEffect(() => { setPapercutComplexity(null); }, [papercutDetail?.id]);
+  useEffect(() => {
+    setPapercutComplexity(null);
+  }, [papercutDetail?.id]);
   return (
     <RecordModal
       label="Papercut detail"
@@ -50,7 +124,10 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
       {papercutDetailQuery.error && (
         <Text
           accessibilityRole="alert"
-          style={{ color: c.statusDanger, fontSize: typeScale.metadata.fontSize }}
+          style={{
+            color: c.statusDanger,
+            fontSize: typeScale.metadata.fontSize,
+          }}
         >
           {String(papercutDetailQuery.error)}
         </Text>
@@ -108,8 +185,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   text="Save changes"
                   busy={busy}
                   disabled={
-                    !papercutEdit.title.trim() ||
-                    !papercutEdit.happened.trim()
+                    !papercutEdit.title.trim() || !papercutEdit.happened.trim()
                   }
                   c={c}
                   onPress={() =>
@@ -211,9 +287,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   />
                   <DetailField
                     label="Date"
-                    value={new Date(
-                      papercutDetail.filedAt,
-                    ).toLocaleString()}
+                    value={new Date(papercutDetail.filedAt).toLocaleString()}
                     c={c}
                     compact={compact}
                   />
@@ -272,11 +346,69 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                     }
                   />
                 </View>
+                {/* Nucleus#1543: a papercut parks like a lead; an open one can park, and a parked one unparks. */}
+                <View style={{ gap: space.xs, paddingTop: space.xxs }}>
+                  <Text
+                    style={{
+                      ...muted(c),
+                      fontSize: typeScale.metadata.fontSize,
+                    }}
+                  >
+                    Parking
+                  </Text>
+                  <ParkPanel
+                    c={c}
+                    busy={busy}
+                    parked={papercutDetail.parked ?? null}
+                    recheck={papercutDetail.recheck ?? null}
+                    canPark={papercutDetail.state === "open"}
+                    parkReason={
+                      papercutDetail.state === "open"
+                        ? null
+                        : "Only open papercuts can be parked"
+                    }
+                    unparkReason={null}
+                    onPark={(reason, revisitAt) =>
+                      void act(async () => {
+                        await parkLead({
+                          id: papercutDetail.id,
+                          version: papercutDetail.version,
+                          reason,
+                          revisitAt,
+                          author: "operator (board)",
+                        });
+                        setRecordNotice({
+                          kind: "ok",
+                          text: revisitAt
+                            ? "Parked; it returns to the list for its recheck."
+                            : "Parked.",
+                        });
+                      }, "record")
+                    }
+                    onUnpark={() =>
+                      void act(async () => {
+                        await unparkLead({
+                          id: papercutDetail.id,
+                          version: papercutDetail.version,
+                        });
+                        setRecordNotice({
+                          kind: "ok",
+                          text: "Back on the to-do list.",
+                        });
+                      }, "record")
+                    }
+                  />
+                </View>
                 {papercutDetail.state === "open" && (
                   <View style={{ gap: space.xs, paddingTop: space.xxs }}>
-                    <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-                      Complexity for the promoted task (sets how capable
-                      a model each run needs)
+                    <Text
+                      style={{
+                        ...muted(c),
+                        fontSize: typeScale.metadata.fontSize,
+                      }}
+                    >
+                      Complexity for the promoted task (sets how capable a model
+                      each run needs)
                     </Text>
                     <View style={row}>
                       {(
@@ -302,7 +434,12 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   </View>
                 )}
                 <View style={{ gap: space.xs, paddingTop: space.xxs }}>
-                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+                  <Text
+                    style={{
+                      ...muted(c),
+                      fontSize: typeScale.metadata.fontSize,
+                    }}
+                  >
                     Close note
                   </Text>
                   <TextInput

@@ -72,7 +72,7 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
   assert.equal(ui.ofType("Modal").length, 0, "a popover at the wide size");
   assert.equal(
     ui.get(/^Project consumer-b-v2/).props.accessibilityLabel,
-    "Project consumer-b-v2, 0 tasks",
+    "Project consumer-b-v2, 0 active, 0 in total",
     "the zero total is included in the accessible project name",
   );
   // A plain click from empty selects one project and closes the picker.
@@ -276,7 +276,7 @@ test("026-14b rendered: single-select, Clear back to all, and one top row of sea
       .all(/^Project /)
       .filter((node) => node.props.accessibilityRole === "checkbox")
       .map((node) => node.props.accessibilityLabel),
-    ["Project project-a-accelerator, 0 tasks"],
+    ["Project project-a-accelerator, 0 active, 0 in total"],
   );
   ui.type("Filter projects", "");
   // Clear empties the selection, so every project shows at once, and the picker stays open.
@@ -845,7 +845,7 @@ test("1476: the board's selector commits the selection it reports; the other sco
   );
 });
 
-test("1529 rendered: the picker lists each group by task count, then last activity, then name, in the popover and the modal", async () => {
+test("1544 rendered: the picker shows active / total counts, sorts by total and keeps the count in Rename", async () => {
   const { ProjectSelector } = await load();
   const now = Date.parse("2026-11-22T12:00:00.000Z");
   const iso = (ms: number) => new Date(ms).toISOString();
@@ -854,6 +854,30 @@ test("1529 rendered: the picker lists each group by task count, then last activi
     { repository: "owner/other", repoPath: "/other", phase: "working" },
     { repository: "owner/consumer", repoPath: "/consumer", phase: "working" },
   ] as unknown as TaskSummary[];
+  const leads = [
+    ...["other-lead-1", "other-lead-2"].map((id) => ({
+      id,
+      title: id,
+      state: "open",
+      lanes: [],
+      repositories: [repo("other")],
+    })),
+    {
+      id: "consumer-lead",
+      title: "Consumer lead",
+      state: "open",
+      lanes: [],
+      repositories: [repo("consumer")],
+    },
+    {
+      id: "project-a-papercut",
+      title: "Project A papercut",
+      state: "open",
+      lanes: [],
+      repositories: [repo("project-a")],
+      tags: ["papercut"],
+    },
+  ] as unknown as Lead[];
   const activity = ["other", "consumer-b-v2"].map((key) => ({
     key,
     items: [
@@ -862,9 +886,9 @@ test("1529 rendered: the picker lists each group by task count, then last activi
     ],
   }));
   const order = [
-    "Project other, 2 tasks",
-    "Project consumer-b-v2, 1 tasks",
-    "Project project-a-accelerator, 0 tasks",
+    "Project other, 2 active, 4 in total",
+    "Project consumer-b-v2, 1 active, 2 in total",
+    "Project project-a-accelerator, 0 active, 1 in total",
   ];
   // The wide and medium headers share the popover; the narrow header opens the modal.
   for (const compact of [false, true]) {
@@ -872,7 +896,8 @@ test("1529 rendered: the picker lists each group by task count, then last activi
       h(ProjectSelector, {
         projects,
         tasks,
-        leads: [],
+        leads,
+        projectActions: { rename: () => Promise.resolve() },
         projectActivity: activity,
         value: [],
         onChange: () => {},
@@ -898,5 +923,14 @@ test("1529 rendered: the picker lists each group by task count, then last activi
         ? "the modal keeps the row order"
         : "the popover keeps the row order",
     );
+    assert.match(ui.text(), /2 \/ 4/);
+    assert.match(ui.text(), /1 \/ 2/);
+    assert.match(ui.text(), /0 \/ 1/);
+    if (!compact) {
+      ui.press("Project actions for other");
+      ui.press("Rename other");
+      assert.ok(ui.get("Name for other"));
+      assert.match(ui.text(), /2 \/ 4/, "Rename keeps the active / total count");
+    }
   }
 });

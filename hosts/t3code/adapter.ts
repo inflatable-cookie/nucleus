@@ -65,6 +65,7 @@ import {
   config,
   optionDescriptor,
   T3CompatibilityError,
+  T3ConnectionRefusalError,
   runtimeModes,
   defaultRuntimeMode,
   type RuntimeMode,
@@ -473,11 +474,11 @@ export class T3CodeHost implements Host {
   /** The authenticated connection this durable identity proved, or a typed refusal. */
   private requireConnection() {
     if (!this.connected)
-      throw new T3CompatibilityError(
+      throw new T3ConnectionRefusalError(
         "authenticated host connection is unavailable",
       );
     if (this.state.read().hostId !== this.hostId)
-      throw new T3CompatibilityError("durable host identity changed");
+      throw new T3ConnectionRefusalError("durable host identity changed");
   }
   async profiles(): Promise<Profile[]> {
     return [];

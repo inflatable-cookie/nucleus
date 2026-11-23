@@ -534,6 +534,7 @@ export type ResultApplicationContext = Pick<
   | "hooks"
   | "host"
   | "lease"
+  | "leaseDeclineText"
   | "openPlannerEscalation"
   | "ordinaryRoundCustody"
   | "ownedToolHold"
@@ -557,6 +558,20 @@ export class ResultApplication {
   }
   get adapter() {
     return this.resolution.adapter;
+  }
+  /**
+   * A participant still in its turn holds a result's application, and that hold
+   * is a visible wait like every launch's lease decline (nucleus#1100). Silent,
+   * it left a released revision's ready result in changes_requested with no run,
+   * stop or wait for 20 minutes while its worker's thread stayed active
+   * (bovine-accelerator#6935, Spec 068 §4).
+   */
+  private leaseDeclineWait(taskId: string) {
+    return (agentId: string, state: Parameters<ResultApplicationContext["leaseDeclineText"]>[2]) => {
+      if (settlementHeld(this.store, this.resolution.stopped())) return;
+      const current = this.store.task(taskId);
+      this.resolution.waiting(current, this.resolution.leaseDeclineText(current, agentId, state), "lifecycle");
+    };
   }
   /** Verify a recorded publication and commit its verdict, with no publish or dispatch. */
   async applyPublishedReview(
@@ -868,7 +883,7 @@ export class ResultApplication {
           : null;
       const leased = await this.resolution.lease(
         t,
-        undefined,
+        this.leaseDeclineWait(t.id),
         recoveryRunId ?? undefined,
       );
       if (!leased || settlementHeld(this.store, this.resolution.stopped()))
@@ -1209,7 +1224,7 @@ export class ResultApplication {
       return;
     }
     if (
-      !(await this.resolution.lease(t, undefined, run.id)) ||
+      !(await this.resolution.lease(t, this.leaseDeclineWait(t.id), run.id)) ||
       settlementHeld(this.store, this.resolution.stopped())
     )
       return;
