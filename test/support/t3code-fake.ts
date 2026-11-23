@@ -727,6 +727,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     disconnectMutation: false,
     disconnectAfterEffect: false,
     archiveChecksDelegatedTasks: false,
+    archiveClearsDelegation: true,
     rejectedArchives: [] as string[],
     /** A launch thread commits, then its reply is lost to a dropped socket. */
     disconnectAfterLaunch: false,
@@ -1863,6 +1864,26 @@ export async function t3Fake(t: TestContext, directory: string) {
                 });
               }
               p.thread.archivedAt = STAMP;
+              if (controls.archiveClearsDelegation && p.thread.lineage?.parentThreadId) {
+                const parent = threads.get(p.thread.lineage.parentThreadId);
+                for (const task of parent?.subagents ?? []) {
+                  if (
+                    task.origin !== "app_owned" ||
+                    task.childThreadId !== payload.threadId ||
+                    !["pending", "running", "waiting"].includes(task.status)
+                  )
+                    continue;
+                  task.status = "failed";
+                  const item = parent?.turnItems.find(
+                    (row: Value) => row.subagentId === task.id,
+                  );
+                  if (item) item.status = "failed";
+                }
+                if (parent?.pendingBackgroundTasks)
+                  parent.pendingBackgroundTasks = parent.pendingBackgroundTasks.filter(
+                    (task: Value) => task.childThreadId !== payload.threadId,
+                  );
+              }
               break;
             }
             case "queued-run.cancel": {
@@ -1874,27 +1895,6 @@ export async function t3Fake(t: TestContext, directory: string) {
                 (row: Value) => row.id === p.thread.forkedFrom?.nodeId,
               );
               if (task && run.ordinal === 1) task.status = "cancelled";
-              break;
-            }
-            case "subagent.stop": {
-              const task = p.subagents?.find(
-                (row: Value) =>
-                  row.id === payload.subagentId && row.runId === payload.runId,
-              );
-              assert.equal(task?.origin, "app_owned");
-              const child = threads.get(task.childThreadId);
-              if (
-                child?.thread.forkedFrom?.nodeId !== task.id &&
-                !child?.runs.some(
-                  (run: Value) => run.delegatedTaskId === task.id,
-                )
-              ) {
-                task.status = "cancelled";
-                const item = p.turnItems.find(
-                  (row: Value) => row.subagentId === task.id,
-                );
-                if (item) item.status = "cancelled";
-              }
               break;
             }
             case "thread.unarchive":

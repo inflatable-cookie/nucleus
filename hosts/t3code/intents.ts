@@ -539,6 +539,15 @@ export class T3IntentLedger {
                     : "T3Code send fence refused before delivery",
               )
             : null;
+      if (refusal && prior?.status === "unknown") {
+        // This attempt did not send. An earlier delivery can still have landed.
+        // Keep its exact wire and late-reply fence for the next read.
+        state.update((current) => {
+          if (current.intents[key]?.status === "unknown")
+            current.intents[key] = prior;
+        });
+        throw new HostUnknownDeliveryError(prior.diagnostic);
+      }
       if (refusal)
         state.update((current) => {
           if (current.intents[key]?.status !== "moot")

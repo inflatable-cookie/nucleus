@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { T3CodeHost, type T3CodeConfig } from "../hosts/t3code/adapter";
 import { PARENT_MODEL, PARENT_PROVIDER } from "../hosts/t3code/nesting";
 import { identity } from "../hosts/t3code/intents";
+import { T3RpcError } from "../hosts/t3code/rpc";
 import { canonical } from "../hosts/t3code/state";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import type { HostAgentSpec } from "../shared/host";
@@ -161,6 +162,8 @@ const finishChildren = (host: T3CodeHost, server: Server) => {
     if (!thread) continue;
     for (const run of thread.runs)
       if (run.status === "running") run.status = "completed";
+    // The ordinary terminal role cleanup has already archived these children.
+    thread.thread.archivedAt = STAMP;
   }
   for (const thread of server.threads.values())
     for (const task of thread.subagents ?? []) task.status = "completed";
@@ -422,19 +425,46 @@ test("a retired child with held initial work cannot strand a rejected parent arc
 
   child.runs[0]!.queueHeld = true;
   server.controls.shellStatuses[childId] = "idle";
+  const call = host.rpc.call.bind(host.rpc);
+  const refusal = t.mock.method(
+    host.rpc,
+    "call",
+    async (method: string, payload: unknown) => {
+      if (method === "orchestration.dispatchCommand")
+        throw new T3RpcError("transport", method, undefined, "not_sent");
+      return call(method, payload);
+    },
+  );
+  const withheld = await host.reconcileFinishedParents([task]);
+  assert.equal(withheld[0]!.state, "unknown");
+  assert.equal(host.state.read().intents[dispose]!.status, "unknown");
+  assert.equal(host.state.read().intents[dispose]!.timedOut, true);
+  refusal.mock.restore();
+
   const beforeClearing = server.commands.length;
   const clearing = await host.reconcileFinishedParents([task]);
   assert.equal(clearing[0]!.state, "unobserved");
   assert.equal(delegated.completionDelivery.state, "disposed");
   assert.deepEqual(
     since(server, beforeClearing).map((command) => command.type),
-    ["delegated_task.completion-delivery.dispose", "queued-run.cancel"],
+    ["delegated_task.completion-delivery.dispose"],
   );
   assert.deepEqual(
     commandsOf(server, "delegated_task.completion-delivery.dispose").map(
       (command) => command.commandId,
     ),
     [dispose, dispose],
+  );
+  child.runs[0]!.queueHeld = false;
+  assert.match(
+    (await host.reconcileFinishedParents([task]))[0]!.reason,
+    /active work/,
+  );
+  assert.equal(commandsOf(server, "queued-run.cancel").length, 0);
+  child.runs[0]!.queueHeld = true;
+  assert.match(
+    (await host.reconcileFinishedParents([task]))[0]!.reason,
+    /held child run cancelled/,
   );
   assert.equal(child.runs[0]!.status, "cancelled");
   assert.deepEqual(
@@ -443,12 +473,18 @@ test("a retired child with held initial work cannot strand a rejected parent arc
   );
   assert.equal(commandsOf(server, "thread.archive").length, 0);
 
+  assert.match(
+    (await host.reconcileFinishedParents([task]))[0]!.reason,
+    /show the child archived/,
+  );
+  assert.equal(child.thread.archivedAt, STAMP);
   const replay = await host.reconcileFinishedParents([task]);
   assert.equal(replay[0]!.state, "unknown");
-  assert.deepEqual(
-    commandsOf(server, "thread.archive").map((command) => command.commandId),
-    [rejected],
-  );
+  const parentArchives = () =>
+    commandsOf(server, "thread.archive")
+      .filter((command) => command.threadId === parent.threadId)
+      .map((command) => command.commandId);
+  assert.deepEqual(parentArchives(), [rejected]);
   host.close();
 
   const rolled = new T3CodeHost(options);
@@ -459,10 +495,7 @@ test("a retired child with held initial work cannot strand a rejected parent arc
   const successor =
     rolled.state.read().parents![parent.taskId]!.archiveCommandId;
   assert.ok(successor && successor !== rejected);
-  assert.deepEqual(
-    commandsOf(server, "thread.archive").map((command) => command.commandId),
-    [rejected, successor],
-  );
+  assert.deepEqual(parentArchives(), [rejected, successor]);
   assert.equal(commandsOf(server, "thread.settle").length, 0);
 });
 
@@ -473,7 +506,6 @@ test("an idle child with background work or a pending user question keeps the ar
   const childId = remote.subagents[0]!.childThreadId;
   const child = server.threads.get(childId)!;
   child.runs = [];
-  child.thread.forkedFrom = null;
   child.pendingBackgroundTasks = [];
   child.turnItems = [
     syntheticTurnItem(childId, 1, {
@@ -517,19 +549,22 @@ test("an idle child with background work or a pending user question keeps the ar
     (await host.reconcileFinishedParents([task]))[0]!.state,
     "unobserved",
   );
-  assert.equal(commandsOf(server, "subagent.stop").length, 1);
+  assert.deepEqual(
+    commandsOf(server, "thread.archive").map((command) => command.threadId),
+    [childId],
+  );
   assert.deepEqual(await host.reconcileFinishedParents([task]), []);
   assert.equal(remote.thread.archivedAt, STAMP);
 });
 
-test("a pending background item for an idle orphan clears through the delegated record", async (t) => {
+test("a finished fork-linked child is archived before the parent's stale delegation clears", async (t) => {
   const { server, host, parentFor } = await fixture(t);
   const parent = await parentFor();
   const remote = server.threads.get(parent.threadId)!;
   const delegated = remote.subagents[0]!;
   const child = server.threads.get(delegated.childThreadId)!;
-  child.runs = [];
-  child.thread.forkedFrom = null;
+  child.runs[0]!.status = "completed";
+  assert.equal(child.thread.forkedFrom.nodeId, delegated.id);
   remote.turnItems.push({
     id: delegated.id.replace("node:", "turn-item:"),
     runId: delegated.runId,
@@ -551,17 +586,158 @@ test("a pending background item for an idle orphan clears through the delegated 
     (await host.reconcileFinishedParents([task]))[0]!.state,
     "unobserved",
   );
-  assert.equal(delegated.status, "cancelled");
-  assert.equal(commandsOf(server, "subagent.stop").length, 1);
+  assert.equal(child.thread.archivedAt, STAMP);
+  assert.equal(delegated.status, "failed");
+  assert.deepEqual(remote.pendingBackgroundTasks, []);
+  assert.equal(remote.thread.archivedAt, null);
   assert.deepEqual(await host.reconcileFinishedParents([task]), []);
   assert.equal(remote.thread.archivedAt, STAMP);
+  assert.deepEqual(
+    commandsOf(server, "thread.archive").map((command) => command.threadId),
+    [delegated.childThreadId, parent.threadId],
+  );
   assert.equal(commandsOf(server, "thread.settle").length, 0);
+});
+
+test("an archived child with a surviving live delegation names the wait without another send", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  const remote = server.threads.get(parent.threadId)!;
+  const childId = remote.subagents[0]!.childThreadId;
+  const child = server.threads.get(childId)!;
+  child.runs[0]!.status = "completed";
+  server.controls.archiveClearsDelegation = false;
+  const task = doneTask(host);
+  await host.reconcileFinishedParents([task]);
+  assert.equal(child.thread.archivedAt, STAMP);
+
+  const waits = await host.reconcileFinishedParents([task]);
+  assert.match(
+    waits[0]!.reason,
+    /live delegated record for the archived child/,
+  );
+  assert.deepEqual(
+    commandsOf(server, "thread.archive").map((command) => command.threadId),
+    [childId],
+  );
+  remote.subagents[0]!.status = "completed";
+  assert.deepEqual(await host.reconcileFinishedParents([task]), []);
+  assert.equal(remote.thread.archivedAt, STAMP);
+});
+
+test("disposal admission refusal retries from a fresh parent read under the same command ID", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  const remote = server.threads.get(parent.threadId)!;
+  const delegated = remote.subagents[0]!;
+  const child = server.threads.get(delegated.childThreadId)!;
+  child.runs = [
+    syntheticRun(child.thread.id, 1, {
+      status: "queued",
+      queueHeld: true,
+      delegatedTaskId: delegated.id,
+    }),
+  ];
+  const type = "delegated_task.completion-delivery.dispose";
+  const commandId = commandsOf(server, type)[0]!.commandId;
+  delegated.completionDelivery = { state: "pending", observedByRunId: null };
+  host.state.update((state) => {
+    delete state.intents[commandId];
+  });
+  const call = host.rpc.call.bind(host.rpc);
+  const refusal = t.mock.method(
+    host.rpc,
+    "call",
+    async (method: string, payload: unknown) => {
+      if (method === "orchestration.dispatchCommand")
+        throw new T3RpcError("transport", method, undefined, "not_sent");
+      return call(method, payload);
+    },
+  );
+  const task = doneTask(host);
+  assert.equal(
+    (await host.reconcileFinishedParents([task]))[0]!.state,
+    "refused",
+  );
+  assert.equal(host.state.read().intents[commandId]!.status, "refused");
+  assert.equal(commandsOf(server, type).length, 1);
+  refusal.mock.restore();
+
+  await host.reconcileFinishedParents([task]);
+  assert.deepEqual(
+    commandsOf(server, type).map((command) => command.commandId),
+    [commandId, commandId],
+  );
+  assert.equal(commandsOf(server, "queued-run.cancel").length, 0);
+  await host.reconcileFinishedParents([task]);
+  assert.equal(commandsOf(server, "queued-run.cancel").length, 1);
+});
+
+test("the final parent read fences work that appeared after release and child inspection", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  finishChildren(host, server);
+  const remote = server.threads.get(parent.threadId)!;
+  const read = host.reads.readDirectProjection.bind(host.reads);
+  let parentReads = 0;
+  t.mock.method(
+    host.reads,
+    "readDirectProjection",
+    async (...[id, kind, fresh]: Parameters<typeof read>) => {
+      if (id === parent.threadId && ++parentReads === 2) {
+        assert.equal(fresh, true);
+        remote.runs.push(
+          syntheticRun(id, 2, { status: "queued", queueHeld: true }),
+        );
+      }
+      return read(id, kind, fresh);
+    },
+  );
+  const task = doneTask(host);
+  const waits = await host.reconcileFinishedParents([task]);
+  assert.match(waits[0]!.reason, /active or queued run/);
+  assert.equal(commandsOf(server, "thread.archive").length, 0);
+
+  remote.runs.at(-1)!.status = "completed";
+  remote.runtimeRequests = [syntheticRuntimeRequest()];
+  assert.match(
+    (await host.reconcileFinishedParents([task]))[0]!.reason,
+    /pending runtime request/,
+  );
+  assert.equal(commandsOf(server, "thread.archive").length, 0);
+  remote.runtimeRequests[0]!.status = "resolved";
+  assert.deepEqual(await host.reconcileFinishedParents([task]), []);
+});
+
+test("an archive result cannot mark a replacement binding settled", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  finishChildren(host, server);
+  const call = host.rpc.call.bind(host.rpc);
+  t.mock.method(host.rpc, "call", async (method: string, payload: unknown) => {
+    const result = await call(method, payload);
+    if (method === "orchestration.dispatchCommand") {
+      host.state.update((state) => {
+        state.parents![parent.taskId] = {
+          ...state.parents![parent.taskId]!,
+          threadId: "synthetic-replacement",
+        };
+      });
+    }
+    return result;
+  });
+  const waits = await host.reconcileFinishedParents([doneTask(host)]);
+  assert.match(waits[0]!.reason, /binding.*changed/);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, STAMP);
+  const current = host.state.read().parents![parent.taskId]!;
+  assert.equal(current.threadId, "synthetic-replacement");
+  assert.equal(current.archivedAt, undefined);
+  assert.equal(current.archive, undefined);
 });
 
 test("a nonterminal task, a shared binding and a role thread are never archived", async (t) => {
   const { server, host, parentFor } = await fixture(t);
   const parent = await parentFor();
-  finishChildren(host, server);
   const child = Object.keys(host.state.read().agents)[0]!;
 
   // A twin record claims the same thread: neither is a proved single identity.

@@ -78,10 +78,6 @@
       "required": ["type", "commandId", "threadId", "runId"],
       "optional": []
     },
-    "subagent.stop": {
-      "required": ["type", "commandId", "threadId", "runId", "subagentId"],
-      "optional": []
-    },
     "thread.unarchive": {
       "required": [
         "type",

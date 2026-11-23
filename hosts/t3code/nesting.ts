@@ -136,6 +136,41 @@ type ConfigModel = z.infer<
 >["providers"][number]["models"][number];
 type ConfigProvider = z.infer<typeof config>["providers"][number];
 type ParentThread = NonNullable<T3State["parents"]>[string];
+type DelegatedChild = NonNullable<Projection["subagents"]>[number];
+type ParentArchiveCommand =
+  | { type: "thread.archive"; threadId: string }
+  | { type: "queued-run.cancel"; threadId: string; runId: string }
+  | {
+      type: "delegated_task.completion-delivery.dispose";
+      parentThreadId: string;
+      taskId: string;
+    };
+type ArchiveStep =
+  | { kind: "wait"; reason: string }
+  | {
+      kind: "send";
+      key: string;
+      command: ParentArchiveCommand;
+      childId: string;
+      reason: string;
+    };
+
+/** Match the captured launch binding across state writes and service reads. */
+function archiveBinding(state: T3State, parent: ParentThread) {
+  const current = state.parents?.[parent.taskId];
+  if (
+    current?.taskId === parent.taskId &&
+    current.threadId === parent.threadId &&
+    current.projectId === parent.projectId &&
+    current.workspaceId === parent.workspaceId &&
+    current.directory === parent.directory &&
+    current.sessionId === parent.sessionId &&
+    current.bindingPath === parent.bindingPath &&
+    current.launchCommandId === parent.launchCommandId &&
+    current.createdAt === parent.createdAt
+  )
+    return current;
+}
 
 /** A task Nucleus will not run again: removed, done or cancelled. */
 const terminalTask = (task: Task): boolean =>
@@ -144,6 +179,21 @@ const terminalTask = (task: Task): boolean =>
 /** T3's work statuses for a delegated record or a background turn item. */
 const activeWork = (status: unknown): boolean =>
   status === "pending" || status === "running" || status === "waiting";
+
+const pendingRuntimeRequest = (projection: Projection) =>
+  projection.runtimeRequests.some((request) => request.status === "pending");
+
+/** Only the parts of a delegated record that can change this pass's decision. */
+const archiveDelegations = (projection: Projection) =>
+  canonical(
+    (projection.subagents ?? []).map((child) => [
+      child.id,
+      child.origin,
+      child.childThreadId,
+      child.status,
+      child.completionDelivery?.state,
+    ]),
+  );
 
 /**
  * One bounded, remote-text-free reason for a finished parent's archive attempt
@@ -883,13 +933,15 @@ export class T3Nesting {
       )
       .slice(0, PARENT_ARCHIVE_BATCH);
     const waits: ParentArchiveWait[] = [];
-    for (const [taskId, parent] of due) {
+    for (const [taskId, binding] of due) {
+      const parent = { ...binding };
       let wait: ParentArchiveWait | null;
       try {
         wait = await this.settleFinishedParent(
           terminal.get(taskId)!,
           parent,
           (claims.get(parent.threadId) ?? 0) > 1,
+          lookup,
         );
       } catch (error) {
         // A host timeout is this pass's own answer; every other fault stays this
@@ -902,23 +954,18 @@ export class T3Nesting {
           reason: `the parent archive state could not be read: ${parentArchiveDetail(error)}`,
         };
       }
-      this.recordParentArchiveAttempt(parent.taskId, wait);
+      this.recordParentArchiveAttempt(parent, wait);
       if (wait) waits.push(wait);
     }
     return waits;
   }
 
-  /**
-   * Settle one finished task's parent archive: release the held turn, then archive the
-   * same thread through its durable intent and observe it archived before the
-   * obligation is settled. A recorded intent whose delivery is unknown is read, never
-   * resent blind — an archived thread settles it, and a live one is the fresh positive
-   * read that lets the same command replay under its own identity.
-   */
+  /** A pass sends at most one mutation. Its next decision starts with new observations. */
   private async settleFinishedParent(
     task: Task,
     parent: ParentThread,
     shared: boolean,
+    lookup?: (taskId: string) => Task | null,
   ): Promise<ParentArchiveWait | null> {
     const wait = (
       state: ParentArchiveWait["state"],
@@ -929,19 +976,15 @@ export class T3Nesting {
       state,
       reason,
     });
-    if (parent.taskId !== task.id)
-      return wait(
-        "mismatched",
-        "the durable parent binding does not name this task",
-      );
+    const state = this.core.state.read();
+    const binding = archiveBinding(state, parent);
+    if (!binding || parent.taskId !== task.id)
+      return wait("mismatched", "the durable parent binding changed");
     if (shared)
       return wait(
         "mismatched",
         "the durable parent thread is claimed by more than one task",
       );
-    const state = this.core.state.read();
-    // Only the exact parent thread of exactly this task: never the Inbox, an agent
-    // thread or a follow-up child (nucleus#1459 — no planner or personal thread).
     if (
       !parent.threadId ||
       parent.threadId === state.inbox?.threadId ||
@@ -953,118 +996,229 @@ export class T3Nesting {
         "mismatched",
         "the durable parent thread is not this task's parent thread",
       );
-    // A parent this host removed owes nothing; its binding is forgotten, never re-sent.
+    const stillTerminal = () => {
+      const latest = lookup ? lookup(task.id) : task;
+      return (
+        latest?.hostId === this.core.hostId() &&
+        terminalTask(latest) &&
+        !isDispositionActive(latest)
+      );
+    };
+    if (!stillTerminal())
+      return wait("unobserved", "the task changed before parent archive");
     if (this.core.intents.confirmedDeletion(state, parent.threadId)) {
-      this.forgetParent(task.id);
+      this.core.state.update((current) => {
+        if (archiveBinding(current, parent)) delete current.parents![task.id];
+      });
       return null;
     }
-    let observed: Awaited<ReturnType<T3Nesting["classifyParent"]>>;
-    try {
-      observed = await this.classifyParent(parent, true);
-    } catch (error) {
-      if (isHostOperationTimeout(error)) throw error;
-      return wait(
-        "read_failed",
-        `the parent's own archive state could not be read: ${parentArchiveDetail(error)}`,
-      );
-    }
+
+    if (binding.holdingSince || !binding.releasedAt) await this.release(parent);
+    const releasedAt = archiveBinding(
+      this.core.state.read(),
+      parent,
+    )?.releasedAt;
+    const currentBinding = () => {
+      const currentState = this.core.state.read();
+      const current = archiveBinding(currentState, parent);
+      return current &&
+        !current.archivedAt &&
+        !current.holdingSince &&
+        current.releasedAt === releasedAt &&
+        stillTerminal() &&
+        parent.threadId !== currentState.inbox?.threadId &&
+        !currentState.agents[parent.threadId] &&
+        !currentState.retiredAgents?.[parent.threadId] &&
+        !currentState.followUps?.[parent.threadId] &&
+        !Object.entries(currentState.parents ?? {}).some(
+          ([otherId, other]) =>
+            otherId !== task.id && other.threadId === parent.threadId,
+        )
+        ? current
+        : undefined;
+    };
+    const changed = "the parent binding, task or released hold changed";
+    const observed = await this.classifyParent(parent, true);
+    if (!currentBinding()) return wait("unobserved", changed);
     if (observed.kind === "mismatched")
       return wait(
         "mismatched",
         "the parent thread no longer reports this task's checkout and provider",
       );
-    if (observed.kind === "archived" || observed.kind === "deleted") {
-      this.observeParentArchiveSettled(task.id);
+    if (observed.kind !== "live") {
+      this.observeParentArchiveSettled(parent);
       return null;
     }
-    // A finished task creates no further child, so its held turn is released at once —
-    // the create grace window is for live work and must never keep a terminal thread
-    // busy against the closeout lane (nucleus#1366). The release is a local ACP call, so
-    // a thread that left observation is still released.
-    await this.release(parent);
+    const busy = this.parentArchiveBusy(observed.projection);
+    if (busy) return wait("unobserved", busy);
+
     try {
-      const pending = observed.projection.subagents?.find(
-        (child) =>
-          child.origin === "app_owned" &&
-          child.childThreadId &&
-          activeWork(child.status),
-      );
-      if (pending) {
-        const reason = await this.reconcileArchiveChild(parent, pending);
-        return wait("unobserved", reason);
+      let childStep: Extract<ArchiveStep, { kind: "send" }> | undefined;
+      let blocked: string | undefined;
+      const checkedChildren = new Set<string>();
+      for (const child of observed.projection.subagents ?? []) {
+        if (child.origin !== "app_owned" || !child.childThreadId) {
+          if (activeWork(child.status))
+            blocked ??= "the parent still has live delegated work";
+          continue;
+        }
+        // A child can have several delegated records. Each live record must clear,
+        // but a historical record cannot authorize the same child write twice.
+        if (
+          checkedChildren.has(child.childThreadId) &&
+          !activeWork(child.status)
+        )
+          continue;
+        checkedChildren.add(child.childThreadId);
+        const step = await this.planArchiveChild(
+          parent,
+          child,
+          child.childThreadId,
+        );
+        if (step?.kind === "send") {
+          childStep = step;
+          break;
+        }
+        if (step?.kind === "wait") blocked ??= step.reason;
       }
-      let key =
-        parent.archiveCommandId ??
+      if (!childStep && blocked) return wait("unobserved", blocked);
+
+      // The child reads can take time. Read the parent again at the dispatch gate
+      // and use the child plan only while the records that authorized it are the same.
+      const latest = await this.classifyParent(parent, true);
+      const current = currentBinding();
+      if (!current) return wait("unobserved", changed);
+      if (latest.kind === "mismatched")
+        return wait(
+          "mismatched",
+          "the parent thread no longer reports this task's checkout and provider",
+        );
+      if (latest.kind !== "live") {
+        this.observeParentArchiveSettled(parent);
+        return null;
+      }
+      const stillBusy = this.parentArchiveBusy(latest.projection);
+      if (stillBusy) return wait("unobserved", stillBusy);
+      if (
+        archiveDelegations(latest.projection) !==
+        archiveDelegations(observed.projection)
+      )
+        return wait(
+          "unobserved",
+          "the parent delegation changed during the archive check",
+        );
+
+      const beforeSend = () => {
+        if (!currentBinding()) throw new ProvenPreSendRefusalError(changed);
+        if (childStep && !this.ownsArchiveChild(parent, childStep.childId))
+          throw new ProvenPreSendRefusalError(
+            "the delegated child's durable binding changed",
+          );
+      };
+      if (childStep) {
+        const { key, command, reason } = childStep;
+        await this.archiveEffect(key, command, beforeSend);
+        return wait("unobserved", currentBinding() ? reason : changed);
+      }
+
+      const key =
+        current.archiveCommandId ??
         identity(
           "parent-archive",
           canonical([this.core.hostId(), parent.threadId]),
         );
-      // A rejected receipt is immutable. Only T3's reply proving that exact
-      // receipt, followed by a fresh archive read, can authorize a successor.
-      const prior = state.intents[key];
-      if (prior?.status === "unknown" && prior.rejectedReceipt) {
-        key = identity("parent-archive-retry", key);
-        this.core.state.update((current) => {
-          current.parents![task.id].archiveCommandId = key;
+      const next = this.archiveCommandAfterRejection(key);
+      if (next !== key) {
+        this.core.state.update((state) => {
+          const binding = archiveBinding(state, parent);
+          if (binding) binding.archiveCommandId = next;
         });
       }
-      await this.archiveEffect(key, {
-        type: "thread.archive",
-        threadId: parent.threadId,
-      });
+      await this.archiveEffect(
+        next,
+        { type: "thread.archive", threadId: parent.threadId },
+        beforeSend,
+      );
+      if (!currentBinding()) return wait("unobserved", changed);
+      this.observeParentArchiveSettled(parent);
+      return null;
     } catch (error) {
       if (isHostOperationTimeout(error)) throw error;
-      if (
-        !(
-          error instanceof ProvenPreSendRefusalError ||
-          error instanceof HostUnknownDeliveryError
-        )
-      )
-        return wait(
-          "read_failed",
-          `parent archive preparation failed: ${parentArchiveDetail(error)}`,
-        );
       if (error instanceof ProvenPreSendRefusalError)
         return wait(
           "refused",
           `a parent archive step was refused before it was sent: ${parentArchiveDetail(error)}`,
         );
+      if (error instanceof HostUnknownDeliveryError)
+        return wait(
+          "unknown",
+          `a parent archive step has unknown delivery and is read before any repeat: ${parentArchiveDetail(error)}`,
+        );
       return wait(
-        "unknown",
-        `a parent archive step has unknown delivery and is read before any repeat: ${parentArchiveDetail(error)}`,
+        "read_failed",
+        `parent archive preparation failed: ${parentArchiveDetail(error)}`,
       );
     }
-    // The archive's own settled receipt is the observation this obligation needs
-    // (Spec 069 batch 5): T3 accepted `thread.archive` for this exact thread, so no
-    // inventory is read to confirm it. An unknown delivery took the wait above and
-    // is read by its exact id before any repeat.
-    this.observeParentArchiveSettled(task.id);
-    return null;
   }
 
-  /** Clear only idle owned work that T3 still counts against the archive. */
-  private async reconcileArchiveChild(
-    parent: ParentThread,
-    child: NonNullable<Projection["subagents"]>[number],
-  ): Promise<string> {
-    const childId = child.childThreadId!;
+  private parentArchiveBusy(projection: Projection): string | undefined {
+    // T3 represents queued messages by their queued run, including held queues.
+    if (
+      projection.runs.some((run) => activeStatuses.has(run.status)) ||
+      projection.turnItems.some(
+        (item) => item.type === "user_message" && activeWork(item.status),
+      )
+    )
+      return "the parent still has an active or queued run";
+    if (pendingRuntimeRequest(projection))
+      return "the parent still has a pending runtime request";
+  }
+
+  private ownsArchiveChild(parent: ParentThread, childId: string): boolean {
     const state = this.core.state.read();
     const owned =
       state.agents[childId] ??
       state.retiredAgents?.[childId] ??
       state.followUps?.[childId];
-    if (
-      owned?.parentThreadId !== parent.threadId ||
-      labelTask(owned.labels) !== parent.taskId
-    )
-      return "T3 still reports a delegated child outside this task's recorded roles";
+    return (
+      childId !== parent.threadId &&
+      childId !== state.inbox?.threadId &&
+      !this.isParent(childId) &&
+      owned?.parentThreadId === parent.threadId &&
+      labelTask(owned.labels) === parent.taskId
+    );
+  }
+
+  /** Archive each idle owned child and keep waiting while T3 still counts it as live. */
+  private async planArchiveChild(
+    parent: ParentThread,
+    child: DelegatedChild,
+    childId: string,
+  ): Promise<ArchiveStep | null> {
+    const live = activeWork(child.status);
+    const wait = (reason: string): ArchiveStep => ({ kind: "wait", reason });
+    if (!this.ownsArchiveChild(parent, childId))
+      return live
+        ? wait(
+            "T3 still reports live delegated work outside this task's recorded roles",
+          )
+        : null;
 
     const observed = await this.core.reads.readThreadRecord(childId, true);
-    if (observed && !observed.projection)
-      return "the delegated child's exact run state is unavailable";
-    const projection = observed?.projection;
-    const runs = projection?.runs ?? [];
-    const held = runs.find(
+    if (observed?.row.archivedAt)
+      return live
+        ? wait(
+            "T3 still reports a live delegated record for the archived child",
+          )
+        : null;
+    if (!observed || observed.row.deletedAt)
+      return live
+        ? wait("T3 still reports a live delegated record for the missing child")
+        : null;
+    const projection = observed.projection;
+    if (!projection)
+      return wait("the delegated child's exact run state is unavailable");
+    const held = projection.runs.find(
       (run) =>
         run.status === "queued" &&
         run.queueHeld === true &&
@@ -1073,114 +1227,120 @@ export class T3Nesting {
             run.userMessageId === `message:${child.id.slice("node:".length)}`)),
     );
     if (
-      runs.some((run) => run !== held && activeStatuses.has(run.status)) ||
-      projection?.providerThreads?.some(
+      projection.runs.some(
+        (run) => run !== held && activeStatuses.has(run.status),
+      ) ||
+      projection.providerThreads?.some(
         (thread) => thread.pendingBackgroundTasks?.length,
       ) ||
-      projection?.turnItems.some(
+      projection.subagents?.some((task) => activeWork(task.status)) ||
+      projection.turnItems.some(
         (item) =>
           ["command_execution", "dynamic_tool", "subagent"].includes(
             item.type,
           ) && activeWork(item.status),
       ) ||
-      projection?.runtimeRequests.some(
-        (request) => request.status === "pending",
-      ) ||
+      pendingRuntimeRequest(projection) ||
       (await this.core.reads.currentShellRow(childId))?.pendingBackgroundTasks
         ?.length
     )
-      return "the delegated child still has active work";
+      return wait("the delegated child still has active work");
 
     if (held) {
-      // T3 calls this run queued in the projection and idle in the shell. The
-      // held queue will never start on its own. Cancelling the exact run lets
-      // T3 settle the delegated record through its ordinary run update.
       const delivery = child.completionDelivery?.state;
       if (
         delivery === undefined ||
         delivery === "pending" ||
         delivery === "claimed"
       )
-        await this.dispose(parent, child.id, { replayTimedOutAfterRead: true });
-      await this.archiveEffect(
-        identity(
+        return {
+          kind: "send",
+          key: this.disposeCommandId(parent, child.id),
+          command: {
+            type: "delegated_task.completion-delivery.dispose",
+            parentThreadId: parent.threadId,
+            taskId: child.id,
+          },
+          childId,
+          reason:
+            "waiting for T3 to show the child completion delivery disposed",
+        };
+      return {
+        kind: "send",
+        key: identity(
           "parent-archive-queued-run",
           canonical([this.core.hostId(), childId, held.id]),
         ),
-        { type: "queued-run.cancel", threadId: childId, runId: held.id },
-      );
-    } else if (child.runId) {
-      // T3 checks the parent/run/child relation and clears an orphaned record.
-      await this.archiveEffect(
-        identity(
-          "parent-archive-subagent",
-          canonical([this.core.hostId(), parent.threadId, child.id]),
-        ),
-        {
-          type: "subagent.stop",
-          threadId: parent.threadId,
-          runId: child.runId,
-          subagentId: child.id,
+        command: {
+          type: "queued-run.cancel",
+          threadId: childId,
+          runId: held.id,
         },
-      );
+        childId,
+        reason: "waiting for T3 to show the held child run cancelled",
+      };
     }
-    return "waiting for T3 to clear the idle delegated child from the parent";
+    return {
+      kind: "send",
+      key: this.archiveCommandAfterRejection(
+        identity(
+          "parent-archive-child",
+          canonical([this.core.hostId(), parent.threadId, childId]),
+        ),
+      ),
+      command: { type: "thread.archive", threadId: childId },
+      childId,
+      reason:
+        "waiting for T3 to show the child archived and its live delegated record cleared",
+    };
   }
 
-  /** Each caller first reads the exact state its command is meant to change. */
+  /** Only an explicit rejected receipt can authorize another archive command ID. */
+  private archiveCommandAfterRejection(key: string): string {
+    const intents = this.core.state.read().intents;
+    while (intents[key]?.status === "unknown" && intents[key]?.rejectedReceipt)
+      key = identity("parent-archive-retry", key);
+    return key;
+  }
+
   private async archiveEffect(
     key: string,
-    command:
-      | { type: "thread.archive"; threadId: string }
-      | { type: "queued-run.cancel"; threadId: string; runId: string }
-      | {
-          type: "subagent.stop";
-          threadId: string;
-          runId: string;
-          subagentId: string;
-        },
+    command: ParentArchiveCommand,
+    beforeSend: () => void,
   ): Promise<void> {
     const prior = this.core.state.read().intents[key];
     await this.core.intents.effect(
       key,
       "orchestration.dispatchCommand",
       { ...command, commandId: key },
-      undefined,
+      beforeSend,
       undefined,
       {
         resendUnknownAfterRead: prior?.status === "unknown",
         replayTimedOutAfterRead: true,
-        retryRefusedBeforeSend: prior?.status === "refused",
+        retryRefusedBeforeSend: true,
       },
     );
   }
 
-  /** Record one finished parent's settlement on its durable binding. */
-  private observeParentArchiveSettled(taskId: string): void {
+  private observeParentArchiveSettled(parent: ParentThread): void {
     this.core.state.update((state) => {
-      const current = state.parents?.[taskId];
+      const current = archiveBinding(state, parent);
       if (!current) return;
       current.archivedAt ??= new Date().toISOString();
       delete current.archive;
     });
   }
 
-  /**
-   * Keep one finished parent's last attempt on its binding: the typed wait is what the
-   * host pass reports to the operator, and its timestamp is what rotates a bounded
-   * batch, so a binding that cannot settle never starves the ones behind it.
-   */
+  /** Keep a wait only on the binding the pass actually inspected. */
   private recordParentArchiveAttempt(
-    taskId: string,
+    parent: ParentThread,
     wait: ParentArchiveWait | null,
   ): void {
+    if (!wait) return;
     this.core.state.update((state) => {
-      const current = state.parents?.[taskId];
-      if (!current) return;
-      if (!wait) {
-        delete current.archive;
-        return;
-      }
+      const current = archiveBinding(state, parent);
+      if (!current || current.archivedAt) return;
       current.archive = {
         state: wait.state,
         reason: wait.reason.slice(0, 300),
@@ -1527,10 +1687,14 @@ export class T3Nesting {
   private async release(parent: ParentThread): Promise<void> {
     const acp = this.core.acp();
     if (!acp) return;
+    const binding = { ...parent };
+    const current = archiveBinding(this.core.state.read(), binding);
+    if (!current) return;
+    const holdingSince = current.holdingSince;
     acp.release(parent.sessionId, "no role child is running");
     this.core.state.update((state) => {
-      const current = state.parents?.[parent.taskId];
-      if (!current) return;
+      const current = archiveBinding(state, binding);
+      if (!current || current.holdingSince !== holdingSince) return;
       current.releasedAt = new Date().toISOString();
       delete current.holdingSince;
     });
@@ -1544,16 +1708,16 @@ export class T3Nesting {
 
   // ---------------------------------------------------------------------- children
 
-  /** Dispose one delegated task's completion delivery; a repeat is settled by a read. */
-  private async dispose(
-    parent: ParentThread,
-    taskId: string,
-    options: Pick<EffectOptions, "replayTimedOutAfterRead"> = {},
-  ): Promise<void> {
-    const commandId = identity(
+  private disposeCommandId(parent: ParentThread, taskId: string): string {
+    return identity(
       "dispose",
       canonical([this.core.hostId(), parent.threadId, taskId]),
     );
+  }
+
+  /** Dispose one delegated task's completion delivery; a repeat is settled by a read. */
+  private async dispose(parent: ParentThread, taskId: string): Promise<void> {
+    const commandId = this.disposeCommandId(parent, taskId);
     await this.core.intents.effect(
       commandId,
       "orchestration.dispatchCommand",
@@ -1565,7 +1729,7 @@ export class T3Nesting {
       },
       undefined,
       undefined,
-      { resendUnknownAfterRead: true, ...options },
+      { resendUnknownAfterRead: true },
     );
   }
 
@@ -1708,12 +1872,6 @@ export class T3Nesting {
       observation.absent === true &&
       !this.parentLaunchReserved(taskId, launchCommandId)
     );
-  }
-
-  private forgetParent(taskId: string): void {
-    this.core.state.update((state) => {
-      if (state.parents?.[taskId]) delete state.parents[taskId];
-    });
   }
 
   /**
