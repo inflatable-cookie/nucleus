@@ -451,6 +451,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         answers,
       );
     }
+    /**
+     * Spec 068 Decision 4: T3 answers a task run's permission request natively
+     * (`runtime-request.respond`), so Nucleus declines it and task runs keep the
+     * profile's runtime mode rather than a forced non-interactive one.
+     */
     answerNativePermission(
       agent: string,
       workspace: string,

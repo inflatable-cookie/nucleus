@@ -1156,6 +1156,7 @@ export class Resolution {
       "hooks",
       "host",
       "lease",
+      "leaseDeclineText",
       "openPlannerEscalation",
       "ordinaryRoundCustody",
       "ownedToolHold",

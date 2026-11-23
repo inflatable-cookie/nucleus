@@ -38,6 +38,7 @@ import { participantToolRunIds } from "../recovery/task-reasons";
 import { releasedRunDeliveryEvidence } from "../recovery/recovery-effects";
 import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
+import { OrphanPhases } from "../recovery/orphan-phase";
 import type { Engine } from "../engine";
 
 export type TaskQuantumContext = Pick<
@@ -49,6 +50,8 @@ export type TaskQuantumContext = Pick<
   | "hooks"
   | "launchAgent"
   | "launchProofOnly"
+  | "moveToReview"
+  | "moveToWork"
   | "note"
   | "noteStepFailure"
   | "observeOwnerStop"
@@ -101,7 +104,11 @@ export type TaskQuantumContext = Pick<
 };
 
 export class TaskQuantum {
-  constructor(readonly context: TaskQuantumContext) {}
+  /** Spec 068 §4: orphan phases return to admission or record a typed stop. */
+  readonly orphanPhases: OrphanPhases;
+  constructor(readonly context: TaskQuantumContext) {
+    this.orphanPhases = new OrphanPhases(context);
+  }
   private async observeReleasedRunDeliveries(taskId: string): Promise<void> {
     const { adapter, resolution, store } = this.context;
     if (!adapter.originAgent || !adapter.agentTimelinePage) return;
@@ -626,6 +633,12 @@ export class TaskQuantum {
               !missingOriginHasPlanner(this.context.store, current)))
         )
           await this.context.resolution.recovery.route(current);
+        // Spec 068 §4: a phase nothing owns returns to admission for its role.
+        if (!current.removedAt)
+          await this.orphanPhases.settle(
+            taskId,
+            Boolean(this.context.store.getMeta("paused")),
+          );
       } catch (error) {
         this.context.noteStepFailure(taskId, error);
       }

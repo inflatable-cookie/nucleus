@@ -13,7 +13,7 @@ export interface HostNativeQuestions {
   pendingQuestions?(agentId: string): Promise<Array<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }>>;
   answerNativeQuestion?(agentId: string, workspaceId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   /** One explicitly addressed native approval, retaining its stable durable send identity. */
-  answerNativePermission?(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision, intentId: string): Promise<void>;
+  answerNativePermission?(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision, intentId: string, message?: string): Promise<void>;
   /** Dismiss one pending native question through the host; never used for tool or bash permissions. */
   dismissNativeQuestion?(agentId: string, workspaceId: string, requestId: string): Promise<void>;
   /**

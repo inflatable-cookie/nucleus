@@ -2063,6 +2063,7 @@ export class Store {
     hostKind?: import("../../shared/host-kind").HostKind | null,
     affectedTests?: RepositorySettings["affectedTests"],
     workspaceProvider?: RepositorySettings["workspaceProvider"],
+    toolQuietLimitMinutes?: RepositorySettings["toolQuietLimitMinutes"],
   ): RepositorySettings {
     return this.repositorySettingsStore.putRepository(
       identity,
@@ -2076,6 +2077,7 @@ export class Store {
       hostKind,
       affectedTests,
       workspaceProvider,
+      toolQuietLimitMinutes,
     );
   }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
@@ -2091,10 +2093,15 @@ export class Store {
       checksPolicy?: RepositorySettings["checksPolicy"];
       hostKind?: import("../../shared/host-kind").HostKind | null;
       workspaceProvider?: RepositorySettings["workspaceProvider"];
+      toolQuietLimitMinutes?: RepositorySettings["toolQuietLimitMinutes"];
       note?: string;
     },
   ): RepositorySettings {
     return this.repositorySettingsStore.patchRepository(identity, patch);
+  }
+  /** Spec 068: how long a participant's tool command may go without output before it is terminated. */
+  toolQuietLimitMsFor(task: Pick<Task, "repoPath" | "repository">): number {
+    return this.repositorySettingsStore.toolQuietLimitMsFor(task);
   }
   scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string {
     return this.repositorySettingsStore.scratchNamespaceFor(task);
