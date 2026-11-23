@@ -557,7 +557,7 @@ test("an idle child with background work or a pending user question keeps the ar
   assert.equal(remote.thread.archivedAt, STAMP);
 });
 
-test("a finished fork-linked child is archived before the parent's stale delegation clears", async (t) => {
+test("the parent's background roster must clear after its fork-linked child archives", async (t) => {
   const { server, host, parentFor } = await fixture(t);
   const parent = await parentFor();
   const remote = server.threads.get(parent.threadId)!;
@@ -590,6 +590,22 @@ test("a finished fork-linked child is archived before the parent's stale delegat
   assert.equal(delegated.status, "failed");
   assert.deepEqual(remote.pendingBackgroundTasks, []);
   assert.equal(remote.thread.archivedAt, null);
+
+  // The shell can still retain the background item after the delegation ends.
+  // The bounded projection need not include the item that owns this entry.
+  remote.turnItems = [];
+  remote.pendingBackgroundTasks = [
+    {
+      kind: "subagent",
+      taskId: delegated.id.replace("node:", "turn-item:"),
+      childThreadId: delegated.childThreadId,
+    },
+  ];
+  const waits = await host.reconcileFinishedParents([task]);
+  assert.match(waits[0]!.reason, /pending background work on the parent/);
+  assert.equal(remote.thread.archivedAt, null);
+  assert.equal(commandsOf(server, "thread.archive").length, 1);
+  remote.pendingBackgroundTasks = [];
   assert.deepEqual(await host.reconcileFinishedParents([task]), []);
   assert.equal(remote.thread.archivedAt, STAMP);
   assert.deepEqual(

@@ -520,6 +520,15 @@ export class T3Reads {
     const row = await this.shellRow(threadId);
     return row && !this.written.has(threadId) ? row : undefined;
   }
+  /** A fresh family read carries T3's background roster beyond the timeline window. */
+  async readThreadFamilyRow(threadId: string): Promise<ShellRow | undefined> {
+    const family = decode(
+      z.object({ threads: z.array(shellThread) }),
+      await this.core.rpc.call("orchestration.getThreadFamily", { threadId }),
+      "getThreadFamily",
+    );
+    return family.threads.find((row) => row.id === threadId);
+  }
   /** `readListRow` for a caller outside this module. */
   async readListRowById(threadId: string): Promise<ShellRow | undefined> {
     return await this.readListRow(threadId);

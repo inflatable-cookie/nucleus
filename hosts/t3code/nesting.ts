@@ -1086,8 +1086,7 @@ export class T3Nesting {
       // The child reads can take time. Read the parent again at the dispatch gate
       // and use the child plan only while the records that authorized it are the same.
       const latest = await this.classifyParent(parent, true);
-      const current = currentBinding();
-      if (!current) return wait("unobserved", changed);
+      if (!currentBinding()) return wait("unobserved", changed);
       if (latest.kind === "mismatched")
         return wait(
           "mismatched",
@@ -1121,6 +1120,24 @@ export class T3Nesting {
         return wait("unobserved", currentBinding() ? reason : changed);
       }
 
+      const row = await this.core.reads.readThreadFamilyRow(parent.threadId);
+      if (!row || row.archivedAt || row.deletedAt)
+        return wait(
+          "unobserved",
+          "T3 did not list the parent in its fresh thread family",
+        );
+      if (row.activeRunId || row.pendingRuntimeRequest)
+        return wait(
+          "unobserved",
+          "the parent still has an active run or pending request",
+        );
+      if (row.pendingBackgroundTasks?.length)
+        return wait(
+          "unobserved",
+          "T3 still reports pending background work on the parent",
+        );
+      const current = currentBinding();
+      if (!current) return wait("unobserved", changed);
       const key =
         current.archiveCommandId ??
         identity(

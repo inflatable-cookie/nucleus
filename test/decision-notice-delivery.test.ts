@@ -418,6 +418,48 @@ test("coalesced wakeups deliver one notice per version with no duplicate planner
   assert.equal(f.delivered.length, 1);
 });
 
+test("a queued decision pass cancels the retry timer after draining pending notices", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const firstSend = deferred<void>();
+  const releaseSend = deferred<void>();
+  t.after(() => releaseSend.resolve());
+  const f = createFixture(t, {
+    notify: async (id) => {
+      if (id === "planner-first") {
+        firstSend.resolve();
+        await releaseSend.promise;
+      }
+    },
+  });
+  const recordAnswer = (askedBy: string) => {
+    const decision = f.decisions.add({ question: "Proceed?", askedBy, project });
+    return f.decisions.answer({
+      id: decision.id,
+      version: 1,
+      answer: "Proceed",
+      answeredBy: "operator (board)",
+      relayed: false,
+      note: "",
+    });
+  };
+
+  const first = recordAnswer("planner-first");
+  const pass = f.engine.scheduleDecisionNotices();
+  await firstSend.promise;
+  const second = recordAnswer("planner-second");
+  const followUp = f.engine.scheduleDecisionNotices();
+  releaseSend.resolve();
+  await Promise.all([pass, followUp]);
+  await f.engine.quiesce();
+  assert.equal(f.decisions.get({ id: first.id }).delivery?.status, "delivered");
+  assert.equal(f.decisions.get({ id: second.id }).delivery?.status, "delivered");
+
+  const later = recordAnswer("planner-later");
+  t.mock.timers.tick(30);
+  await f.engine.quiesce();
+  assert.equal(f.decisions.get({ id: later.id }).delivery?.status, "pending");
+});
+
 test("busy, unavailable, or hung recipients stay pending and cannot monopolize an unrelated reachable recipient", async (t) => {
   const hungWait = deferred<AgentObservation>();
   t.after(() =>

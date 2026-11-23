@@ -1457,6 +1457,22 @@ export async function t3Fake(t: TestContext, directory: string) {
           }
           return stream(opening);
         }
+        case "orchestration.getThreadFamily": {
+          const root =
+            threads.get(payload.threadId)?.thread.lineage?.rootThreadId;
+          return success({
+            snapshotSequence: controls.snapshotSequence,
+            threads: [...threads.values()]
+              .filter(
+                (p) =>
+                  !p.thread.archivedAt &&
+                  !p.thread.deletedAt &&
+                  (p.thread.id === payload.threadId ||
+                    (root && p.thread.lineage?.rootThreadId === root)),
+              )
+              .map(shell),
+          });
+        }
         case "orchestration.getArchivedShellSnapshot":
           controls.beforeArchiveRead();
           return success({

@@ -1799,7 +1799,9 @@ of it. The step is now independent:
   every mutation. It checks the released hold, queued messages, requests and
   delegated records against the decision that preceded the read. The parent
   archive requires all its observed owned children archived or gone and all
-  live delegated records cleared.
+  live delegated records cleared. A fresh `orchestration.getThreadFamily`
+  read must also show an empty background roster on that parent. T3 derives
+  this roster from provider work and turn items beyond the timeline window.
   T3's settled archive receipt for that exact thread marks the
   binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
   batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
