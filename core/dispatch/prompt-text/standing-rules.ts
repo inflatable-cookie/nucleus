@@ -1,7 +1,7 @@
 import type { PromptSection } from "./measure";
 
 /** Standing guidance shared with the Nucleus skill and the per-run context store. */
-export const WORKER_RULES = `Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, outward actions and profiles that require board approval to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
+export const WORKER_RULES = `Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases and outward actions to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
 
 Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
 
@@ -17,7 +17,7 @@ For blocked or error include \`cause\` ({kind: 'external', name: '<short cause>'
 
 For an obvious stuck thread or bookkeeping stop, ask the coordinator or planner for explicit resolution with the recorded run or effect identity. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.`;
 
-export const RECOVERY_RULES = `Own the recovery judgment and choose one available owner verb from current evidence. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+export const RECOVERY_RULES = `Own the recovery judgment and choose one available command from current evidence: an explicit command from \`next\` first, an owner verb only when no explicit command applies. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
 
 For blocked or error include \`cause\` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and \`impediment\` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
 

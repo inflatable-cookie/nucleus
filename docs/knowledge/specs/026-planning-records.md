@@ -420,12 +420,18 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Routine dispatch under standing authority (Tom, 2026-11-20).** The planner
   decides whether to dispatch an ordinary in-scope brief without asking the
   operator for dispatch approval, and records the source of that authority.
-  Product or scope changes, held-profile requests, releases and other explicitly
+  Product or scope changes, releases and other explicitly
   reserved operator actions still need the operator. The check, digest,
   attribution and promotion gates are unchanged: a CLI approval under the
   standing ruling still carries `relayed: true` with a note naming the standing
   ruling and the brief it covers, never a per-brief operator conversation that
   did not happen.
+- **Projects without a planner (Tom, 2026-11-22).** Any project planner may brief
+  and dispatch routine, in-scope tasks for a project that has no registered planner
+  ("Can we add into the skill approval for other planners to brief and dispatch
+  tasks on projects that don't have a planner?"). The dispatching planner is that
+  task's planner. Its note names this ruling and the project. Product or scope
+  changes for that project still go to the operator.
 - **Promote to task.** One action turns an approved lead version, or a papercut, into
   a task. It re-checks at promotion time, is atomic, and is idempotent on the source
   and the admitted version, digest and repository. The admitted approval retains
@@ -631,7 +637,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     link that opens the pull request without opening the task; on the web board it is a
     real anchor, so the keyboard opens it too. A normal task shows none.
   - **Buttons** only where the row is the action: the hold prompt's Release and Keep
-    (with its reason) and the drained lane's Close lane and Keep. They and the flags
+    (with its reason) and the drained lane's Mark done (which always asks first) and
+    Keep. They and the flags
     sit inside the row's frame, below its content and outside its press target, so a
     press on a control or the PR link never opens the record too, and no control is
     nested inside the row's button. Pressing a drained lane's row opens that lane
@@ -846,7 +853,7 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   clamped to three lines, a bar of live tasks by phase with the counts in words and the
   finished count (done, cancelled and superseded alike, so it says "finished", not
   "done"), and "Done when". An empty column says "Nothing here". Finished lanes sit
-  in a collapsed row at the bottom. History reads each save exactly as stored with
+  in a collapsed row at the bottom, each with Reopen. History reads each save exactly as stored with
   `plan.get` (the latest included, never the live projection of lanes that joined or
   closed since), opening on the latest and paging back through every earlier version. A
   version shows who saved it and when, its idle mark, and its Now, Next and Later lanes
@@ -856,8 +863,11 @@ lanes as columns 2. Just go with first lane 3. Land the read view first"):
   the plan editor unchanged ([Spec 041](041-planning-roadmap.md)).
 - **Lane page:** opens in the detail pane from a lane card, with the breadcrumb
   Planning › Project › Lane. The header has the title and chips for its horizon in the
-  plan it was opened from, open or closed, and the other plans that list it, with Close
-  lane and Edit lane (the edit icon; it edits the lane document). Below are the aim in full; the finish line
+  plan it was opened from, open or closed, and the other plans that list it, with Mark
+  done (which always asks first, naming every plan that lists the lane and its live
+  tasks) or, on a closed lane, Reopen (which returns it to its saved plan position),
+  and Edit lane (the edit icon; it edits the lane document). "Close" only ever dismisses
+  a panel or modal, never marks a lane done. Below are the aim in full; the finish line
   (`doneWhen`) with "Why it's still open" from `lane.keep.reason`; the latest status
   (the plan entry's `note`, with the plan's author and age); what is in flight (live
   tasks as inbox rows with phase and detail, paged from the server total); what is
@@ -1143,8 +1153,7 @@ decision.
 standing authority for routine, in-scope work only. Each promotion records the
 planner as approver and promoting agent, with its reason, and runs the same
 check and promotion gates as an operator-approved lead. Changes to product
-direction, release or outward actions, and held profiles are not triage
-decisions: the planner uses `operator` for them.
+direction, releases and outward actions go to the operator.
 
 **Limits.** Triage never prunes on age, never edits filing text, and never
 overrides a project's dispatch limit, pause or dispatch hold. Opting out or

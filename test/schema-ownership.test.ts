@@ -150,6 +150,7 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
     "laneDrainEscalationMinutes",
     "hostOutageNoticeMinutes",
     "threadRetentionDays",
+    "threadRetentionIntervalHours",
     "operatorDefaultHostKind",
   ]);
   // An absent field keeps the catalogue's default, and the bound is the catalogue's.

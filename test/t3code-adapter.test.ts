@@ -31,7 +31,6 @@ import { T3CompatibilityError, shellThread } from "../hosts/t3code/contracts";
 import {
   activeStatuses,
   shellThreadStatus,
-  T3InventoryChurnError,
 } from "../hosts/t3code/reads";
 import {
   workspaceThreadFacts,
@@ -822,7 +821,12 @@ test("observations distinguish idle, active run, permissions, archived and expli
   p.thread.deletedAt = STAMP;
   await assert.rejects(host.observe(created.id), /ThreadNotFound|T3Code/);
   await assert.rejects(host.observe("absent-thread"));
-  assert.equal(await host.observationInventory(["absent-thread"]), null);
+  // A thread T3's live shell does not list is not observed: the inventory answers
+  // it by omission, with no read (Spec 069 batch 5).
+  assert.deepEqual(
+    await host.observationInventory(["absent-thread"]),
+    new Map(),
+  );
 });
 
 test("empty enrichment snapshots preserve inventory while missing fields and incomplete reads stay unknown", async (t) => {
@@ -834,6 +838,8 @@ test("empty enrichment snapshots preserve inventory while missing fields and inc
   await assert.rejects(host.observe(created.id), /activeRunId/);
   assert.equal(await host.observationInventory([created.id]), null);
   server.controls.shellMissingField = "";
+  // The refused shell opens back off; T3's fixed shape is read without waiting it out.
+  host.reads.live.close();
   // A coverage claim that names more history without saying where it went cannot
   // be used by either read: nothing in it bounds or locates the rest.
   server.controls.incompleteThread = true;
@@ -1723,75 +1729,39 @@ test("a pending question on a long thread reads from the bounded timeline window
   );
 });
 
-test("inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles", async (t) => {
+test("the workspace inventory reads the live shell and exact ids, never the archived snapshot (Spec 069 batch 5)", async (t) => {
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
-  let movingReads = 0;
-  server.controls.beforeArchiveRead = () => {
-    if (movingReads++ < 2) server.controls.snapshotSequence++;
-  };
+  const archivedReads = () =>
+    server.requests.filter(
+      (request) => request.tag === "orchestration.getArchivedShellSnapshot",
+    ).length;
+  const before = archivedReads();
   assert.ok(
     (await host.listLiveAgents()).some((agent) => agent.id === created.id),
   );
   assert.ok(
     (await host.activeThreads()).some((agent) => agent.id === created.id),
   );
+  const live = await host.workspaceThreads([workspace.id]);
+  assert.ok(live.ok && live.threads.some((agent) => agent.id === created.id));
+  // An archived thread of the workspace is still listed, from its exact read.
+  server.threads.get(created.id)!.thread.archivedAt = STAMP;
+  await host.reads.shell();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const retired = await host.workspaceThreads([workspace.id]);
+  assert.ok(retired.ok);
+  const row = retired.ok
+    ? retired.threads.find((agent) => agent.id === created.id)
+    : undefined;
+  assert.equal(row?.archived, true, "the archived thread reads archived");
+  assert.equal(row?.status, "closed");
   assert.equal(
-    movingReads,
-    0,
-    "live-only reads use the atomic shell without touching archived snapshots",
+    (await host.reads.threadArchiveState(created.id))?.archivedAt,
+    STAMP,
+    "one thread's archive fact is its exact read",
   );
-  const archiveInventory = await host.workspaceThreads([workspace.id]);
-  assert.equal(archiveInventory.ok, true);
-  assert.ok(
-    archiveInventory.ok &&
-      archiveInventory.threads.some((agent) => agent.id === created.id),
-  );
-  assert.equal(
-    movingReads,
-    3,
-    "two mismatched pairs are followed by the consistent third pair",
-  );
-});
-
-test("inventory refuses an unstable snapshot after the bounded number of read pairs", async (t) => {
-  const { host, server, workspace, spec } = await fixture(t);
-  const created = await host.createAgent(spec());
-  server.controls.beforeArchiveRead = () => {
-    server.controls.snapshotSequence++;
-  };
-  // Live observation and catalog/workspace project reads succeed with 0 archive reads.
-  assert.ok(
-    (await host.listLiveAgents()).some((agent) => agent.id === created.id),
-  );
-  assert.ok((await host.observe(created.id)).id === created.id);
-  assert.equal(await host.workspaceAvailable(workspace.id), true);
-
-  const shellReads = server.requests.filter(
-    (request) => request.tag === "orchestration.subscribeShell",
-  ).length;
-  const archiveReads = server.requests.filter(
-    (request) => request.tag === "orchestration.getArchivedShellSnapshot",
-  ).length;
-  await assert.rejects(
-    host.reads.threadArchiveState(created.id),
-    (error: unknown) =>
-      error instanceof T3InventoryChurnError &&
-      !(error instanceof T3CompatibilityError) &&
-      /inventory kept moving.*5 attempts/.test(error.message),
-  );
-  assert.equal(
-    server.requests.filter(
-      (request) => request.tag === "orchestration.subscribeShell",
-    ).length - shellReads,
-    5,
-  );
-  assert.equal(
-    server.requests.filter(
-      (request) => request.tag === "orchestration.getArchivedShellSnapshot",
-    ).length - archiveReads,
-    5,
-  );
+  assert.equal(archivedReads(), before, "no archived snapshot was read");
 });
 
 test("questions and approvals answer exact runtime requests and refuse wrong kinds or workspaces", async (t) => {
@@ -2220,7 +2190,9 @@ test("the origin read answers authoritative absence, and only an unread inventor
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent("native-id-t3-does-not-have"), null);
   // A projection whose coverage claim is unusable proves nothing about the thread.
+  // (The thread moves, so its unchanged held snapshot is not the answer.)
   server.controls.incompleteThread = true;
+  server.threads.get(created.id)!.thread.updatedAt = "2026-01-02T00:00:00.000Z";
   await assert.rejects(
     host.originAgent(created.id),
     /hasMoreHistory true with no cursor/,
@@ -2991,6 +2963,9 @@ test("a finished task's follow-up child leaves observation with its task, and a 
   assert.ok(finishedParent, "the finished task has a parent thread");
   const reminder = "thread:delegated-task:ns-reminder-1381";
   const liveFollowUp = "thread:delegated-task:ns-run-1381";
+  // A follow-up T3 never created (its message reached a thread that started no
+  // child): recorded at send time, never listed by T3 (Spec 069 batch 5).
+  const neverCreated = "thread:delegated-task:ns-checkpoint-1381";
   host.state.update((state) => {
     state.followUps = {
       [reminder]: {
@@ -2998,6 +2973,16 @@ test("a finished task's follow-up child leaves observation with its task, and a 
         labels: storedT3Labels("worker", {
           taskId: finishedTask,
           runId: "reminder-run",
+        }),
+        parentThreadId: finishedParent!,
+        // T3's live shell listed this child while its task ran.
+        seenAt: "2026-01-01T00:00:00.000Z",
+      },
+      [neverCreated]: {
+        workspaceId: workspace.id,
+        labels: storedT3Labels("worker", {
+          taskId: finishedTask,
+          runId: "checkpoint-run",
         }),
         parentThreadId: finishedParent!,
       },
@@ -3023,6 +3008,11 @@ test("a finished task's follow-up child leaves observation with its task, and a 
     state.followUps?.[reminder],
     undefined,
     "the finished task's reminder is no longer a live-looking row",
+  );
+  assert.equal(
+    state.followUps?.[neverCreated] ?? state.retiredAgents?.[neverCreated],
+    undefined,
+    "a follow-up T3 never listed is dropped, not retired into lookups",
   );
   assert.equal(
     state.retiredAgents?.[reminder]?.workspaceId,
@@ -3875,4 +3865,127 @@ test("a native answer on a paged thread reads the retained question item, and a 
       .at(-1)!.answers,
     { choice: ["Yes"] },
   );
+});
+
+test("brief amendment steers a running nested T3 worker without creating a second subagent item, and queues when idle", async (t) => {
+  const { host, server, workspace, directory, spec } = await fixture(t);
+  const store = new Store(join(directory, "queue.sqlite"));
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  store.setMeta("hostId", host.hostId);
+
+  const initialBrief = "Initial brief body.";
+  const task = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Brief amendment task",
+      repoPath: directory,
+      planningCommit: "a".repeat(40),
+      brief: { text: initialBrief, mediaType: "text/markdown" },
+      originAgentId: "origin",
+    }),
+    host.hostId,
+    initialBrief,
+    "a".repeat(40),
+  );
+  const launchSpec = spec("worker-launch-amend", "Work");
+  const worker = await host.createAgent({
+    ...launchSpec,
+    attempt: () => ({
+      ...launchSpec.attempt(false, false),
+      labels: storedT3Labels("worker", { taskId: task.id, runId: "initial" }),
+    }),
+  });
+  store.update(task.id, {
+    phase: "working",
+    agentId: worker.id,
+    runId: "initial",
+    workspaceId: workspace.id,
+    directory,
+  });
+
+  const parentId = host.state.read().parents?.[task.id]?.threadId;
+  assert.ok(parentId, "worker has a parent task thread");
+  const parent = server.threads.get(parentId)!;
+  const workerThread = server.threads.get(worker.id)!;
+  const subagentsBefore = parent.subagents.length;
+  const activeWorkerRunId = workerThread.runs.at(-1)!.id;
+
+  const t3 = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  );
+  const engine = new Engine(store, t3 as unknown as Adapter, 0);
+  const v2Brief = "Amended brief v2.";
+  const amendedV2 = engine.amendBrief({
+    taskId: task.id,
+    version: store.task(task.id).version,
+    brief: v2Brief,
+    reason: "Clarify scope mid-run",
+  });
+  for (
+    let i = 0;
+    i < 50 &&
+    !store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "brief_amendment_delivered" &&
+          event.detail.includes("-v2-worker:"),
+      );
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const v2Dispatch = server.commands.findLast(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === worker.id &&
+      typeof command.text === "string" &&
+      command.text.includes(v2Brief),
+  );
+  assert.ok(v2Dispatch, "v2 amendment dispatched to worker thread");
+  assert.deepEqual(v2Dispatch.dispatchMode, {
+    type: "steer_active",
+    targetRunId: activeWorkerRunId,
+  });
+  assert.equal(
+    parent.subagents.length,
+    subagentsBefore,
+    "steered brief amendment does not add a second subagent item to the parent task thread",
+  );
+
+  // When the worker thread has no live run, steerOrNotify falls back to queue_after_active
+  // so the amendment reaches its next turn.
+  workerThread.runs = [];
+  const v3Brief = "Amended brief v3.";
+  engine.amendBrief({
+    taskId: task.id,
+    version: amendedV2.version,
+    brief: v3Brief,
+    reason: "Follow-up while idle",
+  });
+  for (
+    let i = 0;
+    i < 50 &&
+    !store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "brief_amendment_delivered" &&
+          event.detail.includes("-v3-worker:"),
+      );
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const v3Dispatch = server.commands.findLast(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === worker.id &&
+      typeof command.text === "string" &&
+      command.text.includes(v3Brief),
+  );
+  assert.ok(v3Dispatch, "v3 amendment dispatched to idle worker thread");
+  assert.deepEqual(v3Dispatch.dispatchMode, { type: "queue_after_active" });
 });

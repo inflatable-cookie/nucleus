@@ -14,9 +14,11 @@ introduced into Northstar core. The Paseo plugin is its thin native UI and RPC
 bridge. Neither grants execution authority from document promotion, invents
 planning decisions, or bypasses exact-head review.
 
-## Planner frontier grants
+## Frontier profiles
 
-Tom, 2026-11-06: when frontier is needed, it is generally needed for a string of dispatches. The planner asks for standing permission and handles the routing; the operator only says yes, then can revoke when the block of work is done. See [Spec 052](specs/052-usage-level.md).
+At Low, Normal and High, planners request Frontier for a specific task and
+role with a reason. The request applies on the role's next run (Tom,
+2026-11-22). See [Spec 052](specs/052-usage-level.md).
 
 ## Responsible tasks settle their own questions
 

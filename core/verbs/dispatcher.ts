@@ -1,7 +1,7 @@
 import {
   FORCE_ACTION_REFUSAL,
-  FORCE_CALLER_REFUSAL,
   FORCE_REASON_REFUSAL,
+  forceCallerRefusal,
 } from "./verb-refusal-text";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { taskNeverDispatched } from "../task-decision-rules";
@@ -35,6 +35,7 @@ import {
 } from "./owner-authority";
 import { applyReceiptAcceptance } from "./receipt-acceptance";
 import { recordNoAutomaticRetryRule } from "./no-automatic-retry-record";
+import { sameCallerIdentity } from "../../shared/agent-identity";
 
 /**
  * Every task control enters here: the audit lines, the force and cap gates, and
@@ -212,7 +213,9 @@ export class TaskControlDispatcher {
     const task = this.store.task(input.taskId);
     if (input.force) {
       if (input.action === "retry_effect")
-        throw new DurableFenceRefusal("Use run.release or record.clear kind=effect for explicit settlement");
+        throw new DurableFenceRefusal(
+          "Use run.release or record.clear kind=effect for explicit settlement",
+        );
       if (!input.reason?.trim())
         throw new DurableFenceRefusal(FORCE_REASON_REFUSAL);
       if (
@@ -220,8 +223,10 @@ export class TaskControlDispatcher {
         input.to === "closeout" &&
         task.resolution.mergedCommit
       ) {
-        if (!await this.engine.forceCallerAuthorized(task, input.caller))
-          throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
+        if (!(await this.engine.forceCallerAuthorized(task, input.caller)))
+          throw new DurableFenceRefusal(
+            forceCallerRefusal(input.caller, task.critical),
+          );
         return this.engine.applyTaskControlMove(
           { ...input, force: false },
           operated,
@@ -233,6 +238,17 @@ export class TaskControlDispatcher {
       throw new DurableFenceRefusal(FORCE_ACTION_REFUSAL);
     }
     assertAuthorRevisionAllowance(this.engine, input, task);
+    if (
+      (input.action === "route" ||
+        (input.action === "set_routing" &&
+          input.profileRequests !== undefined)) &&
+      [task.agentId, task.resolution.reviewerAgentId].some((agentId) =>
+        sameCallerIdentity(input.caller, agentId, undefined, task.hostId),
+      )
+    )
+      throw new DurableFenceRefusal(
+        "The task's worker and reviewer cannot request a profile for this task",
+      );
     if (input.action === "complete")
       return await this.engine.applyTaskControlComplete(
         input,
@@ -311,8 +327,11 @@ export class TaskControlDispatcher {
     if (input.action === "set_lane")
       return await this.engine.applyTaskControlSetLane(input, operated);
     if (input.action === "set_routing") {
-      const planner = input.critical !== undefined && input.caller !== undefined &&
-        input.caller !== "operator (board)" && await this.engine.forcePlannerMatches(task, input.caller);
+      const planner =
+        input.critical !== undefined &&
+        input.caller !== undefined &&
+        input.caller !== "operator (board)" &&
+        (await this.engine.forcePlannerMatches(task, input.caller));
       return this.engine.applyTaskControlSetRouting(input, operated, planner);
     }
     if (input.action === "exclude_worker")

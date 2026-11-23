@@ -71,7 +71,6 @@ import {
 } from "./contracts";
 import {
   activeStatuses,
-  T3InventoryChurnError,
   T3Reads,
   type Projection,
   type ThreadReadKind,
@@ -148,6 +147,8 @@ const providerRuntimeModes = (
 ): readonly RuntimeMode[] =>
   supported && supported.length ? supported : runtimeModes;
 type OptionSelection = { id: string; value: string | boolean };
+/** How long a catalog caller waits on T3 before it is answered from the last catalog read. */
+export const CATALOG_PROMPT_MS = 2_000;
 /** One model of `server.getConfig`'s provider snapshot (the shared thinking decision's own types). */
 /**
  * The model's real option descriptors from `server.getConfig`, read at launch:
@@ -228,6 +229,9 @@ export class T3CodeHost implements Host {
   hostId = "";
   version = "";
   private ready = false;
+  /** The last catalog this connection read, and the read in flight (see `catalog`). */
+  private catalogHeld: HostCatalog | null = null;
+  private catalogReading: Promise<HostCatalog> | null = null;
   private readonly probeThreadId?: string;
   private readonly modelCapturePath?: string;
   private readonly acp: () => AcpSessionSurface | null;
@@ -400,16 +404,6 @@ export class T3CodeHost implements Host {
       await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
     }
   }
-  /** Only this host's durable parent record can identify a task's ACP row. */
-  decisionParent(
-    taskId: string,
-  ): import("../../core/acp/decisions").ParentStatus {
-    if (!this.connected) return { state: "unknown" };
-    const parent = this.state.read().parents?.[taskId];
-    return !parent || parent.archivedAt
-      ? { state: "absent" }
-      : { state: "parent", sessionId: parent.sessionId };
-  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -422,6 +416,8 @@ export class T3CodeHost implements Host {
   }
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
+    this.catalogHeld = null;
+    this.catalogReading = null;
     this.reads.resetShape();
     this.reads.resetObservation();
     try {
@@ -440,7 +436,9 @@ export class T3CodeHost implements Host {
       const probe =
         probeThreadId ?? [...shell.threads, ...shell.archivedThreads][0]?.id;
       this.reads.markShapePending(!probe);
-      if (probe) await this.reads.readProjection(probe, "observation");
+      // The shape probe is an exact read of one thread, whatever its archive state.
+      if (probe)
+        await this.reads.readDirectProjection(probe, "observation", true);
       this.state.update((state) => {
         state.hostId = hostId;
         state.lastPassedVersion = observed.environment.serverVersion;
@@ -522,9 +520,22 @@ export class T3CodeHost implements Host {
       retiredIds = Object.keys(state.retiredAgents ?? {});
     if (!tracked.length && !retiredIds.length) return;
     const retire: string[] = [],
-      restore: string[] = [];
+      restore: string[] = [],
+      seen: string[] = [],
+      unseen: string[] = [];
     for (const id of tracked) {
       try {
+        // A follow-up T3 has not listed yet is only a candidate (Spec 069 batch 5):
+        // it costs no read while its task runs, and is dropped, not retired, once
+        // the task is over without T3 ever listing it.
+        const followUp = state.followUps?.[id];
+        if (followUp && !followUp.seenAt) {
+          if (await this.reads.listedLive(id)) seen.push(id);
+          else {
+            if (!this.reads.observes(id)) unseen.push(id);
+            continue;
+          }
+        }
         if (!(await this.reads.isObserved(id))) retire.push(id);
       } catch (error) {
         if (!(error instanceof HostReadRefusalError)) throw error;
@@ -534,8 +545,18 @@ export class T3CodeHost implements Host {
       if (state.retiredAgents?.[id]?.deletedAt) continue;
       if (await this.reads.isActiveInShell(id)) restore.push(id);
     }
-    if (!retire.length && !restore.length) return;
+    if (!retire.length && !restore.length && !seen.length && !unseen.length)
+      return;
     this.state.update((next) => {
+      const at = new Date().toISOString();
+      for (const id of seen) {
+        const record = next.followUps?.[id];
+        if (record && !record.seenAt) record.seenAt = at;
+      }
+      for (const id of unseen) {
+        if (next.followUps?.[id] && !next.followUps[id].seenAt)
+          delete next.followUps[id];
+      }
       next.retiredAgents ??= {};
       for (const id of retire) {
         const record = next.agents[id] ?? next.followUps?.[id];
@@ -671,7 +692,7 @@ export class T3CodeHost implements Host {
     attention: TaskAttention,
   ): Promise<void> {
     if (!this.connected) return;
-    const pending = this.acp()?.pendingDecisionKey?.(taskId);
+    const pending = this.acp()?.openDecisionKey?.(taskId);
     const shown = pending
       ? { state: "attention" as const, cause: "Decision needs an operator" }
       : attention;
@@ -687,7 +708,7 @@ export class T3CodeHost implements Host {
     const acp = this.acp();
     return rows.filter(
       ({ task, attention }) =>
-        attention.state === "active" && !acp?.pendingDecisionKey?.(task.id),
+        attention.state === "active" && !acp?.openDecisionKey?.(task.id),
     ).length;
   }
   /**
@@ -743,16 +764,15 @@ export class T3CodeHost implements Host {
         // and the served-`ui` record: the offer, the card and the hold are untouched.
         await this.inbox.serveQueuedUi();
       }
+      // A task thread keeps no decision card (Spec 032): this read only settles a card
+      // an earlier owner left there, so the decision reaches the Inbox instead.
       for (const parent of Object.values(state.parents ?? {})) {
-        if (!parent.archivedAt) {
-          const cards = await this.decisionCards.reconcile(
+        if (!parent.archivedAt)
+          await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
             { taskId: parent.taskId, sessionId: parent.sessionId },
           );
-          if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
-            await this.decisionHold.reconcile(parent.threadId);
-        }
       }
     } catch (error) {
       if (isHostOperationTimeout(error))
@@ -780,13 +800,51 @@ export class T3CodeHost implements Host {
    */
   async reconcileFinishedParents(
     tasks: readonly Task[],
+    lookup?: (taskId: string) => Task | null,
   ): Promise<readonly ParentArchiveWait[]> {
     if (!this.connected) return [];
-    return await this.nesting.archiveFinishedParents(tasks);
+    return await this.nesting.archiveFinishedParents(tasks, lookup);
   }
 
+  /**
+   * The host catalog. One `server.getConfig` read is in flight at a time, shared by
+   * every caller. When T3 answers within `CATALOG_PROMPT_MS` the caller gets that
+   * answer; when it is slower and this connection already read a catalog, the
+   * caller gets that last catalog at once and the read finishes in the background
+   * (Spec 069 batch 5): Settings, the board and `next` never wait on a busy T3.
+   */
   async catalog(): Promise<HostCatalog> {
     this.requireConnection();
+    if (!this.catalogReading) {
+      const reading = this.readCatalog().then(
+        (catalog) => {
+          if (this.catalogReading === reading) this.catalogHeld = catalog;
+          return catalog;
+        },
+      );
+      this.catalogReading = reading;
+      void reading
+        .catch(() => undefined)
+        .finally(() => {
+          if (this.catalogReading === reading) this.catalogReading = null;
+        });
+    }
+    const reading = this.catalogReading;
+    const held = this.catalogHeld;
+    if (!held) return await reading;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<HostCatalog>((resolve) => {
+      timer = setTimeout(() => resolve(held), CATALOG_PROMPT_MS);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([reading.catch(() => held), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async readCatalog(): Promise<HostCatalog> {
     const value = decode(
       config,
       await this.rpc.call("server.getConfig", {}),
@@ -1143,16 +1201,13 @@ export class T3CodeHost implements Host {
     try {
       const threads =
         options.includeArchived === false
-          ? await this.reads.activeThreads()
-          : await this.reads.activeAndArchivedThreads();
-      return {
-        ok: true as const,
-        threads: threads.filter(
-          (t) => !!t.workspaceId && ids.includes(t.workspaceId),
-        ),
-      };
+          ? (await this.reads.activeThreads()).filter(
+              (t) => !!t.workspaceId && ids.includes(t.workspaceId),
+            )
+          : await this.reads.workspaceThreadsLiveAndRecorded(ids);
+      return { ok: true as const, threads };
     } catch (error) {
-      if (error instanceof T3InventoryChurnError)
+      if (error instanceof HostReadRefusalError)
         return { ok: false as const, reason: error.message };
       throw error;
     }
@@ -1656,6 +1711,7 @@ export class T3CodeHost implements Host {
         undefined,
         { retryRefusedBeforeSend: true },
       );
+      this.reads.noteDeleted(id);
       this.presentation.retireDeletedPresentationIntents();
     } catch (error) {
       // A local not-sent result leaves the terminal effect ready for the next

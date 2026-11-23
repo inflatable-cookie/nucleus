@@ -151,9 +151,7 @@ export class T3Inbox {
     }
     let thread =
       (await this.core.reads.shellRow(inbox!.threadId)) ??
-      (await this.core.reads.inventory()).threads.find(
-        (row) => row.id === inbox!.threadId,
-      );
+      (await this.core.reads.readListRowById(inbox!.threadId));
     if (thread?.deletedAt || thread?.archivedAt)
       throw new T3CompatibilityError("Nucleus inbox is deleted or archived");
     if (!thread) {
@@ -293,9 +291,8 @@ export class T3Inbox {
     if (!inbox) throw new Error("Nucleus inbox is unavailable");
     const thread =
       (await wait(() => this.core.reads.shellRow(inbox.threadId))) ??
-      (await wait(() => this.core.reads.inventory())).threads.find(
-        (row) => row.id === inbox.threadId,
-      );
+      (await wait(() => this.core.reads.readThreadRecord(inbox.threadId)))
+        ?.row;
     if (!thread) throw new Error("Nucleus inbox is unavailable");
     if (thread.deletedAt || thread.archivedAt)
       throw new T3CompatibilityError("Nucleus inbox is deleted or archived");

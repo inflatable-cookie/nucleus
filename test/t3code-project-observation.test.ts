@@ -230,7 +230,7 @@ test("RuntimeBoard.uiSnapshot populates repositoryBadges for lead-only and paper
     engine: {
       profiles: [],
       retiredObservationKey: (host) => `retired:${host}`,
-      queuedExternalWait: () => "",
+      currentExternalWait: () => "",
       resolution: {
         slotAdmissionReason: () => "",
         slotAdmissionReader: () => () => "",

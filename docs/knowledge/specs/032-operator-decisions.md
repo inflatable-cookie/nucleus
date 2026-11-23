@@ -18,14 +18,23 @@ escalations are the only durable attention signal.
 
 An agent records a question that needs the operator as a **decision** in Nucleus.
 The board shows all open decisions. The operator can also answer in the Paseo
-composer pill or in T3. In T3, operator questions for T3-hosted tasks appear
-on their parent threads when a live parent exists; when a linked T3 task has no
-eligible parent yet (or its parent is archived) it goes to that host's pinned
-Nucleus inbox, and when the parent lookup answers `unknown` (for example, a
-disconnected host or a different registered T3 session) it falls back to the
-connected T3 host's pinned Nucleus inbox rather than dropping the decision, with
-durable first-offer binding keeping one owner per version. Other decisions
-routed to that T3 operator also appear in the pinned Nucleus inbox. See
+composer pill or in T3.
+
+**Ruling (Tom, 2026-11-22):** every operator decision appears in the host's pinned
+Nucleus Inbox, including decisions linked to a T3 task: "We need to get the inbox
+working consistently". A routing sign-off for nucleus#1537 went only to the task's
+own thread, so the operator never saw it. nucleus#1538 implements this. A task
+thread receives no decision card and holds no turn for one.
+
+In T3, a decision's one owner is always `{ kind: "inbox", hostId }`: a linked T3
+task's host picks the Inbox, so a planner sign-off reaches the host that owns the
+work, and a decision that links no such task goes to the connected host's pinned
+Nucleus Inbox. Durable first-offer binding keeps one owner per version, and an
+answer from that Inbox reaches the asker on the ordinary answer path. A version
+bound to a task thread before this ruling moves to its Inbox on its next offer,
+and the host's settlement of the card left on the task thread cancels it; answered
+and withdrawn decisions are untouched. An Inbox card names a task-linked decision
+by that task's reference and title, as the board's task link does. See
 [operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
 Decisions clear when answered, withdrawn or superseded. Answers reach the
 asking agent.
@@ -90,10 +99,11 @@ the record's links would fabricate history for an imported decision.
 - `decision.get`, `decision.list` — filter by status, asker, project, task,
   lead or papercut.
 - `decision.answer` — records the operator's answer. The board and Paseo pill
-  carry direct operator authority. Nucleus also records an answer from an
-  authenticated T3 task parent or inbox as a direct operator answer, with
-  `answeredBy: operator (t3code:<hostId>)` derived from the session's host.
-  The session can answer only decisions offered to it at the current version.
+  carry direct operator authority. Nucleus also records an answer from the
+  authenticated T3 inbox that owns the decision as a direct operator answer, with
+  `answeredBy: operator (t3code:<hostId>)` derived from the session's host. A task
+  session can answer none: decisions are offered only in the inbox. The session can
+  answer only decisions offered to it at the current version.
   That identity is reserved for authenticated T3 sessions. Agent relays
   record the relaying agent, quote the operator verbatim and name the approver
   in the note, with `relayed: true`.

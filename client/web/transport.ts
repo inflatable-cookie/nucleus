@@ -3,6 +3,8 @@ import type { RpcContract } from "../../shared/rpc";
 import { RPC_CATALOGUE } from "../../shared/rpc-catalogue";
 import { SETTINGS_SURFACE_HEADER, SETTINGS_SURFACE_VALUE } from "../../shared/web-surface";
 
+const PROFILE_SAVE_TIMEOUT_MS = 10_000;
+
 /** Exchange the one-time link token for an HttpOnly same-origin session cookie. */
 export async function pairWebSession(token?: string, fetcher: typeof fetch = fetch): Promise<void> {
   const response = token
@@ -29,23 +31,36 @@ export function createWebTransport(fetcher: typeof fetch = fetch) {
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (settings) headers[SETTINGS_SURFACE_HEADER] = SETTINGS_SURFACE_VALUE;
       const bodyText = JSON.stringify({ method: contract.name, input: contract.input.parse(input) });
+      const signal = contract.name === "queue.profile" ? AbortSignal.timeout(PROFILE_SAVE_TIMEOUT_MS) : undefined;
       while (true) {
         let response: Response;
         try {
-          response = await fetcher("/api/rpc", { method: "POST", headers, body: bodyText });
+          response = await fetcher("/api/rpc", { method: "POST", headers, body: bodyText, signal });
+          if (signal) {
+            // Keep the same deadline while reading the acknowledgement body.
+            return await readRpcResponse(contract, response);
+          }
         } catch (error) {
+          if (signal?.aborted)
+            throw new Error("The service did not confirm the save within 10 seconds. Check the stored profile settings.", { cause: error });
           if (!retryRead) throw error;
           await waitForService();
           continue;
         }
         if (retryRead && [502, 503, 504].includes(response.status)) { await waitForService(); continue; }
-        const body = await response.json() as { result?: unknown; error?: { message?: string } };
-        if (!response.ok) throw new Error(body.error?.message ?? `Board request failed (${response.status})`);
-        return contract.output.parse(body.result);
+        return readRpcResponse(contract, response);
       }
     },
     events(signal: AbortSignal) {
       return fetcher("/api/events", { signal });
     },
   };
+}
+
+async function readRpcResponse<Input extends ZodType, Output extends ZodType>(
+  contract: RpcContract<Input, Output>, response: Response,
+): Promise<ZodOutput<Output>> {
+  const body = await response.json() as { result?: unknown; error?: { message?: string } };
+  if (!response.ok) throw new Error(body.error?.message ?? `Board request failed (${response.status})`);
+  return contract.output.parse(body.result);
 }

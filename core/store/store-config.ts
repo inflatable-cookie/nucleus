@@ -5,9 +5,7 @@ import {
   availabilitySchema,
   poolRecordFromLegacy,
   poolSchema,
-  routingGrantSchema,
   usageSettingSchema,
-  type RoutingGrant,
   type RoutingPolicy,
   type Task,
   type UsageLevel,
@@ -245,31 +243,4 @@ export class StoreConfig {
     };
   }
 
-  /** Spec 052 planner grants stored in meta, like usage. */
-  routingGrants(): RoutingGrant[] {
-    const parsed = routingGrantSchema
-      .array()
-      .safeParse(this.getMeta<unknown>("routingGrants") ?? []);
-    return parsed.success ? parsed.data : [];
-  }
-
-  noteGrantRun(task: Task, role: "worker" | "reviewer" | "coordinator"): void {
-    const grantId = task.profileRequests?.[role]?.signoff?.grantId;
-    if (!grantId) return;
-    const at = Date.now();
-    let changed = false;
-    const next = this.routingGrants().map((grant) => {
-      if (
-        grant.id !== grantId ||
-        grant.status !== "active" ||
-        (grant.until && Date.parse(grant.until) <= at)
-      )
-        return grant;
-      changed = true;
-      return { ...grant, runCount: grant.runCount + 1 };
-    });
-    if (!changed) return;
-    this.setMeta("routingGrants", next);
-    this.advanceRevision();
-  }
 }

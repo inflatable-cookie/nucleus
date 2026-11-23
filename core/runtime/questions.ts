@@ -2,7 +2,6 @@ import { formatAgentId, nativeAgentId } from "../../shared/agent-identity";
 import { Store, digest as storeDigest } from "../store/store";
 import type { Engine } from "../engine";
 import type { Decisions } from "../planning/decisions";
-import { reconcileRoutingGrants } from "../dispatch/routing-signoff";
 import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host";
 
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
@@ -231,11 +230,6 @@ export class RuntimeQuestions {
       this.context.engine.resolution.operatorDecisionAnswered(view);
     } catch {
       /* the decision record is the durable answer; the ask's own pending receipt names it */
-    }
-    try {
-      reconcileRoutingGrants(this.context.store, this.context.decisions);
-    } catch {
-      /* the decision record is the durable answer; grant activation retries on the next reconcile */
     }
     if (view.delivery) {
       void this.context.engine.scheduleDecisionNotices?.().catch(() => {

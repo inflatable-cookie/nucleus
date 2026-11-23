@@ -10,6 +10,9 @@ export function isAgentGoneRefusal(error: unknown): boolean {
   return error instanceof Error && error.message === AGENT_NOT_FOUND;
 }
 
+/** The adapter has stopped observing this identity. */
+export class ThreadUnobservedError extends Error {}
+
 /** The adapter failed before issuing an archive request. */
 export class ArchiveNotDeliveredError extends Error {
   constructor(cause: unknown) {

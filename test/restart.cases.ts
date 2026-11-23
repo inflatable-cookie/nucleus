@@ -6115,7 +6115,7 @@ async function coordinatorRouteCostScenario(): Promise<void> {
           .find((row) => row.action === "route" && row.outcome === "refused");
         assert.match(
           String(outcome?.detail.reason),
-          /needs the operator's permission at the normal usage level/,
+          /requires a planner or owner request at the normal usage level/,
         );
         assert.notEqual(
           f.current().profileRequests?.worker?.profileId,

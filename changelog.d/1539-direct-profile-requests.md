@@ -1,0 +1,1 @@
+Planner profile requests take effect on the role’s next run. At Low, Normal and High, Frontier requires a request with a reason, including after review asks for changes. Heavyweight profiles outside automatic selection at Low or Normal follow the same rule. The Low admission gate still requires operator approval for high and very-high complexity work.

@@ -39,6 +39,7 @@ import {
   DEFAULT_PROJECT_LIMIT,
   DEFAULT_STALL_THRESHOLD_MINUTES,
   DEFAULT_THREAD_RETENTION_DAYS,
+  DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
   capacityAuthorityValuesSchema,
   capacityChangeSchema,
   type CapacityAuthorityState,
@@ -96,6 +97,7 @@ export const CAPACITY_AUTHORITY_KEYS = [
   "hostOutageNoticeMinutes",
   "operatorDefaultHostKind",
   "threadRetentionDays",
+  "threadRetentionIntervalHours",
 ] as const satisfies readonly (keyof CapacityAuthorityValues)[];
 
 /** The current state, with the defaults every live reader uses on a store that never set one. */
@@ -133,6 +135,9 @@ export function capacityAuthorityEffective(
     threadRetentionDays:
       store.getMeta<number>("threadRetentionDays") ??
       DEFAULT_THREAD_RETENTION_DAYS,
+    threadRetentionIntervalHours:
+      store.getMeta<number>("threadRetentionIntervalHours") ??
+      DEFAULT_THREAD_RETENTION_INTERVAL_HOURS,
   };
 }
 

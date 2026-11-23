@@ -1,3 +1,4 @@
+import { workerActivityObservation } from "../../telemetry/task-activity-observation";
 import { isDispositionActive, isDispositionComplete } from '../../../shared/contracts';
 import type { Task } from '../../../shared/contracts';
 import { interactiveSessionOpen } from '../../dispatch/interactive';
@@ -7,7 +8,31 @@ import { now } from '../../store/store';
 import { OPERATOR_WORKER_REMAP_REASON, observedActive } from '../task-reasons';
 import type { WorkerReconcileContext } from './context';
 import { HOST_KIND_LABELS, hostKindOf } from '../../../shared/host-kind';
-import { INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON, classifyWorkerObservation } from './decisions';
+import { INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON, STOPPED_WORKER_STATUSES, classifyWorkerObservation } from './decisions';
+import {
+  completedTurnCanRelease,
+  type CompletionObservation,
+} from "../completed-run-observation";
+
+export type WorkerObservation =
+  | { kind: "stopped"; state: Awaited<ReturnType<Adapter["observe"]>>; current: Task }
+  | { kind: "released_completion"; state: Awaited<ReturnType<Adapter["observe"]>> | null; current: Task };
+
+/** The initial worker stores its authenticated completion on the task row. */
+function workerCompletionReceivedAt(engine: WorkerReconcileContext, task: Task) {
+  const completion = task.completion;
+  if (
+    !completion ||
+    completion.taskId !== task.id ||
+    completion.runId !== task.runId ||
+    !engine.store.receiptHash(completion.eventId, task.id, completion.runId)
+  )
+    return undefined;
+  const received = engine.store.db.prepare(
+    "SELECT at FROM events WHERE taskId=? AND kind='completion_received' ORDER BY id DESC LIMIT 1",
+  ).get(task.id);
+  return typeof received?.at === "string" ? received.at : undefined;
+}
 
 /**
  * Observation gates: which tasks a pass may observe at all, what an observation
@@ -34,16 +59,22 @@ function resetLookupBackoff(engine: WorkerReconcileContext, current: Task): void
 const permissionWait = (hostId: string | null | undefined): string =>
   `Worker is waiting for a permission response in ${HOST_KIND_LABELS[hostKindOf(hostId)]}`;
 
-export async function reconcileObservation(engine: WorkerReconcileContext, task: Task): Promise<{ state: Awaited<ReturnType<Adapter["observe"]>>; current: Task } | null> {
+export async function reconcileObservation(engine: WorkerReconcileContext, task: Task): Promise<WorkerObservation | null> {
   const { store, resolution } = engine;
   // Callers pick lanes from an earlier read. A task that has since finished or been
   // disposed must not be reconciled: re-processing an old worker receipt reopened
   // g05.222 from cancelled to blocked.
   if (terminal(store.task(task.id))) return null;
-  const state = await engine.onTaskHost(task, () => engine.host.observe(task.agentId!));
+  const at = now();
+  let thread: CompletionObservation;
+  try {
+    thread = { kind: "observed", state: await engine.onTaskHost(task, () => engine.host.observe(task.agentId!)) };
+  } catch (error) {
+    thread = { kind: "unobservable", error };
+  }
   if (engine.stopped) return null;
   let current = store.task(task.id);
-  if (terminal(current)) return null;
+  if (terminal(current) || current.runId !== task.runId || current.agentId !== task.agentId) return null;
   if (current.phase === 'working' && !current.resolution.recoveryActive && current.resolution.recovery?.status === 'escalated'
     && current.retiredWorkers.at(-1)?.reason.startsWith(OPERATOR_WORKER_REMAP_REASON)) {
     current = engine.updateAfterOperatorRemap(current);
@@ -61,6 +92,18 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
   if (consumedReady && current.phase !== 'working') return null;
   if (current.phase === 'changes_requested') return null;
   if (current.failoverReason) return null;
+  const completionReceivedAt = workerCompletionReceivedAt(engine, current);
+  const releaseReported = completedTurnCanRelease(
+    { ...current, completionReceivedAt }, thread, at, engine.idleGraceMs,
+  );
+  if (thread.kind === "unobservable") {
+    if (!completionReceivedAt) throw thread.error;
+    if (!releaseReported || (current.checkpoints.intent && current.checkpoints.intent.status !== 'delivered'))
+      return null;
+    current = store.update(task.id, { agentActive: false });
+    return { kind: "released_completion", state: null, current };
+  }
+  const { state } = thread;
   if (state.workspaceId !== current.workspaceId) throw new Error("Worker placement changed; workspace ownership is unknown");
   recordObservation(engine, current, state);
   // Pause still applies a stored result. Without one, skip classification so
@@ -83,6 +126,13 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
     }
   }
   if (resolution.reconcileStalledTurnStop(current, null, state)) return null;
+  if (releaseReported && (
+    observedActive(state) || state.activeTurnId || state.archived ||
+    !STOPPED_WORKER_STATUSES.includes(state.status)
+  )) {
+    current = store.update(task.id, { agentActive: false });
+    return { kind: "released_completion", state, current };
+  }
   const observation = classifyWorkerObservation(current, state);
   if (observation === 'live' || observation === 'live_recover') {
     resetLookupBackoff(engine, current);
@@ -111,7 +161,7 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
     if (current.runId) resolution.extendCallbackReminder(store.task(task.id), current.runId);
     return null;
   }
-  return { state, current };
+  return { kind: "stopped", state, current };
 }
 
 /** Record the observation on the task: last status, activity and any model change. */
@@ -119,7 +169,9 @@ export function recordObservation(engine: WorkerReconcileContext, task: Task, st
   const active = observedActive(state);
   const changed = task.lastAgentStatus !== state.status || task.agentActive !== active;
   const modelChanged = Boolean(state.model && (state.model !== task.workerModel || !task.workerModels.includes(state.model)));
-  engine.store.update(task.id, { lastAgentStatus: state.status, agentActive: active, lastObservedAt: now(), lastActivityAt: state.updatedAt || null, ...(modelChanged ? { workerModel: state.model, workerModels: [...new Set([...task.workerModels, state.model!])] } : {}) }, changed ? "agent_state" : undefined, state.status);
+  const at = now();
+  const participantActivity = workerActivityObservation(task, state, at);
+  engine.store.update(task.id, { lastAgentStatus: state.status, agentActive: active, lastObservedAt: at, lastActivityAt: state.updatedAt || null, ...(participantActivity ? { participantActivity } : {}), ...(modelChanged ? { workerModel: state.model, workerModels: [...new Set([...task.workerModels, state.model!])] } : {}) }, changed ? "agent_state" : undefined, state.status);
 }
 
 /** Observe without settling anything: the caller owns the answer. */

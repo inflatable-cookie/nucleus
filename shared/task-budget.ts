@@ -171,6 +171,8 @@ export const budgetClockSchema = z.object({
 export type BudgetClock = z.infer<typeof budgetClockSchema>;
 
 export type BudgetEvent = { at: string; kind: string; detail: string };
+/** One outage of the task's host (`hostOutageIntervals`); `until` is null while it is open. */
+export type BudgetHostOutage = { since: string; until: string | null };
 type BudgetInterval = { start: number; end: number };
 
 /**
@@ -297,7 +299,8 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
 
 /**
  * A responsible task's budget at `at` (epoch ms). Every caller passes the same
- * inputs — the task row, its runs, its events and canonical repository settings —
+ * inputs — the task row, its runs, its events, canonical repository settings and
+ * its host's outages (Spec 069 §3) —
  * so the dispatch gate, the board, task detail and `task.next` measure one figure
  * (nucleus#1187). The
  * lifecycle start is the task's own `budgetSince`, else its legacy
@@ -315,7 +318,8 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
  * the task's budget.
  */
 export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Partial<Pick<Task, "budgetSince" | "holds" | "held" | "mergeHold" | "holdAt" | "holdUntil" | "holdOwner" | "holdReason" | "holdGeneration" | "holdBlocking" | "phase">>, runs: Run[], at: number,
-  events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskBudgetView {
+  events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null,
+  hostOutages: readonly BudgetHostOutage[] = []): TaskBudgetView {
   const level = taskBudgetLevel(task.complexity);
   const steps = 1 + (task.resolution.budgetExtensions ?? 0);
   // The recorded extension count sizes the increment per answer; the granted
@@ -349,7 +353,11 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
   const fences = task.held ? [task.holds?.dispatch, task.holds?.merge].filter((fence): fence is HoldFence => Boolean(fence)) : [];
   const legacyHoldStart = task.held && !fences.length ? task.holdAt : null;
   const holdIntervals = [...fences.map(fence => ({ start: Date.parse(fence.at), end: at })),
-    ...(legacyHoldStart ? [{ start: Date.parse(legacyHoldStart), end: at }] : [])];
+    ...(legacyHoldStart ? [{ start: Date.parse(legacyHoldStart), end: at }] : []),
+    // Spec 069 §3: the task's host outages, read from the host's own record, so an
+    // outage pauses every task on the host without a write per task.
+    ...hostOutages.map(outage => ({ start: Date.parse(outage.since), end: outage.until ? Date.parse(outage.until) : at }))
+      .filter(interval => Number.isFinite(interval.start) && Number.isFinite(interval.end))];
   const paused = Math.min(wallSpan, Number.isFinite(wallStart)
     ? recordedBudgetPaused(events, task, at, wallStart, holdIntervals) : 0);
   const wallUsed = wallSpan - paused;

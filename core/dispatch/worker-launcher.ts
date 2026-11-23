@@ -1,3 +1,4 @@
+import { endsStopOnReason } from "../../shared/task-stop";
 import { measureRunPrompt, recordPromptSize } from "./prompt-text/measure";
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
@@ -281,7 +282,12 @@ export class WorkerLauncher {
               }
             : {}),
           laneDocumentIssues: [...references.unresolved, ...missingDocuments],
-          resolution: { ...current.resolution, restartSlotHold: null },
+          resolution: {
+            ...current.resolution,
+            // Creating the worker ends the wait the task was in (Spec 069 §3).
+            ...endsStopOnReason(current, "Creating worker"),
+            restartSlotHold: null,
+          },
         },
         "agent_intent",
         runId,

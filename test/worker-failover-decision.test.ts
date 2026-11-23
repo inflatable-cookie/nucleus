@@ -20,7 +20,7 @@ test('worker failover gates and outcomes', () => {
     [{ stage: 'selected', failure: false, requestedId: null, selectedId: 'a', operatorArmed: false, relayed: false }, 'refuse_same_model'],
     [{ stage: 'selected', failure: false, requestedId: 'b', selectedId: 'a', operatorArmed: false, relayed: false }, 'refuse_superseded'],
     [{ stage: 'selected', failure: true, requestedId: 'b', selectedId: 'a', operatorArmed: false, relayed: false }, 'continue'],
-    [{ stage: 'replacement', decision: { allowed: false, rule: 'signoff_pending', detail: 'x' }, selected: {} as never, replacingStoppedRevision: false, replacingStoppedWorker: false }, 'refuse_rule'],
+    [{ stage: 'replacement', decision: { allowed: false, rule: 'request_required', detail: 'x' }, selected: {} as never, replacingStoppedRevision: false, replacingStoppedWorker: false }, 'refuse_rule'],
     [{ stage: 'replacement', decision: { allowed: true, cause: 'x' }, selected: {} as never, replacingStoppedRevision: true, replacingStoppedWorker: false }, 'replace'],
   ];
   for (const [facts, expected] of cases) assert.equal(decideWorkerFailover(facts).kind, expected, JSON.stringify(facts));

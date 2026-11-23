@@ -48,8 +48,8 @@ nothing else:
   operator's text is the last `<user_request>` block when the prompt carries one
   and the prompt itself otherwise; a command is matched against that text, never
   against the client's envelope (nucleus#1435).
-  It also raises each service-projected decision as a concurrent native form and
-  returns the operator's answer or cancellation receipt. A host that released a turn re-enters the
+  An inbox session also raises each service-projected decision as a concurrent
+  native form and returns the operator's answer or cancellation receipt. A host that released a turn re-enters the
   thread with a prompt of its own, and the binding's `holdPattern` names it:
   nothing is shown, nothing is forwarded, and the turn is held, which is what
   gives the host's next child a live parent run (nucleus#1305);
@@ -126,13 +126,16 @@ socket, authenticated by the minted token:
     whatever this service already showed for that session. The stored signature
     suppresses only the repetitions a held turn would otherwise make;
   - `release` when the task is terminal, or when a host adapter called
-    `release(sessionId, reason)`, provided no operator decision is open. A release directive is consumed by the turn
+    `release(sessionId, reason)`. A release directive is consumed by the turn
     that acts on it and the next turn holds again, which is what "release the
     parent between children, re-enter by message" needs. Directives are
     memory-only, so a service restart re-derives the answer from the task.
-  - `elicitations` names the offerable decision versions whose cards the host has
-    confirmed absent. An attach shows the line only. Held polls offer cards once
-    the host supplies a successful observation.
+    A task turn carries no `elicitations`: operator decisions belong to the host
+    Inbox (Spec 032), so no decision holds a task thread.
+- `POST /acp-turn` `{kind: "inbox", hostId, sessionId, waitMs, attach?}` answers
+  `{kind: "inbox", hostId, state, reason, messages, elicitations}`. It holds while
+  a decision this Inbox owns is offered, and `elicitations` names the offerable
+  versions whose cards the host has confirmed absent. An attach raises no card.
 - `POST /acp-answer` authenticates a task or host-scoped inbox session, checks the
   offered decision and version, and records an operator answer or the operator's own
   dismissal receipt. A cancellation a host makes for a card whose turn ended is not
@@ -263,7 +266,7 @@ settlement and restart behavior belong to the
 Parenting role threads as ACP children of this session, and registering the
 Nucleus provider in T3, are the host adapter's work
 ([t3code host adapter](t3code-host-adapter.md), "Native parenting"): it holds the
-turn while a child is active or a decision needs the operator, releases it when neither applies, and re-enters with a
+turn while a child is active, releases it when no child is, and re-enters with a
 `holdPattern` prompt before the next child. Registering the provider
 is one operator setting (`nucleus-acp` is the installed command path); a drift
 in the client's ACP revision is the adapter's compatibility check, not the

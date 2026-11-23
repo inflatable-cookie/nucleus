@@ -78,6 +78,15 @@ export function threadIdOfPayload(payload: unknown): string | undefined {
   return typeof threadId === "string" ? threadId : undefined;
 }
 
+/** The child thread a `delegated_task.request` creates (nightly `idAllocator.derive`). */
+function delegatedChildOfPayload(payload: unknown): string | undefined {
+  const command = payload as { type?: unknown; commandId?: unknown } | null;
+  return command?.type === "delegated_task.request" &&
+    typeof command.commandId === "string"
+    ? `thread:delegated-task:${command.commandId}`
+    : undefined;
+}
+
 /**
  * The thread a presentation intent addresses, when the recorded command is only
  * presentation. A `thread.metadata.update` counts only when the title is the
@@ -429,6 +438,10 @@ export class T3IntentLedger {
       // The thread is about to change: the pass's held snapshot of it is stale from
       // here on, whatever this command's outcome turns out to be.
       if (threadId) this.core.forgetRead?.(threadId);
+      // A child request creates a thread whose id T3 derives from the command id; the
+      // live shell may not list it for a moment, so it is read by id until it does.
+      const child = delegatedChildOfPayload(payload);
+      if (child) this.core.forgetRead?.(child);
       this.awaitingLate.add(key);
       const result = await rpc.call(method, payload);
       this.awaitingLate.delete(key);

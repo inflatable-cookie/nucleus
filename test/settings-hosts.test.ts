@@ -38,6 +38,7 @@ const CAPACITY: CapacityAuthorityValues = {
   hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
+  threadRetentionIntervalHours: 12,
 };
 const BB = "bb:0123456789abcdef";
 const now = Date.parse("2026-11-18T12:00:00.000Z");

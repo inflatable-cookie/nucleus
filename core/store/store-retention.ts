@@ -135,14 +135,23 @@ export class StoreRetention {
     for (;;) {
       const more = this.core.transaction(() => {
         const rows = this.db
-          .prepare("SELECT rowid AS k, * FROM tasks WHERE rowid>? ORDER BY rowid LIMIT ?")
+          .prepare(
+            "SELECT rowid AS k, * FROM tasks WHERE rowid>? ORDER BY rowid LIMIT ?",
+          )
           .all(cursor, batch);
         if (!rows.length) return false;
         cursor = Number(rows.at(-1)!.k);
         const pendingProcessTasks = this.pendingProcessTasks();
         const batchPurged: string[] = [];
         for (const row of rows) {
-          const id = this.purgeTask(row, at, cutoff, pendingProcessTasks, cleanupFiles, failures);
+          const id = this.purgeTask(
+            row,
+            at,
+            cutoff,
+            pendingProcessTasks,
+            cleanupFiles,
+            failures,
+          );
           if (id) batchPurged.push(id);
         }
         // Purging deletes in bulk (and runs caller cleanup in between), so drop
@@ -165,7 +174,10 @@ export class StoreRetention {
       this.core.setMeta(
         "telemetryCaptureError",
         failures.length
-          ? `Telemetry capture failed for ${failures.length} finished task${failures.length === 1 ? "" : "s"}; their history is kept: ${failures.slice(0, 3).join("; ")}`.slice(0, 2000)
+          ? `Telemetry capture failed for ${failures.length} finished task${failures.length === 1 ? "" : "s"}; their history is kept: ${failures.slice(0, 3).join("; ")}`.slice(
+              0,
+              2000,
+            )
           : "",
       );
     });
@@ -199,7 +211,9 @@ export class StoreRetention {
     // A removed task never contributed to telemetry, so it carries no record (and any
     // seeded one goes with it).
     if (task.removedAt) {
-      this.db.prepare("DELETE FROM task_telemetry_retained WHERE taskId=?").run(task.id);
+      this.db
+        .prepare("DELETE FROM task_telemetry_retained WHERE taskId=?")
+        .run(task.id);
     } else {
       let record: RetainedTaskTelemetry;
       try {
@@ -325,7 +339,13 @@ export class StoreRetention {
         ON CONFLICT(taskId) DO UPDATE SET version=excluded.version, createdAt=excluded.createdAt,
           capturedAt=excluded.capturedAt, data=excluded.data`,
       )
-      .run(record.taskId, record.version, record.createdAt, record.capturedAt, JSON.stringify(record));
+      .run(
+        record.taskId,
+        record.version,
+        record.createdAt,
+        record.capturedAt,
+        JSON.stringify(record),
+      );
   }
 
   /**
@@ -351,7 +371,9 @@ export class StoreRetention {
 
   /** Retained-history coverage for the telemetry base (see `establishTelemetryCoverage`). */
   retainedTelemetryCoverage(): RetainedTelemetryCoverage {
-    const marker = this.core.getMeta<{ coverageFrom?: string | null }>(TELEMETRY_COVERAGE_KEY);
+    const marker = this.core.getMeta<{ coverageFrom?: string | null }>(
+      TELEMETRY_COVERAGE_KEY,
+    );
     if (marker !== undefined)
       return { coverageFrom: marker?.coverageFrom ?? null, active: true };
     const coverageFrom = this.legacyCoverageFrom();
@@ -365,7 +387,10 @@ export class StoreRetention {
    * record is never counted while the task's detailed history exists, and the purge
    * re-captures it at commit.
    */
-  seedRetainedTelemetry(at = Date.now(), limit = TELEMETRY_SEED_LIMIT): { seeded: number; failed: string[] } {
+  seedRetainedTelemetry(
+    at = Date.now(),
+    limit = TELEMETRY_SEED_LIMIT,
+  ): { seeded: number; failed: string[] } {
     this.establishTelemetryCoverage(at);
     const cursor = this.core.getMeta<number>("telemetrySeedCursor") ?? 0;
     const rows = this.db
@@ -377,19 +402,31 @@ export class StoreRetention {
           AND NOT EXISTS (SELECT 1 FROM task_telemetry_retained AS r WHERE r.taskId=t.id AND r.version=?)
         ORDER BY t.rowid LIMIT ?`,
       )
-      .all(cursor, RETAINED_TELEMETRY_VERSION, Math.max(1, limit)) as { k: number; id: string }[];
+      .all(cursor, RETAINED_TELEMETRY_VERSION, Math.max(1, limit)) as {
+      k: number;
+      id: string;
+    }[];
     const failed: string[] = [];
     let seeded = 0;
     for (let index = 0; index < rows.length; index += TASK_PURGE_BATCH) {
       this.core.transaction(() => {
         for (const row of rows.slice(index, index + TASK_PURGE_BATCH)) {
           // Re-read at commit: the row may have been purged or reopened since the scan.
-          const current = this.db.prepare("SELECT data FROM tasks WHERE id=?").get(row.id);
+          const current = this.db
+            .prepare("SELECT data FROM tasks WHERE id=?")
+            .get(row.id);
           if (!current) continue;
           const task = this.hooks.numberedTask(String(current.data));
-          if (task.removedAt || !["done", "cancelled"].includes(task.phase) || !task.finishedAt) continue;
+          if (
+            task.removedAt ||
+            !["done", "cancelled"].includes(task.phase) ||
+            !task.finishedAt
+          )
+            continue;
           try {
-            this.writeRetainedTelemetry(this.hooks.captureTelemetry(task.id, at));
+            this.writeRetainedTelemetry(
+              this.hooks.captureTelemetry(task.id, at),
+            );
             seeded += 1;
           } catch (error) {
             failed.push(`${task.id}: ${String(error).slice(0, 300)}`);
@@ -397,11 +434,17 @@ export class StoreRetention {
         }
       });
     }
-    this.core.setMeta("telemetrySeedCursor", rows.length < Math.max(1, limit) ? 0 : Number(rows.at(-1)!.k));
+    this.core.setMeta(
+      "telemetrySeedCursor",
+      rows.length < Math.max(1, limit) ? 0 : Number(rows.at(-1)!.k),
+    );
     this.core.setMeta(
       "telemetrySeedError",
       failed.length
-        ? `Telemetry seed failed for ${failed.length} finished task${failed.length === 1 ? "" : "s"}: ${failed.slice(0, 3).join("; ")}`.slice(0, 2000)
+        ? `Telemetry seed failed for ${failed.length} finished task${failed.length === 1 ? "" : "s"}: ${failed.slice(0, 3).join("; ")}`.slice(
+            0,
+            2000,
+          )
         : "",
     );
     return { seeded, failed };
@@ -411,7 +454,10 @@ export class StoreRetention {
    * Expire retained records whose creation cohort left the rolling 90-day window, in bounded
    * transactions. Detailed retention, tombstones and durable outcomes are untouched.
    */
-  expireRetainedTelemetry(at = Date.now(), batch = TELEMETRY_EXPIRY_BATCH): number {
+  expireRetainedTelemetry(
+    at = Date.now(),
+    batch = TELEMETRY_EXPIRY_BATCH,
+  ): number {
     const before = new Date(at - TELEMETRY_RETENTION_MS).toISOString();
     let total = 0;
     for (;;) {
@@ -517,6 +563,14 @@ export class StoreRetention {
     if (
       task.resolution.workspaceRetirement &&
       task.resolution.workspaceRetirement.state !== "archived"
+    )
+      return false;
+    // nucleus#1548: an owed branch deletion is a durable effect like any other; its
+    // task row is not history until the delete settles or is deliberately kept.
+    if (
+      task.resolution.branchCleanups.some(
+        (record) => record.state === "intent" || record.state === "wait",
+      )
     )
       return false;
     if (

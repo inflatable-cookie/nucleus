@@ -357,7 +357,7 @@ already present.
 | Queue message behind current step | `message.dispatch` `queue_after_active` | Exposed through `T3Adapter.enqueueMessage`; queues behind any active turn without interrupting it |
 | Decider and consult reviewer | `delegated_task.request` child under the task parent, followed by `askPlanner` / `askReviewer` | Exposed through `T3Adapter.runDecider` and `T3Adapter.createConsultReviewer` with separate deterministic launch IDs (`ns-decider-launch-<id>`, `ns-reviewer-consult-launch-<id>`) and first-question delivery IDs (`ns-decider-<id>`, `ns-reviewer-consult-<id>`) |
 | Closeout workspace recovery | Nucleus-owned Git worktree (`ns-closeout-<taskId>`) under the task workspaces root, registered via `createWorkspace` | Records `worktreeSlug` and `projectRootPath` on the T3 workspace handle so `findCloseoutWorkspaces` and `verifyCloseoutWorkspace` prove identity and cleanliness. Before binding a replacement parent on the recovered closeout checkout, the adapter verifies the prior parent's identity and archived/deleted state, binds the ACP session pointer to the verified closeout directory, and persists the replacement `launchCommandId` for restart recovery |
-| Tell, relayed answer or decision notice (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own lifecycle reminders and notices keep `queue_after_active` |
+| Tell, relayed answer, decision notice or brief amendment (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own lifecycle reminders and notices keep `queue_after_active` |
 | Host-neutral fallbacks (run usage, native decisions, live-run presence) | No silent skip | Missing run-usage streaming records one `run_usage_unavailable` event per run; native-decision fallback records one `operator_question_route_fallback` event before ladder/board routing; absent live-run terminal/label presence is reported as `liveRunPresence: { active: false, reason }` in `service.health` |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
@@ -787,42 +787,60 @@ completion or a Nucleus report.
 
 ## Observation and restart
 
-`orchestration.subscribeShell` returns every project registration (active and
-archived) and every active non-archived thread in one SQLite read transaction,
-whereas `orchestration.getArchivedShellSnapshot` returns archived threads in a
-separate transaction. Routine live-only reads — `listLiveAgents`, `activeThreads`,
-`createWorkspace`, `repositoryProject`, `workspaceAvailable`,
-`workspaceArchived`, live `observe`, live `findAgents`, live `originAgent`,
-live `archiveThreadPage({ includeArchived: false })`, `reconcileObservation` for
-live or retired threads, and live nesting checks — answer from `subscribeShell`
-(and bounded `orchestration.subscribeThread` snapshots where needed) without
-pairing against `getArchivedShellSnapshot`. Pass-scoped `shell`, `archivedShell`
-and `inventory` promises share reads within one audit pass and clear on close.
+### Live shell (Spec 069 batch 5)
+
+The adapter holds one `orchestration.subscribeShell` subscription per connection
+(`hosts/t3code/live-shell.ts`). T3 answers it with one authoritative snapshot, a
+`synchronized` marker and then a live tail (`thread.updated`, `thread.removed`,
+`project.updated`, `project.removed`), and the adapter applies that tail to the
+copy it holds. Every reader — the host pass, the board's live lists, Settings,
+project observations, exact lookups — answers from that copy, in a pass or not.
+The live shell lists every active, non-archived thread, so a thread it does not
+list is not live.
+
+Freshness is bounded: the copy counts as live only while its subscription is
+open, its tail has delivered an item within five minutes
+(`LIVE_SHELL_QUIET_BOUND_MS`), and the subscription is younger than fifteen
+minutes (`LIVE_SHELL_MAX_AGE_MS`). Past either bound, or after a dropped stream, a
+disconnect, `snapshot-required` or an item the adapter does not know, the next
+reader that needs a current answer opens a new subscription and waits for its one
+fresh snapshot; rows that differ between the two copies count as changed. The
+opening snapshot has the 60-second deadline thread snapshots have; one that
+outlasts it is a `T3RpcError` timeout, which fails only the step that waited, and
+a remote failure to open is a transient read refusal (`T3TransientReadError`).
+Neither is an incompatibility or a host fault. After a failed open the next one
+waits out a backoff (1 s doubling to 60 s); a decision read in between gets a
+bounded `T3ShellBackoffError` refusal instead of another open. The previous copy
+is kept: the board's and Settings' live-agent list (`listLiveAgents`) answers from
+it at once while the new one opens in the background. Decisions never read that
+dated copy.
+
+There is no archived or paired inventory in steady state (Tom, 2026-11-22: "We
+shouldn't need to be reading archived threads at all"). Where this spec says a T3
+read uses the "complete" or "paired" inventory, the adapter now reads the live
+shell and, for a bound thread the shell does not list, one exact
+`subscribeThread` read by id. That exact read answers an archived or tombstoned
+thread with its own record, and `ThreadNotFoundError` (or the projection's proved
+missing-thread cause) means T3 has no such thread: removed, or never created —
+unless the live shell lists it, because T3's projection store and its shell can
+disagree for a moment, and a creation lookup must never answer such a thread
+absent. Its
+answer is kept until T3's shell names the thread again, a command goes to it, or
+the connection drops, so a missing thread costs one read, not one per pass. A
+thread a command just went to (`forget`, including the child a
+`delegated_task.request` derives) keeps its exact read until the shell shows it,
+because its absence may only be the stream's lag. `T3InventoryChurnError` is gone.
+The one archived read left is the retention pass's walk, on its own interval
+(see Archived thread retention in the orchestration contract).
 
 For already-bound targets (`observe`, `originAgent`, `isObserved`, `activeRunId`,
 `activeRunIds`, `runtimeRequest`, `knownThread`, `parentGone`, and
-`restoreForRestart`), reads prefer `subscribeThread` (`readDirectProjection`)
-once the target is absent from live shell so a positively live, archived,
-`deletedAt`, or mismatched exact binding is proved without pairing
-`getArchivedShellSnapshot`, and selection shares that projection with the
-pre-send check within a pass. Only `ThreadNotFoundError`, an
-`OrchestrationV2GetThreadProjectionError` whose `cause` proves
-`ProjectionStoreThreadNotFoundError` for the requested thread (which the
-adapter classifies as `OrchestrationV2GetThreadProjectionError:thread_not_found`),
-and, for a bound parent, the generic incomplete projection read (nucleus#1460)
-hand a read to the paired inventory (plus operations that genuinely require full
-coverage: `threadArchiveState`, `workspaceThreads`, `archiveThreadPage`,
-`findAgents`, `anyChildLive`, and `observeThreadList` after a not-found error)
-pairs `subscribeShell` with `getArchivedShellSnapshot` at an equal
-`snapshotSequence` (retrying up to 5 times). If events keep advancing the global
-cursor across that pair, or if `subscribeThread` returns a transient incomplete
-or failing projection read (`OrchestrationV2GetThreadProjectionError` without a
-missing-thread proof for that thread — including `ProjectionStoreReadError`,
-`LegacyV1ThreadImportError`, missing/unrecognized `cause`, or a missing fork
-ancestor — before delivery), the adapter throws a `HostReadRefusalError`
-(`T3InventoryChurnError` / `T3TransientReadError`)
-rather than catching and erasing the reason or inferring deletion/absence. This
-keeps T3 online and model-eligible, records no `host_transport_fault`, and
+`restoreForRestart`), a transient projection read
+(`OrchestrationV2GetThreadProjectionError` without a missing-thread proof for that
+thread — including `ProjectionStoreReadError`, `LegacyV1ThreadImportError`,
+missing/unrecognized `cause`, or a missing fork ancestor) throws
+`T3TransientReadError` (a `HostReadRefusalError`) rather than inferring absence.
+This keeps T3 online and model-eligible, records no `host_transport_fault`, and
 never marks an un-sent intent refused or unknown (`intents.ts` releases the
 provisional intent reservation before delivery on `HostReadRefusalError` or
 `HostSnapshotPendingError`).
@@ -858,19 +876,22 @@ coordinator admission, durable owner controls/restarts, or `question.answer`:
   (`NativeQuestions`) likewise preserves recorded answers without recording
   `native_question_unknown`, and manual `host.question-answer` records
   `native_manual_answer_refused` on pre-send transient/refusal failures.
-`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates;
-retention still takes an exact `threadArchiveState` read immediately before
-deletion. Do not enable omission of older settled threads or idle children.
+`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates
+(with a 60-second deadline), and only the retention pass calls it.
+`threadArchiveState` then answers from the live shell (an unarchived thread reads
+live there at once) and from that same walk. The read after a removal is not a
+fresh observation: T3's settled `thread.delete` receipt confirms the removal, so
+that read answers absent even before T3's shell streams the removal. Without a walk on
+this connection it is one exact read by id. Do not enable omission of older settled threads or idle children.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
 carry empty thread arrays; they never replace authoritative shell reads.
 
-Observation reads keep each sweep bounded: T3 transport and timeout errors
-classify as transport failures (deferring the lane and marking the host
-unavailable on the pass), while `T3InventoryChurnError` keeps the host online
-and lets independent work proceed. A task quantum that does not return within
-two minutes (`TASK_QUANTUM_BOUND_MS`) releases the sweep; the task records an
-`observation_outage` event and its lane stays held until the quantum returns
-(#1148, planner ruling).
+Observation reads keep each sweep bounded: T3 transport and timeout errors fail
+only their own step (host health is the connection's, Spec 069 batch 2), and a
+transient read refusal keeps the host online and lets independent work proceed.
+A task quantum that does not return within two minutes (`TASK_QUANTUM_BOUND_MS`)
+releases the sweep; the task records an `observation_outage` event and its lane
+stays held until the quantum returns (#1148, planner ruling).
 
 ### Observation window
 
@@ -891,20 +912,38 @@ and pending request; `observe`, `originAgent` and the archive lane therefore rea
 no snapshot for it, and a read that would need one is refused rather than answered
 from memory.
 
-Inside one pass every consumer shares one thread list and one snapshot per thread:
-status, row step, the row's shown/snoozed decision and pending questions all read the
-same answer, so a tracked thread costs at most one `subscribeThread` per pass however many
-paths ask about it, plus at most one more after each command the pass sends to that
-thread (the write invalidates the snapshot the pass held, so a post-write read is
-never answered from before the write). The pass skips a thread's snapshot entirely while the row
-T3 reports for it — the whole row, including `updatedAt`, `status`, `activeRunId`,
-`settledOverride`, `archivedAt`, `deletedAt` and the pending request — is unchanged
-since the snapshot it already holds, so a sweep with nothing new in T3 serves no
-thread snapshot at all. A pending runtime request is never skipped across passes:
-the row summarizes one request, and the read that carries its questions is worth
-one snapshot per pass. A transcript read is never served from a bounded snapshot,
-and an unreadable thread list falls back to the plain per-thread read instead of
-holding a marker it could not prove.
+Every consumer shares the live shell and one held snapshot per thread: status, row
+step, the row's shown/snoozed decision and pending questions all read the same
+answer. A thread's snapshot is kept with its live-shell row as the change marker —
+the whole decoded row, including `updatedAt`, `status`, `activeRunId`,
+`settledOverride`, `archivedAt`, `deletedAt`, T3's `itemCount` and
+`visibleItemCount`, `latestRunId`, `activityRunStatus` and the pending request —
+and is read again only when that row moved, in a pass or out of one, so an idle
+unchanged thread is never re-read. Two kinds of thread cannot be answered by the
+row and are refreshed at most once per pass: a thread with a pending runtime
+request (the row summarizes one request; its questions are in the snapshot), and a
+thread with a live run (its projection's `updatedAt`, which a stall check measures
+quiet time from, and its window's tool output can move under an unchanged row).
+Out of a pass those two are read fresh. A command dispatched to a thread drops its held
+snapshot, so a post-write read is never answered from before the write. A
+transcript read is never served from a bounded snapshot.
+
+Pending questions are read only for a thread the live shell marks as awaiting a
+runtime request. At most `T3_THREAD_READ_CONCURRENCY` (4) thread snapshots are in
+flight to one host; further reads wait their turn in arrival order (an owner or
+answer read outside a pass queues behind pass reads already waiting), and
+heartbeats (control frames) never queue behind them. The catalog is one
+`server.getConfig` read in flight at a time; when T3 takes longer than
+`CATALOG_PROMPT_MS` (2 s), a caller that already has a catalog from this
+connection gets it at once and the read finishes in the background. The first
+catalog read on a connection, and the first shell snapshot, are waited for.
+
+A follow-up child is recorded when its message is sent, before T3 creates (or
+declines to create) it, so it is only a candidate until the live shell lists it
+(`seenAt`). An unseen candidate costs no read while its task runs and is dropped,
+not retired, when the task ends: a reminder, checkpoint, brief amendment, reviewer
+report or revision-run prompt (`ns-run-<runId>` to the retained reviewer) whose
+message T3 delivered into the existing thread never becomes a thread to read.
 
 The move is reversible and loses nothing: a thread T3 no longer reports archived — a
 person or a planner re-attached it — returns to observation on the next pass with the
@@ -1052,43 +1091,43 @@ expiry is not evidence that the original answer was never delivered.
 
 ## Operator decisions on T3
 
-An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; when its host confirms no eligible parent exists (before a parent is
-created or after a recorded parent is archived) it goes to that host's single
-pinned **Nucleus** inbox; and when a parent lookup answers `unknown` (for
-example, a disconnected host, an unreadable parent, or a different registered T3
-session) it falls back to the connected T3 host's pinned **Nucleus** inbox
-rather than pinning the unavailable host or leaving the decision offered nowhere
-(nucleus#1516). Other operator decisions also go to the inbox. No parent is
-created to ask a question. Opening, withdrawing or
-superseding a decision (including a routing sign-off opened during a task
-quantum) wakes the reconciliation sweep so the inbox refreshes its title and
-raises or settles cards without waiting for an unrelated wake. The
+Every open operator decision belongs to one host's pinned **Nucleus** inbox
+(Spec 032, Tom 2026-11-22). A task thread never shows a decision card and never
+holds its turn for one. A linked T3 task's host picks the Inbox, so a planner
+sign-off about that task reaches the host that owns the work; a decision that
+links no such T3 task belongs to the connected host's pinned **Nucleus** inbox.
+No parent is created to ask a question. A version bound to a task thread before
+this ruling moves to its Inbox on its next offer, and the sweep's read of the task
+thread settles and cancels the card left there; answered and withdrawn decisions
+are untouched. An Inbox card for a task-linked decision is titled with that
+task's reference and title, as the board's task link is. Opening, withdrawing or
+superseding a decision wakes the reconciliation sweep so the inbox refreshes its
+title and raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
 replaces the authority record and revokes the previous credential. The inbox is
 not a role thread and retention and task archiving never select it.
 
-The service durably binds a decision version to the exact scope of its first offer
-before returning the form. A later parent does not move an Inbox offer, and a
-restart keeps the same owner. Fresh reads of the offering inbox and any known
-linked parent precede a first offer; a legacy pending card is adopted from
-positive T3 evidence before a competing scope can offer it, while a transient
-`unknown` parent status does not block an observed Inbox from offering and
-binding the version. An unknown card read never proves a card absent, and a
-bound version is re-offered only after its own scope is read again. Offer, count,
-callback authorization and card settlement use the same owner. An Inbox sign-off
-uses the ordinary authenticated T3 operator answer route and leaves independent
-task holds intact (nucleus#1433).
+The service durably binds a decision version to the exact Inbox of its first offer
+before returning the form. A later link change does not move an Inbox offer, and a
+restart keeps the same owner. A fresh read of the offering Inbox precedes a first
+offer, and a legacy pending card on that Inbox is adopted from positive T3
+evidence before anything else can offer the version. An unknown card read never
+proves a card absent, and a bound version is re-offered only after its own scope
+is read again. Offer, count, callback authorization and card settlement use the
+same owner. An Inbox sign-off uses the ordinary authenticated T3 operator answer
+route and leaves independent task holds intact (nucleus#1433).
 
-Each open decision version becomes its own `elicitation/create` form. The field id
-carries the decision id and version; its title, question and labelled options are
-shown by T3. Multiple cards can remain pending on one held turn. An accepted
-answer goes through the existing decision answer route as the authenticated T3
-operator; it is not a planner relay. A task with an open decision needs a person,
-so its row is unsnoozed and its parent is held or re-entered. Once the answer is
-recorded, ordinary attention projection decides whether the row snoozes again.
+Each open decision version becomes its own `elicitation/create` form on the Inbox
+thread. The field id carries the decision id and version; its title names the
+linked task, and the question and labelled options are shown by T3. Multiple cards
+can remain pending on one held turn. An accepted answer goes through the existing
+decision answer route as the authenticated T3 operator; it is not a planner relay.
+A task with an open decision needs a person, so its row stays unsnoozed and names
+the decision while the Inbox holds the card; the task's own thread is never held
+for it. Once the answer is recorded, ordinary attention projection decides whether
+the row snoozes again.
 
 The adapter reads each pending runtime request before settlement. An answer from
 another surface is sent to the same request as `runtime-request.respond` with the
@@ -1106,10 +1145,11 @@ What is offered is the service's reading of two facts, never an assumption:
 - the host's own read of T3. Each sweep reads the thread's pending runtime
   requests, settles the cards whose run or capability is gone, and records the
   ones still pending with their decision id and version
-  (`observedCards`, per inbox or per task parent). The offer names the open
-  versions whose cards that read confirms absent, so a lost card comes back on
-  the next held turn in the same inbox, binding and session. Offers and re-entry
-  wait for a successful observation when the thread's pending cards are unknown.
+  (`observedCards`). The offer names the open versions whose cards that read
+  confirms absent, so a lost card comes back on the next held turn in the same
+  inbox, binding and session. Offers and re-entry wait for a successful observation
+  when the thread's pending cards are unknown. A task thread's own read is used
+  only to settle a card an earlier owner left there.
   A card older than the thread's window is read from the full transcript so the
   sweep can settle a card that survives a T3 restart;
 - the operator's own dismissals. A cancel is the operator's only when it arrives
@@ -1119,8 +1159,8 @@ What is offered is the service's reading of two facts, never an assumption:
   that limit is not reset. A card the client settles after its turn ended (across
   a callback-socket replacement, say) is a settlement the host made from its read,
   records nothing, and so never spends the version's re-offer. A version whose
-  re-offer is spent no longer holds a task parent or names the inbox, because the
-  offer key applies the same rule everywhere.
+  re-offer is spent no longer names the inbox, and no longer marks its task's row
+  as waiting on a decision, because the offer key applies the same rule everywhere.
 
 An answer whose delivery is unknown is never resent. The decision stays open, the
 version is offered again on the next held turn, and the operator's next answer is
@@ -1258,8 +1298,8 @@ pass cannot both open for it.
 **One bound, a clear result, and a responsive Stop.** Inbox lookup, message
 lookup, link issuance and all preview calls share one
 `INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Inbox
-lookup checks the live shell first and reads complete inventory only when
-the inbox is absent from that shell. Each read uses the time left in the
+lookup checks the live shell first and reads the inbox thread by its exact id only
+when the shell does not list it. Each read uses the time left in the
 same budget. If the deadline expires after an open is sent,
 the command records a timeout and leaves that attempt's delivery uncertain.
 The three cases are
@@ -1372,11 +1412,11 @@ Those runs predate the proof's agent-stderr capture and its bounded fault-count 
 so their cause is not confirmed. The window now lets a late-landing line count, and a
 failure prints the parent's runs, messages and the agent's stderr. Three consecutive runs
 at `8afefd567` passed, and the agent log of a passing run shows one fault line per outage
-with the turn held. The same proof also covers the parent's own open decision: a task-scoped
-decision the held parent raises as a card stays the same card, on the same running run,
-through a roll, with one card posted and the decision still open. The proof raises it by
-marking the parent's scope observed through the service's own ACP surface, since the
-service's adapter runs in another process.
+with the turn held. The same proof also covers a decision linked to the task: the held
+parent posts no card for it (the Inbox owns it, Spec 032), the parent's run stays live and
+the decision stays open through a roll, and the binding is unchanged. The proof marks the
+parent's scope observed and confirms no card is posted, since the service's adapter runs
+in another process.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
@@ -1442,8 +1482,8 @@ adapter's state before the send, and a lost reply is settled by finding the thre
 before anything is launched again. The binding is stored before the parent's
 launch read, so a read failure in between leaves a **prepared** binding
 (nucleus#1458). An older or generic `OrchestrationV2GetThreadProjectionError` without `ProjectionStoreThreadNotFoundError` grants no absence on its own, so the
-parent observation and the launch's own existence check fall back to the complete
-paired inventory for a prepared binding only (nucleus#1460). A sent parent's generic
+parent observation and the launch's own existence check fall back to the live
+shell for a prepared binding only (nucleus#1460; Spec 069 batch 5). A sent parent's generic
 read keeps its transient wait, so churn never turns it into archive scans or a finished
 marker (nucleus#1451); only `ThreadNotFoundError` or `OrchestrationV2GetThreadProjectionError:thread_not_found` checks the paired inventory. An unreadable inventory keeps the wait.
 Prepared is one decision, shared by first dispatch, the retained launch and owner
@@ -1680,7 +1720,11 @@ of it. The step is now independent:
   `parents` record whose task the same pass reports as this host's and terminal
   (removed, done, or cancelled with no active disposition). The record is on disk,
   so the obligation survives a task workspace archive and a service roll, and
-  Inbox, decision-card, row and title faults cannot hide it.
+  Inbox, decision-card, row and title faults cannot hide it. The step walks the
+  host's own open bindings and resolves each task through the store's single-task
+  read (Spec 069 §4), so it costs one read per open binding, never one per finished
+  task, and a finish the batch did not reach, or one from before a service roll, is
+  still owed on the next pass.
 - **Bounded and rotating.** One pass visits at most `PARENT_ARCHIVE_BATCH` (four)
   entries, the one whose last attempt is oldest first, and records the attempt's
   timestamp on the binding, so a backlog drains over sweeps and no parent waits
@@ -1692,19 +1736,20 @@ of it. The step is now independent:
   record, and it must not be the pinned Inbox thread or any recorded role, follow-up
   or retired-agent thread. Nothing here sweeps planners, project agents or a
   person's own threads, and an operator snooze on another thread is untouched.
-- **Release, then archive, then observe.** The finished parent's held turn is
-  released first (a local ACP call, so a thread that left observation is still
-  released), then `thread.archive` goes through the durable intent with the
-  deterministic parent-archive command id. A settled receipt is never enough on its
-  own: the same thread must read archived (or removed/absent) before the binding is
-  marked `archivedAt`. A receipt T3 still shows live is a person's own unarchive
-  and is never undone.
+- **Release, then archive.** The finished parent's held turn is released first (a
+  local ACP call, so a thread that left observation is still released), then
+  `thread.archive` goes through the durable intent with the deterministic
+  parent-archive command id. T3's settled receipt for that exact thread marks the
+  binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
+  batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
+  reading archived threads at all"). A thread T3 later shows live is a person's own
+  unarchive and is never undone.
 - **Unknown delivery is read, never resent blind.** A recorded intent whose
   delivery is unknown is settled by a fresh positive read of that parent: archived
   settles it, and a live thread is the read that lets the same command replay under
   its own identity. A proven pre-send refusal may be re-sent the same way.
 - **A typed, visible wait.** Every entry the step cannot settle is returned as a
-  typed wait (`unknown`, `refused`, `unobserved`, `mismatched`, `shared`,
+  typed wait (`unknown`, `refused`, `mismatched`, `shared`,
   `read_failed`) with the host's own reason. The pass writes it on the task
   (`parent_archive_uncertain` for unknown delivery, `parent_archive_wait`
   otherwise, one event per distinct reason) and the binding keeps the same state,
@@ -1773,17 +1818,13 @@ snapshot supplies placement. On `ThreadNotFoundError`, or on an
 `OrchestrationV2GetThreadProjectionError` whose `cause` proves
 `ProjectionStoreThreadNotFoundError` for the requested thread (the installed
 nightly's `subscribeThread` wire shape for a missing thread, classified as
-`OrchestrationV2GetThreadProjectionError:thread_not_found`), it checks a fresh,
-synchronized live and archived inventory and counts any surviving row as a
-match. A candidate missing from both lists after that response contributes
-no match. Any other `OrchestrationV2GetThreadProjectionError` (a read failure
+`OrchestrationV2GetThreadProjectionError:thread_not_found`), the candidate
+contributes no match: T3 has no such thread (Spec 069 batch 5). Any other `OrchestrationV2GetThreadProjectionError` (a read failure
 such as `ProjectionStoreReadError`, missing/unrecognized `cause`, or a missing
 fork ancestor) and any transport or timeout error stays transient and leaves
 the lookup unanswered.
 
-If the inventory's five live and archived pairs keep returning different
-sequences, the lookup retries once from fresh reads. Persistent churn surfaces
-as a read refusal. The
+The
 [uncertain-creation contract](../contracts/orchestration.md#uncertain-creation-and-explicit-exits)
 owns the grace and producer checks that allow a replacement.
 

@@ -401,3 +401,49 @@ test("a parent whose thread reports another checkout is a typed wait, never an a
     "mismatched",
   );
 });
+
+/**
+ * Spec 069 §4: the host pass hands only a page of finished tasks, so the obligation is
+ * selected from the open bindings and each task resolved through the store's
+ * single-task read. Six finishes in one interval (more than one batch) are all archived
+ * over the following passes with an empty task list, and a binding whose task is not
+ * finished is left alone.
+ */
+test("open bindings resolved through the lookup archive every finish over passes, batch by batch", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const finished = [
+    "finish-1",
+    "finish-2",
+    "finish-3",
+    "finish-4",
+    "finish-5",
+    "finish-6",
+  ];
+  const parents: Array<{ threadId: string }> = [];
+  for (const id of finished) parents.push(await parentFor(id));
+  const live = await parentFor("still-working");
+  finishChildren(host, server);
+  const lookup = (taskId: string) =>
+    taskId === "still-working"
+      ? doneTask(host, taskId, { phase: "working" } as Partial<Task>)
+      : finished.includes(taskId)
+        ? doneTask(host, taskId)
+        : null;
+  const archived = () =>
+    parents.filter(
+      (parent) => server.threads.get(parent.threadId)!.thread.archivedAt,
+    ).length;
+  assert.deepEqual(await host.reconcileFinishedParents([], lookup), []);
+  assert.equal(archived(), 4, "one pass archives one batch");
+  assert.deepEqual(await host.reconcileFinishedParents([], lookup), []);
+  assert.equal(
+    archived(),
+    6,
+    "the next pass archives the rest; none was dropped",
+  );
+  assert.equal(
+    server.threads.get(live.threadId)!.thread.archivedAt ?? null,
+    null,
+    "a live task's parent is never archived",
+  );
+});

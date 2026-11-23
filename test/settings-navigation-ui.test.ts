@@ -37,7 +37,6 @@ const board = {
   projectCapacities: [],
   prStates: {},
   usage: { level: "normal", setLevel: "normal", until: null, expired: false },
-  routingGrants: [],
   backup: { newestSnapshotAt: "2026-11-07T21:00:00Z", localError: null },
 };
 const capacity = {

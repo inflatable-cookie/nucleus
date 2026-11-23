@@ -13,7 +13,7 @@ export interface RunCreationOwner {
 }
 export async function createRunVia(owner: RunCreationOwner, task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null,
   guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string) {
-    if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head, true);
+    if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head);
     if (task.reviewEntry && run.workspaceId !== task.workspaceId)
       throw new Error('Review-entry reviewer must use the task workspace');
     if (!run.profile) throw new Error("Run profile missing");

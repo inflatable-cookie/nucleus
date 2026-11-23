@@ -790,7 +790,6 @@ export class T3Nesting {
       if (projection.thread.archivedAt) continue;
       if (!projection.runs.some((run) => activeStatuses.has(run.status)))
         continue;
-      if (this.core.acp()?.pendingDecisionKey?.(task.id)) continue;
       if (this.holding(parent)) continue;
       if (await this.anyChildLive(task.id)) continue;
       await this.release(parent);
@@ -815,6 +814,7 @@ export class T3Nesting {
    */
   async archiveFinishedParents(
     tasks: readonly Task[],
+    lookup?: (taskId: string) => Task | null,
   ): Promise<readonly ParentArchiveWait[]> {
     const state = this.core.state.read();
     const bindings = Object.entries(state.parents ?? {}).filter(
@@ -822,16 +822,22 @@ export class T3Nesting {
     );
     if (!bindings.length) return [];
     this.core.requireConnection();
-    const terminal = new Map(
-      tasks
-        .filter(
-          (task) =>
-            task.hostId === this.core.hostId() &&
-            terminalTask(task) &&
-            !isDispositionActive(task),
-        )
-        .map((task) => [task.id, task]),
-    );
+    // The obligation is the open binding itself (Spec 069 §4): each one's task is
+    // resolved from the pass's list or, when the caller gives one, its lookup, so
+    // a pass costs one read per open binding, never one per finished task, and a
+    // finish the batch did not reach is still owed on the next pass.
+    const known = new Map(tasks.map((task) => [task.id, task]));
+    const terminal = new Map<string, Task>();
+    for (const [taskId] of bindings) {
+      const task = known.get(taskId) ?? lookup?.(taskId) ?? null;
+      if (
+        task &&
+        task.hostId === this.core.hostId() &&
+        terminalTask(task) &&
+        !isDispositionActive(task)
+      )
+        terminal.set(taskId, task);
+    }
     if (!terminal.size) return [];
     // One thread claimed by two task records is never archived on a guess: the binding
     // pair is not a positively proved identity (nucleus#1459 review).
@@ -976,18 +982,12 @@ export class T3Nesting {
         `the parent archive delivery is unknown; it is read before any repeat: ${parentArchiveDetail(error)}`,
       );
     }
-    const after = await this.core.reads.threadArchiveState(parent.threadId);
-    // The same thread archived, removed or gone is the observation this obligation
-    // needs; a settled receipt T3 still shows live is a person's own action, never a
-    // reason to send again.
-    if (!after || after.archivedAt || after.deleted) {
-      this.observeParentArchiveSettled(task.id);
-      return null;
-    }
-    return wait(
-      "unobserved",
-      "the parent archive was accepted but the same thread is not archived",
-    );
+    // The archive's own settled receipt is the observation this obligation needs
+    // (Spec 069 batch 5): T3 accepted `thread.archive` for this exact thread, so no
+    // inventory is read to confirm it. An unknown delivery took the wait above and
+    // is read by its exact id before any repeat.
+    this.observeParentArchiveSettled(task.id);
+    return null;
   }
 
   /** Record one finished parent's settlement on its durable binding. */
@@ -1512,18 +1512,15 @@ export class T3Nesting {
     }
   }
 
-  /** The thread's rows in the complete paired inventory; an unreadable one is a transient refusal. */
-  private async inventoryRows(threadId: string, fresh: boolean) {
-    try {
-      const inventory = fresh
-        ? await this.core.reads.freshInventory()
-        : await this.core.reads.inventory();
-      return inventory.threads.filter((candidate) => candidate.id === threadId);
-    } catch (error) {
-      if (isTransientT3ReadRpcError(error))
-        throw new T3TransientReadError(error);
-      throw error;
-    }
+  /**
+   * The thread's row in T3's live shell, after an exact read could not answer it
+   * (not found, or a prepared binding's transient read). The live shell lists every
+   * active thread, so a thread it does not list was never launched or is gone; no
+   * archived inventory is read (Spec 069 batch 5).
+   */
+  private async inventoryRows(threadId: string, _fresh: boolean) {
+    const row = await this.core.reads.shellRow(threadId);
+    return row ? [row] : [];
   }
 
   /**

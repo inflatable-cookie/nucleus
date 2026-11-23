@@ -116,7 +116,7 @@ answered by an agent where possible so tasks don't get blocked overnight."
 - Every remaining question has a kind. Only these stay the operator's: scope or product changes
   (changing what a task delivers, abandoning work), raised as a discussion rather than a yes/no
   question; releases and outward actions (publishing, production enablement, creating external
-  resources); and profiles the usage level's permission rule holds (board sign-off). Everything else is delegated,
+  resources). Everything else is delegated,
   including accepting a head whose native, consumer or post-merge proofs haven't run, and spend
   past 2× a task's budget.
 - **Approve by default (Tom, 2026-11-03).** "When the question is just approve something or to
@@ -685,9 +685,7 @@ Busy time consumes the existing answer window.
   on the retained worker and reviewer of a responsible task. It sends their questions, the brief
   and latest review to the project planner, or to an automatically selected short-lived decider
   if no planner answers within ten minutes. The delegate answers through the original permission,
-  keyed by question header; activity records the answer and reason. A delegate leaves product or scope changes, releases or outward actions, and frontier or
-  top-tier profile requests the usage level holds for the operator as discussions, with context, options, a
-  recommendation and the reason recorded. A delegate answers binary approve/hold questions approve
+  keyed by question header; activity records the answer and reason. A delegate leaves product or scope changes, releases and outward actions for the operator, with context, options, a recommendation and the reason recorded. A delegate answers binary approve/hold questions approve
   by default unless they concern one of those operator matters; spending past twice the budget is
   delegated. Its `Decision: operator` or hold stands (Tom, 2026-11-06). A permission already answered
   on the thread keeps that answer. A durable intent fences
@@ -868,23 +866,18 @@ a product or scope change or a release or outward action, `blocked` only outside
   route. An errored agent's observed error is recorded as the failure detail, and automatic routing
   excludes that same profile while preferring another eligible profile. Worker restart and
   automatic failover use the existing replacement on the same workspace, branch and PR without a
-  recovery coordinator; committed and pushed work carries over. A within-level route needs no
-  sign-off; a route to a profile the usage level holds needs the operator's board sign-off on that task and
-  profile.
+  recovery coordinator; committed and pushed work carries over. A request-only
+  profile requires a recorded request for that role ([Spec 052](052-usage-level.md)).
 - Every other path continues the same retained worker agent: recovery actions, "remap"
-  restarts, owner restarts without a model change, route requests still waiting on sign-off,
-  non-delivery push-backs, and unfinished (stalled) continuations.
+  restarts, owner restarts without a model change, non-delivery push-backs, and unfinished (stalled) continuations.
 - One guard (`core/recovery/worker-replacement.ts`) enforces it in the replacement path itself: `restart`,
   `route`, `move to=work` with fresh, the stalled-turn continuation, and the automatic failover
   sweep all read it before retiring the retained worker. A caller that asks for a replacement the
-  guard refuses records `worker_replacement_refused` naming the rule (`signoff_pending`,
+  guard refuses records `worker_replacement_refused` naming the rule (`request_required`,
   `same_model_no_failure`, `fresh_without_cause_or_relay`, `route_superseded`) and continues the
   retained worker.
-- A route change waiting on sign-off records the request and changes nothing until it is approved;
-  a `route now` to an unsigned request refuses the same way (review 825): the verb fails naming the
-  sign-off, the request stands, and the retained run is untouched. Once approved, the next worker
-  launch arms it through the existing `worker_route_honoured` path and the sweep retires the worker
-  once for the approved model change.
+- An explicit route applies from the role's next run. Use `route now` to
+  replace a live run through the existing stop and replacement gates.
 - `restart role=worker fresh` is allowed only under condition 1, on an approved route to a
   different model, or with an explicit operator-relayed reason (the board caller or a relayed
   operator note, which travels on the armed replacement so the sweep can retire on it). A
@@ -894,7 +887,7 @@ a product or scope change or a release or outward action, `blocked` only outside
   of arming a replacement.
 - A planner/operator exclusion of the retained worker, a granted extra replacement covering the
   occurrence, and an operator-armed failover reason each count as the operator's explicit
-  authorization in the sweep; an unsigned route never arms, so there is nothing to spend.
+  authorization in the sweep.
 
 ### Slice 17 — the blocker ladder climbs worker → reviewer → planner → Tom (task 584)
 
@@ -1007,7 +1000,7 @@ planner or operator can change it after dispatch; enabling it refuses every task
 including reviewer check waivers. Each fresh automatic reviewer selection requires a model
 independent of every author model and a Spec 053 capability rating at least the worker's current
 profile. Re-routing to a stronger worker raises that floor for the next fresh reviewer.
-Unrated profiles or workers cannot meet it, and frontier profiles awaiting sign-off are unavailable.
+Unrated profiles or workers cannot meet it. At Low, Normal and High, Frontier requires a reviewer profile request.
 If no eligible profile is available, ordinary reviewer selection proceeds immediately. The fallback
 is recorded on the task, shown in `next` and named in closeout; it never holds review up.
 

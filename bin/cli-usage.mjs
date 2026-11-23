@@ -20,7 +20,7 @@ Methods without a dot are tried as queue.<method> first, for example:
   project.get, project.settings, project.remove, project.removal-blockers, project.qa.get, project.qa.list, project.qa.request-status, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
   lead.list, lead.set-lanes, lead.set-tags, lead.drop, lead.reopen, triage.get, triage.set, triage.apply, lead.promote, lead.check, lead.approve, lead.promote-task, lead.submit, lead.import,
-  decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, queue.routing-grant, lane.document.get,
+  decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, lane.document.get,
   lane.document.edit, plan.get, plans, plan.set, backup.now, backup.list, acp.bind
 acp.bind mints a task's ACP session and answers with the owner-only binding path a
 host or an operator hands to an ACP-capable app; no credential is returned.

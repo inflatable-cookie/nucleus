@@ -1,3 +1,4 @@
+import { taskActivitySchema } from "./task-activity";
 import { z } from "zod";
 import { taskPhaseSchema } from "./task-primitives";
 import { routingPolicySchema } from "./settings";
@@ -275,6 +276,7 @@ export const taskNextSchema = z
      */
     replacement: taskNextReplacementSchema.optional(),
     activeRun: taskNextRunSchema.nullable(),
+    activity: taskActivitySchema.optional(),
     prHead: z.string().nullable(),
     prUrl: z.string().nullable(),
     branch: z.string(),

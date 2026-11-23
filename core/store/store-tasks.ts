@@ -4,7 +4,10 @@ import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { PREREQUISITE_WAIT_PREFIX } from "../../shared/wait-state";
-import { legacyStopHolderAgentId, taskDecisionFact } from "../../shared/task-stop";
+import {
+  legacyStopHolderAgentId,
+  taskDecisionFact,
+} from "../../shared/task-stop";
 import {
   taskSchema,
   externalWorkspaceArchivesSettled,
@@ -24,6 +27,7 @@ import {
 import { holdsOf } from "../../shared/holds";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
+import { StoreHostIndex } from "./store-host-index";
 import { StoreQueueIndex } from "./store-queue-index";
 import {
   archiveIntentOutstanding,
@@ -33,15 +37,25 @@ import type { FinishedDrainTask } from "../planning/lane-drains";
 
 /** Normalize pre-Spec 067 records at the same boundary for cold and projected reads. */
 export function hydrateTaskDecisionFacts(task: Task): Task {
-  if (task.reasonFact === undefined) task.reasonFact = taskDecisionFact(task.reason);
+  if (task.reasonFact === undefined)
+    task.reasonFact = taskDecisionFact(task.reason);
   const { stop, incident, recovery } = task.resolution;
   if (stop && stop.fact === undefined) {
-    const holderAgentId = stop.holderAgentId ?? legacyStopHolderAgentId(stop.detail);
-    task.resolution.stop = { ...stop,
-      fact: task.originError && stop.detail === task.originError ? { code: "origin_error" } : taskDecisionFact(stop.detail),
+    const holderAgentId =
+      stop.holderAgentId ?? legacyStopHolderAgentId(stop.detail);
+    task.resolution.stop = {
+      ...stop,
+      fact:
+        task.originError && stop.detail === task.originError
+          ? { code: "origin_error" }
+          : taskDecisionFact(stop.detail),
       ...(holderAgentId ? { holderAgentId } : {}),
-      ...(incident && (incident.detail === stop.detail || (incident.id === recovery?.incidentId && recovery.summary === stop.detail))
-        ? { incidentId: incident.id } : {}),
+      ...(incident &&
+      (incident.detail === stop.detail ||
+        (incident.id === recovery?.incidentId &&
+          recovery.summary === stop.detail))
+        ? { incidentId: incident.id }
+        : {}),
     };
   }
   return task;
@@ -183,6 +197,11 @@ export class StoreTasks {
       activeCapacityTasks: () => this.queue.activeCapacityTasks(),
       lastEventAtByTask: () => this.hooks.lastEventAtByTask(),
     });
+    this.hosts = new StoreHostIndex({
+      projection: () => this.taskProjection ?? new Map(),
+      sequence: (id) => this.taskSequence.get(id) ?? 0,
+      ensureProjection: () => this.ensureTaskProjection(),
+    });
   }
   private get db() {
     return this.core.db;
@@ -191,6 +210,8 @@ export class StoreTasks {
   readonly queue: StoreQueueIndex;
   /** The board-facing indexes over this projection. */
   readonly board: StoreBoardIndex;
+  /** The pass-facing indexes over this projection: live and finished tasks per host. */
+  readonly hosts: StoreHostIndex;
 
   taskProjection: Map<string, Task> | null = null;
   /** Task ids newest first, matching the historical `ORDER BY rowid DESC` lists. */
@@ -290,6 +311,7 @@ export class StoreTasks {
     this.newestSequence = 0;
     this.queue.reset();
     this.board.reset();
+    this.hosts.reset();
     this.runState = null;
     this.unreleasedByTask = null;
     this.pendingRunProjection = null;
@@ -328,6 +350,7 @@ export class StoreTasks {
     this.indexDependencies(task, true);
     this.queue.index(task);
     this.board.index(task);
+    this.hosts.index(task);
     if (
       !previous ||
       previous.phase !== task.phase ||
@@ -506,6 +529,7 @@ export class StoreTasks {
       this.indexDependencies(task, true);
       this.queue.index(task);
       this.board.index(task);
+      this.hosts.index(task);
     }
   }
   /** A caller-owned copy of one projected row; null when the id names no task. */
@@ -527,7 +551,11 @@ export class StoreTasks {
     // A warmed projection must be representation-identical to one rebuilt from the
     // row: JSON storage drops undefined-valued keys, so the cached parse drops them
     // too. Otherwise a deepEqual across a projection rebuild sees phantom keys.
-    return frozenTask(hydrateTaskDecisionFacts(taskSchema.parse(JSON.parse(JSON.stringify(task)))));
+    return frozenTask(
+      hydrateTaskDecisionFacts(
+        taskSchema.parse(JSON.parse(JSON.stringify(task))),
+      ),
+    );
   }
   private projectedTasksWhere(predicate: (task: Task) => boolean): Task[] {
     this.ensureTaskProjection();
@@ -727,6 +755,14 @@ export class StoreTasks {
           (record) =>
             !archived.includes(record.workspaceId) &&
             !archiveSettledByOwner(task, record.workspaceId),
+        )
+      )
+        return true;
+      // nucleus#1548: a Nucleus-created branch closeout still owes, or whose delete
+      // it must observe first, keeps the finished task in the cleanup scan.
+      if (
+        task.resolution.branchCleanups.some(
+          (record) => record.state === "intent" || record.state === "wait",
         )
       )
         return true;

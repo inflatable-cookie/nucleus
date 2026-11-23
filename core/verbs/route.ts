@@ -13,11 +13,9 @@ import { settleSupersededFences } from "../recovery/fence-settlement";
 import type { Run, Task, TaskControlInput } from "../../shared/contracts";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import {
-  requestOnly,
+  workerThinking,
   groupIsUnavailable,
-  honouredWorkerThinking,
 } from "../../shared/pool";
-import { climbedTier, requestedTier } from "../../shared/demand";
 import type { Engine } from "../engine";
 import {
   collectOwnerVerbFacts,
@@ -32,13 +30,6 @@ import {
   workerReviewerRouteRefusal,
   type RoutingPreflightInput,
 } from "../dispatch/routing";
-import { coveringGrant, grantSignoff } from "../dispatch/routing-signoff";
-import {
-  OPERATOR_BOARD,
-  boardSignoff,
-  priorNonGrantSignoff,
-  withdrawOpen,
-} from "../dispatch/routing-signoff";
 import { digest, now } from "../store/store";
 import {
   OPERATOR_WORKER_REMAP_REASON,
@@ -106,9 +97,6 @@ export function routePatch(f: {
     ...(includeThinking ? { thinkingOptionId: thinking } : {}),
     ...(lifted ? { workerExclusions: lifted } : {}),
   };
-  const rerouteActivity = reason.startsWith("Rerouted to ")
-    ? reason.split(":", 1)[0]
-    : null;
   const currentRunLive = liveRun(currentRun);
   if (role === "worker") {
     const ownsWorkerSlot = !currentRunLive || currentRun!.role === "revision";
@@ -130,10 +118,8 @@ export function routePatch(f: {
           2000,
         );
     }
-    const recordOnly = replacementRefusal?.rule === "signoff_pending";
     if (
       selectsNextRun &&
-      !recordOnly &&
       (replaceLive || !live) &&
       ownsWorkerSlot
     ) {
@@ -159,7 +145,6 @@ export function routePatch(f: {
       ) {
         patch.phase = "changes_requested";
         patch.reason =
-          rerouteActivity ??
           `Owner routed the worker profile; selecting the next worker run on ${profileId}`;
       }
     }
@@ -183,7 +168,6 @@ export function routePatch(f: {
       if (current.phase === "reviewing" || waitingOnRole) {
         patch.phase = "awaiting_review";
         patch.reason =
-          rerouteActivity ??
           `Owner routed the reviewer profile; selecting the next reviewer on ${profileId}`;
       }
       patch.resolution = {
@@ -203,7 +187,6 @@ export function routePatch(f: {
       patch.coordinatorAgentId = "";
       patch.coordinatorGeneration = current.coordinatorGeneration + 1;
       patch.reason =
-        rerouteActivity ??
         `Owner routed the coordinator profile; the next coordinator run uses ${profileId}`;
       if (replaceLive)
         patch.resolution = {
@@ -238,9 +221,6 @@ export class RouteControls {
   get coordinatorActionRunId() {
     return this.engine.coordinatorActionRunId;
   }
-  get signoffDecisions() {
-    return this.engine.signoffDecisions;
-  }
 
   /**
    * Spec 050 `route`: point one role's next run at a named profile, and with
@@ -259,7 +239,7 @@ export class RouteControls {
     const role = input.role as RouteRole;
     const profileId = input.profileId!;
     const reason = (input.reason ?? "").trim();
-    const replaceNow = input.now === true;
+    const replaceLive = input.now === true;
     return this.engine.control(async () => {
       let task = this.store.task(input.taskId);
       if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
@@ -273,18 +253,7 @@ export class RouteControls {
       if (!reason) throw Error("route requires a reason");
       // Round 4: a route applies while paused; only dispatch waits for unpause.
 
-      const thinking =
-        input.thinkingOptionId ??
-        (role === "worker"
-          ? honouredWorkerThinking(
-              task,
-              this.store.pool(),
-              this.store.usageLevel(),
-              requestedTier(task.complexity),
-              climbedTier(task),
-            )
-          : "") ??
-        "";
+      const thinking = input.thinkingOptionId ?? (role === "worker" ? workerThinking(task) : "");
       // nucleus#1500: the route reads the catalog evidence its own decision
       // reads, per host, instead of the legacy primary's snapshot alone.
       const catalogRefusal = this.profileCatalogRefusal(task, [role]);
@@ -318,7 +287,7 @@ export class RouteControls {
             `Profile ${profileId} cannot run on task host ${task.hostId ?? "unknown"}: ${candidate?.problem || "absent from host catalog"}`,
           );
       }
-      const { profile } = validateNamedProfile(
+      const { profile, entry: routeEntry } = validateNamedProfile(
         profileId,
         role,
         task.scope,
@@ -353,42 +322,6 @@ export class RouteControls {
       const independenceWaived =
         role === "reviewer" && reviewerSharesAuthorModel(task, profile.model);
 
-      // Replacing a live run now only helps once the profile can actually be
-      // used; an unsigned request would restart the role on automatic selection.
-      // Spec 058 task 577: a route waiting on sign-off never displaces the
-      // retained run, but it still records its request — the early throw here
-      // lost it (review 825), so the operator was never asked. Until the
-      // sign-off is approved the role's run, bindings and phase stay untouched.
-      const routeEntry = this.store
-        .pool()
-        .find((entry) => entry.profileId === profileId);
-      const prior =
-        input.caller !== OPERATOR_BOARD
-          ? priorNonGrantSignoff(this.store, task.id, role, profileId)
-          : null;
-      const grant = coveringGrant(this.store, task, profileId);
-      const carryDeclined = prior?.status === "declined" && Boolean(grant);
-      const appliedGrant = carryDeclined ? null : grant;
-      const requestedTierOfTask = requestedTier(task.complexity);
-      const climbedTierOfTask = climbedTier(task);
-      const signoffPendingNow =
-        replaceNow &&
-        Boolean(routeEntry) &&
-        requestOnly(
-          routeEntry!,
-          this.store.usageLevel(),
-          requestedTierOfTask,
-          climbedTierOfTask,
-        ) &&
-        input.caller !== OPERATOR_BOARD &&
-        !(
-          task.profileRequests?.[role]?.profileId === profileId &&
-          task.profileRequests[role]!.signoff?.status === "approved"
-        ) &&
-        !appliedGrant;
-      // The displacement a `now` route owes; a sign-off-pending route owes none
-      // and is written like a route without `now`.
-      const replaceLive = replaceNow && !signoffPendingNow;
       const controlRefusal = replaceLive
         ? unsettledControlRefusal(this.store, task)
         : null;
@@ -541,19 +474,6 @@ export class RouteControls {
       }
 
       const before = task.profileRequests?.[role] ?? null;
-      // Spec 052 (2026-10-21, 2026-11-17): the operator's own board route is its
-      // sign-off; any other route to a profile the level's permission rule holds is asked.
-      const signoff =
-        input.caller === OPERATOR_BOARD
-          ? boardSignoff()
-          : before?.profileId === profileId &&
-              before.signoff?.status === "approved"
-            ? before.signoff
-            : carryDeclined
-              ? prior
-              : appliedGrant
-                ? grantSignoff(appliedGrant)
-                : undefined;
       const lifted =
         role === "worker"
           ? task.workerExclusions.filter(
@@ -563,18 +483,6 @@ export class RouteControls {
       const exclusionLifted = lifted.length !== task.workerExclusions.length;
       // Spec 050: only `route` writes the `ownerRoute` marker, so the
       // reviewer independence waiver applies solely to an owner route.
-      // An unsigned route keeps its thinking level on the request, so until the
-      // operator signs it off automatic selection runs at the task's own level.
-      const unsignedRoute = Boolean(
-        routeEntry &&
-          requestOnly(
-            routeEntry,
-            this.store.usageLevel(),
-            requestedTierOfTask,
-            climbedTierOfTask,
-          ) &&
-          !signoff,
-      );
       const requests = {
         ...task.profileRequests,
         [role]: {
@@ -583,18 +491,16 @@ export class RouteControls {
           required: true,
           ownerRoute: true,
           ...(role === "worker" ? { routedAt: now() } : {}),
-          ...((role !== "worker" || unsignedRoute) &&
+          ...(role !== "worker" &&
           input.thinkingOptionId !== undefined
             ? { thinkingOptionId: input.thinkingOptionId }
             : {}),
           ...(input.caller ? { requestedBy: input.caller } : {}),
-          ...(signoff ? { signoff } : {}),
         },
       };
 
       const hostMoveRequested = Boolean(
         role === "worker" &&
-          !unsignedRoute &&
           targetHostSelection &&
           targetHostSelection.hostId !== task.hostId,
       );
@@ -624,17 +530,7 @@ export class RouteControls {
             );
           current = released;
         }
-        const thinkingPatch =
-          role === "worker" && !unsignedRoute
-            ? (input.thinkingOptionId ??
-              honouredWorkerThinking(
-                task,
-                this.store.pool(),
-                this.store.usageLevel(),
-                requestedTierOfTask,
-                climbedTierOfTask,
-              ))
-            : undefined;
+        const thinkingPatch = role === "worker" ? thinking : undefined;
         const currentRun = current.resolution.currentRunId
           ? this.store.run(current.resolution.currentRunId)
           : null;
@@ -674,7 +570,7 @@ export class RouteControls {
                 hostProfiles.find((candidate) => candidate.id === profileId)
                   ?.model ?? null,
               currentModel: current.profile?.model ?? null,
-              approved: !unsignedRoute,
+              approved: true,
               hostChanges: Boolean(
                 targetHostSelection &&
                   targetHostSelection.hostId !== current.hostId,
@@ -719,7 +615,7 @@ export class RouteControls {
                   )
               : false,
           requests,
-          includeThinking: role === "worker" && !unsignedRoute,
+          includeThinking: role === "worker",
           thinking: thinkingPatch,
           lifted: exclusionLifted ? lifted : null,
           continuation,
@@ -736,7 +632,7 @@ export class RouteControls {
           profileId,
           thinkingOptionId: input.thinkingOptionId ?? null,
           reason,
-          now: replaceNow,
+          now: replaceLive,
           phaseBefore: current.phase,
           independenceWaived,
           exclusionLifted,
@@ -834,22 +730,6 @@ export class RouteControls {
           now(),
           this.coordinatorActionRunId.getStore(),
         );
-      // The new request replaces the question the old one was waiting on.
-      if (before?.signoff?.status === "pending" && before.signoff.decisionId)
-        withdrawOpen(
-          this.signoffDecisions,
-          before.signoff.decisionId,
-          "The role was routed again",
-        );
-      if (signoffPendingNow) {
-        // Spec 058 task 577 (review 825): the `now` replacement is refused and
-        // the verb fails, but the request stands and the retained run is
-        // untouched; the reconciler opens the operator's sign-off decision.
-        void this.engine.cleanContext(() => this.engine.wakeTask(updated.id));
-        throw Error(
-          `${profileId} needs the operator's board sign-off before a route can replace a live run; the request is recorded and this route left the retained run untouched until the operator approves it on the board`,
-        );
-      }
       if (movedHost) {
         this.engine.enqueueCleanup(updated.id);
         void this.engine.cleanContext(() => this.engine.wakeTask(updated.id));
@@ -1093,7 +973,7 @@ export class RouteControls {
    * those hosts, so an offline primary whose catalog was never read no longer
    * refuses a route the eligible catalogs can answer. An unread catalog is absent
    * evidence, never a profile's absence, so the control waits and names the host
-   * it needs; offline, transport, incompatibility and sign-off rules stay.
+   * it needs; offline, transport, and incompatibility rules stay.
    */
   profileCatalogRefusal(
     task: Task,

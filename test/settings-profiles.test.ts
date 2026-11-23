@@ -181,11 +181,14 @@ interface Fixture {
     cwd?: string;
     refresh?: boolean;
   }) => Promise<unknown>;
+  profileSave?: (entry: import("../shared/contracts").PoolEntry) => Promise<unknown>;
 }
 
 function screenTree(fixture: Fixture, compact = false) {
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot") return board();
+    if (method === "queue.profile" && fixture.profileSave)
+      return fixture.profileSave(input as import("../shared/contracts").PoolEntry);
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "repositories")
       return [
@@ -267,6 +270,34 @@ const fixture = (): Fixture => ({
   updates: [],
   removes: [],
   catalogReads: [],
+});
+
+test("the weight editor shows a refusal or an unconfirmed weight, and only shows Saved for the stored entry", async () => {
+  await load();
+  const state = fixture();
+  state.profileSave = async (entry) => {
+    if (entry.weight === "fewest") throw new Error("Store unavailable");
+    return {
+      ok: true,
+      entry: entry.weight === "fewer" ? { ...entry, weight: "default" } : entry,
+    };
+  };
+  const ui = mount(screenTree(state));
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => Boolean(ui.query("Edit Imported Sol")));
+    ui.press("Edit Imported Sol");
+    ui.press("Weight: fewest assignments");
+    await settle(() => ui.text().includes("Not saved: Store unavailable"));
+    ui.press("Weight: fewer assignments");
+    await settle(() => ui.text().includes("Not saved: The service could not confirm"));
+    ui.press("Weight: more assignments");
+    await settle(() => ui.query("Profile save status")?.props.children === "Saved");
+    assert.doesNotMatch(ui.text(), /Profile settings could not be saved/);
+  } finally {
+    ui.update(h("View", null));
+  }
 });
 
 test("Settings Profiles creates a profile from the host catalog and shows the unavailable one with its reason", async () => {

@@ -654,7 +654,6 @@ test("Git common-dir checks, node_modules setup, build output cleanup mismatch, 
       assertOrdinaryReviewIdentity(
         { ...updatedTask, workspaceIntent: true },
         reviewHead,
-        false,
       ),
     );
 

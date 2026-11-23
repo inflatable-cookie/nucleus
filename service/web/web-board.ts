@@ -61,8 +61,24 @@ const WEB_SESSION_REFRESH_MS = 24 * 60 * 60 * 1000;
 const MAX_OUTSTANDING_TOKENS = 16;
 const MAX_STREAMS = 8;
 const STREAM_KEEPALIVE_MS = 15_000;
+/**
+ * A stream whose socket holds more unsent bytes than this gets no further frames until
+ * it drains, so a client that stops reading cannot grow service memory (nucleus#1542).
+ * A frame written while under the bound may leave the buffer one frame past it.
+ */
+const STREAM_BUFFER_LIMIT_BYTES = 256 * 1024;
+/** A backlogged stream still undrained after this long is closed, which frees its slot. */
+const STREAM_STALL_MS = 30_000;
 /** How often open streams refresh and re-check their paired session. */
 const STREAM_TOKEN_CHECK_MS = 30_000;
+/**
+ * Spec 069 §3: the live channel publishes at most one board per this window. A
+ * publication after a quiet window goes out at once; a burst of revisions inside it
+ * is coalesced into one trailing push of the latest board, so N task writes never
+ * fan out N full boards to every stream. Each stream still gets the whole board:
+ * per-stream deltas would need a client merge protocol, left for a later change.
+ */
+export const BOARD_PUBLISH_INTERVAL_MS = 500;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 /** The fields an unchanged-board acknowledgement carries, so the live channel matches the plugin's poll. */
 const COUNTER_FIELDS = [
@@ -222,6 +238,12 @@ export interface WebBoardOptions {
   port?: number;
   /** Owner-only file in the data home that holds session digests. */
   sessionFile?: string;
+  /** Fixture knob for the per-stream buffer bound; production uses the default. */
+  streamBufferLimitBytes?: number;
+  /** Fixture knob for the stall timeout; production uses the default. */
+  streamStallMs?: number;
+  /** Fixture knob for the publication window; production uses `BOARD_PUBLISH_INTERVAL_MS`, 0 publishes every revision. */
+  publishIntervalMs?: number;
 }
 
 interface Stream {
@@ -234,6 +256,8 @@ interface Stream {
   sentCounters: string;
   sentUnavailable: string | null;
   keepalive: NodeJS.Timeout;
+  /** Armed while the stream is backlogged; closes the stream if it does not drain in time. */
+  stallTimer: NodeJS.Timeout | null;
 }
 
 class BodyTooLarge extends Error {}
@@ -251,10 +275,21 @@ export class WebBoard {
   private readonly now: () => number;
   private portFallback = false;
   private sessionWrites: Promise<void> = Promise.resolve();
+  private readonly bufferLimit: number;
+  private readonly stallMs: number;
+  private readonly publishIntervalMs: number;
+  /** The armed trailing publication of a coalesced burst, if any. */
+  private publishTimer: NodeJS.Timeout | null = null;
+  private lastPublishAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: WebBoardOptions) {
     this.tokens = new WebTokens(options.now);
     this.now = options.now ?? Date.now;
+    this.bufferLimit =
+      options.streamBufferLimitBytes ?? STREAM_BUFFER_LIMIT_BYTES;
+    this.stallMs = options.streamStallMs ?? STREAM_STALL_MS;
+    this.publishIntervalMs =
+      options.publishIntervalMs ?? BOARD_PUBLISH_INTERVAL_MS;
   }
 
   /** The loopback address the server listens on, or null when it is not listening. */
@@ -339,6 +374,8 @@ export class WebBoard {
     this.unsubscribe = null;
     if (this.tokenTimer) clearInterval(this.tokenTimer);
     this.tokenTimer = null;
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.publishTimer = null;
     for (const stream of [...this.streams]) stream.response.end();
     const server = this.server;
     this.server = null;
@@ -774,25 +811,47 @@ export class WebBoard {
       sentCounters: "",
       sentUnavailable: null,
       keepalive: setInterval(() => {
-        if (!response.writableEnded) response.write(": keepalive\n\n");
+        if (response.writableEnded) return;
+        if (this.backlogged(stream)) this.armStall(stream);
+        else {
+          this.clearStall(stream);
+          response.write(": keepalive\n\n");
+        }
       }, STREAM_KEEPALIVE_MS),
+      stallTimer: null,
     };
     stream.keepalive.unref?.();
     this.streams.add(stream);
+    // A drain means the client has caught up: send it the latest board, which
+    // the backlog skipped, and disarm the stall timer.
+    response.on("drain", () => {
+      this.clearStall(stream);
+      this.pushTo(stream);
+    });
     response.on("close", () => {
       clearInterval(stream.keepalive);
+      this.clearStall(stream);
       this.streams.delete(stream);
     });
     this.pushTo(stream);
   }
 
-  /** Send what this stream has not seen yet: the full board when its revision moved, counters when only they moved. */
+  /**
+   * Send what this stream has not seen yet: the full board when its revision moved,
+   * counters when only they moved. A backlogged stream gets nothing; it is armed to
+   * close if it does not drain, and its next frame is the latest board, not the skipped ones.
+   */
   private pushTo(stream: Stream): void {
     if (stream.response.writableEnded) return;
+    if (!this.backlogged(stream)) this.deliver(stream);
+    if (this.backlogged(stream)) this.armStall(stream);
+  }
+
+  private deliver(stream: Stream): void {
     const reason = this.options.host.unavailable();
     if (reason) {
       if (stream.sentUnavailable !== reason) {
-        writeEvent(stream, "unavailable", { message: reason });
+        writeEvent(stream.response, "unavailable", { message: reason });
         stream.sentUnavailable = reason;
         stream.sentRevision = -1;
       }
@@ -805,13 +864,13 @@ export class WebBoard {
     const counters = countersOf(board);
     const signature = JSON.stringify(counters);
     if (board.revision !== stream.sentRevision) {
-      writeEvent(stream, "board", board, board.revision);
+      writeEvent(stream.response, "board", board, board.revision);
       stream.sentRevision = board.revision;
       stream.sentCounters = signature;
       return;
     }
     if (signature !== stream.sentCounters) {
-      writeEvent(stream, "counters", {
+      writeEvent(stream.response, "counters", {
         unchanged: true,
         revision: board.revision,
         ...counters,
@@ -820,7 +879,25 @@ export class WebBoard {
     }
   }
 
+  /**
+   * An executor publication. At most one push per window (`BOARD_PUBLISH_INTERVAL_MS`):
+   * the first after a quiet window goes out at once, the rest of a burst wait for one
+   * trailing push, which reads the latest board when it runs.
+   */
   private publish(): void {
+    if (this.publishIntervalMs <= 0) return this.flush();
+    if (this.publishTimer) return;
+    const wait = this.lastPublishAt + this.publishIntervalMs - Date.now();
+    if (wait <= 0) return this.flush();
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = null;
+      this.flush();
+    }, wait);
+    this.publishTimer.unref?.();
+  }
+
+  private flush(): void {
+    this.lastPublishAt = Date.now();
     for (const stream of [...this.streams]) this.pushTo(stream);
   }
 
@@ -830,8 +907,43 @@ export class WebBoard {
         !this.sessions.has(stream.key) ||
         this.sessions.get(stream.key)! <= this.now()
       )
-        stream.response.end();
+        this.endStream(stream);
     }
+  }
+
+  /** End a stream. A backlogged one is destroyed: its queued bytes would hold the slot until the client reads. */
+  private endStream(stream: Stream): void {
+    if (this.backlogged(stream)) stream.response.destroy();
+    else stream.response.end();
+  }
+
+  /** Whether a stream's socket still holds more unsent bytes than the bound allows. */
+  private backlogged(stream: Stream): boolean {
+    return stream.response.writableLength > this.bufferLimit;
+  }
+
+  /** Start the stall timer for a backlogged stream; it closes the stream unless the stream drains first. */
+  private armStall(stream: Stream): void {
+    if (stream.stallTimer) return;
+    stream.stallTimer = setTimeout(() => {
+      stream.stallTimer = null;
+      stream.response.destroy();
+    }, this.stallMs);
+    stream.stallTimer.unref?.();
+  }
+
+  private clearStall(stream: Stream): void {
+    if (!stream.stallTimer) return;
+    clearTimeout(stream.stallTimer);
+    stream.stallTimer = null;
+  }
+
+  /** Each live stream's unsent bytes and whether its stall timer is armed, for diagnostics and tests. */
+  liveStreamBacklog(): { bufferedBytes: number; stalled: boolean }[] {
+    return [...this.streams].map((stream) => ({
+      bufferedBytes: stream.response.writableLength,
+      stalled: stream.stallTimer !== null,
+    }));
   }
 
   private hostAllowed(host: string | undefined): boolean {
@@ -899,16 +1011,14 @@ function countersOf(
 }
 
 function writeEvent(
-  stream: Stream,
+  response: ServerResponse,
   event: string,
   data: unknown,
   id?: number,
 ): void {
-  if (stream.response.writableEnded) return;
+  if (response.writableEnded) return;
   const idLine = id === undefined ? "" : `id: ${id}\n`;
-  stream.response.write(
-    `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-  );
+  response.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 /** Map a thrown catalogue error to the HTTP status and typed code the web board answers with. */

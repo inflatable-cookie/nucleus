@@ -1,3 +1,5 @@
+import { taskActivitySchema } from "./task-activity";
+import { participantActivitySchema } from "./task-activity";
 import { hostSelectionSchema } from "../host-selection";
 import { taskDecisionFactSchema } from "../task-stop";
 import { z } from "zod";
@@ -166,6 +168,7 @@ export const taskSchema = submissionSchema
     agentActive: z.boolean().nullable(),
     lastObservedAt: z.string().nullable(),
     lastActivityAt: z.string().nullable().optional(),
+    participantActivity: participantActivitySchema.nullable().optional(),
     profileGroup: z.string().nullable().default(null),
     failoverReason: z.string().default(""),
     resumePrNumber: z.number().nullable().default(null),
@@ -302,9 +305,10 @@ export const taskSchema = submissionSchema
 
 export type Task = z.infer<typeof taskSchema>;
 
-export const taskDetailSchema = taskSchema.extend({
+export const taskDetailSchema = taskSchema.omit({ participantActivity: true }).extend({
   holdKind: holdKindSchema.optional(),
   waitState: waitStateViewSchema.optional(),
+  activity: taskActivitySchema.optional(),
   heavyRun: heavyRunViewSchema.optional(),
   budget: taskBudgetViewSchema.optional(),
 });

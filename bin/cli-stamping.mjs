@@ -167,15 +167,6 @@ export const STAMPING_RULES = [
       return stamp(input, 'answeredBy', context);
     },
   },
-  // A routing grant is requested by the calling thread; only the board revokes.
-  {
-    matches: (method, input) => (method === 'queue.routing-grant' || method === 'routing-grant') && isRecord(input),
-    apply: async (input, context) => {
-      if (input.action === 'revoke' || ['operator (board)', 'operator'].includes(input.caller))
-        throw new Error('CLI cannot revoke a routing grant or claim the operator board; revoke from the board');
-      return stamp(input, 'caller', context);
-    },
-  },
   // Spec 058 (task 540): the planner names itself, or the operator names one; the caller is the setter.
   {
     matches: method => method === 'project.set-planner',

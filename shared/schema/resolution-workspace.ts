@@ -4,6 +4,7 @@ import {
   displacedHostWorkspaceSchema,
   externalWorkspaceArchiveSchema,
   runtimeRetirementSchema,
+  taskBranchCleanupSchema,
   workspaceAllocationSchema,
   workspaceArchiveRetrySchema,
 } from "./workspace";
@@ -48,6 +49,8 @@ export const resolutionWorkspaceFields = {
   cleanupReason: z.string().default(""),
   buildOutputCleanups: z.array(buildOutputCleanupSchema).default([]),
   workspaceArchiveRetries: z.array(workspaceArchiveRetrySchema).default([]),
+  // nucleus#1548: the Nucleus-created branches a verified merge lets closeout delete.
+  branchCleanups: z.array(taskBranchCleanupSchema).default([]),
   runtimeRetirements: z.array(runtimeRetirementSchema).default([]),
   // Spec 017: preserved external workspaces whose Paseo sidebar entry is archived
   // while their folder is kept. Never an archive of the workspace's files.

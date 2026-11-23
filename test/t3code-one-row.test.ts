@@ -318,13 +318,20 @@ test("a row fault partway through the pass never publishes a partial running cou
   const runPass = () =>
     engine.withHost(host.hostId, () => pass.run(host.hostId));
 
-  const insertTask = (name: string, hostId = host.hostId) =>
-    store.insert(
+  // Each task holds the workspace its roles launch in, as a dispatch records it: a
+  // row belongs to a task that has a thread (Spec 069 §4), never to an inert queued one.
+  const insertTask = (name: string, hostId = host.hostId) => {
+    const task = store.insert(
       submission({ submissionId: name, title: name, repoPath: directory }),
       hostId,
       "handoff",
       "a".repeat(40),
     );
+    return store.update(task.id, {
+      workspaceIntent: true,
+      workspaceId: workspace.id,
+    });
+  };
   const taskA = insertTask("inbox-count-a");
   const taskB = insertTask("inbox-count-b");
   const taskC = insertTask("inbox-count-c");
@@ -404,10 +411,9 @@ test("a row fault partway through the pass never publishes a partial running cou
       ? Promise.reject(new T3RpcError("transport", method))
       : readStream(method, payload, accept);
   const faultyPass = await runPass();
-  assert.equal(
-    faultyPass.transportAnswered,
-    false,
-    "the row step stopped at the transport boundary",
+  assert.ok(
+    faultyPass.callFault,
+    "the row step stopped at the transport boundary, a sample for the host's health",
   );
   assert.match(
     String(store.getMeta("hostPassError")),
@@ -1638,7 +1644,7 @@ test("unconfirmed role launches snooze the verified parent and stay out of the I
     directory: inboxDir,
     bindingPath: join(inboxDir, "binding"),
   });
-  acp.surface.pendingDecisionKey = (id) =>
+  acp.surface.openDecisionKey = (id) =>
     pendingDecision && id === task.id ? pendingDecision : null;
   const runPass = () =>
     engine.withHost(host.hostId, () => pass.run(host.hostId));

@@ -113,7 +113,7 @@ export class RunLaunchReserve {
         }
         throw error;
       }
-      await ordinaryReviewSource(this.store.task(t.id), run.head, false);
+      await ordinaryReviewSource(this.store.task(t.id), run.head);
     }
     if (source.continuedPr?.progressRunId) {
       const wait = await this.resolution.continuedProgressWait(
@@ -147,8 +147,8 @@ export class RunLaunchReserve {
         this.store.event(
           t.id,
           "coordinator_route_applied",
-          selection.coordinatorRouteSwitch.startsWith("sign-off:")
-            ? `The bound coordinator profile ${selection.coordinatorRouteSwitch.slice("sign-off:".length)} awaits the operator's board sign-off; ${selection.profile?.id ?? "a profile within the usage level"} serves at generation ${run.generation}`
+          selection.coordinatorRouteSwitch.startsWith("request-only:")
+            ? `The bound coordinator profile ${selection.coordinatorRouteSwitch.slice("request-only:".length)} requires an explicit profile request; ${selection.profile?.id ?? "a profile within the usage level"} serves at generation ${run.generation}`
             : `Owner-routed coordinator profile ${selection.coordinatorRouteSwitch} supersedes the recorded coordinator binding at generation ${run.generation}`,
         );
       }

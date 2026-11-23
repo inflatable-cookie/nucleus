@@ -26,8 +26,6 @@ import {
   capacitySchema,
   projectDispatchLimitSchema,
 } from "../../shared/contracts";
-import type { Decisions } from "../planning/decisions";
-import { applyRoutingGrant } from "../dispatch/routing-signoff";
 import type { CapacityChangeJournal } from "../dispatch/capacity-changes";
 import {
   capacityWriteRefusalMessage,
@@ -57,7 +55,6 @@ export interface SettingsContext {
         | "scheduleDecisionNotices"
       >
     >;
-  decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
   readonly hostId: string;
@@ -82,16 +79,23 @@ export class RuntimeSettings {
       new Set(this.context.store.profiles().map((p) => p.id)),
       this.context.store.pool(),
     );
-    this.context.store.setMeta("pool", entries);
-    this.context.store.advanceRevision();
-    void this.context.wakeAndSettlePostBootstrapTimeout();
+    this.context.store.transaction(() => {
+      this.context.store.setMeta("pool", entries);
+      this.context.store.advanceRevision();
+    });
+    setImmediate(() => {
+      void this.context.wakeAndSettlePostBootstrapTimeout();
+    });
     return { ok: true as const };
   }
 
   configureProfile(settings: ProfileSettings) {
-    return this.configurePool({
+    this.configurePool({
       entries: saveProfileSettings(this.context.store.pool(), settings),
     });
+    const entry = this.context.store.pool().find((row) => row.profileId === settings.profileId);
+    if (!entry) throw new Error("The saved profile is missing from the pool");
+    return { ok: true as const, entry };
   }
 
   /**
@@ -310,26 +314,6 @@ export class RuntimeSettings {
     this.context.store.advanceRevision();
     void this.context.wakeAndSettlePostBootstrapTimeout();
     return { ok: true as const };
-  }
-
-  /** Spec 052: a planner asks for a standing frontier grant; the operator answers on the board. */
-  routingGrant(input: {
-    action: "request" | "end" | "revoke";
-    caller: string;
-    reason?: string;
-    profiles?: string[];
-    until?: string | null;
-    grantId?: string;
-  }) {
-    const result = applyRoutingGrant(
-      this.context.store,
-      this.context.decisions,
-      input,
-    );
-    void this.context.engine.wake().catch(() => {
-      /* a failed drain is recorded as engineError */
-    });
-    return result;
   }
 
   /** Spec 052: the operator's usage level, read live by every automatic selection. */

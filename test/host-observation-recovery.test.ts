@@ -10,10 +10,7 @@ import {
   ProvenPreSendRefusalError,
   type Adapter,
 } from "../core/host";
-import {
-  T3InventoryChurnError,
-  T3TransientReadError,
-} from "../hosts/t3code/reads";
+import { T3TransientReadError } from "../hosts/t3code/reads";
 import {
   hostReadTransientKey,
   readHostReadTransientEpisode,
@@ -512,13 +509,13 @@ test("bounded host-read retries recover on fresh relevant evidence and keep unre
   );
 });
 
-test("independent incomplete observation shape (T3InventoryChurnError) stays in host recovery across restart and keeps genuine pre-send refusal separate", async (t) => {
+test("independent incomplete observation shape (T3TransientReadError) stays in host recovery across restart and keeps genuine pre-send refusal separate", async (t) => {
   const f = makeEngineFixture(t);
   f.store.setMeta("hostReadTransientLimitMs", 1);
   f.store.setMeta("hostReadTransientMinAttempts", 1);
   f.store.setMeta("hostReadTransientMaxAttempts", 1);
 
-  // Task A: reviewing task whose advancePhase / settleAdvanceFailure hits T3InventoryChurnError.
+  // Task A: reviewing task whose advancePhase / settleAdvanceFailure hits a transient T3 read refusal.
   const reviewTask = f.store.insert(
     submissionSchema.parse({
       submissionId: "sub-review-churn",
@@ -545,7 +542,7 @@ test("independent incomplete observation shape (T3InventoryChurnError) stays in 
   // First failure enters bounded host-read wait via RecoveryLifecycle.settleAdvanceFailure.
   f.engine.resolution.settleAdvanceFailure(
     f.store.task(reviewTask.id),
-    new T3InventoryChurnError(5),
+    new T3TransientReadError(new Error("T3 read kept moving")),
     null,
     () => null,
   );
@@ -586,7 +583,7 @@ test("independent incomplete observation shape (T3InventoryChurnError) stays in 
 
   restarted.engine.resolution.settleAdvanceFailure(
     restarted.store.task(reviewTask.id),
-    new T3InventoryChurnError(5),
+    new T3TransientReadError(new Error("T3 read kept moving")),
     null,
     () => null,
   );
@@ -610,7 +607,7 @@ test("independent incomplete observation shape (T3InventoryChurnError) stays in 
   // Repeated exhaustion pass coalesces notice & does not trigger route_unavailable or coordinator launch.
   restarted.engine.resolution.settleAdvanceFailure(
     restarted.store.task(reviewTask.id),
-    new T3InventoryChurnError(5),
+    new T3TransientReadError(new Error("T3 read kept moving")),
     null,
     () => null,
   );

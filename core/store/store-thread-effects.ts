@@ -48,11 +48,18 @@ export class StoreThreadEffects {
    * still owed, so a lost or partial cleanup keeps its durable retry
    * (nucleus#1155 brief v3). The effect keys and the completion marker are this
    * owner's formats, read here once.
+   *
+   * `taskIds` narrows the read to one page of finished tasks (Spec 069 §4): the
+   * host pass passes its slow catch-up cursor's page, so a pass never scans the
+   * whole finished history. Without it the read covers every finished task, for
+   * the readers that report on all of them.
    */
-  finishedTasksOwingCleanup(hostId: string, removal: boolean): Task[] {
+  finishedTasksOwingCleanup(hostId: string, removal: boolean, taskIds?: readonly string[]): Task[] {
+    if (taskIds && !taskIds.length) return [];
+    const page = taskIds ? "tasks.id IN (SELECT value FROM json_each(?)) AND " : "";
     const rows = this.db.prepare(`WITH finished AS (
       SELECT id, data, json_extract(data,'$.hostId') AS hostId FROM tasks
-      WHERE json_extract(data,'$.hostId')=?
+      WHERE ${page}json_extract(data,'$.hostId')=?
         AND json_extract(data,'$.removedAt') IS NULL
         AND ((json_extract(data,'$.phase')='done' AND (
           COALESCE(json_extract(data,'$.resolution.mergedCommit'),'')<>''
@@ -82,7 +89,7 @@ export class StoreThreadEffects {
         COALESCE(json_extract(meta.value,'$.status'),'')<>'archived'
         OR COALESCE(json_extract(meta.value,'$.op'),'archive')<>
           CASE WHEN ? AND candidates.worker=0 THEN 'delete' ELSE 'archive' END)
-    ) ORDER BY finished.id`).all(hostId, removal ? 1 : 0, finishedThreadCleanupKeyPrefix, qualifiedThreadArchiveEffectKeyPrefix, removal ? 1 : 0) as { data: string }[];
+    ) ORDER BY finished.id`).all(...(taskIds ? [JSON.stringify(taskIds)] : []), hostId, removal ? 1 : 0, finishedThreadCleanupKeyPrefix, qualifiedThreadArchiveEffectKeyPrefix, removal ? 1 : 0) as { data: string }[];
     return rows.map(row => JSON.parse(row.data) as Task);
   }
 

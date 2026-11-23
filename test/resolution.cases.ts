@@ -76,10 +76,6 @@ import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-co
 import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
 import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
-import {
-  reconcileRoutingSignoffs,
-  signoffApprove,
-} from "../core/dispatch/routing-signoff";
 import { taskWaitStateContext } from "../core/recovery/wait-context";
 import { ownerRevisionFixture } from "./support/review-entry-fixture";
 import { stepEngine } from "./support/engine-step";
@@ -17031,8 +17027,8 @@ test("a stale coordinator action after the task moved on is refused, not applied
   }
 });
 
-/** Spec 052 sign-off on retained bindings (Sol, #580; Tom 2026-10-21: keep the worker's own thread). */
-function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
+/** Spec 052 usage policy on retained bindings. */
+function requestOnlyPool(f: ReturnType<typeof fixture>, frontier: string) {
   const cheapReviewer = profile("cheap-reviewer"),
     cheapCoordinator = profile("cheap-coordinator");
   f.engine.profiles = [...f.engine.profiles, cheapReviewer, cheapCoordinator];
@@ -17064,20 +17060,13 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
     },
   ]);
 }
-test("sign-off: a worker already bound to its task keeps its own thread on an unsigned frontier profile", async () => {
+test("Spec 052: a worker already bound to its task keeps its own thread on a request-only Frontier profile", async () => {
   const f = fixture();
   try {
-    signoffPool(f, "author");
+    requestOnlyPool(f, "author");
     f.adapter.verifyResume = async () => head;
     const t = f.store.update(f.task.id, {
       phase: "changes_requested",
-      profileRequests: {
-        worker: {
-          profileId: "author",
-          reason: "Legacy live request",
-          required: true,
-        },
-      },
     });
     await f.engine.resolution.launch(t, "revision");
     assert.equal(f.sends.length, 1);
@@ -17090,19 +17079,12 @@ test("sign-off: a worker already bound to its task keeps its own thread on an un
     await f.close();
   }
 });
-test("sign-off: a fresh reviewer on an unsigned retained frontier profile is selected within the level instead", async () => {
+test("Spec 052: a fresh reviewer on a retained Frontier profile without a request is selected within the level instead", async () => {
   const f = fixture();
   try {
-    signoffPool(f, "reviewer");
+    requestOnlyPool(f, "reviewer");
     f.idle("retained-reviewer");
     const t = f.store.update(f.task.id, {
-      profileRequests: {
-        reviewer: {
-          profileId: "reviewer",
-          reason: "Legacy live request",
-          required: true,
-        },
-      },
       resolution: {
         ...f.current().resolution,
         reviewerAgentId: "retained-reviewer",
@@ -17115,20 +17097,13 @@ test("sign-off: a fresh reviewer on an unsigned retained frontier profile is sel
       "cheap-reviewer",
       `${f.current().phase}: ${f.current().reason}`,
     );
-    const signed = f.store.update(f.task.id, {
+    const requested = f.store.update(f.task.id, {
       phase: "awaiting_review",
       profileRequests: {
         reviewer: {
           profileId: "reviewer",
           reason: "Legacy live request",
           required: true,
-          signoff: {
-            status: "approved",
-            decisionId: "d",
-            by: "operator (board)",
-            at: new Date().toISOString(),
-            note: "",
-          },
         },
       },
       resolution: {
@@ -17140,20 +17115,20 @@ test("sign-off: a fresh reviewer on an unsigned retained frontier profile is sel
     });
     for (const run of f.store.runs(f.task.id))
       f.store.putRun({ ...run, status: "finished", released: true });
-    await f.engine.resolution.launch(signed, "reviewer");
+    await f.engine.resolution.launch(requested, "reviewer");
     assert.equal(
       f.creates.at(-1)?.profile?.id,
       "reviewer",
-      "a signed-off request keeps the frontier reviewer",
+      "a stored request keeps the frontier reviewer",
     );
   } finally {
     await f.close();
   }
 });
-test("sign-off: a bound coordinator on an unsigned frontier profile is not reused; the next run is selected within the level", async () => {
+test("Spec 052: a bound coordinator on a request-only Frontier profile is not reused; the next run is selected within the level", async () => {
   const f = fixture();
   try {
-    signoffPool(f, "coordinator");
+    requestOnlyPool(f, "coordinator");
     const p = f.engine.profiles.find((item) => item.id === "coordinator")!;
     f.idle("retained-coordinator");
     f.store.putRun({
@@ -17195,241 +17170,8 @@ test("sign-off: a bound coordinator on an unsigned frontier profile is not reuse
         .some(
           (e) =>
             e.kind === "coordinator_route_applied" &&
-            /awaits the operator's board sign-off/.test(e.detail),
+            /requires an explicit profile request/.test(e.detail),
         ),
-    );
-  } finally {
-    await f.close();
-  }
-});
-test("sign-off: replacement selection never carries an unsigned worker request's thinking level (Sol, #580)", async () => {
-  const f = fixture();
-  try {
-    const frontier = { ...profile("frontier"), supportedThinking: ["xhigh"] };
-    f.engine.profiles.push(frontier);
-    f.store.setMeta("pool", [
-      ...f.store.pool().map((p) => ({ ...p, })),
-      {
-        profileId: "frontier",
-        enabled: true,
-        group: "frontier",
-        roles: ["worker"],
-        scopes: ["general"],
-        weight: "default",
-        
-        capability: "frontier",
-      },
-    ]);
-    f.adapter.verifyResume = async () => head;
-    f.store.update(f.task.id, { phase: "changes_requested" });
-    const routed = await f.engine.performTaskControl(
-      taskControlInputSchema.parse({
-        taskId: f.task.id,
-        version: f.current().version,
-        action: "route",
-        role: "worker",
-        profileId: "frontier",
-        thinkingOptionId: "xhigh",
-        reason: "Stronger author",
-        caller: "owner-thread",
-      }),
-    );
-    assert.equal(
-      chooseProfile(
-        routed,
-        f.engine.profiles,
-        f.store.pool(),
-        {},
-        new Set(),
-        "worker",
-      )?.profile.id,
-      "author",
-    );
-    await (
-      f.engine as unknown as { recoverExhaustedWorkers: () => Promise<void> }
-    ).recoverExhaustedWorkers();
-    assert.doesNotMatch(
-      f.current().reason,
-      /thinking option xhigh unsupported/,
-      "the unsigned level does not narrow the replacement",
-    );
-  } finally {
-    await f.close();
-  }
-});
-test("sign-off: once the operator approves, the requested reviewer takes over from the automatic fallback (Sol, #580)", async () => {
-  const f = fixture();
-  try {
-    const cheap = profile("cheap-reviewer");
-    f.engine.profiles.push(cheap);
-    f.store.setMeta("pool", [
-      ...f.store.pool().map((p) => ({
-        ...p,
-        capability:
-          p.profileId === "reviewer" ? ("frontier" as const) : p.capability,
-      })),
-      {
-        profileId: cheap.id,
-        enabled: true,
-        group: "cheap-review",
-        roles: ["reviewer"],
-        scopes: ["general"],
-        weight: "default",
-        
-      },
-    ]);
-    const t = f.store.update(f.task.id, {
-      profileRequests: {
-        reviewer: {
-          profileId: "reviewer",
-          reason: "Strong independent review",
-          required: true,
-        },
-      },
-    });
-    const decisions = new Decisions(f.store);
-    reconcileRoutingSignoffs(f.store, decisions, t.id, f.engine.profiles);
-    const decisionId =
-      f.current().profileRequests!.reviewer!.signoff!.decisionId!;
-    await f.engine.resolution.launch(f.current(), "reviewer");
-    const first = f.creates.at(-1)!;
-    assert.equal(
-      first.profile?.id,
-      "cheap-reviewer",
-      "unsigned: the fallback reviews",
-    );
-    f.store.putRun({
-      ...f.store.run(first.id)!,
-      status: "finished",
-      released: true,
-    });
-    f.idle(first.agentId!);
-    f.store.update(t.id, {
-      phase: "awaiting_review",
-      resolution: { ...f.current().resolution, currentRunId: null },
-    });
-    const d = decisions.get({ id: decisionId });
-    decisions.answer({
-      id: d.id,
-      version: d.version,
-      answer: signoffApprove("reviewer"),
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-    reconcileRoutingSignoffs(f.store, decisions, t.id, f.engine.profiles);
-    await f.engine.resolution.launch(f.current(), "reviewer");
-    assert.equal(
-      f.creates.at(-1)?.profile?.id,
-      "reviewer",
-      "signed off: the requested reviewer takes over",
-    );
-  } finally {
-    await f.close();
-  }
-});
-test("sign-off: an unsigned coordinator request does not narrow automatic coordinator scope (Sol, #580)", async () => {
-  const f = fixture();
-  try {
-    const specialist = profile("specialist");
-    f.engine.profiles.push(specialist);
-    f.store.setMeta("pool", [
-      ...f.store.pool(),
-      {
-        profileId: specialist.id,
-        enabled: true,
-        group: "specialist",
-        roles: ["coordinator"],
-        weight: "default",
-        scopes: ["complex"],
-        
-        capability: "frontier",
-      },
-    ]);
-    f.store.update(f.task.id, { scope: "complex", phase: "verifying" });
-    const unsigned = f.store.update(f.task.id, {
-      profileRequests: {
-        coordinator: {
-          profileId: specialist.id,
-          reason: "Domain expertise",
-          required: true,
-        },
-      },
-    });
-    // Spec 053 (Tom, 2026-11-04): the automatic set serves; a fresh pool breaks the tie by id, so the cheapest is not forced.
-    assert.ok(
-      ["author", "coordinator", "reviewer"].includes(
-        f.engine.resolution.select(unsigned, "coordinator")?.profile.id ?? "",
-      ),
-      "the general coordinator set still serves; the frontier specialist is not picked",
-    );
-  } finally {
-    await f.close();
-  }
-});
-test('sign-off: a worker "Use" answer carries into a pending replacement aimed at the requested profile (Sol, #580)', async () => {
-  const f = fixture();
-  try {
-    const requested = profile("frontier"),
-      chosen = profile("chosen");
-    f.engine.profiles.push(requested, chosen);
-    f.store.setMeta("pool", [
-      ...f.store.pool().map((p) => ({ ...p, })),
-      ...["frontier", "chosen"].map((id) => ({
-        profileId: id,
-        enabled: true,
-        group: id,
-        roles: ["worker"],
-        weight: "default",
-        scopes: ["general"],
-        
-        capability: "frontier",
-      })),
-    ]);
-    f.adapter.verifyResume = async () => head;
-    f.store.update(f.task.id, { phase: "changes_requested" });
-    await f.engine.performTaskControl(
-      taskControlInputSchema.parse({
-        taskId: f.task.id,
-        version: f.current().version,
-        action: "route",
-        role: "worker",
-        profileId: requested.id,
-        reason: "Stronger author",
-        caller: "owner-thread",
-      }),
-    );
-    const decisions = new Decisions(f.store);
-    reconcileRoutingSignoffs(f.store, decisions, f.task.id, f.engine.profiles);
-    const id = f.current().profileRequests!.worker!.signoff!.decisionId!;
-    const d = decisions.get({ id });
-    decisions.answer({
-      id,
-      version: d.version,
-      answer: "Use chosen",
-      answeredBy: "operator (board)",
-      relayed: false,
-      note: "",
-    });
-    reconcileRoutingSignoffs(f.store, decisions, f.task.id, f.engine.profiles);
-    // Spec 058 task 577: the unsigned route armed nothing, so the board's answer
-    // takes effect through the next worker launch, which arms the approved pick
-    // through worker_route_honoured; the sweep then retires once for it.
-    await f.engine.resolution.launch(f.current(), "revision");
-    assert.equal(
-      f.current().replacementProfile?.profileId,
-      "chosen",
-      "the approved pick is armed",
-    );
-    (f.engine as unknown as { launchAgent: () => Promise<void> }).launchAgent =
-      async () => {};
-    await (
-      f.engine as unknown as { recoverExhaustedWorkers: () => Promise<void> }
-    ).recoverExhaustedWorkers();
-    assert.equal(
-      f.current().profile!.id,
-      "chosen",
-      "the replacement takes the operator's pick",
     );
   } finally {
     await f.close();

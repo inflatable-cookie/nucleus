@@ -1320,6 +1320,10 @@ test("a slow T3 thread read refuses the retained-worker restart and names the ti
     // A subscribeThread that outlives the host's read bound: the recorded
     // incident failure, end to end through observe and the owner verb.
     f.server.controls.slowSnapshotMs = 6_000; // the fixture host's read bound is 5 000 ms
+    // The worker's row moves, so its state needs a fresh snapshot: an unchanged row
+    // is answered from the snapshot already held (Spec 069 batch 5).
+    f.server.threads.get(task.agentId!)!.thread.updatedAt =
+      "2026-01-02T00:00:00.000Z";
     await assert.rejects(
       f.runtime.taskControl({
         action: "restart",
@@ -1417,15 +1421,17 @@ test("the worker thread is watched and messaged on the task host, never the defa
     const { taskId, workerThreadId } = await taskWithWorker(f);
     // The worker's turn has ended: the idle check reads its own thread.
     f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
-    const readsBefore = f.server.requests.filter(
-      (request) => request.tag === "orchestration.subscribeThread",
-    ).length;
     await f.runtime.engine.reconcile(f.runtime.store.task(taskId));
+    // The worker's state is T3's own: its row in T3's live shell, and a snapshot of
+    // it only when that row moved since the last one (Spec 069 batch 5).
     assert.ok(
-      f.server.requests.filter(
-        (request) => request.tag === "orchestration.subscribeThread",
-      ).length > readsBefore,
+      f.host.reads.live.row(workerThreadId),
       "the worker reconcile read the worker thread on T3",
+    );
+    assert.equal(
+      (await f.host.observe(workerThreadId)).active,
+      false,
+      "T3's answer for the worker is its finished run",
     );
 
     // A planner tell into the task's own thread.
@@ -1765,13 +1771,6 @@ test("a removed coordinator thread and a routed coordinator profile each open a 
             reason: "Route the coordinator to the review profile",
             required: true,
             ownerRoute: true,
-            signoff: {
-              status: "approved",
-              decisionId: null,
-              by: "operator (board)",
-              at: new Date().toISOString(),
-              note: "",
-            },
           },
         },
       },

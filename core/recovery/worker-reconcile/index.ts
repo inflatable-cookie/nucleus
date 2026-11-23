@@ -1,3 +1,4 @@
+import { stopClearedPatch } from "../../../shared/task-stop";
 import { missingReportBindingCompletion } from '../../intake/reporting-failure';
 import type { Task } from '../../../shared/contracts';
 import { pausedStopWaitReason } from '../../../shared/contracts';
@@ -11,7 +12,7 @@ import { branchPrLookupDue, reconcileBranchPr } from './branch-pr';
 import { continuationOwnsReturn, reconcileBlockedReturn } from './blocked-return';
 import type { WorkerReconcileContext } from './context';
 import { STOPPED_WORKER_STATUSES, completionReportsPr } from './decisions';
-import { observeOnly, reconcileObservation, recordObservation } from './observation-gates';
+import { observeOnly, reconcileObservation, recordObservation, type WorkerObservation } from './observation-gates';
 import { reconcileReportingBinding, reportingBindingRecheckDue } from './reporting-binding';
 import { acceptWorkerResult } from './result-acceptance';
 
@@ -48,6 +49,12 @@ export class WorkerReconcile {
   async reconcile(task: Task): Promise<void> {
     const observed = await this.reconcileObservation(task);
     if (!observed) return;
+    if (observed.kind === "released_completion") {
+      const current = await this.preBranchGates(task, observed.state, false);
+      if (current?.completion && !this.reconcileBlockedReturn(task, current, observed.state))
+        await this.acceptWorkerResult(task, current);
+      return;
+    }
     const { state } = observed;
     if (!STOPPED_WORKER_STATUSES.includes(state.status)) throw new Error("Worker status is unknown; not releasing its workspace");
     const grace = this.beginIdleGrace(observed.current, state);
@@ -113,7 +120,7 @@ export class WorkerReconcile {
     // live-stop path found reviewing #641). No run, phase or stop record moves:
     // an unheld worker keeps the ordinary grace note and reminders, and a
     // release still retires the held stop with the last fence.
-    const current = this.engine.store.update(initial.id, dispatchBlocked(initial) ? { idleSince: now() } : { idleSince: now(), reason });
+    const current = this.engine.store.update(initial.id, dispatchBlocked(initial) ? { idleSince: now() } : { idleSince: now(), reason, ...stopClearedPatch(this.engine.store.task(initial.id), reason) });
     return { current, firstIdleObservation, graceElapsed };
   }
 
@@ -122,7 +129,7 @@ export class WorkerReconcile {
    * unverified read, the split reporting binding, and a recovery escalation that
    * owns the lane. Null ends the pass; otherwise the task to continue with.
    */
-  private async preBranchGates(task: Task, state: Observation, graceElapsed: boolean): Promise<Task | null> {
+  private async preBranchGates(task: Task, state: Observation | null, graceElapsed: boolean): Promise<Task | null> {
     const { store } = this.engine;
     let current = store.task(task.id);
     // Read-only identity diagnostic (Contract 003): a stopped initial worker
@@ -130,7 +137,7 @@ export class WorkerReconcile {
     // nothing. The exact branch-PR reconciliation below runs first because it
     // re-issues the binding through the retained revision path; this reports the
     // remaining split before the lane stalls into an unrecoverable phase.
-    const mismatch = reportingIdentityMismatch(current, wireLabel(state.labels, "mcpBinding"));
+    const mismatch = reportingIdentityMismatch(current, wireLabel(state?.labels, "mcpBinding"));
     const hasPrIdentity = Boolean(completionReportsPr(current) || current.prUrl || current.prHead || current.resumePrNumber);
     // A split binding cannot deliver the callback that would record the PR, and the
     // PR is what re-issues the binding, so this reconciliation is the repair rather
@@ -139,7 +146,7 @@ export class WorkerReconcile {
     // existing behaviour: a matched binding still gets its full grace before the
     // queue reaches for a PR the worker may be about to report itself.
     const readyForBranchPrLookup = !hasPrIdentity &&
-      (state.status === 'error' || state.status === 'closed' || graceElapsed || Boolean(mismatch));
+      (state?.status === 'error' || state?.status === 'closed' || graceElapsed || Boolean(mismatch));
     if (readyForBranchPrLookup && this.branchPrLookupDue(current) && await this.reconcileBranchPr(current)) return null;
     // While the branch-PR live read is unverified, the lane holds for its
     // retry: a reporting-binding mismatch or an ordinary worker fault must
@@ -163,7 +170,7 @@ export class WorkerReconcile {
   }
 
   /** Observe the worker and settle every live state. Null ends the pass; otherwise the worker has stopped. */
-  reconcileObservation(task: Task): Promise<{ state: Observation; current: Task } | null> { return reconcileObservation(this.engine, task); }
+  reconcileObservation(task: Task): Promise<WorkerObservation | null> { return reconcileObservation(this.engine, task); }
   /** Look for the queue branch's open PR before coordinator recovery. True ends the pass. */
   reconcileBranchPr(current: Task): Promise<boolean> { return reconcileBranchPr(this.engine, current); }
   /** A split reporting binding: re-read it live once per grace window, then escalate only a confirmed split. */
@@ -171,7 +178,7 @@ export class WorkerReconcile {
     return reconcileReportingBinding(this.engine, current, mismatch);
   }
   /** A blocked or error receipt: same-thread push-back, or consumed once. True ends the pass; synchronous on purpose. */
-  reconcileBlockedReturn(task: Task, current: Task, state: Observation): boolean { return reconcileBlockedReturn(this.engine, task, current, state); }
+  reconcileBlockedReturn(task: Task, current: Task, state: Observation | null): boolean { return reconcileBlockedReturn(this.engine, task, current, state); }
   /** Take the worker's recorded result: hold a report for its planner, verify a PR report, or record a blocked or error return. */
   acceptWorkerResult(task: Task, current: Task): Promise<void> { return acceptWorkerResult(this.engine, task, current); }
   /** Whether the queue-owned branch reconciliation may run again. */

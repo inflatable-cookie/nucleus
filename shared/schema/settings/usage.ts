@@ -23,35 +23,3 @@ export const usageViewSchema = z.object({
 }).strict();
 
 export type UsageView = z.infer<typeof usageViewSchema>;
-
-/**
- * Spec 052 planner grant (Tom, 2026-11-06): standing permission for one planner
- * to use profiles the level holds for a block of work. Stored in meta.
- */
-export const routingGrantStatuses = ["pending", "active", "ended", "revoked", "expired", "archived", "declined"] as const;
-
-export const routingGrantSchema = z.object({
-  id: z.string().min(1),
-  planner: z.string().min(1).max(300),
-  reason: z.string().min(1).max(4000),
-  /** Empty: every profile that needs sign-off. Named: only those ids. */
-  profiles: z.array(z.string().trim().min(1)).default([]),
-  until: z.string().datetime({ offset: true }).nullable().default(null),
-  status: z.enum(routingGrantStatuses),
-  requestedAt: z.string().datetime({ offset: true }),
-  requestedBy: z.string().min(1).max(300),
-  decisionId: z.string().nullable().default(null),
-  activatedAt: z.string().datetime({ offset: true }).nullable().default(null),
-  activatedBy: z.string().nullable().default(null),
-  endedAt: z.string().datetime({ offset: true }).nullable().default(null),
-  endedBy: z.string().nullable().default(null),
-  endReason: z.string().max(400).nullable().default(null),
-  runCount: z.number().int().nonnegative().default(0),
-}).strict();
-
-export type RoutingGrant = z.infer<typeof routingGrantSchema>;
-
-/** What the board lists: live grants, newest first. */
-export const routingGrantViewSchema = routingGrantSchema;
-
-export type RoutingGrantView = RoutingGrant;
