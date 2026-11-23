@@ -3,6 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::profiles::{BoundProfile, Profile};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -338,6 +340,15 @@ pub struct PreparedLaunch {
     pub(crate) credential: CredentialDigest,
     pub input: String,
     pub review_head: Option<Head>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) profile: Option<BoundProfile>,
+}
+
+impl PreparedLaunch {
+    #[must_use]
+    pub fn profile(&self) -> Option<&Profile> {
+        self.profile.as_ref().map(|bound| &bound.selected)
+    }
 }
 
 impl fmt::Debug for PreparedLaunch {
@@ -397,6 +408,12 @@ pub struct Threads {
     pub(crate) worker: Option<String>,
     pub(crate) reviewer: Option<String>,
     pub(crate) launch_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) worker_profile: Option<BoundProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reviewer_profile: Option<BoundProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) applied_review_sequence: Option<u64>,
 }
 
 impl Threads {
@@ -408,11 +425,24 @@ impl Threads {
         }
     }
 
-    pub(crate) fn set(&mut self, role: Role, thread: String) {
+    #[must_use]
+    pub fn profile(&self, role: Role) -> Option<&Profile> {
         match role {
-            Role::Worker => self.worker = Some(thread),
-            Role::Reviewer => self.reviewer = Some(thread),
+            Role::Worker => self.worker_profile.as_ref(),
+            Role::Reviewer => self.reviewer_profile.as_ref(),
         }
+        .map(|bound| &bound.selected)
+    }
+
+    pub(crate) fn bind(&mut self, launch: &PreparedLaunch) {
+        let (thread, profile) = match launch.role {
+            Role::Worker => (&mut self.worker, &mut self.worker_profile),
+            Role::Reviewer => (&mut self.reviewer, &mut self.reviewer_profile),
+        };
+        if thread.as_ref() != Some(&launch.thread) || launch.profile.is_some() {
+            profile.clone_from(&launch.profile);
+        }
+        *thread = Some(launch.thread.clone());
     }
 }
 
