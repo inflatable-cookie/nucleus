@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
-use nucleus_service::{Project, ReportTicket, Service, router};
+use nucleus_service::{Controller, Project, ReportTicket, Service, router};
 use nucleus_store::{EngineSettings, PinnedVolume, SettingsFile};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
@@ -27,6 +27,8 @@ use tokio::net::TcpListener;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_INPUT: u64 = 64 * 1024;
+const CONTROL_KEY: &str = "NUCLEUS_ENGINE_CONTROL_KEY";
+const FIXTURE_ORIGIN_KEY: &str = "NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY";
 
 #[derive(Parser)]
 #[command(about = "Run the isolated Nucleus task engine")]
@@ -64,6 +66,9 @@ enum Action {
         /// Bind the controller to the authenticated T3 planner's thread ID.
         #[arg(long)]
         planner: bool,
+        /// Give the fixture origin thread its own planner credential.
+        #[arg(long)]
+        fixture_origin_thread: Option<String>,
     },
     /// Admit a fixture task. Read the brief from stdin.
     Admit { id: String, reference: String },
@@ -137,13 +142,22 @@ async fn main() -> Result<()> {
             t3,
             actor,
             planner,
+            fixture_origin_thread,
         } => {
             let authority = if planner {
                 Authority::Planner { actor }
             } else {
                 Authority::Operator { actor }
             };
-            serve(endpoint, &home, &project, &t3, authority).await
+            serve(
+                endpoint,
+                &home,
+                &project,
+                &t3,
+                authority,
+                fixture_origin_thread,
+            )
+            .await
         }
         Action::Report { ticket } => report(&ticket).await,
         other => control(endpoint, other).await,
@@ -173,6 +187,7 @@ async fn serve(
     project: &Path,
     host: &str,
     authority: Authority,
+    fixture_origin_thread: Option<String>,
 ) -> Result<()> {
     loopback(endpoint)?;
     let actor = match &authority {
@@ -185,7 +200,21 @@ async fn serve(
     let project: Project = from_reader(File::open(project)?)?;
     let host = T3::new(host, &secret("NUCLEUS_ENGINE_T3_BEARER")?)?;
     let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
-    let credential = control_key()?;
+    let credential = control_key(CONTROL_KEY)?;
+    let mut controllers = vec![Controller {
+        credential,
+        authority,
+    }];
+    if let Some(actor) = fixture_origin_thread {
+        let origin = control_key(FIXTURE_ORIGIN_KEY)?;
+        if origin == credential || actor.trim().is_empty() {
+            return Err("supply a distinct key and identity for the fixture origin".into());
+        }
+        controllers.push(Controller {
+            credential: origin,
+            authority: Authority::Planner { actor },
+        });
+    }
     let tcp = TcpListener::bind(endpoint).await?;
     let service = Arc::new(Service::open(
         &settings,
@@ -195,7 +224,7 @@ async fn serve(
         tcp.local_addr()?,
         env::current_exe()?.canonicalize()?,
     )?);
-    let api = router(Arc::clone(&service), credential, authority);
+    let api = router(Arc::clone(&service), controllers);
     let watch = Arc::clone(&service);
     let watcher = tokio::spawn(async move {
         watch.watch_host().await;
@@ -266,7 +295,7 @@ async fn report(path: &Path) -> Result<()> {
 async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     use Action as A;
     loopback(endpoint)?;
-    let key = control_key()?;
+    let key = control_key(CONTROL_KEY)?;
     let (method, path, body) = match action {
         A::Admit { id, reference } => (
             Method::POST,
@@ -349,10 +378,10 @@ fn secret(name: &str) -> Result<String> {
     env::var(name).map_err(|_| format!("set {name}").into())
 }
 
-fn control_key() -> Result<[u8; 32]> {
+fn control_key(name: &str) -> Result<[u8; 32]> {
     let mut key = [0; 32];
-    hex::decode_to_slice(secret("NUCLEUS_ENGINE_CONTROL_KEY")?, &mut key)
-        .map_err(|_| "NUCLEUS_ENGINE_CONTROL_KEY must contain 64 hex digits")?;
+    hex::decode_to_slice(secret(name)?, &mut key)
+        .map_err(|_| format!("{name} must contain 64 hex digits"))?;
     Ok(key)
 }
 

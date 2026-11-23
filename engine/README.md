@@ -329,6 +329,9 @@ that profile, a project file for the authorized fixture, and the local T3
 endpoint. Set the control key, T3 bearer and GitHub token in the environment.
 The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
 API. `report` reads the role's owner-only ticket and the report from stdin.
+For the live proof, bind a separate key to the idle fixture origin thread with
+`--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. The responding
+planner uses their own control key.
 
 | Keep | Reshape | Remove from Rust tasks |
 | --- | --- | --- |

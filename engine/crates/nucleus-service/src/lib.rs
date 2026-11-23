@@ -38,7 +38,7 @@ use tokio::{
 
 pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
-pub use web::router;
+pub use web::{Controller, router};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

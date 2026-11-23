@@ -1,7 +1,7 @@
 use std::{convert::Infallible, sync::Arc};
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     middleware::{self, Next},
@@ -28,17 +28,21 @@ mod tests;
 #[derive(Clone)]
 struct Api {
     service: Arc<Service>,
-    credential: [u8; 32],
-    authority: Authority,
+    controllers: Arc<[Controller]>,
+}
+
+/// A controller key and the identity authenticated by that key.
+pub struct Controller {
+    pub credential: [u8; 32],
+    pub authority: Authority,
 }
 
 /// Bind the engine's JSON API and its revision stream. Task commands and
 /// callbacks use separate credentials. Serve on the configured loopback address.
-pub fn router(service: Arc<Service>, credential: [u8; 32], authority: Authority) -> Router {
+pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controller>) -> Router {
     let api = Api {
         service,
-        credential,
-        authority,
+        controllers: controllers.into_iter().collect(),
     };
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
@@ -57,13 +61,19 @@ pub fn router(service: Arc<Service>, credential: [u8; 32], authority: Authority)
 
 async fn authorize(
     State(api): State<Api>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
-    if !bool::from(api.credential.ct_eq(&supplied)) {
+    let mut matches = api
+        .controllers
+        .iter()
+        .filter(|caller| bool::from(caller.credential.ct_eq(&supplied)));
+    let caller = matches.next().ok_or(ApiError::Unauthorized)?;
+    if matches.next().is_some() {
         return Err(ApiError::Unauthorized);
     }
+    request.extensions_mut().insert(caller.authority.clone());
     Ok(next.run(request).await)
 }
 
@@ -100,12 +110,13 @@ struct Admission {
 
 async fn admit(
     State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
     input: Result<Json<Admission>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
     let input = body(input)?;
     let task = api
         .service
-        .admit(input.id, input.reference, input.brief, &api.authority)
+        .admit(input.id, input.reference, input.brief, &authority)
         .await?;
     Ok((StatusCode::CREATED, Json(Summary::new(&task, 1, None))))
 }
@@ -155,7 +166,11 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     }))
 }
 
-async fn next(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<NextView>, ApiError> {
+async fn next(
+    State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
+    Path(id): Path<String>,
+) -> Result<Json<NextView>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
     let task = &row.task;
@@ -165,7 +180,7 @@ async fn next(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<Nex
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
-        commands: command_options(task, &api.authority),
+        commands: command_options(task, &authority),
     }))
 }
 
@@ -245,13 +260,11 @@ fn purpose(task: &Task, role: Role) -> String {
 
 async fn command(
     State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
     Path(id): Path<String>,
     input: Result<Json<Command>, JsonRejection>,
 ) -> Result<Json<Summary>, ApiError> {
-    let task = api
-        .service
-        .command(&id, &api.authority, body(input)?)
-        .await?;
+    let task = api.service.command(&id, &authority, body(input)?).await?;
     Ok(Json(Summary::new(&task.task, task.version, None)))
 }
 
