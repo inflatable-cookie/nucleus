@@ -157,6 +157,10 @@ also check the open PR and clean checkout after native authorization.
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
   provider and model. Pre-register the single fixture project for milestone 1.
+- `orchestration.subscribeShell` can send repository enrichment snapshots before
+  `synchronized`. These update repository metadata. Project binding and planner
+  routing use the authoritative Shell snapshot.
+  [T3 Shell stream](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/ws.ts#L1301-L1345)
 - `orchestration.launchThread` takes explicit command, thread and initial-message
   IDs and `existing_worktree`. Bind the run and immutable launch inputs before
   sending. The task assigns a monotonic launch instance and derives a fresh

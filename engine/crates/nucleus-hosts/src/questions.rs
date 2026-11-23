@@ -123,7 +123,7 @@ impl T3 {
                 json!({
                     "requestCompletionMarker": true,
                 }),
-                Read::Snapshot,
+                Read::Shell,
             )
             .await?
         else {
@@ -282,7 +282,7 @@ impl T3 {
                 json!({
                     "threadId":id, "requestCompletionMarker":true, "acceptBoundedSnapshot":false,
                 }),
-                Read::Snapshot,
+                Read::Thread,
             )
             .await?;
         let value = match result {
