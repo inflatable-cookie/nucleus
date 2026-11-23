@@ -4,6 +4,7 @@ import type { ResolutionAdapter } from '../resolution';
 import type { ParticipantLease } from '../dispatch/participant-lease';
 import type { TaskStops } from '../recovery/task-stops';
 import type { ReviewerSetting } from '../forge/index';
+import type { ResultApplication } from '../intake/result-application';
 
 
 import { reviewPublicationBody } from '../../shared/review-text';
@@ -12,6 +13,7 @@ import { digest, type Store } from '../store/store';
 export interface ReviewPublicationContext {
   readonly store: Store;
   readonly adapter: Pick<Partial<ResolutionAdapter>, 'reconcileReviewPublication'>;
+  readonly resultApplication: Pick<ResultApplication, 'reviewVerdictGate'>;
   reviewerSetting(t: Task): ReviewerSetting | null;
   paused(): boolean;
   lease: ParticipantLease['lease'];
@@ -306,17 +308,21 @@ export class ReviewPublication {
     // with a positive publication ID, so the earlier intent is history.
     if (classifyReviewPublication(this.store, t, run).state === 'superseded')
       throw Error('Its uncertain publication is superseded by a later applied review at the same head; it stays on record as history');
-    const identity = JSON.stringify(run), setting = JSON.stringify(reviewer);
-    const allowed = () => {
+    const gate = this.resolution.resultApplication.reviewVerdictGate(t, run, run.completion, {
+      reapplied: true, published: true, reviewer,
+    });
+    const identity = JSON.stringify(run);
+    const allowed = Object.assign(() => {
       const current = this.store.task(t.id);
-      return current.version === t.version && !this.resolution.paused() && !dispatchBlocked(current) && !isDispositionActive(current) &&
-        JSON.stringify(this.store.run(runId)) === identity && JSON.stringify(this.resolution.reviewerSetting(current)) === setting &&
+      return gate.allowed() && current.version === t.version && !this.resolution.paused() && !dispatchBlocked(current) && !isDispositionActive(current) &&
+        JSON.stringify(this.store.run(runId)) === identity &&
         !this.store.runs(t.id).some(item => !item.released && item.id !== reportingRunId);
-    };
+    }, { observe: gate.observe });
     if (!allowed() || !await this.resolution.lease(t, undefined, reportingRunId) || !allowed()) throw Error('Resolve the retained thread, pause or dispatch fence before publication reconciliation');
     const id = await this.adapter.reconcileReviewPublication(this.store, t, run, reviewer, reason, allowed);
     retainReviewPublication(this.store, t, run, run.completion, reviewer, id);
     if (!await this.resolution.lease(t, undefined, reportingRunId)) throw Error('A retained thread became active during publication reconciliation');
+    await gate.observe();
     return this.store.transaction(() => {
       if (!allowed()) throw Error('Task or accepted review changed during publication reconciliation');
       this.store.putRun({ ...run, completion: { ...run.completion!, reviewId: id } });

@@ -401,6 +401,8 @@ async function pendingVerdict(
         ...task.resolution,
         currentRunId: run.id,
         review: null,
+        integrationTurn: null,
+        mergeIntent: false,
         reviews: task.resolution.reviews.filter(
           (review) => review.runId !== run.id,
         ),
@@ -738,6 +740,8 @@ test("a released authenticated review with a lost application is reapplied once 
           ...task.resolution,
           currentRunId: null,
           review: null,
+          integrationTurn: null,
+          mergeIntent: false,
           reviews: task.resolution.reviews.filter(
             (review) => review.runId !== run.id,
           ),
@@ -828,6 +832,8 @@ test("a lost follow-up verdict returns a detached checkout before it is reapplie
           ...task.resolution,
           currentRunId: null,
           review: null,
+          integrationTurn: null,
+          mergeIntent: false,
           reviews: task.resolution.reviews.filter(
             (review) => review.runId !== run.id,
           ),
@@ -1536,7 +1542,7 @@ test("a superseded uncertain publication merges through its ordinary turn; the o
   }
 });
 
-test("ordinary review custody ignores its concurrent dispatch hold and waiting writes during the final proof", async () => {
+test("a dispatch hold placed during ordinary review custody keeps the verdict pending", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
@@ -1572,7 +1578,9 @@ test("ordinary review custody ignores its concurrent dispatch hold and waiting w
       true,
       "the dispatch hold and task_waiting record landed during custody proof",
     );
-    assert.equal(f.store.task(f.task.id).resolution.review?.runId, run.id);
+    const current = f.store.task(f.task.id);
+    assert.equal(current.resolution.currentRunId, run.id);
+    assert.equal(current.resolution.review, null);
     assert.equal(
       f.store
         .eventsAll(f.task.id)
@@ -1580,9 +1588,9 @@ test("ordinary review custody ignores its concurrent dispatch hold and waiting w
           (event) =>
             event.kind === "review_result_applied" && event.detail === run.id,
         ).length,
-      1,
+      0,
     );
-    assert.equal(f.store.task(f.task.id).resolution.attention, false);
+    assert.equal(current.resolution.attention, false);
   } finally {
     await f.close();
   }

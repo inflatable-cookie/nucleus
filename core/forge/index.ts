@@ -60,6 +60,7 @@ export {
   verifyReview,
   publishReview,
   type PublicationOutcome,
+  type ReviewPublicationGuard,
   publishReviewOnce,
   validateReviewComment,
   REVIEWER_TOKEN_SERVICE,

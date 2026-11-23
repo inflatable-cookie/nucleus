@@ -270,6 +270,30 @@ export function plannerEscalations(events: readonly LadderHistoryEvent[]): Plann
   });
 }
 
+/** An answered escalation still owns its wait until the ladder settles it. */
+export function activePlannerEscalationWait(
+  events: readonly LadderEvent[],
+): string | null {
+  const retired = new Set<string>();
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    if (!event.kind.startsWith("planner_escalation_")) continue;
+    const id = event.detail.split(":", 1)[0]!;
+    if (event.kind === "planner_escalation_wait") {
+      if (!retired.has(id)) return id;
+    } else if (
+      [
+        "planner_escalation_woke",
+        "planner_escalation_wait_superseded",
+        "planner_escalation_resolved",
+      ].includes(event.kind)
+    ) {
+      retired.add(id);
+    }
+  }
+  return null;
+}
+
 /** The open (unsettled) escalation for one cause, if any: a repeated blocker attaches to it. */
 export function findOpenPlannerEscalation(
   events: LadderEvent[],

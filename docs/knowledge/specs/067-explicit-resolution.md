@@ -95,7 +95,7 @@ No command changes anything it does not name.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
-| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Phase unchanged. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
+| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. A reviewer start can enter `reviewing` from an eligible phase. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
 | `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|recovery\|attention\|run_pointer\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `workspace_intent` (id: the task branch; [Spec 068](068-self-healing.md) batch A) releases an uncertain dispatch workspace creation that bound nothing and returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only: the workspace may exist on the host; `effect_may_land` joins it while the task's dispatch is in flight) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
@@ -128,6 +128,22 @@ current task version. `next` shows eligible records and the same warnings
 the command applies, including `effect_may_land` for a claimed coordinator
 action with an unsettled outcome. The scheduler rechecks the task after
 settlement, including any pending verdict through ordinary exact-head intake.
+
+`run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
+`awaiting_review` or `changes_requested` when it reserves the run. These are the
+only eligible phases. Open escalations, active escalation waits, holds,
+incidents, escalated recovery episodes, merge requests, integration turns and
+recorded merges block the start. `next` uses the same eligibility check for its
+offers.
+
+Reviewer callbacks follow the ordinary verdict path. Accepting
+`discard_reported_verdict` records the displaced reviewer's replacement when
+the new run is reserved. After credential lookup, publication checks live
+reviewer independence and durable ownership before sending to the forge.
+Comment publication checks them after acquiring its `gh` process slot. The
+verdict transaction uses the same gate, which includes the reviewer binding,
+the exact head, discard, dispatch holds, publication policy and integration
+ownership.
 
 **Hard gates** (never accepted as warnings):
 
@@ -205,8 +221,8 @@ command instead:
 | Lever used today | Explicit command |
 | --- | --- |
 | `restart role=reviewer fresh` to get a new reviewer | `run.start reviewer fresh replacing=<run>` |
-| `restart role=reviewer` to make the reviewer report | `message.send reviewer` or `run.start reviewer retained` |
-| `move to=review` after a silent worker pushed | `run.start reviewer head=<sha>` |
+| `restart role=reviewer` to make the reviewer report | `message.send reviewer`, or `run.start reviewer retained` from an eligible phase |
+| `move to=review` after a silent worker pushed | `phase.set to=awaiting_review`, then `run.start reviewer head=<sha>` |
 | `move to=review` / `stop` to drop the integration turn | `turn.release` |
 | `move to=merge` to re-claim the turn | `turn.take` or `merge.now head=<sha>` |
 | forced `retry_effect` on a run or operation | `run.release` or `record.clear effect` |

@@ -10,6 +10,8 @@ import {
 import {
   REVISION_BUDGET,
   WORKER_REPLACEMENT_CEILING,
+  holdOwnerOf,
+  holdsOf,
   runSchema,
   type Profile,
   type Run,
@@ -48,6 +50,11 @@ import {
   readGitCheckout,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
+import {
+  activePlannerEscalationWait,
+  plannerEscalations,
+  type LadderEvent,
+} from "../questions/ladder/records";
 import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
@@ -181,6 +188,55 @@ export function phaseSetPlan(
       };
     },
   };
+}
+
+const reviewerStartPhases: readonly Task["phase"][] = [
+  "needs_attention",
+  "blocked",
+  "awaiting_review",
+  "changes_requested",
+];
+
+export function reviewerStartRefusal(
+  task: Task,
+  events: LadderEvent[],
+): string | null {
+  const {
+    mergedCommit,
+    unreviewedMerge,
+    mergeIntent,
+    integrationTurn,
+    incident,
+    recovery,
+  } = task.resolution;
+  if (mergedCommit || unreviewedMerge)
+    return "Cannot start a reviewer after a merge has been recorded.";
+  if (!reviewerStartPhases.includes(task.phase))
+    return `Cannot start a reviewer while the task is ${task.phase}.`;
+  if (mergeIntent || integrationTurn) {
+    const blocker = mergeIntent
+      ? "a merge request is pending"
+      : "the task holds an integration turn";
+    return `Cannot start a reviewer while ${blocker}.`;
+  }
+  const { dispatch, merge } = holdsOf(task);
+  const hold = dispatch ?? merge;
+  if (hold) {
+    const kind = dispatch ? "Dispatch" : "Merge";
+    return `${kind} is held by ${holdOwnerOf(task, hold.owner)}: ${hold.reason}. Release the hold before starting a reviewer.`;
+  }
+  const escalation = plannerEscalations(events).find(
+    (item) => !item.answered,
+  );
+  if (escalation)
+    return `The planner ladder still owns escalation ${escalation.id}.`;
+  const wait = activePlannerEscalationWait(events);
+  if (wait) return `The planner ladder still owns escalation ${wait}'s wait.`;
+  if (incident)
+    return `The recovery owner must clear ${incident.status} incident ${incident.id}.`;
+  if (recovery?.status === "escalated")
+    return `The recovery owner must settle ${recovery.status} episode ${recovery.id}.`;
+  return null;
 }
 
 export function messageSendPlan(
@@ -496,6 +552,10 @@ export async function preflightExplicitRunStart(
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
+  const refusal =
+    input.role === "reviewer" &&
+    reviewerStartRefusal(task, engine.store.eventsAll(task.id));
+  if (refusal) throw Error(refusal);
   // Spec 068 §4: every run.start launches into the task checkout, so the one
   // reattach step runs first. It moves no commit and names its refusal instead
   // of leaving a detached checkout unexplained.
@@ -658,6 +718,20 @@ export function runStartPolicyStop(
   return reached.length ? reached.join("; ") : null;
 }
 
+function displacedReviewerVerdicts(
+  store: Store,
+  task: Task,
+  runs: Run[],
+  replacing: string | undefined,
+) {
+  return runs.flatMap((run) => {
+    if (run.id !== replacing && run.id !== task.resolution.currentRunId)
+      return [];
+    const verdict = reportedUnappliedVerdict(store, task, run);
+    return verdict ? [{ run, verdict }] : [];
+  });
+}
+
 /**
  * Every warning a `run.start` names that the stored task and runs show. The command
  * itself adds what only its preflight reads (the forge head, the checkout HEAD and a
@@ -695,18 +769,21 @@ export function runStartWarnings(
 
   // A reviewer that already reported a verdict at the current head is a finished
   // review: replacing it, or starting another reviewer over it, would drop that
-  // verdict (bovine-accelerator#6863). The lifecycle applies it on its own, so the
-  // start waits unless the caller explicitly discards it.
+  // verdict (bovine-accelerator#6863). The start waits unless the caller
+  // explicitly discards it.
   const displaced =
-    replacedRun ??
-    (runRole === "reviewer" && task.resolution.currentRunId
-      ? (store.run(task.resolution.currentRunId) ?? null)
-      : null);
-  const reported = displaced ? reportedUnappliedVerdict(store, task, displaced) : null;
-  if (reported)
+    runRole === "reviewer"
+      ? displacedReviewerVerdicts(store, task, runs, input.replacing)
+      : [];
+  if (displaced.length)
     warn(
       "discard_reported_verdict",
-      `Reviewer run ${displaced!.id} already reported ${reported.status} at ${reported.head.slice(0, 12)}; it is applied on the next pass. Accept discard_reported_verdict to replace it anyway.`,
+      displaced
+        .map(
+          ({ run, verdict }) =>
+            `Reviewer run ${run.id} already reported ${verdict.status} at ${verdict.head.slice(0, 12)}; accept discard_reported_verdict to discard it.`,
+        )
+        .join(" "),
     );
 
   // Spec 068 §3: the host may still answer this role's uncertain create. A new
@@ -813,6 +890,10 @@ export function runStartPlan(
   preflight?: ExplicitRunStartPreflight,
 ): ExplicitPlan {
   const store = engine.store;
+  const refusal =
+    input.role === "reviewer" &&
+    reviewerStartRefusal(task, store.eventsAll(task.id));
+  if (refusal) throw Error(refusal);
   const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
     runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {
@@ -875,7 +956,17 @@ export function runStartPlan(
   return {
     warnings,
     apply() {
+      const discarded =
+        runRole === "reviewer" &&
+        input.accept.includes("discard_reported_verdict")
+          ? displacedReviewerVerdicts(store, task, runs, input.replacing)
+          : [];
       const releaseChange = replacingPlan?.apply();
+      // Keep the authenticated completion and retire its claim on the verdict.
+      for (const { run } of discarded) {
+        const settled = store.run(run.id);
+        if (settled) store.putRun({ ...settled, replacedAt: now() });
+      }
       const basePatch = releaseChange?.patch ?? {};
       const resolution = { ...(basePatch.resolution ?? task.resolution) };
       const runId = randomUUID();
@@ -931,6 +1022,8 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
+      if (runRole === "reviewer")
+        patch.phase = "reviewing";
       // Only record a forge-confirmed PR head when the task checkout already
       // matches it (e.g. #1508 where the worker pushed from the task checkout).
       // Never record an unconfirmed SHA as prHead.
@@ -967,6 +1060,7 @@ export function runStartPlan(
         patch,
         before: {
           replacing: releaseChange?.before ?? null,
+          phase: task.phase,
           currentRunId: task.resolution.currentRunId,
           reviewerAgentId: task.resolution.reviewerAgentId,
           agentId: task.agentId,

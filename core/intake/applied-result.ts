@@ -1,3 +1,4 @@
+import type { Run } from "../../shared/contracts";
 import type { Store } from "../store/store";
 
 /** The application event and its task transition must share a transaction. */
@@ -63,16 +64,20 @@ export function recordResultApplied(
 export function reportedUnappliedVerdict(
   store: Store,
   task: { id: string; prHead: string | null },
-  run: {
-    id: string;
-    taskId: string;
-    role: string;
-    head: string;
-    completion: { status: string; head?: string | null; runId: string } | null;
-  },
+  run: Pick<
+    Run,
+    "id" | "taskId" | "role" | "head" | "completion" | "status" | "replacedAt"
+  >,
 ): { status: "ready_to_merge" | "changes_required"; head: string } | null {
   const completion = run.completion;
-  if (run.role !== "reviewer" || run.taskId !== task.id || !completion) return null;
+  if (
+    run.role !== "reviewer" ||
+    run.taskId !== task.id ||
+    run.status === "superseded" ||
+    run.replacedAt ||
+    !completion
+  )
+    return null;
   if (completion.runId !== run.id) return null;
   if (completion.status !== "ready_to_merge" && completion.status !== "changes_required")
     return null;

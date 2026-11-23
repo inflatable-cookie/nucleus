@@ -62,7 +62,7 @@ export interface OwnerVerbFacts {
   store: Store;
   task: Task;
   runs: Run[];
-  events: Array<{ id: number; kind: string; detail: string; at: string }>;
+  events: ReturnType<Store["eventsAll"]>;
   notices: Notice[];
   /** The task's recorded hook occurrences; `retry_effect` reads them as pending effects. */
   hookRecords: HookRecord[];

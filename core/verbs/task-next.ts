@@ -7,7 +7,11 @@ import {
   releaseWarnings,
 } from "./explicit-resolution";
 import { plannerEscalations } from "../questions/ladder/records";
-import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
+import {
+  reviewerStartRefusal,
+  runStartPolicyStop,
+  runStartWarnings,
+} from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
@@ -628,7 +632,14 @@ function explicitCommandsFor(
   if (["done", "cancelled"].includes(task.phase)) return settlements;
   const base = { taskId: task.id, version: task.version };
   const commands: TaskNextExplicitCommand[] = [...settlements];
+  const reviewerRefusal = reviewerStartRefusal(task, facts.events);
   const push = (command: TaskNextExplicitCommand) => {
+    if (
+      command.action === "run.start" &&
+      command.args.role === "reviewer" &&
+      reviewerRefusal
+    )
+      return;
     const releaseTarget =
       command.action === "run.release"
         ? command.args.run
