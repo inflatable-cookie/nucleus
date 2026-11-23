@@ -1263,12 +1263,20 @@ export class HostPass {
     );
     // Demanded pages go ahead of the rotation so a page a quantum asked for is
     // never starved two passes running; the rotation keeps the rest fair.
-    const demandedIds = new Set(demanded.map((item) => item.agentId));
-    const interleaved: WarmItem[] = demanded.map((item) => ({
-      kind: "tool" as const,
-      ...item,
-      demanded: true,
-    }));
+    const warmsPages = Boolean(
+      this.adapter.agentTimelinePage &&
+        this.context.resolution.primePassTimelinePage,
+    );
+    const demandedIds = new Set(
+      warmsPages ? demanded.map((item) => item.agentId) : [],
+    );
+    const interleaved: WarmItem[] = warmsPages
+      ? demanded.map((item) => ({
+          kind: "tool" as const,
+          ...item,
+          demanded: true,
+        }))
+      : [];
     const maxLen = rotatedGroups.reduce(
       (max, group) => Math.max(max, group.length),
       0,
