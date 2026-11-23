@@ -726,6 +726,11 @@ export class Resolution {
     const key = this.passHostKey(hostId);
     const read = () => this.host.agentTimelinePage(agentId, limit);
     const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
+    // Any quantum that reads a participant's pass page (an owned-tool proof, a
+    // continuation, an effect reconcile, a fence settlement) asks the next host
+    // pass to observe that participant before its process snapshot and to warm
+    // its page first, so no reader is starved two passes running (Spec 068 §6).
+    if (inQuantum) this.requestPassProof(hostId, agentId);
     const snapshot = this.currentPassSnapshot();
     if (snapshot)
       return snapshot.timelinePage(key, agentId, limit, read, deadlineMs, {

@@ -1,0 +1,1 @@
+- Every task-quantum read of a pass timeline page now asks the next host pass to observe that participant first and warm its page, not only the owned-tool proof. Retained-progress continuations, effect reconciles and fence settlements no longer cycle on "agent timeline page was not captured in this host pass".
