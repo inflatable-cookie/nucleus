@@ -999,6 +999,91 @@ test("uncertain creation: past the attempt bound the task records a typed stop w
   }
 });
 
+/** An initial worker whose native create call ended (it threw) with no agent bound. */
+function uncertainWorker(f: Fixture) {
+  f.store.putRun({
+    ...f.store.run("review-run")!,
+    released: true,
+    active: false,
+    status: "superseded",
+  });
+  f.store.update(
+    f.submitted.id,
+    {
+      phase: "working",
+      completion: null,
+      prHead: null,
+      prUrl: null,
+      agentId: null,
+      agentIntent: true,
+      runId: "uncertain-worker-run",
+      resolution: {
+        ...f.current().resolution,
+        currentRunId: null,
+        reviewerAgentId: null,
+        reviewerProfile: null,
+      },
+    },
+    "agent_intent",
+  );
+  const attempt = readCreationAttempt(f.store, {
+    id: "uncertain-worker-run",
+    taskId: f.submitted.id,
+    hostId: f.current().hostId,
+    workspaceId: "workspace",
+    role: "worker",
+  });
+  assert.ok(attempt, "the initial worker's creation is journaled");
+  settleCreationAttempt(f.store, attempt!, "threw");
+}
+
+test("uncertain worker creation: the one thread the lookup finds is bound", async () => {
+  const f = fixture();
+  try {
+    uncertainWorker(f);
+    f.lookups.set("uncertain-worker-run", [
+      { id: "found-worker", workspaceId: "workspace" },
+    ]);
+    await f.engine.wake();
+    assert.equal(f.current().agentId, "found-worker");
+    assert.equal(f.current().runId, "uncertain-worker-run");
+    assert.equal(f.events("creation_bound_by_lookup").length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("uncertain worker creation: absent after the grace relaunches the worker once", async () => {
+  const f = fixture();
+  try {
+    uncertainWorker(f);
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(f.events("creation_absent_released").length, 1);
+    // The relaunch reuses the released run id (restartRunId), under a new attempt.
+    assert.equal(f.events("creation_attempt_reserved").length, 2);
+    assert.equal(f.current().phase, "working");
+    assert.equal(f.current().agentId, `agent-${f.submitted.id}`, "one fresh worker");
+  } finally {
+    await f.close();
+  }
+});
+
+test("uncertain worker creation: a failed lookup keeps the creation and names why", async () => {
+  const f = fixture();
+  try {
+    uncertainWorker(f);
+    f.lookups.set("uncertain-worker-run", new Error("host read refused"));
+    await f.engine.wake();
+    assert.equal(f.current().runId, "uncertain-worker-run");
+    assert.equal(f.current().agentId, null);
+    assert.equal(f.current().resolution.stop?.fact?.code, "worker_lookup");
+    assert.match(f.current().reason, /lookup could not complete/);
+  } finally {
+    await f.close();
+  }
+});
+
 test("a stop naming a superseded run clears once the run is released", async () => {
   const f = fixture();
   try {
