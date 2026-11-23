@@ -1,0 +1,1 @@
+Nucleus now resumes interrupted T3 workspace creation when the task's own checkout already has a registration. The task reuses that registration and fills in missing checkout files when it can do so safely.

@@ -2,7 +2,8 @@ import type { Task } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { git, proveRebindableDispatchBase } from "../git/index";
 import { workspaceCreationRefusal } from "../workspaces/workspace-allocation";
-import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
+import { worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
+import { bindWorkspaceRegistration, type WorkspaceRegistration } from "../workspaces/workspace-registration";
 
 /** Verification and re-admission of tasks before worker dispatch. */
 export class PlanningRepairs {
@@ -72,7 +73,7 @@ export class PlanningRepairs {
     if (this.engine.stopped) throw new Error("Validation cannot be retried while Nucleus is stopping");
     let retained = false;
     let rebound: { id: string; directory: string } | null = null;
-    let bound: { id: string; directory: string } | null = null;
+    let bound: WorkspaceRegistration | null = null;
     let displaced: { id: string; directory: string; branch: string } | null = null;
     const targetOwnedElsewhere = (id: string, directory: string) => this.store.tasks().some(other => other.id !== current.id &&
       (other.workspaceId === id || other.directory === directory || other.resolution.coordinatorWorkspaceId === id ||
@@ -103,8 +104,9 @@ export class PlanningRepairs {
         throw new Error("The recorded workspace is not visible; reconcile its identity before retrying");
       } else if (this.adapter.inspectWorkspaceCreation) {
         const classified = await this.adapter.inspectWorkspaceCreation(current);
-        if (classified.kind === "found_done") {
-          bound = await this.adapter.createWorkspace(current);
+        if (classified.kind === "found_done" || classified.kind === "registered_incomplete") {
+          const populated = classified.kind === "registered_incomplete" ? await this.adapter.populateTaskWorktree?.(current) : undefined;
+          bound = await this.adapter.createWorkspace(current, { freshlyPopulated: populated?.populated });
           await this.adapter.verifyWorkspace(current, bound.directory);
           retained = true;
         } else if (classified.kind === "partial") {
@@ -133,7 +135,7 @@ export class PlanningRepairs {
         this.store.update(current.id, { workspaceId: rebound.id, directory: rebound.directory },
           "dispatch_workspace_rebound", JSON.stringify({ from: displaced, to: rebound }));
       } else if (bound) {
-        this.store.update(current.id, { workspaceId: bound.id, directory: bound.directory, ...worktreeLinksForBinding(this.store.task(current.id), { workspaceId: bound.id, directory: bound.directory }) }, "workspace_created", bound.id);
+        bindWorkspaceRegistration(this.store, current.id, bound, "workspace_created");
       }
       const reason = retained ? "Retained workspace verified; validation retry requested" : current.workspaceIntent
         ? "Uncertain workspace creation is provably absent; replaying the same create" : "Validation retry requested";

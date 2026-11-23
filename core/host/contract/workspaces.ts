@@ -6,6 +6,7 @@ import type {
 } from "../../../shared/contracts";
 import type { AgentObservation } from "./observation";
 import type { OriginAgent } from "./identity";
+import type { WorkspaceRegistration } from "../../workspaces/workspace-registration";
 
 /** The task workspace lifecycle: validation and storage preflight, creation, inspection, recovery, title, lookup and removal, the source proofs a continuation needs, the checkout identity proofs, and the review-entry workspace. */
 export interface HostWorkspaces {
@@ -23,7 +24,7 @@ export interface HostWorkspaces {
   createWorkspace(
     task: Task,
     options?: { freshlyPopulated?: boolean },
-  ): Promise<{ id: string; directory: string }>;
+  ): Promise<WorkspaceRegistration>;
   /** Queue-owned gitBulk populate; admission must not wrap this. */
   populateTaskWorktree?(task: Task): Promise<{
     directory: string;
@@ -49,7 +50,7 @@ export interface HostWorkspaces {
   recoverTaskWorkspace?(
     task: Task,
     options?: { target?: "pr_head" | "branch" },
-  ): Promise<{ id: string; directory: string }>;
+  ): Promise<WorkspaceRegistration>;
   setTaskWorkspaceTitle?(
     task: Task,
     title: string,

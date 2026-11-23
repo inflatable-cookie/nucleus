@@ -9,10 +9,8 @@ import {
   CheckoutUnavailableError,
 } from "../workspaces/checkout-volume";
 import { workspaceCreationRefusal } from "../workspaces/workspace-allocation";
-import {
-  worktreeLinksForBinding,
-  worktreeLinksForClearedIntent,
-} from "../workspaces/worktree-links";
+import { worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
+import { bindWorkspaceRegistration } from "../workspaces/workspace-registration";
 import { isTransportFailure } from "../../shared/transport";
 import type { TaskStopRecord } from "../../shared/task-stop";
 import { expiredQuantumDeadlineError } from "../scheduling/pass-snapshot";
@@ -180,27 +178,6 @@ function waitOn(
   return "waiting";
 }
 
-function bind(
-  ctx: WorkspaceLookupContext,
-  task: Task,
-  workspace: { id: string; directory: string },
-): void {
-  ctx.store.update(
-    task.id,
-    {
-      workspaceId: workspace.id,
-      directory: workspace.directory,
-      phase: "dispatching",
-      ...worktreeLinksForBinding(ctx.store.task(task.id), {
-        workspaceId: workspace.id,
-        directory: workspace.directory,
-      }),
-    },
-    "workspace_recovered",
-    workspace.id,
-  );
-}
-
 /**
  * A dispatch's workspace intent with nothing bound yet and nothing to lose: no
  * worker, run, completion or PR identity. That is a first dispatch, or a
@@ -266,7 +243,13 @@ export async function settleWorkspaceCreation(
     return "waiting";
   }
   if (found.length === 1) {
-    bind(ctx, task, found[0]!);
+    bindWorkspaceRegistration(
+      store,
+      task.id,
+      found[0]!,
+      "workspace_recovered",
+      { phase: "dispatching" },
+    );
     if (!paused) await ctx.launchAgent(store.task(task.id));
     return "bound";
   }
@@ -292,10 +275,23 @@ export async function settleWorkspaceCreation(
           `the worktree inspection could not complete (${message(error)})`,
         );
   }
-  if (state.kind === "found_done") {
+  if (state.kind === "found_done" || state.kind === "registered_incomplete") {
     if (paused) return "skipped";
-    const workspace = await adapter.createWorkspace(task);
-    bind(ctx, task, workspace);
+    const populated =
+      state.kind === "registered_incomplete"
+        ? await adapter.populateTaskWorktree?.(task)
+        : undefined;
+    if (startsNoRuns(store, ctx.stopped)) return "skipped";
+    const workspace = await adapter.createWorkspace(task, {
+      freshlyPopulated: populated?.populated,
+    });
+    bindWorkspaceRegistration(
+      store,
+      task.id,
+      workspace,
+      "workspace_recovered",
+      { phase: "dispatching" },
+    );
     await ctx.launchAgent(store.task(task.id));
     return "bound";
   }

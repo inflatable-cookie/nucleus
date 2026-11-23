@@ -9,6 +9,7 @@ import type { WorkspaceContinuationHostCalls } from "./workspace-continuation";
 import type { AgentObservation, ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorkspaceCatalog, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceSourceExpectation } from "../host/adapter";
 import { git, gitRaw, originBranchContaining } from "../git/index";
 import { externalWorkspaceArchivePlacement } from "./external-workspace-placement";
+import { sameWorkspacePath } from "./workspace-allocation";
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /**
@@ -47,18 +48,18 @@ export class ExternalWorkspaceArchive {
    * what the daemon currently lists at this exact path.
    */
   async externalWorkspaceCatalog(directory: string): Promise<ExternalWorkspaceCatalog> {
-    let entries: Awaited<ReturnType<typeof this.host.workspaceHost.workspaceInventory>>;
-    try { entries = await this.host.workspaceHost.workspaceInventory(); }
-    catch (error) { return { ok: false, reason: `Workspace catalog could not be read: ${errorMessage(error)}` }; }
-    const wanted = resolve(directory);
-    return { ok: true, entries: entries
-      .filter(entry => Boolean(entry.workspaceDirectory) && resolve(entry.workspaceDirectory!) === wanted)
-      .map(entry => {
-        const placement = externalWorkspaceArchivePlacement(entry, entry.id, entry.workspaceDirectory!, true);
-        return placement.ok
-          ? { workspaceId: entry.id, directory: entry.workspaceDirectory!, placement: placement.observed }
-          : { workspaceId: entry.id, directory: entry.workspaceDirectory!, placement: null, reason: placement.reason };
+    try {
+      const entries = await this.host.workspaceHost.workspaceInventory();
+      return { ok: true, entries: entries.flatMap(entry => {
+        const path = entry.workspaceDirectory;
+        if (!path || !sameWorkspacePath(path, directory)) return [];
+        const placement = externalWorkspaceArchivePlacement(entry, entry.id, path, true);
+        return [placement.ok
+          ? { workspaceId: entry.id, directory: path, placement: placement.observed }
+          : { workspaceId: entry.id, directory: path, placement: null, reason: placement.reason }];
       }) };
+    }
+    catch (error) { return { ok: false, reason: `Workspace catalog could not be read: ${errorMessage(error)}` }; }
   }
   /**
    * Spec 017: archive one merged review-entry task's external workspace *entry*.

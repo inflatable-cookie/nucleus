@@ -28,6 +28,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
+import { sameWorkspacePath } from "../../core/workspaces/workspace-allocation";
 import type {
   ParentArchiveWait,
   RowSnoozeVisibility,
@@ -1115,9 +1116,12 @@ export class T3CodeHost implements Host {
   }
 
   async findWorkspaces(task: Task) {
-    return Object.values(this.state.read().workspaces)
-      .filter((w) => !w.archivedAt && w.directory === task.directory)
-      .map((w) => ({ id: w.id, directory: w.directory }));
+    const { workspaces } = this.state.read();
+    const { directory } = task;
+    if (!directory) return [];
+    return Object.values(workspaces)
+      .filter((w) => !w.archivedAt && sameWorkspacePath(w.directory, directory))
+      .map((w) => ({ id: w.id, directory }));
   }
 
   private async resolveWorkspace(id: string) {
