@@ -90,7 +90,8 @@ one of the four. It is never left in place.
 `{state, role, since, occurrence, detail, lastActivityAt, tool?, attempt?}`. The
 reconciler, `next`, the board and the ACP task thread all read it, so what is shown
 is what Nucleus acts on. `occurrence` names the fact that owns the current reading —
-the decision, stop, host wait, permission, repair episode or last concluded run —
+the decision, stop, host wait, permission, deferred coordinator host read, repair
+episode or last concluded run —
 and stays the same while that fact holds, so a reader can tell one wait from the
 next without reading the task's write timestamps. Its inputs are facts, not host
 display:

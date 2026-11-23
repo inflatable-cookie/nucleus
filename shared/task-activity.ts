@@ -134,7 +134,8 @@ export function revisionCapHoldDetail(task: Pick<Task, "resolution">): string {
  * read failed on a host fault or transport failure and the observation waits
  * for the next pass, inside a bound, instead of escalating.
  */
-export const COORDINATOR_OBSERVATION_DEFERRED_EVENT = "coordinator_observation_deferred";
+export const COORDINATOR_OBSERVATION_DEFERRED_EVENT =
+  "coordinator_observation_deferred";
 
 export type CoordinatorObservationDeferral = {
   runId: string;
@@ -157,9 +158,13 @@ export function coordinatorObservationDeferral(
     const event = events[index]!;
     if (event.kind !== COORDINATOR_OBSERVATION_DEFERRED_EVENT) continue;
     try {
-      const detail = JSON.parse(event.detail) as Partial<CoordinatorObservationDeferral>;
+      const detail = JSON.parse(
+        event.detail,
+      ) as Partial<CoordinatorObservationDeferral>;
       if (detail.runId !== run.id) continue;
-      return detail.since === since && detail.until && detail.cause !== undefined
+      return detail.since === since &&
+        detail.until &&
+        detail.cause !== undefined
         ? (detail as CoordinatorObservationDeferral)
         : null;
     } catch {

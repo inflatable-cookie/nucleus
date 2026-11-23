@@ -4384,3 +4384,184 @@ test("every path that ends a repair attempt ends its call exactly once", async (
     await fixture.close();
   }
 });
+
+test("launches recorded before they named an episode keep their own words and charge rule", async () => {
+  const fixture = await acpFixture();
+  const nowIso = new Date().toISOString();
+  const recoveryRun = (id: string, released: boolean) =>
+    fixture.store.putRun({
+      id,
+      taskId: fixture.taskId,
+      role: "recovery",
+      generation: 1,
+      head: base,
+      agentId: `${id}-agent`,
+      workspaceId: "ws",
+      profile: fixture.engine.profiles[0]!,
+      status: released ? "finished" : "running",
+      createdAt: nowIso,
+      lastObservedAt: nowIso,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released,
+    } as unknown as Run);
+  // Today's main shape of a launch line: no episode id, no attempt index, no action.
+  const legacyLaunch = (runId: string, cause: string, outage: boolean) =>
+    fixture.store.event(
+      fixture.taskId,
+      "telemetry_recovery",
+      JSON.stringify({
+        runId,
+        targetRole: "worker",
+        cause,
+        work: "w",
+        outage,
+      }),
+    );
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    // A retained launch during a provider outage, then a charged one.
+    recoveryRun("run-legacy-outage", true);
+    legacyLaunch("run-legacy-outage", "Worker provider was unavailable", true);
+    recoveryRun("run-legacy-charged", false);
+    legacyLaunch("run-legacy-charged", "Worker thread vanished", false);
+    const task = fixture.store.task(fixture.taskId);
+    fixture.store.update(fixture.taskId, {
+      resolution: {
+        ...task.resolution,
+        recoveryActive: true,
+        recovery: {
+          id: "ep-legacy",
+          key: "k-legacy",
+          generation: 1,
+          runId: "run-legacy-charged",
+          agentId: "run-legacy-charged-agent",
+          status: "running",
+          summary: "",
+          idleSince: null,
+          incidentId: null,
+        },
+      },
+    });
+    const reply = await fixture.turn({ attach: true });
+    assert.deepEqual(
+      ("presentation" in reply ? (reply.presentation?.toolCalls ?? []) : [])
+        .filter((call) => call.toolCallId.startsWith("repair:"))
+        .map((call) => [call.toolCallId, call.status, call.title]),
+      [
+        [
+          "repair:run-legacy-outage",
+          "completed",
+          "Worker provider was unavailable (1 of 3)",
+        ],
+        [
+          "repair:run-legacy-charged",
+          "in_progress",
+          "Worker thread vanished (1 of 3)",
+        ],
+      ],
+      "each launch keeps its cause, and the outage launch charges nothing",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a deferred coordinator observation is its own wait call, opened and closed per occurrence", async () => {
+  const fixture = await acpFixture();
+  const firstObserved = new Date(Date.now() - 60_000).toISOString();
+  let session: Awaited<ReturnType<typeof heldSession>> | null = null;
+  const defer = (since: string) =>
+    fixture.store.event(
+      fixture.taskId,
+      "coordinator_observation_deferred",
+      JSON.stringify({
+        runId: "run-coord-deferred",
+        since,
+        until: new Date(Date.parse(since) + 600_000).toISOString(),
+        cause: "host read timed out",
+      }),
+    );
+  const waitCalls = () => [
+    ...new Set(
+      session!.updates
+        .filter(
+          (update) =>
+            update.sessionUpdate === "tool_call" &&
+            String(update.toolCallId).startsWith("activity:nucleus:"),
+        )
+        .map((update) => String(update.toolCallId)),
+    ),
+  ];
+  try {
+    parkWithoutLiveRun(fixture, "working");
+    reserveRepair(fixture, "ep-deferred");
+    const run = bindRepairRun(fixture, "run-coord-deferred", "ep-deferred", 1);
+    fixture.store.putRun({
+      ...run,
+      agentId: "coordinator-agent",
+      status: "running",
+      lastObservedAt: firstObserved,
+    } as unknown as Run);
+    session = await heldSession(fixture);
+    await session.next(
+      isCall("repair:ep-deferred:1", "in_progress"),
+      "the coordinator's repair call",
+    );
+
+    // The coordinator's host does not answer: Nucleus waits for it, as its own call.
+    defer(firstObserved);
+    const opened = await session.next(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:nucleus:") &&
+        update.status === "in_progress",
+      "deferral wait",
+    );
+    assert.match(
+      JSON.stringify(opened.content),
+      /waiting for the coordinator's host to answer/i,
+    );
+    const first = String(opened.toolCallId);
+
+    // A good observation ends that wait; the repair call carries on.
+    const secondObserved = new Date().toISOString();
+    fixture.store.putRun({
+      ...fixture.store.run("run-coord-deferred")!,
+      lastObservedAt: secondObserved,
+    } as unknown as Run);
+    await session.next(isCall(first, "completed"), "deferral wait ends");
+
+    // A later deferral is a new occurrence and a new call, never the settled one revived.
+    defer(secondObserved);
+    const reopened = await session.next(
+      (update) =>
+        update.sessionUpdate === "tool_call" &&
+        String(update.toolCallId).startsWith("activity:nucleus:") &&
+        update.status === "in_progress",
+      "second deferral wait",
+    );
+    assert.notEqual(reopened.toolCallId, first);
+    // The service names each deferral by its own occurrence, so a relaunched agent
+    // rebuilds the second wait under its own id too.
+    const rebuilt = await fixture.turn({ attach: true });
+    const rebuiltWait = (
+      "presentation" in rebuilt ? (rebuilt.presentation?.toolCalls ?? []) : []
+    ).find((call) => call.toolCallId.startsWith("activity:nucleus:"));
+    assert.ok(rebuiltWait);
+    assert.notEqual(rebuiltWait.toolCallId, first);
+    assert.deepEqual(session.statuses(first), ["in_progress", "completed"]);
+    assert.equal(waitCalls().length, 2);
+    assert.deepEqual(
+      session
+        .statuses("repair:ep-deferred:1")
+        .filter((status) => status !== "in_progress"),
+      [],
+      "the waits never settle the repair attempt",
+    );
+  } finally {
+    session?.child.kill();
+    await fixture.close();
+  }
+});

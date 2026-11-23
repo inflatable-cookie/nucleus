@@ -176,6 +176,9 @@ socket, authenticated by the minted token:
   and each reservation that ended before a run was bound (`recovery_attempt_settled`)
   is the next attempt, and both events name the episode and the index. A retry under
   the same episode is therefore a new call and never reuses a settled attempt's id.
+  A launch recorded before launches named their episode is keyed by its run id
+  (`repair:<run>`) and keeps its own cause, target role and charge rule: an outage
+  launch is not charged.
   Settlement is one fact per attempt, and a call's terminal status comes only from
   the fact for that exact attempt. A bound attempt settles with its own run row: its
   authenticated report, release or supersession. A reserved attempt (a live episode
@@ -198,7 +201,8 @@ socket, authenticated by the minted token:
   shows in the structured view instead of leaving only a plan step in progress.
   Each wait occurrence has its own call lifetime, keyed by the fact the activity
   derivation selected for the reading (`activity.occurrence`: the open decision, the
-  recorded stop, the host wait, the permission, a launch in flight, the repair episode,
+  recorded stop, the host wait, the permission, a launch in flight, a deferred read of
+  the coordinator's host (its run and last good observation), the repair episode,
   or the last concluded run and phase when no single fact owns it). A wait keeps one id
   for its whole duration, so a secondary stop recorded beside a continuing host wait
   never splits it, and a fresh occurrence — a second decision, a new stop, another

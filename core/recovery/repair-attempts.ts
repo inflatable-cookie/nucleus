@@ -90,9 +90,17 @@ export function reservationWords(resolution: Task["resolution"]): {
 
 /** One attempt, read from the journal fact that names it. */
 export interface RepairAttemptRecord {
-  episodeId: string;
+  /**
+   * The attempt's episode. Null for a launch recorded before launches named their
+   * episode: that attempt is keyed by its run id alone.
+   */
+  episodeId: string | null;
+  /** The attempt's index under its episode; 0 for a launch with no episode. */
   attempt: number;
-  /** Charged launches of this episode recorded before this attempt (Spec 068 §5). */
+  /**
+   * Charged launches recorded before this attempt (Spec 068 §5): of its episode, or,
+   * for a launch with no episode, of the other launches with none.
+   */
   chargedBefore: number;
   cause: string;
   targetRole: string;
@@ -129,7 +137,8 @@ const outcomes = new Set<string>([
 
 /**
  * Read every repair attempt from the task's journal. A launch recorded before launches
- * named their index takes the next index of its episode.
+ * named their index takes the next index of its episode, and one recorded before they
+ * named their episode keeps its own words and charge rule under its run id.
  */
 export function readRepairJournal(
   events: readonly { kind: string; detail: string }[] | undefined,
@@ -142,6 +151,7 @@ export function readRepairJournal(
   const settled: RepairAttemptRecord[] = [];
   const highest = new Map<string, number>();
   const charged = new Map<string, number>();
+  let chargedUnattached = 0;
   for (const event of events ?? []) {
     if (event.kind !== REPAIR_LAUNCHED && event.kind !== REPAIR_ATTEMPT_SETTLED)
       continue;
@@ -152,7 +162,24 @@ export function readRepairJournal(
       continue;
     }
     const episodeId = text(value.episodeId);
-    if (!episodeId) continue;
+    if (!episodeId) {
+      // A launch from before launches named their episode: today's main shape,
+      // `{runId, targetRole, cause, work, outage}`. An outage launch is not charged.
+      const runId = text(value.runId);
+      if (event.kind !== REPAIR_LAUNCHED || !runId) continue;
+      const uncharged = value.outage === true || refunded.has(runId);
+      byRun.set(runId, {
+        episodeId: null,
+        attempt: 0,
+        chargedBefore: chargedUnattached,
+        cause: text(value.cause),
+        targetRole: text(value.targetRole),
+        action: text(value.action),
+        launch: { runId, uncharged },
+      });
+      if (!uncharged) chargedUnattached += 1;
+      continue;
+    }
     const attempt = index(value.attempt) ?? (highest.get(episodeId) ?? 0) + 1;
     highest.set(episodeId, Math.max(highest.get(episodeId) ?? 0, attempt));
     const record: RepairAttemptRecord = {

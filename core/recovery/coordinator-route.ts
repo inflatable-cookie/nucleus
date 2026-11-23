@@ -473,8 +473,10 @@ export class CoordinatorRoute {
     // against a released run was superseded by the run that replaced it.
     if (
       incidentBindsCurrentWork(t, this.store.runs(t.id)) &&
-      automaticIncidentPending(t.resolution.incident, this.resolution.graceMs, (since) =>
-        waitAgeMs(this.store, t.hostId, since),
+      automaticIncidentPending(
+        t.resolution.incident,
+        this.resolution.graceMs,
+        (since) => waitAgeMs(this.store, t.hostId, since),
       )
     )
       return null;

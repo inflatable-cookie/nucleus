@@ -497,8 +497,10 @@ export function acpTaskToolCalls(
   // beside it still shows.
   let liveParticipant = false;
   let repairInProgress = false;
-  // Launches recorded before they named an episode count among themselves.
-  let chargedUnattached = 0;
+  // Runs with no launch line at all (recorded before launches were journaled) count
+  // among themselves. A launch that names no episode is in the journal, keyed by its
+  // run id, with its own words and charge rule.
+  let chargedUnlaunched = 0;
 
   // Legacy/initial worker bound directly on the task row without a matching revision run row.
   const workerOnly =
@@ -548,8 +550,8 @@ export function acpTaskToolCalls(
           ? Math.max(1, record.chargedBefore)
           : record.chargedBefore + 1;
       } else {
-        chargedUnattached += 1;
-        attempt = chargedUnattached;
+        chargedUnlaunched += 1;
+        attempt = chargedUnlaunched;
       }
       // A bound attempt settles with its own run row: its report, release or
       // supersession. No reading and no other attempt's fact ends it.
@@ -573,7 +575,7 @@ export function acpTaskToolCalls(
             : undefined
           : completedDetailLine(run);
       calls.push({
-        toolCallId: record
+        toolCallId: record?.episodeId
           ? `repair:${record.episodeId}:${record.attempt}`
           : `repair:${run.id}`,
         title,
