@@ -2,7 +2,14 @@ import { useState } from "react";
 import { Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRpc } from "../shell";
-import { Button, Field, muted, row, type Colors } from "../controls";
+import {
+  Button,
+  Field,
+  muted,
+  row,
+  useCardFill,
+  type Colors,
+} from "../controls";
 import { errorText } from "../error-text";
 import * as api from "../../shared/contracts";
 import type {
@@ -94,6 +101,7 @@ export function HappeningCard({
   c: Colors;
 }) {
   const r = roles(c);
+  const fill = useCardFill(c);
   const queryClient = useQueryClient();
   const setTask = useRpc(api.taskControl);
 
@@ -265,12 +273,10 @@ export function HappeningCard({
   };
 
   const isDanger = happening.tone === "danger";
+  // A danger card reads by its tint alone, with no border (nucleus#1540).
   const cardBg = isDanger
-    ? toneSurface(r.danger, r.section, taskDetail.attnAlpha)
-    : r.section;
-  const cardBorder = isDanger
-    ? toneSurface(r.danger, r.border, taskDetail.attnBorderAlpha)
-    : r.border;
+    ? toneSurface(r.danger, fill, taskDetail.attnAlpha)
+    : fill;
   const eyebrowColor = isDanger ? r.danger : r.muted;
 
   const cmdMissing = Boolean(
@@ -284,8 +290,6 @@ export function HappeningCard({
         borderRadius: radius.panel,
         padding: space.md,
         backgroundColor: cardBg,
-        borderWidth: 1,
-        borderColor: cardBorder,
         gap: space.xs,
       }}
     >
@@ -430,8 +434,6 @@ export function HappeningCard({
             ...row,
             gap: space.xs,
             paddingTop: space.xs,
-            borderTopWidth: 1,
-            borderTopColor: r.border,
           }}
         >
           {moreVerbs.map((verb) => (
@@ -456,8 +458,6 @@ export function HappeningCard({
           style={{
             gap: space.xs,
             paddingTop: space.xs,
-            borderTopWidth: 1,
-            borderTopColor: r.border,
           }}
         >
           <Text
@@ -515,8 +515,6 @@ export function HappeningCard({
             gap: space.xs,
             padding: space.sm,
             borderRadius: radius.control,
-            borderWidth: 1,
-            borderColor: r.warning,
             backgroundColor: toneSurface(
               r.warning,
               r.section,

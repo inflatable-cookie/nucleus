@@ -687,8 +687,6 @@ export function DetailsTab({
               style={{
                 gap: space.xxs,
                 paddingBottom: space.xs,
-                borderBottomWidth: 1,
-                borderBottomColor: r.border,
               }}
             >
               <Text

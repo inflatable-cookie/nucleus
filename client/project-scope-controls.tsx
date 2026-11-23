@@ -498,9 +498,7 @@ export function ProjectSelector({
       </Text>
     ) : null;
     const frame = {
-      borderTopWidth: control.border,
-      borderTopColor: c.border,
-      backgroundColor: c.surface1,
+      backgroundColor: roles(c).hover,
       padding: space.xxs,
       gap: space.xxs / 2,
     };
@@ -760,9 +758,11 @@ export function ProjectSelector({
                 <View
                   style={{
                     borderRadius: radius.control,
-                    borderWidth: control.border,
-                    borderColor: project.checked ? c.accent : c.border,
-                    backgroundColor: project.checked ? c.surface2 : c.surface0,
+                    backgroundColor: project.checked
+                      ? roles(c).selected
+                      : hovered === project.key || focused === project.key
+                        ? roles(c).hover
+                        : "transparent",
                     overflow: "hidden",
                   }}
                 >
@@ -929,7 +929,7 @@ export function ProjectSelector({
             style={{
               width: 420,
               borderWidth: 1,
-              borderColor: c.border,
+              borderColor: roles(c).hairline,
               borderRadius: radius.panel,
               backgroundColor: c.surface1,
               shadowColor: overlay.shadow,
@@ -973,7 +973,7 @@ export function ProjectSelector({
                 alignSelf: "center",
                 borderRadius: radius.panel,
                 borderWidth: 1,
-                borderColor: c.border,
+                borderColor: roles(c).hairline,
                 backgroundColor: c.surface1,
               }}
             >

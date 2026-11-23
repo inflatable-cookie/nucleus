@@ -4,7 +4,13 @@ import { inboxViews, type InboxView } from "../../shared/inbox-board";
 import { Icon } from "../shell";
 import { useFocusVisible } from "../focus-modality";
 import { muted, type Colors } from "../controls";
-import { hoverSurface, radius, space, type as typeScale } from "../design";
+import {
+  hoverSurface,
+  radius,
+  selectedSurface,
+  space,
+  type as typeScale,
+} from "../design";
 
 export type InboxMenuCounts = Record<InboxView, number>;
 
@@ -62,7 +68,7 @@ function MenuEntry({
         paddingHorizontal: space.sm,
         borderRadius: radius.control,
         backgroundColor: on
-          ? c.surface2
+          ? selectedSurface(c)
           : highlighted
             ? hoverSurface(c)
             : "transparent",
@@ -167,19 +173,9 @@ export function InboxMenu({
       options={options}
     />
   );
-  // The dimmer dividers read at half the border's contrast against the menu
-  // background: the same border token, drawn translucent.
+  // Groups part with spacing, not a drawn line (nucleus#1540).
   const divider = (key: string) => (
-    <View
-      key={key}
-      style={{
-        height: 1,
-        backgroundColor: c.border,
-        opacity: 0.5,
-        marginVertical: space.xs,
-        marginHorizontal: space.xs,
-      }}
-    />
+    <View key={key} style={{ height: space.md }} />
   );
   return (
     <ScrollView

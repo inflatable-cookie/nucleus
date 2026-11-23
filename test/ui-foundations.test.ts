@@ -147,19 +147,18 @@ test('a long title, note and status wrap in the header row and never run past th
   assert.equal(ui.get(`${title} save status`).props.style.maxWidth, '100%');
 });
 
-test('a section whose content ends in a row divider is set off by a wider gap, not a second line', async () => {
+test('sections part with a wider gap, never a drawn line (nucleus#1540)', async () => {
   const { Section } = await controls();
   const { space } = await design();
   const style = (props: Record<string, unknown>) => mount(h(Section, { c, title: 'Profiles', label: 'Profiles', ...props, children: h('Text', null, 'row') })).get('Profiles').props.style;
-  const ruled = style({});
-  assert.equal(ruled.borderBottomWidth, 1, 'a section ending in text keeps its divider');
-  assert.equal(ruled.paddingBottom, space.md);
-  const gap = style({ endsInRow: true });
-  assert.equal(gap.borderBottomWidth, 0, 'no second line under the last row');
-  assert.equal(gap.paddingBottom, space.lg, 'the boundary is a wider gap');
-  assert.equal(gap.paddingTop, space.md);
+  for (const props of [{}, { endsInRow: true }]) {
+    const section = style(props);
+    assert.equal(section.borderBottomWidth, undefined, 'no divider under a section');
+    assert.equal(section.paddingBottom, space.lg, 'the boundary is a wider gap');
+    assert.equal(section.paddingTop, space.md);
+  }
   const last = style({ endsInRow: true, last: true });
-  assert.equal(last.borderBottomWidth, 0);
+  assert.equal(last.borderBottomWidth, undefined);
   assert.equal(last.paddingBottom, space.md, 'the last section adds no trailing gap');
 });
 

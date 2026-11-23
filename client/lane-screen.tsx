@@ -20,9 +20,22 @@ import {
   laneOpen,
   lanePlanContext,
 } from "../shared/planning-read";
-import { ActionButton, Button, row, type Colors } from "./controls";
+import {
+  ActionButton,
+  Button,
+  row,
+  useCardFill,
+  type Colors,
+} from "./controls";
 import { MarkDoneConfirm, ReopenHelp } from "./lane-mark-done";
-import { planningRead, radius, roles, space, type } from "./design";
+import {
+  planningRead,
+  radius,
+  roles,
+  space,
+  toneWash,
+  type,
+} from "./design";
 import {
   BoardCard,
   BoardCardVariantContext,
@@ -147,9 +160,7 @@ function RecordList({
           gap: space.xs,
           padding: space.sm,
           borderRadius: radius.control,
-          borderWidth: 1,
-          borderColor: r.danger,
-          backgroundColor: r.section,
+          backgroundColor: toneWash(r.danger, r.section),
         }}
       >
         <Text style={{ color: r.foreground }}>
@@ -288,6 +299,8 @@ export function LaneScreen({
   c: Colors;
 }) {
   const r = roles(c);
+  // Cards step up from the pane: the section on the canvas, raised in a dialog.
+  const fill = useCardFill(c);
   const [mode, setMode] = useState<Mode>(draft ? "edit" : "preview");
   const [pastVersion, setPastVersion] = useState<number | null>(null);
   const [past, setPast] = useState<{
@@ -332,15 +345,12 @@ export function LaneScreen({
     fontSize: type.metadata.fontSize,
     lineHeight: type.metadata.lineHeight,
   } as const;
-  const panel = {
+  const alertPanel = {
     gap: space.xs,
     padding: space.sm,
     borderRadius: radius.control,
-    borderWidth: 1,
-    borderColor: r.border,
-    backgroundColor: r.section,
+    backgroundColor: toneWash(r.warning, fill),
   } as const;
-  const alertPanel = { ...panel, borderColor: r.warning } as const;
   // Edit mode without a draft has nothing to edit; the screen shows the document instead.
   const shown: Mode = mode === "edit" && !draft ? "preview" : mode;
   // The draft is based on an older version than the latest: saving it now would overwrite newer text.
@@ -446,7 +456,7 @@ export function LaneScreen({
     gap: space.xs,
     padding: space.sm,
     borderRadius: radius.panel,
-    backgroundColor: r.section,
+    backgroundColor: fill,
   } as const;
   const pager = (
     <>
@@ -680,8 +690,6 @@ export function LaneScreen({
         style={{
           gap: space.xs,
           paddingLeft: space.sm,
-          borderLeftWidth: 1,
-          borderLeftColor: r.border,
         }}
       >
         {finishedShown.map((outcome) => (
@@ -765,7 +773,7 @@ export function LaneScreen({
       return (
         <View
           accessibilityRole="alert"
-          style={{ ...box, borderWidth: 1, borderColor: r.danger }}
+          style={{ ...box, backgroundColor: toneWash(r.danger, fill) }}
         >
           {heading}
           <Text style={text}>Couldn’t load the lane document: {doc.error}</Text>
@@ -1244,11 +1252,7 @@ export function LaneScreen({
           </Text>
           {lane.keep && (
             <View
-              style={{
-                borderTopWidth: 1,
-                borderTopColor: r.border,
-                paddingTop: space.xs,
-              }}
+              style={{ paddingTop: space.xxs }}
             >
               <Text selectable style={{ ...text, color: r.muted }}>
                 <Text style={{ color: r.foreground, fontWeight: "500" }}>
@@ -1381,9 +1385,7 @@ export function LaneScreen({
       <View
         style={{
           gap: space.xs,
-          borderTopWidth: 1,
-          borderTopColor: r.border,
-          paddingTop: space.xs,
+          paddingTop: space.sm,
         }}
       >
         <Pressable

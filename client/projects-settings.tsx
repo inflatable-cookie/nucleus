@@ -179,7 +179,7 @@ function ProjectRow({
         gap: space.sm,
         paddingHorizontal: space.sm,
         borderBottomWidth: 1,
-        borderBottomColor: r.border,
+        borderBottomColor: r.hairline,
       }}
     >
       {onOpen ? (
@@ -369,7 +369,7 @@ export function ProjectsSection({
           />
         )}
         {data && (
-          <View style={{ borderTopWidth: 1, borderTopColor: r.border }}>
+          <View>
             {!rows.length && (
               <Text
                 style={{

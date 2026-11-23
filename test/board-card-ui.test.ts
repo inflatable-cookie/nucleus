@@ -3064,17 +3064,27 @@ test("Planning lists its projects as inbox rows, grouped, with the selected surf
       true,
       "the first active project opens beside the list",
     );
-    assert.equal(style("App").backgroundColor, dark.surface2);
+    // nucleus#1540: selection is the selected-role wash over the row's own fill.
+    const { selectedSurface } = await import("../client/design");
+    const wash = (name: string) =>
+      row(name).children.find(
+        (child): child is HostNode =>
+          typeof child !== "string" &&
+          child.props.pointerEvents === "none" &&
+          child.props.style?.position === "absolute",
+      )?.props.style.backgroundColor;
+    assert.equal(wash("App"), selectedSurface(dark as never));
     assert.equal(
       style("Second").backgroundColor,
       "transparent",
       "a closed row has no background at rest",
     );
+    assert.equal(wash("Second"), undefined, "and no wash");
     tree.raw.press("Project row Second");
     await settle(
       () => row("Second").props.accessibilityState.selected === true,
     );
-    assert.equal(style("Second").backgroundColor, dark.surface2);
+    assert.equal(wash("Second"), selectedSurface(dark as never));
     assert.ok(tree.raw.query("Plan for Second"));
     // The project with no recent activity lists under Dormant.
     assert.ok(

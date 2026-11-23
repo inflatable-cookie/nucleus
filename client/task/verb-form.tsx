@@ -136,8 +136,6 @@ export function VerbForm({
         style={{
           gap: space.xs,
           paddingTop: space.xs,
-          borderTopWidth: 1,
-          borderTopColor: r.border,
         }}
       >
         {verbFill.map((field) => (

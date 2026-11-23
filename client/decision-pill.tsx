@@ -9,8 +9,8 @@ import { Icon } from "./shell";
 import * as api from "../shared/contracts";
 import type { DecisionView } from "../shared/contracts";
 import { decisionProjectLabel } from "../shared/decision-project";
-import { Button, ConfirmReplaceAnswer, muted, row } from "./controls";
-import { radius, roles, touchSlop, touchTarget, type as typeScale, space } from "./design";
+import { Button, ConfirmReplaceAnswer, SurfacePress, muted, row } from "./controls";
+import { radius, roles, toneWash, touchSlop, touchTarget, type as typeScale, space } from "./design";
 
 /**
  * Spec 032: while any decision is open, every thread's composer shows a pill
@@ -128,11 +128,11 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
       </View>
       {project && <View accessibilityRole="tablist" style={{ ...row, gap: space.xs, paddingBottom: space.xs }}>
         {([["project", `${project.name} (${(open ?? []).filter(decision => decision.projectKey === project.key).length})`], ["all", `All (${(open ?? []).length})`]] as const).map(([value, text]) =>
-          <Pressable key={value} accessibilityRole="tab" accessibilityLabel={`Show ${value === "all" ? "all decisions" : `${project.name} decisions`}`} accessibilityState={{ selected: scope === value }}
+          <SurfacePress key={value} role="tab" c={c} corner={radius.control} label={`Show ${value === "all" ? "all decisions" : `${project.name} decisions`}`} selected={scope === value}
             onPress={() => setScope(value)}
-            hitSlop={touchSlop(26)} style={{ borderWidth: 1, borderColor: scope === value ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: space.sm, paddingVertical: space.xxs, backgroundColor: scope === value ? c.surface2 : c.surface1 }}>
+            hitSlop={touchSlop(26)} style={{ paddingHorizontal: space.sm, paddingVertical: space.xxs }}>
             <Text style={{ color: scope === value ? c.foreground : c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{text}</Text>
-          </Pressable>)}
+          </SurfacePress>)}
       </View>}
       {loadError !== "" && <View style={{ ...row, paddingBottom: space.xs }}>
         <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Could not load decisions: {loadError}. The list may be out of date.</Text>
@@ -154,12 +154,12 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
           const details = [...new Set([decision.question.length > 140 && decision.question !== headline ? `Full question: ${decision.question}` : null,
             decision.details, decision.context, decision.recommendation].filter((value): value is string => Boolean(value)))].join("\n\n");
           const references = decision.overtakenBy ?? [];
-          return <View key={decision.id} style={{ gap: space.xs, paddingBottom: space.sm, marginBottom: space.sm, borderBottomWidth: 1, borderBottomColor: c.border }}>
+          return <View key={decision.id} style={{ gap: space.xs, paddingBottom: space.sm, marginBottom: space.sm }}>
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{decisionProjectLabel(decision)}</Text>
           {decision.links.tasks.length > 0 && <Text numberOfLines={1} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Task · {decision.links.tasks.join(", ")}</Text>}
           <Text selectable style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600", lineHeight: typeScale.section.lineHeight }}>{headline}</Text>
           {decision.stale && <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Stale: every linked task, lead and papercut has finished.</Text>}
-          {references.length > 0 && <View style={{ gap: space.xxs, padding: space.xs, borderWidth: 1, borderColor: c.statusWarning, borderRadius: radius.control }}>
+          {references.length > 0 && <View style={{ gap: space.xxs, padding: space.xs, borderRadius: radius.control, backgroundColor: toneWash(c.statusWarning, roles(c).section) }}>
             <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>Probably overtaken</Text>
             <Pressable accessibilityRole="link" accessibilityLabel={`Open citing ruling: ${references.at(-1)!.label}`}
               onPress={() => { client.openPanel(boardPanelId, { workspaceId }); close(); }}>
@@ -170,12 +170,12 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
           {choices.length > 0 && <View style={{ gap: space.xs, paddingTop: space.xxs / 2 }}>{choices.map(choice => {
             const chosen = (drafts[decision.id] ?? "") === choice.label;
             const isRecommendedChoice = choice.label === recommended;
-            return <Pressable key={choice.label} accessibilityRole="button" accessibilityLabel={`Use option: ${choice.label}${isRecommendedChoice ? ", recommended" : ""}`} accessibilityState={{ selected: chosen }}
+            return <SurfacePress key={choice.label} c={c} corner={radius.control} label={`Use option: ${choice.label}${isRecommendedChoice ? ", recommended" : ""}`} selected={chosen}
               onPress={() => { const draft = drafts[decision.id] ?? ""; if (draft.trim() && draft !== choice.label) setPendingOption({ id: decision.id, option: choice.label }); else setDrafts(current => ({ ...current, [decision.id]: choice.label })); }}
-              style={{ ...row, flexWrap: "nowrap", gap: space.xs, minHeight: touchTarget, borderWidth: 1, borderColor: chosen ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: space.sm, paddingVertical: space.xs, backgroundColor: c.surface1 }}>
+              style={{ ...row, flexWrap: "nowrap", gap: space.xs, minHeight: touchTarget, paddingHorizontal: space.sm, paddingVertical: space.xs, backgroundColor: roles(c).raised }}>
               <Icon name={chosen ? "CircleCheck" : "Circle"} size={14} color={chosen ? c.accent : c.foregroundMuted} />
               <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight, flex: 1 }}>{isRecommendedChoice ? "★ Recommended · " : ""}{choice.label}{choice.consequence ? ` — ${choice.consequence}` : ""}</Text>
-            </Pressable>;
+            </SurfacePress>;
           })}</View>}
           {details && <View style={{ gap: space.xxs }}>
             <Pressable accessibilityRole="button" hitSlop={touchSlop(22)} accessibilityLabel={`${detailsOpen[decision.id] ? "Hide" : "Show"} details for ${headline}`}

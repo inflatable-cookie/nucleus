@@ -1,6 +1,14 @@
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { Button, Disclosure, muted, row, type Colors } from "../controls";
+import {
+  Button,
+  Disclosure,
+  SurfacePress,
+  muted,
+  row,
+  useCardFill,
+  type Colors,
+} from "../controls";
 import * as api from "../../shared/contracts";
 import type { Run, Task } from "../../shared/contracts";
 import {
@@ -9,6 +17,7 @@ import {
   eventKindLabel,
 } from "../../shared/task-events";
 import {
+  control,
   radius,
   roles,
   space,
@@ -39,13 +48,12 @@ export function CollapsibleSection({
   c: Colors;
   children: React.ReactNode;
 }) {
+  const fill = useCardFill(c);
   return (
     <View
       style={{
         borderRadius: radius.control,
-        borderWidth: 1,
-        borderColor: c.border,
-        backgroundColor: c.surface1,
+        backgroundColor: fill,
         overflow: "hidden",
       }}
     >
@@ -218,8 +226,6 @@ export function EventRow({
       accessibilityLabel={`${kind}, actor ${actor}, ${when}`}
       style={{
         gap: space.xxs,
-        borderBottomColor: c.border,
-        borderBottomWidth: 1,
         paddingBottom: space.xs,
       }}
     >
@@ -330,9 +336,7 @@ export function TaskDetailTabs({
       style={{
         flexDirection: "row",
         flexWrap: "wrap",
-        gap: space.xs,
-        borderBottomWidth: 1,
-        borderBottomColor: r.border,
+        gap: space.xxs,
         paddingHorizontal: compact ? space.md : space.lg,
       }}
     >
@@ -341,21 +345,20 @@ export function TaskDetailTabs({
         const count =
           value === "activity" && activityCount > 0 ? activityCount : null;
         return (
-          <Pressable
+          <SurfacePress
             key={value}
-            accessibilityRole="tab"
-            accessibilityLabel={label}
-            accessibilityState={{ selected }}
+            role="tab"
+            label={label}
+            selected={selected}
             onPress={() => onSelect(value)}
+            c={c}
+            corner={radius.control}
             style={{
-              minHeight: touchTarget,
+              minHeight: control.height,
               flexDirection: "row",
               alignItems: "center",
               gap: space.xxs,
               paddingHorizontal: space.sm,
-              borderBottomWidth: taskDetail.tabIndicator,
-              borderBottomColor: selected ? r.accent : "transparent",
-              marginBottom: -1,
             }}
           >
             <Text
@@ -377,7 +380,7 @@ export function TaskDetailTabs({
                 {count}
               </Text>
             )}
-          </Pressable>
+          </SurfacePress>
         );
       })}
     </View>
@@ -479,8 +482,6 @@ export function MessageRow({
     <View
       style={{
         gap: space.xxs,
-        borderBottomColor: c.border,
-        borderBottomWidth: 1,
         paddingBottom: space.xs,
       }}
     >

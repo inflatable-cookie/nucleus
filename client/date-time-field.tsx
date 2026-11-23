@@ -69,7 +69,7 @@ function DateTimePickerModal({ c, label, value, now, onCancel, onDone }: { c: Co
   const inPast = draft.getTime() <= now();
   return <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
     <View style={{ flex: 1, justifyContent: "center", padding: space.lg, backgroundColor: overlay.scrim }}>
-      <View accessibilityViewIsModal accessibilityLabel={`Pick ${label}`} style={{ maxWidth: 420, width: "100%", alignSelf: "center", gap: space.sm, padding: space.md, borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
+      <View accessibilityViewIsModal accessibilityLabel={`Pick ${label}`} style={{ maxWidth: 420, width: "100%", alignSelf: "center", gap: space.sm, padding: space.md, borderRadius: radius.panel, borderWidth: 1, borderColor: roles(c).hairline, backgroundColor: c.surface1 }}>
         <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: type.section.fontSize, fontWeight: "600" }}>{label}</Text>
         <View style={row}>
           <Button small c={c} text="In 1 day" onPress={() => preset(1)} />
