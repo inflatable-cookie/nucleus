@@ -389,8 +389,15 @@ function selectProfileForStart(
   }
   if (!profile) {
     const entry = pool.find(
-      (item) => item.enabled && item.roles.includes(role) &&
-        !requestOnly(item, usage, requestedTier(task.complexity), climbedTier(task)),
+      (item) =>
+        item.enabled &&
+        item.roles.includes(role) &&
+        !requestOnly(
+          item,
+          usage,
+          requestedTier(task.complexity),
+          climbedTier(task),
+        ),
     );
     profile =
       (entry
@@ -398,7 +405,15 @@ function selectProfileForStart(
         : null) ??
       allProfiles.find((candidate) => {
         const entry = pool.find((item) => item.profileId === candidate.id);
-        return !entry || !requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task));
+        return (
+          !entry ||
+          !requestOnly(
+            entry,
+            usage,
+            requestedTier(task.complexity),
+            climbedTier(task),
+          )
+        );
       }) ??
       null;
   }
@@ -740,16 +755,23 @@ export function runStartPlan(
       "The task's replacement ceiling, revision cap or execution budget is reached.",
     );
   }
-  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
+  const entry = engine.store
+    .pool()
+    .find((item) => item.profileId === profile?.id);
   const usage = engine.store.usageLevel();
   if (
     entry &&
     task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
     requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
   )
-    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
+    throw Error(
+      `Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`,
+    );
   if (input.role === "worker" && usageGateBlocked(task, usage))
-    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
+    warn(
+      "route_policy",
+      "The Low usage level requires approval to admit this high-complexity task.",
+    );
 
   let createdRun: Run | null = null;
   let token = "";

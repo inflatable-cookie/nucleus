@@ -34,7 +34,8 @@ interface Ports {
   availability: () => Array<z.infer<typeof availabilitySchema>>;
 }
 /** The lifetime row a role's charge to a profile increments: its rotation counts a role apart from the others. */
-const roleLifetimeKey = (role: AssignmentRole, profileId: string) => `role:${role}:profile:${profileId}`;
+const roleLifetimeKey = (role: AssignmentRole, profileId: string) =>
+  `role:${role}:profile:${profileId}`;
 
 export class StoreConfig {
   constructor(
@@ -99,7 +100,9 @@ export class StoreConfig {
   counts(): Record<string, number> {
     return Object.fromEntries(
       this.db
-        .prepare("SELECT * FROM assignments WHERE substr(group_id,1,5)<>'role:'")
+        .prepare(
+          "SELECT * FROM assignments WHERE substr(group_id,1,5)<>'role:'",
+        )
         .all()
         .map((r) => [String(r.group_id), Number(r.count)]),
     );
@@ -122,7 +125,9 @@ export class StoreConfig {
     const prefix = roleLifetimeKey(role, "");
     const lifetime: Record<string, number> = {};
     for (const row of this.db
-      .prepare("SELECT group_id,count FROM assignments WHERE substr(group_id,1,5)='role:'")
+      .prepare(
+        "SELECT group_id,count FROM assignments WHERE substr(group_id,1,5)='role:'",
+      )
       .all()) {
       const key = String(row.group_id);
       if (key.startsWith(prefix))
@@ -279,5 +284,4 @@ export class StoreConfig {
       expired: Boolean(setting && setting.level !== level),
     };
   }
-
 }

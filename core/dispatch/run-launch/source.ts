@@ -420,7 +420,10 @@ export class RunLaunchSource {
                 allowDraft: true,
               })
             : role === "reviewer" && unreviewedMergeRoute(t)
-              ? await this.machine.verifyMergedReviewSource!(t, unreviewedMergeRoute(t)!)
+              ? await this.machine.verifyMergedReviewSource!(
+                  t,
+                  unreviewedMergeRoute(t)!,
+                )
               : await this.machine.verifyPr(t, taskPrNumber(t));
     if (revisionContinuation && pr) await this.machine.verifyResume!(t);
     let retainedPrePrHead: string | null = null;

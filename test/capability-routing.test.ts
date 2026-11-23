@@ -1066,14 +1066,58 @@ test("Spec 053 rotation (Tom, 2026-11-21): equal weights rotate equally within t
   );
 });
 
-test('Spec 053 rotation: a stop is a fixed share of Default (50/75/100/150/200), never a promised percentage of all work',()=>{
-  const profiles=[profile('heavy'),profile('light')];
-  const pool=[poolSchema.parse({profileId:'heavy',enabled:true,group:'heavy',roles:['worker'],weight:'more',scopes:['general'],capability:'worker'}),
-    poolSchema.parse({profileId:'light',enabled:true,group:'light',roles:['worker'],weight:'default',scopes:['general'],capability:'worker'})];
-  assert.deepEqual(simulate(taskOf({complexity:'high'}),profiles,pool,210),{heavy:126,light:84},'More (150%) to Default (100%)');
-  const ends=[poolSchema.parse({profileId:'heavy',enabled:true,group:'heavy',roles:['worker'],weight:'most',scopes:['general'],capability:'worker'}),
-    poolSchema.parse({profileId:'light',enabled:true,group:'light',roles:['worker'],weight:'fewest',scopes:['general'],capability:'worker'})];
-  assert.deepEqual(simulate(taskOf({complexity:'high'}),profiles,ends,200),{heavy:160,light:40},'Most (200%) to Fewest (50%)');
+test("Spec 053 rotation: a stop is a fixed share of Default (50/75/100/150/200), never a promised percentage of all work", () => {
+  const profiles = [profile("heavy"), profile("light")];
+  const pool = [
+    poolSchema.parse({
+      profileId: "heavy",
+      enabled: true,
+      group: "heavy",
+      roles: ["worker"],
+      weight: "more",
+      scopes: ["general"],
+      capability: "worker",
+    }),
+    poolSchema.parse({
+      profileId: "light",
+      enabled: true,
+      group: "light",
+      roles: ["worker"],
+      weight: "default",
+      scopes: ["general"],
+      capability: "worker",
+    }),
+  ];
+  assert.deepEqual(
+    simulate(taskOf({ complexity: "high" }), profiles, pool, 210),
+    { heavy: 126, light: 84 },
+    "More (150%) to Default (100%)",
+  );
+  const ends = [
+    poolSchema.parse({
+      profileId: "heavy",
+      enabled: true,
+      group: "heavy",
+      roles: ["worker"],
+      weight: "most",
+      scopes: ["general"],
+      capability: "worker",
+    }),
+    poolSchema.parse({
+      profileId: "light",
+      enabled: true,
+      group: "light",
+      roles: ["worker"],
+      weight: "fewest",
+      scopes: ["general"],
+      capability: "worker",
+    }),
+  ];
+  assert.deepEqual(
+    simulate(taskOf({ complexity: "high" }), profiles, ends, 200),
+    { heavy: 160, light: 40 },
+    "Most (200%) to Fewest (50%)",
+  );
 });
 test("Spec 053 rotation: an unavailable group leaves the set and the rest rotate; the level permission still excludes", () => {
   const live = [

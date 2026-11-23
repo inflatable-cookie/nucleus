@@ -37,7 +37,10 @@ const workerTask = (): Task =>
   }) as Task;
 
 /** Worker-bracket profiles, one subscription group each, stored as the pool the store reads. */
-function seed(store: Store, entries: Array<{ id: string; weight: ProfileWeight }>) {
+function seed(
+  store: Store,
+  entries: Array<{ id: string; weight: ProfileWeight }>,
+) {
   const profiles: Profile[] = entries.map(({ id }) => profile(id));
   const pool: PoolEntry[] = entries.map(({ id, weight }) =>
     poolSchema.parse({
@@ -55,7 +58,11 @@ function seed(store: Store, entries: Array<{ id: string; weight: ProfileWeight }
 }
 
 /** One worker selection through the real selector, then the charge dispatch records for it. */
-function pickWorker(store: Store, profiles: Profile[], pool: PoolEntry[]): string {
+function pickWorker(
+  store: Store,
+  profiles: Profile[],
+  pool: PoolEntry[],
+): string {
   const rotation = store.rotationCounts("worker");
   const chosen = chooseProfile(
     workerTask(),
@@ -72,7 +79,12 @@ function pickWorker(store: Store, profiles: Profile[], pool: PoolEntry[]): strin
   return chosen.profile.id;
 }
 
-function runSequence(store: Store, profiles: Profile[], pool: PoolEntry[], picks: number) {
+function runSequence(
+  store: Store,
+  profiles: Profile[],
+  pool: PoolEntry[],
+  picks: number,
+) {
   const tally: Record<string, number> = {};
   for (let i = 0; i < picks; i += 1) {
     const id = pickWorker(store, profiles, pool);
@@ -89,7 +101,8 @@ test("a most-weighted profile with many reviewer runs is still picked ahead of a
       { id: "neon", weight: "fewer" },
     ]);
     // Sol reviewed eleven times and has never worked; Neon has one recent worker turn.
-    for (let i = 0; i < 11; i += 1) store.chargeAssignment("sol", "sol", "reviewer");
+    for (let i = 0; i < 11; i += 1)
+      store.chargeAssignment("sol", "sol", "reviewer");
     store.chargeAssignment("neon", "neon", "worker");
 
     assert.equal(
@@ -140,8 +153,14 @@ test("over a 60-pick worker sequence, most against fewer converges near 200 to 7
     ]);
     const tally = runSequence(store, profiles, pool, 60);
     // Ideal split over 60 picks is 200:75, so 43.6 and 16.4.
-    assert.ok(tally.heavy >= 42 && tally.heavy <= 46, `most gets ${tally.heavy} of 60, near 43.6`);
-    assert.ok(tally.light >= 14 && tally.light <= 18, `fewer gets ${tally.light} of 60, near 16.4`);
+    assert.ok(
+      tally.heavy >= 42 && tally.heavy <= 46,
+      `most gets ${tally.heavy} of 60, near 43.6`,
+    );
+    assert.ok(
+      tally.light >= 14 && tally.light <= 18,
+      `fewer gets ${tally.light} of 60, near 16.4`,
+    );
     assert.equal(tally.heavy + tally.light, 60);
   } finally {
     store.close();
@@ -156,7 +175,11 @@ test("default-weight profiles rotate evenly", (t) => {
       { id: "deepseek", weight: "default" },
       { id: "haiku", weight: "default" },
     ]);
-    assert.deepEqual(runSequence(store, profiles, pool, 60), { glm: 20, deepseek: 20, haiku: 20 });
+    assert.deepEqual(runSequence(store, profiles, pool, 60), {
+      glm: 20,
+      deepseek: 20,
+      haiku: 20,
+    });
   } finally {
     store.close();
   }
@@ -183,7 +206,10 @@ test("a weight never removes a kept profile", (t) => {
     ]);
     const tally = runSequence(set, profiles, pool, 60);
     // Ideal split is 0.5:2.5 over 60 picks, so about 12 for fewest.
-    assert.ok(tally.fewest >= 9, `fewest keeps its rotation share: ${tally.fewest} of 60`);
+    assert.ok(
+      tally.fewest >= 9,
+      `fewest keeps its rotation share: ${tally.fewest} of 60`,
+    );
     assert.equal(tally.most + tally.fewest, 60);
   } finally {
     set.close();
