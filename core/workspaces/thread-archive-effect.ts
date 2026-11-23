@@ -55,6 +55,7 @@ export async function settleArchive(
     ? "Observed deleted or absent"
     : "Observed archived or absent";
   let sent = false;
+  let mutationCompleted = false;
   try {
     const observed = await host.originAgent(agentId);
     if (cleanupComplete(observed, op)) {
@@ -114,6 +115,7 @@ export async function settleArchive(
     // again under its own identity; the host replays its recorded receipt.
     if (remove) await host.deleteAgent(agentId);
     else await host.archiveAgent(agentId);
+    mutationCompleted = true;
     const after = await host.originAgent(agentId);
     if (!cleanupComplete(after, op))
       throw Error(
@@ -143,11 +145,16 @@ export async function settleArchive(
     // or deferred wait — preserve the durable archive intent without burning
     // retries or recording an error stop.
     if (isQuantumDeadlineExceeded(error)) {
-      // Definite pre-send deferral (`!sent || error.preSend`): no archive or
-      // delete crossed the send boundary, so keep `ready` without burning
-      // retries. Post-send timeout (`sent && !error.preSend`) preserves the
-      // durable `intent` already written above so the next pass observes first.
-      if ((!sent || error.preSend) && (fresh || effect.status === "ready")) {
+      // Definite pre-send deferral (`!sent || (!mutationCompleted && error.preSend)`):
+      // no archive or delete crossed the send boundary, so keep `ready` without
+      // burning retries. Once the mutation has started and either timed out in
+      // flight (`!error.preSend`) or returned (`mutationCompleted`) before
+      // confirmation expired, leave the durable `intent` in place so the next
+      // pass observes first and never re-sends.
+      if (
+        (!sent || (!mutationCompleted && error.preSend)) &&
+        (fresh || effect.status === "ready")
+      ) {
         store.putThreadArchiveEffect(key, agentId, {
           status: "ready",
           at: now(),

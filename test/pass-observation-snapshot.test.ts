@@ -3814,8 +3814,11 @@ test("audit branch-PR recovery runs inside the task-lane quantum deadline and re
 
   const idleAt = new Date(Date.now() - 60_000).toISOString();
   let findOpenBranchPrCalls = 0;
-  let queuedCallerRan = false;
-  let queuedLanePromise: Promise<void> | null = null;
+  let lookupResolved = false;
+  let signalLookupStarted!: () => void;
+  const lookupStarted = new Promise<void>((resolve) => {
+    signalLookupStarted = resolve;
+  });
 
   const f = engineFixture(t, {
     observationInventory: async (ids: readonly string[]) =>
@@ -3846,19 +3849,14 @@ test("audit branch-PR recovery runs inside the task-lane quantum deadline and re
     }),
     agentTimelinePage: async () => toolTimelinePage([]),
     hostProcessListing: async () => [],
-    findOpenBranchPr: (taskArg: Task) => {
+    findOpenBranchPr: () => {
       findOpenBranchPrCalls++;
-      // Queue another caller on the exact same exclusive task:<id> lane while
-      // the audit branch-PR lookup is in flight.
-      queuedLanePromise = f.engine.scheduleLane(
-        `task:${taskArg.id}`,
-        LANE_PRIORITY_TASK,
-        () => {
-          queuedCallerRan = true;
-        },
-      );
+      signalLookupStarted();
       return new Promise((resolve) => {
-        const timer = setTimeout(() => resolve([]), 60_000);
+        const timer = setTimeout(() => {
+          lookupResolved = true;
+          resolve([]);
+        }, 60_000);
         timer.unref?.();
         timers.push(timer);
       });
@@ -3891,12 +3889,33 @@ test("audit branch-PR recovery runs inside the task-lane quantum deadline and re
     agentActive: false,
   });
 
-  await f.engine.auditPass(true);
-  assert.ok(
-    queuedLanePromise,
-    "audit branch-PR recovery invoked findOpenBranchPr on the task lane",
+  // Start the real audit pass and wait until findOpenBranchPr is in flight on
+  // the exclusive `task:<id>` lane.
+  const passPromise = f.engine.auditPass(true);
+  await lookupStarted;
+
+  // Queue a second caller from this independent top-level context (NOT inside
+  // the task lane) so LaneScheduler genuinely queues it behind the in-flight
+  // branch-PR lookup rather than running it inline.
+  let queuedCallerRan = false;
+  let lookupResolvedWhenCallerRan = true;
+  const queuedLanePromise = f.engine.scheduleLane(
+    `task:${task.id}`,
+    LANE_PRIORITY_TASK,
+    () => {
+      queuedCallerRan = true;
+      lookupResolvedWhenCallerRan = lookupResolved;
+    },
   );
-  await queuedLanePromise;
+  // Immediately after scheduling, the caller must still be queued while the
+  // branch-PR lookup holds the lane.
+  assert.equal(
+    queuedCallerRan,
+    false,
+    "second caller from independent context must queue behind the active task lane rather than running inline",
+  );
+
+  await Promise.all([passPromise, queuedLanePromise]);
 
   assert.ok(
     findOpenBranchPrCalls >= 1,
@@ -3905,7 +3924,12 @@ test("audit branch-PR recovery runs inside the task-lane quantum deadline and re
   assert.equal(
     queuedCallerRan,
     true,
-    "caller queued on the same exclusive task:<id> lane ran after the unknown branch-PR lookup deferred",
+    "queued caller on the same exclusive task:<id> lane ran after the unknown branch-PR lookup deferred",
+  );
+  assert.equal(
+    lookupResolvedWhenCallerRan,
+    false,
+    "queued caller ran while the hung branch-PR lookup promise was still unresolved",
   );
   assert.equal(
     f.store.task(task.id).resolution.attention,
@@ -4211,4 +4235,119 @@ test("already-expired quantum scope rejects before invoking native host or forge
     0,
     "expired scope must not invoke native createRun mutation",
   );
+});
+
+test("settleArchive preserves durable intent when confirmation expires after mutation succeeds, and synchronous adapter members stay synchronous in an expired scope", async (t) => {
+  const { settleArchive } = await import(
+    "../core/workspaces/thread-archive-effect"
+  );
+  let archiveSendCalls = 0;
+  let originCalls = 0;
+
+  const f = engineFixture(t, {
+    originAgent: async (id: string) => {
+      originCalls++;
+      return {
+        id,
+        workspaceId: "ws-confirm-expire",
+        archived: false,
+        deleted: false,
+      };
+    },
+    archiveAgent: async () => {
+      archiveSendCalls++;
+      // Advance past the 20 ms quantum deadline synchronously before resolving
+      // so the mutation itself returns cleanly (`mutationCompleted = true`) and
+      // the following confirmation `originAgent` deterministically hits an
+      // already-expired scope (`preSend: true` for the confirmation read).
+      const until = Date.now() + 25;
+      while (Date.now() < until) {
+        /* busy-wait 25 ms so the mutation resolves before any timer fires */
+      }
+    },
+    workspaceIdAccepted: (id: unknown) => id === "ws-ok",
+    hostLoad: () => ({ load: 1.5, cpus: 8 }),
+    runTemporaryDirectory: (runId: string) => `/synthetic/scratch/${runId}`,
+    scratchNamespaceFor: (taskArg: Task) => `ns-${taskArg.id}`,
+    isConnected: () => true,
+  });
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-confirm-expire",
+      title: "Archive confirmation expiry",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const key = f.store.threadArchiveKey("agent-confirm-expire", HOST)!;
+  const readyEffect = {
+    status: "ready" as const,
+    at: new Date().toISOString(),
+    op: "archive" as const,
+  };
+  f.store.putThreadArchiveEffect(key, "agent-confirm-expire", readyEffect);
+
+  // Pass 1: mutation runs and succeeds, then confirmation `originAgent` sees an
+  // already-expired scope (`preSend: true` for read). The effect MUST stay
+  // `intent` (never reverted to `ready`).
+  await runInTaskQuantumScope(20, async () => {
+    await settleArchive(
+      f.store,
+      f.engine.adapter,
+      inserted.id,
+      "agent-confirm-expire",
+      key,
+      true,
+      readyEffect,
+    );
+  });
+  assert.equal(archiveSendCalls, 1, "archive mutation was sent once");
+  assert.equal(
+    f.store.getMeta<{ status: string }>(key)?.status,
+    "intent",
+    "expired confirmation read after mutation return must keep durable intent, never revert to ready",
+  );
+
+  // Pass 2: subsequent pass observes the thread still live and MUST send
+  // nothing while the prior mutation's outcome remains unknown.
+  const storedIntent = f.store.getMeta<{ status: "intent"; at: string }>(key)!;
+  await settleArchive(
+    f.store,
+    f.engine.adapter,
+    inserted.id,
+    "agent-confirm-expire",
+    key,
+    false,
+    storedIntent,
+  );
+  assert.equal(
+    archiveSendCalls,
+    1,
+    "subsequent pass must not re-send archive while prior mutation outcome is unknown",
+  );
+  assert.equal(
+    f.store.getMeta<{ status: string }>(key)?.status,
+    "uncertain",
+    "subsequent pass transitions prior live intent to uncertain without re-sending",
+  );
+  assert.ok(originCalls >= 2);
+
+  // Part B: Synchronous adapter members return plain values unchanged in an
+  // already-expired quantum scope (never rejected promises).
+  await runInTaskQuantumScope(0, async () => {
+    assert.equal(f.engine.adapter.workspaceIdAccepted?.("ws-ok"), true);
+    assert.equal(f.engine.adapter.workspaceIdAccepted?.("ws-bad"), false);
+    assert.deepEqual(f.engine.adapter.hostLoad?.(), { load: 1.5, cpus: 8 });
+    assert.equal(
+      f.engine.adapter.runTemporaryDirectory?.("run-123", inserted),
+      "/synthetic/scratch/run-123",
+    );
+    assert.equal(
+      f.engine.adapter.scratchNamespaceFor?.(inserted),
+      `ns-${inserted.id}`,
+    );
+    assert.equal(f.engine.adapter.isConnected?.(), true);
+  });
 });

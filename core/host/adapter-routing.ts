@@ -131,6 +131,26 @@ export interface HostAdapterRoutingOwner {
 }
 
 /**
+ * Synchronous adapter members whose contract returns a plain value (or void),
+ * never a Promise. An expired quantum scope must pass these through unchanged
+ * rather than returning a rejected Promise that breaks sync callers.
+ */
+const SYNC_ADAPTER_METHODS = new Set<PropertyKey>([
+  "isConnected",
+  "capabilities",
+  "workspaceIdAccepted",
+  "reportingFallback",
+  "hostLoad",
+  "purgeReportingFiles",
+  "runTemporaryDirectory",
+  "forgetThreads",
+  "scratchNamespaceFor",
+  "beginHostPass",
+  "endHostPass",
+  "workspaceCreationProgress",
+]);
+
+/**
  * Adapter that serves the ambient host, unwraps qualified agent ids for that
  * host, and re-enters itself inside a foreign agent's own host context. Direct
  * `inspectReviewEntry` without a supplied proof fetches the origin proof on the
@@ -426,7 +446,7 @@ export function routeHostAdapter(
         }
         if (property === "observationInventory" && Array.isArray(normalized[0]))
           normalized[0] = (normalized[0] as unknown[]).map(native);
-        if (property !== "capabilities") {
+        if (!SYNC_ADAPTER_METHODS.has(property)) {
           const preExpired = expiredQuantumDeadlineError(String(property));
           if (preExpired) return Promise.reject(preExpired);
         }
