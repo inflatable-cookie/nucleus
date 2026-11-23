@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nucleus-core"]
+members = ["crates/nucleus-core", "crates/nucleus-forge"]
 resolver = "3"
 
 [workspace.package]
