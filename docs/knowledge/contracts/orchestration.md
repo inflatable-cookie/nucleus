@@ -3880,7 +3880,8 @@ after the task finishes.
   evidence on the task's host before entering the lane, even while the task is
   still reviewing. A prefetched busy observation can keep an unchanged run's
   lease busy. Release and other lifecycle effects require a fresh observation
-  in the task lane.
+  in the task lane. The fresh reads for task wakes and reported-run releases
+  bypass the host's idle-observation cache.
   Missing evidence leaves the settlement pending for a later pass. A skip is
   final for an unsafe root. Records cover runs in queue-owned workspaces since
   this rule took effect.

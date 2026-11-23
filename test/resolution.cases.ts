@@ -17761,10 +17761,28 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
       }
     });
   }
-  for (const newerTurn of [true, false]) {
-    const scenario = newerTurn ? "a newer reviewer turn" : "the reported reviewer turn";
+  for (const { scenario, prefetchedTurn, newerTurn } of [
+    {
+      scenario: "a newer reviewer turn",
+      prefetchedTurn: "reporting-turn",
+      newerTurn: true,
+    },
+    {
+      scenario: "the reported reviewer turn",
+      prefetchedTurn: "reporting-turn",
+      newerTurn: false,
+    },
+    {
+      scenario: "an idle reviewer cached by the host",
+      prefetchedTurn: null,
+      newerTurn: true,
+    },
+  ]) {
     await t.test(`grace-expired wake rechecks ${scenario} after prefetch`, async (t) => {
-      const f = fixture(false, false, undefined, true);
+      const admission = prefetchedTurn === null
+        ? new Admission({ startIntervalMs: 0, now: () => Date.now() })
+        : undefined;
+      const f = fixture(false, false, undefined, true, admission);
       let unblock!: () => void;
       const gate = new Promise<void>((resolve) => {
         unblock = resolve;
@@ -17775,8 +17793,10 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         assert.ok(run?.agentId, f.current().reason);
         f.engine.completionFollowUpDelays = [];
         t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-        let turnId = "reporting-turn";
-        let turnStartedAt = new Date(Date.now() - 1_000).toISOString();
+        let turnId = prefetchedTurn;
+        let turnStartedAt = turnId
+          ? new Date(Date.now() - 1_000).toISOString()
+          : null;
         const receipt = f.engine.resolution.complete(
           {
             eventId: "grace-expired-review",
@@ -17796,7 +17816,7 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         const held = f.engine.control(() => gate, `task:${f.task.id}`);
         let queued = false;
         let wakeSnapshot: PassSnapshot | undefined;
-        const observations: string[] = [];
+        const observations: Array<string | null> = [];
         const observe = f.adapter.observe.bind(f.adapter);
         f.adapter.observe = async (id) => {
           if (id !== run.agentId) return observe(id);
@@ -17805,8 +17825,8 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
           return {
             id,
             workspaceId: run.workspaceId,
-            status: "running",
-            active: true,
+            status: turnId ? "running" : "idle",
+            active: Boolean(turnId),
             permissions: false,
             error: "",
             activeTurnId: turnId,
@@ -17834,7 +17854,7 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
         await Promise.all([held, f.engine.wakeTask(f.task.id)]);
         assert.ok(wakeSnapshot, "the queued wake prefetched a snapshot");
         assert.equal(f.store.run(run.id)?.released, !newerTurn);
-        assert.deepEqual(observations.slice(0, 2), ["reporting-turn", turnId]);
+        assert.deepEqual(observations.slice(0, 2), [prefetchedTurn, turnId]);
         if (newerTurn) {
           assert.equal(f.store.run(run.id)?.participantActivity?.turnId, turnId);
           assert.equal(f.current().resolution.currentRunId, run.id);

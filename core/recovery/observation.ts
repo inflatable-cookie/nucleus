@@ -323,8 +323,9 @@ export class Observation {
         // Its new turn needs a narrow read started against the delivered state.
         let state: AgentObservation;
         try {
+          const freshReadRequired = Boolean(completedTaskId || run.completion);
           const cached =
-            run.completion || reviewInProgress(run)
+            freshReadRequired || reviewInProgress(run)
               ? null
               : (inventory?.get(run.agentId) ?? null);
           if (cached) {
@@ -334,7 +335,8 @@ export class Observation {
               "retained run observation",
               () =>
                 this.resolution.onTaskHost(run, () => {
-                  if (wakeObservation)
+                  // Prefetch can populate the host cache with an idle sample.
+                  if (freshReadRequired)
                     admissionOf(this.adapter)?.invalidate(run.agentId!);
                   return this.resolution.host.observe(run.agentId!);
                 }),
