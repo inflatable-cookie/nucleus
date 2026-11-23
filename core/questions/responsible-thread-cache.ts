@@ -36,6 +36,8 @@ export interface ResponsibleShortlist {
   observedAt: number;
   /** True when at least one online host failed or timed out during inventory, so absence is not proved. */
   incomplete?: boolean;
+  /** The online hosts whose inventory failed or timed out, when `incomplete`. */
+  unreadHosts?: string[];
 }
 
 /**
@@ -201,7 +203,7 @@ export class ResponsibleThreadCache {
   private async collect(
     hosts: readonly ResponsibleHost[],
   ): Promise<ResponsibleShortlist> {
-    let incomplete = false;
+    const unreadHosts: string[] = [];
     const inventories = await Promise.all(
       hosts.map(async (host) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -225,7 +227,7 @@ export class ResponsibleThreadCache {
               agentId: formatAgentId(host.id, fact.nativeId),
             }));
         } catch {
-          incomplete = true;
+          unreadHosts.push(host.id);
           return [];
         } finally {
           if (timer) clearTimeout(timer);
@@ -249,7 +251,9 @@ export class ResponsibleThreadCache {
     return {
       threads,
       observedAt: this.clock(),
-      ...(incomplete ? { incomplete: true } : {}),
+      ...(unreadHosts.length
+        ? { incomplete: true, unreadHosts: unreadHosts.sort() }
+        : {}),
     };
   }
 }

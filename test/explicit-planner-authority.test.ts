@@ -43,9 +43,19 @@ function fixture(threads: Thread[]) {
   const directory = mkdtempSync(join(tmpdir(), "explicit-authority-"));
   const store = new Store(":memory:");
   const unroutable = new Set<string>();
+  /** Runs inside each inventory and each thread read, so a test can invalidate mid-read. */
+  const during = {
+    inventory: () => {},
+    observation: (_id: string) => {},
+  };
   const adapter = {
     hostId: host,
-    listLiveAgents: async () => threads,
+    listLiveAgents: async () => {
+      // After the cache has registered this inventory as its pending read.
+      await new Promise((resolve) => setImmediate(resolve));
+      during.inventory();
+      return threads;
+    },
     originAgent: async (id: string) => ({
       id,
       title: id,
@@ -65,10 +75,12 @@ function fixture(threads: Thread[]) {
   const engine = new Engine(store, adapter, 0);
   engine.identifyOriginHost = async () => host;
   engine.hostAvailable = () => true;
-  engine.resolution.plannerPresence.threadRoute = async (id) =>
-    unroutable.has(id)
+  engine.resolution.plannerPresence.threadRoute = async (id) => {
+    during.observation(id);
+    return unroutable.has(id)
       ? { kind: "unroutable", detail: "the host named a different thread" }
       : { kind: "routable" };
+  };
   store.upsertProject({
     key: "example",
     name: "Example",
@@ -111,7 +123,17 @@ function fixture(threads: Thread[]) {
     store.close();
     rmSync(directory, { recursive: true, force: true });
   };
-  return { directory, store, engine, adapter, unroutable, insert, command, close };
+  return {
+    directory,
+    store,
+    engine,
+    adapter,
+    unroutable,
+    during,
+    insert,
+    command,
+    close,
+  };
 }
 
 const thread = (id: string, updatedAt: string): Thread => ({
@@ -300,7 +322,7 @@ test("a worker, a checkout-only thread that is not the pick, an unroutable plann
   }
 });
 
-test("an incomplete shortlist refuses every planner, including the routing pick", async () => {
+test("an incomplete shortlist keeps the routing pick and the registered planner, and names the unread host otherwise", async () => {
   const f = fixture([
     thread("alpha", "2099-02-01T00:00:00Z"),
     thread("beta", "2099-01-01T00:00:00Z"),
@@ -319,22 +341,124 @@ test("an incomplete shortlist refuses every planner, including the routing pick"
     f.engine.hostIds = () => [host, "t3code:unreadable"];
     f.engine.resolveHostAdapter = (id) =>
       id === host ? healthy : id === "t3code:unreadable" ? broken : undefined;
+    const project = () => f.store.projectByKey("example")!;
+    const read = await f.engine.resolution.responsibleThread(project());
+    assert.equal(read.confirmed, true);
+    assert.equal(read.incomplete, true);
+    assert.deepEqual(read.unreadHosts, ["t3code:unreadable"]);
+    assert.equal(read.thread?.agentId, caller("alpha"));
+    const unread =
+      /the responsible-planner read for project Example is incomplete \(host t3code:unreadable unread\)/;
+
+    // The routing pick keeps authority, as before.
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), caller("alpha")),
+      true,
+    );
+    // Another dispatcher, a stranger and an unroutable thread are refused,
+    // and the refusal names the unread host.
+    for (const refused of [caller("beta"), caller("stranger")]) {
+      await assert.rejects(f.command(taskId, refused), unread);
+    }
+
+    // A registered planner keeps authority on an incomplete read too.
+    f.store.setProjectPlanner({
+      key: "example",
+      agentId: caller("beta"),
+      setBy: "operator",
+    });
+    const registered = await f.engine.resolution.responsibleThread(project());
+    assert.equal(registered.incomplete, true);
+    assert.equal(registered.thread?.agentId, caller("beta"));
+    f.unroutable.add(caller("beta"));
+    f.engine.resolution.responsibleThreads.cache.invalidate("example");
+    await assert.rejects(f.command(taskId, caller("beta")), unread);
+    f.unroutable.delete(caller("beta"));
+    f.engine.resolution.responsibleThreads.cache.invalidate("example");
+    const applied = await f.command(taskId, caller("beta"));
+    assert.equal(applied.explicitResolution?.status, "applied");
+    // Alpha is now a dispatcher that is not the pick on an incomplete read.
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), caller("alpha")),
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("the planner's own activity invalidating its shortlist mid-read does not refuse it", async () => {
+  const f = fixture([
+    thread("planner", "2099-01-01T00:00:00Z"),
+    thread("design", "2099-06-01T00:00:00Z"),
+  ]);
+  try {
+    const planner = caller("planner");
+    const taskId = f.insert({ originAgentId: "planner" });
+    f.store.setProjectPlanner({
+      key: "example",
+      agentId: planner,
+      setBy: "operator",
+    });
+    // Every thread read lands alongside one of the planner's own calls, which
+    // invalidates the shortlist naming it, so routing discards both attempts.
+    f.during.observation = () =>
+      f.engine.resolution.responsibleThreads.recordActivity(planner);
     const read = await f.engine.resolution.responsibleThread(
       f.store.projectByKey("example")!,
     );
-    assert.equal(read.incomplete, true);
-    assert.equal(read.thread?.agentId, caller("alpha"));
-    for (const planner of [caller("alpha"), caller("beta")]) {
-      assert.equal(
-        await livePlannerMatches(f.engine, f.store.task(taskId), planner),
-        false,
-        planner,
-      );
-      await assert.rejects(
-        f.command(taskId, planner),
-        /this caller is not one of them/,
-      );
-    }
+    assert.equal(read.thread, null, "routing has no verified recipient");
+
+    const applied = await f.command(taskId, planner);
+    assert.equal(applied.explicitResolution?.status, "applied");
+    assert.equal(read.confirmed, false);
+    assert.equal(f.store.task(taskId).phase, "reviewing");
+    assert.equal(
+      await f.engine.forceCallerAuthorized(f.store.task(taskId), planner),
+      true,
+    );
+    // The fallback serves only a registered planner or a dispatcher.
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), caller("design")),
+      false,
+    );
+    await assert.rejects(
+      f.command(taskId, caller("design")),
+      /this caller is not one of them: it is not a responsible planner for project Example/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("a fallback read older than the bound refuses, and the refusal says the read is unconfirmed", async () => {
+  const f = fixture([thread("planner", "2099-01-01T00:00:00Z")]);
+  try {
+    const planner = caller("planner");
+    const taskId = f.insert({ originAgentId: "planner" });
+    // One confirmed read, then every inventory is invalidated before it lands,
+    // so no later read finishes.
+    await f.engine.resolution.responsibleThread(f.store.projectByKey("example")!);
+    f.engine.resolution.responsibleThreads.cache.invalidate("example");
+    f.during.inventory = () =>
+      f.engine.resolution.responsibleThreads.cache.invalidate("example");
+    const unconfirmed = await f.engine.resolution.responsibleThread(
+      f.store.projectByKey("example")!,
+    );
+    assert.equal(unconfirmed.thread, null, "routing has no verified recipient");
+    assert.equal(
+      await livePlannerMatches(f.engine, f.store.task(taskId), planner),
+      true,
+      "within the bound the finished read stands in",
+    );
+    assert.equal(unconfirmed.confirmed, false);
+
+    f.engine.resolution.plannerAuthorityMaxAgeMs = 0;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await assert.rejects(
+      f.command(taskId, planner),
+      /Explicit resolution requires this task's coordinator, its live responsible planner or the operator board; the responsible-planner read for project Example is unconfirmed, and no confirmed read finished in the last 0 minutes/,
+    );
     assert.equal(f.store.task(taskId).phase, "awaiting_review");
   } finally {
     f.close();

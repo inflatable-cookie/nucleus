@@ -51,6 +51,46 @@ function identityHost(id: string | null | undefined): string | null {
   }
 }
 
+/**
+ * Whether a live thread (its native id on one host) dispatched or owns this
+ * task: the shortlist's `dispatcher` reason. Authority re-reads it from current
+ * tasks when it relies on an earlier observation.
+ */
+export function dispatchedBy(
+  task: Task,
+  nativeId: string,
+  hostId: string,
+): boolean {
+  const matches = (value: string | null | undefined) =>
+    sameCallerIdentity(value, nativeId, task.originHostId, hostId);
+  return (
+    matches(task.plannerAgentId) ||
+    (!isOperatorOrigin(taskOwner(task)) && matches(taskOwner(task)))
+  );
+}
+
+/**
+ * Whether a live thread is this registered identity, matched by the host its own
+ * qualified id proves, so a Paseo, T3 or BB registration is recognised as live
+ * on that host and is never read through a stale recorded host id.
+ */
+export function registeredAs(
+  value: string | null | undefined,
+  nativeId: string,
+  hostId: string,
+  recordedHost?: string | null,
+): boolean {
+  return (
+    Boolean(value) &&
+    sameCallerIdentity(
+      value,
+      nativeId,
+      identityHost(value) ?? recordedHost,
+      hostId,
+    )
+  );
+}
+
 export class ResponsibleThreadResolver {
   readonly cache = new ResponsibleThreadCache();
   private readonly membership = new Map<string, string>();
@@ -148,29 +188,16 @@ export class ResponsibleThreadResolver {
             value: string | null | undefined,
             host: string | null | undefined,
           ) => sameCallerIdentity(value, agent.id, host, id);
-          // A registered identity is matched by the host its own qualified id
-          // proves, so a Paseo, T3 or BB registration is recognised as live on
-          // that host and is never read through a stale recorded host id.
           const registered = (
             value: string | null | undefined,
             recordedHost?: string | null,
-          ) =>
-            Boolean(value) &&
-            sameCallerIdentity(
-              value,
-              agent.id,
-              identityHost(value) ?? recordedHost,
-              id,
-            );
+          ) => registeredAs(value, agent.id, id, recordedHost);
           const taskRole =
             ownerCandidateKind(agent.labels) !== "planner" ||
             tasks.some((task) => matches(task.agentId, task.hostId)) ||
             runs.some((run) => matches(run.agentId, run.hostId));
-          const owned = projectTasks.filter(
-            (task) =>
-              matches(task.plannerAgentId, task.originHostId) ||
-              (!isOperatorOrigin(taskOwner(task)) &&
-                matches(taskOwner(task), task.originHostId)),
+          const owned = projectTasks.filter((task) =>
+            dispatchedBy(task, agent.id, id),
           );
           const registeredPlanner = registered(plannerId);
           const registeredAgent =
