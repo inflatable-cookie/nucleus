@@ -39,9 +39,16 @@ export function authorRevisionAcceptance(engine: Engine, input: TaskControlInput
   return { taskId: task.id, detail: acceptanceDetail(input) };
 }
 
-/** The acceptance a successful forced `move to=work` at the cap records; the force rules already decided who may force. */
+/**
+ * The acceptance a successful forced `move to=work` at the cap records. Only the
+ * operator board's or a live planner's force grants the round: a participant's
+ * self-force (a run credential, `selfForceRunId`: the reviewer holding the verdict,
+ * a live coordinator or the worker) and a coordinator's report never do, so their
+ * force applies but the revision launch stays held at the cap.
+ */
 export function forcedRevisionAcceptance(engine: Engine, input: TaskControlInput, task: Task): { taskId: string; detail: string } | null {
-  if (!(input.action === 'move' && input.to === 'work') || engine.coordinatorActionRunId.getStore()) return null;
+  if (!(input.action === 'move' && input.to === 'work')) return null;
+  if (engine.coordinatorActionRunId.getStore() || engine.selfForceRunId.getStore()) return null;
   if (!revisionAllowanceExhausted(task, engine.store.runs(task.id), engine.store.eventsAll(task.id))) return null;
   return { taskId: task.id, detail: `force ${acceptanceDetail(input)}` };
 }

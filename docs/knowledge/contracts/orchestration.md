@@ -2472,9 +2472,11 @@ archive the same decider again. An unknown send is never blindly retried. See
   The explicit `run.start` for the worker, with `budget` accepted (planner or
   operator board only), creates the revision run itself. A planner's, the
   operator's or a delegated answer's author-round control (`move to=work`,
-  `restart role=worker`, `route role=worker`, or a forced `move to=work`) records
-  `revision_cap_accepted` inside its own transaction, at its commit point, so a
-  refused control grants nothing; a coordinator's is refused. The cap park stays
+  `restart role=worker`, `route role=worker`, or the board's or a live planner's
+  forced `move to=work`) records `revision_cap_accepted` inside its own
+  transaction, at its commit point, so a refused control grants nothing; a
+  coordinator's is refused, and a participant's self-force (`selfForceRunId`)
+  records nothing, so its launch stays held. The cap park stays
   the visible stop and its planner escalation
   ([vision](../vision.md#reviewer-choice-review-loop-caps-and-coordinators-that-act)).
 - Historical author-escalation rows are stripped from task rows (schema 54, task 989;

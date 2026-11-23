@@ -496,6 +496,22 @@ test("an author-round control at the cap records its acceptance only when it app
   try {
     await g.reviews(7);
     await g.settle(2);
+    // The finished reviewer holding the verdict may self-force a move, but its
+    // force grants no round past the cap: the revision launch stays held.
+    const reviewer = g.current().resolution.review?.runId;
+    assert.ok(reviewer, "the cap park keeps the reviewer's verdict");
+    const revisionsAtCap = g.store.runs(g.current().id).filter(run => run.role === "revision").length;
+    await g.engine.selfForceRunId.run(reviewer!, () => g.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move", to: "work", force: true, taskId: g.current().id, version: g.current().version,
+      instruction: "One more round", reason: "Force my own move", caller: `run:${reviewer}`,
+    })));
+    assert.equal(g.events("revision_cap_accepted").length, 0, "a participant's self-force records no acceptance");
+    await g.settle(2);
+    assert.equal(g.store.runs(g.current().id).filter(run => run.role === "revision").length, revisionsAtCap,
+      "the self-forced move starts no revision past the cap");
+    assert.equal(g.current().resolution.stop?.reason, "escalated");
+
+    // The operator board's force does.
     await g.engine.performTaskControl(taskControlInputSchema.parse({
       action: "move", to: "work", force: true, taskId: g.current().id, version: g.current().version,
       instruction: "One more round", reason: "Force one more round", caller: OPERATOR_BOARD_CALLER,

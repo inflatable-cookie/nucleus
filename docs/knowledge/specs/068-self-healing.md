@@ -339,10 +339,11 @@ Built as a direct PR (Tom, 2026-11-23: "fill the gaps using subagents"):
   waiting stop, so no coordinator is launched for it. The planner's or operator's
   `run.start` for the worker accepting `budget` creates the round's run itself. An
   author-round control (`move to=work`, `restart role=worker`, `route
-  role=worker`, or a forced `move to=work`) by an authorized caller records
-  `revision_cap_accepted` inside its own transaction, so only a control that
-  applies grants the round (planner ruling, 2026-11-23); a coordinator's is
-  refused. The cap park stays the stop and the planner escalation.
+  role=worker`, or a forced `move to=work` by the operator board or a live
+  planner) by an authorized caller records `revision_cap_accepted` inside its own
+  transaction, so only a control that applies grants the round (planner ruling,
+  2026-11-23); a coordinator's is refused, and a participant's self-force records
+  nothing. The cap park stays the stop and the planner escalation.
 - **Round 3.** The third non-converging round records `review_round_continued`
   and tells the task's planner with the reviewer's findings; it asks nothing. A
   tell that sent nothing (the service stopped before its intent, or no planner or
