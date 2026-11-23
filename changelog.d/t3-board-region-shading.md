@@ -1,1 +1,1 @@
-The Nucleus board in T3 Code now shades the header, navigation menu and task list in steps toward the detail pane, using the selected theme in light and dark mode.
+The Nucleus board in T3 Code uses the former task list shade in the header, with darker shades for the navigation menu and task list in both appearances. A bar marks the selected menu entry.

@@ -107,9 +107,8 @@ export function resolvePalette(
   if (!palette.seeds && Object.keys(overrides).length === 0) return null;
 
   const colors = { ...defaults[appearance].colors };
-  const surface = (canvas: string, foreground: string, alpha: number) =>
-    color(`color-mix(in srgb, ${canvas}, ${foreground} ${alpha * 100}%)`) ??
-    canvas;
+  const surface = (base: string, tint: string, alpha: number) =>
+    color(`color-mix(in srgb, ${base}, ${tint} ${alpha * 100}%)`) ?? base;
   if (palette.seeds) {
     const { canvas, accent } = palette.seeds;
     const foreground = overrides.foreground ?? contrastingText(canvas);
@@ -125,14 +124,17 @@ export function resolvePalette(
     });
   }
   const resolved = { ...colors, ...overrides };
-  const { surface0: canvas, foreground } = resolved;
+  const { surface1: header, foreground } = resolved;
+  // Use a shadow of the light foreground to darken the dark palette.
+  const shade =
+    appearance === "dark" ? surface("black", foreground, 0.02) : foreground;
+  const step = appearance === "dark" ? 0.2 : 0.045;
   return {
     colors: {
       ...resolved,
-      // The header starts at the stock dark palette's former list shade.
-      surfaceHeader: surface(canvas, foreground, 0.07),
-      surfaceNavigation: surface(canvas, foreground, 0.045),
-      surfaceList: surface(canvas, foreground, 0.02),
+      surfaceHeader: header,
+      surfaceNavigation: surface(header, shade, step),
+      surfaceList: surface(header, shade, step * 2),
     },
   };
 }

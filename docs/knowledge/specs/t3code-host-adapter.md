@@ -1368,11 +1368,11 @@ palette. A fixed environment appearance takes precedence over the browser's
 preference. A theme with one usable appearance uses that palette. An unavailable
 settings read or an unknown theme ID leaves the board's own palette.
 
-For a resolved T3 palette, the header, menu and list step toward the canvas in
-that order, and the detail pane uses the canvas. All three fills mix the
-resolved canvas and foreground in sRGB. The header mix matches the stock dark
-theme's former list shade (Tom, 2026-11-23). The menu uses foreground washes
-over its own fill for hover and selection in both appearances.
+In both T3 appearances, the header uses the palette's former list shade
+(Tom, 2026-11-23). The menu and list use progressively darker sRGB mixes of
+that shade and a tint from the palette foreground. The detail pane uses the
+canvas. The menu uses foreground washes for hover and selection and marks the
+selected entry with a foreground bar.
 
 The planner ruled on 2026-11-23 that the board follows the environment defaults.
 Published definitions take precedence over the built-in palettes copied from

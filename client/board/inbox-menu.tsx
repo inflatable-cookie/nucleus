@@ -19,7 +19,7 @@ export type InboxMenuCounts = Record<InboxView, number>;
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
  * background on hover and keyboard focus, the selected surface when selected.
- * Hover over the selected entry keeps it; a dimmed zero-count entry still hovers.
+ * Themed navigation also marks selection with a foreground bar.
  */
 function MenuEntry({
   c,
@@ -84,6 +84,20 @@ function MenuEntry({
         opacity: options.dimmed && !on && !themedNavigation ? 0.55 : 1,
       }}
     >
+      {on && themedNavigation && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            start: space.xxs,
+            top: space.xs,
+            bottom: space.xs,
+            width: space.xxs / 2,
+            borderRadius: radius.full,
+            backgroundColor: c.foreground,
+          }}
+        />
+      )}
       {options.icon && (
         <Icon
           name={options.icon}
