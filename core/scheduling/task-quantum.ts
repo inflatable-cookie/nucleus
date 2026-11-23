@@ -3,6 +3,7 @@ import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
+  claimRunProcessSweep,
   hostOwesRunProcessCleanup,
   sweepSettledRunProcesses,
 } from "../machine/run-process-cleanup";
@@ -22,6 +23,7 @@ import { provisionHostMovedWorkspace } from "../dispatch/worker-host-move";
 import { archiveFinishedThreads } from "../workspaces/thread-archive";
 import { archiveSupersededWorkers } from "../workspaces/thread-archive-replacement";
 import type { Task } from "../../shared/contracts";
+import type { HostProcessFact } from "../host/types";
 import { missingOriginHasPlanner } from "../questions/origin";
 import {
   taskStopClassification,
@@ -190,7 +192,13 @@ export class TaskQuantum {
    * the host. Task-scoping it while coalescing across tasks would settle only the
    * first task's runs and silently leave the rest (review 5943860105). Nothing is
    * queued while the host owes no cleanup, so the sweep never reads a process
-   * table a task quantum does not need.
+   * table a task quantum does not need, and none sooner than the per-pass interval
+   * after the last, so records that stay pending cost one sweep per pass.
+   *
+   * The lane runs outside this caller's async context, so the process reader is
+   * taken here, on the task's own host. Read later through the routed adapter it
+   * would land on the unbound fallback, which has no reader, and every sweep
+   * would defer as "process table observation is unavailable".
    */
   scheduleRunProcessCleanup(taskId: string): void {
     if (this.context.stopped) return;
@@ -198,6 +206,19 @@ export class TaskQuantum {
     const store = this.context.store,
       adapter = this.context.adapter;
     if (!hostOwesRunProcessCleanup(store, hostId)) return;
+    let readListing: (() => Promise<HostProcessFact[] | null>) | undefined;
+    try {
+      readListing = this.context.resolution.onTaskHost({ hostId }, () =>
+        adapter.hostProcessListing?.bind(adapter),
+      );
+    } catch {
+      readListing = undefined; // A host that is not connected is swept by its own pass.
+    }
+    // A host with no reader would only defer every run as unobserved: leave its
+    // records to the host's own pass.
+    if (!readListing) return;
+    if (!claimRunProcessSweep(store, hostId)) return;
+    const read = readListing;
     void this.context
       .cleanContext(() =>
         runOutsideTaskQuantumScope(() =>
@@ -208,7 +229,7 @@ export class TaskQuantum {
               runOutsideTaskQuantumScope(() =>
                 sweepSettledRunProcesses(store, hostId, {
                   pendingOnly: true,
-                  readProcesses: () => adapter.hostProcessListing!(),
+                  readProcesses: () => read(),
                 }),
               ),
             { coalesce: "settled-run-process-cleanup" },

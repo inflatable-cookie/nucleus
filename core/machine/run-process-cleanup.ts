@@ -42,6 +42,12 @@ interface CleanupRun {
     at: string;
     processes?: Array<{ pid: number; startIdentity: string }>;
   };
+  /**
+   * The uncertainty the last `run_process_cleanup_deferred` event recorded. A
+   * left-alone record clears `uncertainty` for display, so this, not that, says
+   * whether a deferral is news.
+   */
+  deferred?: string;
 }
 const key = (id: string) => `runProcessCleanup:${id}`;
 const terminal = (phase: string) => ["done", "cancelled"].includes(phase);
@@ -306,6 +312,38 @@ async function boundedRead<T>(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * Shortest gap between two per-pass sweeps of one host. The host pass schedules
+ * one sweep each pass; a task quantum asks for another only after this long, so
+ * records that stay pending cost about one sweep per pass, not one per quantum.
+ */
+export const RUN_PROCESS_SWEEP_MIN_INTERVAL_MS = 15_000;
+const sweepClaims = new WeakMap<Store, Map<string, number>>();
+
+/**
+ * Claim this host's next per-pass sweep. The host pass always claims (`force`),
+ * since its sweep also records live runs' host identities; a quantum's claim is
+ * refused until the interval has passed since the last one.
+ */
+export function claimRunProcessSweep(
+  store: Store,
+  hostId: string,
+  options: { force?: boolean; now?: number; minIntervalMs?: number } = {},
+): boolean {
+  const now = options.now ?? Date.now();
+  let claims = sweepClaims.get(store);
+  if (!claims) sweepClaims.set(store, (claims = new Map()));
+  const last = claims.get(hostId);
+  if (
+    !options.force &&
+    last !== undefined &&
+    now - last < (options.minIntervalMs ?? RUN_PROCESS_SWEEP_MIN_INTERVAL_MS)
+  )
+    return false;
+  claims.set(hostId, now);
+  return true;
 }
 
 /**
@@ -875,18 +913,50 @@ function sameProcesses(
   );
 }
 
+/** A read that answered nothing: it says nothing about this run's processes. */
+const UNOBSERVED = new Set([
+  "process table observation is unavailable",
+  "process executable observation is unavailable",
+]);
+const unobserved = (uncertainty: string | undefined): boolean => {
+  if (!uncertainty) return false;
+  try {
+    return UNOBSERVED.has(
+      (JSON.parse(uncertainty) as { reason?: string }).reason ?? "",
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Keep a run's cleanup pending under this uncertainty. The event is written only
+ * when the uncertainty differs from the last one recorded, so a sweep that fails
+ * the same way again writes nothing. A read that observed nothing never replaces
+ * a more specific record: what an earlier observation proved still stands.
+ */
 function deferCleanup(
   store: Store,
   run: CleanupRun,
   uncertainty: string,
 ): void {
   const prior = store.getMeta<CleanupRun>(key(run.id));
-  if (prior?.uncertainty === uncertainty) return;
-  store.event(
-    run.taskId,
-    "run_process_cleanup_deferred",
-    JSON.stringify({ runId: run.id, ...JSON.parse(uncertainty) }),
-  );
+  if (
+    unobserved(uncertainty) &&
+    prior?.pending !== false &&
+    ((prior?.uncertainty && !unobserved(prior.uncertainty)) ||
+      prior?.leftAlone ||
+      (prior?.deferred && !unobserved(prior.deferred)))
+  )
+    return;
+  if (prior?.uncertainty === uncertainty && prior.pending === true) return;
+  const recorded = prior?.deferred ?? prior?.uncertainty;
+  if (recorded !== uncertainty)
+    store.event(
+      run.taskId,
+      "run_process_cleanup_deferred",
+      JSON.stringify({ runId: run.id, ...JSON.parse(uncertainty) }),
+    );
   store.setMeta(key(run.id), {
     id: run.id,
     taskId: run.taskId,
@@ -896,6 +966,7 @@ function deferCleanup(
     ...prior,
     pending: true,
     uncertainty,
+    deferred: uncertainty,
   });
 }
 

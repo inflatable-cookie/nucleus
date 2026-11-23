@@ -1316,10 +1316,12 @@ test("sweep leaves conflicting tombstone and unreadable process ownership visibl
       (name) => name.includes("settlement lacks proof") && name.includes(op.id),
     ),
   );
+  // A sweep whose table read answered nothing keeps the recorded, more specific
+  // uncertainty rather than replacing it with "unavailable".
   assert.ok(
     names.some(
       (name) =>
-        name.includes("process table observation is unavailable") &&
+        name.includes("process environment ownership is unreadable") &&
         name.includes("pending-run"),
     ),
   );

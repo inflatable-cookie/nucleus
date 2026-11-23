@@ -1,5 +1,8 @@
 import { isHostOperationTimeout as hostTimedOut } from "../host/errors";
-import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
+import {
+  claimRunProcessSweep,
+  sweepSettledRunProcesses,
+} from "../machine/run-process-cleanup";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
 import type { Task } from "../../shared/contracts";
@@ -1022,10 +1025,15 @@ export class HostPass {
     // Schedule settled-run process cleanup AFTER `processSnapshot` so cleanup's
     // initial scan shares the already-primed pass snapshot instead of racing
     // ahead of inventory and terminal observation collection.
-    if (this.adapter.hostProcessListing) {
+    // The reader is taken here, on this host: the lane runs later, and a task
+    // quantum's request for the same coalesced sweep may be the one that runs.
+    const readListing = this.adapter.hostProcessListing?.bind(this.adapter);
+    if (readListing) {
       const historical =
         Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
+      // The pass's sweep is the host's one per pass: a quantum's waits its turn.
+      claimRunProcessSweep(this.store, host, { force: true });
       let usedPassSnapshot = false;
       const primePass = this.context.resolution.primePassProcesses;
       void this.context
@@ -1041,7 +1049,7 @@ export class HostPass {
                   const read = await primePass(host);
                   return read.state === "listed" ? read.processes : null;
                 }
-                return this.adapter.hostProcessListing!();
+                return readListing();
               },
             }),
           {

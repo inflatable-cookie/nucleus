@@ -1829,6 +1829,17 @@ request identities and stored committed-handoff rows are not rewritten.
   onto the sweep already waiting and it owes every run of the host, so no task's
   cleanup is dropped because another task asked first. Nothing is queued while the
   host owes no cleanup, so a task quantum never reads a process table for nothing.
+  The host pass sweeps each host once per pass, and a quantum asks for another
+  sweep only 15 seconds after the last, so records that stay pending cost about
+  one sweep per pass. The process reader is taken on the owning host when the
+  sweep is queued, because the lane runs outside the caller's host context; a
+  host that is not connected or has no reader is left to its own pass. A
+  deferral is written to the timeline only when its uncertainty differs from
+  the last one recorded, and a read that observed nothing never replaces a
+  more specific record. Before removing a proved scratch leaf, cleanup gives
+  the owner write access to directories inside it, so a read-only folder a
+  tool left behind cannot hold the leaf. It walks without following links and
+  refuses a directory on another device.
   Terminal sweeps use the host adapter’s listing when available; a failed or
   unreadable listing retains the sweep intent. On macOS one listing uses one
   process-table read and one cwd read for the PIDs in that snapshot.

@@ -46,6 +46,9 @@ function laneContext(f: ReturnType<typeof fixture>) {
       },
     },
     cleanContext: <T>(work: () => T) => work(),
+    resolution: {
+      onTaskHost: <T>(_owner: unknown, work: () => T) => work(),
+    },
     scheduleLane: (
       key: string,
       priority: number,
