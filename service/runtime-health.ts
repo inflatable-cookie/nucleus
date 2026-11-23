@@ -10,7 +10,7 @@
  */
 import type { HookCleanupHealth } from "../core/hooks/hook-cleanup";
 import type { HostRunOutputFailureSummary } from "../core/host-runs/host-run-output-failures";
-import type { Admission } from "../core/host/admission";
+import { Admission } from "../core/host/admission";
 import type { HostRegistry } from "../core/host/host-registry";
 import type { Engine } from "../core/engine";
 import { phaseLatency } from "../core/scheduling/phase-latency";
@@ -108,6 +108,12 @@ export interface RuntimeHealth {
   taskIdentities: number;
   /** Queue-observed outbound Paseo admission: depth, coalescing, waits and backpressure. */
   admission: HostAdmission;
+  /**
+   * Every connected host's own call queue: per-class depth, slot waits, latency and
+   * backpressure. `admission` above is only the legacy primary's; a T3 or BB host's
+   * queue shows here.
+   */
+  hostAdmission?: HostAdmissionView[];
   /** Durable cursor evidence for the bounded safety sweep. */
   reconciliation: ReconciliationSweep;
   /** Task facts that have waited over 30 seconds for a Nucleus lane. */
@@ -195,6 +201,23 @@ export interface RuntimeHealth {
     fingerprint?: string | null;
     settledFrom?: "running" | "landed" | "refused" | "failed" | null;
   };
+}
+
+/** One host's admission snapshot, named by the host it queues calls to. */
+export interface HostAdmissionView {
+  hostId: string;
+  admission: HostAdmission;
+}
+
+/** The admission controllers among the registry's per-host resources, by host id. */
+export function hostAdmissionViews(
+  resources: Iterable<[string, unknown]>,
+): HostAdmissionView[] {
+  const views: HostAdmissionView[] = [];
+  for (const [hostId, resource] of resources)
+    if (resource instanceof Admission)
+      views.push({ hostId, admission: resource.snapshot() });
+  return views.sort((left, right) => left.hostId.localeCompare(right.hostId));
 }
 
 /** The owners health reads and the runtime's own answers it needs. */
@@ -481,6 +504,7 @@ export class RuntimeHealthProjection {
       lastStoreAccessAt: lifecycle.lastStoreAccessAt,
       taskIdentities: store.countTasks(),
       admission: this.context.admission.snapshot(),
+      hostAdmission: hostAdmissionViews(hostRegistry.resourceEntries()),
       admissionRpc: this.context.serveHostRunEndpoint
         ? this.context.admissionRpcMetrics()
         : null,

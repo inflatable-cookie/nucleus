@@ -338,6 +338,12 @@ export class Admission {
   private readonly cache = new Map<string, CacheEntry>();
   private observationEpoch = 0;
   private readonly latencies = new Map<AdmissionClass, number[]>();
+  /**
+   * How long each class's recent calls waited for their class and total slots,
+   * start spacing included. Kept apart from host latency: a call can answer in a
+   * millisecond and still have waited seconds for its turn.
+   */
+  private readonly slotWaits = new Map<AdmissionClass, number[]>();
   private readonly slowSamples: SlowSample[] = [];
   private totalRunning = 0;
   private readonly totalWaiting: {
@@ -426,6 +432,7 @@ export class Admission {
         coalesced: 0,
       });
       this.latencies.set(cls, []);
+      this.slotWaits.set(cls, []);
     }
   }
 
@@ -775,6 +782,7 @@ export class Admission {
       const releaseClass = await this.acquire(cls);
       const releaseTotal = await this.acquireTotal(cls);
       try {
+        this.recordSlotWait(cls, this.now() - waitingAt);
         options.onAdmitted?.(this.now() - waitingAt);
         this.noteWait(
           cls,
@@ -965,6 +973,13 @@ export class Admission {
     return { admitted: false, reason };
   }
 
+  private recordSlotWait(cls: AdmissionClass, ms: number) {
+    const samples = this.slotWaits.get(cls)!;
+    samples.push(ms);
+    if (samples.length > this.latencyWindow)
+      samples.splice(0, samples.length - this.latencyWindow);
+  }
+
   private record(
     cls: AdmissionClass,
     ms: number,
@@ -1039,15 +1054,14 @@ export class Admission {
         coalesced: gate.coalesced,
       };
     };
-    const latency = (cls: AdmissionClass) => {
-      const samples = this.latencies.get(cls)!;
-      return {
-        samples: samples.length,
-        p50Ms: percentile(samples, 0.5),
-        p95Ms: percentile(samples, 0.95),
-        maxMs: samples.length ? Math.max(...samples) : null,
-      };
-    };
+    const window = (samples: number[]) => ({
+      samples: samples.length,
+      p50Ms: percentile(samples, 0.5),
+      p95Ms: percentile(samples, 0.95),
+      maxMs: samples.length ? Math.max(...samples) : null,
+    });
+    const latency = (cls: AdmissionClass) => window(this.latencies.get(cls)!);
+    const slotWait = (cls: AdmissionClass) => window(this.slotWaits.get(cls)!);
     return {
       callback: state("callback"),
       control: state("control"),
@@ -1064,6 +1078,21 @@ export class Admission {
         cleanup: latency("cleanup"),
         inventory: latency("inventory"),
         workspace: latency("workspace"),
+      },
+      slotWait: {
+        callback: slotWait("callback"),
+        control: slotWait("control"),
+        observation: slotWait("observation"),
+        title: slotWait("title"),
+        cleanup: slotWait("cleanup"),
+        inventory: slotWait("inventory"),
+        workspace: slotWait("workspace"),
+      },
+      total: {
+        limit: this.totalLimit,
+        running: this.totalRunning,
+        waiting: this.totalWaiting.length,
+        startIntervalMs: this.startIntervalMs,
       },
       observationCacheEntries: this.cache.size,
       observationCacheHits: this.cacheHits,

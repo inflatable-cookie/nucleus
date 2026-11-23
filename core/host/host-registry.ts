@@ -174,6 +174,11 @@ export class HostRegistry<T> {
   }
 
   /** Admission and breaker state belongs to an identity, surviving reconnects. */
+  /** Every per-host resource created so far, by host id; read-only, for health. */
+  resourceEntries(): Array<[string, unknown]> {
+    return [...this.resources];
+  }
+
   resource<R>(id: string, create: () => R): R {
     if (!this.resources.has(id)) {
       const value = create();
