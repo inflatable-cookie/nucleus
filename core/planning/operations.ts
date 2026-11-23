@@ -6,6 +6,13 @@ import {
 export { SOURCE_PROMOTION_NOT_DELIVERED } from "./source-promotion-reconcile";
 import { isTransportFailure } from "../../shared/transport";
 import { HostReadRefusalError } from "../host";
+import { readHostReadTransientEpisode } from "../recovery/host-read-transient";
+import {
+  currentTaskQuantumScope,
+  QUANTUM_TOTAL_READ_BUDGET_MS,
+  runInTaskQuantumScope,
+  type PassSnapshot,
+} from "../scheduling/pass-snapshot";
 import { assertSupportedSubmission, PlanningSubmission } from "./submission";
 import { PlanningRepairs } from "./planning-repairs";
 import { operationFailureSettlement } from "./operation-failure";
@@ -503,20 +510,27 @@ export class Operations {
   reconcileSourcePromotion(operation: QueueOperation): void {
     reconcileSourcePromotion(this.store, operation, this.activeOperations);
   }
-  scheduleOperation(id: string): void {
+  async scheduleOperation(id: string, passSnapshot?: PassSnapshot): Promise<void> {
     const operation = this.store.operation(id);
     if (!operation || operationIsSettled(operation.state)) return;
     if (this.engine.ownerSettledOperation(operation.taskId, id)) return;
     // A task-scoped command shares the task's exclusive lane so it is FIFO with
     // that task's lifecycle quanta and its nested control runs inline.
     const key = operationLaneKey(this.store.operationPayload(id), operation);
-    void this.engine
+    await this.engine
       .cleanContext(() =>
         this.engine.scheduleLane(
           key,
           LANE_PRIORITY_OPERATION,
-          () => this.engine.runOperation(id),
-          { coalesce: `operation:${id}` },
+          () =>
+            passSnapshot
+              ? runInTaskQuantumScope(
+                  this.engine.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
+                  () => this.engine.runOperation(id),
+                  passSnapshot,
+                )
+              : this.engine.runOperation(id),
+          { coalesce: `${passSnapshot ? "operation-pass" : "operation"}:${id}` },
         ),
       )
       .catch(() => {
@@ -618,6 +632,11 @@ export class Operations {
       });
       return;
     }
+    if (
+      readHostReadTransientEpisode(this.store, id, "op")?.retryOnPass &&
+      !currentTaskQuantumScope()?.snapshot?.hostPassCompleted(pending.hostId)
+    )
+      return;
     if (
       (pending.kind === "submit" || pending.kind === "review_entry") &&
       !this.engine.submissionReady()

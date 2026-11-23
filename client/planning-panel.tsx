@@ -52,6 +52,7 @@ import {
   muted,
   row,
   type Colors,
+  type PaneSurface,
 } from "./controls";
 import { MarkDoneConfirm, ReopenHelp } from "./lane-mark-done";
 import {
@@ -1072,13 +1073,13 @@ export function LaneFinderResults({
  */
 /**
  * The Planning tab's place on the board: the list pane's width beside the lane page,
- * whether the lane opens as a dialog, and the list pane's surface (nucleus#1540: a
- * step up from the menu beside it, the canvas when it stands alone).
+ * whether the lane opens as a dialog, and the pane fill and card elevation.
  */
 export type PlanningInbox = {
   listWidth: number | null;
   laneModal: boolean;
   listFill?: string;
+  listSurface?: PaneSurface;
 };
 /** What the lane page learns from Planning: the plan it was opened from, and a way to show another project's plan (false when that project is out of scope). */
 export type PlanningLaneContext = {
@@ -1463,9 +1464,7 @@ export function PlanningTab({
     : { flex: 1, minHeight: 0, backgroundColor: inbox.listFill };
   return (
     <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
-      <PaneSurfaceContext.Provider
-        value={inbox.listFill === roles(c).section ? "section" : "canvas"}
-      >
+      <PaneSurfaceContext.Provider value={inbox.listSurface ?? "canvas"}>
       <View
         style={listStyle}
         onLayout={

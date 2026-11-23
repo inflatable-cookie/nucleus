@@ -204,7 +204,11 @@ export class CompletionFollowUps {
         progress(before, beforeRuns) !== progress(after, afterRuns),
       attention: after.resolution.attention,
       recoveryActive: after.resolution.recoveryActive,
-      dispatchBlocked: dispatchBlocked(after),
+      // A send waiting on a proof the next host pass serves is retried by that
+      // pass, not by an immediate follow-up that would read the same miss.
+      dispatchBlocked:
+        dispatchBlocked(after) ||
+        after.resolution.stop?.fact?.code === "pass_proof",
       heldIntegration,
       hadIntegrationTurn,
       integrationActiveBefore,

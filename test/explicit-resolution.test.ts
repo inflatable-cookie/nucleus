@@ -525,14 +525,13 @@ test("next and run.release refuse a creation the host may still answer", async (
   store.update(current().id, {
     resolution: { ...current().resolution, currentRunId: coordinator.id, stop },
   });
-  const offer = () =>
-    runtime
-      .taskNext({ taskId: current().id })
+  const offer = async () =>
+    (await runtime.taskNext({ taskId: current().id }))
       .explicitCommands?.find(
         (item) =>
           item.action === "run.release" && item.args.run === coordinator.id,
       );
-  assert.equal(offer(), undefined);
+  assert.equal(await offer(), undefined);
   await assert.rejects(
     command({
       action: "run.release",
@@ -547,7 +546,7 @@ test("next and run.release refuse a creation the host may still answer", async (
   store.update(current().id, {
     resolution: { ...current().resolution, stop: null },
   });
-  const available = offer();
+  const available = await offer();
   assert.ok(available);
   assert.deepEqual(available.warnings, ["live_turn", "unreported_result"]);
   const args = { action: available.action, run: available.args.run };
@@ -577,10 +576,10 @@ test("next offers release of an unbound initial worker once creation settles", a
     role: "worker",
   });
   assert.ok(attempt && !attempt.settlement);
-  const offers = () =>
-    runtime.taskNext({ taskId: worker.id }).explicitCommands ?? [];
+  const offers = async () =>
+    (await runtime.taskNext({ taskId: worker.id })).explicitCommands ?? [];
   assert.equal(
-    offers().some((item) => item.args.run === runId || item.args.replacing === runId),
+    (await offers()).some((item) => item.args.run === runId || item.args.replacing === runId),
     false,
   );
   await assert.rejects(
@@ -594,7 +593,7 @@ test("next offers release of an unbound initial worker once creation settles", a
   assert.doesNotThrow(() => store.authenticate(runId, "initial-worker-secret"));
 
   settleCreationAttempt(store, attempt, "threw");
-  const offer = offers().find(
+  const offer = (await offers()).find(
     (item) => item.action === "run.release" && item.args.run === runId,
   );
   assert.ok(offer);
@@ -909,7 +908,7 @@ test("praxis#369 / underlay#046: run.start reviewer fresh replacing=<run> resolv
     await started;
     assert.equal(current().resolution.stop, null);
     assert.equal(readCreationAttempt(store, stuck)?.settlement, null);
-    const offers = runtime.taskNext({ taskId: current().id }).explicitCommands ?? [];
+    const offers = (await runtime.taskNext({ taskId: current().id })).explicitCommands ?? [];
     assert.equal(
       offers.some((item) => item.args.run === stuck.id || item.args.replacing === stuck.id),
       false,
@@ -1651,7 +1650,7 @@ test("review fixes: phase.set preserves stop, message.send warns on queue-only r
   assert.equal(current().resolution.stop?.since, stopSince);
 
   // task.next exposes machine-readable explicitCommands.
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.start" && c.args.replacing === stuck.id,
@@ -2158,7 +2157,7 @@ test("review round 2: message.send reports host steer disposition and blocks que
     released: false,
   });
   store.putRun(execRun);
-  const next = runtime.taskNext({ taskId: current().id });
+  const next = await runtime.taskNext({ taskId: current().id });
   assert.ok(
     next.explicitCommands?.some(
       (c) => c.action === "run.release" && c.args.run === execRun.id,

@@ -296,8 +296,8 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
           `${id}: ${JSON.stringify({ question, reviewer: "planner-1" })}`,
         );
         f.store.event(task.id, `${prefix}_sent`, `${id}: sent`);
-        if (route === "consult")
-          f.engine.resolution.waiting(f.current(), escalationWaitDetail.reviewer(id), "escalated");
+        const detail = route === "consult" ? escalationWaitDetail.reviewer(id) : escalationWaitDetail.planner(id);
+        f.engine.resolution.waiting(f.current(), detail, "escalated");
       } else {
         f.store.event(task.id, "responsible_question", `${id}: head pending`);
         f.store.event(

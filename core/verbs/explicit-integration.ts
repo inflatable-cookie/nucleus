@@ -1,7 +1,12 @@
 import {
+  externalMergeSourceAcceptance,
   holdsOf,
+  isDispositionActive,
+  mergeReviewEvidenceAt,
+  OPERATOR_BOARD_CALLER,
   operatorSourceAcceptance,
   qualifiedOwnerAcceptance,
+  type OwnerAcceptanceRecord,
   type Task,
 } from "../../shared/contracts";
 import type {
@@ -9,10 +14,18 @@ import type {
   ResolutionWarningId,
 } from "../../shared/schema/task-control";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
+import { unreviewedMergeObservation } from "../../shared/task-view";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
+import { ExternalMergeProofRefusal } from "../forge/merge";
+import { reportedUnappliedVerdict } from "../intake/applied-result";
+import { unreviewedExternalMergeCause } from "../merge/external-merge-check";
 import { nextMergeRequestAt, sendGuardedMerge } from "../merge/merge-phase";
+import { closeEscalationFollowups } from "../questions/ladder/continuation";
+import { findOpenPlannerEscalation } from "../questions/ladder/records";
+import { boundedRead } from "../scheduling/pass-snapshot";
 import { now, type Store } from "../store/store";
+import { acceptanceEvidenceAt } from "./owner-move";
 import {
   releasePlan,
   type ExplicitPlan,
@@ -31,6 +44,7 @@ export type ExplicitIntegrationPreflight = {
     head: string | null;
     base: string | null;
   } | null;
+  externalMerge?: { head: string; commit: string };
   mergeReadError?: string;
   prIdentityError?: string;
   checksWarning?: string | null;
@@ -46,7 +60,7 @@ export function closeoutRecoveryRun(store: Store, task: Task) {
 }
 
 /**
- * Spec 067 hard gate for `merge.now` and `closeout.now`: requires an applied
+ * Spec 067 hard gate for `merge.now`: requires an applied
  * qualifying review verdict (`ready_to_merge` or `owner_reviewed`) or an
  * explicit recorded `operator_source` acceptance at the exact head. Never
  * waived by `skipPRReview` and never satisfied by `source_approved` with
@@ -59,6 +73,54 @@ function hasExplicitMergeEvidence(task: Task, head: string): boolean {
   if (qualifiedOwnerAcceptance(atHead)) return true;
   if (operatorSourceAcceptance(atHead)) return true;
   return false;
+}
+
+/** A source eligible for an external-merge disposition, before the fresh forge read. */
+function externalCloseoutHead(store: Store, task: Task): string | null {
+  const r = task.resolution;
+  if (
+    ["queued", "dispatching", "done", "cancelled"].includes(task.phase) ||
+    isDispositionActive(task) ||
+    r.mergeIntent ||
+    r.mergeRequestedAt ||
+    r.mergeResponseOutcome === "uncertain" ||
+    r.mergeRetryOutcome === "uncertain"
+  ) return null;
+  // Intake binds an existing workspace before Nucleus dispatches a reviewer.
+  if (task.reviewEntry && !task.agentId && !store.runs(task.id).some((run) =>
+    run.agentId && (run.role === "reviewer" || run.role === "revision" || run.role === "executor")
+  ))
+    return null;
+  if (r.mergedCommit) return r.externalMerge ? r.mergeHead : null;
+  return task.prHead;
+}
+
+function unreviewedCloseoutWarning(
+  store: Store,
+  task: Task,
+  merge: { head: string; commit: string },
+) {
+  if (
+    !externalCloseoutHead(store, task) ||
+    mergeReviewEvidenceAt(task, merge.head) ||
+    externalMergeSourceAcceptance(task)
+  ) return null;
+  const runs = store.runs(task.id);
+  const atHead = { id: task.id, prHead: merge.head };
+  if (runs.some((run) => reportedUnappliedVerdict(store, atHead, run))) return null;
+  const review = task.resolution.review;
+  const evidence = acceptanceEvidenceAt(task, runs, merge.head);
+  const missingEvidence = review?.status === "changes_required" && review.head === merge.head
+    ? "The recorded changes_required verdict at the merged head is still outstanding"
+    : evidence.available && evidence.acceptance === "operator_source"
+      ? evidence.missingEvidence
+      : null;
+  if (!missingEvidence) return null;
+  return {
+    id: "unreviewed_merge" as const,
+    text: `The PR merged outside Nucleus at ${merge.head} (merge commit ${merge.commit}). ${missingEvidence}. Accepting records a source disposition for closeout.`,
+    missingEvidence,
+  };
 }
 
 function currentTurnHolders(engine: Engine, task: Task): Task[] {
@@ -186,7 +248,44 @@ export async function preflightExplicitIntegration(
     return result;
   }
 
-  // closeout.now
+  return preflightCloseout(engine, task);
+}
+
+async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIntegrationPreflight> {
+  const externalHead = externalCloseoutHead(engine.store, task);
+  if (
+    externalHead &&
+    (!task.resolution.mergedCommit || !mergeReviewEvidenceAt(task, externalHead)) &&
+    !externalMergeSourceAcceptance(task) &&
+    (task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber) &&
+    engine.resolution.adapter.merged
+  ) {
+    try {
+      const observed = await engine.resolution.adapter.merged(task, { externalOnly: true });
+      const recorded = task.resolution.unreviewedMerge;
+      const expectedCommit = task.resolution.mergedCommit ?? recorded?.commit;
+      const verified =
+        observed.merged &&
+        observed.base === task.baseBranch &&
+        (observed.head === externalHead ||
+          (!task.resolution.mergedCommit && observed.descendsFrom === externalHead)) &&
+        /^[a-f0-9]{40}$/.test(observed.head) &&
+        observed.commit &&
+        /^[a-f0-9]{40}$/.test(observed.commit) &&
+        (!expectedCommit || observed.commit === expectedCommit) &&
+        (!recorded || (recorded.prNumber === taskPrNumber(task) && recorded.head === observed.head));
+      return {
+        observedMerge: observed,
+        ...(verified && observed.commit
+          ? { externalMerge: { head: observed.head, commit: observed.commit } }
+          : {}),
+      };
+    } catch (error) {
+      return error instanceof ExternalMergeProofRefusal
+        ? { prIdentityError: error.message }
+        : { observedMerge: null, mergeReadError: String(error) };
+    }
+  }
   if (task.resolution.mergedCommit) {
     return {
       observedMerge: {
@@ -233,6 +332,24 @@ export async function preflightExplicitIntegration(
     observedMerge: null,
     mergeReadError: "GitHub merge observation is unavailable",
   };
+}
+
+export async function previewUnreviewedCloseout(engine: Engine, task: Task) {
+  const { externalMerge, mergedCommit } = task.resolution;
+  if (
+    task.removedAt ||
+    !externalCloseoutHead(engine.store, task) ||
+    externalMergeSourceAcceptance(task) ||
+    (!(externalMerge && mergedCommit) && !unreviewedMergeObservation(task))
+  ) return undefined;
+  const read = await boundedRead(
+    "external closeout preflight",
+    () => engine.onTaskHost(task, () => preflightCloseout(engine, task)),
+    engine.resolution.quantumReadTimeoutMs,
+  );
+  if (read.state === "unknown" || !read.value.externalMerge) return undefined;
+  const warning = unreviewedCloseoutWarning(engine.store, task, read.value.externalMerge);
+  return warning ? { taskId: task.id, version: task.version, warning } : undefined;
 }
 
 export function turnReleasePlan(
@@ -607,6 +724,9 @@ export function closeoutNowPlan(
 ): ExplicitPlan {
   const store = engine.store;
   const r = task.resolution;
+  if (preflight?.prIdentityError) {
+    throw Error(`closeout.now refused: ${preflight.prIdentityError}`);
+  }
   let mergedCommit: string;
   let mergeHead: string | null;
   let unverified = false;
@@ -653,14 +773,23 @@ export function closeoutNowPlan(
     unverified = true;
   }
 
-  // Hard gate: applied qualifying review verdict at that head or explicit operator source acceptance.
-  if (!mergeHead || !hasExplicitMergeEvidence(task, mergeHead)) {
+  const sourceAcceptance =
+    preflight?.externalMerge &&
+    preflight.externalMerge.head === mergeHead &&
+    preflight.externalMerge.commit === mergedCommit
+      ? unreviewedCloseoutWarning(store, task, preflight.externalMerge)
+      : null;
+  const priorExternalAcceptance = externalMergeSourceAcceptance(task);
+  if (!mergeHead || (!hasExplicitMergeEvidence(task, mergeHead) && !sourceAcceptance && !priorExternalAcceptance)) {
     throw Error(
       `closeout.now refused: merged head ${mergeHead ?? "unknown"} has no applied review verdict or explicit operator source acceptance`,
     );
   }
 
   const warnings: ExplicitWarning[] = [];
+  if (sourceAcceptance) {
+    warnings.push({ id: sourceAcceptance.id, text: sourceAcceptance.text });
+  }
   if (unverified) {
     warnings.push({
       id: "unverified_merge",
@@ -672,7 +801,7 @@ export function closeoutNowPlan(
       r.review?.status === "ready_to_merge" &&
       r.review.head === mergeHead,
   );
-  if (!hasReadyVerdict) {
+  if (!hasReadyVerdict && !sourceAcceptance && !priorExternalAcceptance) {
     warnings.push({
       id: "no_verdict",
       text: "No applied ready_to_merge review verdict exists for this merged head.",
@@ -732,6 +861,34 @@ export function closeoutNowPlan(
         phase === "syncing"
           ? "Verified merge; synchronizing the integration checkout"
           : "Integration checkout synchronized; closeout pending";
+      const ownerAcceptances = [...baseResolution.ownerAcceptances];
+      if (sourceAcceptance) {
+        if (!mergeHead || !input.caller) throw Error("External merge acceptance requires an exact head and authenticated caller");
+        const authority = input.caller === OPERATOR_BOARD_CALLER ? "operator" : "planner";
+        const acceptance: OwnerAcceptanceRecord = {
+          at: now(),
+          kind: "external_merge_source",
+          head: mergeHead,
+          mergedCommit,
+          prNumber: taskPrNumber(task),
+          actor: { agentId: input.caller, role: authority },
+          authority: { kind: authority, note: null },
+          reason: input.reason,
+          qualification: sourceAcceptance.text,
+          missingEvidence: sourceAcceptance.missingEvidence,
+          review: null,
+        };
+        ownerAcceptances.push(acceptance);
+        store.event(task.id, "owner_acceptance", JSON.stringify({ taskId: task.id, ...acceptance }));
+        const escalation = findOpenPlannerEscalation(
+          store.eventsAll(task.id),
+          unreviewedExternalMergeCause(task.id, mergeHead),
+        );
+        if (escalation) {
+          store.event(task.id, "planner_escalation_resolved", `${escalation.id}: External merge source accepted`);
+          closeEscalationFollowups(store, task.id, escalation.id);
+        }
+      }
       return {
         before: {
           phase: task.phase,
@@ -751,6 +908,7 @@ export function closeoutNowPlan(
             mergedCommit,
             ...(mergeHead ? { mergeHead } : {}),
             ...(r.mergedCommit ? {} : { externalMerge: true }),
+            ...(sourceAcceptance ? { ownerAcceptances, mergedWithNone: true } : {}),
             integrationTurn,
             stop: null,
             attention: false,

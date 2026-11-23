@@ -3,13 +3,16 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { inboxViews, type InboxView } from "../../shared/inbox-board";
 import { Icon } from "../shell";
 import { useFocusVisible } from "../focus-modality";
-import { muted, type Colors } from "../controls";
+import type { Colors } from "../controls";
 import {
   hoverSurface,
+  navigationTextOpacity,
   radius,
   selectedSurface,
   space,
+  toneSurface,
   type as typeScale,
+  wash,
 } from "../design";
 
 export type InboxMenuCounts = Record<InboxView, number>;
@@ -17,7 +20,7 @@ export type InboxMenuCounts = Record<InboxView, number>;
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
  * background on hover and keyboard focus, the selected surface when selected.
- * Hover over the selected entry keeps it; a dimmed zero-count entry still hovers.
+ * Themed navigation also marks selection with a foreground bar.
  */
 function MenuEntry({
   c,
@@ -43,7 +46,23 @@ function MenuEntry({
 }) {
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
-  const highlighted = hovered || focus.visible;
+  const themedNavigation = Boolean(c.surfaceNavigation);
+  const navigationTint = (fallback: string, alpha: number) =>
+    themedNavigation ? toneSurface(c.foreground, fallback, alpha) : fallback;
+  const backgroundColor = on
+    ? navigationTint(selectedSurface(c), wash.selected)
+    : hovered || focus.visible
+      ? navigationTint(hoverSurface(c), wash.hover)
+      : "transparent";
+  // Keep zero-count labels quieter without fading the entire interaction fill.
+  const labelColor = on
+    ? c.foreground
+    : navigationTint(
+        c.foregroundMuted,
+        options.dimmed
+          ? navigationTextOpacity.dimmed
+          : navigationTextOpacity.normal,
+      );
   return (
     <Pressable
       accessibilityRole="tab"
@@ -67,28 +86,36 @@ function MenuEntry({
         minHeight: 36,
         paddingHorizontal: space.sm,
         borderRadius: radius.control,
-        backgroundColor: on
-          ? selectedSurface(c)
-          : highlighted
-            ? hoverSurface(c)
-            : "transparent",
-        // A zero-count entry reads quieter without leaving the muted token; the
-        // selected entry keeps its full styling.
-        opacity: options.dimmed && !on ? 0.55 : 1,
+        backgroundColor,
+        opacity: options.dimmed && !on && !themedNavigation ? 0.55 : 1,
       }}
     >
+      {on && themedNavigation && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            start: space.xxs,
+            top: space.xs,
+            bottom: space.xs,
+            width: space.xxs / 2,
+            borderRadius: radius.full,
+            backgroundColor: c.foreground,
+          }}
+        />
+      )}
       {options.icon && (
         <Icon
           name={options.icon}
           size={16}
-          color={on ? c.foreground : c.foregroundMuted}
+          color={labelColor}
         />
       )}
       <Text
         numberOfLines={1}
         style={{
           flex: 1,
-          color: on ? c.foreground : c.foregroundMuted,
+          color: labelColor,
           fontSize: typeScale.body.fontSize,
         }}
       >
@@ -118,7 +145,12 @@ function MenuEntry({
             </Text>
           </View>
         ) : (
-          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+          <Text
+            style={{
+              color: themedNavigation ? labelColor : c.foregroundMuted,
+              fontSize: typeScale.metadata.fontSize,
+            }}
+          >
             {value}
           </Text>
         ))}

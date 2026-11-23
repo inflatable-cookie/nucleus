@@ -1,0 +1,1 @@
+Lifecycle tests now model fresh host-pass evidence for review, merge and recovery. They check that recovery can finish while scheduled process cleanup is blocked and preserve coverage for stale or missing activity stamps.
