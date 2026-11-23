@@ -8764,13 +8764,12 @@ test("an external merge at an unreviewed head stops for its planner with the rec
       `move to=review is offered: ${shape}`,
     );
     assert.ok(
-      next.verbs.some(
-        (verb) =>
-          verb.verb === "move" &&
-          verb.available &&
-          verb.args?.to === "closeout",
+      next.explicitCommands?.some(
+        (command) =>
+          command.action === "closeout.now" &&
+          command.warnings?.includes("unreviewed_merge"),
       ),
-      `move to=closeout is offered: ${shape}`,
+      "closeout.now offers the planner the warning",
     );
     // A repeat observation attaches to the open escalation instead of asking again.
     assert.equal(
@@ -9177,7 +9176,7 @@ test("the sweep leaves a legitimately parked needs_attention task alone", async 
   }
 });
 
-test("an operator accepts an external merge at a planner head built on the recorded work", async () => {
+test("an external merge at a descendant head needs an explicit source disposition", async () => {
   const f = fixture();
   try {
     // Live, 2026-09-30 (longhorn #033): the planner recorded known gaps in a commit on top of the
@@ -9202,40 +9201,20 @@ test("an operator accepts an external merge at a planner head built on the recor
         }),
       /move requires a target step .* and a reason/,
     );
-    await f.engine.performTaskControl({
-      taskId: f.task.id,
-      version: f.current().version,
-      action: "move",
-      to: "closeout",
-      reason:
-        "Planner recorded the remaining map findings as known gaps (longhorn #033)",
-    });
-    const accepted = f.current();
-    assert.equal(accepted.prHead, planner);
-    assert.equal(accepted.resolution.mergedCommit, merged);
-    assert.equal(accepted.resolution.externalMerge, true);
-    assert.ok(["syncing", "merging"].includes(accepted.phase), accepted.phase);
-    assert.ok(
-      f.store
-        .events(f.task.id)
-        .some(
-          (e) =>
-            e.kind === "external_merge_head_accepted" &&
-            e.detail.includes("known gaps") &&
-            e.detail.includes(planner),
-        ),
-    );
-    assert.equal(f.counts().merges, 0, "Queue never merges it again");
+    const before = f.current();
     await assert.rejects(
       f.engine.performTaskControl({
         taskId: f.task.id,
         version: f.current().version,
         action: "move",
         to: "closeout",
-        reason: "again",
+        reason: "Planner recorded the remaining findings as known gaps",
       }),
-      /no recorded exact-head review or operator source acceptance/,
+      /No review evidence binds the merged head/,
     );
+    assert.equal(f.current().version, before.version);
+    assert.equal(f.current().resolution.mergedCommit, null);
+    assert.equal(f.counts().merges, 0);
   } finally {
     await f.close();
   }

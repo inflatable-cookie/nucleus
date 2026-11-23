@@ -8,6 +8,7 @@ import {
   OPERATOR_BOARD_CALLER,
   runSchema,
   submissionSchema,
+  taskControlInputSchema,
   taskControlTaskSchema,
   type Task,
 } from "../shared/contracts";
@@ -655,7 +656,7 @@ test("a coordinator cannot accept creation_in_flight: no second thread beside a 
         },
         coordinator,
       ),
-    /Only the live responsible planner or operator board can accept hold_owner, route_policy, two_writers or creation_in_flight/,
+    /Only the live responsible planner or operator board can accept creation_in_flight/,
   );
 });
 
@@ -917,6 +918,18 @@ test("a planner explicitly accepts a verified external merge without a review an
   assert.equal(observedExternalOnly, true);
 
   const acceptCloseout = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  await assert.rejects(
+    runtime.engine.performTaskControl(taskControlInputSchema.parse({
+      action: "move",
+      to: "closeout",
+      force: true,
+      caller: PLANNER,
+      taskId: task.id,
+      version: before.version,
+      reason: "A forced closeout still needs source acceptance",
+    })),
+    /closeout.now with accept \["unreviewed_merge"\]/,
+  );
   observedHead = OTHER_HEAD;
   await assert.rejects(callExplicit(task.id, acceptCloseout), /no applied review verdict/);
   observedHead = HEAD;
@@ -978,6 +991,21 @@ test("a planner explicitly accepts a verified external merge without a review an
   );
   assert.equal(store.task(open.id).resolution.mergeIntent, false);
   assert.equal(mergeRequests, 0);
+
+  observedMerged = true;
+  store.update(open.id, {
+    phase: "merging",
+    resolution: {
+      ...store.task(open.id).resolution,
+      mergeIntent: true,
+      mergeHead: HEAD,
+    },
+  });
+  await assert.rejects(
+    callExplicit(open.id, acceptCloseout),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  assert.equal(store.task(open.id).resolution.ownerAcceptances.length, 0);
 });
 
 test("deleted levers: restart on merged-but-parked task refuses with closeout.now; stop on done task with turn refuses with turn.release", async (t) => {
@@ -1063,14 +1091,12 @@ test("review findings: exact-head gate ignores skipPRReview and pending proofs, 
   );
   mergedState = true;
   mergedBase = "main";
-  await assert.rejects(
-    () =>
-      callExplicit(skipped.id, {
-        action: "closeout.now",
-        accept: ["no_verdict"],
-      }),
-    /no applied review verdict or explicit operator source acceptance/,
-  );
+  const skippedWarning = await callExplicit(skipped.id, {
+    action: "closeout.now",
+    accept: ["no_verdict"],
+  });
+  assert.equal(skippedWarning.explicitResolution?.status, "warnings");
+  assert.deepEqual(skippedWarning.explicitResolution.warnings.map((warning) => warning.id), ["unreviewed_merge"]);
   store.update(skipped.id, {
     resolution: {
       ...store.task(skipped.id).resolution,
@@ -1088,6 +1114,10 @@ test("review findings: exact-head gate ignores skipPRReview and pending proofs, 
   });
   await assert.rejects(
     () => callExplicit(skipped.id, { action: "merge.now", head: HEAD }),
+    /no applied review verdict or explicit operator source acceptance/,
+  );
+  await assert.rejects(
+    () => callExplicit(skipped.id, { action: "closeout.now", accept: ["unreviewed_merge"] }),
     /no applied review verdict or explicit operator source acceptance/,
   );
 

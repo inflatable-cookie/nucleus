@@ -102,6 +102,14 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
     resolution: {
       ...store.task(inserted.id).resolution,
       attention: true,
+      review: {
+        taskId: inserted.id,
+        runId: "reviewer-run",
+        eventId: "review-approved",
+        status: "ready_to_merge",
+        summary: "Approved at the merged head",
+        head,
+      },
       integrationTurn: { sequence: 1, acceptedAt: new Date().toISOString() },
     },
   });
@@ -197,17 +205,7 @@ test("Queue planner force closeout succeeds on an project-c-shaped row (prefix i
       originAgentId: queuePlanner,
       agentId: "worker",
       coordinatorAgentId: queuePlanner,
-      resolution: {
-        ...f.task().resolution,
-        reviewerAgentId: "reviewer",
-        review: {
-          taskId: f.task().id,
-          runId: "reviewer-run",
-          eventId: "review-approved",
-          status: "ready_to_merge",
-          head,
-        },
-      },
+      resolution: { ...f.task().resolution, reviewerAgentId: "reviewer" },
     });
     f.store.putRun({
       id: "historical-planner-run",
