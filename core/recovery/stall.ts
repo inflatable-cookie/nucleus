@@ -1182,6 +1182,13 @@ export function workspaceToolProcessIssue(
   // Exited processes never arrive: the readers drop a process whose inspection
   // proves it is gone. What remains is filtered for zombies here.
   const live = processes.filter((process) => !isZombieProcess(process));
+  // A process can keep writing to an open file after leaving the workspace.
+  const root = resolve(directory);
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  const inDirectory = (path: string) => path === root || path.startsWith(prefix);
+  const openFileHolder = live.find((process) => process.openFiles?.paths.some(inDirectory));
+  if (openFileHolder)
+    return `process ${openFileHolder.pid} still has an open file in the workspace or run scratch`;
   const runtime = participantRuntimePids(live, bindings);
   const malformedHelpers = new Set<number>();
   for (const process of live) {
@@ -1207,12 +1214,11 @@ export function workspaceToolProcessIssue(
   // could reach that tree: its parent is in the tree, or its parent identity
   // is itself unreadable. A process whose known parent is outside the tree is
   // not the task's, whatever its own cwd readability.
-  const root = resolve(directory);
   const rooted = new Set<number>();
   for (const process of live) {
     if (process.cwd === null) continue;
     const cwd = resolve(process.cwd);
-    if (cwd === root || cwd.startsWith(`${root}${sep}`))
+    if (inDirectory(cwd))
       rooted.add(process.pid);
   }
   let changed = true;

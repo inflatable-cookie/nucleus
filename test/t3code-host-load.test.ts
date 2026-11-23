@@ -19,7 +19,7 @@ import { Engine } from "../core/engine";
 import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store } from "../core/store/store";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
-import { runSchema, submissionSchema, type Task } from "../shared/contracts";
+import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, type Task } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
   STAMP,
@@ -278,6 +278,91 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
 
   server.threads.delete(agentId);
   assert.equal(await lease(), false);
+});
+
+test("owner complete waits for a finished T3 participant's background work and process custody", async (t) => {
+  const { host, server, liveIds, workspaceId, directory } = await fixture(t, { live: 1 });
+  const agentId = liveIds[0]!;
+  const runId = "run-complete";
+  const temporaryDirectory = join(directory, "run-scratch");
+  const thread = server.threads.get(agentId)!;
+  thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
+  server.controls.shellStatuses[agentId] = "completed";
+  thread.turnItems = [syntheticTurnItem(agentId, 1, {
+    type: "command_execution", runId, status: "running",
+  })];
+  host.state.update((state) => {
+    delete state.workspaces[workspaceId]!.archivedAt;
+  });
+
+  const store = new Store(":memory:");
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  adapter.findAnyOpenBranchPr = async () => [];
+  let processes: HostProcessFact[] = [];
+  adapter.hostProcessListing = async () => Object.assign(processes, { cwdComplete: true });
+  const engine = new Engine(store, adapter, 60_000);
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
+  const head = "a".repeat(40);
+  const inserted = store.insert(submissionSchema.parse({
+    submissionId: "owner-complete-custody",
+    title: "Complete a report after background work",
+    repoPath: directory,
+    planningCommit: head,
+    handoffPath: "handoff.md",
+    originAgentId: "synthetic-planner",
+  }), host.hostId, "handoff.md", head);
+  const task = store.update(inserted.id, {
+    phase: "working", agentId, workspaceId, directory, runId, temporaryDirectory,
+  });
+  store.putRun(runSchema.parse({
+    id: runId, taskId: task.id, hostId: host.hostId, agentId, workspaceId,
+    temporaryDirectory, role: "revision", generation: 1, head, base: head,
+    status: "running", released: false, createdAt: STAMP, profile: null,
+    lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null,
+  }));
+  store.setCredential(runId, "synthetic-complete-secret");
+  const complete = () => engine.performTaskControl({
+    taskId: task.id,
+    version: store.task(task.id).version,
+    action: "complete",
+    reason: "Accept the finished report",
+    caller: OPERATOR_BOARD_CALLER,
+  });
+  const refuses = async (reason: RegExp) => {
+    await assert.rejects(complete, reason);
+    assert.equal(store.task(task.id).phase, "working");
+    assert.equal(store.run(runId)?.released, false);
+    assert.doesNotThrow(() => store.authenticate(runId, "synthetic-complete-secret"));
+  };
+  assert.equal((await host.observe(agentId)).status, "idle");
+  await refuses(/outstanding background work: command synthetic-item-1/);
+  thread.turnItems[0].status = "completed";
+  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: "older-items" };
+  await refuses(/incomplete projection/);
+  server.controls.threadCoverage = {};
+
+  const process = {
+    pid: 42, ppid: 1, pgid: 42, uid: 501,
+    startIdentity: "synthetic-start",
+    command: "synthetic-detached-command",
+    cwd: "/",
+  };
+  for (const root of [directory, temporaryDirectory]) {
+    processes = [{
+      ...process, openFiles: { paths: [join(root, "output.log")], complete: true },
+    }];
+    await refuses(/process 42 still has an open file/);
+  }
+  processes = [{ ...process, openFiles: { paths: [], complete: false } }];
+  await refuses(/incomplete working-directory or open-file coverage/);
+
+  processes = [];
+  assert.equal((await complete()).phase, "done");
+  assert.equal(store.run(runId)?.released, true);
+  assert.throws(() => store.authenticate(runId, "synthetic-complete-secret"), /unauthorized callback/i);
 });
 
 for (const provider of ["codex", "pi"]) {
