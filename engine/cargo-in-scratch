@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -f .agents.local.env ]]; then
+    source .agents.local.env
+fi
+if [[ ${NUCLEUS_SCRATCH_ROOT:-} != /* || ! -d $NUCLEUS_SCRATCH_ROOT ]]; then
+    printf '%s\n' 'Set NUCLEUS_SCRATCH_ROOT to a mounted scratch root in .agents.local.env.' >&2
+    exit 1
+fi
+
+engine_scratch="$NUCLEUS_SCRATCH_ROOT/engine-milestone-1"
+mkdir -p "$engine_scratch/tmp"
+export TMPDIR="$engine_scratch/tmp" TMP="$engine_scratch/tmp" TEMP="$engine_scratch/tmp"
+export CARGO_TARGET_DIR="$engine_scratch/target"
+exec cargo "$@"
