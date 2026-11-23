@@ -351,6 +351,79 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
     server.abort();
 }
 
+#[tokio::test]
+async fn a_settled_run_wakes_the_oldest_slot_waiter() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    for id in ["z-first", "a-second"] {
+        let (task, _, _) = reservation(id, Entry::Brief, &service.project.start);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .expect("seed waiter");
+        let row = service.task(id).await.expect("waiter");
+        service
+            .schedule_result(
+                &row,
+                &Ok(Action::Wait(WaitReason::Capacity)),
+                Priority::Effect,
+            )
+            .await
+            .expect("schedule capacity backstop");
+    }
+    let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.project.start);
+    let instance = holder
+        .run()
+        .expect("reserved run")
+        .launch()
+        .instance
+        .clone();
+    holder.record_send(&instance, 1).expect("slot occupied");
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&holder, &event("fixture"))
+        .expect("seed holder");
+    let actor = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let CommandOutcome::Applied(revoked) = service
+        .command("holder", &actor, Command::Cancel)
+        .await
+        .expect("cancel")
+    else {
+        panic!("cancel must commit");
+    };
+    {
+        let now = Instant::now();
+        let state = service.state.lock().await;
+        assert!(!state.schedule.effect_ready("z-first", now));
+        assert!(state.schedule.due("z-first").expect("backstop") > now + Duration::from_secs(55));
+    }
+    let mut settled = revoked.task.clone();
+    settled.reconcile(&Observation {
+        host: Observed::Known(Host::Current {
+            instance,
+            state: nucleus_core::RunState::Ended,
+        }),
+        forge: Observed::Unknown,
+        workspace: Observed::Unknown,
+    });
+    assert!(settled.run().is_none());
+    service
+        .save(&revoked, settled, &event("phase_reconciled"))
+        .await
+        .expect("release slot");
+    let state = service.state.lock().await;
+    let now = Instant::now();
+    assert!(state.schedule.effect_ready("z-first", now));
+    assert!(!state.schedule.effect_ready("a-second", now));
+}
+
 pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {

@@ -14,6 +14,7 @@ const SCAN_PAGE: u32 = 32;
 pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
 const LIVE_CHECK: Duration = Duration::from_secs(45);
+pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
@@ -66,9 +67,14 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::IdleWithoutTerminalRun
             | WaitReason::Hold,
         ) => (LIVE_CHECK, Priority::Refresh),
-        Some(WaitReason::HostUnknown | WaitReason::RetainedThreadBusy | WaitReason::Question) => {
-            (T3_RETRY_DELAY, Priority::Decision)
-        }
+        Some(
+            WaitReason::HostUnknown
+            | WaitReason::WorkspaceUnknown
+            | WaitReason::RetainedThreadBusy
+            | WaitReason::Question,
+        ) => (T3_RETRY_DELAY, Priority::Decision),
+        Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),
+        Some(WaitReason::Capacity) => (Duration::from_mins(1), Priority::Refresh),
         Some(WaitReason::ChecksPending) => (Duration::from_secs(15), Priority::Decision),
         _ => (Duration::from_secs(3), Priority::Decision),
     }
@@ -146,6 +152,13 @@ impl Schedule {
 
     pub(crate) fn due(&self, id: &str) -> Option<Instant> {
         self.tasks.get(id).and_then(Pending::due)
+    }
+
+    pub(crate) fn effect_ready(&self, id: &str, now: Instant) -> bool {
+        self.tasks
+            .get(id)
+            .and_then(|pending| pending.deadlines[Priority::Effect as usize])
+            .is_some_and(|due| due <= now)
     }
 }
 

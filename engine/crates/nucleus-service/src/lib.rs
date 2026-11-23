@@ -11,7 +11,7 @@ mod ticket;
 mod web;
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     net::SocketAddr,
     os::fd::OwnedFd,
     path::PathBuf,
@@ -87,6 +87,7 @@ pub struct Service {
     changes: broadcast::Sender<TaskChange>,
     wake: Notify,
     forge_until: AtomicU64,
+    forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
     _profile: OwnedFd,
 }
@@ -96,6 +97,7 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, WaitReason>,
+    capacity_waiters: VecDeque<String>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
@@ -170,6 +172,7 @@ impl Service {
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                capacity_waiters: VecDeque::new(),
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
@@ -180,6 +183,7 @@ impl Service {
             changes,
             wake: Notify::new(),
             forge_until: AtomicU64::new(0),
+            forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
         })
     }
@@ -377,7 +381,7 @@ impl Service {
         let mut state = self.state.lock().await;
         let current = self.lookup(&state, id)?;
         if !active(&current.task) && !state.forge_requested.contains(id) {
-            state.waits.remove(id);
+            state.set_wait(id, None);
             return Ok(());
         }
         if current.version != row.version {
@@ -393,7 +397,9 @@ impl Service {
             _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
             _ => now + delay,
         };
-        let priority = if row
+        let priority = if wait == Some(WaitReason::Capacity) {
+            priority
+        } else if row
             .task
             .run()
             .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
@@ -407,10 +413,7 @@ impl Service {
             priority
         };
         state.schedule.wake(id, due, priority);
-        let prior = match wait {
-            Some(reason) => state.waits.insert(id.clone(), reason),
-            None => state.waits.remove(id),
-        };
+        let prior = state.set_wait(id, wait);
         if prior != wait {
             self.publish(id, current.version);
         }
@@ -605,10 +608,13 @@ impl Service {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let version = state.store.save_row(prior, task, &audit)?;
         track(state, task);
-        state.waits.remove(id);
+        state.set_wait(id, None);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
+        if occupied_slot(&prior.task) && !occupied_slot(task) {
+            state.wake_capacity(Instant::now());
+        }
         self.wake_task(
             state,
             id,
@@ -729,6 +735,31 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 }
 
 impl State {
+    fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
+        let prior = match wait {
+            Some(reason) => self.waits.insert(id.into(), reason),
+            None => self.waits.remove(id),
+        };
+        if prior != wait {
+            if prior == Some(WaitReason::Capacity) {
+                self.capacity_waiters.retain(|waiting| waiting != id);
+            } else if wait == Some(WaitReason::Capacity) {
+                self.capacity_waiters.push_back(id.into());
+            }
+        }
+        prior
+    }
+
+    fn wake_capacity(&mut self, now: Instant) {
+        if let Some(id) = self
+            .capacity_waiters
+            .iter()
+            .find(|id| !self.schedule.effect_ready(id, now))
+        {
+            self.schedule.wake(id, now, Priority::Effect);
+        }
+    }
+
     fn command_observation(&self, row: &TaskRow) -> Observation {
         let forge = self
             .observed_forge
@@ -743,6 +774,12 @@ impl State {
             workspace: Observed::Unknown,
         }
     }
+}
+
+fn occupied_slot(task: &Task) -> bool {
+    task.run()
+        .and_then(nucleus_core::Run::last_send_at_ms)
+        .is_some()
 }
 
 fn track(state: &mut State, task: &Task) {
