@@ -177,6 +177,7 @@ export function TaskDialog({
         }}
       >
         <TaskMenuActionPanel
+          key={task.id}
           panel={menuPanel}
           onClose={() => setMenuPanel(null)}
           task={task}

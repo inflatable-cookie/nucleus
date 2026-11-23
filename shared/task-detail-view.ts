@@ -1242,6 +1242,8 @@ export type ReviewFindingItem = {
 
 export type TaskReviewFindings = {
   roundLabel: string;
+  /** The selected report's own summary, always shown above its findings. */
+  summary: string;
   items: ReviewFindingItem[];
 };
 
@@ -1348,9 +1350,12 @@ export function taskReviewFindings(
 
   const currentHead = task.prHead ?? next?.prHead ?? null;
   const short = (head: string | null) => (head ? head.slice(0, 7) : "");
+  // "Current head" is decided only by comparing this report's own head with the
+  // PR head: never by poll order, verdict kind or supersession.
   const notes: string[] = [];
   if (!evidence.head) notes.push("Head not recorded");
-  else if (currentHead && evidence.head !== currentHead)
+  else if (!currentHead) notes.push(`Reviewed ${short(evidence.head)}`);
+  else if (evidence.head !== currentHead)
     notes.push(`Not the current head (reviewed ${short(evidence.head)})`);
   else notes.push(`At ${short(evidence.head)}`);
   if (evidence.superseded) notes.push("Superseded");
@@ -1403,21 +1408,25 @@ export function taskReviewFindings(
     });
   }
 
+  // The selected report's own summary: the joined completion's when the reads
+  // agree, the outcome's own while they catch up.
+  const summary = clipText(
+    (completion?.summary?.trim() || evidence.summary?.trim() || "").replace(
+      /\s+/g,
+      " ",
+    ),
+    320,
+  );
   if (items.length === 0) {
-    const summaryText =
-      firstSentence(
-        (completion?.headline || completion?.summary || evidence.summary) ?? "",
-        240,
-      ) || statusWord;
     items.push({
       id: "summary-finding",
       severity: approved ? "OK" : "Note",
-      text: summaryText,
+      text: statusWord.charAt(0).toUpperCase() + statusWord.slice(1),
       status: approved ? `Approved · ${reportNote}` : reportNote,
     });
   }
 
-  return { roundLabel, items };
+  return { roundLabel, summary, items };
 }
 
 function pickEvidence(source: {
@@ -1728,6 +1737,10 @@ const IDENTITY_EVENT_SUMMARY: Record<string, string> = {
   review_reapplied: "Nucleus reapplied the reviewer’s verdict.",
 };
 
+/** Host thread and agent identities: `thread:delegated-task:…`, `mcp:…`, `t3code:…`, `ns-agent-…`, `ns-run-…`. */
+const HOST_IDENTITY_PATTERN =
+  /\b(?:thread|mcp|t3code)(?::[\w.@/-]+)+|\bns-(?:agent|run)-[\w-]+/gi;
+
 const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const SHA_PATTERN = /\b([0-9a-f]{7})[0-9a-f]{33}\b/gi;
@@ -1744,21 +1757,22 @@ export function readableEventDetail(detail: string, kind = ""): string {
   const text = detail.trim();
   // A detail that is only an identifier (an agent or thread ID, a run ID, a host
   // thread path) says nothing to a reader: summarize the event by its kind.
-  if (
-    text &&
-    !/\s/.test(text) &&
-    /\d/.test(text) &&
-    /[:-]/.test(text) &&
-    text.length >= 8
-  )
-    return IDENTITY_EVENT_SUMMARY[kind] ?? "";
+  const identityOnly =
+    Boolean(text) &&
+    (stripHostIdentities(text) === "" ||
+      (!/\s/.test(text) &&
+        /\d/.test(text) &&
+        /[:-]/.test(text) &&
+        text.length >= 8));
+  if (identityOnly) return IDENTITY_EVENT_SUMMARY[kind] ?? "";
   if (text.startsWith("{") || text.startsWith("[")) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Not JSON: a person's note such as "[QA] waiting for the receipt", kept as written.
-      return text;
+      // Not JSON: a person's note such as "[QA] waiting for the receipt", kept as
+      // written apart from any host identity.
+      return stripHostIdentities(text);
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
       return "";
@@ -1782,11 +1796,18 @@ export function readableEventDetail(detail: string, kind = ""): string {
     }
     return "";
   }
-  return stripIdentifiers(text);
+  return stripIdentifiers(text) || (IDENTITY_EVENT_SUMMARY[kind] ?? "");
+}
+
+function stripHostIdentities(text: string): string {
+  return text
+    .replace(HOST_IDENTITY_PATTERN, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function stripIdentifiers(text: string): string {
-  return text
+  return stripHostIdentities(text)
     .replace(UUID_PATTERN, "")
     .replace(SHA_PATTERN, "$1")
     .replace(/\(\s*\)/g, "")

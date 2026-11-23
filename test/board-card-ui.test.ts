@@ -2604,8 +2604,7 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
           nodeHas(
             node,
             (child) =>
-              child.props.accessibilityLabel ===
-                "Mark drained lane alpha done",
+              child.props.accessibilityLabel === "Mark drained lane alpha done",
           ) &&
           nodeHas(node, (child) =>
             /^Drained lane: Alpha lane, Status: Drained/.test(
@@ -2705,7 +2704,11 @@ test("a drained lane asks before it is marked done, and cancel writes nothing", 
   );
   assert.match(ui.text(), /App \(Now\)/);
   assert.match(ui.text(), /2 live tasks/);
-  assert.deepEqual(calls, [], "the confirmation writes nothing until it is confirmed");
+  assert.deepEqual(
+    calls,
+    [],
+    "the confirmation writes nothing until it is confirmed",
+  );
   ui.press("Cancel marking Alpha lane done");
   assert.equal(ui.query("Mark Alpha lane done"), undefined);
   assert.deepEqual(calls, [], "cancel writes nothing");

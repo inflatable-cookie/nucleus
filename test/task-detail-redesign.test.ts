@@ -20,6 +20,7 @@ import {
   type UiQueueState,
 } from "../shared/contracts";
 import { taskDetailView } from "../shared/task-view";
+import type { TaskDrafts } from "../client/task/drafts";
 import { hostDisplayLabel } from "../shared/host-outage";
 import {
   buildActivityTimeline,
@@ -131,17 +132,6 @@ function makeQueryResult<T>(data: T) {
   } as never;
 }
 
-function makeDrafts() {
-  const values = new Map<string, unknown>();
-  return {
-    get: <T>(key: string, fallback: T) =>
-      values.has(key) ? (values.get(key) as T) : fallback,
-    set: (key: string, value: unknown) => {
-      values.set(key, value);
-    },
-  } as never;
-}
-
 async function renderDialog(opts: {
   task: TaskDetail;
   next: TaskNext;
@@ -157,6 +147,8 @@ async function renderDialog(opts: {
   state?: UiQueueState;
   compact?: boolean;
   inline?: boolean;
+  /** The board's draft store (a plain record, shared across tasks as on the board). */
+  drafts?: TaskDrafts;
   invoke?: (method: string, input: unknown) => Promise<unknown>;
 }) {
   const { TaskDialog } = await import("../client/task/task-dialog");
@@ -207,7 +199,7 @@ async function renderDialog(opts: {
             act: async (fn: () => Promise<unknown>) => {
               await fn();
             },
-            drafts: makeDrafts(),
+            drafts: opts.drafts ?? ({} as TaskDrafts),
             navigation: {
               openAgent: () => {},
               openWorkspace: () => {},
@@ -1270,17 +1262,22 @@ test("the Review card reads its report by task, run and completion event", () =>
       }),
     });
     const catchingUp = taskReviewFindings(task, next, [blocked]);
+    assert.equal(
+      catchingUp?.summary,
+      "Approved at the current head.",
+      "the outcome's own summary stands in while the reads catch up",
+    );
     assert.deepEqual(
       catchingUp?.items,
       [
         {
           id: "summary-finding",
           severity: "OK",
-          text: "Approved at the current head.",
+          text: "Approved",
           status: `Approved · At ${HEAD.slice(0, 7)}`,
         },
       ],
-      "the outcome's own summary stands in; the blocked findings never show under the approval",
+      "the blocked findings never show under the approval",
     );
 
     // Once the detail read carries the same event, the report's own text shows.
@@ -1487,6 +1484,191 @@ test("Activity summarizes identity-only events by kind and keeps a bracketed not
     assert.ok(
       tree.text().includes(agentId),
       "the raw list keeps the original record",
+    );
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("the dependency editor shows the selected task's own list and never another task's draft", async () => {
+  const store = new Store(":memory:");
+  try {
+    // One draft store for the board, shared across the tasks the operator opens.
+    const drafts = {} as TaskDrafts;
+    const dependencyVerb = (task: TaskDetail) =>
+      taskNextVerbSchema.parse({
+        verb: "set_dependencies",
+        action: "set_dependencies",
+        available: true,
+        args: { taskId: task.id, version: task.version },
+        fill: ["dependsOn"],
+      });
+    const field =
+      "Prerequisites (comma-separated task IDs or references; leave empty to clear)";
+    const taskA = createTaskDetail(store, {
+      phase: "queued",
+      dependsOn: ["app#11"],
+    });
+    const taskB = createTaskDetail(store, {
+      phase: "queued",
+      dependsOn: ["app#22", "app#23"],
+    });
+
+    // Task A: start an edit and leave it unsaved.
+    const a = await renderDialog({
+      task: taskA,
+      next: makeNext(taskA, { verbs: [dependencyVerb(taskA)] }),
+      drafts,
+    });
+    a.tree.press("Task actions menu");
+    a.tree.press("Set dependencies");
+    a.tree.type(field, "app#99");
+    a.tree.update(h("View", null));
+
+    // Task B opens with its own stored list, and the untouched form cannot submit.
+    const b = await renderDialog({
+      task: taskB,
+      next: makeNext(taskB, { verbs: [dependencyVerb(taskB)] }),
+      drafts,
+    });
+    b.tree.press("Task actions menu");
+    b.tree.press("Set dependencies");
+    assert.equal(
+      b.tree.get(field).props.value,
+      "app#22, app#23",
+      "B's own prerequisites",
+    );
+    assert.equal(
+      b.tree.get("Save dependencies").props.accessibilityState?.disabled,
+      true,
+      "an untouched form never submits",
+    );
+    // A change enables Save, and the submission is B's.
+    b.tree.type(field, "app#22");
+    b.tree.press("Save dependencies");
+    await new Promise((r) => setTimeout(r, 10));
+    const call = b.calls.find(
+      (item) =>
+        item.method === "queue.task" &&
+        (item.input as { action: string }).action === "set_dependencies",
+    );
+    assert.deepEqual(
+      [
+        (call?.input as { taskId: string }).taskId,
+        (call?.input as { dependsOn: string[] }).dependsOn,
+      ],
+      [taskB.id, ["app#22"]],
+    );
+    b.tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("the Review card shows the report's own summary and judges the head only by comparing heads", async () => {
+  const store = new Store(":memory:");
+  try {
+    const task = createTaskDetail(store, { phase: "working", prHead: HEAD_2 });
+    const run = reviewerRun(task.id, {
+      eventId: "ev-1",
+      head: HEAD,
+      status: "changes_required",
+      summary: "Two issues block the merge.",
+      reviewText:
+        "Two issues block the merge.\n- [P1] The menu is hidden in the modal.",
+    });
+    // A stale `next` read still says the verdict is at the current head and not superseded;
+    // the report's own head differs from the PR head, so it is not the current head.
+    const next = makeNext(task, {
+      outcome: acceptedOutcome({
+        status: "changes_required",
+        head: HEAD,
+        currentHead: true,
+        superseded: false,
+      }),
+    });
+    const { tree } = await renderDialog({ task, next, runs: [run] });
+    const text = tree.text();
+    assert.ok(
+      text.includes("Two issues block the merge."),
+      "the report's own summary shows beside its findings",
+    );
+    assert.ok(tree.query("Review summary: Two issues block the merge."));
+    assert.ok(text.includes("The menu is hidden in the modal."));
+    assert.ok(
+      text.includes(`Not the current head (reviewed ${HEAD.slice(0, 7)})`),
+    );
+    assert.ok(!text.includes(`At ${HEAD.slice(0, 7)}`));
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("Activity shows no host thread identity in any default line", async () => {
+  const store = new Store(":memory:");
+  try {
+    const task = createTaskDetail(store, { phase: "working" });
+    // Synthetic identities in the shapes hosts write.
+    const events = [
+      {
+        id: 1,
+        taskId: task.id,
+        at: "2026-11-22T10:00:00.000Z",
+        kind: "agent_created",
+        detail:
+          "thread:delegated-task:ns-agent-0b2a69ba-1111-4222-8333-444455556666",
+      },
+      {
+        id: 2,
+        taskId: task.id,
+        at: "2026-11-22T10:01:00.000Z",
+        kind: "worker_resumed",
+        detail: "Resumed ns-run-7f3e2a after the restart",
+      },
+      {
+        id: 3,
+        taskId: task.id,
+        at: "2026-11-22T10:02:00.000Z",
+        kind: "agent_observed",
+        detail: "mcp:paseo:worker-alpha",
+      },
+      {
+        id: 4,
+        taskId: task.id,
+        at: "2026-11-22T10:03:00.000Z",
+        kind: "coordination_note",
+        detail: "[QA] asked t3code:thread-abc for the receipt",
+      },
+    ];
+    const { tree } = await renderDialog({ task, next: makeNext(task), events });
+    tree.press("Activity");
+    const text = tree.text();
+    for (const prefix of [
+      "thread:delegated-task",
+      "ns-agent-",
+      "ns-run-",
+      "mcp:",
+      "t3code:",
+    ])
+      assert.ok(!text.includes(prefix), `no ${prefix} in the default timeline`);
+    assert.ok(
+      text.includes("A new agent thread started for this task."),
+      "identity-only events read by kind",
+    );
+    assert.ok(
+      text.includes("Resumed after the restart"),
+      "the human words remain",
+    );
+    assert.ok(
+      text.includes("[QA] asked for the receipt"),
+      "the note keeps its words",
+    );
+    tree.press(/Show raw events \(4\)/);
+    assert.ok(
+      tree.text().includes("ns-run-7f3e2a"),
+      "the raw list keeps the originals",
     );
     tree.update(h("View", null));
   } finally {

@@ -440,12 +440,6 @@ export function TaskMenuActionPanel({
   const [holdReason, setHoldReason] = useTaskDraft(drafts, "holdReason", "");
   const [amendBrief, setAmendBrief] = useTaskDraft(drafts, "amendBrief", "");
   const [amendReason, setAmendReason] = useTaskDraft(drafts, "amendReason", "");
-  const [depsText, setDepsText] = useTaskDraft(
-    drafts,
-    "dependsOnText",
-    (task.dependsOn ?? []).join(", "),
-  );
-  const [depsReason, setDepsReason] = useTaskDraft(drafts, "depsReason", "");
   const [budgetReason, setBudgetReason] = useTaskDraft(
     drafts,
     "budgetReason",
@@ -669,55 +663,16 @@ export function TaskMenuActionPanel({
   }
 
   if (panel === "set_dependencies") {
-    const dependenciesChanged =
-      normalizeDependencies(depsText) !==
-      normalizeDependencies((task.dependsOn ?? []).join(", "));
+    // Keyed by task: switching tasks remounts the editor with that task's own list.
     return (
-      <DetailSection title="Set dependencies" c={c}>
-        <Field
-          c={c}
-          label="Prerequisites (comma-separated task IDs or references; leave empty to clear)"
-          value={depsText}
-          onChange={setDepsText}
-          placeholder="e.g. #1501, #1502"
-        />
-        <Field
-          c={c}
-          label="Reason (optional)"
-          value={depsReason}
-          onChange={setDepsReason}
-          placeholder="Why the dependency list changed"
-        />
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text="Save dependencies"
-            label="Save dependencies"
-            // An untouched form never submits: an empty list only goes out when the
-            // operator actually cleared the existing prerequisites.
-            disabled={busy || pendingOperation || !dependenciesChanged}
-            onPress={() =>
-              void act(async () => {
-                const dependsOn = depsText
-                  .split(/[,\s]+/)
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-                await setTask({
-                  taskId: task.id,
-                  version: task.version,
-                  action: "set_dependencies",
-                  dependsOn,
-                  ...(depsReason.trim() ? { reason: depsReason.trim() } : {}),
-                });
-                setDepsReason("");
-                onClose();
-              })
-            }
-          />
-          <Button small c={c} text="Close" onPress={onClose} />
-        </View>
-      </DetailSection>
+      <DependenciesPanel
+        key={task.id}
+        task={task}
+        busy={busy || pendingOperation}
+        act={act}
+        onClose={onClose}
+        c={c}
+      />
     );
   }
 
@@ -807,4 +762,74 @@ function normalizeDependencies(text: string): string {
     .map((entry) => entry.trim())
     .filter(Boolean)
     .join(",");
+}
+
+/**
+ * The dependency editor. Its text starts from this task's stored `dependsOn` and
+ * lives only while the editor is open for this task, so another task's draft can
+ * never reach it. Save stays disabled until the list differs from the stored one,
+ * so an untouched form never submits and an empty list goes out only on purpose.
+ */
+function DependenciesPanel({
+  task,
+  busy,
+  act,
+  onClose,
+  c,
+}: {
+  task: TaskDetailRead["task"];
+  busy: boolean;
+  act: BoardAct;
+  onClose: () => void;
+  c: Colors;
+}) {
+  const setTask = useRpc(api.taskControl);
+  const stored = (task.dependsOn ?? []).join(", ");
+  const [depsText, setDepsText] = useState(stored);
+  const [depsReason, setDepsReason] = useState("");
+  const changed =
+    normalizeDependencies(depsText) !== normalizeDependencies(stored);
+  return (
+    <DetailSection title="Set dependencies" c={c}>
+      <Field
+        c={c}
+        label="Prerequisites (comma-separated task IDs or references; leave empty to clear)"
+        value={depsText}
+        onChange={setDepsText}
+        placeholder="e.g. #1501, #1502"
+      />
+      <Field
+        c={c}
+        label="Reason (optional)"
+        value={depsReason}
+        onChange={setDepsReason}
+        placeholder="Why the dependency list changed"
+      />
+      <View style={row}>
+        <Button
+          small
+          c={c}
+          text="Save dependencies"
+          label="Save dependencies"
+          disabled={busy || !changed}
+          onPress={() =>
+            void act(async () => {
+              await setTask({
+                taskId: task.id,
+                version: task.version,
+                action: "set_dependencies",
+                dependsOn: depsText
+                  .split(/[,\s]+/)
+                  .map((entry) => entry.trim())
+                  .filter(Boolean),
+                ...(depsReason.trim() ? { reason: depsReason.trim() } : {}),
+              });
+              onClose();
+            })
+          }
+        />
+        <Button small c={c} text="Close" onPress={onClose} />
+      </View>
+    </DetailSection>
+  );
 }

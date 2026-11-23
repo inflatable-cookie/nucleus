@@ -1,3 +1,4 @@
+import type { TaskActivity } from "../../shared/schema/task-activity";
 import React, { useRef } from "react";
 import { Text, View } from "react-native";
 import { ActionButton, Button, row, type Colors } from "../controls";
@@ -34,6 +35,16 @@ export function detailToneColor(tone: DetailTone, c: Colors): string {
       return r.muted;
   }
 }
+
+/** Spec 068 activity states in the detail's tones (the board card uses the same reading). */
+const ACTIVITY_TONE: Record<TaskActivity["state"], DetailTone> = {
+  active: "accent",
+  nucleus: "muted",
+  recovering: "accent",
+  needs_person: "warning",
+  finished: "success",
+  unclassified: "warning",
+};
 
 /**
  * The redesigned task detail header (nucleus#1537):
@@ -91,21 +102,26 @@ export function TaskDetailHeader({
   );
   const taskElapsedMs = taskElapsed(runs);
   const isAttn = attention(task);
+  // Spec 068: the one activity reading (state and detail) when Nucleus has derived it.
+  const activity = next?.activity ?? task.activity ?? null;
   const stateTone: DetailTone = isAttn
     ? "danger"
-    : task.phase === "done"
-      ? "success"
-      : task.phase === "queued" || task.phase === "cancelled"
-        ? "muted"
-        : task.phase === "changes_requested"
-          ? "warning"
-          : "accent";
+    : activity
+      ? ACTIVITY_TONE[activity.state]
+      : task.phase === "done"
+        ? "success"
+        : task.phase === "queued" || task.phase === "cancelled"
+          ? "muted"
+          : task.phase === "changes_requested"
+            ? "warning"
+            : "accent";
   const stateColor = detailToneColor(stateTone, c);
   const stateWords = isAttn ? "Needs attention" : phaseLabel(task);
 
   // One-line detail beside the state words: PR round/head when reviewing, else happening headline
-  const oneLineDetail =
-    task.phase === "reviewing" && next
+  const oneLineDetail = activity
+    ? activity.detail
+    : task.phase === "reviewing" && next
       ? `Round ${Math.min(next.outcome.revision.runs + 1, next.outcome.revision.budget)}${task.prHead ? ` at ${task.prHead.slice(0, 7)}` : ""}`
       : happening.headline;
 

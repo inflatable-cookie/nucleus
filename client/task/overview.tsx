@@ -284,6 +284,19 @@ export function OverviewTab({
               paddingVertical: space.xs,
             }}
           >
+            {Boolean(findings.summary) && (
+              <Text
+                accessibilityLabel={`Review summary: ${findings.summary}`}
+                style={{
+                  color: r.foreground,
+                  fontSize: typeScale.body.fontSize,
+                  lineHeight: typeScale.body.lineHeight,
+                  paddingVertical: space.xs,
+                }}
+              >
+                {findings.summary}
+              </Text>
+            )}
             {findings.items.map((item, idx) => (
               <View
                 key={item.id}
@@ -292,7 +305,7 @@ export function OverviewTab({
                   alignItems: "flex-start",
                   gap: space.sm,
                   paddingVertical: space.xs,
-                  borderTopWidth: idx === 0 ? 0 : 1,
+                  borderTopWidth: idx === 0 && !findings.summary ? 0 : 1,
                   borderTopColor: r.border,
                 }}
               >
