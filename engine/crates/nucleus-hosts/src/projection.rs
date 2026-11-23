@@ -340,8 +340,10 @@ fn invocation_label(program: &str, option: Option<&str>, argument: Option<&str>)
         }
         ("cargo", Some("check"), _) | ("effigy", Some("engine:check"), _) => "Checking Rust code",
         ("cargo", Some("clippy"), _) | ("effigy", Some("engine:clippy"), _) => "Linting Rust code",
+        ("effigy", Some(selector), _) if selector == "test" || selector.starts_with("test:") => {
+            "Running tests"
+        }
         ("bun" | "npm" | "pnpm", Some("test"), _)
-        | ("effigy", Some("test" | "test:affected" | "test:timing" | "test:baseline"), _)
         | ("pytest", _, _)
         | ("python" | "python3", Some("-m"), Some("pytest")) => "Running tests",
         ("effigy", Some("qa:docs"), _) => "Checking documentation",
@@ -361,6 +363,7 @@ fn wrapped_effigy_selectors_get_friendly_labels() {
             "Running Rust tests",
         ),
         ("bash -c \"effigy check\"", "Checking the project"),
+        ("sh -lc 'effigy test:integration'", "Running tests"),
         ("effigy test:affected --run", "Running tests"),
         ("effigy qa:docs", "Checking documentation"),
         (

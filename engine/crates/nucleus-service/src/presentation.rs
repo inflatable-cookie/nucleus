@@ -215,16 +215,68 @@ fn purpose(task: &Task, role: Role, store: &Store) -> String {
 }
 
 fn brief_title(text: &str) -> Option<&str> {
-    let mut lines = text.trim_start().lines().map(str::trim);
-    let first = lines.next()?;
-    let title = if first == "---" {
-        lines.find(|line| *line == "---")?;
-        lines.find(|line| !line.is_empty())?
-    } else {
-        first
-    };
-    let heading = title.trim_start_matches('#');
-    Some(heading.strip_prefix(' ').map_or(title, str::trim))
+    let mut lines = text
+        .lines()
+        .skip_while(|line| line.trim().is_empty())
+        .peekable();
+    if lines.peek()?.trim_end() == "---" {
+        lines.next();
+        lines.find(|line| line.trim_end() == "---")?;
+    }
+    let mut prose = None;
+    let mut fence = None;
+    for line in lines {
+        let trimmed = line.trim_start_matches(' ');
+        if line.len() - trimmed.len() > 3 || trimmed.starts_with('\t') {
+            continue;
+        }
+        let line = trimmed.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        let marker = line.as_bytes()[0];
+        let width = line.bytes().take_while(|&byte| byte == marker).count();
+        if let Some((open, minimum)) = fence {
+            if marker == open && width >= minimum && width == line.len() {
+                fence = None;
+            }
+            continue;
+        }
+        if matches!(marker, b'`' | b'~') && width >= 3 {
+            fence = Some((marker, width));
+            continue;
+        }
+        if marker == b'#'
+            && width <= 6
+            && (line.len() == width || line[width..].starts_with([' ', '\t']))
+        {
+            let body = &line[width..];
+            let without_closing = body.trim_end_matches('#');
+            let heading = if without_closing.ends_with([' ', '\t']) {
+                without_closing.trim()
+            } else {
+                body.trim()
+            };
+            if !heading.is_empty() {
+                return Some(heading);
+            }
+            continue;
+        }
+        prose.get_or_insert(line);
+    }
+    prose
+}
+
+#[cfg(test)]
+#[test]
+fn brief_title_prefers_a_heading_to_prose_and_code() {
+    let text = "---\nkind: work\n---\n\nAn introduction.\n\n```sh\n# An example\n```\n\n## Fix the retry test ##";
+    assert_eq!(brief_title(text), Some("Fix the retry test"));
+    assert_eq!(
+        brief_title("Écrire le test.\n\n#not-a-heading"),
+        Some("Écrire le test.")
+    );
+    assert_eq!(brief_title("---\nkind: work"), None);
 }
 
 fn excerpt(value: &str, limit: usize) -> String {
