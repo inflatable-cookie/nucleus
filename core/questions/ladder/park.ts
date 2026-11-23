@@ -8,10 +8,19 @@ import { automaticRetryForbidden } from "../../../shared/automatic-retry";
 import { digest } from "../../store/store";
 import { openProofOnlyGo } from "../../qa/proof-only-go";
 import { proofWaitApplies } from "../../qa/proof-wait";
-import { reportsExternalCause } from "../../recovery/non-delivery";
+import {
+  consecutiveNonDeliveries,
+  reportsExternalCause,
+  unfinishedContinuationEvents,
+} from "../../recovery/non-delivery";
 import { blockingRecoveryEffects } from "../../recovery/recovery-effects";
 import { readyReviewAtHead } from "../../recovery/task-reasons";
-import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
+import {
+  collectOwnerVerbFacts,
+  latestAuthorResult,
+  ownerVerbViews,
+} from "../../verbs/owner-verbs";
+import { resultApplied } from "../../intake/applied-result";
 import {
   blockerCauseId,
   isProviderFailure,
@@ -33,6 +42,7 @@ import {
   type LadderEvent,
 } from "./records";
 import { escalationWaitDetail } from "./waits";
+import { blockerLadderStep } from "./pass";
 
 /**
  * The ladder's park: what a stuck responsible task does when a run ends blocked or
@@ -53,6 +63,222 @@ export type BlockerLadderInput = {
   runId: string | null;
   completion: Completion;
 };
+
+/** Publish the accepted receipt without doing the run's release or result application. */
+export function publishBlockerReceipt(
+  ladder: Ladder,
+  t: Task,
+  onReceipt = false,
+): void {
+  if (
+    t.removedAt ||
+    ["done", "cancelled"].includes(t.phase) ||
+    t.entrypoint === "proof" ||
+    isDispositionActive(t) ||
+    ladder.resolution.paused() ||
+    proofWaitApplies(t)
+  )
+    return;
+
+  const run = t.resolution.currentRunId
+    ? ladder.store.run(t.resolution.currentRunId)
+    : null;
+  const parked =
+    ["blocked", "error"].includes(t.phase) &&
+    !run &&
+    !t.resolution.recoveryActive;
+  const initial =
+    !run &&
+    ["working", "dispatching", "needs_attention"].includes(t.phase) &&
+    t.completion?.runId === t.runId;
+  const source =
+    run?.role === "revision" ||
+    run?.role === "reviewer" ||
+    run?.role === "closeout"
+      ? run.role
+      : initial || parked
+        ? "worker"
+        : null;
+  const completion =
+    run?.completion ??
+    (initial
+      ? t.completion
+      : parked
+        ? latestAuthorResult(t, ladder.store.runs(t.id))
+        : null);
+  if (
+    !source ||
+    !completion ||
+    isProviderFailure(completion) ||
+    run?.mergeRetirement ||
+    (!parked && resultApplied(ladder.store, t.id, completion.runId))
+  )
+    return;
+
+  if (!["blocked", "error"].includes(completion.status)) {
+    if (run)
+      ladder.resolution.escalationSettlement.retireCorrectedBlocker(t, run.id);
+    return;
+  }
+  if (completion.sourceApproved || (run && !t.responsible)) return;
+
+  const events = ladder.store.eventsAll(t.id);
+  const cause = blockerCauseId(t.id, completion);
+  const classified = events.some(
+    (event) =>
+      event.kind === "blocker_ladder_classified" &&
+      event.detail.startsWith(`${completion.eventId}:`),
+  );
+  if (restoreReceiptRung(ladder, t, completion, cause, events)) return;
+
+  // A parked legacy receipt is eligible only when the old classification
+  // has no rung. The normal settlement path handles unclassified parked work.
+  if (
+    !classified &&
+    (!onReceipt ||
+      parked ||
+      !ladder.store.receiptHash(completion.eventId, t.id, completion.runId))
+  )
+    return;
+  if (
+    t.resolution.stop?.reason === "responsible_question" ||
+    t.resolution.ownerStop ||
+    (t.resolution.attention && t.resolution.mergeIntent)
+  )
+    return;
+  if (!parked && (source === "worker" || source === "revision")) {
+    const nonDeliveries = consecutiveNonDeliveries(events);
+    if (
+      unfinishedContinuationEvents(events).some(
+        (item) => item.runId === completion.runId,
+      ) ||
+      (nonDeliveries.length <= (source === "worker" ? 1 : 2) &&
+        nonDeliveries.some((item) => item.runId === completion.runId))
+    )
+      return;
+  }
+  if (holdProofOnlyGoWait(ladder, t)) return;
+
+  const publish = () => {
+    routeBlocker(
+      ladder,
+      t,
+      { source, runId: completion.runId, completion },
+      events,
+      cause,
+    );
+    if (!classified)
+      ladder.store.event(
+        t.id,
+        "blocker_ladder_classified",
+        `${completion.eventId}: ${cause}`,
+      );
+  };
+  if (ladder.store.db.isTransaction) publish();
+  else ladder.store.transaction(publish);
+}
+
+/** A routed answer can arrive while its authenticated blocker still owns execution. */
+export async function waitForBlockerSettlement(
+  ladder: Ladder,
+  taskId: string,
+  escalationId: string,
+): Promise<void> {
+  const events = ladder.store.eventsAll(taskId);
+  const escalation = plannerEscalations(events).find(
+    (item) => item.id === escalationId,
+  );
+  if (
+    !escalation?.runId ||
+    escalation.answered ||
+    !events.some(
+      (event) =>
+        event.kind === "blocker_ladder_classified" &&
+        event.detail.endsWith(`: ${escalation.cause}`),
+    )
+  )
+    return;
+  const runId = escalation.runId;
+
+  const stillSettling = () => {
+    if (ladder.resolution.stopped()) return false;
+    const task = ladder.store.taskOrNull(taskId);
+    if (
+      !task ||
+      isDispositionActive(task) ||
+      ["done", "cancelled"].includes(task.phase)
+    )
+      return false;
+    const run = ladder.store.run(runId);
+    const completion = run?.completion ?? task.completion;
+    if (
+      completion?.runId !== runId ||
+      blockerCauseId(taskId, completion) !== escalation.cause
+    )
+      return false;
+    if (run ? task.resolution.currentRunId !== runId : task.runId !== runId)
+      return false;
+    return !resultApplied(ladder.store, taskId, runId);
+  };
+  if (!stillSettling()) return;
+  await new Promise<void>((resolve) => {
+    const settle = () => {
+      if (stillSettling()) return;
+      unsubscribe();
+      clearInterval(shutdown);
+      resolve();
+    };
+    const unsubscribe = ladder.store.onTaskChange((id) => {
+      if (id === taskId) queueMicrotask(settle);
+    });
+    const shutdown = setInterval(settle, 1000);
+    shutdown.unref();
+  });
+}
+
+/** Reuse a receipt's durable rung when observations or settlement change the task reason. */
+function restoreReceiptRung(
+  ladder: Ladder,
+  t: Task,
+  completion: Completion,
+  cause: string,
+  events: LadderEvent[],
+): boolean {
+  const escalations = plannerEscalations(events).filter(
+    (item) =>
+      item.cause === cause &&
+      (item.runId === completion.runId ||
+        events.some(
+          (event) =>
+            event.kind === "planner_escalation_attached" &&
+            event.detail ===
+              `${item.id}: attach run ${completion.runId}; ${cause}`,
+        )),
+  );
+  const consults = reviewerConsults(events).filter(
+    (item) =>
+      item.cause === cause &&
+      item.runId === completion.runId &&
+      !item.answered &&
+      !item.unknown,
+  );
+  if (!escalations.length && !consults.length) return false;
+  const stop = t.resolution.stop;
+  if (!stop || ["lifecycle", "validation"].includes(stop.reason)) {
+    const next = blockerLadderStep({
+      classified: true,
+      completion,
+      escalations,
+      consults,
+    });
+    if (next.kind === "wait")
+      ladder.resolution.waiting(t, next.detail, "escalated", {
+        fact: next.fact,
+        holderAgentId: next.holderAgentId,
+      });
+  }
+  return true;
+}
 
 /**
  * Spec 058 slice 17 (task 584): the blocker ladder for a stuck responsible task.
@@ -142,6 +368,9 @@ export async function responsibleBlockerLadder(
       }
     }
   }
+  const events = ladder.store.eventsAll(t.id);
+  const cause = blockerCauseId(t.id, completion);
+  if (restoreReceiptRung(ladder, t, completion, cause, events)) return true;
   // The lane reads honestly while the ladder holds it, and the completed run's
   // lease ends here: without clearing it, every later pass would replay this
   // completion into a second consult or escalation.
@@ -161,8 +390,17 @@ export async function responsibleBlockerLadder(
   // effigy#697: a GO-gate reviewer's blocked report is the release GO's wait, not a
   // planning question. No consult, escalation or route offer applies; only the answer.
   if (holdProofOnlyGoWait(ladder, t)) return true;
-  const events = ladder.store.eventsAll(t.id);
-  const cause = blockerCauseId(t.id, completion);
+  return routeBlocker(ladder, t, input, events, cause);
+}
+
+function routeBlocker(
+  ladder: Ladder,
+  t: Task,
+  input: BlockerLadderInput,
+  events: LadderEvent[],
+  cause: string,
+): boolean {
+  const { completion } = input;
   const open = findOpenPlannerEscalation(events as LadderEvent[], cause);
   if (open) {
     const attach = `${open.id}: attach run ${input.runId ?? "worker"}; ${cause}`;

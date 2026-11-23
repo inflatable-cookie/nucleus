@@ -1,5 +1,9 @@
 import type { Engine } from "../engine";
 import type { Run, Task } from "../../shared/contracts";
+import { coordinatorObservationDeferral } from "../../shared/task-activity";
+import { COORDINATOR_UNOBSERVED_BOUND_MS } from "../recovery/coordinator-pass";
+import { publishBlockerReceipt } from "../questions/ladder/park";
+import { openHostOutage, waitAgeMs } from "./host-outage";
 import {
   classifyGitTransientFailure,
   ForgeOutageError,
@@ -27,7 +31,10 @@ import {
   CheckoutRefusalError,
   CheckoutUnavailableError,
 } from "../workspaces/checkout-volume";
-import { routeUnavailableStop } from "../../shared/task-stop";
+import {
+  isWaitingTaskStop,
+  routeUnavailableStop,
+} from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { HostReadRefusalError } from "../host";
 import { PassProofPendingError } from "../host/errors";
@@ -50,11 +57,15 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
+  isQuantumDeadlineExceeded,
   runInTaskQuantumScope,
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
-import { custodyProofDeferral, requireCustodyEvidence } from "../machine/custody-proof";
+import {
+  custodyProofDeferral,
+  requireCustodyEvidence,
+} from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -246,6 +257,19 @@ export type TaskWakesContext = Pick<
 
 export class TaskWakes {
   constructor(readonly engine: TaskWakesContext) {}
+
+  private watchRecoveryDeadlines(): void {
+    if (this.unsubscribeRecoveryDeadlines) return;
+    this.unsubscribeRecoveryDeadlines = this.store.onTaskChange((id) => {
+      if (!id || this.recoveryDeadlineChanges.has(id)) return;
+      this.recoveryDeadlineChanges.add(id);
+      // Task, run and event writes may all be part of the same transaction.
+      queueMicrotask(() => {
+        this.recoveryDeadlineChanges.delete(id);
+        this.armRecoveryDeadline(id);
+      });
+    });
+  }
   get store() {
     return this.engine.store;
   }
@@ -264,6 +288,91 @@ export class TaskWakes {
     string,
     ReturnType<typeof setTimeout>
   >();
+  private unsubscribeRecoveryDeadlines?: () => void;
+  private readonly recoveryDeadlineChanges = new Set<string>();
+  private readonly recoveryDeadlines = new Map<
+    string,
+    {
+      key: string;
+      at: number;
+      timer: ReturnType<typeof setTimeout> | null;
+    }
+  >();
+
+  private recoveryDeadline(id: string): { key: string; at: number } | null {
+    const task = this.store.taskOrNull(id);
+    const recovery = task?.resolution.recovery;
+    if (
+      !task ||
+      !recovery ||
+      task.removedAt ||
+      !task.hostId ||
+      ["done", "cancelled"].includes(task.phase) ||
+      startsNoRuns(this.store, this.engine.stopped) ||
+      dispatchBlocked(task)
+    )
+      return null;
+    if (!recovery.runId) {
+      if (
+        recovery.status !== "pending" ||
+        recovery.action ||
+        (task.resolution.stop && isWaitingTaskStop(task.resolution.stop.reason))
+      )
+        return null;
+      const pending = this.store
+        .eventsAll(id)
+        .findLast((event) => event.kind === "recovery_pending");
+      return pending
+        ? {
+            key: `${recovery.id}:${pending.id}`,
+            at:
+              Date.parse(pending.at) + this.resolution.recovery.pendingBoundMs,
+          }
+        : null;
+    }
+    const run = this.store.run(recovery.runId);
+    if (!run || run.released || run.completion || run.role !== "recovery")
+      return null;
+    const deferred = coordinatorObservationDeferral(
+      this.store.eventsAll(id),
+      run,
+    );
+    if (!deferred || openHostOutage(this.store, task.hostId)) return null;
+    const at =
+      Date.now() +
+      COORDINATOR_UNOBSERVED_BOUND_MS -
+      waitAgeMs(this.store, task.hostId, deferred.since);
+    return { key: `${recovery.id}:${run.id}:${deferred.since}`, at };
+  }
+
+  private armRecoveryDeadline(id: string): void {
+    if (this.engine.stopped) return;
+    const due = this.recoveryDeadline(id);
+    const prior = this.recoveryDeadlines.get(id);
+    if (due && prior?.key === due.key && (prior.at === due.at || !prior.timer))
+      return;
+    if (prior?.timer) clearTimeout(prior.timer);
+    this.recoveryDeadlines.delete(id);
+    if (!due) return;
+    const timer = setTimeout(
+      () => {
+        if (this.engine.stopped) return;
+        const current = this.recoveryDeadline(id);
+        if (!current || current.key !== due.key || current.at > Date.now()) {
+          this.recoveryDeadlines.delete(id);
+          this.armRecoveryDeadline(id);
+          return;
+        }
+        this.recoveryDeadlines.set(id, { ...due, timer: null });
+        // The timer wakes the ordinary guards; reaching a due time proves no
+        // liveness or release on its own. Leave any unsuccessful read to the pass.
+        void this.engine.cleanContext(() => this.engine.wakeTask(id));
+      },
+      Math.max(0, due.at - Date.now()),
+    );
+    timer.unref();
+    this.recoveryDeadlines.set(id, { ...due, timer });
+  }
 
   /**
    * Record a step failure. A transport failure leaves the lane where it is so the next
@@ -441,9 +550,11 @@ export class TaskWakes {
   }
   resumeHostReadTransients(): void {
     if (this.engine.stopped) return;
+    this.watchRecoveryDeadlines();
     for (const task of this.store.liveTasks()) {
       if (task.removedAt || ["done", "cancelled"].includes(task.phase))
         continue;
+      this.armRecoveryDeadline(task.id);
       const episode = readHostReadTransientEpisode(this.store, task.id, "task");
       if (episode && episode.exhaustedAt == null)
         this.armHostReadTransient(task.id, episode.retryAt, "task");
@@ -696,17 +807,23 @@ export class TaskWakes {
     }
     const retryOnPass =
       operation &&
-      (error instanceof PassProofPendingError || activeOld?.retryOnPass === true);
+      (error instanceof PassProofPendingError ||
+        activeOld?.retryOnPass === true);
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
     ].filter(Boolean);
     const scopeText = scopeParts.length ? ` (${scopeParts.join(", ")})` : "";
-    const retry = retryOnPass ? "retrying after the next host pass" : "retrying automatically";
+    const retry = retryOnPass
+      ? "retrying after the next host pass"
+      : "retrying automatically";
     const visible = `${next.step ?? step} read incomplete${scopeText}; ${retry} (attempt ${next.attempts}): ${detail}`;
     if (operation) {
       this.store.transaction(() => {
-        this.store.setMeta(key, retryOnPass ? { ...next, retryOnPass: true } : next);
+        this.store.setMeta(
+          key,
+          retryOnPass ? { ...next, retryOnPass: true } : next,
+        );
         const current = this.store.operation(id);
         if (current)
           this.store.putOperation({
@@ -728,6 +845,19 @@ export class TaskWakes {
   noteStepFailure(taskId: string, error: unknown) {
     const current = this.store.task(taskId);
     const terminal = ["done", "cancelled"].includes(current.phase);
+    if (isQuantumDeadlineExceeded(error)) {
+      if (
+        !terminal &&
+        (!current.resolution.stop ||
+          current.resolution.stop.reason === "lifecycle")
+      )
+        this.resolution.waiting(
+          current,
+          `${error.message}; retrying on the next pass`,
+          "lifecycle",
+        );
+      return;
+    }
     if (!terminal && error instanceof HostReadRefusalError) {
       this.deferHostReadTransient(taskId, error, false);
       return;
@@ -1041,6 +1171,7 @@ export class TaskWakes {
     taskId: string,
     passSnapshot?: PassSnapshot,
   ): Promise<void> {
+    if (!this.engine.stopped) this.watchRecoveryDeadlines();
     return this.engine.scheduleLane(
       `task:${taskId}`,
       LANE_PRIORITY_TASK,
@@ -1059,8 +1190,12 @@ export class TaskWakes {
                   this.store.getMeta<GitTransientEpisode | null>(
                     this.engine.transientKey(taskId),
                   );
+                const task = this.store.task(taskId);
+                if (!this.engine.taskHostAvailable(task)) return;
+                // Old receipts can have a classification without any durable rung.
+                // Repair that gap through the same receipt path before phase work.
+                publishBlockerReceipt(this.resolution.ladder, task);
                 const before = this.store.task(taskId);
-                if (!this.engine.taskHostAvailable(before)) return;
                 const heldIntegration =
                   this.resolution.holdsIntegrationTurn(before);
                 const beforeRuns = this.store.runs(taskId);
@@ -1103,6 +1238,10 @@ export class TaskWakes {
                   this.engine.taskQuantum(taskId),
                 );
                 if (settlementHeld(this.store, this.engine.stopped)) return;
+                publishBlockerReceipt(
+                  this.resolution.ladder,
+                  this.store.task(taskId),
+                );
                 this.engine.completionFollowUps.finishQuantum(
                   taskId,
                   before,
@@ -1324,6 +1463,26 @@ export class TaskWakes {
   /** Drive the task named by a callback/control without waking the full fleet. */
   wakeTask(taskId: string): Promise<void> {
     if (this.engine.stopped) return Promise.resolve();
+    // The initial-worker callback records its continuation facts after the
+    // receipt write. Read both in this turn, ahead of task-lane admission.
+    queueMicrotask(() => {
+      if (this.engine.stopped) return;
+      try {
+        const accepted = this.store.taskOrNull(taskId);
+        if (accepted?.hostId && this.engine.taskHostAvailable(accepted))
+          this.engine.withHost(accepted.hostId, () =>
+            publishBlockerReceipt(this.resolution.ladder, accepted, true),
+          );
+      } catch (error) {
+        recordWakeFailure(
+          this.store,
+          this.engine.stopped,
+          taskId,
+          "Blocker receipt wake",
+          error,
+        );
+      }
+    });
     // A callback or control is authoritative evidence that this task's agents
     // changed state, so its cached observations must not answer for them.
     const admission = this.admission;
@@ -1429,6 +1588,10 @@ export class TaskWakes {
 
   /** Clears every pending timer. `Engine.stop` calls this before the projections stop. */
   stop(): void {
+    this.unsubscribeRecoveryDeadlines?.();
+    for (const { timer } of this.recoveryDeadlines.values())
+      if (timer) clearTimeout(timer);
+    this.recoveryDeadlines.clear();
     for (const timer of this.gitTransientTimers.values()) clearTimeout(timer);
     this.gitTransientTimers.clear();
     for (const timer of this.hostReadTransientTimers.values())
