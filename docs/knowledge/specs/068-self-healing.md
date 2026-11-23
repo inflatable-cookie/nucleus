@@ -253,7 +253,9 @@ thread part by proving the participant is inactive in the bound workspace, has
 no pending runtime request and reports an empty background roster. The same
 workspace and run-process proof must cover that observation. If the pass has no
 process listing, custody takes a bounded direct listing after the participant
-observation. An unreadable direct listing leaves the proof pending.
+observation. At most one direct listing runs per host pass and it can only
+clear participants whose inactivity it covers. Unreadable listings or
+incomplete working-directory coverage leave the proof pending.
 An unknown observation or a scan that predates confirmed inactivity cannot
 clear a lease.
 

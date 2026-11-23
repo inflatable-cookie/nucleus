@@ -31,6 +31,7 @@ import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type { HostParticipantObservation } from "../../../shared/host";
 import type {
   HostProcessFact,
+  HostProcessTable,
   TimelineEntry,
   TimelinePage,
   WorktreeValidationScan,
@@ -85,7 +86,7 @@ export interface HostObservation {
     extraArgv: string[][],
   ): WorktreeValidationScan;
   /** Complete host process table for proofs rooted in a Queue-launched provider. */
-  hostProcessListing?(): Promise<HostProcessFact[] | null>;
+  hostProcessListing?(): Promise<HostProcessTable | null>;
   /** Complete host-process proof for a finished-turn shell tool. Null means no run process or workspace process remains. */
   noLiveWorkspaceProcesses?(
     workspaceId: string,

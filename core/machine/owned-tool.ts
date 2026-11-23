@@ -110,6 +110,8 @@ export class OwnedTools {
   }
   private async readProcesses(
     hostId: string | null | undefined,
+    agentId: string,
+    turn: ObservedTurnState | null | undefined,
     deadlineMs: number,
   ): Promise<PassProcessRead> {
     const pass = await this.resolution.readPassProcesses?.(hostId);
@@ -117,54 +119,70 @@ export class OwnedTools {
     const adapter = this.adapter;
     const listProcesses = adapter.hostProcessListing?.bind(adapter);
     if (pass && !listProcesses) return pass;
-    const capturedAt = Date.now();
     if (listProcesses) {
-      // The outer deadline still shares the quantum budget. Only the
-      // adapter call bypasses the normal task-lane process-table restriction.
-      const list = pass
-        ? () => runOutsideTaskQuantumScope(listProcesses)
-        : listProcesses;
-      const read = await boundedRead(
-        "host process listing",
-        async () => requireCustodyEvidence(
-          await list(),
-          "the host process listing",
-        ),
-        pass
-          ? Math.min(deadlineMs, this.processDeadlineMs)
-          : this.processDeadlineMs,
-      ).catch((error) => {
-        const deferred = custodyProofDeferral({ kind: "error", error });
-        return deferred
-          ? { state: "unknown" as const, reason: deferred.reason, deferred: true }
-          : {
-              state: "unknown" as const,
-              reason: pass
-                ? `host process listing failed: ${String(error)}`
-                : "failed",
-              deferred: Boolean(pass),
-            };
-      });
-      if (read.state === "ok") {
-        return {
-          state: "listed",
-          processes: read.value,
-          capturedAt,
-          fromPassSnapshot: false,
-        };
-      }
+      const deadline = pass
+        ? Math.min(deadlineMs, this.processDeadlineMs)
+        : this.processDeadlineMs;
+      const read = () =>
+        this.readAdapterProcesses(listProcesses, deadline, Boolean(pass));
+      const snapshot = pass && this.resolution.currentPassSnapshot?.();
+      if (!snapshot) return read();
+      const result = await boundedRead(
+        "shared direct process listing",
+        () =>
+          snapshot.directProcesses(hostId ?? adapter.hostId, agentId, turn, read),
+        deadline,
+      );
+      if (result.state === "ok") return result.value;
       return {
         state: "unknown",
-        reason: read.reason,
-        capturedAt,
-        fromPassSnapshot: false,
-        deferred: "deferred" in read ? read.deferred : true,
+        reason: result.reason,
+        capturedAt: Date.now(),
+        fromPassSnapshot: true,
+        deferred: true,
       };
     }
+    const capturedAt = Date.now();
     const listing = await readHostUidProcesses({
       deadlineMs: this.processDeadlineMs,
     });
     return { ...listing, capturedAt, fromPassSnapshot: false };
+  }
+
+  private async readAdapterProcesses(
+    list: NonNullable<Resolution["adapter"]["hostProcessListing"]>,
+    deadlineMs: number,
+    missedPass: boolean,
+  ): Promise<PassProcessRead> {
+    const capturedAt = Date.now();
+    const metadata = { capturedAt, fromPassSnapshot: false };
+    try {
+      const read = await boundedRead(
+        "host process listing",
+        async () => requireCustodyEvidence(
+          await (missedPass ? runOutsideTaskQuantumScope(list) : list()),
+          "the host process listing",
+        ),
+        deadlineMs,
+      );
+      return read.state === "ok"
+        ? {
+            state: "listed",
+            processes: read.value,
+            cwdComplete: read.value.cwdComplete,
+            ...metadata,
+          }
+        : { ...read, deferred: true, ...metadata };
+    } catch (error) {
+      const deferred = custodyProofDeferral({ kind: "error", error });
+      return {
+        state: "unknown",
+        reason: deferred?.reason ??
+          (missedPass ? `host process listing failed: ${String(error)}` : "failed"),
+        deferred: missedPass || Boolean(deferred),
+        ...metadata,
+      };
+    }
   }
 
   /**
@@ -196,9 +214,11 @@ export class OwnedTools {
       kind: "processes",
       scan: read,
       participant: turn,
-      beforeScan: read.fromPassSnapshot
-        ? this.resolution.passObservedBeforeProcesses?.(hostId, agentId)
-        : null,
+      beforeScan: read.directBeforeScan !== undefined
+        ? read.directBeforeScan
+        : read.fromPassSnapshot
+          ? this.resolution.passObservedBeforeProcesses?.(hostId, agentId)
+          : null,
       entries,
     });
   }
@@ -547,7 +567,7 @@ export class OwnedTools {
       const boundRun = options.runId ? this.store.run(options.runId) : null;
       const task = this.store.task(options.taskId);
       const processHostId = boundRun?.hostId ?? task.hostId;
-      const processRead = await this.readProcesses(processHostId, remainingMs());
+      const processRead = await this.readProcesses(processHostId, agentId, turn, remainingMs());
       const deferred = this.processProofDeferral(
         processRead, processHostId, agentId, turn, read.entries,
       );
@@ -776,7 +796,7 @@ export class OwnedTools {
       bbThreads,
     });
     const processHostId = boundRun?.hostId ?? task.hostId;
-    const processRead = await this.readProcesses(processHostId, deadlineMs);
+    const processRead = await this.readProcesses(processHostId, agentId, turn, deadlineMs);
     const deferred = this.processProofDeferral(
       processRead, processHostId, agentId, turn, entries,
     );

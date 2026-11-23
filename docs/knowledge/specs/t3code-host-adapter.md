@@ -1050,9 +1050,10 @@ item. A missing item is refused by that exact field. Answered questions cover
 the retained answered window; an absent question item leaves its text empty.
 Answered reads return an explicit success or unknown result; an unreadable
 bounded snapshot never becomes an empty answer list.
-A complete-transcript read still refuses a paged or locally omitted projection;
-no consumer requests an unbounded snapshot. A native answer reads the window too
-(see Native question answers), so no answer needs the transcript.
+A complete-transcript read still refuses a paged or locally omitted projection.
+When a pass misses its custody page, one exact read requests the full projection
+to check background work across all provider sessions. A bounded response cannot
+clear that custody proof. Native answers still use the window.
 Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or

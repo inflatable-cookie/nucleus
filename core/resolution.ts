@@ -621,7 +621,7 @@ export class Resolution {
             await this.adapter.hostProcessListing(),
             "the host process listing",
           );
-          return { state: "listed", processes };
+          return { state: "listed", processes, cwdComplete: processes.cwdComplete };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
           const deferred = custodyProofDeferral({ kind: "error", error });

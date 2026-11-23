@@ -73,6 +73,11 @@ export type WorkspaceCreationState =
   | { kind: "partial"; orphan: OrphanWorkspace; evidence: string }
   | { kind: "conflicting"; evidence: string };
 
+export type HostProcessTable = HostProcessFact[] & {
+  /** False if the scan could not establish cwd coverage. */
+  cwdComplete?: boolean;
+};
+
 export interface HostProcessFact {
   pid: number;
   /** Process parent, when available from the host process table. */

@@ -201,7 +201,10 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
       const requestsBefore = server.requests.length;
       const result = await runInTaskQuantumScope(5_000, work, snapshot);
       assert.equal(
-        served(server, "orchestration.getThreadFamily", requestsBefore),
+        server.requests.slice(requestsBefore).filter((request) =>
+          request.tag === "orchestration.subscribeThread" &&
+          request.payload.acceptBoundedSnapshot === false,
+        ).length,
         1,
         "one exact read replaces the missing timeline page",
       );
@@ -261,13 +264,22 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   assert.equal((await hold()).kind, "hold");
   server.controls.shellStatuses[agentId] = "completed";
   thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
-  thread.pendingBackgroundTasks = [
-    { kind: "command", taskId: "running-command" },
+  thread.thread.activeProviderThreadId = "current-provider";
+  thread.providerThreads = [
+    syntheticProviderThread({ id: "current-provider", status: "active" }),
+    syntheticProviderThread({
+      id: "previous-provider",
+      status: "idle",
+      pendingBackgroundTasks: [{ kind: "command", taskId: "running-command" }],
+    }),
   ];
-  assert.equal((await hold()).kind, "hold");
-  thread.pendingBackgroundTasks = [];
+  const background = await hold();
+  assert.equal(background.kind, "hold");
+  assert.match(background.reason, /running-command/);
+  thread.providerThreads = [];
 
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
+  thread.updatedAt = thread.thread.updatedAt;
   const staleScan = await hold();
   assert.equal(staleScan.kind, "deferred");
   assert.match(staleScan.reason, /active after the pass process snapshot/);
