@@ -52,7 +52,7 @@ result, warnings and what the scheduler does next.
 `run.start` takes `role` (`worker`, `reviewer` or `coordinator`), optional
 `agent` (`retained` or `fresh`), `head`, `instruction` and `replacing` (which
 releases that run first) and leaves the task phase unchanged. Its warnings are
-`duplicate_thread`, `two_writers`, `head_mismatch`, `budget` and `route_policy`.
+`duplicate_thread`, `two_writers`, `head_mismatch`, `budget`, `route_policy` and `discard_reported_verdict`.
 `run.release` takes `run` and optional `archive`. `record.clear` takes `kind`
 and `id`. Use the stop's `since` for a stop or stop-backed wait, the retained
 prerequisite wait ID for a retained wait, `dispatch` or `merge` for a hold,

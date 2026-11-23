@@ -15,6 +15,7 @@ import type {
 import {
   TASK_PROGRESSING_REASON,
   isWaitingTaskStop,
+  stopNamesRun,
 } from "../../shared/task-stop";
 import type { Engine } from "../engine";
 import { signalProcessGroupByLeader } from "../machine/process-group";
@@ -340,8 +341,15 @@ export async function resolveExplicitly(
   };
 }
 
+/**
+ * The engine ports the ordinary release plan needs. Narrow deliberately, so the
+ * same plan serves an owner `run.release` and the sweep's own release of a
+ * provably dead participant (Spec 068 §3; nucleus#1552).
+ */
+export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
+
 export function releasePlan(
-  engine: Engine,
+  engine: ReleasePlanContext,
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.release" }>,
 ): Plan {
@@ -422,6 +430,11 @@ export function releasePlan(
       }
       if (resolution.restartSlotHold?.fromRunId === input.run)
         resolution.restartSlotHold = null;
+      if (stopNamesRun(task, input.run)) {
+        if (task.reason === task.resolution.stop?.detail)
+          patch.reason = TASK_PROGRESSING_REASON;
+        resolution.stop = null;
+      }
       const recovery = resolution.recovery;
       if (recovery?.runId === input.run && !completion) {
         resolution.recoveryActive = false;

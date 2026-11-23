@@ -14,6 +14,7 @@ import {
   type Profile,
 } from "../shared/contracts";
 import { Reports } from "../core/intake/report";
+import { resultApplied } from "../core/intake/applied-result";
 import {
   digest,
   operationIdForKey,
@@ -3211,3 +3212,61 @@ for (const refusal of freshReviewerRefusals) {
     }
   });
 }
+
+test("a reviewer that reported while its turn still runs is stopped once and its verdict applies (Spec 068)", async () => {
+  // bovine-accelerator#6863: the follow-up reviewer reported ready_to_merge at
+  // the exact head, its run was released from that report, but its thread kept
+  // showing a live turn. Custody refused the verdict and every owner action was
+  // refused with nothing retrying. Nucleus now stops the leftover turn once and
+  // applies the verdict through the ordinary result path.
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    await f.report(f.current(), "changes_required");
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    const reportedAt = Date.now();
+    const result = await new Reports(f.engine).report(
+      {
+        taskId: f.task.id,
+        runId: run.id,
+        eventId: randomUUID(),
+        status: "ready_to_merge",
+        head: run.head,
+        summary: "Source examined",
+        reviewText: "No findings at this head",
+      },
+      f.tokens.get(run.id)!,
+    );
+    assert.equal((result as { accepted: boolean }).accepted, true);
+    // The thread still shows the turn that delivered the report.
+    f.states.set(run.agentId!, {
+      ...f.states.get(run.agentId!)!,
+      status: "running",
+      active: true,
+      activeTurnId: "reporting-turn",
+      turnStartedAt: new Date(reportedAt - 60_000).toISOString(),
+    });
+    let stops = 0;
+    f.adapter.stopAgentTurn = async (id) => {
+      assert.equal(id, run.agentId);
+      stops++;
+      f.idle(run);
+    };
+    for (let index = 0; index < 4; index++) await f.engine.wake();
+    const events = f.store.eventsAll(f.task.id);
+    assert.equal(stops, 1, "the leftover turn is stopped exactly once");
+    assert.equal(
+      events.filter((event) => event.kind === "reported_turn_stopped").length,
+      1,
+    );
+    assert.equal(
+      resultApplied(f.store, f.task.id, run.id),
+      true,
+      `the reported verdict is applied: ${f.store.task(f.task.id).reason}`,
+    );
+    assert.equal(f.store.task(f.task.id).resolution.attention, false);
+  } finally {
+    await f.close();
+  }
+});

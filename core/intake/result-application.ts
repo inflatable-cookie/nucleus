@@ -1,3 +1,4 @@
+import { settleReportedReviewerTurn } from "./reported-turn";
 import { isDeepStrictEqual } from "node:util";
 import { resultApplied, recordResultApplied } from "./applied-result";
 import {
@@ -536,6 +537,8 @@ export type ResultApplicationContext = Pick<
   | "lease"
   | "leaseDeclineText"
   | "openPlannerEscalation"
+  | "graceMs"
+  | "onTaskHost"
   | "ordinaryRoundCustody"
   | "ownedToolHold"
   | "recordBlockedPrIdentity"
@@ -925,6 +928,13 @@ export class ResultApplication {
     }
     let c = run.completion;
     if (run.ordinaryDetached) {
+      // Spec 068 §3: a reviewer that already reported owns no live work; its
+      // leftover turn is driven to settlement instead of failing custody.
+      if (
+        (await settleReportedReviewerTurn(this.resolution, t, run)) ===
+        "waiting"
+      )
+        return;
       await this.resolution.ordinaryRoundCustody(t, run, true);
       // The reattach step returns a checkout an earlier round left detached to
       // its task branch before this pass proves the source it advances: it moves

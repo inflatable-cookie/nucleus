@@ -1,6 +1,6 @@
 # Spec 068 — Self-healing
 
-Status: approved (Tom, 2026-11-22: "Sounds good, let's do it", accepting the design and the planner's recommended answers under [Decisions](#decisions)). Batches briefed.
+Status: approved (Tom, 2026-11-22: "Sounds good, let's do it", accepting the design and the planner's recommended answers under [Decisions](#decisions)). Batches briefed. Batches 3a and 3b are built directly with subagents as batch A (Tom, 2026-11-23: "These are the sorts of issues that I need nucleus to be able to self-heal without needing you to triage like this" and "Yes, I'd like you to go ahead and fill the gaps using subagents"); see [Batch A](#batch-a-dead-agents-and-uncertain-launches).
 Builds on [Spec 066](066-one-reconciler.md) and [Spec 067](067-explicit-resolution.md).
 Audience: queue implementers, reviewers, planners and coordinators
 
@@ -254,6 +254,37 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 5a | nucleus#1553 | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. | 1 |
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
+
+### Batch A: dead agents and uncertain launches
+
+Built directly on 2026-11-23, replacing nucleus#1555 (cancelled) and nucleus#1552
+(held; its process-death release, PR #453, is ported here). It covers 3a and 3b
+and the gaps the 2026-11-22 T3 crash and reboot showed:
+
+- **Dead agents release by themselves.** Process facts or a thread gone on a
+  complete host read (the T3 live shell inside its bound plus an exact read by
+  id) release a reviewer or revision run through `releasePlan`; ordinary
+  admission relaunches it. A live recorded process vetoes thread absence. A host
+  answer that a thread is gone is no longer swallowed as a host fault.
+- **A dead retained worker means a fresh worker.** The revision launch retires a
+  retained worker whose thread is gone and continues the same revision on a fresh
+  one; a dead initial worker with a PR continues it the same way. `next` offers
+  `run.start worker fresh`.
+- **Uncertain creation settles by lookup for every role**, with a bound of three
+  automatic relaunches per role, the host-read hold no longer keeping the
+  coordinator out, and T3's lookup also finding a created thread whose reply was
+  lost.
+- **`run_stalled` admits its coordinator**, and a stop naming a released run
+  clears.
+- **A reported verdict is never dropped or stranded.** `run.start` warns
+  `discard_reported_verdict` before replacing a reviewer whose exact-head verdict
+  is unapplied, and a reviewer whose turn keeps running after its report has that
+  turn stopped once so the verdict applies.
+
+Two gaps stay open: a dead coordinator run is still settled only by the
+coordinator episode's own observation (a task whose recovery episode was live at
+the reboot keeps it), and escalation menus are not yet derived from the decision
+`next` uses; the states above simply no longer escalate.
 
 **Done when:** over one week, no task spends more than 30 minutes outside the four
 states, and no planner or operator action resolves a mechanical stall.

@@ -1058,13 +1058,32 @@ export class T3Reads {
     return found;
   }
 
-  /** A launch record names a candidate whose existence T3 still needs to confirm. */
+  /**
+   * A creation lookup (Spec 068 §3). A launch record names a candidate whose
+   * existence T3 still needs to confirm, and the launch's own command id names
+   * the child thread T3 derives from it, so a create whose reply was lost (and
+   * whose record was dropped) is still found. The live shell is brought inside
+   * its freshness bound first, so an empty answer is a complete one: a stale or
+   * unreadable shell throws instead of answering absent. Each candidate the shell
+   * does not list takes one fresh exact read by id; nothing reads the archived
+   * inventory.
+   */
   async findRunAgents(labels: Record<string, string>) {
     this.core.requireConnection();
+    await this.readShell();
+    const run = labels[WIRE_LABEL_KEYS.run];
+    const derived = run
+      ? [`ns-run-${run}`, `ns-run-${run}-socket`, `ns-agent-${run}`, `ns-agent-${run}-socket`].map(
+          (command) => `thread:delegated-task:${command}`,
+        )
+      : [];
     const found = [];
-    for (const id of this.matchingAgentIds(labels)) {
+    for (const id of new Set([...this.matchingAgentIds(labels), ...derived])) {
+      const listed = this.live.row(id);
       // A fresh exact read by id; a thread T3 does not have is not a candidate.
-      const record = await this.readThreadRecord(id, true);
+      const record = listed
+        ? { row: listed, projection: null }
+        : await this.readThreadRecord(id, true);
       if (record && !record.row.deletedAt)
         found.push({
           id,

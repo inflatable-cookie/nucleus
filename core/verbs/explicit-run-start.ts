@@ -53,6 +53,7 @@ import type {
   ExplicitWarning,
 } from "./explicit-resolution";
 import { releasePlan } from "./explicit-resolution";
+import { reportedUnappliedVerdict } from "../intake/applied-result";
 
 export type MessageTarget = {
   agentId: string | null;
@@ -653,6 +654,22 @@ export function runStartPlan(
       warn(warning.id, warning.text);
     }
   }
+
+  // A reviewer that already reported a verdict at the current head is a finished
+  // review: replacing it, or starting another reviewer over it, would drop that
+  // verdict (bovine-accelerator#6863). The lifecycle applies it on its own, so the
+  // start waits unless the caller explicitly discards it.
+  const displaced =
+    replacedRun ??
+    (runRole === "reviewer" && task.resolution.currentRunId
+      ? (store.run(task.resolution.currentRunId) ?? null)
+      : null);
+  const reported = displaced ? reportedUnappliedVerdict(store, task, displaced) : null;
+  if (reported)
+    warn(
+      "discard_reported_verdict",
+      `Reviewer run ${displaced!.id} already reported ${reported.status} at ${reported.head.slice(0, 12)}; it is applied on the next pass. Accept discard_reported_verdict to replace it anyway.`,
+    );
 
   const unreleasedRoleRuns = runs.filter(
     (r) => r.role === runRole && !r.released,

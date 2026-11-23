@@ -42,6 +42,8 @@ import {
   timestampCompletion,
 } from "./completed-run-observation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
+import { settleRunCreation } from "./creation-lookup";
+import { threadGoneError } from "./dead-participant";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -62,6 +64,7 @@ export type ObservationContext = Pick<
   | "paused"
   | "reconcileStalledTurnStop"
   | "recoverRefusedReviewer"
+  | "releaseDeadParticipant"
   | "remindStoppedRun"
   | "resolveIncident"
   | "resumeTransientProviderThread"
@@ -230,17 +233,10 @@ export class Observation {
             run.released
           )
             continue;
-          const current = this.store.task(task.id);
-          if (!current.resolution.stop) {
-            const roleLabel =
-              run.role === "recovery" ? "coordinator" : run.role;
-            this.resolution.waiting(
-              current,
-              `Uncertain ${run.role} creation ${run.id}; use run.start ${roleLabel} fresh replacing=${run.id} or run.release run=${run.id}`,
-              "lifecycle",
-              { fact: { code: "creation_lookup", subject: run.id } },
-            );
-          }
+          // Spec 068 §3: an uncertain creation settles by lookup — one match
+          // binds, a complete absent read after the grace releases it for one
+          // relaunch, anything partial keeps waiting with its reason named.
+          await settleRunCreation(this.resolution, this.store.task(task.id), run);
           continue;
         }
         // A superseded or replaced run whose thread its host reports archived or
@@ -706,6 +702,20 @@ export class Observation {
       } catch (error) {
         // A failed host read fails only this run's observation (Spec 069 §2): its
         // host's health takes the sample, and the next pass observes the run again.
+        // Spec 068 §3: the host's own answer that this run's thread is gone is
+        // not a host fault. The release proves it on a complete read first
+        // (the live list and an exact read by id); anything short of that proof
+        // falls through to the ordinary handling below.
+        const unobserved = this.store.run(run.id);
+        if (
+          threadGoneError(error) &&
+          unobserved?.agentId &&
+          (await this.resolution.releaseDeadParticipant?.(
+            this.store.task(task.id),
+            unobserved,
+          ))
+        )
+          continue;
         const failedHost = hostFaultHost(error);
         if (failedHost) {
           reportHostCallFailure(this.adapter, failedHost, error);
@@ -752,6 +762,17 @@ export class Observation {
             this.resolution.transportDeferred(this.store.task(task.id), error);
           continue;
         }
+        // A thread its host shows as removed ("Run state is unknown") is
+        // released on the same proof instead of parked.
+        if (
+          unobserved?.agentId &&
+          !threadGoneError(error) &&
+          (await this.resolution.releaseDeadParticipant?.(
+            this.store.task(task.id),
+            unobserved,
+          ))
+        )
+          continue;
         this.resolution.attention(
           task,
           error instanceof Error ? error.message : String(error),

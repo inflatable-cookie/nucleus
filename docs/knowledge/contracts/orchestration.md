@@ -713,6 +713,18 @@ operator-authorized stop of one against a fresh observation. Enforces
 `runningShellCommand`, `liveToolIssue`, `noTurnLive`. Delegates remain on
 Resolution.
 
+**DeadParticipants** (`core/recovery/dead-participant.ts`). Answers whether one
+participant's agent is provably dead (process facts, or its thread gone on a
+complete host read) and, on that proof alone, releases that run through the
+ordinary `releasePlan` (`participant_gone`) or retires a gone retained worker
+before a revision launch (`retained_worker_gone`). Enforces [Liveness and
+reminders](#liveness-and-reminders). Pure: `processDeathProof`.
+
+**CreationLookup** (`core/recovery/creation-lookup.ts`). Settles an uncertain
+run or initial-worker creation by its labelled lookup: bind, release for one
+relaunch, or a named wait. Enforces [Uncertain creation and explicit
+exits](#uncertain-creation-and-explicit-exits).
+
 **ProviderRefusals** (`core/recovery/provider-refusal.ts`). Proves a reviewer's
 provider refused its turn, then replaces the reviewer or records a finite
 blocker. Enforces [Routine faults](#routine-faults). Pures: `refusalGap`,
@@ -2027,10 +2039,53 @@ review or merge credit; live participants and unsettled effects remain fences.
   Paseo's decline carries the message itself; T3 and BB get it as a steer into
   the live turn. A host that could not answer would launch task runs in its
   provider's non-interactive approval mode instead.
-- A stalled turn stays attached to its exact identities until `restart`; Nucleus
-  rechecks identities and fences before cancelling, and starts nothing
-  automatically ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule
-  7).
+- A dead agent is released by itself ([Spec 068](../specs/068-self-healing.md)
+  §3). Two facts prove death, and nothing else does: the participant's own
+  recorded process is positively gone (its PID absent from a complete process
+  table, a different process holding that PID, a zombie, or a start before the
+  machine's last boot), or its thread is absent, archived or removed on its host
+  by the host's own exact answer (on T3 the live shell inside its freshness
+  bound, then one exact read by id; never an archived list and never the `t3`
+  CLI). A live recorded process vetoes thread absence, and an unreadable process
+  table, an unproven start identity, an unavailable host and a failed or partial
+  read prove nothing. The proof is checked when a turn passes the stall
+  threshold, when the host answers that a run's or the worker's thread is gone,
+  and before a revision launch. A dead reviewer or revision run is released
+  through the ordinary `run.release` plan with `participant_gone` naming the
+  proof, and ordinary admission relaunches it: a fresh reviewer at the same head,
+  a revision on the retained worker thread, or on a fresh worker when that
+  thread is gone. A dead initial worker returns to ordinary dispatch when it has
+  published nothing (`worker_process_gone_redispatch`); with a PR it is retired
+  and the PR continues as a revision on a fresh worker
+  (`worker_gone_fresh_continuation`). A coordinator run or recovery episode owns
+  the task's next move, so nothing is released under it. Each role gets three
+  automatic releases at one head; past that the task records an
+  `operator_needed` stop (fact `participant_gone`) naming
+  `run.start <role> fresh replacing=<run>`. Process facts ported from
+  nucleus#1552.
+- A changes_requested task whose retained worker thread is positively gone
+  retires that worker before the revision launch (`retained_worker_gone`, with
+  the proof) and continues the same revision on a fresh worker, which becomes
+  the retained worker. Past the worker replacement ceiling it records an
+  `operator_needed` stop naming `run.start worker fresh` instead. `next` offers
+  `run.start worker fresh` beside `run.start worker retained` in
+  changes_requested, and fresh only once the retained worker is gone.
+- A `run_stalled` stop names its own subject, so that participant's idleness is
+  not a precondition for the task's coordinator: the coordinator is admitted
+  while the host still displays the participant as running. Every other
+  participant keeps its own lease.
+- A stalled turn whose agent is not proven dead stays attached to its exact
+  identities until an owner acts; Nucleus rechecks identities and fences before
+  cancelling ([Spec 016](../specs/016-live-evidence-before-recovery.md) rule 7).
+- A stop that names a run (an uncertain-creation wait, a stalled-turn stop)
+  clears when that run is released, by `run.release` or by the lifecycle pass
+  (`superseded_run_stop_cleared`), so a replaced run's cause is never shown.
+- A reviewer that reported an authenticated verdict at the exact head while its
+  thread still shows a live turn owns no further work. Inside the grace after the
+  report the task waits, named; past it Nucleus stops that leftover turn once
+  (`reported_turn_stopped`) and the next pass applies the verdict through the
+  ordinary result path. A turn that still shows live after the stop records an
+  `operator_needed` stop with its explicit command.
 - A shell command running over 15 minutes shows a notice on the task, recorded
   in the event ledger so it clears across restarts.
 - A shell command with no output for the repository's `toolQuietLimitMinutes`
@@ -2123,14 +2178,24 @@ review or merge credit; live participants and unsettled effects remain fences.
 - Each fresh agent reservation records the service process and creation attempt
   in the same transaction. The native creation call records its return or throw
   against that attempt. An admission deadline leaves a pending native call owned.
-- Uncertain worker and resolution-role creations never require a proven-absence
-  gate before recovery. When an uncertain creation or other mechanical stall
-  persists past its grace window, Nucleus launches the task's coordinator (within
-  the existing loop breaker) and `next` names the explicit command that resolves
-  it (`run.start <role> fresh replacing=<run>` with `duplicate_thread` accepted,
-  or `run.release <run>`). Normal-flow `restart` and `route` stay for ordinary
-  progress and point at those explicit commands instead of waiting for proven
-  absence.
+- Every uncertain creation settles by lookup ([Spec 068](../specs/068-self-healing.md)
+  §3; `core/recovery/creation-lookup.ts`): the initial worker, revision,
+  reviewer and closeout runs here, the coordinator's in the recovery sweep
+  below. The observation pass looks the creation up by its launch labels (on T3
+  the live shell inside its freshness bound plus one exact read by id per
+  candidate, including the child thread id its command derives, so a lost reply
+  is still found). Exactly one match in the run's own workspace binds it
+  (`creation_bound_by_lookup`). No match on a complete read, once the attempt
+  has ended (its call settled or its service was replaced) and the grace has
+  passed, releases the creation (`creation_absent_released`, `absentProvenAt`)
+  and ordinary admission relaunches it once. A partial or failed read, a match
+  outside the workspace or several matches keeps a `lifecycle` wait (fact
+  `creation_lookup` or `worker_lookup`) whose reason names why and when the
+  grace ends, and the coordinator may be admitted for it as for any mechanical
+  stall; the host-read hold never keeps it out. Each role gets three automatic
+  releases; past that the task records an `operator_needed` stop naming
+  `run.start <role> fresh replacing=<run>` or `run.release run=<run>`. Nothing
+  is ever resent blind: a release follows only a complete absent read.
 - For an agentless recovery (coordinator) run, the recovery sweep still uses a
   complete exact lookup on the recorded host and workspace: a single exact match
   binds in the sweep, while a zero result after grace (when the attempt settled
@@ -2142,6 +2207,11 @@ review or merge credit; live participants and unsettled effects remain fences.
   contributes no match to that exact lookup. A thread still held by T3 counts,
   including when archived or placed outside the retained workspace. See the
   [T3 Code adapter spec](../specs/t3code-host-adapter.md#run-creation-lookup).
+- Replacing or superseding a reviewer that reported a verdict at the current
+  head which is not applied yet would discard a finished review, so
+  `run.start` warns `discard_reported_verdict` and the lifecycle applies the
+  verdict unless the caller accepts it; `next` says so on any offer to replace
+  that run.
 - An unreported retained reviewer whose callback has not arrived is resolved
   explicitly: `message.send reviewer` asks the bound thread to resend its report
   without starting a new run, `run.start reviewer retained` starts a new review
@@ -3514,7 +3584,7 @@ after the task finishes.
 | `reviewer_report_request_intent` | `requestReviewerReport` | The owner action names the unknown request and directs the owner to its retained thread. No sweep reads a delivery receipt. | No |
 | `route_stop_intent` | `RouteControls.stopRouteRun` | Replay of the same durable control observes the recorded turn before doing anything. No standalone terminal reader for the event. | Operation replay only |
 | `run_build_output_intent` | `RunCallbackIntake.completeBuildOutput`; initial worker intake records the same row with its completion | Lifecycle schedules `settleRunBuildOutputs` after run release. The handler proves ownership and idle participants or confirms authoritative absence. | Done and cancelled |
-| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` performs the exact creation lookup. Lifecycle abandons an agentless reservation at terminal phase without a new launch. Terminal creation with unknown delivery still needs proof. | Agentless reservation settlement only |
+| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` settles the creation by lookup (`creation-lookup.ts`): one match binds, a complete absent read after the grace releases it for one relaunch, a partial read waits. Lifecycle abandons an agentless reservation at terminal phase without a new launch. | Agentless reservation settlement only |
 | `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
 | `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
 | `task_branch_cleanup_intent` | `attemptBranchCleanup` | The terminal cleanup pass observes the recorded branch locally and on the forge before acting, then records the delete, a keep with its cause, or a retry with its deadline. `retry_effect branch_cleanup.<branch>` is the owner exit. | Yes, while the record waits or is unconfirmed |

@@ -1,3 +1,4 @@
+import { settleWorkerCreation } from "../recovery/creation-lookup";
 import { stopClearedPatch } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
@@ -82,8 +83,13 @@ export type TaskQuantumContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
+    | "adapter"
     | "advance"
     | "beginValidationScanPass"
+    | "graceMs"
+    | "hostAvailable"
+    | "onTaskHost"
+    | "store"
     | "clearHostReadTransient"
     | "holdProofOnlyGoWait"
     | "ownedToolHold"
@@ -488,7 +494,17 @@ export class TaskQuantum {
             ? await this.context.recoverExistingWorkspace(task)
             : false;
         const latest = this.context.store.task(task.id);
-        if (!bound && !latest.resolution.stop) {
+        // Spec 068 §3: the initial worker's uncertain creation settles by lookup
+        // (bind, release for one relaunch, or a named wait) like every role's.
+        const settled =
+          !bound && latest.agentIntent && !latest.agentId && latest.workspaceId
+            ? await settleWorkerCreation(this.context.resolution, latest)
+            : "skipped";
+        if (settled === "released")
+          this.context.cleanContext(() => {
+            void this.context.wakeRepository(latest.repoPath);
+          });
+        if (!bound && settled === "skipped" && !latest.resolution.stop) {
           this.context.resolution.waiting(
             latest,
             latest.agentIntent && !latest.agentId

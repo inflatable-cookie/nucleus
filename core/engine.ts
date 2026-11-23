@@ -28,6 +28,10 @@ import {
 } from "../shared/host-kind";
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
 import { settleResponsibleFault } from "./recovery/responsible-fault";
+import {
+  releaseDeadParticipant,
+  retireGoneRetainedWorker,
+} from "./recovery/dead-participant";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
@@ -317,8 +321,13 @@ export class Engine {
         "workerRoutingProfiles",
       ],
       [
+        "adapter",
         "advance",
         "beginValidationScanPass",
+        "graceMs",
+        "hostAvailable",
+        "onTaskHost",
+        "store",
         "holdProofOnlyGoWait",
         "ownedToolHold",
         "owns",
@@ -1075,6 +1084,13 @@ export class Engine {
     this.resolution.recovery.setResponsibleFaultHandler((task) =>
       this.settleResponsibleFault(task),
     );
+    // Spec 068 §3: proof that a participant's agent is dead releases its run
+    // through the ordinary `run.release` plan (nucleus#1552, extended to thread
+    // facts), and a gone retained worker is retired before a revision launch.
+    this.resolution.releaseDeadParticipant = (task, run) =>
+      releaseDeadParticipant(this, task, run);
+    this.resolution.retireGoneRetainedWorker = (task) =>
+      retireGoneRetainedWorker(this, task);
     this.retirement = retirement ?? new RuntimeRetirementService(store);
     this.lifecycle = new Lifecycle(
       enginePorts(
@@ -1177,6 +1193,7 @@ export class Engine {
           "withHost",
           "reconcileStalledTurnStop",
           "recovery",
+          "releaseDeadParticipant",
           "remindStoppedWorker",
           "resolveIncident",
           "responsiblePrReportRefused",
@@ -1275,9 +1292,11 @@ export class Engine {
           "clearTransportWait",
           "graceMs",
           "recordStop",
+          "releaseDeadParticipant",
           "resumeTransientProviderThread",
           "resumeTransientWorker",
           "retainedWorkerProfileIssue",
+          "retireGoneRetainedWorker",
           "suppressAutomaticRetry",
           "transportDeferred",
           "waiting",

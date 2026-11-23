@@ -106,6 +106,9 @@ const resolutionWarningId = z.enum([
   "holds",
   "unverified_merge",
   "no_verdict",
+  // A reviewer run already reported a verdict at the current head that has not
+  // been applied; replacing or superseding it would discard that verdict.
+  "discard_reported_verdict",
 ]);
 const resolutionFields = {
   taskId: resolutionId,
