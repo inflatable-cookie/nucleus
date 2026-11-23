@@ -236,22 +236,6 @@ test(
   },
 );
 
-test(
-  "an unreadable timeline does not prevent retained external merge acceptance",
-  { timeout: 90000 },
-  async () => {
-    const f = await fixture(true, true);
-    try {
-      f.adapter.agentTimelinePage = async () => { throw Error("timeline unavailable"); };
-      const result = (await f.runtime.taskControl(f.control())) as Task;
-      assert.equal(result.resolution.mergeHead, f.final);
-      assert.equal(f.counts().mergeCalls, 0);
-    } finally {
-      await f.close();
-    }
-  },
-);
-
 test("retired worker process proofs include their task-row run identity", () => {
   const task = {
     agentId: "current",
@@ -263,47 +247,6 @@ test("retired worker process proofs include their task-row run identity", () => 
     "retired-run",
   ]);
 });
-
-for (const role of ["reviewer", "executor"] as const)
-  test(
-    `a released ${role} with a live tool still fences closeout`,
-    { timeout: 90000 },
-    async () => {
-      const f = await fixture(true, true);
-      try {
-        const store = f.runtime.store,
-          before = store.task(f.taskId),
-          run = store.runs(f.taskId).find((item) => item.role === role)!;
-        assert.ok(run.released && run.agentId);
-        const adapter = f.adapter,
-          timeline = adapter.agentTimelinePage!;
-        adapter.agentTimelinePage = async (...args) =>
-          args[0] === run.agentId
-            ? toolTimelineTail(
-                [
-                  {
-                    timestamp: new Date().toISOString(),
-                    item: {
-                      type: "tool_call",
-                      callId: "live",
-                      name: "exec",
-                      status: "running",
-                    },
-                  },
-                ],
-                200,
-              )
-            : timeline.apply(adapter, args);
-        await assert.rejects(
-          f.runtime.taskControl(f.control()),
-          /live or unknown tool effects/,
-        );
-        assert.deepEqual(store.task(f.taskId), before);
-      } finally {
-        await f.close();
-      }
-    },
-  );
 
 test(
   "a transaction failure rolls back merge, acceptance and run settlement together",

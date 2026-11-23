@@ -1038,13 +1038,6 @@ const PARSED: ParsedText[] = [
     sample: "its delivery is unknown",
   },
   {
-    site: "owned-tool retry refusal",
-    re: /^Owned-tool hold .+ remains:/,
-    sample: "Owned-tool hold run-1 remains: live",
-    writers: ["Owned-tool hold ${runId} remains: ${hold}"],
-    reads: ['startsWith("owned_tool.")'],
-  },
-  {
     site: "coordinator version retry",
     re: COORDINATOR_VERSION_RETRY,
     sample:
@@ -1366,11 +1359,6 @@ const PARSED: ParsedText[] = [
     ],
     writers: ["label: 'GO — run the qualification'"],
   },
-  {
-    site: "absent catalog archive",
-    readerPattern:
-      /event\s*\.\s*detail\s*\.\s*includes\s*\(\s*(["'])observed absent from the catalog and disk without a Queue archive intent\1\s*,?\s*\)/,
-  },
   // The absent-creation budget is read from the record's own scope, so the
   // legacy sentence it still recognises and the record writer are pinned;
   // nucleus#1243 removed the reader that matched the replacement sentence.
@@ -1488,7 +1476,7 @@ reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent
 revision_requested:4:3 role_replacement:1:6 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
-unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:1:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:1:2
+unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:0:2 workspace_cleanup_wait:1:1 workspace_contents_discarded:1:2
 workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
     .split(/\s+/)
     .map((row) => {

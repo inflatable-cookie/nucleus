@@ -1149,7 +1149,7 @@ test("hung-tool path shares the host-pass process snapshot and defers on a slow 
   );
 });
 
-test("wake-triggered task quantum primes expensive reads outside the task lane and defers on missing or slow evidence", async (t) => {
+test("wake-triggered task quantum keeps expensive reads outside the lane and does not resend a merge", async (t) => {
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   t.after(() => {
     for (const timer of timers) clearTimeout(timer);
@@ -1265,7 +1265,7 @@ test("wake-triggered task quantum primes expensive reads outside the task lane a
   });
 
   // 1. Direct scheduleTaskQuantum without a host pass performs zero direct
-  // process/timeline reads and defers the merge cleanly.
+  // process/timeline reads and keeps the unresolved merge request.
   await f.engine.scheduleTaskQuantum(task.id);
   assert.ok(observeCalls >= 1, "scheduleTaskQuantum must enter executionLease");
   assert.equal(processCalls, 0);
@@ -1274,7 +1274,7 @@ test("wake-triggered task quantum primes expensive reads outside the task lane a
   assert.equal(mergeCalls, 0);
   assert.match(
     f.store.task(task.id).reason,
-    /was not captured in a host pass|inconclusive/i,
+    /Merge outcome is uncertain/,
   );
 
   // 2. Callback wake (`wakeTask`) with a slow 60 s timeline page runs its
@@ -1295,7 +1295,7 @@ test("wake-triggered task quantum primes expensive reads outside the task lane a
   assert.equal(
     mergeCalls,
     0,
-    "merge must defer when wake host-side prefetch times out",
+    "an unknown merge response remains held",
   );
 });
 

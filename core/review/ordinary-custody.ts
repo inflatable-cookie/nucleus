@@ -63,30 +63,12 @@ export class OrdinaryCustody {
         .some((other) => other.id !== run.id && !other.released)
     )
       throw Error("Another run owns the ordinary review checkout");
-    const taskParticipants = new Set(
-      [
-        t.agentId,
-        run.agentId,
-        ...t.retiredWorkers.map((worker) => worker.agentId),
-      ].filter((id): id is string => Boolean(id)),
-    );
-    const participants = new Map(
-      [...taskParticipants].map((id) => [id, t.workspaceId!]),
-    );
-    if (prior.agentId) participants.set(prior.agentId, t.workspaceId!);
-    for (const [id, workspaceId] of participants) {
-      const allowRetired = restoring || id !== run.agentId;
-      if (!allowRetired) {
-        const state = await this.context.host.observe(id);
-        if (
-          !matchingInactiveParticipant({ agentId: id, workspaceId }, state, [
-            "idle",
-          ])
-        )
-          throw Error(
-            "Ordinary review participant is not idle and permission-free in the recorded workspace",
-          );
-      }
+    if (!restoring && run.agentId) {
+      const state = await this.context.host.observe(run.agentId);
+      if (!matchingInactiveParticipant(run, state, ["idle"]))
+        throw Error(
+          "Ordinary review participant is not idle and permission-free in the recorded workspace",
+        );
     }
     const latest = this.context.store.task(t.id);
     const reviewIdentity = (task: Task) =>

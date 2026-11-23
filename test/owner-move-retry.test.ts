@@ -266,38 +266,25 @@ function reviewerRun(f: ReturnType<typeof fixture>, shape: Partial<Run> = {}) {
   return run;
 }
 
-test("next exposes an owned-tool hold as a retryable effect until fresh evidence settles it", async () => {
+test("next directs historical tool holds to explicit clearing", async () => {
   const f = fixture();
   try {
     f.store.event(
       f.taskId,
       "owned_tool_hold",
-      JSON.stringify({
-        runId: "review-run",
-        reason: "descendant pid 102 remains",
-      }),
+      JSON.stringify({ runId: "review-run", reason: "descendant pid 102 remains" }),
     );
-    const retry = f
-      .next()
-      .verbs.find((view) => view.verb === "retry_effect" && view.available);
-    assert.equal(retry?.args?.effect, "owned_tool.review-run");
-    assert.match(retry?.args?.summary as string, /descendant pid 102/);
+    const refusal = () => f.next().verbs.find(
+      (view) => view.verb === "retry_effect" &&
+        view.refusal?.includes("owned_tool.review-run"),
+    )?.refusal;
+    assert.match(refusal() ?? "", /record.clear kind=effect id=owned_tool.review-run.*descendant pid 102/);
     f.store.event(
       f.taskId,
       "owned_tool_settled",
-      JSON.stringify({ runId: "review-run", evidence: "no descendants" }),
+      JSON.stringify({ runId: "review-run", evidence: "owner accepted warning" }),
     );
-    assert.equal(
-      f
-        .next()
-        .verbs.some(
-          (view) =>
-            view.verb === "retry_effect" &&
-            view.available &&
-            view.args?.effect === "owned_tool.review-run",
-        ),
-      false,
-    );
+    assert.equal(refusal(), undefined);
   } finally {
     await f.close();
   }

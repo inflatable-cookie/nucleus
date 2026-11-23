@@ -9,9 +9,8 @@ import {
 import type { WorkspaceAllocationBridge } from "./workspace-allocation-bridge";
 import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
-import type { AgentObservation, OriginAgent } from "../host/adapter";
+import type { AgentObservation } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
-import type { TimelinePage } from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
 import {
   verifyRecordedOrigin,
@@ -769,9 +768,6 @@ export interface OwnedWorkspaceArchiveHost extends WorkspaceContinuationHost {
     }): Promise<ArchiveThreadPage>;
   };
   observe(id: string): Promise<AgentObservation | null>;
-  originAgent?(id: string): Promise<OriginAgent | null>;
-  deleteAgent?(id: string): Promise<void>;
-  agentTimelinePage?(id: string, limit?: number): Promise<TimelinePage | null>;
   classifyOrphan: typeof classifyOrphanWorktree;
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;
   dataDir(): string;

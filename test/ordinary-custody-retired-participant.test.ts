@@ -321,7 +321,7 @@ function seedOrdinaryRoundState(
   };
 }
 
-test("retired and gone T3 participants reconcile through positive custody and scratch process proof without snapshotting retired threads", async (t) => {
+test("ordinary review leaves historical tool evidence visible without polling retired threads", async (t) => {
   const f = await setupT3Engine(t);
   const worker = await f.host.createAgent(f.makeSpec("w-cur", "worker", "worker-current-ticket"));
   const retired = await f.host.createAgent(f.makeSpec("w-ret", "worker", "worker-retired-ticket"));
@@ -357,13 +357,14 @@ test("retired and gone T3 participants reconcile through positive custody and sc
   );
   assert.deepEqual(
     ownerPendingEffects(collectOwnerVerbFacts(f.store, f.store.task(seeded.task.id)))
-      .filter((effect) => effect.kind === "owned_tool"),
-    [],
-    "positive retired custody + process proof settles recorded owned_tool_hold",
+      .filter((effect) => effect.kind === "owned_tool")
+      .map((effect) => effect.effect),
+    [`owned_tool.${seeded.retiredTicket}`],
+    "ordinary progress preserves the historical warning",
   );
 
   // Now purge the retired worker from T3's complete inventory (`originAgent === null`):
-  // positive gone proof + scratch process proof still succeeds without snapshotting.
+  // a retired worker with no live binding still does not need a read.
   f.server.threads.delete(retired.id);
   await f.engine.resolution.ordinaryRoundCustody(f.store.task(seeded.task.id), seeded.nextRun);
 });

@@ -85,9 +85,7 @@ export function classifyVerbRun(input: {
 
 /**
  * Displace or refuse the runs an owner verb would disturb. Same-name `Engine`
- * methods delegate here. `ownedToolHold`, `supersededIdleFence` and
- * `requireOwnerControlCurrent` go back through the engine so tests that replace
- * them on the instance still see these calls.
+ * methods delegate here.
  */
 export class VerbFences {
   constructor(readonly engine: Engine) {}

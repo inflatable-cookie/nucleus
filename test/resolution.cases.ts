@@ -10727,42 +10727,6 @@ test("a recorded archive intent reconciles a gone workspace without another arch
     await f.close();
   }
 });
-test("a recorded archive intent without a workspace observer waits instead of archiving blindly", async () => {
-  const { Lifecycle } = await import("../core/closeout/workspace-lifecycle");
-  const f = fixture();
-  try {
-    let archives = 0;
-    assert.equal(f.adapter.taskWorkspaceArchived, undefined);
-    Object.assign(f.adapter, {
-      archiveTaskWorkspace: async () => {
-        archives++;
-        return true;
-      },
-    });
-    const lifecycle = new Lifecycle(f.engine);
-    f.store.update(f.task.id, {
-      phase: "done",
-      resolution: {
-        ...f.current().resolution,
-        mergedCommit: merged,
-        syncedCommit: merged,
-        archiveIntentWorkspaceId: "workspace",
-        cleanupReason:
-          "Workspace archive outcome is uncertain; inspect before retrying",
-      },
-    });
-    await lifecycle.pass();
-    assert.equal(archives, 0);
-    assert.match(
-      f.current().resolution.cleanupReason,
-      /Waiting to reconcile the uncertain workspace archive for workspace: workspace observation is unavailable/,
-    );
-    assert.equal(f.current().resolution.archiveIntentWorkspaceId, "workspace");
-    assert.deepEqual(f.current().resolution.archivedWorkspaceIds, []);
-  } finally {
-    await f.close();
-  }
-});
 test("a recorded archive intent reconciles a gone workspace even when the retention hook fails on the removed worktree", async () => {
   const { Lifecycle } = await import("../core/closeout/workspace-lifecycle");
   const f = fixture();
@@ -10841,7 +10805,7 @@ test("a failed archive observation waits with a transport reason and retries lat
     assert.equal(archives, 0);
     assert.match(
       f.current().resolution.cleanupReason,
-      /Waiting to reconcile the uncertain workspace archive for workspace: Paseo transport dropped/,
+      /Workspace archive for workspace failed: Paseo transport dropped/,
     );
     assert.equal(f.current().resolution.archiveIntentWorkspaceId, "workspace");
     assert.deepEqual(f.current().resolution.archivedWorkspaceIds, []);

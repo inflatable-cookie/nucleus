@@ -730,6 +730,17 @@ export class Lifecycle {
     const reviewRun = runs.find(
       (run) => run.reviewSourceView?.workspaceId === id,
     );
+    const sharedWorkspace = () =>
+      this.store.workspaceUsedByOtherTaskRun(task.id, id) ||
+      this.store.tasks().some((other) =>
+        other.id !== task.id &&
+        ([
+          other.workspaceId,
+          other.resolution.coordinatorWorkspaceId,
+          other.resolution.closeoutWorkspaceId,
+        ].includes(id) || other.directory === directory),
+      );
+    if (sharedWorkspace()) throw Error("Workspace is referenced by another task");
     const allowed = () => {
       const current = this.store.task(task.id);
       return (
@@ -746,20 +757,8 @@ export class Lifecycle {
             JSON.stringify(reviewRun.reviewSourceView)) &&
         !(id === current.workspaceId && externalWorkspace(current)) &&
         !this.store.runs(task.id).some((run) => !run.released) &&
-        !this.store.workspaceUsedByOtherTaskRun(task.id, id) &&
         !this.store.hostRunHoldingWorkspace(directory) &&
-        !this.store
-          .tasks()
-          .some(
-            (other) =>
-              other.id !== task.id &&
-              ([
-                other.workspaceId,
-                other.resolution.coordinatorWorkspaceId,
-                other.resolution.closeoutWorkspaceId,
-              ].includes(id) ||
-                other.directory === directory),
-          )
+        !sharedWorkspace()
       );
     };
     if (!allowed())

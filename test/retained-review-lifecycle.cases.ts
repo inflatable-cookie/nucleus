@@ -526,7 +526,7 @@ const restartReviewer = (
 
 // ── move to=review preserves the reader ─────────────────────────────────────
 
-test("an unproven reader binding is never replaced without proof", async () => {
+test("an ordinary retained review move refuses contradictory reader bindings", async () => {
   for (const binding of ["agent", "workspace"] as const)
     for (const busy of [false, true]) {
       const f = fixture();
@@ -577,18 +577,6 @@ test("an unproven reader binding is never replaced without proof", async () => {
           [],
           "ordinary move does not cancel an unproven reader",
         );
-
-        await assert.rejects(
-          f.control({
-            action: "move",
-            to: "review",
-            fresh: true,
-            reason: "Replace the stale review",
-          }),
-          /retained reviewer/,
-        );
-        assert.equal(f.run().released, false);
-        assert.equal(f.stops.length, 0);
       } finally {
         await f.close();
       }
@@ -1006,6 +994,16 @@ weighted(2)(
       assert.equal(parked.resolution.reviewerAgentId, null);
       assert.equal(parked.resolution.reviewerProfile, null);
 
+      let creationError: unknown;
+      const create = f.adapter.createRun!;
+      f.adapter.createRun = async (...args) => {
+        try {
+          return await create(...args);
+        } catch (error) {
+          creationError = error;
+          throw error;
+        }
+      };
       await f.control({
         action: "route",
         role: "reviewer",
@@ -1025,7 +1023,7 @@ weighted(2)(
       assert.equal(
         f.current().resolution.reviewerAgentId,
         `agent-${run.id}`,
-        "the newly created reviewer is recorded",
+        `the newly created reviewer is recorded: ${f.current().reason}; creation: ${String(creationError)}`,
       );
       assert.equal(f.current().resolution.reviewerProfile?.id, reviewer.id);
       assert.equal(f.current().resolution.currentRunId, run.id);
@@ -2090,7 +2088,7 @@ test("the stop-backed resume still needs a matching idle reader, the same identi
   }
 });
 
-test("a crash after the stop-backed reservation reconciles without a resend", async () => {
+test("a crash after the stop-backed reservation leaves the delivery for explicit clearing", async () => {
   const f = fixture();
   try {
     await f.checkpoint("Reading the diff");
@@ -2136,7 +2134,7 @@ test("a crash after the stop-backed reservation reconciles without a resend", as
     const before = f.reviewerDeliveries.length;
     await assert.rejects(
       restartReviewer(f, "Resume the stopped delivered turn"),
-      /remains uncertain|inspect/i,
+      /record.clear kind=effect id=review-delivery/,
     );
     assert.equal(
       f.reviewerDeliveries.length,
@@ -2145,8 +2143,8 @@ test("a crash after the stop-backed reservation reconciles without a resend", as
     );
     assert.equal(
       f.run().reviewDeliveries?.at(-1)?.status,
-      "uncertain",
-      "the durable hold is retained for inspection",
+      "reserved",
+      "the durable occurrence remains available to clear",
     );
     assert.equal(f.run().reviewDeliveries?.at(-1)?.deliveryId, deliveryId);
   } finally {
@@ -2583,7 +2581,7 @@ test("a later checkpoint or verdict supersedes the stopped intent", async () => 
   }
 });
 
-test("a parent-format reserved continuation is inspected and reconciled, never reauthorized", async () => {
+test("a parent-format reserved continuation stays recorded even when the timeline gains the delivery", async () => {
   const f = fixture();
   try {
     await f.checkpoint("Reading the diff");
@@ -2616,9 +2614,7 @@ test("a parent-format reserved continuation is inspected and reconciled, never r
         }),
       ],
     });
-    // Task 620 (PR 868) reads delivery evidence from the complete projected
-    // timeline page, so the parent-format turn rides the page (setTimeline),
-    // not the legacy tail the older evidence path read.
+    // A later projected message is advisory evidence for the original request.
     f.setTimeline([
       {
         timestamp: new Date().toISOString(),
@@ -2629,15 +2625,18 @@ test("a parent-format reserved continuation is inspected and reconciled, never r
         },
       },
     ]);
-    const resumed = await restartReviewer(f, reason);
+    await assert.rejects(
+      restartReviewer(f, reason),
+      /record.clear kind=effect id=review-delivery/,
+    );
     assert.equal(
       f.reviewerDeliveries.length,
       0,
-      "the recorded turn was reconciled, not sent again",
+      "the recorded turn sends no duplicate",
     );
-    assert.equal(f.run().reviewDeliveries?.at(-1)?.status, "delivered");
+    assert.equal(f.run().reviewDeliveries?.at(-1)?.status, "reserved");
     assert.equal(f.run().reviewDeliveries?.at(-1)?.deliveryId, deliveryId);
-    assert.equal(resumed.resolution.currentRunId, f.runId);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
   } finally {
     await f.close();
   }

@@ -260,7 +260,8 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
       effects.push({
         effect: `owned_tool.${runId}`,
         kind: "owned_tool",
-        summary: `Run ${runId} is held by an owned tool: ${state.reason}`,
+        summary: `Run ${runId} recorded a tool hold: ${state.reason}`,
+        refusal: `Use record.clear kind=effect id=owned_tool.${runId} and accept owned_tool (${state.reason})`,
       });
   // A disposition frozen at its workspace proof or archive is the owner's to
   // re-run; nothing else about the fence changes.

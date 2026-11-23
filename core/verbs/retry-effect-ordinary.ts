@@ -384,9 +384,6 @@ export class OrdinaryEffectRetries {
           version: expected,
         });
       case "owned_tool":
-        throw Error(
-          "Owned-tool holds are re-proved before ordinary side-effect recovery",
-        );
       case "recovery_effect":
         if (found.effect === "project-validation.project-validation") {
           const resumed = this.resolution.retryProjectValidationEffect(current);

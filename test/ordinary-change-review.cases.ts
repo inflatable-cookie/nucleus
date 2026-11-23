@@ -2417,16 +2417,17 @@ test("a retained new-head round checkpoints and automatically continues the same
   }
 });
 
-test("unknown tools refuse the ordinary new-head send while preserving the earlier verdict and checkout", async () => {
+test("an unreadable tool timeline does not block the exact-head new review round", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
     const first = f.current();
     await f.report(first, "changes_required");
     f.faults.unknownTools = true;
-    await authorRevision(f, 1);
-    assert.equal(f.sends.length, 0);
-    assert.match(f.store.task(f.task.id).reason, /unknown tools|inconclusive/);
+    const next = await authorRevision(f, 1);
+    assert.equal(f.sends.length, 1);
+    assert.equal(next.head, f.workspaceHead());
+    assert.notEqual(next.head, first.head);
     assert.equal(f.store.run(first.id)!.completion!.status, "changes_required");
     assert.equal(
       runGit(f.workspace, "branch", "--show-current"),
