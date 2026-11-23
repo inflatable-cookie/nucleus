@@ -608,14 +608,17 @@ export class ExternalMerge {
       t.reviewEntry && !t.agentIntent && !t.agentId,
     );
     const retained = Boolean(
-      !unrunReviewEntry &&
-        t.prHead &&
+      t.prHead &&
         t.resolution.mergeHead &&
         t.prHead !== t.resolution.mergeHead &&
-        t.resolution.ownerAcceptances.some(
-          (item) =>
-            item.kind === "operator_source" &&
-            item.head === t.resolution.mergeHead,
+        (
+          (!unrunReviewEntry && t.resolution.ownerAcceptances.some(
+            (item) =>
+              item.kind === "operator_source" &&
+              item.head === t.resolution.mergeHead,
+          )) ||
+          (externalMergeSourceAcceptance(t) && t.directory &&
+            readGitCheckout(t.directory).head === t.prHead)
         ),
     );
     const witness = retained

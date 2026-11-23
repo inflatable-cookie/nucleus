@@ -1,10 +1,9 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
 import { releaseWarnings } from "./explicit-resolution";
-import { unreviewedCloseoutWarning } from "./explicit-integration";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView, unreviewedMergeObservation } from "../../shared/task-view";
+import { externalMergeSourceAcceptance, mergeReviewEvidenceAt, taskDetailView } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -815,11 +814,9 @@ function explicitCommandsFor(
   }
 
   const { mergedCommit, mergeHead, externalMerge } = task.resolution;
-  const observed = externalMerge && mergedCommit && mergeHead
-    ? { head: mergeHead, commit: mergedCommit }
-    : unreviewedMergeObservation(task);
-  const unreviewed = observed
-    ? unreviewedCloseoutWarning(facts.store, task, observed)
+  const proof = facts.externalCloseout;
+  const unreviewed = proof?.taskId === task.id && proof.version === task.version
+    ? proof.warning
     : null;
   if (unreviewed) {
     push({
@@ -829,7 +826,10 @@ function explicitCommandsFor(
       note: `${unreviewed.text} Only a responsible planner or the operator board may accept this warning.`,
       warnings: ["unreviewed_merge"],
     });
-  } else if (mergedCommit) {
+  } else if (mergedCommit && (
+    !externalMerge || externalMergeSourceAcceptance(task) ||
+    (mergeHead && mergeReviewEvidenceAt(task, mergeHead))
+  )) {
     push({
       action: "closeout.now",
       args: { action: "closeout.now", ...base },

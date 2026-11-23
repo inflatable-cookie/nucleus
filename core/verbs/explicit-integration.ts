@@ -14,6 +14,7 @@ import type {
   ResolutionWarningId,
 } from "../../shared/schema/task-control";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
+import { unreviewedMergeObservation } from "../../shared/task-view";
 import type { Engine } from "../engine";
 import { taskPrNumber } from "../forge/index";
 import { ExternalMergeProofRefusal } from "../forge/merge";
@@ -22,6 +23,7 @@ import { unreviewedExternalMergeCause } from "../merge/external-merge-check";
 import { nextMergeRequestAt, sendGuardedMerge } from "../merge/merge-phase";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { findOpenPlannerEscalation } from "../questions/ladder/records";
+import { boundedRead } from "../scheduling/pass-snapshot";
 import { now, type Store } from "../store/store";
 import { acceptanceEvidenceAt } from "./owner-move";
 import {
@@ -65,7 +67,7 @@ function hasExplicitMergeEvidence(task: Task, head: string): boolean {
 }
 
 /** A source eligible for an external-merge disposition, before the fresh forge read. */
-function externalCloseoutHead(task: Task): string | null {
+function externalCloseoutHead(store: Store, task: Task): string | null {
   const r = task.resolution;
   if (
     ["queued", "dispatching", "done", "cancelled"].includes(task.phase) ||
@@ -75,17 +77,22 @@ function externalCloseoutHead(task: Task): string | null {
     r.mergeResponseOutcome === "uncertain" ||
     r.mergeRetryOutcome === "uncertain"
   ) return null;
+  // Intake binds an existing workspace before Nucleus dispatches a reviewer.
+  if (task.reviewEntry && !task.agentId && !store.runs(task.id).some((run) =>
+    run.agentId && (run.role === "reviewer" || run.role === "revision" || run.role === "executor")
+  ))
+    return null;
   if (r.mergedCommit) return r.externalMerge ? r.mergeHead : null;
   return task.prHead;
 }
 
-export function unreviewedCloseoutWarning(
+function unreviewedCloseoutWarning(
   store: Store,
   task: Task,
   merge: { head: string; commit: string },
 ) {
   if (
-    !externalCloseoutHead(task) ||
+    !externalCloseoutHead(store, task) ||
     mergeReviewEvidenceAt(task, merge.head) ||
     externalMergeSourceAcceptance(task)
   ) return null;
@@ -232,8 +239,11 @@ export async function preflightExplicitIntegration(
     return result;
   }
 
-  // closeout.now
-  const externalHead = externalCloseoutHead(task);
+  return preflightCloseout(engine, task);
+}
+
+async function preflightCloseout(engine: Engine, task: Task): Promise<ExplicitIntegrationPreflight> {
+  const externalHead = externalCloseoutHead(engine.store, task);
   if (
     externalHead &&
     (!task.resolution.mergedCommit || !mergeReviewEvidenceAt(task, externalHead)) &&
@@ -313,6 +323,24 @@ export async function preflightExplicitIntegration(
     observedMerge: null,
     mergeReadError: "GitHub merge observation is unavailable",
   };
+}
+
+export async function previewUnreviewedCloseout(engine: Engine, task: Task) {
+  const { externalMerge, mergedCommit } = task.resolution;
+  if (
+    task.removedAt ||
+    !externalCloseoutHead(engine.store, task) ||
+    externalMergeSourceAcceptance(task) ||
+    (!(externalMerge && mergedCommit) && !unreviewedMergeObservation(task))
+  ) return undefined;
+  const read = await boundedRead(
+    "external closeout preflight",
+    () => engine.onTaskHost(task, () => preflightCloseout(engine, task)),
+    engine.resolution.quantumReadTimeoutMs,
+  );
+  if (read.state === "unknown" || !read.value.externalMerge) return undefined;
+  const warning = unreviewedCloseoutWarning(engine.store, task, read.value.externalMerge);
+  return warning ? { taskId: task.id, version: task.version, warning } : undefined;
 }
 
 export function turnReleasePlan(

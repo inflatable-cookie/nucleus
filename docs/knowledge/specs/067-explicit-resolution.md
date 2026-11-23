@@ -157,12 +157,18 @@ Nucleus fetches the exact PR source ref and checks that it matches the merged
 head reported by GitHub before checking ancestry. Nucleus records that head
 in an `external_merge_source` disposition with the actor, authority, reason and
 missing evidence. The disposition applies only to closeout of that merge and
-carries no authority to merge code. When the sweep parks a verified descendant
-merge, `next` offers `closeout.now` with the warning while the recorded source
-still matches the verified ancestor. The warning also names any outstanding
-`changes_required` verdict at the merged head. The
-verdict remains recorded, and the closeout prompt names the recorded actor and
-command.
+carries no authority to merge code. A review-entry task that parked before
+dispatch still requires the qualified operator or authorized-relay route.
+
+For a parked merge, `next` runs the same preflight as `closeout.now` before
+offering the warning. Both require the merge commit to remain on the base
+branch. The warning names any outstanding `changes_required` verdict at the
+merged head. The verdict remains recorded, and the closeout prompt names the
+recorded actor and command.
+
+If synchronization stops after accepting a descendant merge, the sweep and
+`move to=closeout` re-observe the recorded merge and can verify it from the
+earlier clean task source.
 
 ## Normal flow keeps working, and stops being a lever
 

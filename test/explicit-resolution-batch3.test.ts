@@ -913,7 +913,7 @@ test("a planner explicitly accepts a verified external merge without a review an
     HEAD,
     MERGED_COMMIT,
   );
-  const command = runtime.taskNext({ taskId: task.id }).explicitCommands?.find(
+  const command = (await runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
     (entry) => entry.action === "closeout.now",
   );
   assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
@@ -1025,7 +1025,7 @@ async function externalMergeFixture(t: TestContext, mode: "exact" | "advanced" |
   const remote = join(root, "remote.git");
   const { runtime, store, insertTask, attachReadyReview, callExplicit } = await fixture(
     t,
-    { merged: observeForgeMerge, ...(mode === "squash" ? { externalMerge: observeExternalMerge } : {}) },
+    { merged: observeForgeMerge, externalMerge: observeExternalMerge },
     { repoPath },
   );
   const priorPath = process.env.PATH;
@@ -1100,8 +1100,9 @@ process.exit(require("node:child_process").spawnSync("git-upload-pack", [${JSON.
   await git(repoPath, "remote", "set-url", "origin", "git@github.com:example/repo.git");
   const publishMerge = () => git(integration, "push", remote, task.baseBranch);
   const setSourceRef = (sha: string) => git(integration, "push", remote, `+${sha}:${sourceRef}`);
+  const restoreRemoteBase = () => git(integration, "push", remote, `+${base}:refs/heads/${task.baseBranch}`);
   store.update(task.id, { phase: "blocked", prHead: recordedHead, directory, workspaceId: "ws-1" });
-  return { runtime, store, task, attachReadyReview, callExplicit, pr, setPr, base, recordedHead, head, commit, publishMerge, setSourceRef, directory };
+  return { runtime, store, task, attachReadyReview, callExplicit, pr, setPr, base, recordedHead, head, commit, publishMerge, setSourceRef, restoreRemoteBase, directory };
 }
 
 test("the planner can close out a parked external merge with outstanding published changes", async (t) => {
@@ -1117,7 +1118,7 @@ test("the planner can close out a parked external merge with outstanding publish
     commit,
   );
   await new Promise((resolve) => setImmediate(resolve));
-  const command = runtime.taskNext({ taskId: task.id }).explicitCommands?.find(
+  const command = (await runtime.taskNext({ taskId: task.id })).explicitCommands?.find(
     (entry) => entry.action === "closeout.now",
   );
   assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
@@ -1206,13 +1207,107 @@ test("next offers closeout.now after the sweep observes a verified descendant me
   assert.equal(parked.prHead, recordedHead);
   assert.equal(parked.resolution.mergedCommit, null);
   assert.deepEqual(parked.resolution.unreviewedMerge, { prNumber: 49, head, commit, descendsFrom: recordedHead });
-  const next = runtime.taskNext({ taskId: task.id });
+  const next = await runtime.taskNext({ taskId: task.id });
   const command = next.explicitCommands?.find((entry) => entry.action === "closeout.now");
   assert.deepEqual(command?.warnings, ["unreviewed_merge"]);
   assert.ok(command?.note?.includes(head));
   assert.equal(next.verbs.some((entry) => entry.available && entry.action === "move" && entry.args?.to === "review"), false);
   const applied = await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] });
   assert.equal(applied.resolution.mergeHead, head);
+  assert.equal(await git(directory, "rev-parse", "HEAD"), recordedHead);
+});
+
+test("a pre-dispatch review-entry park cannot acquire source acceptance through closeout.now", async (t) => {
+  const { runtime, store, task, callExplicit, directory, base, head, commit, publishMerge } = await externalMergeFixture(t);
+  await publishMerge();
+  const current = store.task(task.id);
+  const parked = store.update(task.id, {
+    entrypoint: "review",
+    phase: "needs_attention",
+    reviewEntry: {
+      operationId: "a".repeat(64), prNumber: 49, repository: "example/repo",
+      branch: current.branch, workspaceId: "ws-1", directory,
+      verifiedHead: head, verifiedBase: base, dispatchBase: null, planningCommit: base,
+      authority: PLANNER, checkedAt: new Date().toISOString(), preserveWorkspace: true,
+      workspaceMode: "isolated", briefDigest: null, briefVersion: null,
+      authorDeclaration: {
+        models: ["fixture/author"], githubAuthor: "fixture-author", authoringSystem: "fixture",
+        attestedBy: PLANNER, provenance: "Review entry fixture",
+      },
+    },
+    resolution: {
+      ...current.resolution, attention: true,
+      unreviewedMerge: { prNumber: 49, head, commit },
+    },
+  });
+  assert.deepEqual(store.runs(task.id), []);
+  assert.equal(parked.agentId, null);
+  const accept = { action: "closeout.now", accept: ["unreviewed_merge"] };
+  for (const caller of [PLANNER, OPERATOR_BOARD_CALLER])
+    await assert.rejects(callExplicit(task.id, accept, caller), /no applied review verdict/);
+  const next = await runtime.taskNext({ taskId: task.id });
+  assert.equal(next.explicitCommands?.some((command) => command.action === "closeout.now") ?? false, false);
+  assert.deepEqual(store.task(task.id), parked);
+});
+
+test("a same-head merge removed from the base cannot park, appear in next, or be accepted", async (t) => {
+  const { runtime, store, task, callExplicit, publishMerge, restoreRemoteBase } = await externalMergeFixture(t);
+  await publishMerge();
+  const resolution = runtime.engine.resolution;
+  resolution.executionLease = async () => true;
+  resolution.externalMergeProbeMs = 0;
+  const current = store.update(task.id, { phase: "reviewing", agentId: "worker" });
+  assert.equal(await resolution.recoverExternalMerge(current), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const next = () => runtime.taskNext({ taskId: task.id });
+  const hasOffer = (plan: Awaited<ReturnType<typeof next>>) =>
+    plan.explicitCommands?.some((command) => command.action === "closeout.now") ?? false;
+  assert.equal(hasOffer(await next()), true);
+
+  await restoreRemoteBase();
+  assert.equal(hasOffer(await next()), false);
+  await assert.rejects(
+    callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] }),
+    /merge commit is not on the task base/,
+  );
+  assert.equal(store.task(task.id).resolution.ownerAcceptances.length, 0);
+  const parked = store.task(task.id);
+  const retry = store.update(task.id, {
+    phase: "reviewing",
+    resolution: { ...parked.resolution, stop: null, unreviewedMerge: null },
+  });
+  await resolution.recoverExternalMerge(retry);
+  assert.equal(store.task(task.id).resolution.unreviewedMerge, null);
+  assert.match(store.task(task.id).reason, /merge commit is not on the task base/);
+});
+
+test("a planner-accepted descendant resumes through the sweep and ordinary move after a sync failure", async (t) => {
+  const { runtime, store, task, callExplicit, directory, recordedHead, head, commit, publishMerge } = await externalMergeFixture(t, "squash");
+  await publishMerge();
+  const { engine } = runtime;
+  const { resolution } = engine;
+  engine.scheduleLifecycleFollowUp = () => false;
+  resolution.executionLease = async () => true;
+  Object.assign(resolution.adapter, { syncMain: async () => { throw Error("Fixture sync failed"); } });
+  store.update(task.id, { agentId: "worker" });
+  const accepted = await callExplicit(task.id, { action: "closeout.now", accept: ["unreviewed_merge"] });
+  assert.equal(accepted.resolution.ownerAcceptances[0]?.actor.role, "planner");
+  await assert.rejects(resolution.closeout.advanceSyncing(store.task(task.id)), /Fixture sync failed/);
+  assert.ok(store.eventsAll(task.id).some((event) => event.kind === "main_sync_failed"));
+
+  const parked = store.update(task.id, { phase: "blocked" });
+  assert.equal(await resolution.recoverExternalMerge(parked), true);
+  assert.equal(store.task(task.id).phase, "syncing");
+
+  const retry = store.update(task.id, { phase: "blocked" });
+  const moved = await engine.performTaskControl(taskControlInputSchema.parse({
+    action: "move", to: "closeout", taskId: task.id, version: retry.version,
+    caller: PLANNER, reason: "Retry synchronization",
+  }));
+  assert.equal(moved.phase, "syncing");
+  assert.equal(moved.resolution.mergeHead, head);
+  assert.equal(moved.resolution.mergedCommit, commit);
+  assert.equal(moved.resolution.ownerAcceptances.length, 1);
   assert.equal(await git(directory, "rev-parse", "HEAD"), recordedHead);
 });
 

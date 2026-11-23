@@ -8748,7 +8748,8 @@ test("an external merge at an unreviewed head stops for its planner with the rec
       parked.reason,
       /Waiting with the planner( or task owner [^:]+)?: blocker escalation/,
     );
-    // `next` offers the existing routes at the merged head.
+    // The stored snapshot offers fresh review. The public next read must
+    // preflight source acceptance before offering closeout.now.
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, parked));
     const shape = JSON.stringify(
       next.verbs.map((verb) => [
@@ -8765,13 +8766,13 @@ test("an external merge at an unreviewed head stops for its planner with the rec
       ),
       `move to=review is offered: ${shape}`,
     );
-    assert.ok(
+    assert.equal(
       next.explicitCommands?.some(
         (command) =>
           command.action === "closeout.now" &&
           command.warnings?.includes("unreviewed_merge"),
-      ),
-      "closeout.now offers the planner the warning",
+      ) ?? false,
+      false,
     );
     // A repeat observation attaches to the open escalation instead of asking again.
     assert.equal(

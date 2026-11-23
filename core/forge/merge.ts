@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { taskPrNumber } from './pr-identity';
 import { reviewRequiredFor } from '../../shared/review-requirement';
-import { type Task, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run, type RepositoryChecksPolicy, type Completion } from '../../shared/contracts';
+import { type Task, externalMergeSourceAcceptance, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run, type RepositoryChecksPolicy, type Completion } from '../../shared/contracts';
 import { withIntegrationCheckout, fastForwardIntegrationBase, git, gitStatus, verifyPr, queueCheckoutStatus, type IntegrationFastForwardObserver } from '../git/index';
 import { type ReviewerSetting, type FormalReviewRuntime, verifyReview } from './reviews';
 import { readyReviewAtHead } from '../recovery/task-reasons';
@@ -137,7 +137,8 @@ type ExternalPull = {
   base?: { ref?: string; repo?: { full_name?: string } };
 };
 
-async function verifyExternalMerge(t: Task, name: string, number: number, p: ExternalPull) {
+async function verifyExternalMerge(t: Task, name: string, number: number, p: ExternalPull,
+  source = t.resolution.mergedCommit ? t.resolution.mergeHead : t.prHead) {
   if (p.number !== number || p.head?.ref !== t.branch || p.base?.ref !== t.baseBranch
     || p.base?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
     || p.head?.repo?.full_name?.toLowerCase() !== name.toLowerCase()
@@ -147,7 +148,6 @@ async function verifyExternalMerge(t: Task, name: string, number: number, p: Ext
   if (!/^[a-f0-9]{40}$/.test(head) || !/^[a-f0-9]{40}$/.test(commit))
     throw new ExternalMergeProofRefusal('External merge requires an exact PR head and merge commit');
 
-  const source = t.resolution.mergedCommit ? t.resolution.mergeHead : t.prHead;
   const descendsFrom = source && source !== head ? source : undefined;
   try {
     await git(t.repoPath, 'fetch', 'origin', t.baseBranch);
@@ -316,6 +316,7 @@ export async function externalMerge(t: Task, acceptHead = false, retainedSource 
   const head=await git(t.directory,'rev-parse','HEAD');
   if(retainedSource){
     if(head!==t.prHead)throw new Error('The retained workspace head differs from the recorded task source');
+    if(externalMergeSourceAcceptance(t))return verifyExternalMerge(t, name, number, p, head);
     try{await git(t.directory,'merge-base','--is-ancestor',head,p.head.sha);}catch{throw new Error('The merged head does not descend from the retained task source, or its ancestry is unreadable');}
     return {head:p.head.sha as string,commit};
   }
@@ -324,6 +325,8 @@ export async function externalMerge(t: Task, acceptHead = false, retainedSource 
     if(!acceptHead)throw new Error('External merge head differs from recorded task work');
     try{await git(t.directory,'merge-base','--is-ancestor',t.prHead,head);}catch{throw new Error('The merged head does not descend from the recorded task work');}
   }
+  if(p.merged===true && ((!acceptHead && !t.resolution.mergedCommit) || externalMergeSourceAcceptance(t)))
+    return verifyExternalMerge(t, name, number, p);
   return {head,commit};
 }
 

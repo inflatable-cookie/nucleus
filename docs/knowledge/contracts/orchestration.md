@@ -3025,7 +3025,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### External merge
 
-- A freshly observed external merge advances to syncing and closeout only when
+- A freshly observed external merge must still be on the base branch. It
+  advances to syncing and closeout only when
   recorded review evidence binds the merged head (task 993): an exact-head
   `ready_to_merge` verdict, a reviewer source approval awaiting its proof at
   that head, a qualified owner acceptance bound to the recorded review, or an
