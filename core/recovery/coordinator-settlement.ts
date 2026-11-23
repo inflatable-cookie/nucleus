@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
 import { digest } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
@@ -36,10 +37,7 @@ export type RecoverySettlementContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    | "attention"
-    | "openPlannerEscalation"
-    | "recovery"
-    | "update"
+    "attention" | "openPlannerEscalation" | "recovery" | "update"
   >;
 };
 export class RecoverySettlement {
@@ -199,7 +197,8 @@ export class RecoverySettlement {
         latest.resolution.recovery?.runId !== run.id ||
         latest.resolution.recovery.action?.eventId !== binding.eventId ||
         latest.resolution.recovery.action.status !== "pending" ||
-        coordinatorActionAttempt(this.store, task.id, claimKey) === "run_result_applying"
+        coordinatorActionAttempt(this.store, task.id, claimKey) ===
+          "run_result_applying"
       )
         return false;
       this.store.event(task.id, "run_result_applying", claimKey);
@@ -358,6 +357,7 @@ export class RecoverySettlement {
           finish("applied");
           return;
         } catch (error) {
+          propagateQuantumDeferral(error);
           const message =
             error instanceof Error ? error.message : String(error);
           // Only the explicit version refusal is safe to retry. Rebuild the plan

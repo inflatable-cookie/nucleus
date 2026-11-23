@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
@@ -225,9 +226,7 @@ export function reviewerStartRefusal(
     const kind = dispatch ? "Dispatch" : "Merge";
     return `${kind} is held by ${holdOwnerOf(task, hold.owner)}: ${hold.reason}. Release the hold before starting a reviewer.`;
   }
-  const escalation = plannerEscalations(events).find(
-    (item) => !item.answered,
-  );
+  const escalation = plannerEscalations(events).find((item) => !item.answered);
   if (escalation)
     return `The planner ladder still owns escalation ${escalation.id}.`;
   const wait = activePlannerEscalationWait(events);
@@ -615,7 +614,10 @@ export async function preflightExplicitRunStart(
       }
     }
     if (task.agentId && typeof engine.host?.observe === "function") {
-      const state = await engine.host.observe(task.agentId).catch(() => null);
+      const state = await engine.host.observe(task.agentId).catch((error) => {
+        propagateQuantumDeferral(error);
+        return null;
+      });
       if (state && (state.status === "running" || state.activeTurnId)) {
         workerTurnActive = true;
       }
@@ -670,7 +672,14 @@ function runStartTarget(store: Store, task: Task, input: RunStartShape) {
   const replacedInitial = Boolean(
     input.replacing && !replacedRun && task.runId === input.replacing,
   );
-  return { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial };
+  return {
+    runs,
+    runRole,
+    retainedAgentId,
+    agentMode,
+    replacedRun,
+    replacedInitial,
+  };
 }
 
 /**
@@ -761,7 +770,11 @@ export function runStartWarnings(
           !task.completion &&
           task.agentIntent,
   );
-  if (input.replacing && (replacedRun || replacedInitial) && !replacedAgentlessUncertain) {
+  if (
+    input.replacing &&
+    (replacedRun || replacedInitial) &&
+    !replacedAgentlessUncertain
+  ) {
     for (const warning of releaseWarnings(store, task, input.replacing)) {
       warn(warning.id, warning.text);
     }
@@ -876,10 +889,20 @@ export function runStartWarnings(
       `Requested head ${input.head.slice(0, 12)} differs from task checkout HEAD ${preflight.localHead.slice(0, 12)}; checkout will not be moved.`,
     );
   }
-  const policyStop = runStartPolicyStop(store, task, input.role, agentMode, runs);
-  if (policyStop) warn("budget", `${policyStop}. Accepting starts the run past it.`);
+  const policyStop = runStartPolicyStop(
+    store,
+    task,
+    input.role,
+    agentMode,
+    runs,
+  );
+  if (policyStop)
+    warn("budget", `${policyStop}. Accepting starts the run past it.`);
   if (input.role === "worker" && usageGateBlocked(task, store.usageLevel()))
-    warn("route_policy", "The Low usage level requires approval to admit this high-complexity task.");
+    warn(
+      "route_policy",
+      "The Low usage level requires approval to admit this high-complexity task.",
+    );
   return warnings;
 }
 
@@ -894,8 +917,14 @@ export function runStartPlan(
     input.role === "reviewer" &&
     reviewerStartRefusal(task, store.eventsAll(task.id));
   if (refusal) throw Error(refusal);
-  const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
-    runStartTarget(store, task, input);
+  const {
+    runs,
+    runRole,
+    retainedAgentId,
+    agentMode,
+    replacedRun,
+    replacedInitial,
+  } = runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {
     throw Error(`No retained ${input.role} thread is bound to this task`);
   }
@@ -941,14 +970,18 @@ export function runStartPlan(
   }
 
   const warnings = runStartWarnings(store, task, input, preflight);
-  const entry = engine.store.pool().find((item) => item.profileId === profile?.id);
+  const entry = engine.store
+    .pool()
+    .find((item) => item.profileId === profile?.id);
   const usage = engine.store.usageLevel();
   if (
     entry &&
     task.profileRequests?.[input.role]?.profileId !== entry.profileId &&
     requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))
   )
-    throw Error(`Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`);
+    throw Error(
+      `Profile ${entry.profileId} requires an explicit ${input.role} profile request at the ${usage} usage level`,
+    );
 
   let createdRun: Run | null = null;
   let token = "";
@@ -1022,8 +1055,7 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      if (runRole === "reviewer")
-        patch.phase = "reviewing";
+      if (runRole === "reviewer") patch.phase = "reviewing";
       // Only record a forge-confirmed PR head when the task checkout already
       // matches it (e.g. #1508 where the worker pushed from the task checkout).
       // Never record an unconfirmed SHA as prHead.

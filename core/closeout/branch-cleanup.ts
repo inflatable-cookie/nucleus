@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { existsSync } from "node:fs";
 import { doublingDelay } from "../../shared/backoff";
 import type { Run, Task } from "../../shared/contracts";
@@ -501,6 +502,7 @@ export async function cleanupTerminalBranches(
           previous,
         );
       } catch (error) {
+        propagateQuantumDeferral(error);
         record = waited(
           candidate,
           previous,

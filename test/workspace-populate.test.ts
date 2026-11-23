@@ -39,7 +39,7 @@ import {
 import { worktreeAddTargets } from "../core/machine/process-identity";
 import { assertCheckoutAvailable } from "../core/workspaces/checkout-volume";
 import { QuantumDeadlineExceededError } from "../core/scheduling/pass-snapshot";
-import { taskActivity } from "../shared/task-activity";
+import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
 
 const profile: Profile = {
   id: "worker",
@@ -1650,6 +1650,36 @@ test("a simulated healthy create beyond 120s finishes under the 600s budget and 
   }
 });
 
+test("a pre-send populate deferral releases the admission for the next pass", async () => {
+  const f = engineFixture();
+  try {
+    const task = f.queued();
+    const populate = f.adapter.populateTaskWorktree!;
+    f.adapter.populateTaskWorktree = async () => {
+      throw new QuantumDeadlineExceededError(
+        "populateTaskWorktree",
+        undefined,
+        true,
+      );
+    };
+    await f.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, () =>
+      f.engine.dispatchTask(task.id, false),
+    );
+    const deferred = f.store.task(task.id);
+    assert.equal(deferred.phase, "queued");
+    assert.equal(deferred.workspaceIntent, false);
+    assert.equal(deferred.resolution.stop, null);
+    assert.equal(f.calls.create, 0);
+
+    f.adapter.populateTaskWorktree = populate;
+    await f.engine.wake();
+    assert.equal(f.store.task(task.id).phase, "working");
+    assert.equal(f.calls.create, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 test("a populate quantum deadline keeps the workspace intent waiting for Nucleus", async () => {
   const f = engineFixture();
   try {
@@ -1657,25 +1687,15 @@ test("a populate quantum deadline keeps the workspace intent waiting for Nucleus
     f.adapter.populateTaskWorktree = async () => {
       throw new QuantumDeadlineExceededError("populateTaskWorktree");
     };
-    await f.engine.dispatchTask(task.id, false);
+    await f.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, () =>
+      f.engine.dispatchTask(task.id, false),
+    );
     const deferred = f.store.task(task.id);
     assert.equal(deferred.phase, "dispatching");
     assert.equal(deferred.workspaceIntent, true);
     assert.equal(deferred.resolution.attention, false);
-    assert.equal(
-      taskActivity({
-        task: deferred,
-        runs: [],
-        events: [],
-        stop: deferred.resolution.stop,
-        now: Date.now(),
-      }).state,
-      "nucleus",
-    );
-    assert.match(
-      deferred.reason,
-      /quantum deadline exceeded; retrying on the next pass/,
-    );
+    assert.equal(deferred.resolution.stop, null);
+    assert.equal(deferred.resolution.recovery, null);
     assert.equal(f.calls.create, 0);
 
     const directory = join(f.dir, "observed-workspace");

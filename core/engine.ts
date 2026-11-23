@@ -15,6 +15,7 @@ import { PrerequisiteReleases } from "./scheduling/prerequisites";
 import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   runInTaskQuantumScope,
+  settleTaskQuantum,
 } from "./scheduling/pass-snapshot";
 import { TaskQuantum } from "./scheduling/task-quantum";
 
@@ -44,7 +45,6 @@ import {
 } from "./recovery/dead-participant";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
-
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
@@ -1345,12 +1345,7 @@ export class Engine {
           "performTaskControl",
           "store",
         ],
-        [
-          "attention",
-          "openPlannerEscalation",
-          "recovery",
-          "update",
-        ],
+        ["attention", "openPlannerEscalation", "recovery", "update"],
       ),
     );
     this.pausedStops = new PausedStops(this);
@@ -1643,11 +1638,15 @@ export class Engine {
     // carries the task quantum deadline scope, whoever scheduled it (audit
     // branch-PR recovery, wake follow-up, dispatch, or full taskQuantum).
     const scoped = key.startsWith("task:")
-      ? () =>
-          runInTaskQuantumScope(
-            this.resolution.quantumReadBudgetMs ?? QUANTUM_TOTAL_READ_BUDGET_MS,
-            () => Promise.resolve(work()),
-          )
+      ? async () => {
+          await settleTaskQuantum(() =>
+            runInTaskQuantumScope(
+              this.resolution.quantumReadBudgetMs ??
+                QUANTUM_TOTAL_READ_BUDGET_MS,
+              () => Promise.resolve(work()),
+            ),
+          );
+        }
       : work;
     return this.laneScheduler.scheduleLane(
       key,
@@ -2717,9 +2716,12 @@ export class Engine {
     const { version } = this.store.task(taskId);
     const apply = await admit();
     if (typeof apply !== "function") return apply;
-    const current = () => this.requireOwnerControlCurrent(
-      this.store.task(taskId), version, "Task changed during restart",
-    );
+    const current = () =>
+      this.requireOwnerControlCurrent(
+        this.store.task(taskId),
+        version,
+        "Task changed during restart",
+      );
     current();
     await displacement.cancel();
     current();

@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 /**
  * The host's own words for a thread that no longer exists. It is a host fact,
  * not a Nucleus decision, so it lives here beside the other host failure kinds
@@ -177,6 +178,7 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
  * `ECONNREFUSED` and a numeric or library code all appear as the host wrote them.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
+  propagateQuantumDeferral(error);
   const record =
     error && typeof error === "object"
       ? (error as {

@@ -11,7 +11,6 @@ import { resumeDispositions } from "../verbs/disposition";
 import { completionReportsPr } from "../recovery/worker-reconcile";
 import { LANE_PRIORITY_AUDIT, LANE_PRIORITY_TASK } from "./lane-priorities";
 import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
-import { isQuantumDeadlineExceeded } from "./pass-snapshot";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass, type HostPassContext } from "./host-pass";
@@ -539,10 +538,12 @@ export class Sweep {
       if (proofRetries.length && passSnapshot && !this.engine.stopped) {
         const retries = proofRetries.flatMap((operation) =>
           operation.taskId && passSnapshot.hostPassCompleted(operation.hostId)
-            ? [this.boundTaskQuantum(
-                this.engine.scheduleOperation(operation.id, passSnapshot),
-                operation.taskId,
-              )]
+            ? [
+                this.boundTaskQuantum(
+                  this.engine.scheduleOperation(operation.id, passSnapshot),
+                  operation.taskId,
+                ),
+              ]
             : [],
         );
         if (retries.length) await Promise.all(retries);
@@ -680,8 +681,7 @@ export class Sweep {
               try {
                 await this.engine.reconcile(this.engine.store.task(task.id));
               } catch (error) {
-                if (!isQuantumDeadlineExceeded(error))
-                  this.engine.noteStepFailure(task.id, error);
+                this.engine.noteStepFailure(task.id, error);
               }
               // The quantum records its own faults; a lane-level failure here means
               // shutdown discarded the queued quantum, so the audit simply stops.

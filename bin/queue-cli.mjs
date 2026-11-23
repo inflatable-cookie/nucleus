@@ -156,7 +156,7 @@ async function main() {
       if (result.portFallback) console.error(`Board port ${result.port} is in use; this link uses the available fallback port.`);
       console.error(`Pair this link before ${result.expiresAt}; its session stays paired until \`nucleus ui --revoke\` or 30 days without use.`);
       if (!rest.includes('--no-open')) openInBrowser(result.url);
-    } else if (explicit && explicitOutcome(result)) {
+    } else if ((explicit || result?.explicitResolution?.status === 'retry') && explicitOutcome(result)) {
       // The outcome leads (papercut ee6e634c): one line on stderr, then the JSON body
       // for machines on stdout; anything but `applied` exits 2.
       const outcome = explicitOutcome(result);

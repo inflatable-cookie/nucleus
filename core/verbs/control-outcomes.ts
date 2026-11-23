@@ -1,3 +1,4 @@
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { TaskChangedRefusal, taskChangedHint } from "../../shared/task-version";
 import type { Engine } from "../engine";
@@ -14,19 +15,39 @@ import { HostReadRefusalError } from "../host/errors";
  * (lean audit 2026-10-15). The hint comes from the typed refusal, never from its
  * words. The durable operation owns retries of incomplete host reads.
  */
-export async function applyControlWithVersionHint(engine: Engine, input: TaskControlInput, operationId?: string): Promise<Task> {
+export async function applyControlWithVersionHint(
+  engine: Engine,
+  input: TaskControlInput,
+  operationId?: string,
+): Promise<Task> {
   const recordOutcome = (outcome: "applied" | "refused", reason?: string) => {
-    if (engine.coordinatorActionRunId.getStore() || engine.replayingDeferredVerb.getStore()) return;
+    if (
+      engine.coordinatorActionRunId.getStore() ||
+      engine.replayingDeferredVerb.getStore()
+    )
+      return;
     try {
-      engine.store.recordVerbOutcome(input.taskId, input.action, outcome, "owner", {
-        ...(input.to ? { to: input.to } : {}), ...(input.role ? { role: input.role } : {}),
-        caller: input.caller ?? null, ...(reason ? { reason: reason.slice(0, 600) } : {}),
-      }, operationId ? `operation:${operationId}` : null);
-    } catch { /* the outcome stands even if its record could not be written */ }
+      engine.store.recordVerbOutcome(
+        input.taskId,
+        input.action,
+        outcome,
+        "owner",
+        {
+          ...(input.to ? { to: input.to } : {}),
+          ...(input.role ? { role: input.role } : {}),
+          caller: input.caller ?? null,
+          ...(reason ? { reason: reason.slice(0, 600) } : {}),
+        },
+        operationId ? `operation:${operationId}` : null,
+      );
+    } catch {
+      /* the outcome stands even if its record could not be written */
+    }
   };
   let applied: Task;
-  try { applied = await engine.performTaskControlApplied(input, operationId); }
-  catch (error) {
+  try {
+    applied = await engine.performTaskControlApplied(input, operationId);
+  } catch (error) {
     const committed = operationId ? engine.store.operation(operationId) : null;
     if (
       committed?.result &&
@@ -39,9 +60,11 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
       recordOutcome("applied");
       return engine.store.task(input.taskId);
     }
+    propagateQuantumDeferral(error);
     if (
       !committed?.preSendBoundaryStartedAt &&
-      committed && error instanceof HostReadRefusalError
+      committed &&
+      error instanceof HostReadRefusalError
     )
       throw error;
     const message = error instanceof Error ? error.message : String(error);
@@ -50,14 +73,26 @@ export async function applyControlWithVersionHint(engine: Engine, input: TaskCon
     // stale version is the one refusal whose reader is the caller's own re-read.
     if (error instanceof TaskChangedRefusal) {
       let current: number | undefined;
-      try { current = engine.store.task(input.taskId).version; } catch { /* a missing task keeps the original refusal */ }
+      try {
+        current = engine.store.task(input.taskId).version;
+      } catch {
+        /* a missing task keeps the original refusal */
+      }
       if (current !== undefined && current !== input.version)
-        throw new TaskChangedRefusal(taskChangedHint(message, current), input.version, current);
+        throw new TaskChangedRefusal(
+          taskChangedHint(message, current),
+          input.version,
+          current,
+        );
     }
     throw error;
   }
   if (input.action === "release") {
-    try { await engine.applyDeferredOwnerVerbs(); } catch { /* the durable deferred record remains available to the next pass */ }
+    try {
+      await engine.applyDeferredOwnerVerbs();
+    } catch {
+      /* the durable deferred record remains available to the next pass */
+    }
     applied = engine.store.task(input.taskId);
     void engine.cleanContext(() => engine.wakeTask(applied.id));
     void engine.cleanContext(() => engine.wakeRepository(applied.repoPath));

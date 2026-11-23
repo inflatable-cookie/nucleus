@@ -26,7 +26,7 @@ import {
   type ReviewEntryAdapter,
 } from "../review/review-entry";
 import { now } from "../store/store";
-import { isQuantumDeadlineExceeded } from "../scheduling/pass-snapshot";
+import { propagateQuantumDeferral } from "../scheduling/pass-snapshot";
 import { nextMergeRequestAt, sendGuardedMerge } from "./merge-phase";
 import { mergeFenceReason } from "../recovery/task-reasons";
 import { recordedSlotWait } from "../recovery/wait-context";
@@ -119,6 +119,7 @@ export class MergeGates {
         t.prHead,
       );
     } catch (error) {
+      propagateQuantumDeferral(error);
       this.resolution.attention(
         latest(),
         `Repository pre-merge gate could not read the control manifest: ${error instanceof Error ? error.message : String(error)}`,
@@ -157,6 +158,7 @@ export class MergeGates {
         (hook) => hook.target === "reviewed_head",
       );
     } catch (error) {
+      propagateQuantumDeferral(error);
       this.resolution.attention(
         latest(),
         `Repository pre-merge gate could not run: ${error instanceof Error ? error.message : String(error)}`,
@@ -381,6 +383,7 @@ export class MergeGates {
         )
           return { other };
       } catch (error) {
+        propagateQuantumDeferral(error);
         // An unreadable ancestry proves no absence. A timed-out read waits like
         // the other local gate reads; any other failure parks visibly instead
         // of merging on unknown history.
@@ -444,9 +447,7 @@ export class MergeGates {
           return "the open PR no longer matches the accepted reviewed head";
         return null;
       } catch (error) {
-        // A read that ran out of quantum budget is deferred, not failed: the
-        // next pass reads the PR again. Only a real answer reaches attention.
-        if (isQuantumDeadlineExceeded(error)) throw error;
+        propagateQuantumDeferral(error);
         return error instanceof Error ? error.message : String(error);
       }
     };
@@ -470,6 +471,7 @@ export class MergeGates {
         summary: reviewAtHead?.summary,
       });
     } catch (error) {
+      propagateQuantumDeferral(error);
       if (error instanceof GitReadTimeoutError) {
         this.resolution.waiting(
           latest(),
@@ -607,6 +609,7 @@ export class MergeGates {
       );
       return true;
     } catch (error) {
+      propagateQuantumDeferral(error);
       this.store.event(
         t.id,
         "integration_base_renewal_refused",
@@ -751,6 +754,7 @@ export class MergeGates {
             this.adapter as Adapter & ReviewEntryAdapter,
           );
         } catch (error) {
+          propagateQuantumDeferral(error);
           if (error instanceof ReviewEntryRefusal && error.transient) {
             this.resolution.waiting(t, error.message, "external_unavailable");
             return;

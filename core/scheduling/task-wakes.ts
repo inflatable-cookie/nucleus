@@ -64,6 +64,7 @@ import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
   isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
   runInTaskQuantumScope,
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
@@ -1150,8 +1151,7 @@ export class TaskWakes {
       }
       return "exhausted";
     }
-    const retryOnPass =
-      operation && activeOld?.retryOnPass === true;
+    const retryOnPass = operation && activeOld?.retryOnPass === true;
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
@@ -1188,19 +1188,7 @@ export class TaskWakes {
   noteStepFailure(taskId: string, error: unknown) {
     const current = this.store.task(taskId);
     const terminal = ["done", "cancelled"].includes(current.phase);
-    if (isQuantumDeadlineExceeded(error)) {
-      if (
-        !terminal &&
-        (!current.resolution.stop ||
-          current.resolution.stop.reason === "lifecycle")
-      )
-        this.resolution.waiting(
-          current,
-          `${error.message}; retrying on the next pass`,
-          "lifecycle",
-        );
-      return;
-    }
+    propagateQuantumDeferral(error);
     if (!terminal && error instanceof HostReadRefusalError) {
       this.deferHostReadTransient(taskId, error, false);
       return;
@@ -1514,10 +1502,16 @@ export class TaskWakes {
               try {
                 const processes = await adapter.hostProcessListing!();
                 if (processes === null)
-                  return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
+                  return {
+                    state: "unknown",
+                    reason: "host process listing is unreadable",
+                    deferred: true,
+                  };
                 return { state: "listed", processes };
               } catch (error) {
-                const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
+                const deferred =
+                  error instanceof HostReadRefusalError ||
+                  error instanceof DeferredPassReadError;
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,

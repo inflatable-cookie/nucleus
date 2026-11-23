@@ -1,3 +1,7 @@
+import {
+  isQuantumDeadlineExceeded,
+  propagateQuantumDeferral,
+} from "../scheduling/pass-snapshot";
 import { recordPromptSize } from "../dispatch/prompt-text/measure";
 import {
   isMechanicalStallStop,
@@ -506,6 +510,7 @@ export class CoordinatorRoute {
     // sweep and the answered-question resumption.
     const blocked = this.authorBlockedReport(t, this.store.runs(t.id));
     if (blocked) return null;
+    const beforeRoute = t;
     let fingerprint = key(t, this.store.runs(t.id));
     // The episode is the same while its stop is, or while the task has not
     // progressed since it opened: a stop churning between a wait and a stop for
@@ -669,6 +674,7 @@ export class CoordinatorRoute {
     // The run this attempt records, so a proven pre-send refusal can settle the
     // occurrence it created (the catch never guesses an identity).
     let attempted: Run | null = null;
+    let sending = false;
     try {
       // Existing closeout without a callback: preserve its run and MCP binding.
       const owed = this.store
@@ -690,6 +696,7 @@ export class CoordinatorRoute {
         this.resolution.update(t, {
           recoveryAttempts: t.resolution.recoveryAttempts + 1,
         });
+        sending = true;
         await this.resolution.adapter.notify!(
           t.coordinatorAgentId,
           `ns-recovery-${incident.id}`,
@@ -756,6 +763,7 @@ export class CoordinatorRoute {
             this.resolution.host.observe(agentId!),
           );
         } catch (error) {
+          propagateQuantumDeferral(error);
           // A deleted T3 thread has no projection. Only authoritative absence or a
           // tombstone allows replacement; an unreadable inventory remains unknown.
           if (!removable || !this.resolution.adapter.originAgent) throw error;
@@ -1008,6 +1016,7 @@ export class CoordinatorRoute {
       }
       if (heldForDispatch) return null;
       if (waitingForCapacity) return null;
+      sending = true;
       if (agentId) {
         await this.resolution.adapter.sendRun!(t, run, token, context);
         recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
@@ -1036,6 +1045,49 @@ export class CoordinatorRoute {
       this.resolution.clearHostReadTransient?.(t.id, "task");
       return null;
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error)) {
+        if (!sending || error.preSend) {
+          this.store.transaction(() => {
+            const current = this.store.task(t.id);
+            if (current.resolution.recovery?.id !== incident.id) return;
+            const run = attempted && this.store.run(attempted.id);
+            if (run?.completion || run?.released) return;
+            if (run) {
+              this.store.deleteCredential(run.id);
+              this.store.putRun({
+                ...run,
+                status: "superseded",
+                released: true,
+                releasedBeforeSend: true,
+                active: false,
+              });
+              if (current.prHead) {
+                const key = requiredCheckPollMetaKey(
+                  current.id,
+                  current.prHead,
+                );
+                const poll = this.store.getMeta<{ recoveryRunId?: string }>(
+                  key,
+                );
+                if (poll?.recoveryRunId === run.id)
+                  this.store.setMeta(key, { ...poll, recoveryRunId: null });
+              }
+            }
+            if (
+              current.resolution.recovery.id !==
+                beforeRoute.resolution.recovery?.id ||
+              sending
+            )
+              this.resolution.update(current, {
+                recovery: beforeRoute.resolution.recovery,
+                recoveryActive: beforeRoute.resolution.recoveryActive,
+                recoveryAttempts: beforeRoute.resolution.recoveryAttempts,
+                restartSlotHold: beforeRoute.resolution.restartSlotHold,
+              });
+          });
+        }
+        throw error;
+      }
       // A host that has not settled its model options has not refused this
       // creation: nothing crossed the send boundary, so the pending run is
       // released and the task waits for the next pass's settled snapshot

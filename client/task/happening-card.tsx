@@ -210,7 +210,7 @@ export function HappeningCard({
           setNotice(null);
           return;
         }
-        if (res?.status === "stale") {
+        if (res?.status === "stale" || res?.status === "retry") {
           setPendingWarnings(null);
           setNotice({
             kind: "error",
