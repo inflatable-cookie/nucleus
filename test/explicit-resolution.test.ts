@@ -904,6 +904,32 @@ for (const mode of [
   });
 }
 
+test("run.release skips exact cancellation when the host confirms an ended turn", async (t) => {
+  const { store, run, command, calls } = await fixture(t, {
+    stopExactAgentTurn: undefined,
+    observeParticipant: async (id: string) => ({
+      id,
+      workspaceId: "workspace",
+      status: "idle",
+      active: false,
+      permissions: false,
+      activeTurnId: null,
+      pendingBackgroundTasks: [],
+    }),
+  });
+  const ended = withRecordedTurn(run("ended-reviewer", "reviewer", "reviewer"), "ended-turn");
+  store.putRun(ended);
+  const result = await command({
+    action: "run.release",
+    run: ended.id,
+    accept: ["live_turn", "unreported_result"],
+  });
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.doesNotMatch(result.explicitResolution?.next ?? "", /Turn cancellation/);
+  assert.equal(store.run(ended.id)?.released, true);
+  assert.deepEqual(calls, []);
+});
+
 test("run.release leaves another live revision using the same thread alone", async (t) => {
   const { store, current, run, command, calls } = await fixture(t);
   const older = run("old-revision", "revision", "worker");

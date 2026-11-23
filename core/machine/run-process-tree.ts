@@ -54,7 +54,7 @@ export function possibleBbRuntimePids(
 
 /** The facts a participant-runtime recognition reads from one listing. */
 export type RuntimeFact = RuntimeProcessFact &
-  Pick<HostProcessFact, "bbThreadId" | "trustedCuaExecutable">;
+  Pick<HostProcessFact, "bbThreadId" | "trustedCuaExecutable" | "openFiles">;
 
 /**
  * Every host's positively bound participant runtime in one listing: the BB

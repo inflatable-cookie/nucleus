@@ -23,9 +23,8 @@ export class TaskCompletion {
   get adapter() { return this.engine.adapter; }
 
   /**
-   * Spec 050 `complete`: an owner finishes a task that has no PR to merge. Only
-   * a terminal task, merge intent, an open PR and a live run refuse it; no brief
-   * heading is proof. Liveness is observed, not read from stored flags. One
+   * Spec 050 `complete`: an owner finishes a task that has no PR to merge after
+   * proving participant inactivity and, where supported, workspace custody. One
    * transaction releases the finished runs and settles the superseded episode
    * records with their history kept, then records the terminal done outcome with
    * the owner's reason and optional lane artifact.
@@ -132,6 +131,19 @@ export class TaskCompletion {
     await new Promise<void>(resolve => setTimeout(resolve, 250));
     ensureCurrent("repeated liveness observation interval");
     await observeIdle("second liveness observation");
+    await this.engine.onTaskHost(task, async () => {
+      if (!this.adapter.observeParticipant) return;
+      if (task.agentId && !task.workspaceId)
+        throw new Error("Cannot complete while the worker workspace is unknown");
+      for (const [agentId, workspaceId] of participants) {
+        const issue = await this.engine.resolution.participantLease.exactCustodyIssue(
+          task, agentId, workspaceId,
+        );
+        ensureCurrent("participant custody check");
+        if (issue !== null)
+          throw new Error(`Cannot complete while participant ${agentId} holds custody: ${issue}`);
+      }
+    });
     ensureCurrent("final pre-completion snapshot check");
 
     const acceptedAt = now();

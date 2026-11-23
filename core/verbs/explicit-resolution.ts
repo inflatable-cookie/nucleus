@@ -47,6 +47,7 @@ import {
 } from "../recovery/workspace-lookup";
 import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { noTurnLive } from "../recovery/stall";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
 import { digest, now, type Store } from "../store/store";
@@ -944,6 +945,7 @@ export function releasePlan(
   const run = store.run(input.run);
   const initial = !run;
   const agentId = run ? run.agentId : task.agentId;
+  const workspaceId = run ? run.workspaceId : task.workspaceId;
   const hostId = run?.hostId ?? task.hostId;
   const completion = run ? run.completion : task.completion;
   const live = releasedRunLive(task, run);
@@ -1077,7 +1079,17 @@ export function releasePlan(
           };
         const onHost = async () => {
           if (live) {
-            const stopped = await attempt("Turn cancellation", () => {
+            const stopped = await attempt("Turn cancellation", async () => {
+              const observed = await engine.host.observeParticipant(agentId)
+                .catch(() => null);
+              if (
+                workspaceId &&
+                observed?.id === agentId &&
+                observed.workspaceId === workspaceId &&
+                noTurnLive(observed) &&
+                observed.pendingBackgroundTasks.length === 0
+              )
+                return;
               if (!recordedTurn)
                 throw Error("The released run has no recorded turn ID");
               return engine.host.stopAgentTurn(agentId, recordedTurn, {

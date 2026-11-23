@@ -19,7 +19,7 @@ import { Engine } from "../core/engine";
 import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store } from "../core/store/store";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
-import { runSchema, submissionSchema, type Task } from "../shared/contracts";
+import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, type Task } from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
   STAMP,
@@ -253,6 +253,24 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   assert.match(store.task(task.id).reason, /running-command/);
   thread.providerThreads = [];
 
+  thread.turnItems = [
+    syntheticTurnItem(agentId, 1, {
+      type: "command_execution",
+      runId,
+      status: "running",
+    }),
+  ];
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /command synthetic-item-1/);
+  thread.turnItems[0].status = "completed";
+  thread.thread.pullRequests = [
+    { host: "github.com", repository: "example/repo", number: 12, source: "agent", watch: {} },
+  ];
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /pull-request-watch:github.com\/example\/repo#12/);
+  thread.thread.pullRequests = [];
+  assert.equal(await lease(), true);
+
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
   thread.updatedAt = thread.thread.updatedAt;
   assert.equal(await lease(), false);
@@ -260,6 +278,152 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
 
   server.threads.delete(agentId);
   assert.equal(await lease(), false);
+});
+
+test("owner complete waits for a finished T3 participant's background work and process custody", async (t) => {
+  const { host, server, liveIds, workspaceId, directory } = await fixture(t, { live: 1 });
+  const agentId = liveIds[0]!;
+  const runId = "run-complete";
+  const temporaryDirectory = join(directory, "run-scratch");
+  const thread = server.threads.get(agentId)!;
+  thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
+  server.controls.shellStatuses[agentId] = "completed";
+  thread.turnItems = [syntheticTurnItem(agentId, 1, {
+    type: "command_execution", runId, status: "running",
+  })];
+  host.state.update((state) => {
+    delete state.workspaces[workspaceId]!.archivedAt;
+  });
+
+  const store = new Store(":memory:");
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  adapter.findAnyOpenBranchPr = async () => [];
+  let processes: HostProcessFact[] = [];
+  adapter.hostProcessListing = async () => Object.assign(processes, { cwdComplete: true });
+  const engine = new Engine(store, adapter, 60_000);
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
+  const head = "a".repeat(40);
+  const inserted = store.insert(submissionSchema.parse({
+    submissionId: "owner-complete-custody",
+    title: "Complete a report after background work",
+    repoPath: directory,
+    planningCommit: head,
+    handoffPath: "handoff.md",
+    originAgentId: "synthetic-planner",
+  }), host.hostId, "handoff.md", head);
+  const task = store.update(inserted.id, {
+    phase: "working", agentId, workspaceId, directory, runId, temporaryDirectory,
+  });
+  store.putRun(runSchema.parse({
+    id: runId, taskId: task.id, hostId: host.hostId, agentId, workspaceId,
+    temporaryDirectory, role: "revision", generation: 1, head, base: head,
+    status: "running", released: false, createdAt: STAMP, profile: null,
+    lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null,
+  }));
+  store.setCredential(runId, "synthetic-complete-secret");
+  const complete = () => engine.performTaskControl({
+    taskId: task.id,
+    version: store.task(task.id).version,
+    action: "complete",
+    reason: "Accept the finished report",
+    caller: OPERATOR_BOARD_CALLER,
+  });
+  const refuses = async (reason: RegExp) => {
+    await assert.rejects(complete, reason);
+    assert.equal(store.task(task.id).phase, "working");
+    assert.equal(store.run(runId)?.released, false);
+    assert.doesNotThrow(() => store.authenticate(runId, "synthetic-complete-secret"));
+  };
+  assert.equal((await host.observe(agentId)).status, "idle");
+  await refuses(/outstanding background work: command synthetic-item-1/);
+  thread.turnItems[0].status = "completed";
+  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: "older-items" };
+  await refuses(/incomplete projection/);
+  server.controls.threadCoverage = {};
+
+  const process = {
+    pid: 42, ppid: 1, pgid: 42, uid: 501,
+    startIdentity: "synthetic-start",
+    command: "synthetic-detached-command",
+    cwd: "/",
+  };
+  for (const root of [directory, temporaryDirectory]) {
+    processes = [{
+      ...process, openFiles: { paths: [join(root, "output.log")], complete: true },
+    }];
+    await refuses(/process 42 still has an open file/);
+  }
+  processes = [{ ...process, openFiles: { paths: [], complete: false } }];
+  await refuses(/incomplete working-directory or open-file coverage/);
+
+  processes = [];
+  assert.equal((await complete()).phase, "done");
+  assert.equal(store.run(runId)?.released, true);
+  assert.throws(() => store.authenticate(runId, "synthetic-complete-secret"), /unauthorized callback/i);
+});
+
+for (const provider of ["codex", "pi"]) {
+  test(`an unlisted ${provider} thread is observed again after its turn ends`, async (t) => {
+    const { host, server, liveIds, tasks, workspaceId } = await fixture(t, { live: 2 });
+    const id = liveIds[1]!;
+    const thread = server.threads.get(id)!;
+    const ordinal = provider === "pi" ? 3 : 1;
+    const turnId = `run:thread:${id}:ordinal:${ordinal}`;
+    thread.thread.providerInstanceId = provider;
+    thread.thread.modelSelection.instanceId = provider;
+    thread.runs = [syntheticRun(id, ordinal, {
+      id: turnId,
+      status: "running",
+      completedAt: null,
+    })];
+    if (provider === "pi") {
+      thread.runs.unshift(syntheticRun(id, 1), syntheticRun(id, 2));
+      thread.providerThreads = [syntheticProviderThread({
+        driver: provider,
+        providerInstanceId: provider,
+        nativeThreadRef: { nativeId: `native-thread:pending:run:thread:${id}:ordinal:1` },
+        status: "idle",
+      })];
+    }
+    server.controls.shellUnlisted = [id];
+    assert.equal(await host.reads.shellRow(id), undefined);
+    assert.equal((await host.observe(id)).activeTurnId, turnId);
+
+    Object.assign(thread.runs.at(-1), { status: "completed", completedAt: STAMP });
+    host.reads.beginPass(tasks);
+    t.after(() => host.reads.endPass());
+    const observed = await host.observe(id);
+    assert.equal(observed.workspaceId, workspaceId);
+    assert.equal(observed.status, "idle");
+    assert.equal(observed.active, false);
+    assert.equal(observed.activeTurnId, null);
+    assert.equal(observed.permissions, false);
+
+    const exact = await host.observeParticipant(id);
+    assert.deepEqual(exact, {
+      id, workspaceId, status: "idle", active: false, permissions: false,
+      activeTurnId: null, updatedAt: STAMP, pendingBackgroundTasks: [],
+    });
+  });
+}
+
+test("a lagging shell row cannot keep a turn active after its projection records completion", async (t) => {
+  const { host, server, liveIds } = await fixture(t, { live: 1 });
+  const id = liveIds[0]!;
+  const thread = server.threads.get(id)!;
+  thread.runs = [syntheticRun(id, 1, { status: "running", completedAt: null })];
+  const running = await host.reads.shellRow(id);
+  assert.equal(running?.activeRunId, thread.runs[0].id);
+  t.mock.method(host.reads.live, "row", () => running);
+
+  Object.assign(thread.runs[0], { status: "completed", completedAt: STAMP });
+  const observed = await host.observe(id);
+  assert.equal(observed.active, false);
+  assert.equal(observed.activeTurnId, null);
+  assert.equal(observed.status, "idle");
 });
 
 /** Requests of one method the fake has served, from `from`. */

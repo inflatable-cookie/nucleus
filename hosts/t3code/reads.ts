@@ -48,10 +48,56 @@ import {
 export type ThreadReadKind = "observation" | "window" | "transcript" | "custody";
 export type Projection = z.infer<typeof projection>;
 
+const custodyThreadLinks = z.object({
+  thread: z.object({
+    pullRequests: z.array(z.object({
+      host: z.string().min(1),
+      repository: z.string().min(1),
+      number: z.number().int().positive(),
+      source: z.string().min(1),
+      watch: z.object({}).optional(),
+    })).default([]),
+  }),
+});
+
 function backgroundTasks(threads: NonNullable<Projection["providerThreads"]>) {
   return threads.flatMap((thread) =>
     (thread.pendingBackgroundTasks ?? []).map((task) => `${task.kind} ${task.taskId}`),
   );
+}
+
+/**
+ * T3 also derives background work from live turn items and PR watches. For
+ * custody, include every provider session's roster, not just the active one's.
+ */
+function custodyBackgroundTasks(
+  projection: Projection,
+  providerThreads: NonNullable<Projection["providerThreads"]>,
+  pullRequests: z.infer<typeof custodyThreadLinks>["thread"]["pullRequests"],
+): string[] {
+  const rolledBack = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+  const tasks = new Set(backgroundTasks(providerThreads));
+  for (const item of projection.turnItems) {
+    if (item.runId && rolledBack.has(item.runId)) continue;
+    if (item.status !== "pending" && item.status !== "running" &&
+        item.status !== "waiting")
+      continue;
+    if (item.type === "command_execution")
+      tasks.add(`${item.monitor === true ? "monitor" : "command"} ${item.id}`);
+    else if (item.type === "subagent")
+      tasks.add(`subagent ${item.id}`);
+    else if (item.type === "dynamic_tool" &&
+      !(item.input && typeof item.input === "object" &&
+        !Array.isArray(item.input) && "persistent" in item.input && item.input.persistent === true))
+      tasks.add(`background_task ${item.id}`);
+  }
+  for (const pr of pullRequests) {
+    if (pr.watch && pr.source !== "stack-dismissed")
+      tasks.add(`monitor pull-request-watch:${pr.host.toLowerCase()}/${pr.repository.toLowerCase()}#${pr.number}`);
+  }
+  return [...tasks];
 }
 /**
  * One thread snapshot as the nightly answered it: the projection it sent and
@@ -59,6 +105,8 @@ function backgroundTasks(threads: NonNullable<Projection["providerThreads"]>) {
  */
 export interface ThreadSnapshotRead {
   projection: Projection;
+  /** Available on complete custody reads with a provider roster. */
+  pendingBackgroundTasks?: string[];
   paged: boolean;
   /** The nightly left the turn items themselves out of a bounded answer. */
   omitsTurnItems: boolean;
@@ -331,10 +379,9 @@ export class T3Reads {
    */
   readonly live: T3LiveShell;
   /**
-   * What an exact read answered for a thread the live shell does not list — an
-   * archived or removed thread, or one that never existed. Kept until T3's shell
-   * names that thread again, a command goes to it, or the connection drops, so a
-   * missing thread costs at most one read, not one per pass.
+   * Terminal or missing answers for unlisted threads. An unlisted thread can
+   * still be running and change without a shell update, so do not keep its
+   * unarchived projection here.
    */
   private readonly absent = new Map<
     string,
@@ -546,8 +593,11 @@ export class T3Reads {
     this.core.requireConnection();
     // Bounded projections can omit older idle provider sessions, and the
     // shell roster covers only the active session. Require all sessions here.
-    const { projection } = await this.readFreshSnapshot(id, "custody");
-    if (projection.thread.deletedAt || !projection.providerThreads) return null;
+    const { projection, pendingBackgroundTasks } = await this.readFreshSnapshot(
+      id,
+      "custody",
+    );
+    if (projection.thread.deletedAt || !pendingBackgroundTasks) return null;
     const row = rowFromProjection(projection);
     return {
       id: row.id,
@@ -557,7 +607,7 @@ export class T3Reads {
       permissions: row.pendingRuntimeRequest !== null,
       activeTurnId: row.activeRunId,
       updatedAt: projection.updatedAt,
-      pendingBackgroundTasks: backgroundTasks(projection.providerThreads),
+      pendingBackgroundTasks,
     };
   }
   /** `readListRow` for a caller outside this module. */
@@ -591,7 +641,7 @@ export class T3Reads {
    * Narrow single-thread snapshot without `shell` or `archivedShell` gating.
    * Inside a pass, concurrent observation reads for the same thread coalesce
    * onto one in-flight snapshot until `forget` or pass closeout drops it. A
-   * thread the live shell does not list answers from its kept exact read.
+   * terminal or missing thread the live shell does not list can reuse its answer.
    */
   private async readDirectSnapshot(
     threadId: string,
@@ -781,8 +831,7 @@ export class T3Reads {
     threadId: string,
     kind: ThreadReadKind,
   ): Promise<ThreadSnapshotRead> {
-    // Whether T3's live shell lists the thread as this read starts: an answer for
-    // one it does not list is kept (see `absent`).
+    // Keep terminal or missing answers for unlisted threads (see `absent`).
     const unlisted = kind !== "custody" &&
       this.live.live && !this.live.row(threadId) && !this.written.has(threadId);
     const epoch = this.forgetEpoch(threadId);
@@ -793,7 +842,8 @@ export class T3Reads {
     await this.acquireThreadRead();
     try {
       const read = await this.readFreshSnapshotNow(threadId, kind);
-      keep({ read });
+      if (read.projection.thread.archivedAt || read.projection.thread.deletedAt)
+        keep({ read });
       return read;
     } catch (error) {
       if (isThreadNotFoundRpcError(error)) keep({ error });
@@ -828,6 +878,7 @@ export class T3Reads {
     kind: ThreadReadKind,
   ): Promise<ThreadSnapshotRead> {
     let read: ThreadSnapshotRead | undefined;
+    let synchronized = false;
     try {
       await this.core.rpc.readStream(
         "orchestration.subscribeThread",
@@ -871,11 +922,24 @@ export class T3Reads {
               paged: coverage.paged,
               omitsTurnItems: coverage.omitsTurnItems,
             };
+            if (kind === "custody" && snapshot.providerThreads) {
+              const { thread } = decode(
+                custodyThreadLinks,
+                item.projection,
+                "subscribeThread.projection",
+              );
+              read.pendingBackgroundTasks = custodyBackgroundTasks(
+                snapshot,
+                snapshot.providerThreads,
+                thread.pullRequests,
+              );
+            }
           } else if (item.kind === "synchronized") {
             if (!read)
               throw new T3CompatibilityError(
                 "subscribeThread.projection missing",
               );
+            synchronized = true;
             return true;
           } else
             throw new T3CompatibilityError(
@@ -886,6 +950,8 @@ export class T3Reads {
       );
       if (!read)
         throw new T3CompatibilityError("subscribeThread.projection missing");
+      if (kind === "custody" && !synchronized)
+        throw new T3CompatibilityError("subscribeThread: snapshot did not synchronize");
       this.pendingThreadShape = false;
       return read;
     } catch (error) {
@@ -1288,6 +1354,17 @@ export class T3Reads {
     const pending = detail.runtimeRequests.filter(
       (r) => r.status === "pending",
     );
+    // A shell update can lag this read. Only carry shell activity that this
+    // snapshot hasn't positively resolved.
+    const shellRun = shellNative && rowActive(shellNative) &&
+      !detail.runs.some((run) =>
+        run.id === shellNative.activeRunId && finishedRunStatuses.has(run.status)
+      ) ? shellNative : undefined;
+    const shellRequest = shellNative?.pendingRuntimeRequest;
+    const pendingInShell = !!shellRequest &&
+      !detail.runtimeRequests.some((request) =>
+        request.id === shellRequest.id && request.status !== "pending"
+      );
     // An archived thread is retired: it reports the terminal closed state, with
     // the archived fact on its own field for retained-read consumers.
     return {
@@ -1300,19 +1377,15 @@ export class T3Reads {
           ? "closed"
           : active
             ? active.status
-            : shellNative && activeStatuses.has(shellNative.status)
-              ? shellNative.status
-              : "idle",
+            : shellRun?.status ?? "idle",
       active:
         thread.archivedAt || thread.deletedAt
           ? false
-          : !!active ||
-            !!shellNative?.activeRunId ||
-            (!!shellNative && activeStatuses.has(shellNative.status)),
+          : !!active || !!shellRun,
       permissions:
         thread.archivedAt || thread.deletedAt
           ? false
-          : pending.length > 0 || !!shellNative?.pendingRuntimeRequest,
+          : pending.length > 0 || pendingInShell,
       error: shellNative?.lastError ?? "",
       model: thread.modelSelection.model,
       provider: thread.modelSelection.instanceId,
@@ -1321,7 +1394,7 @@ export class T3Reads {
       activeTurnId:
         thread.archivedAt || thread.deletedAt
           ? null
-          : (active?.id ?? shellNative?.activeRunId ?? null),
+          : (active?.id ?? shellRun?.activeRunId ?? null),
       turnStartedAt:
         thread.archivedAt || thread.deletedAt
           ? null

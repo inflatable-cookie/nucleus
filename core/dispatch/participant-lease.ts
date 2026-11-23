@@ -6,6 +6,10 @@ import { executionParticipants } from "../machine/execution-participants";
 import { participantTemporaryDirectory } from "../machine/participant-roots";
 import { participantRuntime, storeDataHome } from "../machine/participant-runtime";
 import {
+  incompleteRunProcessScan,
+  readRunProcessCustody,
+} from "../machine/run-process-custody";
+import {
   runBindsCurrentWork,
   type Run,
   type Task,
@@ -272,6 +276,8 @@ export class ParticipantLease {
     const complete = scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
     if (complete !== true)
       return "the host process listing has incomplete working-directory coverage";
+    if (incompleteRunProcessScan(scan))
+      return "the host process listing has incomplete working-directory or open-file coverage";
     const beforeScan =
       scan.directBeforeScan === undefined
         ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
@@ -303,6 +309,20 @@ export class ParticipantLease {
     for (const root of roots) {
       const issue = workspaceToolProcessIssue(scan.processes, root!, runIds, runtime);
       if (issue) return issue;
+    }
+    for (const runId of runIds) {
+      // The same listing also proves custody for provider descendants that
+      // have moved out of the workspace and scratch trees.
+      const custody = await readRunProcessCustody({
+        store: this.store,
+        readProcesses: async () => scan,
+        task,
+        runId,
+        run: runs.find((run) => run.id === runId),
+      });
+      if (custody.state === "unknown") return custody.reason;
+      if (custody.state === "live")
+        return `process ${custody.process.pid} still holds custody for run ${runId}`;
     }
     return null;
   }
