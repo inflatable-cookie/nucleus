@@ -1786,9 +1786,11 @@ request identities and stored committed-handoff rows are not rewritten.
   release, including `run.release`, leaves scratch cleanup pending while a run
   process still has its cwd or an open file in the workspace or scratch, or
   remains in the run's process tree. Incomplete cwd or open-file coverage for
-  live processes owned by the service UID also leaves the intent pending. The
-  hourly host sweep applies the same ownership proof to settled historical runs,
-  including runs settled before this rule, and retries missed cleanup.
+  live processes owned by the service UID also leaves the intent pending.
+  On macOS, the inventory rechecks the state of processes that a successful
+  file scan omitted and the kernel still sees. A confirmed zombie holds no
+  custody. The hourly host sweep applies the same ownership proof to settled
+  historical runs, including runs settled before this rule, and retries missed cleanup.
   A live non-init ancestor is an absolute protection: nothing below a live
   process — an agent host, its MCP or report helper, a retained thread's tools —
   is ever signalled, whatever run identity it carries, and its scratch is kept

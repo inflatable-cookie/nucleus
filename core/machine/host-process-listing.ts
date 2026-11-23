@@ -340,19 +340,39 @@ async function darwinProcesses(
   const paths = darwinOpenFiles(listingFiles.stdout);
   const complete = listingFiles.status === 0 && !listingFiles.stderr.trim();
   const cwds = new Map<number, CwdState>();
+  const missing = new Map<number, HostProcessFact>();
   for (const fact of facts) {
     if (fact.state?.startsWith("Z")) continue;
     const files = paths.get(fact.pid);
     if (files?.cwd) {
       fact.cwd = files.cwd;
       cwds.set(fact.pid, { state: "read", path: files.cwd });
-    } else {
-      cwds.set(fact.pid, { state: pidAlive(fact.pid) ? "unreadable" : "gone" });
-    }
+    } else if (pidAlive(fact.pid)) {
+      cwds.set(fact.pid, { state: "unreadable" });
+      if (complete) missing.set(fact.pid, fact);
+    } else cwds.set(fact.pid, { state: "gone" });
     fact.openFiles = {
       paths: files ? [...files.paths] : [],
       complete: complete && Boolean(files?.complete && files.cwd),
     };
+  }
+  // A process can exit after ps and remain as a zombie. A successful lsof
+  // omits its cwd, while a PID existence check still sees it until it is reaped.
+  if (missing.size) {
+    const states = await processListing("ps", [
+      "-p", [...missing.keys()].join(","), "-o", "pid=,stat=",
+    ]);
+    if (states.status === 0) {
+      for (const line of states.stdout.split("\n")) {
+        const match = /^\s*(\d+)\s+(Z\S*)\s*$/.exec(line);
+        if (!match) continue;
+        const fact = missing.get(Number(match[1]));
+        if (fact) {
+          fact.state = match[2];
+          delete fact.openFiles;
+        }
+      }
+    }
   }
   const processes = dropExitedProcesses(facts, cwds);
   return {
