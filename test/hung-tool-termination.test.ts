@@ -170,6 +170,69 @@ test("a host that declares it streams running output makes a call with no output
   assert.equal(pidAlive(tree.pids.provider), true);
 });
 
+test("a short streaming-tool deadline primes the timeline and process proof between sweeps", async (t) => {
+  const f = await selfHealingFixture(t);
+  const tree = await providerTree(t, f, true);
+  try {
+    f.adapter.capabilities = () => ({
+      reportingViaMcp: true,
+      supportsCoordinatorRecovery: true,
+      streamsRunningToolOutput: true,
+    });
+    f.store.patchRepository(
+      { origin: null, path: f.task.repoPath },
+      { toolQuietLimitMinutes: 5 },
+    );
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const remainingMs = 100;
+    const startedAt = new Date(
+      Date.now() - 5 * 60_000 + remainingMs,
+    ).toISOString();
+    const state = running({
+      updatedAt: new Date().toISOString(),
+      turnStartedAt: startedAt,
+    });
+    const tool = {
+      callId: "call-quiet",
+      name: tree.command,
+      startedAt,
+      lastOutputAt: null,
+    };
+    f.store.update(f.task.id, {
+      participantActivity: {
+        runId: "initial",
+        agentId: "worker",
+        turnId: "worker-turn-1",
+        turnStartedAt: startedAt,
+        tool,
+        permission: null,
+        process: null,
+      },
+    });
+    const call = shellCall(tree.command, 5);
+    assert.ok(call.item.detail);
+    call.timestamp = call.item.detail.startedAt = startedAt;
+    f.setTimeline([call]);
+    f.setObservation(state);
+    f.setProcesses(tree.read);
+    f.engine.resolution.stalls.hungTools.graceMs = 500;
+    await f.engine.scheduleTaskQuantum(f.task.id);
+    assert.equal(events(f, HUNG_TOOL_TERMINATED).length, 0);
+    t.mock.timers.tick(remainingMs);
+    const deadline = performance.now() + 5_000;
+    while (
+      !events(f, HUNG_TOOL_TERMINATED).length &&
+      performance.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(events(f, HUNG_TOOL_TERMINATED).length, 1);
+    assert.equal(pidAlive(tree.pids.command), false);
+    assert.equal(pidAlive(tree.pids.provider), true);
+  } finally {
+    await f.engine.stop();
+  }
+});
+
 test("the repository's toolQuietLimitMinutes raises the limit", async (t) => {
   const f = await selfHealingFixture(t);
   const tree = await providerTree(t, f, true);

@@ -324,7 +324,7 @@ async function until(predicate: () => boolean): Promise<void> {
   assert.ok(predicate(), "the scoped recovery wake did not settle");
 }
 
-test("an exact T3 turn-end read wakes its worker and the late-callback deadline sends the first reminder", async (t) => {
+test("first worker launch arms an exact T3 turn-end read and the late-callback deadline", async (t) => {
   const graceMs = 500;
   const f = await fixture(t, graceMs);
   t.after(() => f.store.close());
@@ -350,12 +350,19 @@ test("an exact T3 turn-end read wakes its worker and the late-callback deadline 
   const state = await host.observe(agentId);
   const observationReads: string[] = [];
   Object.assign(f.adapter, {
+    createAgent: async () => ({ id: agentId, workspaceId: state.workspaceId }),
     observe: async (id: string) => {
       observationReads.push(id);
       return host.observe(id);
     },
   });
-  f.store.update(f.task.id, { agentId, workspaceId: state.workspaceId });
+  const dispatching = f.store.update(f.task.id, {
+    phase: "dispatching",
+    agentId: null,
+    runId: null,
+    agentIntent: false,
+    workspaceId: state.workspaceId,
+  });
   const unrelated = f.store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),
@@ -375,8 +382,11 @@ test("an exact T3 turn-end read wakes its worker and the late-callback deadline 
     workspaceId: "other",
   });
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
-  await f.engine.scheduleTaskQuantum(f.task.id);
-  assert.equal(f.store.task(f.task.id).idleSince, null);
+  await f.engine.launchAgent(dispatching);
+  const launched = f.store.task(f.task.id);
+  assert.equal(launched.phase, "working");
+  assert.equal(launched.agentId, agentId);
+  assert.equal(launched.idleSince, null);
 
   const endedAt = new Date().toISOString();
   thread.runs[0].status = "completed";
@@ -405,7 +415,7 @@ test("an exact T3 turn-end read wakes its worker and the late-callback deadline 
         event.detail ===
           JSON.stringify({
             source: "host_turn_end",
-            runId: "initial",
+            runId: launched.runId,
             at: new Date(confirmedAt).toISOString(),
           }),
     ),

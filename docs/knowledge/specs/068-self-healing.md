@@ -314,9 +314,11 @@ The rules:
   stays only for a running tool whose state can't be observed. Tool output,
   provider events and permissions renew activity. Release and termination
   still need process identity and complete host evidence.
-  The task's own wake handles lifecycle hints and callback receipts. A bounded
-  exact-read deadline checks its live bindings between sweeps, and a confirmed
-  turn end records its source and time before the grace deadline wakes it again.
+  A turn-end hint asks for an exact read of the task's live bindings.
+  A worker launch arms its own bounded read even before its first sweep.
+  A confirmed turn end records its source and time, and the grace deadline
+  wakes the task again. A due tool check primes the timeline and process
+  evidence before entering the task lane.
 - **Publish and route on receipt.** An authenticated blocker shows on the
   board and opens its next ladder rung in the same step. A classified blocker
   always has a next rung or a named owner, never a bare classification wait.

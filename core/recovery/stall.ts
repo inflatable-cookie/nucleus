@@ -334,7 +334,12 @@ export class Stalls {
         return null;
       }
     }
-    const peek = await this.shellNotice(current, role, state);
+    const peek = await this.shellNotice(
+      current,
+      role,
+      state,
+      (run ?? current).participantActivity,
+    );
     if (peek.tool !== undefined && peek.turnId === (state.activeTurnId ?? null))
       recordActivityTool(
         this.store,
@@ -448,7 +453,12 @@ export class Stalls {
     const runId = run?.id ?? t.runId;
     if (!runId) return false;
     const role = run?.role === "reviewer" ? "Reviewer" : "Worker";
-    const peek = await this.shellNotice(t, role, state);
+    const peek = await this.shellNotice(
+      t,
+      role,
+      state,
+      (run ?? t).participantActivity,
+    );
     const activityAt = latestActivity(
       peek.activityAt,
       peek.tool?.lastOutputAt,
@@ -611,38 +621,21 @@ export class Stalls {
     t: Task,
     role: string,
     state: AgentObservation,
+    activity: ParticipantActivity | null | undefined,
   ): Promise<ShellPeek & { activityAt?: string }> {
     const turnId = state.activeTurnId ?? null;
-    const turnStartedAt = state.turnStartedAt
-      ? Date.parse(state.turnStartedAt)
-      : NaN;
-    // A command cannot outlive its turn, so a young turn never needs a peek.
-    const stale =
-      state.updatedAt &&
-      Number.isFinite(Date.parse(state.updatedAt)) &&
-      Date.now() - Date.parse(state.updatedAt) >= this.thresholdMs();
-    if (
-      (!Number.isFinite(turnStartedAt) ||
-        Date.now() - turnStartedAt < SHELL_NOTICE_MS) &&
-      !stale
-    )
+    if (!this.shouldPeek(t, state, activity))
       return { notice: null, live: false, turnId };
     const agentId = state.id;
     const lastPeek = this.shellPeeks.get(agentId);
-    const lastTool = lastPeek?.tool;
-    const toolQuietAt =
-      lastTool?.lastOutputAt ??
-      (this.resolution.adapter.capabilities?.().streamsRunningToolOutput
-        ? lastTool?.startedAt
-        : undefined);
-    const toolDue =
-      toolQuietAt &&
-      Date.now() - Date.parse(toolQuietAt) >= this.store.toolQuietLimitMsFor(t);
+    const at = Date.now();
+    const stale = at - Date.parse(state.updatedAt ?? "") >= this.thresholdMs();
     if (
       !stale &&
-      !toolDue &&
       lastPeek?.turnId === turnId &&
-      Date.now() - lastPeek.at < this.peekTtlMs
+      at - lastPeek.at < this.peekTtlMs &&
+      !(this.toolQuietDeadline(t, lastPeek.tool) <= at) &&
+      !(this.boundToolQuietDeadline(t, state, activity) <= at)
     )
       return lastPeek;
     let notice: string | null = null;
@@ -702,6 +695,52 @@ export class Stalls {
     };
     this.shellPeeks.set(agentId, result);
     return result;
+  }
+
+  /** The host prefetch and the stall observer must agree about when a tool read is due. */
+  shouldPeek(
+    task: Task,
+    state: AgentObservation,
+    activity?: ParticipantActivity | null,
+  ): boolean {
+    const at = Date.now();
+    const turnStarted =
+      state.turnStartedAt ??
+      (activity?.agentId === state.id &&
+      activity.turnId === (state.activeTurnId ?? null)
+        ? activity.turnStartedAt
+        : null);
+    return (
+      at - Date.parse(state.updatedAt ?? "") >= this.thresholdMs() ||
+      at - Date.parse(turnStarted ?? "") >=
+        Math.min(SHELL_NOTICE_MS, this.store.toolQuietLimitMsFor(task)) ||
+      this.boundToolQuietDeadline(task, state, activity) <= at
+    );
+  }
+
+  toolQuietDeadline(
+    task: Task,
+    tool: ParticipantActivity["tool"] | undefined,
+  ): number {
+    if (!tool) return Infinity;
+    const streams =
+      this.resolution.adapter.capabilities?.().streamsRunningToolOutput ===
+      true;
+    const quietFrom = tool.lastOutputAt ?? (streams ? tool.startedAt : null);
+    return quietFrom
+      ? Date.parse(quietFrom) + this.store.toolQuietLimitMsFor(task)
+      : Infinity;
+  }
+
+  private boundToolQuietDeadline(
+    task: Task,
+    state: AgentObservation,
+    activity?: ParticipantActivity | null,
+  ): number {
+    return activity?.agentId === state.id &&
+      activity.turnId === (state.activeTurnId ?? null)
+      ? this.toolQuietDeadline(task, activity.tool)
+      : Infinity;
   }
 
   /** The notice text for one peek result, or null; the durable shown event is written by settleNotice. */

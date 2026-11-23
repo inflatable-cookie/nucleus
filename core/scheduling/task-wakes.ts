@@ -73,7 +73,6 @@ import {
   requireCustodyEvidence,
 } from "../machine/custody-proof";
 import {
-  SHELL_NOTICE_MS,
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
   liveToolIssueFact,
@@ -467,7 +466,8 @@ export class TaskWakes {
    * hosts without turn events and for a process-table fact arriving between
    * quanta. A probe only admits a quantum for a changed, actionable fact.
    */
-  private armRecoveryObservation(taskId: string, startedAt: number): void {
+  armRecoveryObservation(taskId: string, startedAt: number): void {
+    if (this.engine.stopped) return;
     const task = this.store.taskOrNull(taskId);
     const previous = this.recoveryTimers.get(taskId);
     const participants =
@@ -480,18 +480,22 @@ export class TaskWakes {
       const tool = !idleSince && subject?.participantActivity?.tool;
       let toolDeadline = NaN;
       if (tool && task?.hostId) {
-        const streams = this.engine.withHost(
-          task.hostId,
-          () =>
-            this.engine.adapter.capabilities?.().streamsRunningToolOutput ===
-            true,
+        const quietDeadline = this.engine.withHost(task.hostId, () =>
+          this.resolution.stalls.toolQuietDeadline(task, tool),
         );
-        const quietFrom =
-          tool.lastOutputAt ?? (streams ? tool.startedAt : null);
-        toolDeadline = quietFrom
-          ? Date.parse(quietFrom) + this.store.toolQuietLimitMsFor(task)
+        toolDeadline = Number.isFinite(quietDeadline)
+          ? quietDeadline
           : Date.parse(subject?.lastActivityAt ?? tool.startedAt) +
             (this.resolution.stalls?.thresholdMs() ?? Infinity);
+      } else if (
+        !idleSince &&
+        task &&
+        subject?.participantActivity?.turnStartedAt
+      ) {
+        // Discover the call when a short quiet limit can expire before a shell notice.
+        toolDeadline =
+          Date.parse(subject.participantActivity.turnStartedAt) +
+          this.store.toolQuietLimitMsFor(task);
       }
       return [
         Date.parse(
@@ -639,6 +643,29 @@ export class TaskWakes {
   private wakeRecovery(taskId: string): Promise<void> {
     this.recoveryFactWakes.add(taskId);
     return this.engine.wakeTask(taskId);
+  }
+
+  /** A bridge hint widens the next task wake to its fresh run bindings. The host read proves the end. */
+  noteTurnEndHint(input: {
+    agentId?: string | null;
+    workspaceId?: string | null;
+    hostId?: string | null;
+  }): void {
+    if (this.engine.stopped || !input.agentId) return;
+    for (const taskId of this.store.taskIdsForIdentities(input)) {
+      const task = this.store.taskOrNull(taskId);
+      if (
+        task &&
+        this.canObserveRecovery(task) &&
+        recoveryParticipants(task, this.store.runs(taskId)).some(
+          (participant) =>
+            participant.agentId === input.agentId &&
+            (!input.workspaceId ||
+              participant.workspaceId === input.workspaceId),
+        )
+      )
+        this.recoveryFactWakes.add(taskId);
+    }
   }
 
   /** Concurrent probes on one host share the same bounded, out-of-lane sample. */
@@ -1311,6 +1338,12 @@ export class TaskWakes {
     const runs = this.store.runs(taskId);
     const participants = knownExecutionParticipantIds(task, runs);
     if (!participants.length) return undefined;
+    const live = new Map(
+      recoveryParticipants(task, runs).map((participant) => [
+        participant.agentId,
+        (participant.run ?? task).participantActivity,
+      ]),
+    );
 
     const hostId = task.hostId;
     const snapshot = new PassSnapshot();
@@ -1383,12 +1416,9 @@ export class TaskWakes {
                 !obs.activeTurnId &&
                 ["idle", "error", "closed", "gone"].includes(obs.status ?? ""),
             ) || obs.archived === true;
-          const quietMs = this.resolution.stalls?.thresholdMs() ?? Infinity;
           const needsActivePage =
             !inactive &&
-            (Date.now() - Date.parse(obs.updatedAt ?? "") >= quietMs ||
-              Date.now() - Date.parse(obs.turnStartedAt ?? "") >=
-                SHELL_NOTICE_MS);
+            this.resolution.stalls?.shouldPeek(task, obs, live.get(agentId));
           if (
             obs.status === "closed" ||
             obs.status === "gone" ||
