@@ -1372,7 +1372,12 @@ that holds the slot, including an inner-timed one whose individual requests are
 the pending calls. The shape is `HostAdmission` (`shared/telemetry.ts`), one per host
 and shared by every host's admission, so its numbers describe Queue's own load on that
 host and never assert the host's health; a workspace-creation wait reports the step
-`host_admission_wait`. The freed bound keeps bounding instead of shrinking to nothing
+`host_admission_wait`. `service.health.admission` is the legacy primary's queue only;
+`service.health.hostAdmission` lists every host's own `HostAdmission` by host id. Each
+snapshot also reports `slotWait`, how long each class's recent calls waited for their
+class and total slots (start spacing included), apart from `latency`, and `total`, the
+host's in-flight bound, depth and start spacing: a call that answers in a millisecond
+can still wait seconds for its turn. The freed bound keeps bounding instead of shrinking to nothing
 because one host call never returned. An abandoned call is reconciled from
 recorded state, exactly like any other unknown delivery (nucleus#1179).
 

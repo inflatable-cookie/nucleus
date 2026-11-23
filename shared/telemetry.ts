@@ -550,6 +550,16 @@ export const admissionClassStateSchema = z
   .object(admissionClassStateFields)
   .strict();
 export const admissionLatencySchema = z.object(admissionLatencyFields).strict();
+const emptySlotWindow = { samples: 0, p50Ms: null, p95Ms: null, maxMs: null };
+const emptySlotWait = Object.fromEntries(
+  admissionClasses.map((cls) => [cls, { ...emptySlotWindow }]),
+) as Record<AdmissionClass, typeof emptySlotWindow>;
+const emptyAdmissionTotal = {
+  limit: 1,
+  running: 0,
+  waiting: 0,
+  startIntervalMs: 0,
+};
 /**
  * One outbound host call that is still holding its admission slot. `holder`
  * names the effect and its identity, so a stuck call is attributable without a
@@ -585,6 +595,33 @@ export const hostAdmissionSchema = z
         workspace: admissionLatencySchema,
       })
       .strict(),
+    /**
+     * How long each class's recent calls waited for a slot before they were sent,
+     * start spacing included. A call that answers in a millisecond can still have
+     * waited seconds here; latency alone never shows it.
+     */
+    slotWait: z
+      .object({
+        callback: admissionLatencySchema,
+        control: admissionLatencySchema,
+        observation: admissionLatencySchema,
+        title: admissionLatencySchema,
+        cleanup: admissionLatencySchema,
+        inventory: admissionLatencySchema,
+        workspace: admissionLatencySchema,
+      })
+      .strict()
+      .default(emptySlotWait),
+    /** The host's total in-flight bound across classes and the spacing between starts. */
+    total: z
+      .object({
+        limit: z.number().int().positive(),
+        running: z.number().int().nonnegative(),
+        waiting: z.number().int().nonnegative(),
+        startIntervalMs: z.number().nonnegative(),
+      })
+      .strict()
+      .default(emptyAdmissionTotal),
     /** Host calls that passed the held-slot threshold, oldest first, bounded to five. */
     heldSlots: z.array(heldHostSlotSchema).max(5),
     /** Host calls abandoned as unknown at their deadline, and the most recent one. */
@@ -643,6 +680,8 @@ export const emptyHostAdmission: HostAdmission = {
     inventory: { ...emptyAdmissionLatency },
     workspace: { ...emptyAdmissionLatency },
   },
+  slotWait: emptySlotWait,
+  total: { ...emptyAdmissionTotal },
   heldSlots: [],
   abandoned: { count: 0, last: null },
   observationCacheEntries: 0,
