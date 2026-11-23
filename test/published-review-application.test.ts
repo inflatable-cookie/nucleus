@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import {
   completionSchema,
+  explicitResolutionSchema,
   runSchema,
   taskControlInputSchema,
   type Task,
@@ -11,6 +12,10 @@ import { TASK_PROGRESSING_REASON } from "../shared/task-detail-summary";
 import { reviewPublicationBody } from "../core/forge/index";
 import { holdPatch } from "../core/merge/merge-hold";
 import { digest } from "../core/store/store";
+import { formatAgentId } from "../shared/agent-identity";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
+import { plannerEscalations } from "../core/questions/ladder/records";
+import { taskProgressDigest } from "../core/recovery/coordinator-report";
 import { escalationWaitState } from "../core/questions/ladder/hold";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import {
@@ -22,6 +27,105 @@ import { fixture, base, head } from "./support/responsible-lifecycle-fixture";
 
 const publicationId = 142701;
 const future = "2099-01-01T00:00:00.000Z";
+
+type Fixture = Pick<ReturnType<typeof fixture>, "current" | "engine" | "store" | "coordinator">;
+type RecoveryEpisode = NonNullable<Task["resolution"]["recovery"]>;
+
+function registerPlanner(f: Fixture) {
+  const task = f.current();
+  const caller = formatAgentId(task.hostId!, "registered-planner");
+  f.store.upsertProject({
+    key: "settlement",
+    name: "Settlement",
+    repositories: [{ origin: null, path: task.repoPath }],
+  });
+  f.store.setProjectPlanner({
+    key: "settlement",
+    agentId: caller,
+    setBy: "operator",
+  });
+  return caller;
+}
+
+function episodeFor(
+  task: Task,
+  changes: Partial<RecoveryEpisode> = {},
+): RecoveryEpisode {
+  return {
+    id: "recovery-occurrence",
+    key: "recovery-key",
+    generation: task.coordinatorGeneration,
+    runId: null,
+    agentId: null,
+    incidentId: null,
+    status: "escalated",
+    summary: "Recovery previously escalated this occurrence",
+    idleSince: null,
+    progress: taskProgressDigest(task),
+    ...changes,
+  };
+}
+
+function recoveryCommand(
+  f: Fixture,
+  caller: string,
+  args: Record<string, unknown>,
+) {
+  const task = f.current();
+  return resolveExplicitly(
+    f.engine,
+    explicitResolutionSchema.parse({
+      taskId: task.id,
+      version: task.version,
+      caller,
+      reason: "Settle the obsolete recovery binding",
+      ...args,
+    }),
+    () => "The scheduler resumes ordinary reconciliation.",
+  );
+}
+
+function settlementOffers(f: Fixture) {
+  return (
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()))
+      .explicitCommands ?? []
+  );
+}
+
+function coordinatorFor(f: Fixture) {
+  const task = f.current();
+  const at = new Date().toISOString();
+  const completion = completionSchema.parse({
+    eventId: "coordinator-report",
+    taskId: task.id,
+    runId: "coordinator-run",
+    status: "recovered",
+    summary: "Retry the old stop",
+    coordinatorAction: { verb: "retry_effect", reason: "Retry" },
+  });
+  const run = runSchema.parse({
+    id: completion.runId,
+    taskId: task.id,
+    hostId: task.hostId,
+    workspaceId: task.workspaceId,
+    generation: task.coordinatorGeneration,
+    role: "recovery",
+    agentId: "retained-coordinator",
+    status: "finished",
+    createdAt: at,
+    lastObservedAt: null,
+    idleSince: null,
+    released: false,
+    active: false,
+    head,
+    base,
+    profile: f.coordinator,
+    completion,
+  });
+  f.store.putRun(run);
+  f.store.setCredential(run.id, "coordinator-token");
+  return { run, completion };
+}
 
 function parkedVerdict(
   test: TestContext,
@@ -178,6 +282,289 @@ function parkedVerdict(
     },
   };
 }
+
+test("clearing a detached recovery applies the existing exact-head verdict", async (t) => {
+  const f = parkedVerdict(t);
+  const caller = registerPlanner(f);
+  const before = f.current();
+  f.store.event(
+    before.id,
+    "planner_escalation_wait_superseded",
+    "timed-park: wait ended",
+  );
+  const recovery = episodeFor(before, { incidentId: "already-cleared" });
+  f.store.update(before.id, {
+    phase: "reviewing",
+    reason: "Waiting for result application",
+    resolution: {
+      ...before.resolution,
+      stop: null,
+      recovery,
+      recoveryActive: true,
+    },
+  });
+  f.adapter.mergeGate = async () => ({
+    head,
+    base,
+    wait: "Waiting for required checks",
+  });
+  assert.equal(
+    await f.engine.resolution.reapplyPendingReview(f.current()),
+    "blocked",
+  );
+  const offer = settlementOffers(f).find(
+    (item) => item.args.id === recovery.id,
+  );
+  assert.equal(offer?.args.kind, "recovery");
+  assert.deepEqual(offer.warnings, []);
+  const result = await recoveryCommand(f, caller, offer.args);
+  assert.equal(result.explicitResolution?.status, "applied");
+  await f.engine.wake();
+  await f.engine.quiesce();
+  assert.equal(f.current().phase, "verifying");
+  assert.equal(f.current().resolution.review?.runId, f.run.id);
+  assert.equal(f.current().resolution.review?.head, head);
+  f.assertAppliedOnce();
+  f.assertNoSend();
+  assert.equal(f.events("owner_resolution").length, 1);
+});
+
+for (const kind of [
+  "recovery",
+  "recovery flag",
+  "attention",
+  "run_pointer",
+  "run.release",
+] as const) {
+  test(`the registered planner can settle ${kind} once and leave other occurrences alone`, async (t) => {
+    const f = fixture();
+    t.after(() => f.close());
+    f.store.setMeta("paused", true);
+    const caller = registerPlanner(f);
+    const task = f.current();
+    const { run, completion } = coordinatorFor(f);
+    const action = {
+      runId: run.id,
+      eventId: completion.eventId,
+      status: "pending" as const,
+      reportStatus: "recovered" as const,
+      summary: completion.summary,
+      coordinatorAction: completion.coordinatorAction ?? null,
+    };
+    const isRelease = kind === "run.release";
+    const pendingAction = kind === "recovery" || isRelease;
+    if (!isRelease) f.store.putRun({ ...run, released: true });
+    const recovery = pendingAction
+      ? episodeFor(task, {
+          runId: run.id,
+          action,
+        })
+      : null;
+    if (pendingAction)
+      f.store.event(
+        task.id,
+        "run_result_applying",
+        JSON.stringify([task.id, run.id, completion.eventId]),
+      );
+    // The independent incident and escalation have different durable identities.
+    const incident =
+      kind === "attention"
+        ? null
+        : {
+            id: "other-incident",
+            status: "escalated" as const,
+            role: "worker" as const,
+            createdAt: future,
+            updatedAt: future,
+            cause: "workspace_state",
+            detail: "Independent fault",
+            runId: null,
+            fingerprint: "",
+            attempt: 0,
+            action: "" as const,
+          };
+    if (kind !== "attention")
+      f.store.event(
+        task.id,
+        "planner_escalation",
+        `other-escalation: cause ${digest("unrelated")}; run worker; question pending`,
+      );
+    if (recovery) {
+      const cause = digest(`coordinator-refused:${task.id}:${recovery.id}`);
+      f.store.event(
+        task.id,
+        "planner_escalation",
+        `owned-escalation: cause ${cause}; run ${run.id}; question pending`,
+      );
+    }
+    f.store.update(task.id, {
+      resolution: {
+        ...task.resolution,
+        stop: null,
+        recovery,
+        incident,
+        recoveryActive: pendingAction || kind === "recovery flag",
+        attention: kind === "attention",
+        currentRunId: kind === "run_pointer" ? "missing-run" : null,
+      },
+    });
+    await f.engine.quiesce();
+    const offer = settlementOffers(f).find((item) =>
+      isRelease
+        ? item.args.run === run.id
+        : item.args.kind === (kind === "recovery flag" ? "recovery" : kind),
+    );
+    assert.ok(offer);
+    const warnings = pendingAction ? ["effect_may_land"] : [];
+    assert.deepEqual(offer.warnings, warnings);
+    const { taskId: _taskId, version: _version, ...args } = offer.args;
+    if (warnings.length) {
+      const refused = await recoveryCommand(f, caller, args);
+      assert.equal(refused.explicitResolution?.status, "warnings");
+      assert.deepEqual(
+        refused.explicitResolution.warnings.map((warning) => warning.id),
+        warnings,
+      );
+      assert.equal(f.events("owner_resolution").length, 0);
+    }
+    const applied = await recoveryCommand(f, caller, {
+      ...args,
+      accept: warnings,
+    });
+    assert.equal(applied.explicitResolution?.status, "applied");
+    const after = f.current();
+    assert.deepEqual(after.resolution.incident, incident);
+    const escalations = plannerEscalations(f.store.eventsAll(task.id));
+    assert.equal(
+      escalations.find((item) => item.id === "other-escalation")?.answered,
+      kind === "attention" ? undefined : false,
+    );
+    assert.equal(
+      escalations.find((item) => item.id === "owned-escalation")?.answered,
+      recovery ? true : undefined,
+    );
+    assert.equal(after.resolution.attention, false);
+    assert.equal(after.resolution.currentRunId, null);
+    assert.equal(after.resolution.recoveryActive, false);
+    assert.equal(
+      after.resolution.recovery?.action?.status,
+      pendingAction ? "refused" : undefined,
+    );
+    assert.deepEqual(f.store.run(run.id)?.completion, completion);
+    await assert.rejects(
+      recoveryCommand(f, caller, { ...args, accept: warnings }),
+      /No current/,
+    );
+    assert.throws(
+      () =>
+        f.engine.resolution.complete(
+          {
+            ...completion,
+            eventId: "late-coordinator-report",
+          },
+          "coordinator-token",
+        ),
+      /unauthorized callback/i,
+    );
+    await f.engine.resolution.recovery.pass(task.id);
+    assert.equal(f.events("owner_resolution").length, 1);
+    assert.equal(
+      f.current().resolution.recovery?.action?.status,
+      pendingAction ? "refused" : undefined,
+    );
+  });
+}
+
+test("permanently stale coordinator bindings release without another escalation", async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const before = f.current();
+  const { run, completion } = coordinatorFor(f);
+  let observations = 0;
+  const observe = f.adapter.observe.bind(f.adapter);
+  f.adapter.observe = async (agentId) => {
+    if (agentId !== run.agentId) return observe(agentId);
+    observations++;
+    throw Error("The old coordinator can no longer be observed");
+  };
+  f.store.update(before.id, {
+    resolution: {
+      ...before.resolution,
+      recoveryActive: true,
+      recovery: episodeFor(before, {
+        runId: run.id,
+        action: {
+          runId: run.id,
+          eventId: completion.eventId,
+          status: "refused",
+          reportStatus: "recovered",
+          summary: completion.summary,
+          reason: "Stale run",
+        },
+      }),
+    },
+  });
+  const recovery = f.current().resolution.recovery;
+  for (let pass = 0; pass < 3; pass++)
+    await f.engine.resolution.recovery.pass(before.id);
+  assert.equal(f.store.run(run.id)?.released, true);
+  assert.deepEqual(f.store.run(run.id)?.completion, completion);
+  assert.equal(f.current().resolution.recovery?.id, recovery?.id);
+  assert.equal(f.current().resolution.recovery?.action?.reason, "Stale run");
+  assert.equal(f.current().resolution.recovery?.status, "resolved");
+  assert.equal(f.current().resolution.recoveryActive, false);
+  assert.equal(f.events("coordinator_binding_released").length, 1);
+  assert.equal(f.events("recovery_escalated").length, 0);
+  assert.equal(observations, 0);
+});
+
+test("a late coordinator observation cannot reopen a released recovery", async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const caller = registerPlanner(f);
+  const task = f.current();
+  const { run } = coordinatorFor(f);
+  f.store.putRun({ ...run, active: true, status: "running", completion: null });
+  f.store.update(task.id, {
+    resolution: {
+      ...task.resolution,
+      recoveryActive: true,
+      recovery: episodeFor(task, { runId: run.id, status: "running" }),
+    },
+  });
+  let entered!: () => void;
+  const observing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let failRead!: (error: Error) => void;
+  const lateRead = new Promise<never>((_, reject) => {
+    failRead = reject;
+  });
+  const observe = f.adapter.observe.bind(f.adapter);
+  f.adapter.observe = async (agentId) => {
+    if (agentId !== run.agentId) return observe(agentId);
+    entered();
+    return lateRead;
+  };
+  const pass = f.engine.resolution.recovery.pass(task.id);
+  await observing;
+  try {
+    const offer = settlementOffers(f).find((item) => item.args.run === run.id);
+    assert.ok(offer);
+    assert.deepEqual(offer.warnings, ["live_turn", "unreported_result"]);
+    const result = await recoveryCommand(f, caller, {
+      ...offer.args,
+      accept: offer.warnings,
+    });
+    assert.equal(result.explicitResolution?.status, "applied");
+  } finally {
+    failRead(new Error("The old turn became unreadable"));
+    await pass;
+  }
+  assert.equal(f.store.run(run.id)?.released, true);
+  assert.equal(f.current().resolution.recovery?.status, "resolved");
+  assert.equal(f.events("recovery_escalated").length, 0);
+});
 
 for (const status of ["ready_to_merge", "changes_required"] as const) {
   test(`next previews and the sweep applies a released published ${status} from a blocked row`, async (t) => {

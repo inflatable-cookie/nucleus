@@ -3,7 +3,9 @@ import {
   holdsOf,
   OPERATOR_BOARD_CALLER,
   syncHoldProjection,
+  type Run,
   type Task,
+  type TaskNextExplicitCommand,
 } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { QueueOperation } from "../../shared/operations";
@@ -20,6 +22,7 @@ import {
 } from "../../shared/task-stop";
 import type { ResponsibleThreadReason } from "../../shared/responsible-thread";
 import type { Engine } from "../engine";
+import { recordResultApplied, resultApplied } from "../intake/applied-result";
 import { signalProcessGroupByLeader } from "../machine/process-group";
 import {
   reattachRefusal,
@@ -44,7 +47,7 @@ import { plannerEscalations } from "../questions/ladder/records";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { plannerIdMatches } from "../recovery/task-reasons";
 import { reviewPublicationKey } from "../review/review-publication";
-import { now, type Store } from "../store/store";
+import { digest, now, type Store } from "../store/store";
 import { threadServesAnotherTask } from "../workspaces/thread-ownership";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "./owner-verbs";
 import { splitOwnerEffectKey } from "./owner-effects";
@@ -381,6 +384,16 @@ export async function resolveExplicitly(
     });
     if (input.version !== task.version) return reply("stale");
     if (task.removedAt) throw Error("Task was removed from the queue");
+    const releasing = input.action === "run.release" ? store.run(input.run) : null;
+    if (
+      input.action === "run.release" &&
+      releasing?.taskId === task.id &&
+      releasing.role === "recovery" &&
+      releasing.released &&
+      !input.archive &&
+      task.resolution.recovery?.runId !== releasing.id
+    )
+      return missing("coordinator binding for run", releasing.id);
     if (
       source === "coordinator" &&
       input.accept.some((id) => PLANNER_ONLY_WARNINGS.has(id))
@@ -454,6 +467,9 @@ export async function resolveExplicitly(
       status: "applied" as const,
       warnings: plan.warnings,
       finish: plan.finish,
+      wake:
+        (input.action === "record.clear" && isRecoveryRecordKind(input.kind)) ||
+        releasing?.role === "recovery",
     };
   });
   const finished =
@@ -465,6 +481,7 @@ export async function resolveExplicitly(
   const deliveryNote = finished?.delivery
     ? `Message delivery: ${finished.delivery}.`
     : "";
+  if ("wake" in result && result.wake) engine.scheduleLifecycleFollowUp(id);
   return {
     ...latestTask,
     explicitResolution: {
@@ -492,6 +509,315 @@ export async function resolveExplicitly(
  * provably dead participant (Spec 068 §3; nucleus#1552).
  */
 export type ReleasePlanContext = Pick<Engine, "store" | "host" | "withHost">;
+
+type RecoveryEpisode = NonNullable<Task["resolution"]["recovery"]>;
+type RecordKind = Extract<
+  ExplicitResolution,
+  { action: "record.clear" }
+>["kind"];
+type RecoveryRecordKind = Extract<
+  RecordKind,
+  "recovery" | "attention" | "run_pointer"
+>;
+
+function isRecoveryRecordKind(kind: RecordKind): kind is RecoveryRecordKind {
+  return kind === "recovery" || kind === "attention" || kind === "run_pointer";
+}
+
+function pendingRecoveryWarnings(
+  store: Store,
+  task: Task,
+  episode: RecoveryEpisode,
+): Warning[] {
+  const action = episode.action;
+  if (action?.status !== "pending") return [];
+  return coordinatorClaimWarnings(store, task, action.runId, action.eventId);
+}
+
+function coordinatorClaimWarnings(
+  store: Store,
+  task: Task,
+  runId: string,
+  eventId: string,
+): Warning[] {
+  const claim = JSON.stringify([task.id, runId, eventId]);
+  if (
+    resultApplied(store, task.id, runId) ||
+    !store
+      .eventsAll(task.id)
+      .some(
+        (event) =>
+          event.kind === "run_result_applying" && event.detail === claim,
+      )
+  )
+    return [];
+  return [
+    {
+      id: "effect_may_land",
+      text: `Coordinator action ${eventId} already started and its effect may still land.`,
+    },
+  ];
+}
+
+/** Close one episode and the mechanical records that identify it. */
+function recoveryEpisodeSettlement(
+  store: Store,
+  task: Task,
+  episode: RecoveryEpisode,
+  reason: string,
+): Partial<Task> {
+  const { incident, stop } = task.resolution;
+  const events = store.eventsAll(task.id);
+  const causes = ["recovery-pending", "coordinator-refused"].map((cause) =>
+    digest(`${cause}:${task.id}:${episode.id}`),
+  );
+  const escalations = plannerEscalations(events).filter(
+    (item) =>
+      causes.includes(item.cause) &&
+      !item.decisionId &&
+      !events.some(
+        (event) =>
+          event.kind === "planner_escalation_answered" &&
+          event.detail.startsWith(`${item.id}:`),
+      ),
+  );
+  for (const item of escalations) {
+    if (item.answered) continue;
+    store.event(
+      task.id,
+      "planner_escalation_resolved",
+      `${item.id}: ${reason}`,
+    );
+    closeEscalationFollowups(store, task.id, item.id);
+  }
+
+  const action = episode.action;
+  if (action?.status === "pending") {
+    // The action's run may already be detached. Fence an in-flight finish
+    // only when its immutable report (or the episode binding) identifies it.
+    const run = store.run(action.runId);
+    if (
+      run?.taskId === task.id &&
+      run.role === "recovery" &&
+      (run.completion
+        ? run.completion.eventId === action.eventId
+        : episode.runId === run.id) &&
+      !resultApplied(store, task.id, run.id)
+    ) {
+      store.event(task.id, "coordinator_action_refused", action.eventId);
+      recordResultApplied(store, task.id, run.id);
+    }
+  }
+  const incidentRun = incident?.runId ? store.run(incident.runId) : null;
+  const independentLiveRun =
+    incident?.runId &&
+    incident.runId !== episode.runId &&
+    (incidentRun
+      ? !incidentRun.released
+      : task.runId === incident.runId && !task.completion);
+  const ownsIncident =
+    incident && incident.id === episode.incidentId && !independentLiveRun;
+  const ownsStop =
+    stop &&
+    !stop.holderAgentId &&
+    ((ownsIncident &&
+      stop.incidentId === incident.id &&
+      ["operator_needed", "lifecycle", "run_stalled"].includes(stop.reason)) ||
+      (stop.fact?.code === "escalation" &&
+        escalations.some((item) => item.id === stop.fact?.subject)));
+  return {
+    ...(ownsStop && task.reason === stop.detail
+      ? { reason: TASK_PROGRESSING_REASON }
+      : {}),
+    resolution: {
+      ...task.resolution,
+      recoveryActive: false,
+      recovery: {
+        ...episode,
+        runId: null,
+        status: "resolved",
+        ...(action?.status === "pending"
+          ? { action: { ...action, status: "refused" as const, reason } }
+          : {}),
+      },
+      incident:
+        ownsIncident && incident.status !== "resolved"
+          ? { ...incident, status: "resolved", updatedAt: now() }
+          : incident,
+      stop: ownsStop ? null : stop,
+      attention:
+        ownsIncident && (!stop || ownsStop) ? false : task.resolution.attention,
+    },
+  };
+}
+
+/** The explicit release and the coordinator pass retire the same binding. */
+export function releaseCoordinatorBinding(
+  store: Store,
+  task: Task,
+  run: Run,
+  reason: string,
+): Partial<Task> {
+  store.putRun({
+    ...run,
+    active: false,
+    released: true,
+    explicitlyReleasedAt: run.explicitlyReleasedAt ?? now(),
+    status: run.completion ? run.status : "superseded",
+  });
+  const episode = task.resolution.recovery;
+  const patch =
+    episode?.runId === run.id
+      ? recoveryEpisodeSettlement(store, task, episode, reason)
+      : {};
+  if (run.completion) recordResultApplied(store, task.id, run.id);
+  const resolution = { ...(patch.resolution ?? task.resolution) };
+  if (resolution.currentRunId === run.id) resolution.currentRunId = null;
+  if (stopNamesRun(task, run.id) && !task.resolution.stop?.holderAgentId) {
+    if (task.reason === task.resolution.stop?.detail)
+      patch.reason = TASK_PROGRESSING_REASON;
+    resolution.stop = null;
+  }
+  return { ...patch, resolution };
+}
+
+function recoveryRecordPlan(
+  store: Store,
+  task: Task,
+  kind: RecoveryRecordKind,
+  id: string,
+  reason: string,
+): Plan | null {
+  const r = task.resolution;
+  const episode = r.recovery;
+  const plain = (
+    before: unknown,
+    fields: Partial<Task["resolution"]>,
+  ): Plan => ({
+    warnings: [],
+    apply: () => ({ before, patch: { resolution: { ...r, ...fields } } }),
+  });
+  switch (kind) {
+    case "recovery": {
+      if (!episode)
+        return id === task.id &&
+          r.recoveryActive &&
+          !store
+            .runs(task.id)
+            .some((run) => run.role === "recovery" && !run.released)
+          ? plain(true, { recoveryActive: false })
+          : null;
+      const run = episode.runId ? store.run(episode.runId) : null;
+      const bound = run?.taskId === task.id && run.role === "recovery";
+      if (
+        episode.id !== id ||
+        (episode.status === "resolved" &&
+          !r.recoveryActive &&
+          episode.action?.status !== "pending" &&
+          (!episode.runId || bound))
+      )
+        return null;
+      if (bound && !run.released) return null;
+      return {
+        warnings: pendingRecoveryWarnings(store, task, episode),
+        apply: () => ({
+          before: episode,
+          patch: recoveryEpisodeSettlement(store, task, episode, reason),
+        }),
+      };
+    }
+    case "attention":
+      return id === task.id &&
+        r.attention &&
+        !r.stop &&
+        !task.originError &&
+        !r.externalMergePreAttention &&
+        !r.unreviewedMerge &&
+        (!r.incident || r.incident.status === "resolved") &&
+        (!episode ||
+          (episode.status === "resolved" &&
+            episode.action?.status !== "pending")) &&
+        !r.recoveryActive &&
+        !["blocked", "error", "needs_attention"].includes(task.phase) &&
+        (!task.runId ||
+          Boolean(task.completion) ||
+          task.agentActive === false) &&
+        !store.runs(task.id).some((run) => !run.released) &&
+        !plannerEscalations(store.eventsAll(task.id)).some(
+          (item) => !item.answered,
+        )
+        ? plain(true, { attention: false })
+        : null;
+    case "run_pointer":
+      return r.currentRunId === id && task.runId !== id && !store.run(id)
+        ? plain(id, { currentRunId: null })
+        : null;
+  }
+}
+
+export function recoverySettlementOffers(
+  store: Store,
+  task: Task,
+  runs: Run[],
+): TaskNextExplicitCommand[] {
+  const base = { taskId: task.id, version: task.version };
+  const r = task.resolution;
+  const targets = [
+    {
+      kind: "recovery",
+      id: r.recovery?.id ?? task.id,
+      note: r.recovery
+        ? `Settle recovery episode ${r.recovery.id} and its pending action.`
+        : "Clear the orphaned recovery flag.",
+    },
+    {
+      kind: "attention",
+      id: task.id,
+      note: "Clear the orphaned attention flag.",
+    },
+    {
+      kind: "run_pointer",
+      id: r.currentRunId,
+      note: "Clear the pointer to the missing current run.",
+    },
+  ] satisfies Array<{
+    kind: RecoveryRecordKind;
+    id: string | null;
+    note: string;
+  }>;
+  const offers: TaskNextExplicitCommand[] = [];
+  for (const { kind, id, note } of targets) {
+    if (!id) continue;
+    const plan = recoveryRecordPlan(store, task, kind, id, "");
+    if (plan)
+      offers.push({
+        action: "record.clear",
+        args: { action: "record.clear", ...base, kind, id },
+        fill: ["reason"],
+        note,
+        warnings: plan.warnings.map((warning) => warning.id),
+      });
+  }
+  for (const run of runs) {
+    if (run.role !== "recovery" || run.released || run.mergeRetirement)
+      continue;
+    if (
+      r.stop?.fact?.code === "creation_in_flight" &&
+      r.stop.fact.subject === run.id
+    )
+      continue;
+    offers.push({
+      action: "run.release",
+      args: { action: "run.release", ...base, run: run.id },
+      fill: ["reason"],
+      note: `Release coordinator run ${run.id} and settle its matching recovery binding.`,
+      warnings: releaseWarnings(store, task, run.id).map(
+        (warning) => warning.id,
+      ),
+    });
+  }
+  return offers;
+}
 
 function releasedRunLive(task: Task, run: ReturnType<Store["run"]>): boolean {
   return run
@@ -528,6 +854,13 @@ export function releaseWarnings(
           ? "Only this reviewer's first verdict at the current exact head can still be accepted."
           : "Any later report from this run will be refused.",
     });
+  if (run?.role === "recovery") {
+    const episode = task.resolution.recovery;
+    if (episode?.runId === runId && episode.action?.status === "pending")
+      warnings.push(...pendingRecoveryWarnings(store, task, episode));
+    else if (completion)
+      warnings.push(...coordinatorClaimWarnings(store, task, runId, completion.eventId));
+  }
   return warnings;
 }
 
@@ -551,9 +884,13 @@ export function releasePlan(
   return {
     warnings,
     apply() {
-      const resolution = { ...task.resolution };
-      const patch: Partial<Task> = { resolution };
-      if (run) {
+      const patch: Partial<Task> =
+        run?.role === "recovery"
+          ? releaseCoordinatorBinding(store, task, run, input.reason)
+          : {};
+      const resolution = patch.resolution ?? { ...task.resolution };
+      patch.resolution = resolution;
+      if (run && run.role !== "recovery") {
         for (const delivery of run.reviewDeliveries ?? []) {
           if (delivery.status !== "reserved" && delivery.status !== "uncertain")
             continue;
@@ -596,28 +933,10 @@ export function releasePlan(
       }
       if (resolution.restartSlotHold?.fromRunId === input.run)
         resolution.restartSlotHold = null;
-      if (stopNamesRun(task, input.run)) {
+      if (run?.role !== "recovery" && stopNamesRun(task, input.run)) {
         if (task.reason === task.resolution.stop?.detail)
           patch.reason = TASK_PROGRESSING_REASON;
         resolution.stop = null;
-      }
-      const recovery = resolution.recovery;
-      if (recovery?.runId === input.run && !completion) {
-        resolution.recoveryActive = false;
-        resolution.recovery = {
-          ...recovery,
-          runId: null,
-          status: "resolved",
-          ...(recovery.action?.status === "pending"
-            ? {
-                action: {
-                  ...recovery.action,
-                  status: "refused",
-                  reason: input.reason,
-                },
-              }
-            : {}),
-        };
       }
       return { patch, before: run ?? { id: input.run, agentId, completion } };
     },
@@ -708,6 +1027,18 @@ function clearPlan(
   const { id, kind } = input;
   const store = engine.store;
   const r = task.resolution;
+  if (isRecoveryRecordKind(kind)) {
+    const plan = recoveryRecordPlan(store, task, kind, id, input.reason);
+    if (plan) return plan;
+    if (kind === "recovery" && r.recovery?.id === id && r.recovery.runId) {
+      const run = store.run(r.recovery.runId);
+      if (run?.taskId === task.id && run.role === "recovery" && !run.released)
+        throw Error(
+          `Coordinator run ${run.id} still owns recovery ${id}. Use run.release run=${run.id}.`,
+        );
+    }
+    return missing(kind, id);
+  }
   const stop = r.stop;
   const patch = (
     before: unknown,

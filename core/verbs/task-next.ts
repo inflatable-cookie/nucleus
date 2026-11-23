@@ -1,6 +1,6 @@
 import { reportedUnappliedVerdict } from "../intake/applied-result";
 import { activityReadContext } from "../telemetry/task-activity-observation";
-import { releaseWarnings } from "./explicit-resolution";
+import { recoverySettlementOffers, releaseWarnings } from "./explicit-resolution";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
 import { taskDetailView } from "../../shared/task-view";
@@ -465,6 +465,7 @@ export function assembleOwnerTaskNext(
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
   const stop = ownerTaskStop(facts);
+  const explicitCommands = explicitCommandsFor(facts, stop);
   if (stop)
     stop.suggestedVerbs = stop.suggestedVerbs.filter((verb) =>
       verbs.some((view) => view.verb === verb && view.available),
@@ -542,9 +543,7 @@ export function assembleOwnerTaskNext(
         : {}),
     },
     verbs,
-    ...(explicitCommandsFor(facts, stop).length
-      ? { explicitCommands: explicitCommandsFor(facts, stop) }
-      : {}),
+    ...(explicitCommands.length ? { explicitCommands } : {}),
     // Task 645: the durable owner no-automatic-retry rule stays visible until an
     // owner control lifts it. Task detail carries the same fields on resolution.
     ...(task.resolution.noAutomaticRetry
@@ -618,9 +617,11 @@ function explicitCommandsFor(
   stop: TaskNext["stop"],
 ): TaskNextExplicitCommand[] {
   const { task, runs } = facts;
-  if (task.removedAt || ["done", "cancelled"].includes(task.phase)) return [];
+  if (task.removedAt) return [];
+  const settlements = recoverySettlementOffers(facts.store, task, runs);
+  if (["done", "cancelled"].includes(task.phase)) return settlements;
   const base = { taskId: task.id, version: task.version };
-  const commands: TaskNextExplicitCommand[] = [];
+  const commands: TaskNextExplicitCommand[] = [...settlements];
   const push = (command: TaskNextExplicitCommand) => {
     const sig = `${command.action}:${JSON.stringify(command.args)}`;
     if (
@@ -709,12 +710,17 @@ function explicitCommandsFor(
       const stored = runs.find((r) => r.id === stalledRunId);
       const role = stored ? startRoleFor(stored.role) : "worker";
       const label = role ?? stored?.role ?? "worker";
-      push({
-        action: "run.release",
-        args: { action: "run.release", ...base, run: stalledRunId },
-        fill: ["reason"],
-        note: `Release stalled ${label} run ${stalledRunId}.`,
-      });
+      if (
+        stored?.role !== "recovery" ||
+        !stored.released ||
+        task.resolution.recovery?.runId === stored.id
+      )
+        push({
+          action: "run.release",
+          args: { action: "run.release", ...base, run: stalledRunId },
+          fill: ["reason"],
+          note: `Release stalled ${label} run ${stalledRunId}.`,
+        });
       if (role) {
         push({
           action: "run.start",
@@ -905,6 +911,7 @@ function explicitCommandsFor(
   }
 
   return commands.map((command) => {
+    if (command.warnings) return command;
     const warnings = expectedWarnings(facts, command);
     return warnings ? { ...command, warnings } : command;
   });

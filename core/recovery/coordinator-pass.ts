@@ -21,6 +21,8 @@ import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import { resultApplied } from "../intake/applied-result";
+import { releaseCoordinatorBinding } from "../verbs/explicit-resolution";
+import { recoveryApplicationsInFlight } from "./coordinator-settlement";
 import type { AgentObservation } from "../host/adapter";
 import {
   completedTurnCanRelease,
@@ -29,6 +31,7 @@ import {
 } from "./completed-run-observation";
 import { runActivityObservation } from "../telemetry/task-activity-observation";
 import {
+  coordinatorReportMatches,
   reportNamesNoAction,
   retiredNarrowAction,
   retiredNarrowRefusal,
@@ -170,6 +173,62 @@ export class CoordinatorPass {
     }
     return true;
   }
+
+  /** Refused and displaced completed runs have no action left to observe. */
+  private settleStaleBindings(task: Task, runs: Run[]): Task {
+    const episode = task.resolution.recovery;
+    const stale = runs.filter((run) => {
+      if (run.role !== "recovery" || run.mergeRetirement) return false;
+      const bound = episode?.runId === run.id;
+      const action = bound ? episode.action : null;
+      const reportId = run.completion?.eventId ?? action?.eventId;
+      if (
+        reportId &&
+        recoveryApplicationsInFlight.has(
+          JSON.stringify([task.id, run.id, reportId]),
+        )
+      )
+        return false;
+      if (bound && run.generation !== task.coordinatorGeneration)
+        return !run.released || episode.status !== "resolved" || action?.status === "pending";
+      if (!run.completion) return false;
+      if (!bound) return !run.released;
+      if (action?.runId !== run.id || action.eventId !== run.completion.eventId)
+        return false;
+      return (
+        (!run.released && action.status === "refused") ||
+        (action.status === "pending" &&
+          action.coordinatorAction &&
+          !["none", "cannot"].includes(action.coordinatorAction.verb) &&
+          episode.progress &&
+          !coordinatorReportMatches(task))
+      );
+    });
+    if (!stale.length) return task;
+    return this.store.transaction(() => {
+      let current = task;
+      for (const run of stale) {
+        const reason =
+          run.generation !== current.coordinatorGeneration
+            ? "Coordinator generation changed before the action could apply."
+            : "The completed coordinator run no longer owns an applicable action.";
+        const patch = releaseCoordinatorBinding(
+          this.store,
+          current,
+          run,
+          reason,
+        );
+        current = this.store.update(
+          current.id,
+          patch,
+          "coordinator_binding_released",
+          run.id,
+        );
+      }
+      return current;
+    });
+  }
+
   async pass(taskId?: string) {
     if (
       !this.resolution.adapter.supportsCoordinatorRecovery ||
@@ -181,14 +240,22 @@ export class CoordinatorPass {
       .filter((task) => !taskId || task.id === taskId)) {
       let t = this.store.task(initial.id),
         incident = t.resolution.recovery;
+      const runs = this.store.runs(t.id);
+      if (
+        !this.resolution.startsNoRuns() &&
+        !isDispositionActive(t) &&
+        !isDispositionComplete(t) &&
+        !["done", "cancelled"].includes(t.phase)
+      ) {
+        t = this.settleStaleBindings(t, runs);
+        incident = t.resolution.recovery;
+      }
       // The retired report is already history. Release its execution custody
       // only after the ordinary merge lease positively observes participants and
       // effects quiet, and only if neither task nor run changed during that read.
-      for (const retired of this.store
-        .runs(t.id)
-        .filter(
-          (run) => run.mergeRetirement && run.completion && !run.released,
-        )) {
+      for (const retired of runs.filter(
+        (run) => run.mergeRetirement && run.completion && !run.released,
+      )) {
         const snapshot = JSON.stringify(retired);
         if (!(await this.resolution.executionLease(t, undefined, false, true)))
           continue;
@@ -554,36 +621,18 @@ export class CoordinatorPass {
       }
       if (
         !run ||
-        (run.released && (
-          !run.completion ||
-          resultApplied(this.store, t.id, run.id) ||
-          this.episode.bindingFrom(run, incident)?.status !== "pending"
-        ))
+        run.taskId !== t.id ||
+        run.role !== "recovery" ||
+        (run.released &&
+          (!run.completion ||
+            resultApplied(this.store, t.id, run.id) ||
+            this.episode.bindingFrom(run, incident)?.status !== "pending"))
       )
         continue;
+      const episodeId = incident.id;
+      const episodeRunId = incident.runId;
       try {
-        if (run.generation !== t.coordinatorGeneration) {
-          const latest = this.store.run(run.id)!;
-          const binding = this.episode.bindingFrom(latest, incident);
-          if (binding && (binding.status === "pending" || latest.completion)) {
-            this.episode.refuseAcceptedAction(
-              t,
-              latest,
-              binding,
-              "coordinator generation changed after the accepted report",
-              needsAttention(this.store.task(t.id), this.store),
-            );
-            continue;
-          }
-          this.store.putRun({
-            ...latest,
-            released: true,
-            status: "superseded",
-          });
-          this.resolution.update(t, { recoveryActive: false });
-          this.episode.save(t, { status: "resolved" });
-          continue;
-        }
+        if (run.generation !== t.coordinatorGeneration) continue;
         if (!run.agentId && !run.released) {
           if (this.resolution.startsNoRuns()) continue;
           const observed = await observeRecoveryCreation(
@@ -653,7 +702,8 @@ export class CoordinatorPass {
             continue;
           t = this.store.task(t.id);
           if (
-            t.resolution.recovery?.runId !== run.id ||
+            t.resolution.recovery?.id !== episodeId ||
+            t.resolution.recovery.runId !== run.id ||
             t.coordinatorGeneration !== run.generation ||
             isDispositionActive(t) ||
             isDispositionComplete(t)
@@ -735,7 +785,8 @@ export class CoordinatorPass {
           continue;
         t = this.store.task(t.id);
         incident = t.resolution.recovery;
-        if (!incident) continue;
+        if (incident?.id !== episodeId || incident.runId !== episodeRunId)
+          continue;
         run = this.store.run(run.id)!;
         if (
           run.status === "running" &&
@@ -846,6 +897,12 @@ export class CoordinatorPass {
         }
         if (!(await this.resolution.lease(t)) || this.resolution.startsNoRuns())
           continue;
+        const current = this.store.task(t.id);
+        if (
+          current.resolution.recovery?.id !== episodeId ||
+          current.resolution.recovery.runId !== episodeRunId
+        )
+          continue;
         if (
           t.responsible &&
           accepted &&
@@ -932,7 +989,9 @@ export class CoordinatorPass {
         this.store.transaction(() => {
           const latestRun = this.store.run(finishedRun.id)!;
           t = this.store.task(t.id);
-          incident = t.resolution.recovery!;
+          incident = t.resolution.recovery;
+          if (incident?.id !== episodeId || incident.runId !== episodeRunId)
+            return;
           const action = this.episode.bindingFrom(latestRun, incident);
           if (
             !action ||
@@ -970,6 +1029,8 @@ export class CoordinatorPass {
         const reason = error instanceof Error ? error.message : String(error);
         t = this.store.task(t.id);
         incident = t.resolution.recovery;
+        if (incident?.id !== episodeId || incident.runId !== episodeRunId)
+          continue;
         const latest = incident?.runId ? this.store.run(incident.runId) : null;
         const binding =
           latest && incident

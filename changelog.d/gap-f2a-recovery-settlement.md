@@ -1,0 +1,1 @@
+- Planners can settle stale recovery episodes, coordinator bindings and orphaned records from `next`. A pending exact-head verdict can then apply through ordinary review, and completed coordinator reports stay in history.
