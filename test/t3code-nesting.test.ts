@@ -414,6 +414,8 @@ test("a parent with no live turn releases nothing, and the sweep releases one tu
   assert.equal(acp.released.length, 1, "one release per held turn");
   // The terminal step archives a finished task's parent, never the shared project or the
   // child, and it does so from the parent binding rather than the row pass (nucleus#1459).
+  for (const child of server.threads.get(parent.threadId)!.subagents)
+    child.status = "completed";
   await host.reconcileFinishedParents([
     { id: "synthetic-task", hostId: host.hostId, phase: "done" } as Task,
   ]);

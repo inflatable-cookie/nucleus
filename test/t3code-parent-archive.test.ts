@@ -11,7 +11,7 @@ import { canonical } from "../hosts/t3code/state";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import type { HostAgentSpec } from "../shared/host";
 import type { Profile, Task } from "../shared/contracts";
-import { t3Fake, STAMP } from "./support/t3code-fake";
+import { syntheticRun, t3Fake, STAMP } from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
 
 /**
@@ -156,6 +156,8 @@ const finishChildren = (host: T3CodeHost, server: Server) => {
     for (const run of thread.runs)
       if (run.status === "running") run.status = "completed";
   }
+  for (const thread of server.threads.values())
+    for (const task of thread.subagents ?? []) task.status = "completed";
 };
 const doneTask = (
   host: T3CodeHost,
@@ -336,6 +338,137 @@ test("a service roll settles a parent archive whose reply was lost by reading th
     undefined,
   );
   assert.equal(rolled.state.read().parents![parent.taskId]!.archive, undefined);
+});
+
+test("a retired child with held initial work cannot strand a rejected parent archive", async (t) => {
+  const { server, host, options, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  const remote = server.threads.get(parent.threadId)!;
+  const delegated = remote.subagents[0]!;
+  const childId = delegated.childThreadId;
+  const child = server.threads.get(childId)!;
+  const runId = "run:thread:synthetic:ordinal:1";
+  child.runs = [
+    syntheticRun(childId, 1, {
+      id: runId,
+      status: "queued",
+      queueHeld: false,
+      startedAt: null,
+      completedAt: null,
+      userMessageId: `message:${delegated.id.slice("node:".length)}`,
+    }),
+  ];
+  remote.thread.snoozedUntil = "2099-01-01T00:00:00.000Z";
+  remote.pendingBackgroundTasks = [
+    {
+      kind: "subagent",
+      taskId: delegated.id.replace("node:", "turn-item:"),
+      childThreadId: childId,
+    },
+  ];
+  const rejected = parentArchiveCommand(host, parent.threadId);
+  server.controls.rejectedArchives.push(rejected);
+  server.controls.archiveChecksDelegatedTasks = true;
+  host.state.update((state) => {
+    const { workspaceId, labels, parentThreadId } = state.agents[childId]!;
+    state.retiredAgents = {
+      ...state.retiredAgents,
+      [childId]: { workspaceId, labels, parentThreadId },
+    };
+    delete state.agents[childId];
+    state.intents[rejected] = {
+      status: "unknown",
+      kind: "thread.archive",
+      threadId: parent.threadId,
+      timedOut: true,
+      payload: canonical({
+        method: "orchestration.dispatchCommand",
+        payload: {
+          type: "thread.archive",
+          threadId: parent.threadId,
+          commandId: rejected,
+        },
+      }),
+      diagnostic: {
+        command: "thread.archive",
+        reason: "OrchestrationV2DispatchCommandError",
+      },
+    };
+  });
+  const task = doneTask(host);
+  const active = await host.reconcileFinishedParents([task]);
+  assert.match(active[0]!.reason, /active work/);
+  assert.equal(commandsOf(server, "queued-run.cancel").length, 0);
+  assert.equal(commandsOf(server, "thread.archive").length, 0);
+
+  child.runs[0]!.queueHeld = true;
+  server.controls.shellStatuses[childId] = "idle";
+  const clearing = await host.reconcileFinishedParents([task]);
+  assert.equal(clearing[0]!.state, "unobserved");
+  assert.equal(child.runs[0]!.status, "cancelled");
+  assert.deepEqual(
+    commandsOf(server, "queued-run.cancel").map((command) => command.runId),
+    [runId],
+  );
+  assert.equal(commandsOf(server, "thread.archive").length, 0);
+
+  const replay = await host.reconcileFinishedParents([task]);
+  assert.equal(replay[0]!.state, "unknown");
+  assert.deepEqual(
+    commandsOf(server, "thread.archive").map((command) => command.commandId),
+    [rejected],
+  );
+  host.close();
+
+  const rolled = new T3CodeHost(options);
+  t.after(() => rolled.close());
+  await rolled.connect();
+  assert.deepEqual(await rolled.reconcileFinishedParents([task]), []);
+  assert.equal(remote.thread.archivedAt, STAMP);
+  const successor =
+    rolled.state.read().parents![parent.taskId]!.archiveCommandId;
+  assert.ok(successor && successor !== rejected);
+  assert.deepEqual(
+    commandsOf(server, "thread.archive").map((command) => command.commandId),
+    [rejected, successor],
+  );
+  assert.equal(commandsOf(server, "thread.settle").length, 0);
+});
+
+test("a pending background item for an idle orphan clears through the delegated record", async (t) => {
+  const { server, host, parentFor } = await fixture(t);
+  const parent = await parentFor();
+  const remote = server.threads.get(parent.threadId)!;
+  const delegated = remote.subagents[0]!;
+  const child = server.threads.get(delegated.childThreadId)!;
+  child.runs = [];
+  child.thread.forkedFrom = null;
+  remote.turnItems.push({
+    id: delegated.id.replace("node:", "turn-item:"),
+    runId: delegated.runId,
+    nodeId: delegated.id,
+    type: "subagent",
+    status: "running",
+    subagentId: delegated.id,
+  });
+  remote.pendingBackgroundTasks = [
+    {
+      kind: "subagent",
+      taskId: remote.turnItems.at(-1)!.id,
+      childThreadId: delegated.childThreadId,
+    },
+  ];
+  server.controls.archiveChecksDelegatedTasks = true;
+  const task = doneTask(host, parent.taskId, { phase: "cancelled" });
+  assert.equal(
+    (await host.reconcileFinishedParents([task]))[0]!.state,
+    "unobserved",
+  );
+  assert.equal(delegated.status, "cancelled");
+  assert.equal(commandsOf(server, "subagent.stop").length, 1);
+  assert.deepEqual(await host.reconcileFinishedParents([task]), []);
+  assert.equal(remote.thread.archivedAt, STAMP);
+  assert.equal(commandsOf(server, "thread.settle").length, 0);
 });
 
 test("a nonterminal task, a shared binding and a role thread are never archived", async (t) => {

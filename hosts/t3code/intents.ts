@@ -237,6 +237,8 @@ export const LATE_REPLY_WAIT_MS = 10 * 60_000;
 export interface EffectOptions {
   /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
   resendUnknownAfterRead?: boolean;
+  /** The caller proved the effect is still owed; replay the exact timed-out wire once its late-reply wait ends. */
+  replayTimedOutAfterRead?: boolean;
   /**
    * Spec 068 §3: the caller proved on a complete read (the live shell inside its
    * bound plus an exact read by id) that the thread this command creates is
@@ -454,7 +456,9 @@ export class T3IntentLedger {
     if (
       prior?.status === "unknown" &&
       (this.lateReplyPossible(key) ||
-        (prior.timedOut && !options.absentOnCompleteRead))
+        (prior.timedOut &&
+          !options.absentOnCompleteRead &&
+          !options.replayTimedOutAfterRead))
     )
       throw new HostUnknownDeliveryError(prior.diagnostic);
     if (
@@ -597,6 +601,9 @@ export class T3IntentLedger {
               kind,
               threadId,
               diagnostic,
+              ...(error instanceof T3RpcError && error.rejectedReceipt
+                ? { rejectedReceipt: true }
+                : {}),
               ...(error instanceof T3RpcError && error.code === "timeout"
                 ? { timedOut: true }
                 : {}),

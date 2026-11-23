@@ -147,9 +147,13 @@ const terminalTask = (task: Task): boolean =>
  * diagnostic does, so only an authored shape reaches the task's event or its binding.
  */
 const parentArchiveDetail = (error: unknown): string =>
+  (error instanceof HostUnknownDeliveryError
+    ? error.diagnostic.reason
+    : undefined) ??
   sanitizeHostFailureDetail(
     error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-  ) ?? "an unnamed T3Code failure";
+  ) ??
+  "an unnamed T3Code failure";
 
 export interface T3NestingContext {
   rpc: T3RpcClient;
@@ -938,6 +942,7 @@ export class T3Nesting {
       !parent.threadId ||
       parent.threadId === state.inbox?.threadId ||
       state.agents[parent.threadId] ||
+      state.retiredAgents?.[parent.threadId] ||
       state.followUps?.[parent.threadId]
     )
       return wait(
@@ -949,9 +954,9 @@ export class T3Nesting {
       this.forgetParent(task.id);
       return null;
     }
-    let observed: "archived" | "deleted" | "mismatched" | null;
+    let observed: Awaited<ReturnType<T3Nesting["classifyParent"]>>;
     try {
-      observed = await this.parentGone(parent);
+      observed = await this.classifyParent(parent, true);
     } catch (error) {
       if (isHostOperationTimeout(error)) throw error;
       return wait(
@@ -959,12 +964,12 @@ export class T3Nesting {
         `the parent's own archive state could not be read: ${parentArchiveDetail(error)}`,
       );
     }
-    if (observed === "mismatched")
+    if (observed.kind === "mismatched")
       return wait(
         "mismatched",
         "the parent thread no longer reports this task's checkout and provider",
       );
-    if (observed === "archived" || observed === "deleted") {
+    if (observed.kind === "archived" || observed.kind === "deleted") {
       this.observeParentArchiveSettled(task.id);
       return null;
     }
@@ -973,33 +978,56 @@ export class T3Nesting {
     // busy against the closeout lane (nucleus#1366). The release is a local ACP call, so
     // a thread that left observation is still released.
     await this.release(parent);
-    const key = identity(
-      "parent-archive",
-      canonical([this.core.hostId(), parent.threadId]),
-    );
-    const prior = this.core.state.read().intents[key];
     try {
-      await this.core.intents.effect(
-        key,
-        "orchestration.dispatchCommand",
-        { type: "thread.archive", commandId: key, threadId: parent.threadId },
-        undefined,
-        undefined,
-        prior?.status === "unknown"
-          ? { resendUnknownAfterRead: true }
-          : prior?.status === "refused"
-            ? { retryRefusedBeforeSend: true }
-            : {},
+      const pending = observed.projection.subagents?.find(
+        (child) =>
+          child.origin === "app_owned" &&
+          child.childThreadId &&
+          ["pending", "running", "waiting"].includes(child.status),
       );
+      if (pending) {
+        const reason = await this.reconcileArchiveChild(parent, pending);
+        return wait("unobserved", reason);
+      }
+      let key =
+        parent.archiveCommandId ??
+        identity(
+          "parent-archive",
+          canonical([this.core.hostId(), parent.threadId]),
+        );
+      // A rejected receipt is immutable. Only T3's reply proving that exact
+      // receipt, followed by a fresh archive read, can authorize a successor.
+      const prior = state.intents[key];
+      if (prior?.status === "unknown" && prior.rejectedReceipt) {
+        key = identity("parent-archive-retry", key);
+        this.core.state.update((current) => {
+          current.parents![task.id].archiveCommandId = key;
+        });
+      }
+      await this.archiveEffect(key, {
+        type: "thread.archive",
+        threadId: parent.threadId,
+      });
     } catch (error) {
+      if (isHostOperationTimeout(error)) throw error;
+      if (
+        !(
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostUnknownDeliveryError
+        )
+      )
+        return wait(
+          "read_failed",
+          `parent archive preparation failed: ${parentArchiveDetail(error)}`,
+        );
       if (error instanceof ProvenPreSendRefusalError)
         return wait(
           "refused",
-          `the parent archive was refused before it was sent: ${parentArchiveDetail(error)}`,
+          `a parent archive step was refused before it was sent: ${parentArchiveDetail(error)}`,
         );
       return wait(
         "unknown",
-        `the parent archive delivery is unknown; it is read before any repeat: ${parentArchiveDetail(error)}`,
+        `a parent archive step has unknown delivery and is read before any repeat: ${parentArchiveDetail(error)}`,
       );
     }
     // The archive's own settled receipt is the observation this obligation needs
@@ -1008,6 +1036,111 @@ export class T3Nesting {
     // is read by its exact id before any repeat.
     this.observeParentArchiveSettled(task.id);
     return null;
+  }
+
+  /** Clear only idle owned work that T3 still counts against the archive. */
+  private async reconcileArchiveChild(
+    parent: ParentThread,
+    child: NonNullable<Projection["subagents"]>[number],
+  ): Promise<string> {
+    const childId = child.childThreadId!;
+    const state = this.core.state.read();
+    const owned =
+      state.agents[childId] ??
+      state.retiredAgents?.[childId] ??
+      state.followUps?.[childId];
+    if (
+      owned?.parentThreadId !== parent.threadId ||
+      labelTask(owned.labels) !== parent.taskId
+    )
+      return "T3 still reports a delegated child outside this task's recorded roles";
+
+    const observed = await this.core.reads.readThreadRecord(childId, true);
+    if (observed && !observed.projection)
+      return "the delegated child's exact run state is unavailable";
+    const projection = observed?.projection;
+    const runs = projection?.runs ?? [];
+    const held = runs.find(
+      (run) =>
+        run.status === "queued" &&
+        run.queueHeld === true &&
+        (run.delegatedTaskId === child.id ||
+          (child.id.startsWith("node:delegated-task:") &&
+            run.userMessageId === `message:${child.id.slice("node:".length)}`)),
+    );
+    if (
+      runs.some((run) => run !== held && activeStatuses.has(run.status)) ||
+      projection?.providerThreads?.some(
+        (thread) => thread.pendingBackgroundTasks?.length,
+      ) ||
+      projection?.runtimeRequests.some(
+        (request) => request.status === "pending",
+      )
+    )
+      return "the delegated child still has active work";
+
+    if (held) {
+      // T3 calls this run queued in the projection and idle in the shell. The
+      // held queue will never start on its own. Cancelling the exact run lets
+      // T3 settle the delegated record through its ordinary run update.
+      const delivery = child.completionDelivery?.state;
+      if (
+        delivery === undefined ||
+        delivery === "pending" ||
+        delivery === "claimed"
+      )
+        await this.dispose(parent, child.id);
+      await this.archiveEffect(
+        identity(
+          "parent-archive-queued-run",
+          canonical([this.core.hostId(), childId, held.id]),
+        ),
+        { type: "queued-run.cancel", threadId: childId, runId: held.id },
+      );
+    } else if (child.runId) {
+      // T3 checks the parent/run/child relation and clears an orphaned record.
+      await this.archiveEffect(
+        identity(
+          "parent-archive-subagent",
+          canonical([this.core.hostId(), parent.threadId, child.id]),
+        ),
+        {
+          type: "subagent.stop",
+          threadId: parent.threadId,
+          runId: child.runId,
+          subagentId: child.id,
+        },
+      );
+    }
+    return "waiting for T3 to clear the idle delegated child from the parent";
+  }
+
+  /** Each caller first reads the exact state its command is meant to change. */
+  private async archiveEffect(
+    key: string,
+    command:
+      | { type: "thread.archive"; threadId: string }
+      | { type: "queued-run.cancel"; threadId: string; runId: string }
+      | {
+          type: "subagent.stop";
+          threadId: string;
+          runId: string;
+          subagentId: string;
+        },
+  ): Promise<void> {
+    const prior = this.core.state.read().intents[key];
+    await this.core.intents.effect(
+      key,
+      "orchestration.dispatchCommand",
+      { ...command, commandId: key },
+      undefined,
+      undefined,
+      {
+        resendUnknownAfterRead: prior?.status === "unknown",
+        replayTimedOutAfterRead: true,
+        retryRefusedBeforeSend: prior?.status === "refused",
+      },
+    );
   }
 
   /** Record one finished parent's settlement on its durable binding. */

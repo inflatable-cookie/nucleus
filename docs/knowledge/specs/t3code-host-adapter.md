@@ -1781,9 +1781,15 @@ of it. The step is now independent:
   or retired-agent thread. Nothing here sweeps planners, project agents or a
   person's own threads, and an operator snooze on another thread is untouched.
 - **Release, then archive.** The finished parent's held turn is released first (a
-  local ACP call, so a thread that left observation is still released), then
-  `thread.archive` goes through the durable intent with the deterministic
-  parent-archive command id. T3's settled receipt for that exact thread marks the
+  local ACP call, so a thread that left observation is still released). T3 checks
+  the parent's app-owned delegated records before it accepts `thread.archive`.
+  When one still looks active, Nucleus reads the exact recorded role child.
+  An initial or delegated run held in that child's queue is cancelled by run ID,
+  with its completion delivery disposed first. T3 can then update the parent
+  through the ordinary run lifecycle. For an idle orphan, `subagent.stop` asks
+  T3 to clear the delegated record. The next pass reads the parent again.
+  Live or unreadable children keep the archive waiting.
+  T3's settled archive receipt for that exact thread marks the
   binding `archivedAt`; no inventory is read to confirm it (the planner's Spec 069
   batch 5 design, following Tom's 2026-11-22 ruling "We shouldn't need to be
   reading archived threads at all"). A thread T3 later shows live is a person's own
@@ -1791,16 +1797,17 @@ of it. The step is now independent:
 - **Unknown delivery is read, never resent blind.** A recorded intent whose
   delivery is unknown is settled by a fresh positive read of that parent: archived
   settles it, and a live thread is the read that lets the same command replay under
-  its own identity. A proven pre-send refusal may be re-sent the same way.
+  its own identity after any late-reply wait. Only T3's explicit replay of a
+  rejected archive receipt permits a new command ID. The binding records that
+  successor before delivery, after a fresh read shows the parent still needs
+  archive and the delegated records have cleared. A proven pre-send refusal may
+  be re-sent under its original identity.
 - **A typed, visible wait.** Every entry the step cannot settle is returned as a
-  typed wait (`unknown`, `refused`, `mismatched`, `shared`,
+  typed wait (`unknown`, `refused`, `unobserved`, `mismatched`, `shared`,
   `read_failed`) with the host's own reason. The pass writes it on the task
   (`parent_archive_uncertain` for unknown delivery, `parent_archive_wait`
   otherwise, one event per distinct reason) and the binding keeps the same state,
   so the record survives a roll. Reading the same wait again says nothing new.
-
-The three-day archived-thread retention pass and the workspace delete/archive
-rules are unchanged: this step archives a parent thread and nothing else.
 
 ## Composition and unsupported capabilities
 
