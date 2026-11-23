@@ -192,6 +192,17 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     };
     assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
     assert!(graph.method_and_path.starts_with("POST /graphql "));
+    let query = graph.body.as_ref().expect("GraphQL body")["query"]
+        .as_str()
+        .expect("GraphQL query");
+    let tokens =
+        query.split(|character: char| !character.is_ascii_alphanumeric() && character != '_');
+    for field in ["reviewDecision", "statusCheckRollup"] {
+        assert!(
+            tokens.clone().any(|token| token == field),
+            "separate GraphQL field {field}"
+        );
+    }
     assert!(
         merge
             .method_and_path
