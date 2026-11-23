@@ -1,0 +1,1 @@
+- Process scans no longer report incomplete coverage on busy machines: the host-wide open-file listing's output cap is raised from 8 MiB to 96 MiB.

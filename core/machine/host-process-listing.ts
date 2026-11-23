@@ -35,6 +35,14 @@ import { pidAlive } from "./pid";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
+/**
+ * Output cap for one process-listing call. A host-wide `lsof -u <uid> -F0pfn`
+ * lists every open file of the user's processes and reached 18 MB on a busy
+ * workstation, so an 8 MiB cap made every scan incomplete. The cap still bounds
+ * a runaway listing.
+ */
+const LISTING_MAX_BUFFER = 96 * 1024 * 1024;
+
 /** Overall deadline for a full uid process-table read (`ps` + `lsof` + env/image checks). */
 export const HOST_PROCESS_LISTING_DEADLINE_MS = 15_000;
 const PS_TIMEOUT_MS = 5_000;
@@ -90,7 +98,7 @@ async function processListing(
       encoding: "utf8",
       timeout: PS_TIMEOUT_MS,
       killSignal: "SIGKILL",
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: LISTING_MAX_BUFFER,
       env,
     });
     return { status: 0, stdout, stderr };
