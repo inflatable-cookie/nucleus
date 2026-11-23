@@ -833,6 +833,7 @@ export class Resolution {
       "profiles",
       "recordStop",
       "recovery",
+      "releaseDeadParticipant",
       "saveIncident",
       "store",
       "update",
@@ -1048,6 +1049,7 @@ export class Resolution {
       "hostAvailable",
       "hostReadTransientFailure",
       "clearHostReadTransient",
+      "deliverLaunchRun",
       "inventoryHostMatches",
       "launchingRuns",
       "onTaskHost",
@@ -1055,6 +1057,7 @@ export class Resolution {
       "paused",
       "reconcileStalledTurnStop",
       "recoverRefusedReviewer",
+      "releaseDeadParticipant",
       "remindStoppedRun",
       "resolveIncident",
       "resumeTransientProviderThread",
@@ -1158,6 +1161,8 @@ export class Resolution {
       "lease",
       "leaseDeclineText",
       "openPlannerEscalation",
+      "graceMs",
+      "onTaskHost",
       "ordinaryRoundCustody",
       "ownedToolHold",
       "recordBlockedPrIdentity",
@@ -1243,6 +1248,7 @@ export class Resolution {
       "responsibleJointQuestion",
       "retainedProfileIssue",
       "retainedWorkerProfileIssue",
+      "retireGoneRetainedWorker",
       "reviewerCapabilityIssue",
       "retryContext",
       "reviewerSetting",
@@ -3450,6 +3456,17 @@ export class Resolution {
   reapplyPendingReview(t: Task): Promise<"none" | "applied" | "blocked"> {
     return this.resultApplication.reapplyPendingReview(t);
   }
+  /**
+   * Engine-provided (Spec 068 §3): release the participant whose agent is
+   * provably dead, through the ordinary `run.release` plan. A `Resolution` built
+   * without an engine reports no release.
+   */
+  releaseDeadParticipant?: (task: Task, run: Run | null) => Promise<boolean>;
+  /**
+   * Engine-provided (Spec 068 §3): retire a retained worker whose thread its host
+   * positively reports gone, so the revision continues on a fresh worker.
+   */
+  retireGoneRetainedWorker?: (task: Task) => Promise<boolean>;
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   hostReadTransientFailure?: (
     task: Task,

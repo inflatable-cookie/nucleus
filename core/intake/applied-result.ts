@@ -53,3 +53,31 @@ export function recordResultApplied(
   if (!hasApplicationEvent(store, taskId, runId))
     store.event(taskId, "run_result_applied", runId);
 }
+
+/**
+ * A reviewer verdict the reviewer reported at the task's current head that the
+ * lifecycle has not applied yet, or null. A replacement or a superseding reviewer
+ * start must not drop it (bovine-accelerator#6863): it is a finished review at the
+ * exact head, and the ordinary result path applies it.
+ */
+export function reportedUnappliedVerdict(
+  store: Store,
+  task: { id: string; prHead: string | null },
+  run: {
+    id: string;
+    taskId: string;
+    role: string;
+    head: string;
+    completion: { status: string; head?: string | null; runId: string } | null;
+  },
+): { status: "ready_to_merge" | "changes_required"; head: string } | null {
+  const completion = run.completion;
+  if (run.role !== "reviewer" || run.taskId !== task.id || !completion) return null;
+  if (completion.runId !== run.id) return null;
+  if (completion.status !== "ready_to_merge" && completion.status !== "changes_required")
+    return null;
+  const head = completion.head ?? run.head;
+  if (!task.prHead || head !== task.prHead) return null;
+  if (resultApplied(store, task.id, run.id)) return null;
+  return { status: completion.status, head };
+}

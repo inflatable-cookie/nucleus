@@ -105,6 +105,7 @@ export type DispatchLaunchContext = Pick<
   | "leaseDeclineText"
   | "paused"
   | "responsibleJointQuestion"
+  | "retireGoneRetainedWorker"
   | "slotAdmissionReason"
   | "startsNoRuns"
   | "store"
@@ -196,6 +197,12 @@ export class DispatchLaunch {
       this.context.pauseForPrerequisiteWait(t)
     )
       return;
+    // Spec 068 §3: a retained worker whose thread its host positively reports
+    // gone can never take this revision. Retire it with that proof, so the
+    // revision continues on a fresh worker instead of waiting on the dead thread.
+    if (role === "revision" && t.agentId)
+      await this.context.retireGoneRetainedWorker?.(t);
+    t = this.context.store.task(t.id);
     // A stale pending Nucleus question found at dispatch is resolved, not
     // waited on (papercut ee9fc161): a withdrawn question never stalls the
     // launch behind the participant lease. The helper records a short

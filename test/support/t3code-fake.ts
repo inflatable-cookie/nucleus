@@ -684,6 +684,8 @@ export async function t3Fake(t: TestContext, directory: string) {
       );
     return snapshot;
   };
+  /** Delegated launches held by `controls.holdDelegatedLaunch`, run on release. */
+  const heldLaunches: Array<() => void> = [];
   const controls = watch({
     environmentId: "synthetic-environment",
     version: "nightly-synthetic-unseen",
@@ -728,6 +730,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     disconnectAfterLaunch: false,
     /** The next delegated launch times out before T3 creates its child. */
     timeoutDelegatedLaunch: false,
+    /**
+     * The next delegated launch is held unprocessed until the test calls
+     * `releaseHeldLaunches()`: T3 creates its child and answers only then, after
+     * the caller's deadline (a late reply), with no wall-clock race.
+     */
+    holdDelegatedLaunch: false,
     /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
     unsettleFaults: [] as Array<"drops" | "lands">,
     /** Thread reads that still show a settled thread after an unsettle command (a delayed apply). */
@@ -1149,6 +1157,19 @@ export async function t3Fake(t: TestContext, directory: string) {
       clearInterval(shellTimer);
     });
     const handle = (request: Value) => {
+      if (
+        controls.holdDelegatedLaunch &&
+        request._tag === "Request" &&
+        request.tag === "orchestration.dispatchCommand" &&
+        (request.payload as Value | undefined)?.type === "delegated_task.request"
+      ) {
+        controls.holdDelegatedLaunch = false;
+        heldLaunches.push(() => {
+          handleFrame(request);
+          publishShell();
+        });
+        return;
+      }
       handleFrame(request);
       publishShell();
     };
@@ -2416,5 +2437,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     dropSockets,
     inject,
     injectRaw,
+    /** Processes and answers every held delegated launch, late. */
+    releaseHeldLaunches: () => {
+      for (const run of heldLaunches.splice(0)) run();
+    },
   };
 }

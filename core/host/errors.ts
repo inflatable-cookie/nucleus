@@ -33,6 +33,18 @@ export class HostReadRefusalError extends Error {
   }
 }
 /**
+ * Spec 068 §3: a creation lookup the host refuses because one of the run's own
+ * create commands may still return a late reply. It is not an unreadable host:
+ * the create's own answer decides, so nothing may start another thread for the
+ * run meanwhile, and no replacement is offered.
+ */
+export class HostCreateInFlightError extends HostReadRefusalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "HostCreateInFlightError";
+  }
+}
+/**
  * A send this adapter refused before delivery. `label` names the work that was
  * refused, so a title write never reports itself as a reviewer continuation
  * (nucleus#1366); it defaults to the reviewer continuation these refusals

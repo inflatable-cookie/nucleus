@@ -19,6 +19,7 @@ import { staleChangesRequestedPhase } from "../intake/current-binding";
 import { isProviderFailure } from "../questions/ladder";
 import { isMergeCloseoutPhase } from "../closeout/closeout";
 import type { Resolution } from "../resolution";
+import { TASK_PROGRESSING_REASON, stopNamesRun } from "../../shared/task-stop";
 
 export type SchedulingLifecycleContext = Pick<
   Resolution,
@@ -305,6 +306,24 @@ export class SchedulingLifecycle {
         {},
         "released_run_binding_cleared",
         `${bound.role} run ${bound.id} was released without a result; it no longer holds the task`,
+      );
+    // Spec 068 §5: a stop that names a run which has since been released (an
+    // uncertain creation or a stalled turn that was replaced) describes history.
+    // It clears here so the task never keeps showing the superseded run's cause.
+    const stopRun = t.resolution.stop
+      ? this.context.store
+          .runs(t.id)
+          .find((candidate) => stopNamesRun(t, candidate.id))
+      : undefined;
+    if (stopRun?.released && t.resolution.currentRunId !== stopRun.id)
+      t = this.context.update(
+        t,
+        { stop: null },
+        t.reason === t.resolution.stop?.detail
+          ? { reason: TASK_PROGRESSING_REASON }
+          : {},
+        "superseded_run_stop_cleared",
+        `${stopRun.role} run ${stopRun.id} was released; its ${t.resolution.stop!.reason} stop no longer applies`,
       );
     const run = t.resolution.currentRunId
       ? this.context.store.run(t.resolution.currentRunId)

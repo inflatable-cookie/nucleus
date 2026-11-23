@@ -263,7 +263,20 @@ export class CoordinatorRoute {
     // the planner ladder. Its `extend_budget` suggestion is an owner verb, not work
     // a coordinator can settle, so it never opens a coordinator episode.
     if (t.resolution.stop?.reason === "budget") return null;
+    // Spec 068 §3: a create the host may still answer owns its own outcome. A
+    // coordinator could only start another thread beside the one a late reply
+    // brings, so it is not admitted for that wait.
+    if (t.resolution.stop?.fact?.code === "creation_in_flight") return null;
     let mechanicalStallDue = false;
+    // Spec 068 §3 (nucleus#1552): a `run_stalled` stop names its own subject.
+    // That participant can never pass an idleness lease while its host still
+    // displays it as running, and its stall window elapsed before the stop was
+    // recorded, so the coordinator is admitted without waiting on it.
+    const stalledTurnDue =
+      t.resolution.stop?.reason === "run_stalled" && !t.failoverReason;
+    // Spec 068 §3: an uncertain creation is settled by lookup, never by host-read
+    // recovery, so the host-read hold below never keeps its coordinator out.
+    const uncertainCreation = isUncertainCreationStop(t.resolution.stop);
     if (t.resolution.stop && !t.resolution.stop.suggestedVerbs.length) {
       const stop = t.resolution.stop;
       const stallWindowMs =
@@ -424,11 +437,12 @@ export class CoordinatorRoute {
         ? readHostReadTransientEpisode(this.store, t.id, "task")
         : null;
     if (
+      !uncertainCreation &&
       hostReadHold === "waiting" &&
       hostReadEpisode?.step !== "Coordinator admission"
     )
       return null;
-    if (hostReadHold === "exhausted") return undefined;
+    if (!uncertainCreation && hostReadHold === "exhausted") return undefined;
     // An exact automatic replay still owns a held integration-base occurrence
     // inside its bounded window, so coordinator attention waits for it.
     if (this.resolution.automaticHookReplayPending(t)) return null;
@@ -686,7 +700,9 @@ export class CoordinatorRoute {
         return null;
       }
       if (
-        (!mechanicalStallDue && !(await this.resolution.lease(t))) ||
+        (!mechanicalStallDue &&
+          !stalledTurnDue &&
+          !(await this.resolution.lease(t))) ||
         this.resolution.startsNoRuns()
       )
         return null;

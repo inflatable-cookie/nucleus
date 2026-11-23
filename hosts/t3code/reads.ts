@@ -1058,19 +1058,39 @@ export class T3Reads {
     return found;
   }
 
-  /** A launch record names a candidate whose existence T3 still needs to confirm. */
-  async findRunAgents(labels: Record<string, string>) {
+  /**
+   * A creation lookup (Spec 068 §3). A launch record names a candidate whose
+   * existence T3 still needs to confirm, and `derived` names the child threads
+   * T3 derives from the create commands the ledger recorded as sent, so a create
+   * whose reply was lost (and whose record was dropped) is still found. The live shell is brought inside
+   * its freshness bound first, so an empty answer is a complete one: a stale or
+   * unreadable shell throws instead of answering absent. Each candidate the shell
+   * does not list takes one fresh exact read by id; nothing reads the archived
+   * inventory.
+   */
+  async findRunAgents(
+    labels: Record<string, string>,
+    derived: readonly string[] = [],
+  ) {
     this.core.requireConnection();
+    await this.readShell();
     const found = [];
-    for (const id of this.matchingAgentIds(labels)) {
+    for (const id of new Set([...this.matchingAgentIds(labels), ...derived])) {
+      const listed = this.live.row(id);
       // A fresh exact read by id; a thread T3 does not have is not a candidate.
-      const record = await this.readThreadRecord(id, true);
+      const record = listed
+        ? { row: listed, projection: null }
+        : await this.readThreadRecord(id, true);
       if (record && !record.row.deletedAt)
         found.push({
           id,
           workspaceId: this.workspaceFor(record.row),
           hostConfirmed: true,
         });
+      // A removed child of a create this host sent proves the create landed: it
+      // is never absence, so it is answered unconfirmed rather than left out.
+      else if (record && derived.includes(id))
+        found.push({ id, workspaceId: null, hostConfirmed: false });
     }
     return found;
   }

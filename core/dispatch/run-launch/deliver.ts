@@ -60,7 +60,7 @@ import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
 import { verifyBargeLeaseAndCustody } from "../../workspaces/barge-allocator";
 
-// Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
+// Proof executors keep their own refusal path; every other creation waits for its lookup.
 /**
  * The detached reviewer round's PR identity (nucleus#1425). A recorded unreviewed external
  * merge of the task's PR binds its exact merged source; any other task keeps the strict
@@ -76,6 +76,8 @@ async function reviewPrIdentity(
   return machine.verifyMergedReviewSource!(t, route);
 }
 
+// Spec 068 §3: the observation pass settles every role's uncertain creation by
+// lookup (`creation-lookup.ts`); these roles also skip the owner stop here.
 const creationRoles = new Set<Run["role"]>(["reviewer", "closeout"]);
 
 /** The guard a host re-runs immediately before a reviewer's native send or creation. */
@@ -745,8 +747,9 @@ export class RunLaunchDeliver {
       ) {
         this.resolution.waiting(
           this.store.task(t.id),
-          `${role === "reviewer" ? "Reviewer" : role === "closeout" ? "Closeout" : "Run"} creation is uncertain; exact lookup decides whether it produced an agent`,
+          `Uncertain ${role} creation ${run.id}: its creation call did not answer; Nucleus looks it up by its label on the next pass`,
           "lifecycle",
+          { fact: { code: "creation_lookup", subject: run.id } },
         );
         return;
       }

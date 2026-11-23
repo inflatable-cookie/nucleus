@@ -208,6 +208,7 @@ export type StallsContext = Pick<
   | "profiles"
   | "recordStop"
   | "recovery"
+  | "releaseDeadParticipant"
   | "saveIncident"
   | "store"
   | "update"
@@ -280,6 +281,11 @@ export class Stalls {
       );
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
+    // Spec 068 §3 (nucleus#1552): a stalled turn whose agent is provably dead
+    // (its process gone, or its thread gone on a complete host read) is not
+    // work. The release records its proof and ordinary admission relaunches the
+    // role; anything short of proof keeps the run leased and the stall below.
+    if (await this.resolution.releaseDeadParticipant?.(current, run)) return null;
     const toolNotice =
       shellNotice ??
       (peek.live ? `${role} is waiting on a running tool` : null) ??
