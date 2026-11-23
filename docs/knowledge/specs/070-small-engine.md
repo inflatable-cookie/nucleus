@@ -64,6 +64,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
+11. **Keep it light: reads and edits never call the host.** Tom, 2026-11-23: "We need to keep things light and optimised - remember to treat CRUD operations separately from scheduler interactions with the host and to avoid hammering the host with calls". The rules:
+   - Board, ACP, CLI and settings reads and edits (create, read, update, delete) touch only the store and the in-memory read model. They never call T3, GitHub or the process census. A command writes its row and wakes the task, and the scheduler does any host work on its next pass.
+   - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
+   - Host calls have a fixed concurrency cap per host. An unavailable host backs off to a due time and is never retried in a loop.
+   - Views update by push (task and version invalidations), never by polling. Nothing a viewer does causes a host call.
 
 ## The model
 
