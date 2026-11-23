@@ -114,10 +114,12 @@ episode even if the run already reported. Every release checks for an open
 creation reservation from the running service and for a host wait for a late
 reply. Both block release, including through replacement or closeout. `next`
 uses the same rule and offers release for an unbound initial worker once its
-creation wait has settled. Every release passes the recorded turn ID to an
-adapter that can stop that exact turn atomically. Without that capability or
-a recorded turn ID, the local release and credential revocation still apply,
-and the result explains why native cancellation was skipped.
+creation wait has settled. Release skips native cancellation when an exact
+observation of the recorded participant in its workspace confirms that its turn
+ended and no request or background work remains. Otherwise it passes the
+recorded turn ID to an adapter that can stop that turn atomically. Without that
+capability or a recorded turn ID, the local release and credential revocation
+still apply, and the result explains why native cancellation was skipped.
 
 For legacy rows, `record.clear kind=recovery id=<taskId>` clears an orphaned
 recovery flag with no episode or unreleased coordinator.

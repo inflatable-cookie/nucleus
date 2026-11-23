@@ -820,6 +820,7 @@ export async function t3Fake(t: TestContext, directory: string) {
      * is what the nightly's shell carries after the run ends (nucleus#1381).
      */
     shellStatuses: {} as Record<string, string>,
+    shellUnlisted: [] as string[],
   });
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<
@@ -916,6 +917,7 @@ export async function t3Fake(t: TestContext, directory: string) {
   const shellLists = () => {
     const listed = (p: Value, archived: boolean) =>
       (archived ? Boolean(p.thread.archivedAt) : !p.thread.archivedAt) &&
+      !controls.shellUnlisted.includes(p.thread.id) &&
       (!p.thread.deletedAt || controls.shellTombstones);
     return {
       active: [...threads.values()].filter((p) => listed(p, false)).map(shell),

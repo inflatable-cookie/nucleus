@@ -253,6 +253,18 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   assert.match(store.task(task.id).reason, /running-command/);
   thread.providerThreads = [];
 
+  thread.turnItems = [
+    syntheticTurnItem(agentId, 1, {
+      type: "command_execution",
+      runId,
+      status: "running",
+    }),
+  ];
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /command synthetic-item-1/);
+  thread.turnItems[0].status = "completed";
+  assert.equal(await lease(), true);
+
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
   thread.updatedAt = thread.thread.updatedAt;
   assert.equal(await lease(), false);
@@ -260,6 +272,67 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
 
   server.threads.delete(agentId);
   assert.equal(await lease(), false);
+});
+
+for (const provider of ["codex", "pi"]) {
+  test(`an unlisted ${provider} thread is observed again after its turn ends`, async (t) => {
+    const { host, server, liveIds, tasks, workspaceId } = await fixture(t, { live: 2 });
+    const id = liveIds[1]!;
+    const thread = server.threads.get(id)!;
+    const ordinal = provider === "pi" ? 3 : 1;
+    const turnId = `run:thread:${id}:ordinal:${ordinal}`;
+    thread.thread.providerInstanceId = provider;
+    thread.thread.modelSelection.instanceId = provider;
+    thread.runs = [syntheticRun(id, ordinal, {
+      id: turnId,
+      status: "running",
+      completedAt: null,
+    })];
+    if (provider === "pi") {
+      thread.runs.unshift(syntheticRun(id, 1), syntheticRun(id, 2));
+      thread.providerThreads = [syntheticProviderThread({
+        driver: provider,
+        providerInstanceId: provider,
+        nativeThreadRef: { nativeId: `native-thread:pending:run:thread:${id}:ordinal:1` },
+        status: "idle",
+      })];
+    }
+    server.controls.shellUnlisted = [id];
+    assert.equal(await host.reads.shellRow(id), undefined);
+    assert.equal((await host.observe(id)).activeTurnId, turnId);
+
+    Object.assign(thread.runs.at(-1), { status: "completed", completedAt: STAMP });
+    host.reads.beginPass(tasks);
+    t.after(() => host.reads.endPass());
+    const observed = await host.observe(id);
+    assert.equal(observed.workspaceId, workspaceId);
+    assert.equal(observed.status, "idle");
+    assert.equal(observed.active, false);
+    assert.equal(observed.activeTurnId, null);
+    assert.equal(observed.permissions, false);
+
+    const exact = await host.observeParticipant(id);
+    assert.deepEqual(exact, {
+      id, workspaceId, status: "idle", active: false, permissions: false,
+      activeTurnId: null, updatedAt: STAMP, pendingBackgroundTasks: [],
+    });
+  });
+}
+
+test("a lagging shell row cannot keep a turn active after its projection records completion", async (t) => {
+  const { host, server, liveIds } = await fixture(t, { live: 1 });
+  const id = liveIds[0]!;
+  const thread = server.threads.get(id)!;
+  thread.runs = [syntheticRun(id, 1, { status: "running", completedAt: null })];
+  const running = await host.reads.shellRow(id);
+  assert.equal(running?.activeRunId, thread.runs[0].id);
+  t.mock.method(host.reads.live, "row", () => running);
+
+  Object.assign(thread.runs[0], { status: "completed", completedAt: STAMP });
+  const observed = await host.observe(id);
+  assert.equal(observed.active, false);
+  assert.equal(observed.activeTurnId, null);
+  assert.equal(observed.status, "idle");
 });
 
 /** Requests of one method the fake has served, from `from`. */

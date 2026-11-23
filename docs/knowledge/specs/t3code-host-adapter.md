@@ -842,12 +842,10 @@ thread with its own record, and `ThreadNotFoundError` (or the projection's prove
 missing-thread cause) means T3 has no such thread: removed, or never created —
 unless the live shell lists it, because T3's projection store and its shell can
 disagree for a moment, and a creation lookup must never answer such a thread
-absent. Its
-answer is kept until T3's shell names the thread again, a command goes to it, or
-the connection drops, so a missing thread costs one read, not one per pass. A
-thread a command just went to (`forget`, including the child a
-`delegated_task.request` derives) keeps its exact read until the shell shows it,
-because its absence may only be the stream's lag. `T3InventoryChurnError` is gone.
+absent. Archived, tombstoned and missing answers are kept until T3's shell
+names the thread again, a command goes to it, or the connection drops. An
+unarchived thread without a shell row is read again on the next pass or
+standalone observation. Its run can end without a shell update.
 The one archived read left is the retention pass's walk, on its own interval
 (see Archived thread retention in the orchestration contract).
 
@@ -946,7 +944,9 @@ thread with a live run (its projection's `updatedAt`, which a stall check measur
 quiet time from, and its window's tool output can move under an unchanged row).
 Out of a pass those two are read fresh. A command dispatched to a thread drops its held
 snapshot, so a post-write read is never answered from before the write. A
-transcript read is never served from a bounded snapshot.
+snapshot that confirms the shell's named run ended or its named request resolved
+supersedes that shell activity. A transcript read is never served from a bounded
+snapshot.
 
 Pending questions are read only for a thread the live shell marks as awaiting a
 runtime request. At most `T3_THREAD_READ_CONCURRENCY` (4) thread snapshots are in
@@ -1051,9 +1051,11 @@ the retained answered window; an absent question item leaves its text empty.
 Answered reads return an explicit success or unknown result; an unreadable
 bounded snapshot never becomes an empty answer list.
 A complete-transcript read still refuses a paged or locally omitted projection.
-When a pass misses its custody page, one exact read requests the full projection
-to check background work across all provider sessions. A bounded response cannot
-clear that custody proof. Native answers still use the window.
+An exact custody read requests a full, synchronized projection. It checks
+background work across all provider sessions, including T3's live background
+turn items and PR watches. A provider record with no run, request or background
+work contributes no activity, even if its native thread was never bound.
+Native answers still use the window.
 Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
