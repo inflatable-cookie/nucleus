@@ -4,7 +4,7 @@ import { releaseWarnings } from "./explicit-resolution";
 import { unreviewedCloseoutWarning } from "./explicit-integration";
 import { runStartPolicyStop, runStartWarnings } from "./explicit-run-start";
 import type { ResolutionWarningId } from "../../shared/schema/task-control";
-import { taskDetailView, unreviewedMergeRoute } from "../../shared/task-view";
+import { taskDetailView, unreviewedMergeObservation } from "../../shared/task-view";
 import { revisionAllowanceExhausted } from "../../shared/task-activity";
 import { budgetGatesPhase } from "../../shared/task-budget";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -817,7 +817,7 @@ function explicitCommandsFor(
   const { mergedCommit, mergeHead, externalMerge } = task.resolution;
   const observed = externalMerge && mergedCommit && mergeHead
     ? { head: mergeHead, commit: mergedCommit }
-    : unreviewedMergeRoute(task);
+    : unreviewedMergeObservation(task);
   const unreviewed = observed
     ? unreviewedCloseoutWarning(facts.store, task, observed)
     : null;

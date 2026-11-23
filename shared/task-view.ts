@@ -355,18 +355,13 @@ export interface UnreviewedMergeRoute {
   commit: string;
 }
 
-/**
- * The recorded unreviewed external merge the fresh review route admits, or null
- * (nucleus#1425). Shared by `next`, the `move to=review` admission, the reviewer
- * launch and verdict publication, so the offer and every gate read one rule. It
- * holds only while the task still names the recorded PR and source head and no
- * merge is recorded, so a reconciled or re-headed task never routes again.
- */
-export function unreviewedMergeRoute(
+/** The parked merge still binds this PR and its recorded source. */
+export function unreviewedMergeObservation(
   task: AcceptanceTask,
 ): UnreviewedMergeRoute | null {
   const record = task.resolution.unreviewedMerge;
-  if (!record || !task.prHead || record.head !== task.prHead) return null;
+  if (!record || !task.prHead || (record.head !== task.prHead && record.descendsFrom !== task.prHead))
+    return null;
   if (
     task.resolution.mergedCommit ||
     task.resolution.mergeIntent ||
@@ -379,6 +374,12 @@ export function unreviewedMergeRoute(
     task.completion?.prNumber ??
     null;
   return prNumber === record.prNumber ? record : null;
+}
+
+/** Fresh review still requires the task checkout to name the exact merged source. */
+export function unreviewedMergeRoute(task: AcceptanceTask): UnreviewedMergeRoute | null {
+  const observed = unreviewedMergeObservation(task);
+  return observed?.head === task.prHead ? observed : null;
 }
 
 /**

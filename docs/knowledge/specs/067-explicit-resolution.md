@@ -152,11 +152,15 @@ For a dispatched task whose externally merged PR lacks approval at the merged
 head, the responsible planner or operator board can run `closeout.now` with
 `accept: ["unreviewed_merge"]` and a reason. Nucleus verifies the task's own
 PR and confirms that the merge commit is on its base branch. The actual merged
-head must match or descend from the recorded source. Nucleus records that head
+head must match or descend from the recorded source. To prove a descendant,
+Nucleus fetches the exact PR source ref and checks that it matches the merged
+head reported by GitHub before checking ancestry. Nucleus records that head
 in an `external_merge_source` disposition with the actor, authority, reason and
 missing evidence. The disposition applies only to closeout of that merge and
-carries no authority to merge code. `next` shows the warning for a parked merge
-and names any outstanding `changes_required` verdict at the merged head. The
+carries no authority to merge code. When the sweep parks a verified descendant
+merge, `next` offers `closeout.now` with the warning while the recorded source
+still matches the verified ancestor. The warning also names any outstanding
+`changes_required` verdict at the merged head. The
 verdict remains recorded, and the closeout prompt names the recorded actor and
 command.
 

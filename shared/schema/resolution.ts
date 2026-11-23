@@ -205,6 +205,7 @@ export const resolutionSchema = z.object({
       prNumber: z.number().int().positive(),
       head: z.string().regex(/^[a-f0-9]{40}$/),
       commit: z.string().regex(/^[a-f0-9]{40}$/),
+      descendsFrom: z.string().regex(/^[a-f0-9]{40}$/).optional(),
     })
     .strict()
     .nullable()

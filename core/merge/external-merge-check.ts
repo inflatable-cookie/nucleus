@@ -129,6 +129,7 @@ export function stopUnreviewedExternalMerge(
   current: Task,
   head: string,
   commit: string,
+  descendsFrom?: string,
 ): void {
   const { store, resolution } = context;
   // The cause is a stable per-task, per-head digest: the ladder's escalation
@@ -152,7 +153,7 @@ export function stopUnreviewedExternalMerge(
   });
   // nucleus#1425: the stop keeps the observed merge's exact identities, so the fresh
   // review route and its verdict bind this merged source and nothing else.
-  const record = prNumber ? { prNumber, head, commit } : null;
+  const record = prNumber ? { prNumber, head, commit, ...(descendsFrom ? { descendsFrom } : {}) } : null;
   if (record && JSON.stringify(store.task(current.id).resolution.unreviewedMerge) !== JSON.stringify(record))
     resolution.update(store.task(current.id), { unreviewedMerge: record }, {}, "external_merge_unreviewed_recorded", `PR #${record.prNumber} merged at ${head} (commit ${commit})`);
   if (honored) return;
@@ -167,7 +168,8 @@ export function stopUnreviewedExternalMerge(
   const parked = store.task(current.id);
   if (parked.phase !== "blocked" && !["done", "cancelled"].includes(parked.phase))
     resolution.update(parked, {}, { phase: "blocked" }, "external_merge_unreviewed_stopped");
-  const question = `The responsible task "${current.title}"'s PR${prNumber ? ` #${prNumber}` : ""} merged outside Nucleus at head ${head} (merge commit ${commit}) without recorded review evidence at that head. Read next. A responsible planner or the operator board may run closeout.now with accept ["unreviewed_merge"] and a reason to record explicit source acceptance and start closeout. For independent review, move to=review starts a reviewer at the merged head. Choose how it proceeds: ${PLANNER_ESCALATION_CHOICES.join("; ")}.`;
+  const reviewRoute = descendsFrom ? "" : " For independent review, move to=review starts a reviewer at the merged head.";
+  const question = `The responsible task "${current.title}"'s PR${prNumber ? ` #${prNumber}` : ""} merged outside Nucleus at head ${head} (merge commit ${commit}) without recorded review evidence at that head. Read next. A responsible planner or the operator board may run closeout.now with accept ["unreviewed_merge"] and a reason to record explicit source acceptance and start closeout.${reviewRoute} Choose how it proceeds: ${PLANNER_ESCALATION_CHOICES.join("; ")}.`;
   resolution.openPlannerEscalation(store.task(current.id), {
     cause, runId: null, question, payload: { cause, head, commit, prNumber, question },
     causeDetail: detail.slice(0, 2000),

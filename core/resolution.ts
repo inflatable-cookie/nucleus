@@ -341,7 +341,7 @@ export interface ResolutionAdapter {
     task: Task,
     acceptHead?: boolean,
     retainedSource?: boolean,
-  ): Promise<{ head: string; commit: string } | null>;
+  ): Promise<{ head: string; commit: string; descendsFrom?: string } | null>;
   mergeGate(
     task: Task,
     history?: CheckHistory,

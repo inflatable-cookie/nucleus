@@ -3040,12 +3040,11 @@ movement invalidates source approval and preserves the normal readiness gates.
   asking again. An already-recorded merge re-entry never re-decides an
   accepted route, so the gate lives on the fresh observation only.
 - The stop records the merged PR's number, source head and merge commit on the
-  task (`unreviewedMerge`, nucleus#1425). That record is the one route
-  eligibility: `next`, the `move to=review` admission, the reviewer launch and
-  verdict publication read it through one predicate. The route holds only while
-  the task still names that PR and source head and no merge is recorded. The
-  admission then observes the forge's merged PR, which must still name the same
-  head and merge commit; any other answer refuses with nothing written.
+  task (`unreviewedMerge`, nucleus#1425). The fresh review route holds only
+  while the task still names that PR and exact merged head and no merge is
+  recorded. Admission re-observes the merged PR at the same head and commit.
+  A verified descendant also binds the task's earlier source so `next` can
+  offer [explicit closeout](../specs/067-explicit-resolution.md#external-merge-source-acceptance).
 - A fresh review of that merged source may run on the retained reviewer or an
   independent one. Its `ready_to_merge` verdict at the exact merged head
   reconciles the merge once; a verdict at any other head, a negative or a missing
