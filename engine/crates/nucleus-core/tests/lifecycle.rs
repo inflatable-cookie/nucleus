@@ -421,6 +421,54 @@ fn three_confirmed_failures_open_one_question_and_retry_reuses_the_thread() {
 }
 
 #[test]
+fn the_first_pr_seen_as_a_worker_ends_does_not_inherit_its_failures() {
+    let (mut task, workspace) = working();
+    let no_pr = Observation {
+        forge: Observed::Known(Forge::Absent),
+        ..workspace
+    };
+    let idle = retained(no_pr.clone(), "worker", RetainedThread::Idle);
+    start(&mut task, &no_pr, Role::Worker, "worker", "initial work");
+    for _ in 0..2 {
+        let ended = host(&task, no_pr.clone(), RunState::Ended);
+        assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Worker));
+        start(&mut task, &idle, Role::Worker, "worker", "retry");
+    }
+    assert_eq!(task.attempts(), 2);
+
+    let first_pr = host(&task, open('a', CheckState::Ready), RunState::Ended);
+    assert_eq!(task.reconcile(&first_pr), Action::Advance(Phase::Working));
+    assert_eq!(task.attempts(), 0);
+    assert_eq!(task.pull_request(), Some(&pr('a')));
+    assert_eq!(task.question(), None);
+}
+
+#[test]
+fn the_first_pr_seen_between_worker_runs_resets_the_next_launch() {
+    let (mut task, no_pr) = working();
+    start(&mut task, &no_pr, Role::Worker, "worker", "initial work");
+    let ended = host(&task, no_pr, RunState::Ended);
+    assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Worker));
+    assert_eq!(task.attempts(), 1);
+
+    let first_pr = retained(open('a', CheckState::Ready), "worker", RetainedThread::Idle);
+    assert_eq!(task.reconcile(&first_pr), Action::Advance(Phase::Working));
+    assert_eq!(task.attempts(), 0);
+    assert_eq!(task.pull_request(), Some(&pr('a')));
+    start(
+        &mut task,
+        &first_pr,
+        Role::Worker,
+        "worker",
+        "first PR work",
+    );
+    assert_eq!(
+        task.run().expect("bound run").launch().label,
+        format!("task-task-1-working-{}-0", sha('a'))
+    );
+}
+
+#[test]
 fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
     for (command, phase) in [
         (Command::Cancel, Phase::Cancelled),

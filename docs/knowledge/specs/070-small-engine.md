@@ -70,7 +70,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds immutable launch inputs and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
-| `attempts` | Failed launches or silent ends at the current phase and head. |
+| `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
 | `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
 | `hold` | An optional operator or planner hold, with its reason. |
 

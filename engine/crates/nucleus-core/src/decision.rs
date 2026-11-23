@@ -261,7 +261,7 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
         let reported_approval = matches!(report, Some(Report::Review { head, decision: Review::Approve, .. }) if *head == pr.head);
         return merged_signal(task, pr, reported_approval);
     }
-    if (role == Role::Reviewer || (task.pr.is_some() && report.is_none()))
+    if (role == Role::Reviewer || report.is_none())
         && observation
             .pr()
             .is_some_and(|pr| Some(pr) != task.pr.as_ref())
@@ -330,7 +330,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
         Phase::Queued => Signal::Admitted,
         Phase::Working => match (&task.pr, &observation.forge, &observation.workspace) {
             (Some(_), Observed::Unknown, _) => Signal::Wait(WaitReason::ForgeUnknown),
-            (Some(old), Observed::Known(Forge::Open { pr, .. }), _) if old != pr => {
+            (old, Observed::Known(Forge::Open { pr, .. }), _) if old.as_ref() != Some(pr) => {
                 Signal::HeadChanged(Phase::Working)
             }
             (_, _, Observed::Unknown) => Signal::Wait(WaitReason::WorkspaceUnknown),
