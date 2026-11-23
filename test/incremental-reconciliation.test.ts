@@ -1277,6 +1277,109 @@ test("lifecycle hints map only known Queue identities and never scan the fleet",
   }
 });
 
+test("a turn-end signal promptly observes a fresh reviewer or revision binding", async () => {
+  const { dir, root, close } = tempStore();
+  const reads = new Set<string>();
+  const idle = new Set<string>();
+  const raw = fakeAdapter(
+    {
+      observe: async (id) => {
+        reads.add(id);
+        const ended = idle.has(id);
+        return {
+          id,
+          workspaceId: `ws-${id}`,
+          active: !ended,
+          status: ended ? "idle" : "running",
+          activeTurnId: ended ? null : `turn-${id}`,
+          permissions: false,
+          error: "",
+        };
+      },
+    },
+    root,
+  );
+  const runtime = new QueueRuntime({
+    dataDir: dir,
+    adapterFactory: () => raw,
+    timers: false,
+    admission: { observationCacheMs: 0, startIntervalMs: 0 },
+  });
+  try {
+    await runtime.started;
+    await runtime.bootstrap?.catch(() => {});
+    await runtime.engine.quiesce();
+    runtime.store.setMeta("paused", false);
+    const tasks = (["reviewer", "revision"] as const).map((role, index) => {
+      const stamp = new Date().toISOString();
+      const task = insertTask(runtime.store, index, {
+        phase: role === "reviewer" ? "reviewing" : "changes_requested",
+        directory: join(root, role),
+        workspaceId: `ws-${role}`,
+        prHead: head,
+        prUrl: `https://github.com/example/fixture/pull/${index + 1}`,
+      });
+      const runId = `run-${role}`;
+      runtime.store.putRun({
+        id: runId,
+        taskId: task.id,
+        role,
+        generation: 1,
+        base,
+        head,
+        hostId: task.hostId,
+        workspaceId: task.workspaceId!,
+        agentId: role,
+        profile,
+        status: "running",
+        createdAt: stamp,
+        lastObservedAt: stamp,
+        active: true,
+        idleSince: null,
+        completion: null,
+        released: false,
+      });
+      runtime.store.update(task.id, {
+        resolution: {
+          ...task.resolution,
+          currentRunId: runId,
+          ...(role === "reviewer" ? { reviewerAgentId: role } : {}),
+        },
+      });
+      return { role, runId };
+    });
+    const hint = (agentId: string) =>
+      runtime.lifecycleSignal({
+        kind: "agent.turn_ended",
+        agentId,
+        workspaceId: `ws-${agentId}`,
+        at: new Date().toISOString(),
+      });
+    assert.deepEqual(hint("reviewer"), { ok: true, matched: 1 });
+    await runtime.engine.quiesce();
+    assert.equal(
+      runtime.store.run("run-reviewer")?.idleSince,
+      null,
+      "the host still sees a running turn",
+    );
+    assert.ok(reads.has("reviewer"), "the hint caused an exact read");
+    for (const { role, runId } of tasks) {
+      reads.clear();
+      idle.add(role);
+      assert.deepEqual(hint(role), { ok: true, matched: 1 });
+      await runtime.engine.quiesce();
+      assert.ok(
+        runtime.store.run(runId)?.idleSince,
+        `${role} starts callback grace`,
+      );
+      assert.ok(!reads.has(role === "reviewer" ? "revision" : "reviewer"));
+    }
+  } finally {
+    await runtime.drain();
+    close();
+  }
+});
+
 test("the service accepts a bounded lifecycle hint over its socket and reports the match", async () => {
   const dir = mkdtempSync(join(tmpdir(), "nsq"));
   const dataDir = join(dir, "northstar-queue");

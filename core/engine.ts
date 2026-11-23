@@ -96,6 +96,7 @@ import type {
 
 import { stopThreads } from "../shared/contracts";
 import type { Submission } from "../shared/contracts";
+import type { LifecycleSignalKind } from "../shared/lifecycle-signal";
 
 import { controlHasExternalEffect } from "./verbs/control-decisions";
 export { controlHasExternalEffect } from "./verbs/control-decisions";
@@ -3073,11 +3074,14 @@ export class Engine {
     return this.projectLifecycle.migrateProjectOwnersToPlanners();
   }
   noteLifecycleSignal(input: {
+    kind?: LifecycleSignalKind;
     agentId?: string | null;
     workspaceId?: string | null;
     hostId?: string | null;
   }): void {
     this.retiredObservations.noteLifecycleSignal(input);
+    if (input.kind === "agent.turn_ended")
+      this.taskWakes.noteTurnEndHint(input);
   }
   retiredObservationPlan(): {
     persisted: Record<string, { active: boolean; at: string }>;
@@ -3417,8 +3421,9 @@ export class Engine {
   readStash(directory: string) {
     return this.workspaceProvisioning.readStash(directory);
   }
-  launchAgent(task: Task): Promise<void> {
-    return this.workerLauncher.launchAgent(task);
+  async launchAgent(task: Task): Promise<void> {
+    await this.workerLauncher.launchAgent(task);
+    this.taskWakes.armRecoveryObservation(task.id, Date.now());
   }
   launchAgentOnce(task: Task): Promise<void> {
     return this.workerLauncher.launchAgentOnce(task);
