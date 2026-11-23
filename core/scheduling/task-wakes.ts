@@ -54,6 +54,7 @@ import {
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
+import { custodyProofDeferral } from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -1018,9 +1019,11 @@ export class TaskWakes {
                       reason: "the host process listing is unreadable",
                     };
               } catch (error) {
+                const deferred = custodyProofDeferral({ kind: "error", error });
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+                  ...(deferred ? { deferred: true } : {}),
                 };
               }
             },

@@ -412,15 +412,12 @@ test("older pending operations do not crowd out a pass-proof retry", async (t) =
 
 test("a transient host read leaves the owner audit to the successful operation", async (t) => {
   const workspaces = new Map<string, string>();
-  let firstRead = true;
-  const { store, engine } = fixture(t, {
-    workspaces,
-    beforeObserve() {
-      if (!firstRead) return;
-      firstRead = false;
-      throw new HostReadRefusalError("The participant inventory changed during the read");
-    },
-  });
+  const { store, engine } = fixture(t, { workspaces });
+  const apply = engine.performTaskControlApplied.bind(engine);
+  engine.performTaskControlApplied = async () => {
+    engine.performTaskControlApplied = apply;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
   const { task, effect } = seedOwnedToolHold(store, workspaces);
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const accepted = await engine.startOperation(ownedToolRetry(task, effect));
@@ -440,7 +437,7 @@ test("a transient host read leaves the owner audit to the successful operation",
   assert.deepEqual(store.verbOutcomes("").map(({ outcome }) => outcome), ["applied"]);
 });
 
-test("a coordinator's accepted owned-tool retry stays pending until its proof is served", async (t) => {
+test("a coordinator's accepted owned-tool retry stays pending through a second transient host read", async (t) => {
   const workspaces = new Map<string, string>();
   const { store, engine } = fixture(t, { workspaces, recovery: true });
   const { task, effect } = seedOwnedToolHold(store, workspaces);
@@ -496,7 +493,20 @@ test("a coordinator's accepted owned-tool retry stays pending until its proof is
   assert.deepEqual(store.verbOutcomes(""), []);
   assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 1);
 
+  const apply = engine.performTaskControl.bind(engine);
+  engine.performTaskControl = async () => {
+    engine.performTaskControl = apply;
+    throw new HostReadRefusalError("The participant inventory changed during the read");
+  };
   assert.equal((await engine.auditPass(true)).fault, null);
+  assert.equal(store.task(task.id).resolution.recovery?.action?.status, "pending");
+  assert.equal(store.run(runId)?.released, false);
+  assert.deepEqual(store.verbOutcomes(""), []);
+  assert.equal(store.eventsAll(task.id).filter((event) => event.kind === "run_result_deferred").length, 2);
+
+  assert.equal((await engine.auditPass(true)).fault, null);
+  if (store.task(task.id).resolution.recovery?.action?.status === "pending")
+    assert.equal((await engine.auditPass(true)).fault, null);
   assert.equal(store.task(task.id).resolution.recovery?.action?.status, "applied", store.task(task.id).reason);
   assert.deepEqual(store.verbOutcomes("").map(({ outcome, source }) => ({ outcome, source })), [
     { outcome: "applied", source: "coordinator" },

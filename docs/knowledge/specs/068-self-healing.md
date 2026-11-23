@@ -247,8 +247,10 @@ An ordinary review send that hits an unknown proof releases its unsent run and
 waits with a `pass_proof` fact. The next host pass serves its custody participants,
 including retired workers with explicitly released runs, under the same
 freshness rule. The send keeps its normal review instructions and any named
-checks. A process snapshot that predates newer participant activity leaves
-custody unproved and renews the demand. If a completed host pass still cannot
+checks. Custody checks freshness before using a cached process or tool
+observation to clear or hold custody. Evidence from before the participant's
+latest activity and transient custody read failures both leave the proof
+pending and renew the demand. If a completed host pass still cannot
 serve the proof after five minutes of host and service uptime, the task stops with
 `pass_proof_exhausted` and names the unread proof.
 The bound starts at the first proof wait for that review round and head, even

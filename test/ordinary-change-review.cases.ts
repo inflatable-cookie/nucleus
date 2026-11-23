@@ -27,6 +27,7 @@ import { reviewPublicationBody } from "../core/forge/index";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import type { ResolutionAdapter } from "../core/resolution";
 import { HostReadRefusalError } from "../core/host/errors";
+import type { HostProcessFact } from "../core/host";
 import {
   ordinaryReviewSource,
   ordinaryReviewDelta,
@@ -3434,30 +3435,71 @@ test("an intervening host-read wait preserves the ordinary pass proof deadline",
   }
 });
 
-test("ordinary review defers when a retired worker changes after an empty process scan", async () => {
+for (const location of ["empty", "workspace", "scratch"] as const) {
+  test(`ordinary review defers when a retired worker changes after the ${location} process scan`, async () => {
+    const f = fixture();
+    try {
+      const { retiredAgentId } = await waitForOrdinaryPassProof(f);
+      const retired = f.states.get(retiredAgentId);
+      assert.ok(retired);
+      f.states.set(retiredAgentId, { ...retired, status: "closed" });
+      let scans = 0;
+      const exited: HostProcessFact = {
+        pid: 4242, ppid: 1, pgid: 4242, uid: 501, startIdentity: "retired-process",
+        command: "node retired-tool.js",
+        cwd: location === "workspace" ? f.workspace : join(f.root, "retired-scratch"),
+      };
+      f.adapter.noLiveWorkspaceProcesses = async (_workspace, _runs, _runtime, processes) =>
+        location === "workspace" && processes?.some((process) => process.pid === exited.pid)
+          ? "a cached workspace process is still listed"
+          : null;
+      f.adapter.hostProcessListing = async () => {
+        if (++scans === 1) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          f.states.set(retiredAgentId, {
+            ...retired,
+            status: "closed",
+            updatedAt: new Date().toISOString(),
+          });
+          if (location !== "empty") return [exited];
+        }
+        return [];
+      };
+      await f.engine.auditPass(true);
+      const waiting = f.store.task(f.task.id);
+      assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
+      assert.match(waiting.reason, /predates the participant's latest activity/);
+      assert.equal(f.sends.length, 0);
+      assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
+      await f.engine.auditPass(true);
+      assert.equal(f.sends.length, 1, f.store.task(f.task.id).reason);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("ordinary review defers on an empty tool page that predates later participant activity", async () => {
   const f = fixture();
   try {
     const { retiredAgentId } = await waitForOrdinaryPassProof(f);
     const retired = f.states.get(retiredAgentId);
     assert.ok(retired);
-    f.states.set(retiredAgentId, { ...retired, status: "closed" });
-    let scans = 0;
-    f.adapter.noLiveWorkspaceProcesses = async () => null;
-    f.adapter.hostProcessListing = async () => {
-      if (++scans === 1) {
+    const readPage = f.adapter.agentTimelinePage!;
+    let advanced = false;
+    f.adapter.agentTimelinePage = async (id, limit) => {
+      const page = await readPage(id, limit);
+      if (!advanced && id === retiredAgentId) {
+        advanced = true;
         await new Promise<void>((resolve) => setTimeout(resolve, 10));
-        f.states.set(retiredAgentId, {
-          ...retired,
-          status: "closed",
-          updatedAt: new Date().toISOString(),
-        });
+        f.states.set(retiredAgentId, { ...retired, updatedAt: new Date().toISOString() });
       }
-      return [];
+      return page;
     };
     await f.engine.auditPass(true);
     const waiting = f.store.task(f.task.id);
     assert.equal(waiting.resolution.stop?.fact?.code, "pass_proof");
-    assert.match(waiting.reason, /predates the participant's latest activity/);
+    assert.match(waiting.reason, /cached tool timeline predates/);
     assert.equal(f.sends.length, 0);
     assert.ok(!f.store.eventsAll(f.task.id).some((event) => event.kind === "ordinary_review_refused_before_send"));
     await f.engine.auditPass(true);

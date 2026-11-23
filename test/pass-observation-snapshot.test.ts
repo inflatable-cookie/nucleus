@@ -895,11 +895,11 @@ test("a warmed empty tool page never clears a lease after a newer turn changes u
 
   assert.equal(
     hold.kind,
-    "hold",
+    "deferred",
     `warmed empty page must not clear after a newer turn, got: ${JSON.stringify(hold)}`,
   );
   assert.ok(
-    hold.kind === "hold" &&
+    hold.kind === "deferred" &&
       /predates the participant's latest observation/i.test(hold.reason),
     `warmed empty page must not clear after a newer turn, got: ${JSON.stringify(hold)}`,
   );
@@ -1761,7 +1761,7 @@ test("unstamped tool evidence never clears a hold or reads a timeline on the tas
     snap1.expire();
   }
 
-  // 2. Complete empty page with unstamped fresh observation must also hold without
+  // 2. Complete empty page with unstamped fresh observation also defers without
   // issuing any direct timeline RPC inside the task lane.
   boundedMode = false;
   const snap2 = f.engine.resolution.beginPassSnapshot();
@@ -1779,9 +1779,8 @@ test("unstamped tool evidence never clears a hold or reads a timeline on the tas
       taskId: seeded.task.id,
       workspaceId: "ws-unstamped-tool",
     });
-    assert.equal(hold.kind, "hold", "unstamped complete tool page must hold");
-    if (hold.kind === "hold")
-      assert.match(hold.reason, /positive activity stamp|predates/i);
+    assert.equal(hold.kind, "deferred", "unstamped complete tool page must defer");
+    assert.match(hold.reason, /positive activity stamp|predates/i);
     assert.equal(
       timelineCalls,
       callsAfterWarm,
@@ -2703,7 +2702,7 @@ test("task-scope lookups stay strictly cache-only when unsealed or post-reap, an
     },
     agentTimelinePage: async () => {
       timelinePageCalls++;
-      return toolTimelinePage([runningShellEntry("call-reap-stray")]);
+      return toolTimelinePage([runningShellEntry("call-reap-stray", idleAt)]);
     },
     hostProcessListing: async (): Promise<HostProcessFact[]> => {
       processListCalls++;
@@ -2840,6 +2839,9 @@ test("task-scope lookups stay strictly cache-only when unsealed or post-reap, an
     },
   });
 
+  // Reaping needs a current process match and a participant proved inactive
+  // before this pass captures it.
+  f.engine.resolution.requestPassProof(HOST, task.agentId!);
   await f.engine.auditPass(true);
   assert.equal(
     f.store

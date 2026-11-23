@@ -4,8 +4,10 @@ import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
 import { PassProofPendingError } from "../host/errors";
+import { custodyProofDeferral } from "../machine/custody-proof";
 import {
   collectOwnerVerbFacts,
+  ownerEffectIdentity,
   ownerVerb,
   ownerVerbViews,
 } from "../verbs/owner-verbs";
@@ -311,6 +313,7 @@ export class RecoverySettlement {
       }
 
       for (let attempt = 0; attempt < 2; attempt++) {
+        let applyingOwnedToolProof = false;
         try {
           const current = this.store.task(task.id);
           if (
@@ -348,6 +351,10 @@ export class RecoverySettlement {
           });
           if (!plan.ok) throw new Error(plan.refusal);
           const args = plan.args;
+          applyingOwnedToolProof =
+            action.verb === "retry_effect" &&
+            typeof args.effect === "string" &&
+            ownerEffectIdentity(args.effect, "owned_tool") !== null;
           await this.engine.coordinatorActionRunId.run(run.id, () => {
             const apply = () =>
               verb!.apply((input) => this.engine.performTaskControl(input), {
@@ -361,7 +368,10 @@ export class RecoverySettlement {
           finish("applied");
           return;
         } catch (error) {
-          if (error instanceof PassProofPendingError) {
+          if (
+            (applyingOwnedToolProof || error instanceof PassProofPendingError) &&
+            custodyProofDeferral({ kind: "error", error })
+          ) {
             this.store.event(task.id, "run_result_deferred", claimKey);
             return;
           }
