@@ -282,8 +282,10 @@ export class ParticipantLease {
       scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
     if (complete !== true)
       return "the host process listing has incomplete working-directory coverage";
+    // Open files are read only under this participant's scratch roots, never host-wide.
     const opened = await readOpenFileFacts(
       scan.processes.filter(isLiveProcess),
+      [...roots],
     );
     if (opened.state === "unknown") return opened.reason;
     if (

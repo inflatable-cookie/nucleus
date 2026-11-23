@@ -106,11 +106,8 @@ export async function readRunProcessCustody(input: {
   const hostId = run?.hostId ?? task.hostId;
   const scan = await input.readProcesses(hostId, { allowMissFetch: true });
   if (scan.state === "unknown") return scan;
-  // Open files are read only for this custody decision, never on the listing.
-  const opened = await readOpenFileFacts(scan.processes.filter(isLiveProcess));
-  if (opened.state === "unknown") return opened;
-  const live = opened.processes;
-  const table = new RunProcessTable(live);
+  const liveScan = scan.processes.filter(isLiveProcess);
+  const table = new RunProcessTable(liveScan);
   const taskRuns = store.runs(task.id);
   const thread = bbThreadForAgent(run?.agentId ?? task.agentId, hostId);
   const runtime = participantRuntime({
@@ -125,20 +122,33 @@ export async function readRunProcessCustody(input: {
       ?.provider ??
     recordedRunProvider(store, { taskId: task.id, runId }) ??
     (activity?.runId === runId ? activity.process : null);
-  const work = runWorkProcesses({
-    live,
-    byPid: table.byPid,
-    directories: [
-      input.directory ?? runWorkspaceDirectory(task, run),
-      participantTemporaryDirectory(task, taskRuns, runId),
-      store.getMeta<{ temporaryDirectory?: string }>(
-        `runProcessCleanup:${runId}`,
-      )?.temporaryDirectory,
-    ],
-    infrastructure: table.infrastructurePids(runtime),
-    providers:
-      provider && !table.providerHostPids().has(provider.pid) ? [provider] : [],
-  });
+  const directories = [
+    input.directory ?? runWorkspaceDirectory(task, run),
+    participantTemporaryDirectory(task, taskRuns, runId),
+    store.getMeta<{ temporaryDirectory?: string }>(`runProcessCleanup:${runId}`)
+      ?.temporaryDirectory,
+  ];
+  const holdersOf = (processes: readonly HostProcessFact[]) =>
+    runWorkProcesses({
+      live: processes,
+      byPid: table.byPid,
+      directories,
+      infrastructure: table.infrastructurePids(runtime),
+      providers:
+        provider && !table.providerHostPids().has(provider.pid)
+          ? [provider]
+          : [],
+    });
+  // A working directory that already shows custody needs no open-file read, so
+  // an open-file deadline cannot hide a live process the listing has observed.
+  let live = liveScan;
+  let work = holdersOf(live);
+  if (!work.length) {
+    const opened = await readOpenFileFacts(liveScan, directories);
+    if (opened.state === "unknown") return opened;
+    live = opened.processes;
+    work = holdersOf(live);
+  }
   const process = work.find(
     (fact) =>
       fact.startIdentity.startsWith(`${fact.pid}@`) &&

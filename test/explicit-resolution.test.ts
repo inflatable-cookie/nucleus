@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { mergeGate } from "../core/forge/merge";
 import { publishFormalReview, publishReviewOnce } from "../core/forge/reviews";
@@ -688,6 +688,130 @@ test("run.release cancels a current revision on the retained worker thread", asy
   assert.equal(result.agentId, revision.agentId);
   assert.equal(result.runId, "original-worker");
   assert.equal(result.resolution.currentRunId, null);
+});
+
+test("an open-file deadline does not hide a live process the cwd listing already shows", async (t) => {
+  let pid: number | undefined;
+  const scan = async () => {
+    if (!pid) return [];
+    const result = await readProcessSubset([pid]);
+    return result.state === "listed" ? result.processes : null;
+  };
+  const f = await fixture(t, { hostProcessListing: scan });
+  const directory = join(f.root, "worktree");
+  mkdirSync(directory);
+  const runId = "initial-worker";
+  const observe = () => ({
+    MountPoint: f.root,
+    VolumeUUID: "fixture",
+    Internal: false,
+    Writable: true,
+    WritableVolume: true,
+  });
+  const placement = checkoutRunScratchPlacement({
+    mount: f.root,
+    uuid: "fixture",
+    observe,
+  });
+  const scratch = runTemporaryEnvironment(runId, placement).TMPDIR;
+  mkdirSync(scratch, { recursive: true });
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = (path) =>
+    removeRecordedRunScratchDirectory(path, {
+      mount: f.root,
+      uuid: "fixture",
+      observe,
+    });
+  const coordinator = f.run("recovery-run", "recovery", "coordinator");
+  f.store.putRun(coordinator);
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "needs_attention",
+    workspaceId: "workspace",
+    directory,
+    temporaryDirectory: scratch,
+    runId,
+    agentId: "worker",
+    agentActive: true,
+    resolution: {
+      ...task.resolution,
+      stop: taskStopRecord(
+        "run_stalled",
+        "Stalled worker",
+        null,
+        new Date().toISOString(),
+        ["restart"],
+      ),
+      recoveryActive: true,
+      recovery: {
+        id: "episode",
+        key: "key",
+        generation: 1,
+        runId: coordinator.id,
+        agentId: coordinator.agentId,
+        status: "running",
+        summary: "Mechanical stop",
+        idleSince: null,
+        incidentId: null,
+      },
+    },
+  });
+  const file = join(scratch, "held output");
+  const fd = openSync(file, "w");
+  // The child's working directory is the run scratch, so the cwd listing alone
+  // observes it. Every open-file read overruns; only the cwd-only read answers.
+  const child = spawn(
+    process.execPath,
+    ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
+    {
+      cwd: scratch,
+      stdio: ["ignore", "pipe", "inherit", fd],
+    },
+  );
+  closeSync(fd);
+  const exited = once(child, "exit");
+  const shimDir = join(f.root, "lsof-shim");
+  mkdirSync(shimDir);
+  writeFileSync(
+    join(shimDir, "lsof"),
+    `#!/bin/sh
+case "$*" in
+  *"-a -d cwd"*) exec /usr/sbin/lsof "$@" ;;
+  *) exec sleep 6 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const path = process.env.PATH ?? "";
+  process.env.PATH = `${shimDir}${delimiter}${path}`;
+  try {
+    assert.ok(child.stdout);
+    await once(child.stdout, "data");
+    pid = child.pid;
+    assert.ok(pid);
+    const fact = (await scan())?.find((process) => process.pid === pid);
+    assert.ok(fact);
+    assert.equal(fact.cwd, scratch);
+    f.store.update(task.id, { agentActive: false });
+    const refused = await f.command({
+      action: "run.release",
+      run: runId,
+      caller: formatAgentId(host, "coordinator"),
+      accept: ["unreported_result"],
+    });
+    assert.equal(refused.explicitResolution?.status, "warnings");
+    assert.ok(
+      refused.explicitResolution?.warnings.some(
+        (warning) => warning.id === "live_turn",
+      ),
+    );
+    assert.equal(f.current().runId, runId);
+  } finally {
+    process.env.PATH = path;
+    child.kill();
+    await exited;
+  }
 });
 
 test("a coordinator must accept live_turn before releasing an inactive worker with a live process", async (t) => {

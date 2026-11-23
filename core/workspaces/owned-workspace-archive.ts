@@ -10,6 +10,7 @@ import type { WorkspaceAllocationBridge } from "./workspace-allocation-bridge";
 import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import type { AgentObservation } from "../host/adapter";
+import type { HostProcessFact } from "../host/types";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import { bbThreadForAgent, RunProcessTable } from "../machine/run-process-tree";
 import {
@@ -584,12 +585,8 @@ export class OwnedWorkspaceArchive {
       if (task.runId) runIds.add(task.runId);
       for (const worker of task.retiredWorkers) runIds.add(worker.runId);
     }
-    // Open files are read only for this preservation decision, never on the listing.
-    const opened = await readOpenFileFacts(scan.filter(isLiveProcess));
-    if (opened.state === "unknown")
-      throw Error(`Preserving workspace: ${opened.reason}`);
-    const live = opened.processes;
-    const table = new RunProcessTable(live);
+    const liveScan = scan.filter(isLiveProcess);
+    const table = new RunProcessTable(liveScan);
     const providerHosts = table.providerHostPids();
     const runtime = participantRuntime({
       dataHome: this.host.dataDir(),
@@ -603,21 +600,37 @@ export class OwnedWorkspaceArchive {
         return thread ? [thread] : [];
       }),
     });
-    const holders = runWorkProcesses({
-      live,
-      byPid: table.byPid,
-      directories: [
-        directory,
-        id === task.workspaceId ? task.temporaryDirectory : undefined,
-        ...[...runIds].map((runId) =>
-          participantTemporaryDirectory(task, runs, runId),
-        ),
-      ],
-      infrastructure: table.infrastructurePids(runtime),
-      providers: [...table.providerBindings()].flatMap(({ runId, provider }) =>
-        runIds.has(runId) && !providerHosts.has(provider.pid) ? [provider] : [],
+    const directories = [
+      directory,
+      id === task.workspaceId ? task.temporaryDirectory : undefined,
+      ...[...runIds].map((runId) =>
+        participantTemporaryDirectory(task, runs, runId),
       ),
-    });
+    ];
+    const holdersOf = (processes: readonly HostProcessFact[]) =>
+      runWorkProcesses({
+        live: processes,
+        byPid: table.byPid,
+        directories,
+        infrastructure: table.infrastructurePids(runtime),
+        providers: [...table.providerBindings()].flatMap(
+          ({ runId, provider }) =>
+            runIds.has(runId) && !providerHosts.has(provider.pid)
+              ? [provider]
+              : [],
+        ),
+      });
+    // A working directory that already shows a holder needs no open-file read.
+    // Otherwise open files are read only under this workspace's roots.
+    let live = liveScan;
+    let holders = holdersOf(live);
+    if (!holders.length) {
+      const opened = await readOpenFileFacts(liveScan, directories);
+      if (opened.state === "unknown")
+        throw Error(`Preserving workspace: ${opened.reason}`);
+      live = opened.processes;
+      holders = holdersOf(live);
+    }
     const holder = holders[0];
     if (holder)
       throw Error(

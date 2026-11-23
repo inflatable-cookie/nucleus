@@ -13,8 +13,8 @@ export type { HostProcessFact } from "../host/types";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
-import { readFile, readdir, readlink, realpath } from "node:fs/promises";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import type { CwdState } from "../workspaces/worktree-validation";
 import { parseProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
@@ -460,20 +460,23 @@ export type HostOpenFileRead =
   | { state: "unknown"; reason: string };
 
 /**
- * Fill open files for the facts a custody decision examines. On macOS the
- * host-wide open-file listing is the largest read the host makes, so it runs
- * only here, never on a plain listing, and a deadline is its own unknown reason.
- * A fact that already carries open files (Linux /proc, or a caller's own read)
- * keeps them. A live process the listing reports but this read cannot find
- * stays incomplete; one that exited since the listing is dropped as gone.
+ * Fill open files for the facts a custody decision examines. On macOS a plain
+ * listing carries working directories only, so open files come from here. With
+ * `roots`, the read covers only those directories (one `lsof +D` pass per
+ * existing directory), which is what completion and release decisions need. A
+ * call without roots reads every open file the uid holds, for the background
+ * sweep only. A deadline is its own unknown reason. A fact that already carries
+ * open files (Linux /proc, or a caller's own read) keeps them.
  */
 export async function readOpenFileFacts(
   processes: readonly HostProcessFact[],
+  roots?: readonly (string | null | undefined)[],
 ): Promise<HostOpenFileRead> {
   const needsFiles = (fact: HostProcessFact) =>
     fact.openFiles === undefined && !fact.state?.startsWith("Z");
   if (process.platform !== "darwin" || !processes.some(needsFiles))
     return { state: "listed", processes: [...processes] };
+  if (roots) return readOpenFilesUnder(processes, roots, needsFiles);
   const pass = await processListing("lsof", [
     "-nP",
     "-u",
@@ -504,6 +507,69 @@ export async function readOpenFileFacts(
     });
   }
   return { state: "listed", processes: read };
+}
+
+/**
+ * Open files under the given directories. `lsof +D` takes one directory per
+ * call, so each existing root is one pass, and its cost follows the tree's size.
+ * A missing root holds no open files, so it is skipped. Exit status 1 means "no
+ * match" or "a match" here, so only stderr or a timeout marks a pass incomplete.
+ */
+async function readOpenFilesUnder(
+  processes: readonly HostProcessFact[],
+  roots: readonly (string | null | undefined)[],
+  needsFiles: (fact: HostProcessFact) => boolean,
+): Promise<HostOpenFileRead> {
+  const directories = [
+    ...new Set(roots.flatMap((root) => (root ? [resolve(root)] : []))),
+  ];
+  const existing: string[] = [];
+  for (const directory of directories)
+    if (
+      await stat(directory).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+      )
+    )
+      existing.push(directory);
+  const uid = String(uidOf());
+  const found = new Map<number, Set<string>>();
+  let complete = true;
+  for (const directory of existing) {
+    const pass = await processListing("lsof", [
+      "-nP",
+      "-u",
+      uid,
+      "-a",
+      "+D",
+      directory,
+      "-F0pfn",
+    ]);
+    if (pass.timedOut)
+      return {
+        state: "unknown",
+        reason: `the open-file listing timed out after ${PS_TIMEOUT_MS} ms`,
+      };
+    if (pass.stderr.trim() || (pass.status !== 0 && pass.status !== 1))
+      complete = false;
+    for (const [pid, entry] of darwinOpenFiles(pass.stdout)) {
+      if (!entry.complete) complete = false;
+      const paths = found.get(pid) ?? new Set<string>();
+      for (const path of entry.paths) paths.add(path);
+      found.set(pid, paths);
+    }
+  }
+  return {
+    state: "listed",
+    processes: processes.map((fact) =>
+      needsFiles(fact)
+        ? {
+            ...fact,
+            openFiles: { paths: [...(found.get(fact.pid) ?? [])], complete },
+          }
+        : fact,
+    ),
+  };
 }
 
 /**

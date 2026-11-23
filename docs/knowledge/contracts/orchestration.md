@@ -1788,12 +1788,17 @@ request identities and stored committed-handoff rows are not rewritten.
   remains in the run's process tree. Incomplete cwd or open-file coverage for
   live processes owned by the service UID also leaves the intent pending.
   A plain macOS host listing reads working directories only (one small cwd
-  pass), so its coverage no longer depends on the host-wide open-file read. The
-  open-file read (about 18 MB on a busy workstation) runs only when a custody
-  decision asks for open files. A read whose `ps`, cwd or open-file pass overruns
-  its deadline is unknown and names that deadline; it is never reported as
-  incomplete coverage, so a busy host reads as "still unknown", not as a missing
-  working directory.
+  pass), so its coverage no longer depends on the host-wide open-file read.
+  Open files come from a separate read, and each decision asks only for the
+  directories it guards: a participant lease reads its scratch roots, the
+  workspace archive and release custody read the workspace and run scratch, one
+  `lsof +D` pass per existing directory. Only the background run-process sweep
+  still reads every open file of the uid, about 18 MB on a busy workstation. A
+  working directory that already shows a holder needs no open-file read, so an
+  open-file deadline never hides a live process the cwd listing has observed. A
+  read whose `ps`, cwd or open-file pass overruns its deadline is unknown and
+  names that deadline; it is never reported as incomplete coverage, so a busy
+  host reads as "still unknown", not as a missing working directory.
   On macOS, the inventory rechecks the state of processes that a successful
   file scan omitted and the kernel still sees. A confirmed zombie holds no
   custody. The hourly host sweep applies the same ownership proof to settled

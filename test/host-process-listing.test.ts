@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -304,6 +306,92 @@ ROWS
           reason: "the open-file listing timed out after 5000 ms",
         },
       );
+    } finally {
+      process.env.PATH = path;
+    }
+  },
+);
+
+test(
+  "darwin open files under a root come from a read scoped to that root",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "host-process-roots-")),
+    );
+    const other = await realpath(
+      await mkdtemp(join(tmpdir(), "host-process-elsewhere-")),
+    );
+    t.after(() => rm(root, { recursive: true, force: true }));
+    t.after(() => rm(other, { recursive: true, force: true }));
+    const file = join(root, "held output");
+    const handle = await open(file, "w");
+    const child = spawn(
+      process.execPath,
+      ["-e", "console.log('ready'); setInterval(() => {}, 1000)"],
+      { cwd: other, stdio: ["ignore", "pipe", "inherit", handle.fd] },
+    );
+    const exited = once(child, "exit");
+    try {
+      assert.ok(child.stdout);
+      await once(child.stdout, "data");
+      await handle.close();
+      const listed = await readHostUidProcesses();
+      assert.equal(listed.state, "listed");
+      if (listed.state !== "listed") return;
+      // The listing alone carries no open files; a scoped read fills them.
+      assert.equal(listed.processes[0]?.openFiles, undefined);
+      const read = await readOpenFileFacts(listed.processes, [root]);
+      assert.equal(read.state, "listed");
+      if (read.state !== "listed") return;
+      const holder = read.processes.find((fact) => fact.pid === child.pid);
+      assert.ok(holder);
+      assert.deepEqual(holder.openFiles, { paths: [file], complete: true });
+      const elsewhere = read.processes.find((fact) => fact.pid === process.pid);
+      assert.ok(elsewhere);
+      assert.equal(elsewhere.openFiles?.paths.includes(file), false);
+      assert.equal(elsewhere.openFiles?.complete, true);
+      const missing = await readOpenFileFacts(listed.processes, [
+        join(root, "does-not-exist"),
+      ]);
+      assert.equal(missing.state, "listed");
+      if (missing.state === "listed")
+        assert.deepEqual(missing.processes[0]?.openFiles, {
+          paths: [],
+          complete: true,
+        });
+    } finally {
+      child.kill();
+      await exited;
+    }
+  },
+);
+
+test(
+  "a darwin open-file read scoped to a root killed at its deadline is unknown",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "host-process-roots-timeout-")),
+    );
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const shim = await mkdtemp(join(tmpdir(), "host-process-roots-shim-"));
+    t.after(() => rm(shim, { recursive: true, force: true }));
+    await writeFile(
+      join(shim, "lsof"),
+      '#!/bin/sh\ncase "$*" in\n  *"+D"*) exec sleep 6 ;;\n  *) exec /usr/sbin/lsof "$@" ;;\nesac\n',
+      { mode: 0o755 },
+    );
+    const listed = await readHostUidProcesses();
+    assert.equal(listed.state, "listed");
+    if (listed.state !== "listed") return;
+    const path = process.env.PATH ?? "";
+    process.env.PATH = `${shim}${delimiter}${path}`;
+    try {
+      assert.deepEqual(await readOpenFileFacts(listed.processes, [root]), {
+        state: "unknown",
+        reason: "the open-file listing timed out after 5000 ms",
+      });
     } finally {
       process.env.PATH = path;
     }

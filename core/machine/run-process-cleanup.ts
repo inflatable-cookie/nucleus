@@ -498,6 +498,9 @@ async function sweep(
   // Open files are read here for the holder and coverage checks below, never on the listing.
   const openRead = await readOpenFileFacts(live);
   const openLive = openRead.state === "listed" ? openRead.processes : [];
+  // A working directory that shows a holder needs no open-file read, so an
+  // open-file deadline never hides a live process the cwd listing has observed.
+  const holderLive = openRead.state === "listed" ? openRead.processes : live;
   const incomplete =
     openRead.state === "unknown"
       ? openRead.reason
@@ -834,7 +837,7 @@ async function sweep(
         store.queueRunProcessCleanup({ ...run, hostId });
       const provider = records.get(run.id)?.provider;
       const holders = runWorkProcesses({
-        live: openLive,
+        live: holderLive,
         byPid: table.byPid,
         directories: [run.directory, run.temporaryDirectory],
         infrastructure,
