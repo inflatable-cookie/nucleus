@@ -9,6 +9,12 @@ import {
   type OriginReviewHost,
 } from "../review/origin-review-adapter";
 import type { Adapter, AgentObservation, OriginAgent } from "./adapter";
+import {
+  QuantumDeadlineExceededError,
+  currentTaskQuantumScope,
+  isQuantumDeadlineExceeded,
+  raceQuantumDeadline,
+} from "../scheduling/pass-snapshot";
 import type { Engine } from "../engine";
 import { isTransportFailure } from "../../shared/transport";
 import type { Store } from "../store/store";
@@ -138,6 +144,7 @@ export function routeHostAdapter(
     method: PropertyKey,
     error: unknown,
   ) => {
+    if (isQuantumDeadlineExceeded(error)) return error;
     if (
       host &&
       (method === "validate" || method === "preflightWorkspaceStorage") &&
@@ -194,7 +201,12 @@ export function routeHostAdapter(
         ) => {
           try {
             if (suppliedProof || !taskId)
-              return await value.call(selected, input, taskId, suppliedProof);
+              return await raceQuantumDeadline(
+                "inspectReviewEntry",
+                Promise.resolve(
+                  value.call(selected, input, taskId, suppliedProof),
+                ),
+              );
             const task = owner.store.task(taskId),
               originHost = task.originHostId;
             if (!originHost)
@@ -202,7 +214,10 @@ export function routeHostAdapter(
                 "Transport not connected: review-entry origin host is unknown",
               );
             if (originHost === task.hostId)
-              return await value.call(selected, input, taskId);
+              return await raceQuantumDeadline(
+                "inspectReviewEntry",
+                Promise.resolve(value.call(selected, input, taskId)),
+              );
             if (
               !owner.withHost(originHost, () => owner.hostAvailable(originHost))
             )
@@ -216,13 +231,39 @@ export function routeHostAdapter(
               originHost,
               input.submission.originAgentId,
             );
-            return await value.call(selected, input, taskId, proof);
+            return await raceQuantumDeadline(
+              "inspectReviewEntry",
+              Promise.resolve(value.call(selected, input, taskId, proof)),
+            );
           } catch (error) {
+            if (isQuantumDeadlineExceeded(error)) throw error;
             throw record(id, error);
           }
         };
       }
       if (typeof value !== "function") return value;
+      if (property === "hostProcessListing") {
+        return (...args: unknown[]) => {
+          if (currentTaskQuantumScope()?.inTaskQuantum) {
+            return Promise.reject(
+              new QuantumDeadlineExceededError(
+                "hostProcessListing",
+                "hostProcessListing is disallowed inside a task quantum; use the host-pass snapshot",
+              ),
+            );
+          }
+          try {
+            const result: unknown = value.apply(selected, args);
+            return result instanceof Promise
+              ? result.catch((error) => {
+                  throw recordCall(id, property, error);
+                })
+              : result;
+          } catch (error) {
+            throw recordCall(id, property, error);
+          }
+        };
+      }
       if (property === "createAgent" || property === "createRun") {
         return async (...args: unknown[]) => {
           const task = args[0] as Task;
@@ -239,18 +280,19 @@ export function routeHostAdapter(
           const attempt = readCreationAttempt(owner.store, binding);
           if (!attempt) {
             try {
-              return await Reflect.apply(value, selected, args);
+              return await raceQuantumDeadline(
+                String(property),
+                Promise.resolve(Reflect.apply(value, selected, args)),
+              );
             } catch (error) {
               throw recordCall(id, property, error);
             }
           }
           let admitted = false;
           try {
-            return await trackHostCreation(
-              selected,
-              property,
-              args,
-              async (create) => {
+            return await raceQuantumDeadline(
+              String(property),
+              trackHostCreation(selected, property, args, async (create) => {
                 admitted = true;
                 const current = readCreationAttempt(owner.store, binding);
                 if (
@@ -272,7 +314,7 @@ export function routeHostAdapter(
                   creating.delete(attempt.attemptId);
                   settleCreationAttempt(owner.store, attempt, outcome);
                 }
-              },
+              }),
             );
           } catch (error) {
             // A caller deadline does not stop the native promise. Its own
@@ -280,6 +322,7 @@ export function routeHostAdapter(
             if (
               !admitted &&
               !(error instanceof HostCallAbandonedError) &&
+              !isQuantumDeadlineExceeded(error) &&
               attempt.producerId === creationProducerId &&
               !creating.has(attempt.attemptId)
             )
@@ -377,7 +420,7 @@ export function routeHostAdapter(
         try {
           const result: unknown = value.apply(selected, normalized);
           return result instanceof Promise
-            ? result.catch((error) => {
+            ? raceQuantumDeadline(String(property), result).catch((error) => {
                 throw recordCall(id, property, error);
               })
             : result;

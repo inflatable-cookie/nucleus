@@ -81,6 +81,84 @@ export function currentTaskQuantumScope(): TaskQuantumReadScope | undefined {
 }
 
 /**
+ * Typed unknown/deferred error thrown at the host/forge boundary when a call
+ * inside a task quantum outlives the quantum's remaining deadline (Spec 068 §6,
+ * Spec 066 R1). Decisions treat this as unknown and defer: durable intents stay
+ * intact, nothing is settled as absent or clear, and no stop is recorded.
+ */
+export class QuantumDeadlineExceededError extends Error {
+  readonly label: string;
+  readonly unknown = true as const;
+  constructor(label: string, detail?: string) {
+    super(detail ?? `${label} deferred: task quantum deadline exceeded`);
+    this.name = "QuantumDeadlineExceededError";
+    this.label = label;
+  }
+}
+
+export function isQuantumDeadlineExceeded(
+  error: unknown,
+): error is QuantumDeadlineExceededError {
+  return (
+    error instanceof QuantumDeadlineExceededError ||
+    (error instanceof Error && error.name === "QuantumDeadlineExceededError")
+  );
+}
+
+/**
+ * Enforce the active task quantum's deadline at a single boundary choke point
+ * (routing proxy / host facade). Outside a task quantum, returns `promise`
+ * untouched with zero added turns. Inside a task quantum, races `promise`
+ * against the remaining quantum budget and rejects with
+ * `QuantumDeadlineExceededError` on expiry, swallowing any late rejection from
+ * the underlying transport call.
+ */
+export function raceQuantumDeadline<T>(
+  label: string,
+  promise: Promise<T>,
+): Promise<T> {
+  const scope = quantumReadScope.getStore();
+  if (!scope?.inTaskQuantum) return promise;
+  const remaining = scope.deadlineAt - Date.now();
+  if (remaining <= 0) {
+    promise.catch(() => {});
+    return Promise.reject(
+      new QuantumDeadlineExceededError(
+        label,
+        `${label} deferred: task quantum deadline exceeded`,
+      ),
+    );
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  promise.catch(() => {
+    /* swallow late rejection after quantum deadline expiry */
+  });
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      expired = true;
+      reject(
+        new QuantumDeadlineExceededError(
+          label,
+          `${label} deferred: task quantum deadline exceeded (${remaining} ms remaining)`,
+        ),
+      );
+    }, remaining);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        if (timer) clearTimeout(timer);
+        if (!expired) resolve(value);
+      },
+      (error) => {
+        if (timer) clearTimeout(timer);
+        if (!expired) reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Total per-host budget for warming timeline snapshots during one host pass.
  * Keeps a slow host's backlog from delaying healthy hosts' task visits.
  */
@@ -167,6 +245,9 @@ export async function boundedRead<T>(
   try {
     pending = Promise.resolve(work());
   } catch (error) {
+    if (isQuantumDeadlineExceeded(error)) {
+      return { state: "unknown", reason: error.message };
+    }
     return Promise.reject(error);
   }
   // Prevent a late rejection after the deadline has already settled from
@@ -174,10 +255,19 @@ export async function boundedRead<T>(
   pending.catch(() => {});
   try {
     return await Promise.race([
-      pending.then((value): BoundedReadResult<T> => {
-        settled = true;
-        return { state: "ok", value };
-      }),
+      pending.then(
+        (value): BoundedReadResult<T> => {
+          settled = true;
+          return { state: "ok", value };
+        },
+        (error): BoundedReadResult<T> => {
+          if (isQuantumDeadlineExceeded(error)) {
+            settled = true;
+            return { state: "unknown", reason: error.message };
+          }
+          throw error;
+        },
+      ),
       new Promise<BoundedReadResult<T>>((resolve) => {
         timer = setTimeout(() => {
           settled = true;

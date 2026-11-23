@@ -2984,7 +2984,7 @@ test("retained-run observation and creation lookup respect the quantum read dead
   assert.equal(intentRunAfter?.released, false);
   assert.match(
     f.store.task(lookupTask.id).reason,
-    /timed out|unreadable|creation lookup/i,
+    /timed out|unreadable|creation lookup|deadline exceeded/i,
   );
 });
 
@@ -3231,5 +3231,574 @@ test("wake prefetch expands a partial first tool page (200) to a complete second
     mergeCalls,
     1,
     `task merges cleanly using the expanded 400-entry page from wake prefetch (phase: ${f.store.task(task.id).phase}, reason: ${f.store.task(task.id).reason}, events: ${JSON.stringify(f.store.events(task.id).map((e) => [e.kind, e.detail]))})`,
+  );
+});
+
+test("quantum deadline choke point bounds every slow host and forge port, blocks in-quantum process scans, and preserves durable intents", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+  const hang = <T>(fallback: T) =>
+    new Promise<T>((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), 60_000);
+      timer.unref?.();
+      timers.push(timer);
+    });
+
+  let processListingCalls = 0;
+  let observeCalls = 0;
+  let originAgentCalls = 0;
+  let mergeGateCalls = 0;
+  const f = engineFixture(t, {
+    observe: () => {
+      observeCalls++;
+      return hang<AgentObservation>({
+        id: "agent-all-slow",
+        workspaceId: "ws-all-slow",
+        status: "idle",
+        active: false,
+        activeTurnId: null,
+        permissions: false,
+        error: "",
+      });
+    },
+    originAgent: () => {
+      originAgentCalls++;
+      return hang({
+        id: "agent-all-slow",
+        workspaceId: "ws-all-slow",
+        archived: false,
+        deleted: false,
+      });
+    },
+    agentTimeline: () => hang([]),
+    agentTimelinePage: () => hang(toolTimelinePage([])),
+    findRunAgents: () => hang([]),
+    archiveAgent: () => hang(undefined),
+    deleteAgent: () => hang(undefined),
+    workspaceAvailable: () => hang(true),
+    observationInventory: () => hang(new Map()),
+    listLiveAgents: () => hang([]),
+    hostProcessListing: () => {
+      processListingCalls++;
+      return hang<HostProcessFact[]>([]);
+    },
+    mergeGate: () => {
+      mergeGateCalls++;
+      return hang({ head: HEAD, base: "main", wait: "" });
+    },
+    merge: () => hang("merged-commit"),
+    createRun: () => {
+      throw new Error("unexpected createRun when all ports are slow");
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.hostHealth.answered(HOST);
+  f.engine.resolution.quantumReadTimeoutMs = 50;
+  f.engine.resolution.quantumReadBudgetMs = 80;
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-all-slow",
+      title: "All host ports slow",
+      skipPRReview: true,
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-all-slow",
+    directory: "/tmp/synthetic-all-slow",
+    agentId: "agent-all-slow",
+    runId: "run-all-slow",
+    retiredWorkers: [
+      {
+        agentId: "agent-all-slow-retired",
+        runId: "run-all-slow-retired",
+        profile: {
+          id: "claude:sonnet",
+          name: "Claude Sonnet",
+          provider: "claude",
+          model: "sonnet",
+          notes: "",
+          available: true,
+          problem: "",
+          supportedThinking: [],
+        },
+        reason: "rotated",
+        hostId: HOST,
+      },
+    ],
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/97",
+    completion: {
+      eventId: "ev-comp-all-slow",
+      taskId: inserted.id,
+      runId: "run-all-slow",
+      status: "ready_for_review",
+      head: HEAD,
+      prNumber: 97,
+      summary: "done",
+    },
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: false,
+    },
+  });
+  const archiveKey = f.store.threadArchiveKey("agent-all-slow-retired", HOST)!;
+  f.store.putThreadArchiveEffect(archiveKey, "agent-all-slow-retired", {
+    status: "ready",
+    at: idleAt,
+    op: "archive",
+  });
+
+  await f.engine.taskQuantum(task.id);
+
+  assert.equal(
+    processListingCalls,
+    0,
+    "in-quantum hostProcessListing must never execute",
+  );
+  assert.ok(
+    observeCalls + originAgentCalls + mergeGateCalls > 0,
+    "task quantum exercised host/forge ports before the choke point deferred",
+  );
+  assert.equal(
+    f.store.task(task.id).resolution.stop,
+    null,
+    "quantum deadline expiry must defer without recording a task stop",
+  );
+  assert.equal(
+    f.store.getMeta<{ status: string }>(archiveKey)?.status,
+    "ready",
+    "durable archive intent is preserved when the quantum deadline expires",
+  );
+  assert.equal(
+    f.store
+      .events(task.id)
+      .filter((event) => event.kind === "thread_archive_reconcile_error")
+      .length,
+    0,
+    "quantum deadline expiry must not record thread_archive_reconcile_error",
+  );
+});
+
+test("archive reconciliation bounds slow replacement/archive reads and skips inline process scans inside a task quantum", async (t) => {
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  t.after(() => {
+    for (const timer of timers) clearTimeout(timer);
+  });
+
+  let processCallsInQuantum = 0;
+  let inQuantum = false;
+  let originCalls = 0;
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+
+  // Part A: Slow archive-state / replacement observation inside Observation.observe
+  // is bounded by the quantum deadline choke point and preserves the run.
+  const fSlow = engineFixture(t, {
+    observe: () =>
+      new Promise<AgentObservation>((resolve) => {
+        const timer = setTimeout(
+          () =>
+            resolve({
+              id: "agent-replaced-rev",
+              workspaceId: "ws-archive-slow",
+              status: "idle",
+              active: false,
+              activeTurnId: null,
+              permissions: false,
+              error: "",
+            }),
+          60_000,
+        );
+        timer.unref?.();
+        timers.push(timer);
+      }),
+    originAgent: () => {
+      originCalls++;
+      return new Promise((resolve) => {
+        const timer = setTimeout(
+          () =>
+            resolve({
+              id: "agent-replaced-rev",
+              workspaceId: "ws-archive-slow",
+              archived: false,
+              deleted: false,
+            }),
+          60_000,
+        );
+        timer.unref?.();
+        timers.push(timer);
+      });
+    },
+  });
+  fSlow.store.setMeta("paused", false);
+  fSlow.engine.hostHealth.answered(HOST);
+  const slowInserted = fSlow.store.insert(
+    submission({
+      submissionId: "sub-archive-slow",
+      title: "Slow archive observation",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const slowTask = fSlow.store.update(slowInserted.id, {
+    phase: "reviewing",
+    workspaceId: "ws-archive-slow",
+    directory: "/tmp/synthetic-archive-slow",
+    agentId: "agent-worker-slow",
+    runId: "run-worker-slow",
+  });
+  fSlow.store.putRun(
+    runSchema.parse({
+      id: "run-superseded-slow",
+      taskId: slowTask.id,
+      role: "reviewer",
+      generation: 1,
+      head: HEAD,
+      base: HEAD,
+      agentId: "agent-replaced-rev",
+      workspaceId: "ws-archive-slow",
+      hostId: HOST,
+      profile: null,
+      status: "superseded",
+      createdAt: idleAt,
+      lastObservedAt: idleAt,
+      active: false,
+      idleSince: idleAt,
+      completion: null,
+      released: false,
+    }),
+  );
+
+  await runInTaskQuantumScope(60, async () => {
+    await fSlow.engine.resolution.observation.observe(null);
+  });
+  assert.ok(
+    originCalls >= 1,
+    "releaseUnreachableRun invoked originAgent under the quantum choke point",
+  );
+  assert.equal(
+    fSlow.store.run("run-superseded-slow")?.released,
+    false,
+    "timed-out archive-state observation preserves the pending run",
+  );
+
+  // Part B: Already-archived superseded worker with pending cleanup settles its
+  // archive effect in quantumFinish without running an inline hostProcessListing.
+  const fArch = engineFixture(t, {
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-arch-worker",
+      status: "closed",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      archived: true,
+      updatedAt: idleAt,
+      labels: { "nucleus.task": archTaskId },
+    }),
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId: "ws-arch-worker",
+      archived: true,
+      deleted: false,
+    }),
+    archiveAgent: async () => {},
+    deleteAgent: async () => {},
+    hostProcessListing: async () => {
+      if (inQuantum) processCallsInQuantum++;
+      return [];
+    },
+  });
+  fArch.store.setMeta("paused", false);
+  fArch.engine.hostHealth.answered(HOST);
+  const archInserted = fArch.store.insert(
+    submission({
+      submissionId: "sub-arch-worker",
+      title: "Archived superseded worker",
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const archTaskId = archInserted.id;
+  fArch.store.update(archTaskId, {
+    phase: "working",
+    workspaceId: "ws-arch-worker",
+    directory: "/tmp/synthetic-arch-worker",
+    agentId: "agent-arch-current",
+    runId: "run-arch-current",
+    retiredWorkers: [
+      {
+        agentId: "agent-arch-old",
+        runId: "run-arch-old",
+        profile: {
+          id: "claude:sonnet",
+          name: "Claude Sonnet",
+          provider: "claude",
+          model: "sonnet",
+          notes: "",
+          available: true,
+          problem: "",
+          supportedThinking: [],
+        },
+        reason: "rotated",
+        hostId: HOST,
+      },
+    ],
+  });
+
+  inQuantum = true;
+  try {
+    await runInTaskQuantumScope(5_000, async () => {
+      await fArch.engine.quantumFinish(archTaskId);
+    });
+  } finally {
+    inQuantum = false;
+  }
+
+  const archKey = fArch.store.threadArchiveKey("agent-arch-old", HOST)!;
+  assert.equal(
+    fArch.store.getMeta<{ status: string }>(archKey)?.status,
+    "archived",
+    "already-archived superseded worker settles its archive effect in quantumFinish",
+  );
+  assert.equal(
+    processCallsInQuantum,
+    0,
+    "settleArchive inside quantumFinish must never run hostProcessListing inline",
+  );
+});
+
+test("healthy task with 10 archived participants omitted from live inventory merges in one audit pass", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  const originLookups = new Set<string>();
+  let mergeCalls = 0;
+
+  const f = engineFixture(t, {
+    // Live inventory omits archived agents (like Paseo's live inventory).
+    observationInventory: async () => new Map<string, AgentObservation>(),
+    originAgent: async (id: string) => {
+      originLookups.add(id);
+      return {
+        id,
+        workspaceId: "ws-ten-archived",
+        archived: true,
+        deleted: false,
+      };
+    },
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-ten-archived",
+      status: "closed",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      archived: true,
+      updatedAt: idleAt,
+    }),
+    agentTimelinePage: async () => toolTimelinePage([]),
+    hostProcessListing: async () => [],
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during archived-10 merge test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  f.store.setMeta("paused", false);
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-ten-archived",
+      title: "Ten archived participants",
+      repoPath: "/repo-ten-archived",
+      skipPRReview: true,
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-ten-archived",
+    directory: "/tmp/synthetic-ten-archived",
+    agentId: "agent-arch10-main",
+    runId: "run-arch10-main",
+    retiredWorkers: Array.from({ length: 9 }, (_, i) => ({
+      agentId: `agent-arch10-retired-${i}`,
+      runId: `run-arch10-retired-${i}`,
+      profile: {
+        id: "claude:sonnet",
+        name: "Claude Sonnet",
+        provider: "claude",
+        model: "sonnet",
+        notes: "",
+        available: true,
+        problem: "",
+        supportedThinking: [],
+      },
+      reason: "rotated",
+      hostId: HOST,
+    })),
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/98",
+    completion: {
+      eventId: "ev-comp-ten-archived",
+      taskId: inserted.id,
+      runId: "run-arch10-main",
+      status: "ready_for_review",
+      head: HEAD,
+      prNumber: 98,
+      summary: "done",
+    },
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: false,
+    },
+  });
+
+  await f.engine.auditPass(true);
+  for (const id of [
+    "agent-arch10-main",
+    ...Array.from({ length: 9 }, (_, i) => `agent-arch10-retired-${i}`),
+  ]) {
+    assert.ok(
+      originLookups.has(id),
+      `archived participant ${id} received pre-process terminal observation in one pass`,
+    );
+  }
+  assert.equal(
+    mergeCalls,
+    1,
+    `task with 10 archived participants merges in a single audit pass (reason: ${f.store.task(task.id).reason})`,
+  );
+});
+
+test("a slow process table scan does not exhaust the independent timeline warming budget for healthy tasks on the same host", async (t) => {
+  const idleAt = new Date(Date.now() - 60_000).toISOString();
+  let processListingCalls = 0;
+  let timelinePageCalls = 0;
+  let mergeCalls = 0;
+
+  const f = engineFixture(t, {
+    observationInventory: async (ids: readonly string[]) =>
+      new Map<string, AgentObservation>(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            workspaceId: "ws-slow-proc-fast-tl",
+            status: "idle",
+            active: false,
+            activeTurnId: null,
+            permissions: false,
+            error: "",
+            updatedAt: idleAt,
+          },
+        ]),
+      ),
+    observe: async (id: string) => ({
+      id,
+      workspaceId: "ws-slow-proc-fast-tl",
+      status: "idle",
+      active: false,
+      activeTurnId: null,
+      permissions: false,
+      error: "",
+      updatedAt: idleAt,
+    }),
+    hostProcessListing: async () => {
+      processListingCalls++;
+      // Takes 100 ms: longer than hostPassWarmBudgetMs (60 ms), but inside
+      // passProcessReadTimeoutMs (200 ms), mirroring an 11 s scan vs 10 s / 15 s defaults.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return [];
+    },
+    agentTimelinePage: async () => {
+      timelinePageCalls++;
+      return toolTimelinePage([]);
+    },
+    mergeGate: async () => ({
+      head: HEAD,
+      base: "main",
+      wait: "",
+    }),
+    createRun: async () => {
+      throw new Error("unexpected createRun during slow-process test");
+    },
+    merge: async () => {
+      mergeCalls++;
+      return "merged-commit";
+    },
+  });
+  f.store.setMeta("paused", false);
+  f.engine.resolution.hostPassWarmBudgetMs = 60;
+  f.engine.resolution.passProcessReadTimeoutMs = 200;
+
+  const inserted = f.store.insert(
+    submission({
+      submissionId: "sub-slow-proc-fast-tl",
+      title: "Healthy timeline task beside slow process scan",
+      repoPath: "/repo-slow-proc-fast-tl",
+      skipPRReview: true,
+    }),
+    HOST,
+    "handoff",
+    HEAD,
+  );
+  const task = f.store.update(inserted.id, {
+    phase: "merging",
+    workspaceId: "ws-slow-proc-fast-tl",
+    directory: "/tmp/synthetic-slow-proc-fast-tl",
+    agentId: "agent-slow-proc-fast-tl",
+    runId: "run-slow-proc-fast-tl",
+    prHead: HEAD,
+    prUrl: "https://github.com/example/repo/pull/99",
+    completion: {
+      eventId: "ev-comp-slow-proc-fast-tl",
+      taskId: inserted.id,
+      runId: "run-slow-proc-fast-tl",
+      status: "ready_for_review",
+      head: HEAD,
+      prNumber: 99,
+      summary: "done",
+    },
+    reason: "Ready to merge",
+    resolution: {
+      ...inserted.resolution,
+      integrationTurn: { sequence: 1, acceptedAt: idleAt },
+      mergeIntent: false,
+    },
+  });
+
+  await f.engine.auditPass(true);
+  assert.equal(processListingCalls, 1, "slow process scan completed once");
+  assert.ok(
+    timelinePageCalls >= 1,
+    "timeline warming still ran after the slow process scan completed",
+  );
+  assert.equal(
+    mergeCalls,
+    1,
+    `healthy timeline-dependent task advances and merges despite slow process scan (reason: ${f.store.task(task.id).reason})`,
   );
 });

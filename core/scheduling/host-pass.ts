@@ -748,25 +748,6 @@ export class HostPass {
     );
     const warmBudgetMs =
       this.context.resolution.hostPassWarmBudgetMs ?? HOST_PASS_WARM_BUDGET_MS;
-    const warmDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
-    const budgetRemaining = (): number => {
-      const remaining = warmDeadlineAt - Date.now();
-      if (remaining <= 0) {
-        this.context.resolution.markPassTimelineBudgetExhausted?.(
-          host,
-          `host pass timeline warming budget (${warmBudgetMs} ms) exhausted`,
-        );
-        return 0;
-      }
-      return remaining;
-    };
-    const perCandidateCap = (count: number): number => {
-      const remaining = budgetRemaining();
-      if (remaining <= 0) return 0;
-      return count > 1
-        ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
-        : remaining;
-    };
     const rotate = <T>(items: T[], offset: number): T[] => {
       if (items.length <= 1) return items;
       const start = offset % items.length;
@@ -782,12 +763,17 @@ export class HostPass {
       this.context.resolution.recordPassHostObservation &&
       activeTasks.length
     ) {
+      const retainedDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
+      const retainedRemaining = (): number =>
+        Math.max(0, retainedDeadlineAt - Date.now());
       const observedMap = observed as ReadonlyMap<
         string,
         AgentObservation
       > | null;
-      const missingRetained: Array<{ agentId: string; workspaceId: string }> =
-        [];
+      const missingByTask = new Map<
+        string,
+        Array<{ taskId: string; agentId: string; workspaceId: string }>
+      >();
       const seenRetained = new Set<string>();
       for (const task of activeTasks) {
         for (const { agentId, workspaceId } of knownExecutionParticipantIds(
@@ -801,20 +787,43 @@ export class HostPass {
           )
             continue;
           seenRetained.add(agentId);
-          missingRetained.push({ agentId, workspaceId });
+          const group = missingByTask.get(task.id) ?? [];
+          group.push({ taskId: task.id, agentId, workspaceId });
+          missingByTask.set(task.id, group);
         }
       }
-      if (missingRetained.length) {
-        const orderedRetained = rotate(missingRetained, passOffset).slice(
-          0,
-          HOST_PASS_WARM_CANDIDATE_CAP,
-        );
+      if (missingByTask.size) {
+        // Rotate by task group so one task with >8 archived participants can
+        // capture all of its pre-process terminal observations in a single pass
+        // without permanent starvation, while excess participants from other
+        // tasks defer to later passes (Spec 068 §6).
+        const rotatedGroups = rotate([...missingByTask.entries()], passOffset);
+        const primaryRetainedTaskId = rotatedGroups[0]![0];
+        const orderedRetained: Array<{
+          taskId: string;
+          agentId: string;
+          workspaceId: string;
+        }> = [];
+        for (const [taskId, items] of rotatedGroups) {
+          for (const item of items) {
+            if (
+              taskId !== primaryRetainedTaskId &&
+              orderedRetained.length >= HOST_PASS_WARM_CANDIDATE_CAP
+            )
+              break;
+            orderedRetained.push(item);
+          }
+        }
         await this.step(host, "retainedTerminalObservations", async () => {
           for (const candidate of orderedRetained) {
             await yieldToLoop();
             if (this.context.stopped) return;
-            const cap = perCandidateCap(orderedRetained.length);
-            if (cap <= 0) return;
+            const remaining = retainedRemaining();
+            if (remaining <= 0) return;
+            const cap =
+              orderedRetained.length > 1
+                ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
+                : remaining;
             const originRead = await boundedRead(
               "origin agent observation",
               () => this.context.host.originAgent(candidate.agentId),
@@ -875,6 +884,28 @@ export class HostPass {
         );
       }
     }
+    // Start the timeline warming budget AFTER `processSnapshot` completes so a
+    // slow process table scan (up to 15 s) never starves healthy timeline reads
+    // on the same host (Spec 068 §6).
+    const warmDeadlineAt = Date.now() + Math.max(0, warmBudgetMs);
+    const budgetRemaining = (): number => {
+      const remaining = warmDeadlineAt - Date.now();
+      if (remaining <= 0) {
+        this.context.resolution.markPassTimelineBudgetExhausted?.(
+          host,
+          `host pass timeline warming budget (${warmBudgetMs} ms) exhausted`,
+        );
+        return 0;
+      }
+      return remaining;
+    };
+    const perCandidateCap = (count: number): number => {
+      const remaining = budgetRemaining();
+      if (remaining <= 0) return 0;
+      return count > 1
+        ? Math.min(remaining, Math.max(1, Math.ceil(warmBudgetMs / 2)))
+        : remaining;
+    };
     // Schedule settled-run process cleanup AFTER `processSnapshot` so cleanup's
     // initial scan shares the already-primed pass snapshot instead of racing
     // ahead of inventory and terminal observation collection.

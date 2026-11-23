@@ -11,7 +11,9 @@ import {
   QUANTUM_READ_DEADLINE_MS,
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
+  isQuantumDeadlineExceeded,
   runInTaskQuantumScope,
+  runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileUsageGate } from "../dispatch/usage-gate";
@@ -198,15 +200,19 @@ export class TaskQuantum {
     if (!hostOwesRunProcessCleanup(store, hostId)) return;
     void this.context
       .cleanContext(() =>
-        this.context.scheduleLane(
-          `cleanup:${hostId}`,
-          LANE_PRIORITY_AUDIT,
-          () =>
-            sweepSettledRunProcesses(store, hostId, {
-              pendingOnly: true,
-              readProcesses: () => adapter.hostProcessListing!(),
-            }),
-          { coalesce: "settled-run-process-cleanup" },
+        runOutsideTaskQuantumScope(() =>
+          this.context.scheduleLane(
+            `cleanup:${hostId}`,
+            LANE_PRIORITY_AUDIT,
+            () =>
+              runOutsideTaskQuantumScope(() =>
+                sweepSettledRunProcesses(store, hostId, {
+                  pendingOnly: true,
+                  readProcesses: () => adapter.hostProcessListing!(),
+                }),
+              ),
+            { coalesce: "settled-run-process-cleanup" },
+          ),
         ),
       )
       .catch(() => {
@@ -585,6 +591,7 @@ export class TaskQuantum {
         else await this.context.launchAgent(current);
       }
     } catch (error) {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.noteStepFailure(task.id, error);
     }
   }
@@ -704,10 +711,11 @@ export class TaskQuantum {
             Boolean(this.context.store.getMeta("paused")),
           );
       } catch (error) {
-        this.context.noteStepFailure(taskId, error);
+        if (!isQuantumDeadlineExceeded(error)) {
+          this.context.noteStepFailure(taskId, error);
+        }
       }
     }
-    this.scheduleRunProcessCleanup(taskId);
     await archiveFinishedThreads(
       this.context.store,
       this.context.adapter,
@@ -725,6 +733,7 @@ export class TaskQuantum {
         });
       },
     ).catch((error) => {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",
@@ -739,12 +748,17 @@ export class TaskQuantum {
       this.context.adapter,
       taskId,
     ).catch((error) => {
+      if (isQuantumDeadlineExceeded(error)) return;
       this.context.store.event(
         taskId,
         "thread_archive_reconcile_error",
         String(error),
       );
     });
+    // Queue any pending settled-run / retired-thread process cleanup onto the
+    // host cleanup lane AFTER archive steps so newly retired scratch is covered
+    // without ever scanning processes inside the task quantum (Spec 068 §6).
+    this.scheduleRunProcessCleanup(taskId);
     // Title projection is enqueued on its own serial lane: a slow Paseo
     // rename can never hold this task's delivery lane.
     this.context.enqueueTitle(taskId);

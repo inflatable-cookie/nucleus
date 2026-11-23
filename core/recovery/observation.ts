@@ -47,6 +47,7 @@ import { threadGoneError } from "./dead-participant";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
+  isQuantumDeadlineExceeded,
 } from "../scheduling/pass-snapshot";
 
 export type ObservationContext = Pick<
@@ -209,6 +210,7 @@ export class Observation {
             ),
           );
         } catch (error) {
+          if (isQuantumDeadlineExceeded(error)) return;
           // One failed host read fails only this host's observation step (Spec 069
           // §2): its health takes the sample, no run on it is written, and the next
           // pass observes them again.
