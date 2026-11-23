@@ -4,7 +4,10 @@ import {
 } from "../recovery/task-reasons";
 import { executionParticipants } from "../machine/execution-participants";
 import { participantTemporaryDirectory } from "../machine/participant-roots";
-import { participantRuntime, storeDataHome } from "../machine/participant-runtime";
+import {
+  participantRuntime,
+  storeDataHome,
+} from "../machine/participant-runtime";
 import {
   incompleteRunProcessScan,
   readRunProcessCustody,
@@ -275,7 +278,8 @@ export class ParticipantLease {
       direct: options.direct,
     });
     if (scan.state === "unknown") return scan.reason;
-    const complete = scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+    const complete =
+      scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
     if (complete !== true)
       return "the host process listing has incomplete working-directory coverage";
     if (incompleteRunProcessScan(scan))
@@ -304,14 +308,28 @@ export class ParticipantLease {
     });
     const workspace = await boundedRead(
       "workspace process probe",
-      () => noLiveWorkspaceProcesses.call(this.adapter, workspaceId, runIds, runtime, scan.processes),
+      () =>
+        noLiveWorkspaceProcesses.call(
+          this.adapter,
+          workspaceId,
+          runIds,
+          runtime,
+          scan.processes,
+        ),
       deadline,
     );
     if (workspace.state === "unknown") return workspace.reason;
     if (workspace.value !== null)
-      return workspace.value || "the workspace process probe returned no result";
+      return (
+        workspace.value || "the workspace process probe returned no result"
+      );
     for (const root of roots) {
-      const issue = workspaceToolProcessIssue(scan.processes, root!, runIds, runtime);
+      const issue = workspaceToolProcessIssue(
+        scan.processes,
+        root!,
+        runIds,
+        runtime,
+      );
       if (issue) return issue;
     }
     for (const runId of runIds) {
@@ -376,7 +394,8 @@ export class ParticipantLease {
         }
         state = read.value;
       } catch (error) {
-        if (!this.adapter.observeParticipant && isAgentGoneRefusal(error)) continue;
+        if (!this.adapter.observeParticipant && isAgentGoneRefusal(error))
+          continue;
         if (!probe)
           this.resolution.waiting(
             t,

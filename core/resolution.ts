@@ -370,7 +370,10 @@ export interface ResolutionAdapter {
   ): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
-  merged(task: Task, options?: { externalOnly: boolean }): Promise<{
+  merged(
+    task: Task,
+    options?: { externalOnly: boolean },
+  ): Promise<{
     merged: boolean;
     commit: string | null;
     head: string;
@@ -616,7 +619,9 @@ export class Resolution {
   ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
-    const read = async (): Promise<HostProcessListRead & { deferred?: true }> => {
+    const read = async (): Promise<
+      HostProcessListRead & { deferred?: true }
+    > => {
       if (this.adapter.hostProcessListing) {
         try {
           const list = () => this.adapter.hostProcessListing!();
@@ -629,10 +634,16 @@ export class Resolution {
               reason: "host process listing is unreadable",
               deferred: true,
             };
-          return { state: "listed", processes, cwdComplete: processes.cwdComplete };
+          return {
+            state: "listed",
+            processes,
+            cwdComplete: processes.cwdComplete,
+          };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
-          const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
+          const deferred =
+            error instanceof HostReadRefusalError ||
+            error instanceof DeferredPassReadError;
           return {
             state: "unknown",
             reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -648,7 +659,10 @@ export class Resolution {
       const capturedAt = Date.now();
       return boundedRead(
         "host process listing",
-        () => (options.direct || options.participant ? runOutsideTaskQuantumScope(read) : read()),
+        () =>
+          options.direct || options.participant
+            ? runOutsideTaskQuantumScope(read)
+            : read(),
         deadlineMs,
       ).then(
         (result) =>
@@ -674,19 +688,28 @@ export class Resolution {
       const scan = snapshot.processes(key, read, deadlineMs, {
         allowMissFetch: options.allowMissFetch,
         cacheOnly:
-          Boolean(options.participant) || (inQuantum && !options.allowMissFetch),
+          Boolean(options.participant) ||
+          (inQuantum && !options.allowMissFetch),
       });
       const participant = options.participant;
       if (!participant) return scan;
       return scan.then((result) =>
         result.missingFromPass
           ? snapshot.directProcesses(
-              key, participant.agentId, participant.observation, directRead,
+              key,
+              participant.agentId,
+              participant.observation,
+              directRead,
             )
           : result,
       );
     }
-    if (!options.direct && inQuantum && !options.participant && !options.allowMissFetch) {
+    if (
+      !options.direct &&
+      inQuantum &&
+      !options.participant &&
+      !options.allowMissFetch
+    ) {
       return Promise.resolve({
         state: "unknown",
         reason:
