@@ -481,6 +481,7 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        service.project.acp_provider = Some("fixture-acp".into());
         let checkout = service.project.checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;
