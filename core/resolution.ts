@@ -12,6 +12,7 @@ import { PlannerPresence } from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
 import {
   RESPONSIBLE_OBSERVATION_MS,
+  responsiblePickable,
   type ResponsibleCandidate,
   type ResponsibleObservationState,
   type ResponsibleShortlist,
@@ -364,6 +365,20 @@ export {
 } from "./recovery/resolution-decisions";
 import { resolutionAdapter } from "./resolution-adapter";
 
+/** Planner authority falls back to a finished shortlist read at most this old. */
+export const PLANNER_AUTHORITY_MAX_AGE_MS = 10 * 60_000;
+
+/** One finished observation of a project's shortlist. */
+export interface ConfirmedResponsibleRead {
+  candidates: ResponsibleCandidate[];
+  incomplete: boolean;
+  unreadHosts: string[];
+  /** When the shortlist's inventory was taken. */
+  inventoriedAt: number;
+  /** When its observations finished. */
+  finishedAt: number;
+}
+
 /**
  * The composition root every lifecycle owner reads its ports from.
  *
@@ -415,13 +430,22 @@ export class Resolution {
   >();
   /** The read budget per shortlisted thread; a read over it is unverified, never gone (tests shorten it). */
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
+  /**
+   * The last observation of each project's shortlist that finished, kept even
+   * when an invalidation (a candidate's own call, a notice to it) discarded it
+   * before routing could use it. Routing never reads it; planner authority may.
+   */
+  private readonly lastConfirmed = new Map<string, ConfirmedResponsibleRead>();
 
-  /** Only a routable or unverified candidate can be picked; `unroutable` never is. */
-  private static pickable(candidate: ResponsibleCandidate): boolean {
-    return (
-      candidate.observation?.state === "routable" ||
-      candidate.observation?.state === "unverified"
-    );
+  /** How old a finished read planner authority may fall back to (tests shorten it). */
+  plannerAuthorityMaxAgeMs = PLANNER_AUTHORITY_MAX_AGE_MS;
+
+  /** The last confirmed read of a project's shortlist, while it is within the authority bound. */
+  lastConfirmedResponsible(projectKey: string): ConfirmedResponsibleRead | null {
+    const read = this.lastConfirmed.get(projectKey);
+    return read && Date.now() - read.finishedAt <= this.plannerAuthorityMaxAgeMs
+      ? read
+      : null;
   }
 
   private static threadOf(candidate: ResponsibleCandidate): ResponsibleThread {
@@ -438,7 +462,7 @@ export class Resolution {
     return cached
       ? (this.confirmedResponsible
           .get(cached)
-          ?.find((candidate) => Resolution.pickable(candidate))?.agentId ??
+          ?.find((candidate) => responsiblePickable(candidate))?.agentId ??
           null)
       : null;
   }
@@ -475,16 +499,18 @@ export class Resolution {
           exclude!.hostId,
         );
       const senderIsCandidate = confirmed.candidates.some(
-        (candidate) => isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => isSender(candidate) && responsiblePickable(candidate),
       );
       const pick = confirmed.candidates.find(
-        (candidate) => !isSender(candidate) && Resolution.pickable(candidate),
+        (candidate) => !isSender(candidate) && responsiblePickable(candidate),
       );
       return {
         thread: pick ? Resolution.threadOf(pick) : null,
         observedAt: confirmed.shortlist.observedAt,
         senderIsCandidate,
+        confirmed: true,
         incomplete: Boolean(confirmed.shortlist.incomplete),
+        unreadHosts: confirmed.shortlist.unreadHosts ?? [],
         shortlist: confirmed.candidates,
       };
     }
@@ -494,7 +520,9 @@ export class Resolution {
       thread: null,
       observedAt: Date.now(),
       senderIsCandidate: false,
+      confirmed: false,
       incomplete: true,
+      unreadHosts: cached?.unreadHosts ?? [],
       shortlist: (cached?.threads ?? []).map((thread) => ({
         ...thread,
         observation: null,
@@ -637,15 +665,6 @@ export class Resolution {
       shortlist.threads.map((thread) => this.observeCandidate(thread)),
     )
       .then((reads) => {
-        if (cache.peek(projectKey) !== shortlist) return null;
-        const closed = new Set(
-          reads
-            .filter((read) => read.state === "gone")
-            .map((read) => read.thread.agentId),
-        );
-        const current = closed.size
-          ? cache.discardClosed(projectKey, shortlist, closed)
-          : shortlist;
         const candidates: ResponsibleCandidate[] = reads.flatMap((read) =>
           read.state === "gone"
             ? []
@@ -660,6 +679,26 @@ export class Resolution {
                 },
               ],
         );
+        // Recorded before the currency check: an invalidation that lands while
+        // the reads run makes routing discard them, but they still finished.
+        const previous = this.lastConfirmed.get(projectKey);
+        if (!previous || previous.inventoriedAt <= shortlist.observedAt)
+          this.lastConfirmed.set(projectKey, {
+            candidates,
+            incomplete: Boolean(shortlist.incomplete),
+            unreadHosts: shortlist.unreadHosts ?? [],
+            inventoriedAt: shortlist.observedAt,
+            finishedAt: Date.now(),
+          });
+        if (cache.peek(projectKey) !== shortlist) return null;
+        const closed = new Set(
+          reads
+            .filter((read) => read.state === "gone")
+            .map((read) => read.thread.agentId),
+        );
+        const current = closed.size
+          ? cache.discardClosed(projectKey, shortlist, closed)
+          : shortlist;
         this.confirmedResponsible.set(current, candidates);
         return { shortlist: current, candidates };
       })
