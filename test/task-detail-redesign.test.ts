@@ -37,6 +37,8 @@ import {
   qaCapacityWaitReason,
 } from "../shared/wait-state";
 import { capacityReason } from "../core/dispatch/capacity";
+import { ownerControlEventDetail } from "../core/verbs/owner-verbs";
+import { formatAgentId } from "../shared/agent-identity";
 import { taskControlInputSchema } from "../shared/schema/task-control";
 
 useNativeStubs();
@@ -1845,6 +1847,102 @@ test("Activity names owner-control callers in words and explains a late delivery
     );
     tree.press(/Show raw events \(2\)/);
     assert.ok(tree.text().includes(thread), "the raw list keeps the originals");
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("a newer detail read that clears the PR head leaves the current head unknown", async () => {
+  const store = new Store(":memory:");
+  try {
+    // A worker result cleared the recorded PR: `queue.detail` is newer with no head,
+    // while an older `task.next` still carries head B. The review is at A.
+    const base = createTaskDetail(store, { phase: "working", prHead: null });
+    const detail = { ...base, version: base.version + 1, prHead: null };
+    const olderNext = makeNext({ ...base, prHead: HEAD_2 } as TaskDetail, {
+      outcome: acceptedOutcome({
+        status: "changes_required",
+        head: HEAD,
+        currentHead: false,
+      }),
+    });
+    const run = reviewerRun(detail.id, {
+      eventId: "ev-1",
+      head: HEAD,
+      status: "changes_required",
+      summary: "One finding.",
+      reviewText: "- [P2] Copy names the wrong limit.",
+    });
+    const { tree } = await renderDialog({
+      task: detail,
+      next: olderNext,
+      runs: [run],
+    });
+    const text = tree.text();
+    assert.ok(
+      text.includes(`Reviewed ${HEAD.slice(0, 7)}`),
+      "the head is named without judging it",
+    );
+    assert.ok(
+      !text.includes("Not the current head"),
+      "the older next head is never used",
+    );
+    tree.update(h("View", null));
+  } finally {
+    store.close();
+  }
+});
+
+test("Activity shows a qualified CLI caller as an agent, from the real owner-control writer", async () => {
+  const store = new Store(":memory:");
+  try {
+    const task = createTaskDetail(store, { phase: "working" });
+    const caller = formatAgentId("t3code:host-alpha", "thread-0b2a69ba");
+    const detail = ownerControlEventDetail(
+      store.task(task.id),
+      taskControlInputSchema.parse({
+        action: "restart",
+        taskId: task.id,
+        version: task.version,
+        reason: "Worker stalled",
+        caller,
+      }),
+      "needs_attention",
+      "working",
+    );
+    const events = [
+      {
+        id: 1,
+        taskId: task.id,
+        at: "2026-11-22T10:00:00.000Z",
+        kind: "owner_control",
+        detail,
+      },
+    ];
+    const { tree } = await renderDialog({ task, next: makeNext(task), events });
+    tree.press("Activity");
+    const text = tree.text();
+    assert.ok(
+      text.includes(
+        "restart by an agent · needs attention → working · Worker stalled",
+      ),
+    );
+    for (const fragment of [
+      "nucleus-agent",
+      "t3code",
+      "host-alpha",
+      "thread-0b2a69ba",
+    ])
+      assert.ok(
+        !text.includes(fragment),
+        `no ${fragment} in the default timeline`,
+      );
+    tree.press(/Show raw events \(1\)/);
+    assert.ok(
+      tree.text().includes("host-alpha"),
+      "the raw list keeps the original caller",
+    );
     tree.update(h("View", null));
   } finally {
     store.close();

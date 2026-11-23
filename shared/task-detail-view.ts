@@ -1350,10 +1350,10 @@ export function taskReviewFindings(
 
   // The PR head comes from the newer of the two reads: `queue.detail` and
   // `task.next` poll separately, and either can lag behind the other.
+  // The newer snapshot wins outright, including a null head: a worker result can
+  // clear the recorded PR, and the current head is then unknown, not the older one.
   const currentHead =
-    next && next.version > task.version
-      ? next.prHead
-      : (task.prHead ?? next?.prHead ?? null);
+    next && next.version > task.version ? next.prHead : task.prHead;
   const short = (head: string | null) => (head ? head.slice(0, 7) : "");
   // "Current head" is decided only by comparing this report's own head with the
   // PR head: never by poll order, verdict kind or supersession.
@@ -1752,8 +1752,12 @@ const IDENTITY_EVENT_SUMMARY: Record<string, string> = {
 function readableActor(caller: unknown): string {
   if (typeof caller !== "string" || !caller.trim()) return "";
   if (caller === "operator (board)") return " by the operator at the board";
-  const words = stripIdentifiers(caller);
-  return words ? ` by ${words}` : " by an agent";
+  // Only a plain role word ("planner", "operator") is shown; a qualified agent
+  // identity (`nucleus-agent:v1:[host,native]`), a host thread or any other
+  // identifier reads as "an agent". Show raw events keeps the original.
+  return /^[a-z][a-z ()-]{0,40}$/i.test(caller.trim())
+    ? ` by ${caller.trim()}`
+    : " by an agent";
 }
 
 /** Host thread and agent identities: `thread:delegated-task:…`, `mcp:…`, `t3code:…`, `ns-agent-…`, `ns-run-…`. */

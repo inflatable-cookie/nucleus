@@ -473,7 +473,8 @@ existing stuck task recovers with an ordinary `restart role=worker`.
    completion event, with the outcome's own summary standing in until the reads
    agree; the card always shows that report's own summary, and "current head"
    is decided only by comparing the report's head with the PR head, taken from
-   the newer of the `queue.detail` and `task.next` reads. Written
+   the newer of the `queue.detail` and `task.next` reads (a null head there
+   means the current head is unknown, shown as "Reviewed <sha>"). Written
    findings keep their recorded severity and structured verdicts
    their own value and evidence; nothing is carried across reports and no
    finding is marked fixed. "Superseded" and "not the current head" are separate
@@ -488,7 +489,8 @@ existing stuck task recovers with an ordinary `restart role=worker`.
    current list. The header's status line carries the task's Spec 068
    activity reading when Nucleus has derived one, and Activity lines never show
    a host thread identity; identity-only events read by kind, and an owner
-   control names its caller in words (the operator at the board, or an agent).
+   control names its caller in words (the operator at the board, a plain role,
+   or "an agent" for any qualified or host identity).
    A capacity wait names the limit the admission check recorded (global cap,
    project or papercut pool, earlier reservations, in-flight requests or cap, or
    the QA queue), and a queue position shows only when the admission supplies
