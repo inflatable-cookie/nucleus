@@ -88,6 +88,11 @@ Repeated transcript updates and reconnects leave existing deadlines in place.
 Running turns have a 45-second exact-read backstop. A lifecycle change,
 callback or command can wake the task sooner.
 
+The scheduler chooses the next task when the current one releases its slot.
+Native writes and their readbacks come first, then command and callback
+wakes, due decisions, and routine refreshes. Within each tier, the oldest
+due task goes first. Wakes for the same task coalesce into one queue entry.
+
 An exact read that still shows a live turn needs no forge read unless a
 command is waiting on forge evidence. Launches, settlement and native writes
 still use fresh evidence. T3 transport failures and GitHub outages defer

@@ -34,7 +34,7 @@ use nucleus_store::{
 };
 use nucleus_work::{WorkError, Worktrees};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
-use schedule::Schedule;
+use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
     sync::{Mutex, Notify, OnceCell, OwnedMutexGuard, broadcast, mpsc},
     time::Instant,
@@ -214,7 +214,7 @@ impl Service {
         let task = Task::new(identity, brief, None);
         let mut state = self.state.lock().await;
         state.store.create(&task, &event("admitted"))?;
-        self.wake_task(&mut state, &task.identity().id, 1);
+        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(task)
     }
 
@@ -225,11 +225,25 @@ impl Service {
     pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
         let _cycle = self.pass_lock.lock().await;
         self.storage.database().verify()?;
-        let ids = self.due_tasks().await?;
+        let mut first = Some(self.wait_due_task().await?);
         let host = self.host.pass(self.storage.scratch().path());
         let profiles = OnceCell::new();
-        let mut results = Vec::with_capacity(ids.len());
-        for id in ids {
+        let mut results = Vec::with_capacity(PASS_BATCH);
+        let mut visited = BTreeSet::new();
+        for _ in 0..PASS_BATCH {
+            let next = match first.take() {
+                Some(first) => Some(first),
+                None => self
+                    .state
+                    .lock()
+                    .await
+                    .schedule
+                    .take_ready(Instant::now(), &visited),
+            };
+            let Some(DueTask { id, priority }) = next else {
+                break;
+            };
+            visited.insert(id.clone());
             let row = match self.task(&id).await {
                 Ok(row) => row,
                 Err(ServiceError::Missing) => continue,
@@ -258,7 +272,7 @@ impl Service {
                 Ok(()) => Box::pin(self.advance(&row, &host)).await,
                 Err(error) => Err(ServiceError::Host(error)),
             };
-            self.schedule_result(&row, &result).await?;
+            self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
@@ -295,7 +309,7 @@ impl Service {
                 && prior.as_ref() != Some(&hint)
             {
                 *prior = Some(hint.clone());
-                schedule.wake(id, now);
+                schedule.wake(id, now, Priority::Decision);
                 self.wake.notify_one();
             }
         }
@@ -324,7 +338,7 @@ impl Service {
                 .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= budget.max_load))
     }
 
-    async fn due_tasks(&self) -> Result<Vec<String>, ServiceError> {
+    async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
             let next;
             {
@@ -334,8 +348,7 @@ impl Service {
                     store, schedule, ..
                 } = &mut *state;
                 schedule.seed(store, now)?;
-                let ready = schedule.ready(now);
-                if !ready.is_empty() {
+                if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
                 next = schedule.next();
@@ -351,6 +364,7 @@ impl Service {
         &self,
         row: &TaskRow,
         result: &Result<Action, ServiceError>,
+        previous: Priority,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
         let wait = match result {
@@ -367,18 +381,32 @@ impl Service {
             return Ok(());
         }
         if current.version != row.version {
-            state.schedule.wake(id, Instant::now());
+            if state.schedule.due(id).is_none() {
+                state.schedule.wake(id, Instant::now(), Priority::Decision);
+            }
             return Ok(());
         }
         let now = Instant::now();
+        let (delay, priority) = schedule::retry(wait);
         let due = match result {
             Err(ServiceError::Host(HostError::Deferred { until })) => *until,
-            _ if wait == Some(WaitReason::ForgeUnknown) => {
-                now + self.forge_backoff().max(schedule::delay(wait))
-            }
-            _ => now + schedule::delay(wait),
+            _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
+            _ => now + delay,
         };
-        state.schedule.wake(id, due);
+        let priority = if row
+            .task
+            .run()
+            .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
+            || (previous == Priority::Effect && result.is_err())
+            || (row.task.phase() == Phase::Merging && wait == Some(WaitReason::ForgeUnknown))
+        {
+            Priority::Effect
+        } else if state.forge_requested.contains(id) {
+            Priority::Wake
+        } else {
+            priority
+        };
+        state.schedule.wake(id, due, priority);
         let prior = match wait {
             Some(reason) => state.waits.insert(id.clone(), reason),
             None => state.waits.remove(id),
@@ -460,7 +488,7 @@ impl Service {
                 state.forge_requested.insert(id.into());
                 state
                     .schedule
-                    .wake(id, Instant::now() + self.forge_backoff());
+                    .wake(id, Instant::now() + self.forge_backoff(), Priority::Wake);
                 self.wake.notify_one();
                 Ok(CommandOutcome::Pending {
                     version: prior.version,
@@ -581,7 +609,12 @@ impl Service {
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
-        self.wake_task(state, id, version);
+        self.wake_task(
+            state,
+            id,
+            version,
+            commit_priority(&prior.task, task, &audit),
+        );
         Ok(version)
     }
 
@@ -618,6 +651,16 @@ impl Service {
         )
     }
 
+    async fn recheck_effect(&self, row: &TaskRow, wait: WaitReason) {
+        let (delay, _) = schedule::retry(Some(wait));
+        self.state.lock().await.schedule.wake(
+            &row.task.identity().id,
+            Instant::now() + delay,
+            Priority::Effect,
+        );
+        self.wake.notify_one();
+    }
+
     async fn observe_activity(
         &self,
         row: &TaskRow,
@@ -652,8 +695,8 @@ impl Service {
         Ok(())
     }
 
-    fn wake_task(&self, state: &mut State, id: &str, version: i64) {
-        state.schedule.wake(id, Instant::now());
+    fn wake_task(&self, state: &mut State, id: &str, version: i64, priority: Priority) {
+        state.schedule.wake(id, Instant::now(), priority);
         self.wake.notify_one();
         self.publish(id, version);
     }
@@ -663,6 +706,25 @@ impl Service {
             task_id: id.into(),
             version,
         });
+    }
+}
+
+fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
+    if (task.phase() != prior.phase() && matches!(task.phase(), Phase::Merging | Phase::Closing))
+        || (task.run().is_some_and(nucleus_core::Run::revoked)
+            && !prior.run().is_some_and(nucleus_core::Run::revoked))
+    {
+        return Priority::Effect;
+    }
+    match audit.kind.as_str() {
+        "command" | "reported" => Priority::Wake,
+        "run_reserved"
+        | "host_send"
+        | "run_revoked"
+        | "review_rejected_awaiting_archive"
+        | "question_asked"
+        | "question_delivery" => Priority::Effect,
+        _ => Priority::Decision,
     }
 }
 

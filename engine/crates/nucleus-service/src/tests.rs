@@ -331,8 +331,14 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
     assert_eq!(moved.version, stale.version + 1);
     assert_eq!(service.task(id).await.expect("current row"), *moved);
     assert_eq!(
-        service.state.lock().await.schedule.ready(Instant::now()),
-        [id]
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .take_ready(Instant::now(), &BTreeSet::new())
+            .map(|task| task.id),
+        Some(id.into())
     );
     let worktrees = service.worktrees().expect("worktree root");
     let checkout = worktrees

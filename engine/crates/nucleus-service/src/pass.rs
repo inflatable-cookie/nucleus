@@ -333,6 +333,7 @@ impl Service {
         };
         if let Some(unarchive) = authorization.unarchive() {
             host.write_control(unarchive).await?;
+            self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(None);
         }
         let mut sent = task.clone();

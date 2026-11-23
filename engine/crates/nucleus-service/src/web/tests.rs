@@ -494,8 +494,11 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
             .lock()
             .await
             .schedule
-            .ready(tokio::time::Instant::now())
-            .is_empty()
+            .take_ready(
+                tokio::time::Instant::now(),
+                &std::collections::BTreeSet::new()
+            )
+            .is_none()
     );
     // Move past the synthetic outage without making the test wait on the clock.
     service.forge_until.store(0, Ordering::Relaxed);
@@ -802,15 +805,21 @@ async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
     let change = changes.try_recv().expect("move invalidation");
     assert_eq!(change.version, 2);
     assert_eq!(change.task_id, "worker");
-    assert_eq!(
-        service
-            .state
-            .lock()
-            .await
-            .schedule
-            .ready(tokio::time::Instant::now()),
-        ["worker"]
-    );
+    let now = tokio::time::Instant::now();
+    let mut state = service.state.lock().await;
+    for id in ["refresh-a", "refresh-b"] {
+        state.schedule.wake(
+            id,
+            now - std::time::Duration::from_secs(1),
+            crate::schedule::Priority::Refresh,
+        );
+    }
+    let next = state
+        .schedule
+        .take_ready(now, &std::collections::BTreeSet::new())
+        .expect("move wake");
+    assert_eq!(next.id, "worker");
+    assert_eq!(next.priority, crate::schedule::Priority::Wake);
 }
 
 fn expect_command(view: &Value, name: &str, phase: Option<&str>, readiness: &str) {
