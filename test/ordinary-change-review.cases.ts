@@ -24,7 +24,6 @@ import { taskControlOperation } from "../core/verbs/task-control-key";
 import { queueOperationSchema } from "../shared/operations";
 import { supersedeIdleRunInTx } from "../core/recovery/fence-settlement";
 import { reviewPublicationBody } from "../core/forge/index";
-import { ForgeOutageError } from "../core/forge/forge-health";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import type { ResolutionAdapter } from "../core/resolution";
 import {
@@ -873,7 +872,7 @@ test("a lost follow-up verdict returns a detached checkout before it is reapplie
   }
 });
 
-test("a published verdict waits for its open incident and survives transient application failures after settlement", async () => {
+test("a published verdict survives transient application failures and settles its incident on retry", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
@@ -946,23 +945,13 @@ test("a published verdict waits for its open incident and survives transient app
     let attempts = 0;
     f.adapter.verifyReview = async () => {
       attempts++;
-      throw new ForgeOutageError(Error("HTTP 503"));
+      throw Error(
+        "Command failed: git status --porcelain --untracked-files=all",
+      );
     };
     const recoveriesBefore = f.store
       .runs(task.id)
       .filter((item) => item.role === "recovery").length;
-    await f.engine.wake();
-    assert.equal(attempts, 0, "the escalated recovery still has an open incident");
-    const parked = f.store.task(task.id);
-    const incident = parked.resolution.incident;
-    assert.ok(incident);
-    f.store.update(task.id, {
-      resolution: {
-        ...parked.resolution,
-        incident: { ...incident, status: "resolved" },
-        stop: null,
-      },
-    });
     await f.engine.wake();
     await f.engine.wake();
     assert.equal(
@@ -979,7 +968,7 @@ test("a published verdict waits for its open incident and survives transient app
     f.adapter.verifyReview = async () => {
       attempts++;
     };
-    await f.engine.resolution.advance(f.store.task(task.id));
+    await f.engine.wake();
     const applied = f.store.task(task.id);
     assert.equal(applied.resolution.review?.runId, run.id);
     assert.ok(
@@ -1165,7 +1154,7 @@ test("a changed PR head or fresh reviewer binding keeps the released verdict fro
   }
 });
 
-test("retained verdicts replay after settled or refused recovery and a cleared planner escalation", async () => {
+test("retained verdicts replay after settled or refused recovery and only their own planner escalation", async () => {
   for (const scenario of [
     { name: "resolved incident", status: "ready_to_merge" as const },
     {
@@ -1218,15 +1207,6 @@ test("retained verdicts replay after settled or refused recovery and a cleared p
           task.id,
           "planner_escalation",
           `${escalationId}: cause ${incident.fingerprint}; run worker; question ${"b".repeat(64)} (12 chars); options Continue | Hold`,
-        );
-        assert.equal(
-          await f.engine.resolution.reapplyPendingReview(f.store.task(task.id)),
-          "blocked",
-        );
-        f.store.event(
-          task.id,
-          "planner_escalation_resolved",
-          `${escalationId}: the planner cleared the escalation`,
         );
       }
       const next = ownerTaskNext(
@@ -1551,7 +1531,7 @@ test("a superseded uncertain publication merges through its ordinary turn; the o
   }
 });
 
-test("ordinary review custody ignores its concurrent dispatch hold and waiting writes during the final proof", async () => {
+test("a dispatch hold placed during ordinary review custody keeps the verdict pending", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
@@ -1587,7 +1567,9 @@ test("ordinary review custody ignores its concurrent dispatch hold and waiting w
       true,
       "the dispatch hold and task_waiting record landed during custody proof",
     );
-    assert.equal(f.store.task(f.task.id).resolution.review?.runId, run.id);
+    const current = f.store.task(f.task.id);
+    assert.equal(current.resolution.currentRunId, run.id);
+    assert.equal(current.resolution.review, null);
     assert.equal(
       f.store
         .eventsAll(f.task.id)
@@ -1595,9 +1577,9 @@ test("ordinary review custody ignores its concurrent dispatch hold and waiting w
           (event) =>
             event.kind === "review_result_applied" && event.detail === run.id,
         ).length,
-      1,
+      0,
     );
-    assert.equal(f.store.task(f.task.id).resolution.attention, false);
+    assert.equal(current.resolution.attention, false);
   } finally {
     await f.close();
   }

@@ -95,7 +95,7 @@ No command changes anything it does not name.
 
 | Command | Does exactly | Warnings (overridable) |
 | --- | --- | --- |
-| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. Starting a reviewer enters `reviewing` in the same transaction. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
+| `run.start role=<worker\|reviewer\|coordinator> agent=<retained\|fresh> [head] [instruction] [replacing=<run>]` | Creates one run for the role and delivers it: `retained` to the bound thread, `fresh` to a new thread on the role's route. `replacing` first applies `run.release` to that run. A reviewer start can enter `reviewing` from an eligible phase. | `duplicate_thread` (another unreleased or uncertain run of the role exists), `two_writers` (worker only: another worker may be live), `head_mismatch`, `budget` (spent budget, revision cap or replacement ceiling, read from the scheduler's own conditions; Spec 068 §5; planner or operator only), `route_policy` (Low submission gate, reserved for the planner or operator board), `discard_reported_verdict` (the replaced or superseded reviewer already reported an unapplied verdict at the current head; Spec 068 batch A), `creation_in_flight` (the host may still answer this role's uncertain create; planner or operator only) |
 | `run.release run=<id> [archive]` | Stops treating the run as live: best-effort cancel of its turn and its recorded process group, `released=true`, revokes its credential, clears pointers to it, settles its delivery effects. Optionally archives its thread. Never launches or changes phase. | `live_turn` (agent may be mid-turn; a worker's uncommitted changes may be lost), `unreported_result` (its report will be refused) |
 | `record.clear kind=<stop\|wait\|hold\|escalation\|incident\|effect\|host_wait\|owner_stop\|deferred_verb\|workspace_intent> id=<id>` | Removes exactly that record, including the underlying fact any fence reads (run status, operation state, notice state). `workspace_intent` (id: the task branch; [Spec 068](068-self-healing.md) batch A) releases an uncertain dispatch workspace creation that bound nothing and returns the task to `queued`, so ordinary dispatch binds or recreates the same branch and worktree. It clears only the lookup's own stop or a lifecycle wait, and refuses, naming it, any other owner's stop. | `hold_owner` (overrides another owner's hold; planner or operator only), `effect_may_land` (the effect may still complete or repeat), `owned_tool` (a process may still be writing), `workspace_may_exist` (`workspace_intent` only: the workspace may exist on the host; `effect_may_land` joins it while the task's dispatch is in flight) |
 | `phase.set to=<working\|changes_requested\|awaiting_review\|reviewing\|verifying\|needs_attention\|blocked>` | Writes the phase and reason only. | `live_runs` (unreleased runs see an unexpected phase) |
@@ -104,26 +104,17 @@ No command changes anything it does not name.
 | `turn.take` / `turn.release` | Takes or releases the repository integration turn for this task and wakes the tasks waiting on it. | `turn_held` (take displaces another task), `merge_in_flight` |
 | `closeout.now [mergedCommit]` | Records the merge (from GitHub, or an operator-stated commit when GitHub cannot be read) and starts sync and closeout. When a live coordinator or recovery run is bound, releases and cancels it via `run.release` once `live_runs` is accepted. | `unverified_merge` (operator only), `no_verdict`, `live_runs` |
 
-In `reviewing`, the scheduler can publish and apply a released current
-reviewer's authenticated verdict before routing attention. This also resumes
-an unpublished verdict after `phase.set to=reviewing`. The verdict must match
-the canonical PR's current head, and independent stops, holds and recovery
-ownership still apply.
+`run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
+`awaiting_review` or `changes_requested` when it reserves the run. It refuses
+while an escalation is open, another owner holds dispatch, or an escalated
+recovery incident or episode owns the task. A reviewer start also refuses in
+`verifying`, `merging`, `syncing`, `closing` and after a recorded merge.
 
-An open planner escalation keeps the task parked. Reviewer starts, explicit
-transitions to `reviewing`, and verdict application wait for the ladder to
-settle it. A dispatch hold must be released before an explicit reviewer start.
-
-When an escalated recovery has released its run and its incident and escalation
-are both settled or cleared, applying the current reviewer's verdict settles
-the episode in the same transaction. The initial worker's accepted ready
-report still settles an obsolete workspace fault. Verdict application checks
-the repository's current review publication policy before granting credit.
-
-Accepting `discard_reported_verdict` records the displaced reviewer's replacement
-when the new run is reserved. Verdict application rechecks that binding and
-replacement in its own transaction, so an in-flight verification cannot apply
-the discarded verdict.
+Reviewer callbacks follow the ordinary verdict path, with authorship checked
+before publication. Accepting `discard_reported_verdict` records the displaced
+reviewer's replacement when the new run is reserved. The verdict transaction
+rechecks the reviewer binding, whether the verdict was discarded, dispatch
+holds and the current review publication policy before granting credit.
 
 **Hard gates** (never accepted as warnings):
 

@@ -19,8 +19,12 @@ import {
   taskAuthorModelKeys,
 } from "../../shared/authors";
 import {
+  escalationWaitDetail,
+  plannerEscalations,
+  reviewerConsults,
   revisionCapCauseId,
   revisionCapEscalationQuestion,
+  type LadderEvent,
 } from "../questions/ladder";
 import {
   MERGE_CONFLICT_REASON,
@@ -83,7 +87,10 @@ import {
   reviewerIndependence,
 } from "../dispatch/routing";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
-import { reviewLadderWait } from "../questions/ladder/hold";
+import {
+  escalationWaitState,
+  type EscalationWait,
+} from "../questions/ladder/hold";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { matchingInactiveParticipant } from "./run-settlement";
 import { settlementHeld } from "../closeout/queue-drain";
@@ -138,20 +145,18 @@ function authenticatedReviewResult(
   );
 }
 
-type ReviewAdmission<PublicationId extends number | null = number> = {
+type PublishedReview = {
   kind: "ready";
   run: Run;
   completion: Completion;
   prNumber: number;
   reviewer: ReviewerSetting | null;
-  publicationId: PublicationId;
+  publicationId: number;
   settledWaits: { id: string; resolved: boolean }[];
   settlesIncident: boolean;
-  settlesRecovery: boolean;
 };
-type PublishedReview = ReviewAdmission;
-type ReviewDecision<PublicationId extends number | null = number> =
-  | ReviewAdmission<PublicationId>
+type PublishedReviewDecision =
+  | PublishedReview
   | { kind: "none" }
   /**
    * `permanent`: no later fact can make this run's report apply (it was
@@ -180,39 +185,132 @@ function hasPublicationEvidence(store: Store, run: Run): boolean {
   );
 }
 
-/** Owner moves can adopt existing evidence without starting publication. */
+/** Check stored authorship before sending or adopting a forge review. */
+function recordedReviewIndependence(
+  task: Task,
+  run: Run,
+  runs: readonly Run[],
+): { permanent: boolean; refusal: string } | null {
+  const revisions = runs.filter((candidate) => candidate.role === "revision");
+  const external = task.resolution.externalOwnerRevisions ?? [];
+  if (
+    run.agentId &&
+    [
+      task.agentId,
+      ...task.retiredWorkers.map((worker) => worker.agentId),
+      ...revisions.map((revision) => revision.agentId),
+      ...task.proofExecutions.map((proof) => proof.agentId),
+      ...(external.length ? [task.originAgentId] : []),
+      ...external.flatMap((receipt) => [
+        receipt.actor.agentId,
+        receipt.ownerScope?.ownerAgentId,
+      ]),
+    ].includes(run.agentId)
+  )
+    return {
+      permanent: true,
+      refusal: "The reviewer authored this task. The review lifecycle owner must establish independent review",
+    };
+  if (!run.profile) return null;
+  const authors = taskAuthorModelKeys(task, revisions);
+  const currentAuthor = queueAuthorModelKey(task);
+  const requested = task.profileRequests?.reviewer;
+  const independence = reviewerIndependence({
+    site: "verify",
+    authors,
+    currentAuthorModels:
+      currentAuthor === null ? authors : new Set([currentAuthor]),
+    reviewerModel: authorModelKey(run.profile.model),
+    namedRequired:
+      requested?.required === true && requested.profileId === run.profile.id,
+    ownerRouted: isOwnerRoutedReviewer(task, run.profile.id),
+  });
+  return independence === "collision"
+    ? {
+        permanent: false,
+        refusal: "The recorded models conflict with the review independence policy. The review lifecycle owner must reconcile them",
+      }
+    : null;
+}
+
+/** Read the ladder's durable wait records, including the format used before stop fields were recorded. */
+function reviewLadderWait(
+  store: Store,
+  task: Task,
+): {
+  refusal: string | null;
+  settledStop: boolean;
+  settledWaits: PublishedReview["settledWaits"];
+} {
+  const events = store.eventsAll(task.id);
+  const waits = new Map<string, (typeof events)[number]>();
+  const settled = new Set<string>();
+  const settledWaits: PublishedReview["settledWaits"] = [];
+  let settledStop = false;
+  for (const event of events) {
+    if (event.kind === "planner_escalation_wait")
+      waits.set(event.detail.split(":", 1)[0]!, event);
+  }
+  for (const [id, event] of waits) {
+    const afterWait = events.filter(
+      (later) => later.id > event.id && later.detail.startsWith(`${id}:`),
+    );
+    const retired = afterWait.some((later) =>
+      [
+        "planner_escalation_woke",
+        "planner_escalation_wait_superseded",
+      ].includes(later.kind),
+    );
+    const resolved = afterWait.some(
+      (later) => later.kind === "planner_escalation_resolved",
+    );
+    let wait: EscalationWait | null = null;
+    try {
+      wait = JSON.parse(event.detail.slice(id.length + 2));
+    } catch {
+      /* unreadable wait stays for its owner */
+    }
+    const due = wait?.kind === "time" && Date.parse(wait.target) <= Date.now();
+    if (!retired && !resolved && !due)
+      return {
+        refusal: `The planner ladder still owns escalation ${id}'s wait`,
+        settledStop,
+        settledWaits,
+      };
+    if (!retired) {
+      settledWaits.push({ id, resolved });
+      settled.add(id);
+    }
+    if (wait?.kind === "time" || wait?.kind === "decision") {
+      const { stopReason } = escalationWaitState(id, wait);
+      settledStop ||=
+        task.resolution.stop?.reason === stopReason &&
+        task.resolution.stop.fact?.subject === id;
+    }
+  }
+  const open = plannerEscalations(events).find(
+    (item) => !item.answered && !settled.has(item.id),
+  );
+  const consult = reviewerConsults(events).findLast(
+    (item) => !item.answered && !item.unknown,
+  );
+  return {
+    refusal: open
+      ? `The planner ladder still owns escalation ${open.id}`
+      : consult
+        ? escalationWaitDetail.reviewer(consult.id)
+        : null,
+    settledStop,
+    settledWaits,
+  };
+}
+
+/** The stored admission for a published verdict. All three entry points use this read. */
 export function publishedReviewDecision(
   store: Store,
   task: Task,
   enclosing?: VerifiedEnclosingOperation,
-): ReviewDecision {
-  return readReviewAdmission(store, task, enclosing);
-}
-
-export function reviewApplicationDecision(
-  store: Store,
-  task: Task,
-): ReviewDecision<number | null> {
-  return readReviewAdmission(store, task, undefined, true);
-}
-
-function readReviewAdmission(
-  store: Store,
-  task: Task,
-  enclosing?: VerifiedEnclosingOperation,
-): ReviewDecision;
-function readReviewAdmission(
-  store: Store,
-  task: Task,
-  enclosing: VerifiedEnclosingOperation | undefined,
-  resumeUnpublished: boolean,
-): ReviewDecision<number | null>;
-function readReviewAdmission(
-  store: Store,
-  task: Task,
-  enclosing?: VerifiedEnclosingOperation,
-  resumeUnpublished = false,
-): ReviewDecision<number | null> {
+): PublishedReviewDecision {
   // Receipt-only qualification and review of a recorded external merge keep their own lifecycle.
   if (
     task.entrypoint === "proof" ||
@@ -242,29 +340,16 @@ function readReviewAdmission(
     (!currentRunId &&
       (run.head !== task.prHead || run.agentId !== reviewerAgentId)) ||
     resultApplied(store, task.id, run.id) ||
-    (!currentRunId && task.resolution.review?.runId === run.id)
-  )
-    return { kind: "none" };
-  const published = hasPublicationEvidence(store, run);
-  // Returning to review gives the released current verdict a chance to settle
-  // the attention episode. Source approvals still go through proof routing.
-  if (
-    !published &&
-    !(
-      resumeUnpublished &&
-      task.phase === "reviewing" &&
-      (task.resolution.attention || recovery?.status === "escalated") &&
-      currentRunId === run.id &&
-      !run.completion.sourceApproved
-    )
+    (!currentRunId && task.resolution.review?.runId === run.id) ||
+    !hasPublicationEvidence(store, run)
   )
     return { kind: "none" };
 
-  const blocked = (refusal: string): ReviewDecision => ({
+  const blocked = (refusal: string): PublishedReviewDecision => ({
     kind: "blocked",
     refusal,
   });
-  const refusedForever = (refusal: string): ReviewDecision => ({
+  const refusedForever = (refusal: string): PublishedReviewDecision => ({
     kind: "blocked",
     refusal,
     permanent: true,
@@ -320,37 +405,11 @@ function readReviewAdmission(
       "The retained reviewer run, host or workspace binding changed. The review lifecycle owner must reconcile it",
     );
 
-  const revisionRuns = runs.filter((item) => item.role === "revision");
-  if (
-    [
-      task.agentId,
-      ...task.retiredWorkers.map((worker) => worker.agentId),
-      ...revisionRuns.map((revision) => revision.agentId),
-      ...task.proofExecutions.map((proof) => proof.agentId),
-    ].includes(run.agentId)
-  )
-    return refusedForever(
-      "The reviewer authored this task. The review lifecycle owner must establish independent review",
-    );
-  if (run.profile) {
-    const authors = taskAuthorModelKeys(task, revisionRuns);
-    const currentAuthor = queueAuthorModelKey(task);
-    const requested = task.profileRequests?.reviewer;
-    const independence = reviewerIndependence({
-      site: "verify",
-      authors,
-      currentAuthorModels:
-        currentAuthor === null ? authors : new Set([currentAuthor]),
-      reviewerModel: authorModelKey(run.profile.model),
-      namedRequired:
-        requested?.required === true && requested.profileId === run.profile.id,
-      ownerRouted: isOwnerRoutedReviewer(task, run.profile.id),
-    });
-    if (independence === "collision")
-      return blocked(
-        "The recorded models conflict with the review independence policy. The review lifecycle owner must reconcile them",
-      );
-  }
+  const independence = recordedReviewIndependence(task, run, runs);
+  if (independence)
+    return independence.permanent
+      ? refusedForever(independence.refusal)
+      : blocked(independence.refusal);
   if (!authenticatedReviewResult(store, task.id, c))
     return blocked(
       "Callback intake has no authenticated accepted receipt for this verdict",
@@ -362,14 +421,12 @@ function readReviewAdmission(
   const otherId = reviewer ? c.reviewCommentId : c.reviewId;
   // Publication writes its ID before intake enriches the completion. The receipt
   // still authenticates the original completion across that crash boundary.
-  const publicationId =
-    id ?? recordedPublicationId(store, run.id, kind) ?? null;
+  const publicationId = id ?? recordedPublicationId(store, run.id, kind);
   if (
-    published &&
-    (otherId != null ||
-      typeof publicationId !== "number" ||
-      !Number.isSafeInteger(publicationId) ||
-      publicationId <= 0)
+    otherId != null ||
+    typeof publicationId !== "number" ||
+    !Number.isSafeInteger(publicationId) ||
+    publicationId <= 0
   )
     // The report carries only the other publication form (or an invalid ID), and
     // Nucleus publishes only from an unpublished report: no later fact gives it one.
@@ -377,12 +434,12 @@ function readReviewAdmission(
       `Review publication must prove a ${kind} ID under the current repository policy`,
     );
   const completion =
-    publicationId === null || id === publicationId
+    id === publicationId
       ? c
       : reviewer
         ? { ...c, reviewId: publicationId }
         : { ...c, reviewCommentId: publicationId };
-  if (published && store.getMeta(reviewPublicationKey(run.id)) != null) {
+  if (store.getMeta(reviewPublicationKey(run.id)) != null) {
     const publication = classifyReviewPublication(store, task, {
       ...run,
       completion,
@@ -419,12 +476,6 @@ function readReviewAdmission(
     );
   const ownIncident =
     incident?.runId === run.id && incident.role === "reviewer";
-  const initialWorkspaceReady = Boolean(
-    incident &&
-      incident.runId === task.runId &&
-      task.completion?.runId === incident.runId &&
-      task.completion.status === "ready_for_review",
-  );
   // A workspace or earlier-run incident is obsolete once the work it named
   // released or the initial worker's ready report bound the PR. A separate
   // planner wait, stop or pending recovery action still has its own gate.
@@ -432,24 +483,16 @@ function readReviewAdmission(
     incident &&
       (ownIncident ||
         !runBindsCurrentWork(runs, incident.runId) ||
-        initialWorkspaceReady),
-  );
-  // An escalated episode is the ladder's until both its wait and its
-  // incident have settled. An already released episode needs no new action.
-  const settlesRecovery = Boolean(
-    recovery &&
-      recovery.status !== "resolved" &&
-      (recovery.status === "escalated"
-        ? !incident ||
-          incident.status === "resolved" ||
-          initialWorkspaceReady ||
-          (recovery.incidentId && recovery.incidentId !== incident.id)
-        : settlesIncident && recovery.incidentId === incident?.id),
+        (incident.runId === task.runId &&
+          task.completion?.runId === incident.runId &&
+          task.completion.status === "ready_for_review")),
   );
   if (
     task.resolution.recoveryActive ||
     recovery?.action?.status === "pending" ||
-    (recovery && recovery.status !== "resolved" && !settlesRecovery)
+    (recovery &&
+      recovery.status !== "resolved" &&
+      (!settlesIncident || recovery.incidentId !== incident?.id))
   )
     return blocked(
       "The recovery owner must settle the current recovery episode",
@@ -515,7 +558,6 @@ function readReviewAdmission(
     publicationId,
     settledWaits: ladder.settledWaits,
     settlesIncident,
-    settlesRecovery,
   };
 }
 
@@ -630,18 +672,10 @@ export class ResultApplication {
       return true;
     });
   }
+  /** Verify a recorded publication and commit its verdict, with no publish or dispatch. */
   async applyPublishedReview(
     t: Task,
     decision: PublishedReview,
-    enclosing?: ReviewInvocation,
-  ): Promise<PublishedReviewApplication> {
-    return this.applyAdmittedReview(t, decision, enclosing);
-  }
-
-  /** Verify a verdict and its custody before it can publish or apply. */
-  async applyAdmittedReview(
-    t: Task,
-    decision: ReviewAdmission<number | null>,
     enclosing?: ReviewInvocation,
   ): Promise<PublishedReviewApplication> {
     const { run, completion, reviewer, prNumber, publicationId } = decision;
@@ -649,17 +683,12 @@ export class ResultApplication {
     const changed =
       "Task changed during published review verification. Read next again";
     const recheck = ():
-      | { task: Task; decision: ReviewAdmission<number | null> }
+      | { task: Task; decision: PublishedReview }
       | { refusal: string } => {
       const task = this.store.task(t.id);
       if (this.resolution.stopped())
         return { refusal: "The scheduler is stopped" };
-      const current = readReviewAdmission(
-        this.store,
-        task,
-        enclosing?.(),
-        publicationId === null,
-      );
+      const current = publishedReviewDecision(this.store, task, enclosing?.());
       if (current.kind === "blocked") return { refusal: current.refusal };
       if (
         current.kind !== "ready" ||
@@ -695,19 +724,17 @@ export class ResultApplication {
       return blocked(
         "The forge reports a changed PR identity or head. Read next again",
       );
-    if (publicationId !== null) {
-      const verifiedId = await verifyReview.call(
-        this.adapter,
-        t,
-        run,
-        completion,
-        reviewer ?? undefined,
+    const verifiedId = await verifyReview.call(
+      this.adapter,
+      t,
+      run,
+      completion,
+      reviewer ?? undefined,
+    );
+    if (verifiedId !== undefined && verifiedId !== publicationId)
+      return blocked(
+        "The forge observed a different publication ID. The review publication owner must reconcile it",
       );
-      if (verifiedId !== undefined && verifiedId !== publicationId)
-        return blocked(
-          "The forge observed a different publication ID. The review publication owner must reconcile it",
-        );
-    }
 
     // Retained ordinary rounds read their exact head in the task checkout, which
     // the round itself never detaches (Spec 068 §4). The prior receipt and the
@@ -781,33 +808,6 @@ export class ResultApplication {
       if ("refusal" in custody) return blocked(custody.refusal);
       assertOrdinaryReviewIdentity(this.store.task(t.id), run.head);
     }
-    if (publicationId === null) {
-      if (!run.ordinaryDetached)
-        await reattachStoredTaskCheckout(this.store, t.id, run.id);
-      const boundary = recheck();
-      if ("refusal" in boundary) return blocked(boundary.refusal);
-      const published = await this.publishReviewerResult(
-        boundary.task,
-        run,
-        completion,
-        reviewer,
-        () => !("refusal" in recheck()),
-      );
-      if (
-        !published ||
-        !observationAdvanceSince(this.store.task(t.id), t.version)
-      )
-        return blocked(changed);
-      const latest = this.store.task(t.id);
-      const recorded = publishedReviewDecision(
-        this.store,
-        latest,
-        enclosing?.(),
-      );
-      if (recorded.kind === "ready" && recorded.run.id === run.id)
-        return this.applyPublishedReview(latest, recorded, enclosing);
-      return blocked(recorded.kind === "blocked" ? recorded.refusal : changed);
-    }
     return this.commitReviewerVerdict(t, run, completion, true, {
       kind: "published",
       admit: () => {
@@ -832,7 +832,7 @@ export class ResultApplication {
             this.store.event(t.id, "planner_escalation_resolved", detail);
           closeEscalationFollowups(this.store, t.id, id);
         }
-        return { ...boundary.decision, publicationId };
+        return boundary.decision;
       },
     });
   }
@@ -869,12 +869,8 @@ export class ResultApplication {
     }
     const runs = this.store.runs(t.id),
       events = this.store.eventsAll(t.id);
-    const reviewerRunId =
-      t.resolution.currentRunId ??
-      runs.findLast((run) => run.role === "reviewer")?.id;
     const unappliedReview = runs.find((run) => {
       if (
-        run.id !== reviewerRunId ||
         run.role !== "reviewer" ||
         !run.released ||
         run.status !== "finished" ||
@@ -900,6 +896,8 @@ export class ResultApplication {
               later.agentId === run.agentId &&
               later.head === t.prHead,
           ) ||
+        (t.resolution.currentRunId !== null &&
+          t.resolution.currentRunId !== run.id) ||
         t.resolution.review?.runId === run.id ||
         events.some(
           (event) =>
@@ -939,6 +937,18 @@ export class ResultApplication {
       const unresolvedPublication =
         !publicationEvent &&
         Boolean(this.store.getMeta(`reviewPublication:${unappliedReview.id}`));
+      const unresolvedEscalation =
+        !publicationEvent &&
+        plannerEscalations(events as LadderEvent[])
+          // An escalation raised for this same interrupted application is part
+          // of its recovery path. A different unanswered planner question still
+          // owns the task and must not be bypassed by replaying the verdict.
+          .some(
+            (escalation) =>
+              !escalation.answered &&
+              !escalation.unknown &&
+              escalation.cause !== incident?.fingerprint,
+          );
       const ownerStoppedRun = events.some(
         (event) =>
           event.kind === "owner_stopped" &&
@@ -956,11 +966,12 @@ export class ResultApplication {
               Date.parse(incident.createdAt) >=
                 Date.parse(publicationEvent.at)) &&
             !unresolvedPublication &&
+            !unresolvedEscalation &&
             !ownerStoppedRun,
         );
       return reviewingSlot || interruptedApplication;
     })();
-    if (!eligible || reviewLadderWait(this.store, t).refusal) return "blocked";
+    if (!eligible) return "blocked";
     // This path can apply a finished callback before the ordinary run
     // reconciler. Keep the same participant lease in front of its transition.
     try {
@@ -1708,30 +1719,81 @@ export class ResultApplication {
       this.store.transaction(() => this.closeProofOnlyQualification(t, run, c));
       return this.verdictApplied(t.id, run.id);
     }
-    if (
-      reviewLadderWait(this.store, t).refusal ||
-      t.resolution.recovery?.status === "escalated"
-    )
-      return false;
-    if (
-      !t.resolution.unreviewedMerge &&
-      t.prHead &&
-      (t.prHead !== run.head || c.head !== run.head)
-    )
-      throw Error("Review is stale for the current PR head");
     // The verdict applies on the task branch at the head the round read. The one
     // reattach step returns a checkout an earlier round left detached before this
     // body publishes, verifies or commits it — for this run's own round, and
     // moving no commit — so a restored or replayed verdict never leaves the
     // checkout detached (Spec 068 §4).
+    if (
+      t.prHead &&
+      !t.resolution.unreviewedMerge &&
+      (t.prHead !== run.head || c.head !== run.head)
+    )
+      throw Error("Review is stale for the current PR head");
     await reattachStoredTaskCheckout(this.store, t.id, run.id);
-    const reviewer = this.resolution.reviewerSetting(t);
-    const publicationId = reviewer ? c.reviewId : c.reviewCommentId;
+    const current = this.store.task(t.id);
+    if (
+      current.resolution.currentRunId !== t.resolution.currentRunId ||
+      current.prHead !== t.prHead ||
+      holdsOf(current).dispatch ||
+      (!reapplied && reviewLadderWait(this.store, current).refusal)
+    )
+      return false;
+    const independence = recordedReviewIndependence(
+      current,
+      run,
+      this.store.runs(t.id),
+    );
+    if (independence) throw Error(independence.refusal);
+    const reviewer = this.resolution.reviewerSetting(current);
+    // Spec 033: a formal review id is its own evidence, never a comment id.
+    const publicationId = (completion: Completion) =>
+      reviewer ? completion.reviewId : completion.reviewCommentId;
     const publicationRecord = this.store.getMeta(`reviewPublication:${run.id}`);
-    if (!publicationId && (reapplied ? !publicationRecord : true)) {
-      const published = await this.publishReviewerResult(t, run, c, reviewer);
-      if (!published) return false;
-      c = published;
+    if (!publicationId(c) && (reapplied ? !publicationRecord : true)) {
+      if (!c.reviewText || !this.adapter.publishReview)
+        throw Error("Review publication is unavailable");
+      // Task 704: the adapter publishes single-flight per run and reports whether
+      // this pass posted. A repeat that reuses a recorded publication is silent:
+      // no extra `review_published` event.
+      let outcome: number | PublicationOutcome;
+      try {
+        outcome = await this.adapter.publishReview(
+          this.store,
+          t,
+          run,
+          c.status,
+          c.reviewText,
+          () => !settlementHeld(this.store, this.resolution.stopped()),
+          reviewer ?? undefined,
+        );
+      } catch (error) {
+        if (
+          gitDeliveryUnknown(error) &&
+          classifyGitTransientFailure(error) === "network" &&
+          this.store.getMeta(`reviewPublication:${run.id}`)
+        )
+          throw new ReviewPublicationTransientError(error);
+        throw error;
+      }
+      if (this.verdictApplied(t.id, run.id)) return false;
+      const currentRun = this.store.run(run.id);
+      if (
+        currentRun?.completion?.eventId !== c.eventId ||
+        currentRun.status === "superseded" ||
+        currentRun.replacedAt
+      )
+        return false;
+      const id = typeof outcome === "number" ? outcome : outcome.id;
+      const published = typeof outcome === "number" || outcome.published;
+      c = reviewer ? { ...c, reviewId: id } : { ...c, reviewCommentId: id };
+      this.store.putRun({ ...currentRun, completion: c });
+      if (published)
+        this.store.event(
+          t.id,
+          "review_published",
+          `${reviewer ? "PR review" : "PR comment"} ${id}`,
+        );
     }
     const verifiedId = await this.adapter.verifyReview!(
       t,
@@ -1740,66 +1802,12 @@ export class ResultApplication {
       reviewer ?? undefined,
     );
     if (settlementHeld(this.store, this.resolution.stopped())) return false;
-    return this.commitReviewerVerdict(t, run, c, reapplied, {
+    const applied = this.commitReviewerVerdict(t, run, c, reapplied, {
       kind: "ordinary",
       reviewer,
       id: verifiedId,
-    }).kind === "applied";
-  }
-
-  private async publishReviewerResult(
-    t: Task,
-    run: Run,
-    completion: Completion,
-    reviewer: ReviewerSetting | null,
-    stillAdmitted = () => true,
-  ): Promise<Completion | null> {
-    if (!completion.reviewText || !this.adapter.publishReview)
-      throw Error("Review publication is unavailable");
-    // The adapter publishes single-flight per run. A repeat that reuses the
-    // recorded publication produces no extra review_published event.
-    let outcome: number | PublicationOutcome;
-    try {
-      outcome = await this.adapter.publishReview(
-        this.store,
-        t,
-        run,
-        completion.status,
-        completion.reviewText,
-        () =>
-          !settlementHeld(this.store, this.resolution.stopped()) &&
-          stillAdmitted(),
-        reviewer ?? undefined,
-      );
-    } catch (error) {
-      if (
-        gitDeliveryUnknown(error) &&
-        classifyGitTransientFailure(error) === "network" &&
-        this.store.getMeta(reviewPublicationKey(run.id))
-      )
-        throw new ReviewPublicationTransientError(error);
-      throw error;
-    }
-    if (this.verdictApplied(t.id, run.id)) return null;
-    const currentRun = this.store.run(run.id);
-    if (
-      currentRun?.completion?.eventId !== completion.eventId ||
-      currentRun.status === "superseded" ||
-      currentRun.replacedAt
-    )
-      return null;
-    const id = typeof outcome === "number" ? outcome : outcome.id;
-    const result = reviewer
-      ? { ...completion, reviewId: id }
-      : { ...completion, reviewCommentId: id };
-    this.store.putRun({ ...currentRun, completion: result });
-    if (typeof outcome === "number" || outcome.published)
-      this.store.event(
-        t.id,
-        "review_published",
-        `${reviewer ? "PR review" : "PR comment"} ${id}`,
-      );
-    return result;
+    });
+    return applied.kind === "applied";
   }
 
   /** Commit the verdict and its verified evidence together. */
@@ -1861,8 +1869,8 @@ export class ResultApplication {
       if (verification.kind === "ordinary") {
         const { reviewer, id } = verification;
         if (
-          reviewLadderWait(this.store, current).refusal ||
-          current.resolution.recovery?.status === "escalated" ||
+          holdsOf(current).dispatch ||
+          (!reapplied && reviewLadderWait(this.store, current).refusal) ||
           !isDeepStrictEqual(reviewerSettingOf(this.store, current), reviewer)
         )
           return changed;
@@ -1906,12 +1914,16 @@ export class ResultApplication {
       }
       const recovery = current.resolution.recovery;
       const incident = current.resolution.incident;
+      const ownRecovery =
+        recovery &&
+        published?.settlesIncident &&
+        recovery.incidentId === incident?.id;
       const settlesAttention = Boolean(
         reapplied &&
           (published
             ? current.resolution.attention ||
               (published.settlesIncident && incident?.status !== "resolved") ||
-              published.settlesRecovery
+              (ownRecovery && recovery.status !== "resolved")
             : current.resolution.attention && incident?.runId === run.id),
       );
       const recoveryRunId =
@@ -1947,7 +1959,7 @@ export class ResultApplication {
                   },
                 }
               : {}),
-            ...(recovery && (!published || published.settlesRecovery)
+            ...(recovery && (!published || ownRecovery)
               ? {
                   recovery: {
                     ...recovery,
@@ -1960,12 +1972,6 @@ export class ResultApplication {
               : {}),
           }
         : {};
-      if (published?.settlesRecovery && recovery)
-        this.store.event(
-          t.id,
-          "recovery_episode_settled",
-          `${recovery.id}: ${settledDetail}`,
-        );
       if (supersedeRecovery)
         this.store.putRun({
           ...recoveryRun!,

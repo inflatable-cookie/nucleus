@@ -49,7 +49,7 @@ import {
   readGitCheckout,
 } from "../git/git-identity";
 import type { Adapter } from "../host/adapter";
-import { reviewLadderWait } from "../questions/ladder/hold";
+import { plannerEscalations } from "../questions/ladder/records";
 import {
   assertOrdinaryReviewIdentity,
   ordinaryReviewSource,
@@ -157,7 +157,6 @@ export function phaseSetPlan(
   task: Task,
   input: Extract<ExplicitResolution, { action: "phase.set" }>,
 ): ExplicitPlan {
-  if (input.to === "reviewing") assertReviewPhaseAllowed(engine.store, task);
   const runs = engine.store.runs(task.id);
   const hasLiveInitial = Boolean(
     task.runId &&
@@ -186,18 +185,41 @@ export function phaseSetPlan(
   };
 }
 
-function assertReviewPhaseAllowed(store: Store, task: Task): void {
-  const { refusal } = reviewLadderWait(store, task);
-  if (refusal) throw Error(refusal);
-}
+const reviewerStartTransitions: readonly Task["phase"][] = [
+  "needs_attention",
+  "blocked",
+  "awaiting_review",
+  "changes_requested",
+];
 
-function assertReviewerStartAllowed(store: Store, task: Task): void {
+function assertReviewerStartAllowed(
+  store: Store,
+  task: Task,
+  caller: string | undefined,
+): void {
+  const { mergedCommit, unreviewedMerge, incident, recovery } = task.resolution;
+  if (mergedCommit || unreviewedMerge)
+    throw Error("Cannot start a reviewer after a merge has been recorded.");
+  if (
+    ["verifying", "merging", "syncing", "closing", "done", "cancelled"].includes(
+      task.phase,
+    )
+  )
+    throw Error(`Cannot start a reviewer while the task is ${task.phase}.`);
   const { dispatch } = holdsOf(task);
-  if (dispatch)
+  if (dispatch && dispatch.owner !== caller)
     throw Error(
       `Dispatch is held by ${dispatch.owner}: ${dispatch.reason}. Release the hold before starting a reviewer.`,
     );
-  assertReviewPhaseAllowed(store, task);
+  const escalation = plannerEscalations(store.eventsAll(task.id)).find(
+    (item) => !item.answered,
+  );
+  if (escalation)
+    throw Error(`The planner ladder still owns escalation ${escalation.id}.`);
+  if (incident?.status === "escalated")
+    throw Error(`The recovery owner must settle escalated incident ${incident.id}.`);
+  if (recovery?.status === "escalated")
+    throw Error(`The recovery owner must settle escalated episode ${recovery.id}.`);
 }
 
 export function messageSendPlan(
@@ -513,7 +535,8 @@ export async function preflightExplicitRunStart(
   task: Task,
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
-  if (input.role === "reviewer") assertReviewerStartAllowed(engine.store, task);
+  if (input.role === "reviewer")
+    assertReviewerStartAllowed(engine.store, task, input.caller);
   // Spec 068 §4: every run.start launches into the task checkout, so the one
   // reattach step runs first. It moves no commit and names its refusal instead
   // of leaving a detached checkout unexplained.
@@ -727,8 +750,8 @@ export function runStartWarnings(
 
   // A reviewer that already reported a verdict at the current head is a finished
   // review: replacing it, or starting another reviewer over it, would drop that
-  // verdict (bovine-accelerator#6863). The lifecycle applies it on its own, so the
-  // start waits unless the caller explicitly discards it.
+  // verdict (bovine-accelerator#6863). The start waits unless the caller
+  // explicitly discards it.
   const displaced =
     runRole === "reviewer"
       ? displacedReviewerVerdicts(store, task, runs, input.replacing)
@@ -848,7 +871,8 @@ export function runStartPlan(
   preflight?: ExplicitRunStartPreflight,
 ): ExplicitPlan {
   const store = engine.store;
-  if (input.role === "reviewer") assertReviewerStartAllowed(store, task);
+  if (input.role === "reviewer")
+    assertReviewerStartAllowed(store, task, input.caller);
   const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
     runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {
@@ -977,7 +1001,8 @@ export function runStartPlan(
       store.putRun(createdRun);
 
       const patch: Partial<Task> = { ...basePatch, resolution };
-      if (runRole === "reviewer") patch.phase = "reviewing";
+      if (runRole === "reviewer" && reviewerStartTransitions.includes(task.phase))
+        patch.phase = "reviewing";
       // Only record a forge-confirmed PR head when the task checkout already
       // matches it (e.g. #1508 where the worker pushed from the task checkout).
       // Never record an unconfirmed SHA as prHead.
