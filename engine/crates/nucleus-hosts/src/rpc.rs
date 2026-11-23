@@ -47,6 +47,10 @@ pub(crate) struct Rpc {
 }
 
 impl Rpc {
+    pub(crate) const fn endpoint(&self) -> &Url {
+        &self.base
+    }
+
     pub(crate) fn new(endpoint: &str, bearer: &str) -> Result<Self, HostError> {
         let base = Url::parse(endpoint).map_err(|_| HostError::Configuration)?;
         let loopback = base.host_str().is_some_and(|host| {

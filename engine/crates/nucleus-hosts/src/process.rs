@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, hash_map::Entry},
     ffi::OsStr,
     io,
     os::{
@@ -24,7 +24,10 @@ use tokio::{
     time,
 };
 
-use crate::HostError;
+use crate::{
+    HostError,
+    runtime::{RuntimeProcess, ServerRuntime, read_candidates, standing_runtime_pids},
+};
 
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_OUTPUT: u64 = 8 * 1024 * 1024;
@@ -40,11 +43,15 @@ pub(crate) enum Activity {
 /// until a separate process enumeration proves their PIDs have exited.
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
-    scoped: Mutex<HashMap<PathBuf, Result<Activity, HostError>>>,
+    runtime: Option<(u32, HashMap<u32, RuntimeProcess>)>,
+    scoped: Mutex<HashMap<PathBuf, ScopedResult>>,
 }
+
+type ScopedResult = Result<Option<HashSet<u32>>, HostError>;
 
 #[derive(Default)]
 struct ProcessPaths {
+    parent: u32,
     cwd: Option<PathBuf>,
     ambiguous_path: bool,
 }
@@ -56,15 +63,17 @@ impl Inventory {
             processes: HashMap::from([(
                 1,
                 ProcessPaths {
+                    parent: 0,
                     cwd: Some(PathBuf::from("/")),
                     ambiguous_path: false,
                 },
             )]),
+            runtime: None,
             scoped: Mutex::default(),
         }
     }
 
-    pub(crate) async fn capture() -> Result<Self, HostError> {
+    pub(crate) async fn capture(server: Option<ServerRuntime>) -> Result<Self, HostError> {
         let user = geteuid().as_raw();
         let (listing, _) = capture(
             "/usr/sbin/lsof",
@@ -82,9 +91,28 @@ impl Inventory {
         .await?;
         // The later inventory includes any new PID lsof did not see. A zombie
         // has already released its cwd and cannot access the checkout.
-        let (processes, probe_pid) = capture("/bin/ps", &["-axo", "pid=,uid=,stat="]).await?;
+        let (processes, probe_pid) = capture("/bin/ps", &["-axo", "pid=,ppid=,uid=,stat="]).await?;
         let mut inventory = Self::from_listings(&listing, &processes, user, probe_pid)?;
         inventory.complete_missing().await;
+        if let Some(server) = server
+            && inventory.processes.contains_key(&server.pid)
+            && server.still_current().await
+        {
+            let candidates = inventory
+                .processes
+                .iter()
+                .filter_map(|(&pid, process)| {
+                    let direct = process.parent == server.pid;
+                    let second = inventory
+                        .processes
+                        .get(&process.parent)
+                        .is_some_and(|parent| parent.parent == server.pid);
+                    ((direct || second) && process.cwd.is_some() && !process.ambiguous_path)
+                        .then_some((pid, process.parent))
+                })
+                .collect();
+            inventory.runtime = Some((server.pid, read_candidates(candidates).await));
+        }
         Ok(inventory)
     }
 
@@ -99,16 +127,17 @@ impl Inventory {
             .collect::<Vec<_>>()
             .join(",");
         if !missing.is_empty()
-            && let Ok((listing, _)) = capture(
+            && let Ok(listing) = read_listing(
                 "/usr/sbin/lsof",
                 &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
             )
             .await
-            && let Ok(paths) = process_paths(&listing)
+            && let Some(paths) = listing.cwd_followup()
         {
             for (pid, paths) in paths {
                 if let Some(existing) = self.processes.get_mut(&pid) {
-                    *existing = paths;
+                    existing.cwd = paths.cwd;
+                    existing.ambiguous_path = paths.ambiguous_path;
                 }
             }
         }
@@ -131,25 +160,39 @@ impl Inventory {
                 .next()
                 .and_then(|pid| pid.parse::<u32>().ok())
                 .ok_or(HostError::Protocol)?;
+            let parent = columns
+                .next()
+                .and_then(|parent| parent.parse::<u32>().ok())
+                .ok_or(HostError::Protocol)?;
             let uid = columns
                 .next()
                 .and_then(|uid| uid.parse::<u32>().ok())
                 .ok_or(HostError::Protocol)?;
             let status = columns.next().ok_or(HostError::Protocol)?;
             if pid != probe_pid && uid == user && !status.starts_with('Z') {
-                live.insert(pid, by_pid.remove(&pid).unwrap_or_default());
+                let mut process = by_pid.remove(&pid).unwrap_or_default();
+                process.parent = parent;
+                live.insert(pid, process);
             }
         }
         Ok(Self {
             processes: live,
+            runtime: None,
             scoped: Mutex::default(),
         })
     }
 
-    pub(crate) fn activity(&self, path: &Path) -> Result<Activity, HostError> {
+    pub(crate) fn activity(
+        &self,
+        path: &Path,
+        runtime: &HashSet<u32>,
+    ) -> Result<Activity, HostError> {
         verify_root(path)?;
         let mut missing = false;
-        for process in self.processes.values() {
+        for (&pid, process) in &self.processes {
+            if runtime.contains(&pid) {
+                continue;
+            }
             if process
                 .cwd
                 .as_ref()
@@ -170,19 +213,33 @@ impl Inventory {
         &self,
         checkout: &Path,
         scratch: &Path,
+        thread: &str,
     ) -> Result<Activity, HostError> {
-        match (self.activity(checkout)?, self.activity(scratch)?) {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .map_or_else(HashSet::new, |(server, processes)| {
+                standing_runtime_pids(*server, processes, thread)
+            });
+        match (
+            self.activity(checkout, &runtime)?,
+            self.activity(scratch, &runtime)?,
+        ) {
             (Activity::Busy, _) | (_, Activity::Busy) => return Ok(Activity::Busy),
             (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
             (Activity::Quiet, Activity::Quiet) => {}
         }
         let mut scoped = self.scoped.lock().await;
-        if let Some(activity) = scoped.get(checkout) {
-            return *activity;
-        }
-        let activity = scoped_activity(checkout, scratch).await;
-        scoped.insert(checkout.to_path_buf(), activity);
-        activity
+        let scan = match scoped.entry(checkout.to_path_buf()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(scoped_activity(checkout, scratch).await),
+        };
+        let paths = scan.as_ref().map_err(|error| *error)?;
+        Ok(match paths {
+            Some(pids) if pids.iter().any(|pid| !runtime.contains(pid)) => Activity::Busy,
+            Some(_) => Activity::Quiet,
+            None => Activity::Unknown,
+        })
     }
 }
 
@@ -300,7 +357,7 @@ impl<'a> Witness<'a> {
     }
 }
 
-async fn scoped_activity(checkout: &Path, scratch: &Path) -> Result<Activity, HostError> {
+async fn scoped_activity(checkout: &Path, scratch: &Path) -> ScopedResult {
     let mut witnesses = vec![Witness::open(checkout)?];
     if scratch != checkout {
         witnesses.push(Witness::open(scratch)?);
@@ -315,10 +372,10 @@ async fn scoped_activity(checkout: &Path, scratch: &Path) -> Result<Activity, Ho
     let listing = read_listing("/usr/sbin/lsof", &args).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
-    Ok(scoped_listing(&listing, &witnesses).unwrap_or(Activity::Unknown))
+    Ok(scoped_listing(&listing, &witnesses))
 }
 
-fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<Activity> {
+fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<u32>> {
     let end = listing.output.iter().rposition(|&byte| byte == 0)?;
     let diagnostics = listing.output[end + 1..].strip_prefix(b"\n")?;
     // Darwin lsof exits 1 for any closed descendant found by +D. With -V,
@@ -331,7 +388,7 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<Activi
     let mut seen = vec![false; witnesses.len()];
     let mut pid = None;
     let mut fd = None;
-    let mut busy = false;
+    let mut owners = HashSet::new();
     for field in listing.output[..end].split(|&byte| byte == 0) {
         let field = field.strip_prefix(b"\n").unwrap_or(field);
         match field {
@@ -357,7 +414,7 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<Activi
                         return None;
                     }
                 } else {
-                    busy = true;
+                    owners.insert(pid?);
                 }
             }
             _ => return None,
@@ -366,11 +423,7 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<Activi
     if fd.is_some() || !seen.into_iter().all(|found| found) {
         return None;
     }
-    Some(if busy {
-        Activity::Busy
-    } else {
-        Activity::Quiet
-    })
+    Some(owners)
 }
 
 fn closed_paths(diagnostics: &[u8], witnesses: &[Witness<'_>]) -> bool {
@@ -394,7 +447,18 @@ struct Listing {
     pid: u32,
 }
 
-async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostError> {
+impl Listing {
+    fn cwd_followup(&self) -> Option<HashMap<u32, ProcessPaths>> {
+        // Darwin returns 1 if a selected PID exited, even when it reports
+        // the other PIDs. Only the returned cwd rows count as evidence.
+        if !matches!(self.exit, Some(0 | 1)) || self.output.is_empty() {
+            return None;
+        }
+        process_paths(&self.output).ok()
+    }
+}
+
+pub(crate) async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostError> {
     let listing = read_listing(command, args).await?;
     if listing.exit == Some(0) && !listing.output.is_empty() {
         Ok((listing.output, listing.pid))
@@ -407,6 +471,7 @@ async fn read_listing(command: &str, args: &[impl AsRef<OsStr>]) -> Result<Listi
     let mut child = Command::new(command)
         .args(args)
         .env("LC_ALL", "C")
+        .env("TZ", "UTC")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -460,12 +525,15 @@ mod tests {
         let path = path.path().canonicalize().expect("canonical checkout");
         let inventory = Inventory::from_listings(
             b"p1\0\nfcwd\0n/elsewhere\0\n",
-            b"1 501 S\n2 501 R\n3 501 Z\n4 501 R\n",
+            b"1 0 501 S\n2 1 501 R\n3 1 501 Z\n4 1 501 R\n",
             501,
             4,
         )
         .expect("parse inventory");
-        assert!(matches!(inventory.activity(&path), Ok(Activity::Unknown)));
+        assert!(matches!(
+            inventory.activity(&path, &HashSet::new()),
+            Ok(Activity::Unknown)
+        ));
     }
 
     #[tokio::test]
@@ -474,6 +542,18 @@ mod tests {
             capture("/usr/bin/false", &[]).await,
             Err(HostError::Uncertain)
         ));
+    }
+
+    #[test]
+    fn an_exited_pid_does_not_discard_other_positive_cwd_rows() {
+        let reply = Listing {
+            exit: Some(1),
+            output: b"p12\0\nfcwd\0n/checkout\0\n".to_vec(),
+            pid: 0,
+        };
+        let covered = reply.cwd_followup().expect("positive rows");
+        assert_eq!(covered[&12].cwd.as_deref(), Some(Path::new("/checkout")));
+        assert!(!covered.contains_key(&13));
     }
 
     #[test]
@@ -500,6 +580,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_standing_runtime_releases_both_scopes_but_its_tool_holds() {
+        let private = || {
+            tempfile::Builder::new()
+                .permissions(Permissions::from_mode(0o700))
+                .tempdir()
+                .expect("private scope")
+        };
+        let checkout = private();
+        let scratch = private();
+        let checkout = checkout.path().canonicalize().expect("canonical checkout");
+        let scratch = scratch.path().canonicalize().expect("canonical scratch");
+        let mut listing = String::from("p10\0\nfcwd\0n/\0\np24\0\nfcwd\0n/\0\n");
+        for pid in 20..=23 {
+            use std::fmt::Write;
+            writeln!(listing, "p{pid}\0\nfcwd\0n{}\0", checkout.display()).expect("cwd entry");
+        }
+        let census =
+            b"10 1 501 S\n20 10 501 S\n21 20 501 S\n22 20 501 S\n23 20 501 S\n24 21 501 S\n";
+        let mut inventory =
+            Inventory::from_listings(listing.as_bytes(), census, 501, 0).expect("processes");
+        let runtime = [
+            (20, 10, "codex app-server"),
+            (21, 20, "/plugins/node_repl"),
+            (22, 20, "/plugins/node_repl"),
+            (23, 20, "/plugins/cua-driver mcp"),
+        ]
+        .into_iter()
+        .filter_map(|(pid, parent, command)| {
+            RuntimeProcess::from_command(parent, command).map(|facts| (pid, facts))
+        })
+        .collect();
+        inventory.runtime = Some((10, runtime));
+        inventory
+            .scoped
+            .get_mut()
+            .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23]))));
+        assert!(matches!(
+            inventory
+                .activity_for(&checkout, &scratch, "fixture-thread")
+                .await,
+            Ok(Activity::Quiet)
+        ));
+        inventory
+            .scoped
+            .get_mut()
+            .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23, 24]))));
+        assert!(matches!(
+            inventory
+                .activity_for(&checkout, &scratch, "fixture-thread")
+                .await,
+            Ok(Activity::Busy)
+        ));
+    }
+
+    #[tokio::test]
     async fn scopes_distinguish_closed_descendants_from_nested_open_files() {
         let checkout = tempfile::tempdir().expect("checkout");
         let scratch = tempfile::tempdir().expect("scratch");
@@ -511,12 +646,12 @@ mod tests {
         std::fs::File::create(&path).expect("file initially closed");
         assert!(matches!(
             scoped_activity(&checkout, &scratch).await,
-            Ok(Activity::Quiet)
+            Ok(Some(pids)) if pids.is_empty()
         ));
         let held = std::fs::File::open(&path).expect("open file outside process cwd");
         assert!(matches!(
             scoped_activity(&checkout, &scratch).await,
-            Ok(Activity::Busy)
+            Ok(Some(pids)) if pids.contains(&std::process::id())
         ));
         drop(held);
     }
@@ -543,14 +678,17 @@ mod tests {
         .await
         .expect("fixture lsof listing");
         let user = geteuid().as_raw();
-        let census = format!("{pid} {user} S\n");
+        let census = format!("{pid} 0 {user} S\n");
         let inventory =
             Inventory::from_listings(&listing, census.as_bytes(), user, 0).expect("inventory");
         assert_eq!(
             inventory.processes[&pid].cwd.as_deref(),
             Some(checkout.as_path())
         );
-        assert!(matches!(inventory.activity(&checkout), Ok(Activity::Busy)));
+        assert!(matches!(
+            inventory.activity(&checkout, &HashSet::new()),
+            Ok(Activity::Busy)
+        ));
         child.kill().await.expect("stop fixture child");
     }
 
@@ -565,14 +703,17 @@ mod tests {
             "p1\0\nfcwd\0n{}/nested\\xfe\\n\\\\name\0\n",
             checkout.display()
         );
-        let inventory =
-            Inventory::from_listings(listing.as_bytes(), b"1 501 S\n", 501, 0).expect("inventory");
+        let inventory = Inventory::from_listings(listing.as_bytes(), b"1 0 501 S\n", 501, 0)
+            .expect("inventory");
         let expected = checkout.join(OsStr::from_bytes(b"nested\xfe\n\\name"));
         assert_eq!(
             inventory.processes[&1].cwd.as_deref(),
             Some(expected.as_path())
         );
-        assert!(matches!(inventory.activity(&checkout), Ok(Activity::Busy)));
+        assert!(matches!(
+            inventory.activity(&checkout, &HashSet::new()),
+            Ok(Activity::Busy)
+        ));
 
         for field in [
             br"/elsewhere/^A".as_slice(),
@@ -583,9 +724,9 @@ mod tests {
             listing.extend(field);
             listing.extend(b"\0\n");
             let inventory =
-                Inventory::from_listings(&listing, b"1 501 S\n", 501, 0).expect("inventory");
+                Inventory::from_listings(&listing, b"1 0 501 S\n", 501, 0).expect("inventory");
             assert!(matches!(
-                inventory.activity(&checkout),
+                inventory.activity(&checkout, &HashSet::new()),
                 Ok(Activity::Unknown)
             ));
         }

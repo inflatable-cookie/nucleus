@@ -198,7 +198,10 @@ async fn serve(
     }
     let settings = SettingsFile::open(&home.canonicalize()?)?;
     let project: Project = from_reader(File::open(project)?)?;
-    let host = T3::new(host, &secret("NUCLEUS_ENGINE_T3_BEARER")?)?;
+    let mut host = T3::new(host, &secret("NUCLEUS_ENGINE_T3_BEARER")?)?;
+    if let Some(path) = env::var_os("NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR") {
+        host = host.with_runtime_descriptor(path.into());
+    }
     let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
     let credential = control_key(CONTROL_KEY)?;
     let mut controllers = vec![Controller {
