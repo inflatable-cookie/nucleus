@@ -198,8 +198,11 @@ export function ensureRollOwner(
     ];
     logFd = openSync(join(options.dataDir, ROLL_OWNER_LOG_FILE), "a", 0o600);
     const spawnProcess = options.spawnProcess ?? spawn;
+    // The data home is the owner's stable ground: options.root can be a
+    // version folder that retention later removes, and a removed cwd breaks
+    // every child process the owner spawns afterwards (nucleus#1566).
     child = spawnProcess(command, args, {
-      cwd: options.root,
+      cwd: options.dataDir,
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: { ...env, QUEUE_LOGIN_SESSION: currentLoginSession(env) },
@@ -665,8 +668,17 @@ export async function runRollOwnerEntry(
   const dataDirArg = argv
     .find((value) => value.startsWith("--data-dir="))
     ?.slice("--data-dir=".length);
+  const dataDir = dataDirArg ?? dataHome();
+  // Owners spawned before the stable-cwd launch still start inside their
+  // version folder; settle on the data home at start, best-effort
+  // (nucleus#1566). The data home may not exist yet; claiming it creates it.
+  try {
+    process.chdir(dataDir);
+  } catch {
+    /* the heartbeat claim creates the data home */
+  }
   const owner = new RollOwner({
-    dataDir: dataDirArg ?? dataHome(),
+    dataDir,
     sourcePath: root,
     processActions: bridgeProcessActions,
     bbPluginRoll: (input) => bbPluginRoll(input),

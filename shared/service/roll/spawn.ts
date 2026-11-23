@@ -724,7 +724,9 @@ export class ServiceSpawner {
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],
             env,
-            cwd: sourcePath,
+            // The service outlives rolls: its cwd must be the stable data
+            // home, never the version folder retention prunes (nucleus#1566).
+            cwd: this.core.dataDir,
           },
         );
       }

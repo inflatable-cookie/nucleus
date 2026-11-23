@@ -190,8 +190,10 @@ export function ensureDetachedDaemon(
     ];
     logFd = openSync(join(options.dataDir, options.logFile), "a", 0o600);
     const spawnProcess = options.spawnProcess ?? spawn;
+    // The daemon outlives rolls: its cwd must be the stable data home, never
+    // the version folder retention prunes (nucleus#1566).
     child = spawnProcess(command, args, {
-      cwd: options.root,
+      cwd: options.dataDir,
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: { ...env, QUEUE_LOGIN_SESSION: currentLoginSession(env) },

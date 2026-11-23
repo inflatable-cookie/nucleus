@@ -22,6 +22,14 @@ export async function runStandaloneService(
   const dataDirOverride = argv
     .find((value) => value.startsWith("--data-dir="))
     ?.slice("--data-dir=".length);
+  // The launcher cwd can be a version folder that retention later removes; a
+  // removed cwd breaks every child process this long-lived service spawns.
+  // Settle on the stable data home at start, best-effort (nucleus#1566).
+  try {
+    process.chdir(dataDirOverride ?? dataHome(env));
+  } catch {
+    /* the service start creates what it needs */
+  }
   const resolvedHostHome = hostHome(env);
   const ownerOptions = {
     dataDir: dataDirOverride ?? dataHome(env),

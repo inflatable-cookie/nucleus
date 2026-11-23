@@ -70,9 +70,17 @@ function withHome<T>(home: string, body: () => T): T {
 }
 
 function fakeSpawn(pid = 4343) {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const spawnProcess = (command: string, args: string[]) => {
-    calls.push({ command, args });
+  const calls: Array<{
+    command: string;
+    args: string[];
+    options?: { cwd?: string };
+  }> = [];
+  const spawnProcess = (
+    command: string,
+    args: string[],
+    options?: { cwd?: string },
+  ) => {
+    calls.push({ command, args, options });
     return {
       pid,
       unref() {},
@@ -108,6 +116,9 @@ test("a cold start spawns one owner, and concurrent starters share its launch cl
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.args.includes(`--data-dir=${dataDir}`));
   assert.ok(calls[0]!.args.some((arg) => arg.endsWith("queue-roll-owner.mjs")));
+  // The owner outlives rolls: its cwd is the stable data home, never the
+  // version folder retention prunes (nucleus#1566).
+  assert.equal(calls[0]!.options?.cwd, dataDir);
   assert.equal(
     JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_LAUNCH_FILE), "utf8")).pid,
     4343,
