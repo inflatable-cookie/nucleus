@@ -79,7 +79,8 @@ export const USAGE_LABELS: Record<
   },
   extra_high: {
     label: "Extra high",
-    summary: "Same starting brackets as High, with automatic Frontier selection",
+    summary:
+      "Same starting brackets as High, with automatic Frontier selection",
     detail:
       "Every task starts as at High, and no run needs permission. The reviewer runs on the worker's bracket.",
   },
@@ -415,7 +416,8 @@ export function supersedingRouteProfile(
 ): string | null {
   if (!request || request.profileId === recordedProfileId) return null;
   const entry = pool.find((item) => item.profileId === request.profileId);
-  return request.required || (entry && requestOnly(entry, usage, requested, climbTier))
+  return request.required ||
+    (entry && requestOnly(entry, usage, requested, climbTier))
     ? request.profileId
     : null;
 }

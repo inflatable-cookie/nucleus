@@ -1,4 +1,4 @@
-import { profile } from './support/fakes';
+import { profile } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -21,7 +21,6 @@ import {
 } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 
-
 const profiles = [
   profile("worker"),
   profile("cheap"),
@@ -40,7 +39,9 @@ function fixture() {
       roles: ["worker", "reviewer"],
       weight: "default",
       scopes: ["general"],
-      capability: ["worker", "mechanical", "worker", "heavyweight", "worker"][i],
+      capability: ["worker", "mechanical", "worker", "heavyweight", "worker"][
+        i
+      ],
     }),
   );
   store.setMeta("pool", pool);
@@ -138,7 +139,10 @@ test("unrated worker/reviewer and unsigned frontier cannot prove critical capabi
       e.profileId === "peer" ? { ...e, capability: null } : e,
     );
     f.store.setMeta("pool", entries);
-    assert.ok(f.engine.resolution.select(f.task, "reviewer"), "a reviewer is still selected when none proves critical capability; the fallback proceeds");
+    assert.ok(
+      f.engine.resolution.select(f.task, "reviewer"),
+      "a reviewer is still selected when none proves critical capability; the fallback proceeds",
+    );
     const chosen = { profile: profiles[2] };
     assert.equal(criticalReviewerMeets(f.task, chosen.profile, entries), false);
     const record = (
@@ -184,14 +188,24 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
       "a noncritical reviewer at Normal runs one bracket below the Worker author (Tom, 2026-11-19)",
     );
     assert.equal(
-      f.engine.resolution.select({ ...f.task, critical: false }, "reviewer", [], new Set(), "high")
-        ?.profile.id,
+      f.engine.resolution.select(
+        { ...f.task, critical: false },
+        "reviewer",
+        [],
+        new Set(),
+        "high",
+      )?.profile.id,
       "cheap",
       "at High the noncritical reviewer runs one bracket below the Worker author (Tom, 2026-11-22)",
     );
     assert.equal(
-      f.engine.resolution.select({ ...f.task, critical: false }, "reviewer", [], new Set(), "extra_high")
-        ?.profile.id,
+      f.engine.resolution.select(
+        { ...f.task, critical: false },
+        "reviewer",
+        [],
+        new Set(),
+        "extra_high",
+      )?.profile.id,
       "peer",
       "at Extra high the noncritical reviewer runs on the worker's bracket",
     );

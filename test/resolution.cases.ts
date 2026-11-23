@@ -174,7 +174,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: reviewer.id,
@@ -184,7 +183,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "worker",
-      
     },
     {
       profileId: coordinator.id,
@@ -194,7 +192,6 @@ function fixture(
       weight: "default",
       scopes: ["general"],
       capability: "mechanical",
-      
     },
   ]);
   const submitted = store.insert(
@@ -337,7 +334,9 @@ function fixture(
       verifyCleanQueueWorktree: async () => {},
       // nucleus#1425: the merged source is the forge's observed merge, never the open-PR proof.
       verifyMergedReviewSource: async (t, route) => ({
-        ...(await verifyUnreviewedMergeSource(t, route, () => adapter.externalMerge!(t))),
+        ...(await verifyUnreviewedMergeSource(t, route, () =>
+          adapter.externalMerge!(t),
+        )),
         repository: "example/repo",
         headRepository: "example/repo",
         crossRepository: false,
@@ -1670,7 +1669,11 @@ test("applied ordinary review retains its reader across the next exact-head roun
     await f.report("changes_required");
     assert.deepEqual(calls, []);
     assert.equal(f.current().resolution.reviewerAgentId, first.agentId);
-    assert.equal(f.current().resolution.reviewerProfile?.id, "coordinator", "at High the first reviewer runs one bracket below the worker");
+    assert.equal(
+      f.current().resolution.reviewerProfile?.id,
+      "coordinator",
+      "at High the first reviewer runs one bracket below the worker",
+    );
     assert.equal(f.current().agentId, "worker");
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
@@ -2080,7 +2083,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     await f.engine.wake();
@@ -2161,7 +2163,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     f.store.setMeta("usageLevel", {
@@ -2190,7 +2191,8 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
       "reviewer",
     );
     assert.equal(
-      f.store.pool().find((entry) => entry.profileId === highPick?.profile.id)?.capability,
+      f.store.pool().find((entry) => entry.profileId === highPick?.profile.id)
+        ?.capability,
       "worker",
       "at High a fresh reviewer for the Heavyweight worker runs on the Worker bracket",
     );
@@ -2244,7 +2246,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         roles: ["reviewer"],
         weight: "default",
         scopes: ["general"],
-        
       },
     ]);
     assert.match(
@@ -2264,7 +2265,6 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         weight: "default",
         scopes: ["general"],
         capability: "frontier",
-        
       },
     ]);
     assert.equal(
@@ -2483,7 +2483,11 @@ test("a stopped callback-free reviewer is replaced when its stored subscription 
     assert.equal(f.current().resolution.reviewerAgentId, null);
     await f.engine.wake();
     assert.equal(f.run().role, "reviewer");
-    assert.equal(f.run().profile?.id, backup.id, "with the Mechanical bracket paused, the nearest permitted bracket above serves");
+    assert.equal(
+      f.run().profile?.id,
+      backup.id,
+      "with the Mechanical bracket paused, the nearest permitted bracket above serves",
+    );
     assert.equal(f.run().workspaceId, old.workspaceId);
     assert.equal(f.run().head, old.head);
     assert.equal(f.current().resolution.roleReplacements, 1);
@@ -3115,7 +3119,6 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
       {
         profileId: frontier.id,
@@ -3125,7 +3128,6 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
     ]);
     // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
@@ -3305,7 +3307,6 @@ test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permis
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
       {
         profileId: alt.id,
@@ -3315,7 +3316,6 @@ test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permis
         weight: "default",
         scopes: ["general"],
         capability: "heavyweight",
-        
       },
     ]);
     store.setMeta("usageLevel", {
@@ -3992,7 +3992,6 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         weight: "default",
         scopes: ["general"],
         capability: "worker",
-        
       },
     ]);
     f.adapter.verifyResume = async () => {};
@@ -8396,7 +8395,6 @@ test("coordinator exhaustion is stored while paused, then replaced with a fenced
         weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        
       },
     ]);
     f.store.setMeta("paused", true);
@@ -8467,7 +8465,6 @@ test("closeout provider replacement refreshes main without repeating merge", asy
         weight: "default",
         scopes: ["general"],
         capability: "mechanical",
-        
       },
     ]);
     f.idle(old.agentId!);
@@ -13741,7 +13738,11 @@ test("Consumer #687: an explicit successor and a real origin thread are unaffect
         "queue-planner",
         "the Queue planner is the second fallback",
       );
-      f.store.setProjectPlanner({ key: queueKey, agentId: null, setBy: "test" });
+      f.store.setProjectPlanner({
+        key: queueKey,
+        agentId: null,
+        setBy: "test",
+      });
       assert.equal(
         originRecipient(f.store, f.store.task(task.id)),
         null,
@@ -17079,7 +17080,7 @@ function requestOnlyPool(f: ReturnType<typeof fixture>, frontier: string) {
       roles: ["reviewer"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "worker",
     },
     {
@@ -17089,7 +17090,7 @@ function requestOnlyPool(f: ReturnType<typeof fixture>, frontier: string) {
       roles: ["coordinator"],
       weight: "default",
       scopes: ["general"],
-      
+
       capability: "mechanical",
     },
   ]);

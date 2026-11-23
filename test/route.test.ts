@@ -79,11 +79,9 @@ function fixture() {
   // Spec 053: the rating, not the role switch, keeps coord to coordinator demand.
   const coord = profile("coord", "coord-model", ["coordinator"], undefined, {
     capability: "mechanical",
-    
   });
   // Spec 052: Frontier needs a request at High.
   const nova = profile("nova", "nova-model", ["worker"], undefined, {
-    
     capability: "frontier",
   });
   const all = [author, sol, luna, authorrev, coord, nova];
@@ -94,7 +92,11 @@ function fixture() {
   // The reviewer runs one bracket below the worker at High (Tom, 2026-11-22),
   // so the independent Mechanical coordinator profile, not the Worker-rated
   // luna, is the natural reviewer these routes are measured against.
-  store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
+  store.setMeta("usageLevel", {
+    level: "high",
+    until: null,
+    setAt: new Date().toISOString(),
+  });
   const submitted = store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),
@@ -1446,17 +1448,35 @@ test("a planner routes to Frontier for the next worker run without opening a dec
   try {
     const reason = "The revision needs Frontier for cross-system analysis";
     await assert.rejects(
-      f.control({ role: "worker", profileId: "nova", caller: "worker", reason }),
+      f.control({
+        role: "worker",
+        profileId: "nova",
+        caller: "worker",
+        reason,
+      }),
       /worker and reviewer cannot request a profile/,
     );
     f.store.update(f.task.id, {
-      resolution: { ...f.current().resolution, reviewerAgentId: "reviewer-thread" },
+      resolution: {
+        ...f.current().resolution,
+        reviewerAgentId: "reviewer-thread",
+      },
     });
     await assert.rejects(
-      f.control({ role: "reviewer", profileId: "nova", caller: "reviewer-thread", reason }),
+      f.control({
+        role: "reviewer",
+        profileId: "nova",
+        caller: "reviewer-thread",
+        reason,
+      }),
       /worker and reviewer cannot request a profile/,
     );
-    const routed = await f.control({ role: "worker", profileId: "nova", caller: "origin", reason });
+    const routed = await f.control({
+      role: "worker",
+      profileId: "nova",
+      caller: "origin",
+      reason,
+    });
     assert.equal(routed.profileRequests?.worker?.reason, reason);
     assert.equal(routed.agentId, "worker");
     assert.deepEqual(f.stops, []);

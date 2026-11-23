@@ -378,8 +378,13 @@ export function eligibilityReasons(
       if (!entry.enabled) causes.push("disabled");
       if (!p) causes.push(eligibilityAbsence(task, entry.profileId, catalog));
       else if (!p.available) causes.push(`unavailable: ${p.problem}`);
-      if (request?.profileId !== entry.profileId && requestOnly(entry, usage, requested, climb))
-        causes.push(`${entry.capability ?? "unrated"} tier requires an explicit profile request at the ${usage} usage level`);
+      if (
+        request?.profileId !== entry.profileId &&
+        requestOnly(entry, usage, requested, climb)
+      )
+        causes.push(
+          `${entry.capability ?? "unrated"} tier requires an explicit profile request at the ${usage} usage level`,
+        );
       const thinking = workerThinking(task);
       if (thinking && p && !p.supportedThinking.includes(thinking))
         causes.push(`thinking option ${thinking} unsupported`);
@@ -441,9 +446,14 @@ export function chooseProfile(
   // no exception.
   const climb = role === "worker" ? workerClimbTarget(task, pool, usage) : null;
   const climbTier = climb?.to ?? climbedTier(task);
-  const preferredId = request?.profileId ?? (role === "worker" ? task.preferredProfileId : "");
-  const required = request?.required ?? (role === "worker" && task.requirePreferred);
-  const thinkingOptionId = role === "worker" ? workerThinking(task) : (request?.thinkingOptionId ?? "");
+  const preferredId =
+    request?.profileId ?? (role === "worker" ? task.preferredProfileId : "");
+  const required =
+    request?.required ?? (role === "worker" && task.requirePreferred);
+  const thinkingOptionId =
+    role === "worker"
+      ? workerThinking(task)
+      : (request?.thinkingOptionId ?? "");
   // Spec 053 / Spec 052 (Tom, 2026-11-17): the run's tier decides the set.
   const fullDemand = runDemand(task.complexity, role, usage);
   const workerActual = workerActualTier(task, pool);
@@ -505,14 +515,17 @@ export function chooseProfile(
     if (
       preferred &&
       roleMeets(preferred.entry) &&
-      (request || automaticReachable(preferred.entry, usage, requested, climbTier, role))
+      (request ||
+        automaticReachable(preferred.entry, usage, requested, climbTier, role))
     )
       return preferred;
     if (required) return null;
   }
   // An explicit request can reach a profile outside automatic selection.
   // If the request fell through, keep all automatic bounds.
-  eligible = eligible.filter(({ entry }) => !requestOnly(entry, usage, requested, climbTier));
+  eligible = eligible.filter(
+    ({ entry }) => !requestOnly(entry, usage, requested, climbTier),
+  );
   if (role === "reviewer" && task.critical) {
     const rigorous = eligible.filter((candidate) =>
       criticalReviewerMeets(task, candidate.profile, pool),
@@ -652,7 +665,9 @@ export function taskRoutingPolicy(
           ? automaticSelection(entry, usage.level, taskTier, climbTier, role)
           : null,
         gates,
-        ...(source === "request" ? { reason: task.profileRequests?.[role]?.reason } : {}),
+        ...(source === "request"
+          ? { reason: task.profileRequests?.[role]?.reason }
+          : {}),
       };
       return {
         ...policy,
@@ -762,8 +777,7 @@ export function workerSelectionExplanation(
                   .filter((item) => item.profileId !== row.profileId)
                   .slice(0, 2)
                   .map(
-                    (item) =>
-                      `${item.name} ${item.recent} over ${item.share}`,
+                    (item) => `${item.name} ${item.recent} over ${item.share}`,
                   )
                   .join(", ")}`
               : ""
@@ -1036,8 +1050,7 @@ export class RoleSelection {
         requirePreferred: false,
         thinkingOptionId: "",
         scope:
-          role === "coordinator" &&
-          !t.profileRequests?.coordinator
+          role === "coordinator" && !t.profileRequests?.coordinator
             ? ("general" as const)
             : t.scope,
       },
@@ -1166,11 +1179,19 @@ export class RoleSelection {
     return this.resolution.retainedProfileIssue(t.profile);
   }
   /** Keep a retained reviewer or coordinator eligible when the usage level changes. */
-  retainedRouteIssue(t: Task, assigned: Profile | null, role: "reviewer" | "coordinator"): string | null {
-    if (!assigned || t.profileRequests?.[role]?.profileId === assigned.id) return null;
-    const entry = this.store.pool().find((item) => item.profileId === assigned.id);
+  retainedRouteIssue(
+    t: Task,
+    assigned: Profile | null,
+    role: "reviewer" | "coordinator",
+  ): string | null {
+    if (!assigned || t.profileRequests?.[role]?.profileId === assigned.id)
+      return null;
+    const entry = this.store
+      .pool()
+      .find((item) => item.profileId === assigned.id);
     const usage = this.store.usageLevel();
-    return entry && requestOnly(entry, usage, requestedTier(t.complexity), climbedTier(t))
+    return entry &&
+      requestOnly(entry, usage, requestedTier(t.complexity), climbedTier(t))
       ? `profile ${assigned.name || assigned.id} requires an explicit profile request at the ${usage} usage level`
       : null;
   }
