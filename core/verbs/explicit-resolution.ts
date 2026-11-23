@@ -463,7 +463,8 @@ export function releasePlan(
         run?.id ?? input.run,
       );
       const reattachRefused = reattachRefusal(reattach);
-      if (reattachRefused) issues.push(`Checkout reattach: ${reattachRefused}.`);
+      if (reattachRefused)
+        issues.push(`Checkout reattach: ${reattachRefused}.`);
       if (process?.pid && process.processGroupId && process.startIdentity) {
         await attempt("Process-group stop", () => {
           signalProcessGroupByLeader(
@@ -479,7 +480,9 @@ export function releasePlan(
         // Stop the released turn without dropping the retained worker binding.
         const releasedRetainedTurn =
           current.runId === task.runId &&
-          (initial || (run?.role === "revision" && task.resolution.currentRunId === run.id));
+          (initial ||
+            (run?.role === "revision" &&
+              task.resolution.currentRunId === run.id));
         if (
           (current.agentId === agentId && !releasedRetainedTurn) ||
           threadServesAnotherTask(store, current, agentId)
