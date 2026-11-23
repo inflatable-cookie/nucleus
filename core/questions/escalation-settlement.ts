@@ -5,16 +5,14 @@ import {
   type Task,
   type TaskControlInput,
 } from "../../shared/contracts";
-import { escalationOutlived } from "../recovery/task-reasons";
+import { TASK_PROGRESSING_REASON } from "../../shared/task-stop";
 import { Decisions } from "../planning/decisions";
 import type { Resolution } from "../resolution";
-import { collectOwnerVerbFacts, ownerVerbViews } from "../verbs/owner-verbs";
+import type { Store } from "../store/store";
 import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
-  escalationChoiceBinding,
-  escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
   extractTaskReferenceCandidates,
@@ -23,7 +21,148 @@ import {
   type LadderEvent,
 } from "./ladder";
 import { closeEscalationFollowups } from "./ladder/continuation";
-import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host/errors";
+import {
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+} from "../host/errors";
+
+/**
+ * Retire an escalation's owned stop, waits, followups, and optionally its open
+ * operator-classification decision so the scheduler cannot re-park the task on
+ * a settled or cause-cleared escalation.
+ */
+function retireEscalationSurfaces(
+  store: Store,
+  taskId: string,
+  escalationId: string,
+  detail: string,
+  options: { withdrawDecision?: boolean } = {},
+): void {
+  closeEscalationFollowups(store, taskId, escalationId);
+  for (const questionId of [
+    `ns-escalation-${escalationId}`,
+    `ns-escalation-${escalationId}-project`,
+    `ns-decider-${escalationId}`,
+  ]) {
+    const key = `delegation:${questionId}`;
+    const qEvents = store.eventsAll(key);
+    if (
+      qEvents.length &&
+      !qEvents.some((event) => event.kind === "delegated_closed")
+    )
+      store.event(
+        key,
+        "delegated_closed",
+        `Escalation ${escalationId} closed: ${detail}`.slice(0, 4000),
+      );
+  }
+  const events = store.eventsAll(taskId);
+  const activeWaits = events.filter(
+    (event) =>
+      event.kind === "planner_escalation_wait" &&
+      event.detail.startsWith(`${escalationId}:`) &&
+      !events.some(
+        (sup) =>
+          sup.kind === "planner_escalation_wait_superseded" &&
+          sup.id > event.id &&
+          sup.detail.startsWith(`${escalationId}:`),
+      ),
+  );
+  if (activeWaits.length > 0)
+    store.event(
+      taskId,
+      "planner_escalation_wait_superseded",
+      `${escalationId}: ${detail}`.slice(0, 4000),
+    );
+  if (options.withdrawDecision) {
+    const linked = events.findLast(
+      (event) =>
+        event.kind === "planner_escalation_decision_linked" &&
+        event.detail.startsWith(`${escalationId}:`),
+    );
+    const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
+    if (decisionId) {
+      const exists = Boolean(
+        store.db.prepare("SELECT 1 FROM decisions WHERE id=?").get(decisionId),
+      );
+      if (exists) {
+        const stored = store.decision(decisionId);
+        if (stored.status === "open") {
+          const decisions = new Decisions(store);
+          const withdrawInput = {
+            id: stored.id,
+            version: stored.version,
+            reason: `Escalation ${escalationId} closed automatically: ${detail}`,
+            withdrawnBy: "nucleus",
+          };
+          if (store.db.isTransaction)
+            decisions.withdrawInTransaction(withdrawInput);
+          else decisions.withdraw(withdrawInput);
+        }
+      }
+    }
+  }
+  const latest = store.task(taskId);
+  if (
+    latest.resolution.stop?.fact?.code === "escalation" &&
+    latest.resolution.stop.fact.subject === escalationId
+  ) {
+    store.update(
+      taskId,
+      {
+        resolution: { ...latest.resolution, stop: null },
+        ...(![
+          "done",
+          "cancelled",
+          "blocked",
+          "error",
+          "needs_attention",
+        ].includes(latest.phase)
+          ? { reason: TASK_PROGRESSING_REASON }
+          : {}),
+      },
+      "planner_escalation_stop_cleared",
+      `${escalationId}: ${detail}`.slice(0, 4000),
+    );
+  }
+}
+
+/**
+ * Spec 067 batch 4 (round 10): when a task reaches a terminal phase (`done` or
+ * `cancelled`), close its open escalations and retire their stops, waits,
+ * followups, question windows, and open linked decisions in one transaction.
+ * Never closes on merge intent or non-terminal states; non-terminal tasks use
+ * `record.clear kind=escalation` manually.
+ */
+export function closeTerminalEscalations(store: Store, task: Task): string[] {
+  const current = store.taskOrNull(task.id);
+  if (!current) return [];
+  if (current.phase !== "done" && current.phase !== "cancelled") return [];
+  const reason =
+    current.phase === "done" ? "the task completed" : "the task was cancelled";
+  const events = store.eventsAll(current.id) as LadderEvent[];
+  const escalations = plannerEscalations(events);
+  if (escalations.length === 0) return [];
+  const closed: string[] = [];
+  const apply = () => {
+    for (const escalation of escalations) {
+      if (!escalation.answered) {
+        store.event(
+          current.id,
+          "planner_escalation_resolved",
+          `${escalation.id}: closed automatically; ${reason}`,
+        );
+        closed.push(escalation.id);
+      }
+      retireEscalationSurfaces(store, current.id, escalation.id, reason, {
+        withdrawDecision: true,
+      });
+    }
+  };
+  if (store.db.isTransaction) apply();
+  else store.transaction(apply);
+  return closed;
+}
 
 type Answerer =
   | { role: "planner" | "decider"; agentId: string }
@@ -81,10 +220,11 @@ export class EscalationSettlement {
       return result;
     });
     this.escalationSettlements.set(key, settlement);
-    void settlement.finally(() => {
+    const cleanup = () => {
       if (this.escalationSettlements.get(key) === settlement)
         this.escalationSettlements.delete(key);
-    });
+    };
+    settlement.then(cleanup, cleanup);
     return settlement;
   }
   /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
@@ -226,6 +366,7 @@ export class EscalationSettlement {
     answerer: Answerer,
   ): Promise<string | null> {
     const delegatedAnswer = answerer.role !== "operator";
+    closeTerminalEscalations(this.store, this.store.task(t.id));
     if (
       plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
         (item) => item.id === id,
@@ -233,24 +374,6 @@ export class EscalationSettlement {
     ) {
       if (delegatedAnswer)
         throw Error(`Escalation ${id} is already settled; read next again`);
-      return null;
-    }
-    if (escalationOutlived(this.store.task(t.id))) {
-      this.store.event(
-        t.id,
-        "planner_escalation_answer_pending",
-        `${id}: ${JSON.stringify({ questionId, who, answer, control: null })}`,
-      );
-      this.store.event(
-        t.id,
-        "planner_escalation_answered",
-        `${id}: answered by ${who}: ${answer.slice(0, 4000)}`,
-      );
-      this.store.event(
-        t.id,
-        "planner_escalation_applied",
-        `${id}: nothing to apply; the task merged or ended first`,
-      );
       return null;
     }
     const control = escalationAnswerControl(answer);
@@ -290,20 +413,6 @@ export class EscalationSettlement {
               reviewerIncident.runId
             ? this.store.run(reviewerIncident.runId)
             : null;
-      const choiceFacts =
-        selected.kind === "owner"
-          ? collectOwnerVerbFacts(this.store, current)
-          : null;
-      if (selected.kind === "owner" && choiceFacts) {
-        if (selected.choice.binding === undefined)
-          throw Error(
-            "This offer has no recorded run or PR binding. Use a fresh offer or apply the current action from task next",
-          );
-        if (selected.choice.binding !== escalationChoiceBinding(choiceFacts))
-          throw Error(
-            "The task's run or PR binding changed after this escalation offer; read next again",
-          );
-      }
       const workerChoice =
         selected.kind === "owner" &&
         ((selected.choice.verb === "move" &&
@@ -487,27 +596,11 @@ export class EscalationSettlement {
       }
       if (selected.kind === "owner") {
         const choice = selected.choice;
-        // Re-read `next` and match the offered identity, never accepting new fields,
-        // force or an operator-only qualification from the delegate.
-        const withoutVersion = (args: Record<string, unknown>) =>
-          Object.fromEntries(
-            Object.entries(args).filter(([key]) => key !== "version"),
-          );
-        const fresh = escalationVerbChoices(ownerVerbViews(choiceFacts!)).find(
-          (item) =>
-            item.verb === choice.verb &&
-            JSON.stringify(withoutVersion(item.args)) ===
-              JSON.stringify(withoutVersion(choice.args)),
-        );
-        if (!fresh)
-          throw Error(
-            `The selected ${choice.verb} is no longer available; read next again`,
-          );
         const controlInput = taskControlInputSchema.parse({
-          ...fresh.args,
+          ...choice.args,
           taskId: current.id,
           version: current.version,
-          action: fresh.verb,
+          action: choice.verb,
           reason,
           ...grant,
         });
@@ -525,7 +618,7 @@ export class EscalationSettlement {
         this.store.event(
           t.id,
           "planner_escalation_answer_pending",
-          `${id}: ${JSON.stringify({ questionId, who, answer, label: fresh.label, control: controlInput })}`,
+          `${id}: ${JSON.stringify({ questionId, who, answer, label: choice.label, control: controlInput })}`,
         );
         await this.resolution.applyOperatorControl(controlInput);
         this.store.event(
@@ -536,7 +629,7 @@ export class EscalationSettlement {
         this.store.event(
           current.id,
           "planner_escalation_applied",
-          `${id}: ${fresh.label}`,
+          `${id}: ${choice.label}`,
         );
         return null;
       }
@@ -809,6 +902,7 @@ export class EscalationSettlement {
       who,
       offered,
       questionId,
+      answererFromLabel(who),
     );
   }
 
@@ -850,7 +944,11 @@ export class EscalationSettlement {
     if (deferred?.escalationId === id && deferred.questionId === questionId)
       return "pending";
     const control = intent.control;
-    if (!control && escalationOutlived(this.store.task(taskId))) {
+    const currentTask = this.store.task(taskId);
+    if (
+      !control &&
+      (currentTask.phase === "done" || currentTask.phase === "cancelled")
+    ) {
       this.store.event(
         taskId,
         "planner_escalation_answered",

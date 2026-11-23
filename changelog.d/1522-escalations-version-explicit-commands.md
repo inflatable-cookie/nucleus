@@ -1,0 +1,3 @@
+- Removed snapshot binding-hash and "offer no longer available" refusal loops on escalation answers; plain-choice answers apply at the current task version and refuse only once closed.
+- Reaching a terminal task phase closes open escalations and open linked decisions in one transaction; `record.clear kind=escalation` remains the manual close.
+- Removed the legacy `restart`-as-escalation-answer lever in favour of explicit commands and `record.clear`.

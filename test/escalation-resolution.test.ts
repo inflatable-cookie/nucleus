@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store, digest } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   completionSchema,
   dispositionSchema,
@@ -113,111 +114,53 @@ const escalatedEvents = (f: ReturnType<typeof fixture>) =>
     .eventsAll(f.taskId)
     .filter((event) => event.kind === "recovery_escalated");
 
-test("an answered escalation on a terminal task resolves with the operator reason while the escalation event survives", async () => {
+test("restart no longer answers an escalation on a terminal task; record.clear clears the incident while the escalation event survives", async () => {
   const f = fixture();
   try {
     const summary =
       "Operator disposition required before closeout can continue";
     escalated(f, summary);
-    f.store.putNotice({
-      id: "attention",
-      taskId: f.taskId,
-      agentId: "origin",
-      recipientAgentId: "origin",
-      workspaceId: null,
-      sources: [],
-      originEntry: true,
-      kind: "attention",
-      status: "pending",
-      error: "",
-      text: "Needs attention",
-    });
-    f.store.putNotice({
-      id: "attention-intent",
-      taskId: f.taskId,
-      agentId: "origin",
-      recipientAgentId: "origin",
-      workspaceId: null,
-      sources: [],
-      originEntry: true,
-      kind: "attention",
-      status: "intent",
-      error: "",
-      text: "Delivery outcome unknown",
-    });
-    f.store.putNotice({
-      id: "completion",
-      taskId: f.taskId,
-      agentId: "origin",
-      recipientAgentId: "origin",
-      workspaceId: null,
-      sources: [],
-      originEntry: true,
-      kind: "completion",
-      status: "pending",
-      error: "",
-      text: "Completion",
-    });
     const before = f.store.task(f.taskId);
     assert.equal(escalatedEvents(f).length, 1);
     assert.equal(before.resolution.attention, true);
+    assert.ok(before.resolution.incident?.id);
 
-    const resolved = await f.engine.performTaskControl(
-      resolveControl(
-        f.taskId,
-        before.version,
-        "The landed review-skip refusal already answered this escalation",
-      ),
+    // Spec 067 batch 4: restart-as-escalation-answer is deleted; restart refuses on a terminal task.
+    await assert.rejects(
+      () =>
+        f.engine.performTaskControl(
+          resolveControl(
+            f.taskId,
+            before.version,
+            "The landed review-skip refusal already answered this escalation",
+          ),
+        ),
+      /cancelled|Nothing is parked/i,
     );
 
-    assert.equal(
-      resolved.phase,
-      "cancelled",
-      "resolving the escalation never decides the task",
+    // The explicit replacement clears the incident directly and preserves the escalation event.
+    const cleared = await resolveExplicitly(
+      f.engine,
+      {
+        action: "record.clear",
+        taskId: f.taskId,
+        version: before.version,
+        kind: "incident",
+        id: before.resolution.incident!.id,
+        reason:
+          "The landed review-skip refusal already answered this escalation",
+        accept: [],
+        caller: "operator (board)",
+      },
+      () => "next",
     );
-    assert.equal(resolved.resolution.attention, false);
-    assert.equal(resolved.resolution.recovery?.status, "resolved");
-    assert.equal(resolved.resolution.incident?.status, "resolved");
-    assert.match(
-      resolved.resolution.incident?.detail ?? "",
-      /answered by the operator/i,
-    );
-    assert.match(
-      resolved.resolution.incident?.detail ?? "",
-      /review-skip refusal/,
-    );
-    // The escalation event and its summary stay untouched evidence.
-    assert.equal(resolved.resolution.recovery?.summary, summary);
+
+    assert.equal(cleared.explicitResolution?.status, "applied");
+    assert.equal(cleared.phase, "cancelled");
+    assert.equal(cleared.resolution.incident, null);
     assert.deepEqual(
       escalatedEvents(f).map((event) => event.detail),
       [summary],
-    );
-    // Pending attention notices settle; a delivered or uncertain outcome is not rewritten.
-    const notices = f.store.notices(f.taskId);
-    assert.equal(
-      notices.find((notice) => notice.id === "attention")?.status,
-      "superseded",
-    );
-    assert.equal(
-      notices.find((notice) => notice.id === "attention-intent")?.status,
-      "intent",
-    );
-    assert.equal(
-      notices.find((notice) => notice.id === "completion")?.status,
-      "pending",
-    );
-    assert.ok(
-      f.store
-        .eventsAll(f.taskId)
-        .some((event) => event.kind === "attention_episode_resolved"),
-    );
-    assert.ok(
-      f.store
-        .eventsAll(f.taskId)
-        .some(
-          (event) =>
-            event.kind === "operator_control" && event.detail === "restart",
-        ),
     );
   } finally {
     await f.close();
@@ -275,7 +218,7 @@ test("a task with any unreleased run refuses escalation resolution without mutat
         f.engine.performTaskControl(
           resolveControl(f.taskId, before.version, "The question was answered"),
         ),
-      /unreleased reviewer run/,
+      /cancelled|Nothing is parked/i,
     );
     const after = f.store.task(f.taskId);
     assert.equal(after.resolution.recovery?.status, "escalated");

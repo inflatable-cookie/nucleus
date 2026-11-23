@@ -424,7 +424,8 @@ the typed pre-send refusal this verb throws.
 **RestartControls** (`core/verbs/restart.ts`). The owner `restart` verb's
 admission: the terminal and disposition gates, role and shape derivation, retained
 workspace recovery, the replacement ceiling, the owner-stop deferral, the parked
-step and escalation answer it falls back to, and the stalled-run handoff. Each
+step it falls back to (Spec 067 batch 4 removed the legacy restart-as-escalation-answer
+path in favour of explicit commands and `record.clear`), and the stalled-run handoff. Each
 shape is served by its own owner: `restart-worker.ts` continues or replaces a
 worker run (owner-stopped, pre-dispatch, absent creation, blocked/retained and
 stopped revision) and owns the worker restart arm; `restart-review.ts` continues a
@@ -771,7 +772,11 @@ registered on Engine.
 
 **Ladder** (`core/questions/ladder/`). A blocked worker gets
 one reviewer consult per cause, then one planner escalation, which a planner or
-decider settles or classifies to the operator. Also settles open escalations
+decider settles or classifies to the operator. Plain escalation answers apply at
+the current task version without snapshot binding-hash or offer-availability
+refusals, and a task reaching a terminal phase closes its open escalations and
+linked decisions in one transaction (`closeTerminalEscalations` in
+`escalation-settlement.ts`). Also settles open escalations
 when an ordinary control moves the task. Enforces
 [Non-converging review ladder](#non-converging-review-ladder-spec-058-cutover-3)
 and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). The folder splits the

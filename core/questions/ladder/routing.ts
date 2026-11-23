@@ -1,4 +1,10 @@
-import { isOperatorOrigin, taskOwner, taskPlanner, type Task, type TaskStopVerb } from "../../../shared/contracts";
+import {
+  isOperatorOrigin,
+  taskOwner,
+  taskPlanner,
+  type Task,
+  type TaskStopVerb,
+} from "../../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import { digest } from "../../store/store";
 import {
@@ -7,13 +13,9 @@ import {
 } from "../question-delegation";
 import { delegateQuestion, plannerWindows } from "../planner-delegation";
 import { DelegatedHostUnavailable } from "../delegation";
-import { escalationOutlived } from "../../recovery/task-reasons";
-import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
 import type { Ladder } from "./ladder";
 import { plannerEscalationSuggestedVerbs } from "./proof";
 import {
-  escalationChoiceBinding,
-  escalationVerbChoices,
   plannerEscalationChoicesFor,
   type EscalationVerbChoice,
 } from "./questions";
@@ -108,7 +110,10 @@ export function openPlannerEscalation(
   });
 }
 
-function nonOperatorEscalationHolder(ladder: Ladder, task: Task): string | undefined {
+function nonOperatorEscalationHolder(
+  ladder: Ladder,
+  task: Task,
+): string | undefined {
   const planner = taskPlanner(task);
   if (planner && !isOperatorOrigin(planner)) return planner;
   const project = ladder.store.projectFor(
@@ -327,18 +332,13 @@ async function routeEscalationRound(
       event.kind === "planner_escalation_offered" &&
       event.detail.startsWith(`${id}: `),
   );
-  const offerFacts = collectOwnerVerbFacts(
-    ladder.store,
-    ladder.store.task(t.id),
-  );
+  // Spec 067 batch 4 (round 10): new escalations offer plain choices only;
+  // executable owner-verb answers move to a follow-up lead.
   const offered: EscalationVerbChoice[] = offerEvent
     ? (JSON.parse(
         offerEvent.detail.slice(id.length + 2),
       ) as EscalationVerbChoice[])
-    : escalationVerbChoices(
-        ownerVerbViews(offerFacts),
-        escalationChoiceBinding(offerFacts),
-      );
+    : [];
   if (!offerEvent)
     ladder.store.event(
       t.id,
@@ -388,7 +388,10 @@ async function routeEscalationRound(
     const reason = issue ? `${detail}. ${issue}` : detail;
     const resolvedHolder = holderAgentId ?? fallbackHolder;
     const routed = issue
-      ? { detail: reason, ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}) }
+      ? {
+          detail: reason,
+          ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}),
+        }
       : null;
     const entry = `${id}: ${JSON.stringify(routed)}`;
     if ((latest || routed) && latest?.detail !== entry)
@@ -397,11 +400,13 @@ async function routeEscalationRound(
       ...(resolvedHolder ? { holderAgentId: resolvedHolder } : {}),
     });
   };
+  const isTerminalPhase = (task: Task): boolean =>
+    task.phase === "done" || task.phase === "cancelled";
   if (
     issue &&
     !planners.length &&
     !recoverable &&
-    !escalationOutlived(ladder.store.task(t.id))
+    !isTerminalPhase(ladder.store.task(t.id))
   ) {
     recordRoutingWait(
       phase === "return"
@@ -422,7 +427,7 @@ async function routeEscalationRound(
     retainDecider: true,
     current: () =>
       !plannerEscalations(events()).find((item) => item.id === id)?.answered,
-    canAdvance: () => !escalationOutlived(ladder.store.task(t.id)),
+    canAdvance: () => !isTerminalPhase(ladder.store.task(t.id)),
     onIntent: (role, agentId, rung) => {
       if (
         !recoverable &&
@@ -435,9 +440,12 @@ async function routeEscalationRound(
         )
       ) {
         if (phase === "return")
-          ladder.store.event(t.id, "planner_escalation_return_sent", `${id}: sent`);
-        else
-          ladder.store.event(t.id, "planner_escalation_sent", `${id}: sent`);
+          ladder.store.event(
+            t.id,
+            "planner_escalation_return_sent",
+            `${id}: sent`,
+          );
+        else ladder.store.event(t.id, "planner_escalation_sent", `${id}: sent`);
       }
       if (role === "planner")
         recordRoutingWait(
@@ -499,7 +507,7 @@ async function routeEscalationRound(
       );
     }
   };
-  if (!reply && escalationOutlived(ladder.store.task(t.id))) {
+  if (!reply && isTerminalPhase(ladder.store.task(t.id))) {
     ladder.store.event(
       t.id,
       "planner_escalation_answered",
@@ -599,16 +607,8 @@ async function routeEscalationRound(
         })
       : null;
     const followupQuestionId = followupOffer?.questionId ?? refusalBaseId;
-    const followupFacts = collectOwnerVerbFacts(
-      ladder.store,
-      ladder.store.task(t.id),
-    );
-    const currentOffers =
-      followupOffer?.ownerChoices ??
-      escalationVerbChoices(
-        ownerVerbViews(followupFacts),
-        escalationChoiceBinding(followupFacts),
-      );
+    const currentOffers: EscalationVerbChoice[] =
+      followupOffer?.ownerChoices ?? [];
     const retryChoices = followupOffer?.choices ?? [
       ...plannerEscalationChoicesFor(ladder.store.task(t.id)),
       ...currentOffers.map((item) => item.label),
@@ -641,7 +641,7 @@ async function routeEscalationRound(
           prompt: nativeDelegationPrompt("planner", {
             question: `Your choice was refused: ${refusal}. Choose again for the same escalation.`,
             choices: retryChoices,
-            context: ladder.resolution.decisionContext(followupFacts.task),
+            context: ladder.resolution.decisionContext(ladder.store.task(t.id)),
           }),
           signal: new AbortController().signal,
           timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS,
@@ -651,9 +651,7 @@ async function routeEscalationRound(
         },
         "planner",
       );
-      if (
-        plannerEscalations(events()).find((item) => item.id === id)?.answered
-      )
+      if (plannerEscalations(events()).find((item) => item.id === id)?.answered)
         return;
       const next = parseEscalationReply(followup, retryChoices);
       if (next?.kind === "operator")
@@ -662,7 +660,10 @@ async function routeEscalationRound(
           id,
           next.reason,
           who,
-          { authority: "bare_classification", sourceQuestionId: followupQuestionId },
+          {
+            authority: "bare_classification",
+            sourceQuestionId: followupQuestionId,
+          },
         );
       else if (next) {
         const nextAnswer =
