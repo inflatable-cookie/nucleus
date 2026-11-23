@@ -45,9 +45,13 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 3. **Build alongside and switch over.** Don't refactor in place. The old engine gets
    only fixes that unblock live tasks until its tasks drain. Then it is deleted.
 4. **The new engine is Rust.** The web board UI stays TypeScript and reads the
-   engine's JSON API. The existing board is reused, not rebuilt (Tom: "It can reuse
-   the UI we've built - it's not perfect, but it's about 85% of the way there").
-   The engine's API is shaped so the current components need only small adapters. Host plugins that must be JavaScript (Paseo, BB) become thin
+   engine's JSON API. The existing board is the basis, not a constraint (Tom: "It
+   can reuse the UI we've built - it's not perfect, but it's about 85% of the way
+   there", then "it shouldn't just reuse the current UI as is - the basis is good,
+   adapt it to the new model though, not adapt the model to the ui!!"). The model
+   and API come from this spec alone. The board keeps its layout, theming and
+   primitives, and its components are reshaped to the new model. Components that
+   exist only for the old machinery are deleted. Host plugins that must be JavaScript (Paseo, BB) become thin
    shims. T3 is called directly over its RPC.
 5. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
