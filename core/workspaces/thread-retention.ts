@@ -104,6 +104,17 @@ export function threadRetentionDays(store: Store): number {
   return capacityAuthorityEffective(store).threadRetentionDays;
 }
 
+/**
+ * How often the service runs the pass: one Settings value, 12 hours by default
+ * (Tom, 2026-11-22: "Pruning can read archived threads - it needs to know what's
+ * there, but that shouldn't be running regularly? Once or twice a day?").
+ */
+export function threadRetentionIntervalMs(store: Store): number {
+  return (
+    capacityAuthorityEffective(store).threadRetentionIntervalHours * 3_600_000
+  );
+}
+
 /** This host's last pass, or null before one ran; `service.health` reads it. */
 export function threadRetentionHealth(
   store: Store,

@@ -4111,8 +4111,13 @@ can go stale, exactly like that. It needs to be managed by Nucleus scheduling").
   operator unarchived.
 - Implementation: nucleus#1367.
 
-The pass is `core/workspaces/thread-retention.ts`. `SweepMaintenance` starts it
-hourly, only while Nucleus is unpaused, and removes at most
+The pass is `core/workspaces/thread-retention.ts`. It is the only reader of a
+host's archived threads, and it runs on its own interval (Tom, 2026-11-22:
+"Pruning can read archived threads - it needs to know what's there, but that
+shouldn't be running regularly? Once or twice a day?"): `SweepMaintenance` starts
+it every `threadRetentionIntervalHours` (Settings → Dispatch limits → Advanced,
+bounded 1–168, default 12; the `lastThreadRetentionAt` meta records the last
+start), only while Nucleus is unpaused, and removes at most
 `THREAD_RETENTION_BATCH` (200) threads per host per pass, oldest archive stamp
 first, so the existing backlog drains over sweeps instead of in one burst. The
 pass runs detached: `SweepMaintenance` starts it and does not await it, and at
@@ -4129,7 +4134,13 @@ A host prunes only when its adapter supplies the two optional reads beside
 `deleteAgent`: `archivedThreads` (one walk of every archived thread Nucleus
 created, under the current `nucleus.*` and the pre-Nucleus `northstar.*` labels,
 which answers `null` rather than a partial list) and `threadArchiveState` (one
-thread's fresh stamp, immediately before removal). A host that has the walk but
+thread's fresh stamp, immediately before removal). On T3 that stamp comes from
+the live shell and the pass's own walk; after a removal, T3's settled
+`thread.delete` receipt is the confirmation (it drops the thread from the walk),
+not a fresh read, and no per-thread inventory is read (Spec 069 batch 5). A walk
+that fails or is cut short is retried after an hour rather than a full
+interval. T3 has no paged archived read, so its walk is one
+`getArchivedShellSnapshot` per interval. A host that has the walk but
 no removal call (BB) is still read: its pass records `at`, `scanned` and
 `eligible`, leaves `supported` false, and names in `error` that nothing was
 removed. A host with neither is reported as unable to list, with its reason,

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { PARENT_MODEL, PARENT_PROVIDER } from "../hosts/t3code/nesting";
 import { T3CompatibilityError } from "../hosts/t3code/contracts";
-import { T3InventoryChurnError } from "../hosts/t3code/reads";
+import { T3TransientReadError } from "../hosts/t3code/reads";
 import { T3RpcError } from "../hosts/t3code/rpc";
 import { createAdapter, t3AdapterClass } from "../hosts/t3code";
 import type { AcpSessionSurface } from "../shared/acp/surface";
@@ -163,42 +163,37 @@ test("routine live observation, catalog, workspace-project, and live pass reads 
   assert.equal(host.connected, true);
 });
 
-test("complete-inventory operations refuse moving snapshots boundedly without poisoning host state or inferring absence", async (t) => {
+test("retired-thread reads use exact ids, never the archived inventory, and a wire shape fault stays fenced (Spec 069 batch 5)", async (t) => {
   const { server, host, workspace, spec } = await makeFixture(t);
   const created = await host.createAgent(spec("launch-live", "worker"));
   await host.archiveAgent(created.id);
-
-  server.controls.beforeArchiveRead = () => {
-    server.controls.snapshotSequence++;
-  };
-
-  await assert.rejects(
-    host.reads.threadArchiveState(created.id),
-    (error: unknown) =>
-      error instanceof T3InventoryChurnError &&
-      error instanceof HostReadRefusalError &&
-      !(error instanceof T3CompatibilityError),
+  const archivedReads = () =>
+    server.requests.filter(
+      (request) => request.tag === "orchestration.getArchivedShellSnapshot",
+    ).length;
+  const before = archivedReads();
+  assert.equal(
+    (await host.reads.threadArchiveState(created.id))?.archivedAt !== null,
+    true,
+    "the archive fact is the thread's own exact read",
   );
-  await assert.rejects(
-    host.originAgent("absent-thread"),
-    (error: unknown) => error instanceof T3InventoryChurnError,
-  );
+  assert.equal(await host.originAgent("absent-thread"), null);
   const inventory = await host.workspaceThreads([workspace.id]);
-  assert.equal(inventory.ok, false);
-  if (!inventory.ok) assert.match(inventory.reason, /inventory kept moving/);
+  assert.equal(inventory.ok, true);
+  const page = await new (t3AdapterClass(Policy))(
+    host,
+  ).workspaceHost.archiveThreadPage({
+    filter: { includeArchived: true },
+    page: { limit: 50 },
+  });
+  assert.ok(page.entries.some((entry) => entry.agent.id === created.id));
+  assert.equal(archivedReads(), before, "no archived snapshot was read");
 
-  await assert.rejects(
-    new (t3AdapterClass(Policy))(host).workspaceHost.archiveThreadPage({
-      filter: { includeArchived: true },
-      page: { limit: 50 },
-    }),
-    (error: unknown) => error instanceof HostReadRefusalError,
-  );
-
-  // Wait-only / connection invariants remain intact, and real wire shape errors stay fenced.
+  // Connection invariants remain intact, and real wire shape errors stay fenced.
   assert.equal(host.connected, true);
   assert.equal(host.reads.compatibilityFailure, "");
   server.controls.shellMissingField = "activeRunId";
+  host.reads.live.close();
   await assert.rejects(
     host.activeThreads(),
     (error: unknown) =>
@@ -207,7 +202,7 @@ test("complete-inventory operations refuse moving snapshots boundedly without po
   );
 });
 
-test("T3InventoryChurnError does not take T3 offline or drop model eligibility while independent work progresses", async (t) => {
+test("a transient T3 read refusal does not take T3 offline or drop model eligibility while independent work progresses", async (t) => {
   const { host, server, workspace, spec } = await makeFixture(t);
   const healthyT3Agent = await host.createAgent(
     spec("launch-healthy", "worker"),
@@ -215,8 +210,8 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   const churnedT3Agent = await host.createAgent(
     spec("launch-churned", "reviewer"),
   );
-  // Hide churnedT3Agent from subscribeShell/archivedThreads only? Better: trigger T3InventoryChurnError
-  // on churnedT3Agent's unobserved read while healthyT3Agent succeeds cleanly via shell+projection.
+  // A transient read refusal on churnedT3Agent's read while healthyT3Agent succeeds
+  // cleanly via the live shell and its projection.
   server.threads.get(churnedT3Agent.id)!.thread.archivedAt =
     "2026-11-20T00:00:00.000Z";
   // Real nightly subscribeShell puts archived threads in getArchivedShellSnapshot only:
@@ -230,7 +225,7 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   const t3Adapter = createAdapter(Policy, host);
   const baseObserve = t3Adapter.observe.bind(t3Adapter);
   t3Adapter.observe = async (id: string) => {
-    if (id === churnedT3Agent.id) throw new T3InventoryChurnError(5);
+    if (id === churnedT3Agent.id) throw new T3TransientReadError(new Error("T3 read kept moving"));
     return baseObserve(id);
   };
   const paseoAdapter = {
@@ -364,7 +359,7 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   assert.equal(churnedNow.resolution.stop?.reason, "external_unavailable");
   assert.match(
     churnedNow.resolution.stop?.detail ?? "",
-    /inventory kept moving/,
+    /T3 read kept moving/,
   );
   for (const task of [healthyT3Task, churnedT3Task, paseoTask]) {
     assert.equal(
@@ -377,14 +372,14 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   assert.ok(processed.includes(`quantum:${healthyT3Task.id}`));
   assert.ok(processed.includes(`quantum:${paseoTask.id}`));
 
-  // Note: queued task hitting T3InventoryChurnError via noteStepFailure waits boundedly too.
+  // Note: a queued task hitting a transient read refusal via noteStepFailure waits boundedly too.
   const queuedT3 = store.insert(
     submission({ title: "Queued T3", repoPath: "/synthetic/queued-t3" }),
     host.hostId,
     "handoff.md",
     "b".repeat(40),
   );
-  engine.noteStepFailure(queuedT3.id, new T3InventoryChurnError(5));
+  engine.noteStepFailure(queuedT3.id, new T3TransientReadError(new Error("T3 read kept moving")));
   const queuedNow = store.task(queuedT3.id);
   assert.equal(queuedNow.phase, "queued");
   assert.equal(queuedNow.resolution.stop?.reason, "external_unavailable");

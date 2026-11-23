@@ -129,7 +129,11 @@ These close root causes 1–3:
   - a partial read keeps waiting.
 
   A single-thread lookup reads the live list and then the archived list, with no
-  sequence pairing.
+  sequence pairing. On T3 this is now the live shell plus one exact read by id,
+  with no archived list at all ([Spec 069](069-scheduler.md) batch 5; Tom,
+  2026-11-22: "We shouldn't need to be reading archived threads at all").
+  nucleus#1555 builds on that lookup (`T3Reads.readThreadRecord`) rather than
+  adding an archived-list read.
 - **Process death releases a run.** Positive proof that the recorded process is
   gone releases a stalled run. An unreadable process table proves nothing.
 - **A completion releases its run.** Once a run has an authenticated completion,
