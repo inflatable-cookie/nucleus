@@ -51,6 +51,7 @@ export type TaskQuantumContext = Pick<
   | "hooks"
   | "launchAgent"
   | "launchProofOnly"
+  | "acceptWorkerResult"
   | "moveToReview"
   | "moveToWork"
   | "note"

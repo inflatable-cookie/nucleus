@@ -411,7 +411,8 @@ export class CoordinatorEpisode {
    * A report that named no owner verb settles the episode as observed: there is
    * nothing to apply, so nothing is refused and no attention notice is raised. The
    * report's own words are kept as the episode's summary and the run releases with
-   * its completion. The stop it answered stays exactly as recorded, so a later pass
+   * its completion. A recovered report with no open incident also ends the
+   * episode's attention. The stop it answered stays exactly as recorded, so a later pass
    * over the same unchanged facts reads this resolved episode instead of opening
    * another one (nucleus#1388).
    */
@@ -456,10 +457,18 @@ export class CoordinatorEpisode {
             updatedAt: now(),
           }
         : incident;
+    // A recovered observation with no fault left open ends the attention the
+    // episode was opened for, as a live no-op does. Left set, it outlived the
+    // resolved episode and kept admission and the orphan backstop away from a
+    // task whose author result was ready for review. An open incident keeps it.
+    const attentionEnded =
+      action.reportStatus === "recovered" &&
+      (!settledIncident || settledIncident.status === "resolved");
     this.resolution.update(
       current,
       {
         recoveryActive: false,
+        ...(attentionEnded ? { attention: false } : {}),
         ...(recovery
           ? {
               recovery: {

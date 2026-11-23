@@ -3358,7 +3358,9 @@ resulting state on its own cadence.
 - A report that names no owner verb and that Nucleus cannot see as live settles
   the episode as an observation too (nucleus#1388): the episode resolves with the
   report's own words (`observed: <status>, no action — <summary>`), nothing is
-  applied, and no refusal or attention notice is raised. The stop it answered and
+  applied, and no refusal or attention notice is raised. A recovered report whose
+  episode leaves no incident open also ends the attention the episode was opened
+  for; a blocked, errored or escalated one keeps it. The stop it answered and
   its work identity are left as they were, so a later pass over the same unchanged
   facts answers from the resolved episode and opens no new coordinator; the loop
   breaker still bounds a report that does act. An escalating report keeps its
@@ -3373,7 +3375,8 @@ resulting state on its own cadence.
   `move to=work`, `restart role=reviewer` and `amend_brief` with no text).
 - A planner-selected time or task wait resumes ordinary work when its condition
   settles, even if the recovery run that raised the escalation has ended or is
-  missing. Wake follows the available continuation from `next`; when no retained
+  missing. The fleet's question pass reads each task's host availability inside
+  that host's context, so tasks on a secondary host (T3, BB) are visited too. Wake follows the available continuation from `next`; when no retained
   turn can resume, the existing recovery path owns the remaining fault. A refused
   parked restart re-reads that same path even while the raising run is unreleased;
   observation and delivery fences still apply. It never
