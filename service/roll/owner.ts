@@ -198,11 +198,13 @@ export function ensureRollOwner(
     ];
     logFd = openSync(join(options.dataDir, ROLL_OWNER_LOG_FILE), "a", 0o600);
     const spawnProcess = options.spawnProcess ?? spawn;
-    // The data home is the owner's stable ground: options.root can be a
-    // version folder that retention later removes, and a removed cwd breaks
-    // every child process the owner spawns afterwards (nucleus#1566).
+    // An installed root needs no module resolution from its folder, so the
+    // owner starts on the stable data home: options.root can be a version
+    // folder that retention later removes, and a removed cwd breaks every
+    // child process the owner spawns afterwards (nucleus#1566). A checkout
+    // root is never pruned and must stay the cwd so `--import tsx` resolves.
     child = spawnProcess(command, args, {
-      cwd: options.dataDir,
+      cwd: installed ? options.dataDir : options.root,
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: { ...env, QUEUE_LOGIN_SESSION: currentLoginSession(env) },
@@ -670,12 +672,16 @@ export async function runRollOwnerEntry(
     ?.slice("--data-dir=".length);
   const dataDir = dataDirArg ?? dataHome();
   // Owners spawned before the stable-cwd launch still start inside their
-  // version folder; settle on the data home at start, best-effort
-  // (nucleus#1566). The data home may not exist yet; claiming it creates it.
-  try {
-    process.chdir(dataDir);
-  } catch {
-    /* the heartbeat claim creates the data home */
+  // installed version folder; settle on the data home at start,
+  // best-effort (nucleus#1566). Checkouts are never pruned and must stay
+  // the cwd so `--import tsx` resolves. The data home may not exist yet;
+  // claiming it creates it.
+  if (existsSync(join(root, "manifest.json"))) {
+    try {
+      process.chdir(dataDir);
+    } catch {
+      /* the heartbeat claim creates the data home */
+    }
   }
   const owner = new RollOwner({
     dataDir,
