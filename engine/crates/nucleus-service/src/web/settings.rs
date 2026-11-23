@@ -18,6 +18,7 @@ use crate::{Project, Service, ServiceError};
 
 pub(crate) struct RuntimeSettings {
     pub dispatch: Option<DispatchSettings>,
+    pub profiles: Option<Arc<Profiles>>,
     projects: Option<Projects>,
     pub host: CachedHost,
 }
@@ -33,9 +34,11 @@ pub(crate) enum CachedHost {
 impl RuntimeSettings {
     pub(crate) fn open(file: &SettingsFile) -> Result<Self, StorageError> {
         let dispatch = file.read::<DispatchSettings>()?;
+        let profiles = file.read::<Profiles>()?;
         let projects = file.read::<Projects>()?;
         Ok(Self {
             dispatch: dispatch.configured.then_some(dispatch.value),
+            profiles: profiles.configured.then(|| Arc::new(profiles.value)),
             projects: projects.configured.then_some(projects.value),
             host: CachedHost::Unknown,
         })
@@ -224,15 +227,7 @@ pub(super) async fn put(
         match domain {
             Domain::Profiles => {
                 let value = decode::<Profiles>(value)?;
-                let (saved, changed) = edit(&service.settings, revision, move |current| {
-                    *current = value;
-                    Ok(())
-                })
-                .await?;
-                if changed {
-                    service.settings_capacity_changed().await;
-                }
-                Ok(json!(saved))
+                save_profiles(&service, revision, value).await
             }
             Domain::Dispatch => {
                 let value = decode::<DispatchSettings>(value)?;
@@ -399,6 +394,38 @@ async fn save_dispatch(
     }
 }
 
+async fn save_profiles(
+    service: &Service,
+    revision: String,
+    value: Profiles,
+) -> Result<Value, ApiError> {
+    let mut state = service.state.lock().await;
+    match edit(&service.settings, revision, move |current| {
+        *current = value;
+        Ok(())
+    })
+    .await
+    {
+        Ok((saved, changed)) => {
+            if changed {
+                state.settings.profiles = Some(Arc::new(saved.value.clone()));
+                service.wake_settings_capacity(&mut state);
+            }
+            Ok(json!(saved))
+        }
+        Err(error) => {
+            if error.may_have_published() {
+                let profiles = read::<Profiles>(&service.settings)
+                    .await
+                    .map_or_else(|_| Profiles::default(), |saved| saved.value);
+                state.settings.profiles = Some(Arc::new(profiles));
+                service.wake_settings_capacity(&mut state);
+            }
+            Err(error.into())
+        }
+    }
+}
+
 async fn save_projects(
     service: &Service,
     revision: String,
@@ -430,11 +457,6 @@ async fn save_projects(
 }
 
 impl Service {
-    async fn settings_capacity_changed(&self) {
-        let mut state = self.state.lock().await;
-        self.wake_settings_capacity(&mut state);
-    }
-
     fn project_settings_changed(&self, state: &mut crate::State) {
         state.invalidate_planner_authority();
         state.observed_forge.clear();

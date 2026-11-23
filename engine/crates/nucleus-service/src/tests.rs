@@ -72,6 +72,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
         instance_id: "provider".into(),
         model: "fixture".into(),
         runtime_mode: "auto".into(),
+        options: Vec::new(),
     };
     let project = Project {
         repository: REPOSITORY.into(),
@@ -220,6 +221,10 @@ pub(super) async fn serve_forge(app: Router) -> (GitHub, tokio::task::JoinHandle
 pub(super) struct Due(pub(super) AtomicUsize);
 
 impl TaskHost for Due {
+    async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
+        unreachable!("only revoked runs are exercised")
+    }
+
     fn prepare_launch(
         &self,
         _: nucleus_hosts::LaunchRequest<'_>,

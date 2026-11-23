@@ -1,5 +1,6 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+mod catalog;
 mod launch;
 mod parenting;
 mod process;
@@ -17,7 +18,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub use launch::{Binding, Dispatch, RoleProfile, RunRequest};
+pub use catalog::{ProfileCatalog, ProfileOffer};
+pub use launch::{Binding, Dispatch, ModelOption, RoleProfile, RunRequest};
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thread};
@@ -166,6 +168,8 @@ pub struct RunObservation {
 /// The service serializes commands and effects for each task and persists
 /// the authorized send marker immediately before using it on the wire.
 pub trait TaskHost: Send + Sync {
+    fn profile_catalog(&self) -> impl Future<Output = Result<&ProfileCatalog, HostError>> + Send;
+
     /// Prepare the host's immutable launch inputs and native identity.
     /// # Errors
     /// Returns an error when the launch is unsupported or cannot be encoded.
@@ -218,6 +222,7 @@ pub struct T3 {
 /// Exact T3 reads share a single bounded process inventory within each pass.
 pub struct T3Pass<'a> {
     host: &'a T3,
+    profiles: OnceCell<Result<ProfileCatalog, HostError>>,
     processes: OnceCell<Result<Inventory, HostError>>,
     scratch: Option<&'a Path>,
     sent: AtomicBool,
@@ -251,6 +256,7 @@ impl T3 {
     pub fn pass<'a>(&'a self, scratch: &'a Path) -> T3Pass<'a> {
         T3Pass {
             host: self,
+            profiles: OnceCell::new(),
             processes: OnceCell::new(),
             scratch: Some(scratch),
             sent: AtomicBool::new(false),
@@ -263,6 +269,7 @@ impl T3 {
     pub fn fixture_pass(&self) -> T3Pass<'_> {
         T3Pass {
             host: self,
+            profiles: OnceCell::new(),
             processes: OnceCell::new_with(Some(Ok(Inventory::quiet_fixture()))),
             scratch: None,
             sent: AtomicBool::new(false),
@@ -279,11 +286,7 @@ impl T3 {
         self.rpc.watch_threads(hints).await
     }
 
-    /// Check the host protocol and configured role profiles for queued tasks.
-    ///
-    /// # Errors
-    /// Returns an error if the configuration is unreadable or a profile is unavailable.
-    pub async fn check(&self, profiles: &[&RoleProfile]) -> Result<(), HostError> {
+    async fn read_catalog(&self) -> Result<ProfileCatalog, HostError> {
         let Reply::Value(config) = self
             .rpc
             .call("server.getConfig", json!({}), Read::One)
@@ -291,22 +294,7 @@ impl T3 {
         else {
             return Err(HostError::Protocol);
         };
-        if config
-            .pointer("/environment/orchestrationProtocolVersion")
-            .and_then(Value::as_u64)
-            != Some(2)
-        {
-            return Err(HostError::Protocol);
-        }
-        let providers = config["providers"].as_array().ok_or(HostError::Protocol)?;
-        if !profiles.iter().all(|profile| {
-            providers
-                .iter()
-                .any(|provider| available(provider, profile))
-        }) {
-            return Err(HostError::Configuration);
-        }
-        Ok(())
+        ProfileCatalog::parse(config)
     }
 
     /// Verify that the selected project is active at the expected local root.
@@ -430,6 +418,14 @@ impl T3Pass<'_> {
 }
 
 impl TaskHost for T3Pass<'_> {
+    async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {
+        self.profiles
+            .get_or_init(|| self.host.read_catalog())
+            .await
+            .as_ref()
+            .map_err(|error| *error)
+    }
+
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError> {
         let parent = request.parent.as_ref().map(|parent| parent.thread.clone());
         let (dispatch, thread) = match request.via {
@@ -448,7 +444,12 @@ impl TaskHost for T3Pass<'_> {
                 },
                 format!("thread:{}", request.instance),
             ),
-            Launch::Continue { thread } => (Dispatch::Continue, thread.clone()),
+            Launch::Continue { thread } => (
+                Dispatch::Continue {
+                    profile: Some(request.profile.clone()),
+                },
+                thread.clone(),
+            ),
             Launch::SendPrepared => return Err(HostError::Binding),
         };
         RunRequest {
@@ -514,6 +515,16 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let (thread, state) = self.host.delivery(run, &wire).await?;
+        if wire.method == Method::Continue
+            && run.launch().profile().is_some()
+            && !wire.selection.as_ref().is_some_and(|selection| {
+                thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.matches_selection(selection))
+            })
+        {
+            return Err(HostError::Binding);
+        }
         if state != RunState::ReadyToSend
             || !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
@@ -777,6 +788,7 @@ mod tests {
             binding: binding.clone(),
             parent: None,
             method,
+            selection: None,
             payload: to_raw_value(&json!({})).expect("fixture wire"),
         };
         let defect = |command: &str, command_type: &str| {

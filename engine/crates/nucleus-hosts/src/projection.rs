@@ -208,6 +208,20 @@ impl Projection {
         self.thread.deleted_at.is_some() || self.thread.parent_thread_id.as_deref() == Some(parent)
     }
 
+    pub(crate) fn matches_selection(&self, expected: &Value) -> bool {
+        let Some(actual) = &self.thread.model_selection else {
+            return false;
+        };
+        self.thread.provider_instance_id.as_deref() == expected["instanceId"].as_str()
+            && actual["instanceId"] == expected["instanceId"]
+            && actual["model"] == expected["model"]
+            && expected["options"].as_array().is_none_or(|options| {
+                actual["options"].as_array().is_some_and(|current| {
+                    options.iter().all(|requested| current.contains(requested))
+                })
+            })
+    }
+
     pub(crate) fn live_parent_run(&self) -> Option<(&str, &str)> {
         if self.archived() || self.thread.deleted_at.is_some() {
             return None;

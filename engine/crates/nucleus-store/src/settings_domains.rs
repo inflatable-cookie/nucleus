@@ -12,6 +12,8 @@ use crate::settings::SettingsValue;
 pub struct NamedProfile {
     pub name: String,
     pub selection: Profile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +37,14 @@ impl SettingsValue for Profiles {
                     && text(&profile.selection.model),
                 "profile",
                 "each profile needs a stable ID, name and model",
+            )?;
+            check(
+                profile
+                    .group
+                    .as_ref()
+                    .is_none_or(|group| text(group) && group.trim() == group),
+                "group",
+                "subscription group names must be nonempty and trimmed",
             )?;
         }
         Ok(())
