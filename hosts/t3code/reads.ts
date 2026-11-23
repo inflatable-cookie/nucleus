@@ -484,6 +484,15 @@ export class T3Reads {
     return this.live.row(threadId);
   }
   /**
+   * One thread's row from the held shell alone: answered only while the copy is
+   * inside its freshness bounds and the thread shape is proved, so it opens no
+   * subscription and sends T3 nothing. `undefined` means "ask T3", never absent.
+   */
+  async heldShellRow(threadId: string): Promise<ShellRow | undefined> {
+    if (this.pendingThreadShape) return undefined;
+    return await this.live.liveRow(threadId);
+  }
+  /**
    * One thread's row by its exact id: the live shell's row when T3 lists it, or
    * else the thread record one exact read answers (an archived or tombstoned
    * thread). `undefined` when T3 has no such thread. A list that cannot be read is

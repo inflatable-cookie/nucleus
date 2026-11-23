@@ -15,6 +15,7 @@ import type {
   HostCatalog,
   NativeDecisionInput,
   NativeDecisionAnswer,
+  OriginAgent,
 } from "../../shared/host";
 import type { Task, Profile } from "../../shared/contracts";
 import type { TaskAttention } from "../../shared/task-attention";
@@ -657,17 +658,8 @@ export class T3CodeHost implements Host {
     // shell inventory's tombstone is already positive proof of the deletion.
     // An archived thread, or one whose task is over, has left observation: its
     // list row and recorded identity answer this read with no snapshot at all.
-    if (found.deletedAt || found.archivedAt || !this.reads.observes(id)) {
-      if (found.deletedAt)
-        this.presentation.retireDeletedPresentationIntents(id);
-      return {
-        id,
-        workspaceId: this.reads.threadWorkspace(found),
-        title: found.title,
-        archived: !!found.archivedAt,
-        deleted: !!found.deletedAt,
-      };
-    }
+    if (found.deletedAt || found.archivedAt || !this.reads.observes(id))
+      return this.originFromRow(id, found);
     const p =
       record?.projection ??
       (await this.reads.readProjection(id, "observation"));
@@ -679,6 +671,32 @@ export class T3CodeHost implements Host {
       title: p.thread.title,
       archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt,
+    };
+  }
+  /**
+   * `originAgent` from the held live shell alone, with no T3 call, so admission
+   * answers it without a slot. Only a row the shell lists while inside its
+   * freshness bounds answers. A stale or missing shell, or a thread it does not
+   * list, is `undefined`: the admitted exact read runs, so nothing is ever
+   * answered absent from here.
+   */
+  async originAgentHeld(id: string): Promise<OriginAgent | undefined> {
+    if (!this.connected) return undefined;
+    const row = await this.reads.heldShellRow(id);
+    return row ? this.originFromRow(id, row) : undefined;
+  }
+  /** The origin answer one thread record carries; a tombstone retires the thread's presentation intents. */
+  private originFromRow(
+    id: string,
+    row: Projection["thread"],
+  ): OriginAgent {
+    if (row.deletedAt) this.presentation.retireDeletedPresentationIntents(id);
+    return {
+      id,
+      workspaceId: this.reads.threadWorkspace(row),
+      title: row.title,
+      archived: !!row.archivedAt,
+      deleted: !!row.deletedAt,
     };
   }
   /** One synchronized thread snapshot: the reads module owns the decode, the host owns this entry to it. */

@@ -928,7 +928,9 @@ or planner re-attaching a thread returns it to observation under the ordinary ve
 alone, because that row already carries the thread record, its status, active run
 and pending request; `observe`, `originAgent` and the archive lane therefore read
 no snapshot for it, and a read that would need one is refused rather than answered
-from memory.
+from memory. `originAgent` for any thread the live shell lists answers from that row
+while the shell is inside its freshness bounds, with no T3 call and no admission slot
+(`originAgentHeld`); otherwise it takes the admitted read above.
 
 Every consumer shares the live shell and one held snapshot per thread: status, row
 step, the row's shown/snoozed decision and pending questions all read the same

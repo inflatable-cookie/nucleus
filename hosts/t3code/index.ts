@@ -48,6 +48,8 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
   return class T3Adapter extends Policy {
     readonly reportingViaMcp = false;
     readonly supportsCoordinatorRecovery = true;
+    /** Calls share one multiplexed connection, so admission spaces their starts by nothing. */
+    readonly admissionStartIntervalMs = 0;
     readonly socketPath: string;
     readonly helperPath: string;
     readonly admissionLaunchEnv: Record<string, string>;
@@ -351,6 +353,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     }
     originAgent(id: string) {
       return this.native.originAgent(id);
+    }
+    originAgentHeld(id: string) {
+      return this.native.originAgentHeld(id);
     }
     listLiveAgents() {
       return this.native.listLiveAgents();

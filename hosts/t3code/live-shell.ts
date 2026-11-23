@@ -191,6 +191,17 @@ export class T3LiveShell {
     return this.snapshot();
   }
 
+  /**
+   * One row of the held copy while the copy is live, with no open and no host
+   * call. `undefined` when the copy is stale or missing, or does not list the
+   * thread: the caller then asks T3, because neither case proves the thread absent.
+   */
+  async liveRow(threadId: string): Promise<ShellRow | undefined> {
+    if (!this.live) return undefined;
+    await liveShellTestBarrier();
+    return this.live ? this.row(threadId) : undefined;
+  }
+
   /** One row of the held copy, active or archived. */
   row(threadId: string): ShellRow | undefined {
     return this.copy?.active.get(threadId) ?? this.copy?.archived.get(threadId);

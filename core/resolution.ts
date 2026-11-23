@@ -13,7 +13,11 @@ import {
 } from "./host/host-ports";
 import { CriticalReviewFallback } from "./dispatch/critical-review-fallback";
 import { ValidationRetry } from "./qa/validation-retry";
-import { PlannerPresence } from "./questions/planner-presence";
+import {
+  PlannerPresence,
+  PlannerPresencePass,
+  type PlannerRoutes,
+} from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
 import {
   RESPONSIBLE_OBSERVATION_MS,
@@ -816,6 +820,7 @@ export class Resolution {
     exclude?: { agentId: string; hostId?: string | null },
     excludedHosts?: ReadonlySet<string>,
     taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>,
+    presence: PlannerRoutes = this.plannerPresence,
   ) {
     // A pass that cannot use one of the online hosts (the sweep, after that
     // host's own pass failed) neither queries it nor reads without it: a read
@@ -833,7 +838,11 @@ export class Resolution {
         attempt === 0 ? taskIndex : undefined,
       );
       if (!shortlist) continue;
-      const confirmed = await this.observeResponsible(project.key, shortlist);
+      const confirmed = await this.observeResponsible(
+        project.key,
+        shortlist,
+        presence,
+      );
       if (
         !confirmed ||
         this.responsibleThreads.cache.peek(project.key) !== confirmed.shortlist
@@ -889,6 +898,10 @@ export class Resolution {
   ) {
     if (!projects.length) return [];
     const index = this.responsibleThreads.taskIndex(projects);
+    // One presence read per thread for the whole pass: every project's shortlist
+    // probes and gone-planner check share it, instead of one host read per
+    // candidate per project.
+    const presence = new PlannerPresencePass(this.plannerPresence);
     return Promise.all(
       projects.map(async (project) => {
         const read = await this.responsibleThread(
@@ -896,11 +909,16 @@ export class Resolution {
           undefined,
           excludedHosts,
           index,
+          presence,
         );
         // Spec 058: the observing pass clears a registered planner whose thread is
         // missing or archived, and notifies the Nucleus planner once for that
         // episode. Routing reads never clear the row.
-        await this.reconcileGoneProjectPlanner(project, excludedHosts);
+        await this.reconcileGoneProjectPlanner(
+          project,
+          excludedHosts,
+          presence,
+        );
         return read;
       }),
     );
@@ -910,14 +928,13 @@ export class Resolution {
   private async reconcileGoneProjectPlanner(
     project: Project,
     excludedHosts?: ReadonlySet<string>,
+    presence: PlannerRoutes = this.plannerPresence,
   ): Promise<void> {
     const assigned = project.planner;
     if (!assigned) return;
     let gone = false;
     try {
-      gone =
-        (await this.plannerPresence.threadRoute(assigned.agentId)).kind ===
-        "gone";
+      gone = (await presence.threadRoute(assigned.agentId)).kind === "gone";
     } catch {
       return;
     }
@@ -934,6 +951,8 @@ export class Resolution {
       fallback,
       undefined,
       excludedHosts,
+      undefined,
+      presence,
     );
     const planner = thread?.agentId ?? null;
     const stillAssigned = this.store
@@ -983,7 +1002,10 @@ export class Resolution {
    * slow, failed or inconclusive read is `unverified` and keeps its rank, and
    * only a different-thread answer is `unroutable` (Tom, 2026-11-19; nucleus#1383).
    */
-  private async observeCandidate(thread: ResponsibleThread): Promise<{
+  private async observeCandidate(
+    thread: ResponsibleThread,
+    presence: PlannerRoutes,
+  ): Promise<{
     thread: ResponsibleThread;
     state: ResponsibleObservationState | "gone";
     detail: string | null;
@@ -993,7 +1015,7 @@ export class Resolution {
     let detail: string | null = null;
     try {
       const route = await observationTimeout(
-        this.plannerPresence.threadRoute(thread.agentId, thread.hostId),
+        presence.threadRoute(thread.agentId, thread.hostId),
         "Responsible thread observation timed out",
         this.responsibleObservationMs,
       );
@@ -1010,12 +1032,15 @@ export class Resolution {
   private observeResponsible(
     projectKey: string,
     shortlist: ResponsibleShortlist,
+    presence: PlannerRoutes,
   ) {
     const pending = this.responsibleObservations.get(shortlist);
     if (pending) return pending;
     const cache = this.responsibleThreads.cache;
     const read = Promise.all(
-      shortlist.threads.map((thread) => this.observeCandidate(thread)),
+      shortlist.threads.map((thread) =>
+        this.observeCandidate(thread, presence),
+      ),
     )
       .then((reads) => {
         const candidates: ResponsibleCandidate[] = reads.flatMap((read) =>

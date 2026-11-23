@@ -14,6 +14,19 @@ export interface HostAdapterIdentity {
   /** Host-specific workspace registration identity validation. */
   workspaceIdAccepted?(id: unknown): boolean;
   originAgent?(id:string):Promise<OriginAgent|null>;
+  /**
+   * `originAgent` answered from what the host already holds, with no host call
+   * (T3's live shell inside its freshness bounds), so admission serves it without
+   * a slot. `undefined` means "not held": admission runs the exact read. It never
+   * answers absent.
+   */
+  originAgentHeld?(id:string):Promise<OriginAgent|undefined>;
+  /**
+   * The gap admission keeps between the starts of this host's calls. A host that
+   * multiplexes calls over one connection declares 0; absent keeps the default
+   * (125 ms), which Paseo and BB use.
+   */
+  readonly admissionStartIntervalMs?: number;
   supportsCoordinatorRecovery?: boolean;
   reportingFallback?(run:Run):string;
   reportingViaMcp?: boolean;
