@@ -23,14 +23,6 @@ import {
   redactDiagnostic,
 } from "../../recovery/provider-refusal";
 import {
-  BlockingRecoveryEffectsError,
-  blockingRecoveryEffects,
-  blockingRecoveryEffectsRefusal,
-  recoveryEffectsRefusal,
-  reviewEffectWaitKey,
-} from "../../recovery/recovery-effects";
-import { settleObservedHostEffectOperations } from "../../recovery/effect-gates";
-import {
   assertReviewEntryWriterYielded,
   reviewEntryInputForTask,
   type ReviewEntryAdapter,
@@ -53,7 +45,6 @@ import { isTransportFailure } from "../../../shared/transport";
 import { HostTransportFault } from "../../host/adapter-routing";
 import {
   HostReadRefusalError,
-  PassProofPendingError,
   isHostOperationTimeout,
 } from "../../host/errors";
 import { threadRunningReason } from "../../intake/thread-waits";
@@ -62,9 +53,6 @@ import { declaredLaneDocumentKeys } from "../../planning/brief-lane-documents";
 import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../../workspaces/task-node-modules";
 import { verifyBargeLeaseAndCustody } from "../../workspaces/barge-allocator";
-import { waitAgeMs } from "../../scheduling/host-outage";
-import { PASS_PROOF_WAIT_LIMIT_MINUTES } from "../../machine/custody-proof";
-import { taskStopRecord, type TaskDecisionFact } from "../../../shared/task-stop";
 
 /** Put unconsumed owner direction and named checks back on the task. */
 function unsentReviewIntent(task: Task, run: Run) {
@@ -167,10 +155,6 @@ export class RunLaunchDeliver {
       assertOrdinaryReviewIdentity(latest, run.head);
       if (matchesBinding)
         this.resolution.assertReviewProfileIndependent(latest, savedRun);
-      const effects = blockingRecoveryEffects(this.store, latest, {
-        noticeKinds: "all",
-      });
-      if (effects.length) throw new BlockingRecoveryEffectsError(effects);
       return true;
     };
     return {
@@ -220,12 +204,6 @@ export class RunLaunchDeliver {
       token,
     } = context;
     t = this.store.task(t.id);
-    // Observation before any refusal (nucleus#1159): an uncertain host-effect
-    // control whose effect later evidence has answered is settled here, so this
-    // launch gates only on uncertainty the task has yet to answer. Nothing is
-    // resent; the settlement is the observation's own record.
-    if (settleObservedHostEffectOperations(this.store, t.id).length)
-      t = this.store.task(t.id);
     let dispatchInvoked = false;
     try {
       // A follow-up round reads the exact head in the task checkout on its own
@@ -585,13 +563,6 @@ export class RunLaunchDeliver {
           agentId,
           status: "running",
         });
-        const delivered = this.store.task(t.id);
-        if (
-          role === "reviewer" &&
-          delivered.resolution.currentRunId === run.id &&
-          delivered.resolution.reviewPassProofWait
-        )
-          this.resolution.update(delivered, { reviewPassProofWait: null });
       });
       this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(
@@ -634,56 +605,10 @@ export class RunLaunchDeliver {
           this.store.putRun({ ...latestRun, status: "uncertain" });
         return;
       }
-      if (error instanceof BlockingRecoveryEffectsError) {
-        const waitReason = `${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`;
-        this.store.transaction(() => {
-          const latestRun = this.store.run(run.id);
-          if (latestRun && !latestRun.released)
-            this.store.putRun({
-              ...latestRun,
-              status: "superseded",
-              released: true,
-              releasedBeforeSend: true,
-              active: false,
-            });
-          const latest = this.store.task(t.id);
-          if (latest.resolution.currentRunId === run.id)
-            this.resolution.update(
-              latest,
-              {
-                currentRunId: null,
-                attention: false,
-                ...unsentReviewIntent(latest, run),
-              },
-              { phase: role === "reviewer" ? "reviewing" : latest.phase },
-              "review_waiting_on_effects",
-              recoveryEffectsRefusal(error.effects) ?? "",
-            );
-        });
-        this.resolution.waiting(
-          this.store.task(t.id),
-          waitReason,
-          "lifecycle",
-          {
-            fact: {
-              code: "review_effect_wait",
-              subject: reviewEffectWaitKey(error.effects),
-            },
-          },
-        );
-        return;
-      }
-      // A host that has not settled its model options, or a custody proof the
-      // pass has not read yet, has not refused this run: nothing crossed the send
-      // boundary, so the run is released and the task waits for the next pass
-      // (nucleus#1375). The unread proof already asked that pass to serve its
-      // participants first (Spec 068 §6), so the send converges there. The
-      // proof runs only before a send, in the guard or ahead of it.
-      if (
-        error instanceof HostSnapshotPendingError ||
-        error instanceof PassProofPendingError
-      ) {
-        const pendingProof = error instanceof PassProofPendingError;
+      // A host that has not settled its model options has not refused this run:
+      // nothing crossed the send boundary, so the run is released and the task
+      // waits for the next pass to read a settled snapshot (nucleus#1375).
+      if (error instanceof HostSnapshotPendingError) {
         this.store.transaction(() => {
           const latestRun = this.store.run(run.id);
           if (latestRun && !latestRun.released)
@@ -696,74 +621,20 @@ export class RunLaunchDeliver {
             });
           if (!agentId) this.store.deleteCredential(run.id);
           const latest = this.store.task(t.id);
-          if (latest.resolution.currentRunId !== run.id) return;
-          const release = {
-            currentRunId: null,
-            ...unsentReviewIntent(latest, run),
-          };
-          const prior = latest.resolution.stop;
-          const priorRunId = run.priorRunId ?? null;
-          const previousWait = latest.resolution.reviewPassProofWait;
-          const since =
-            previousWait?.head === run.head &&
-            previousWait.priorRunId === priorRunId
-              ? previousWait.since
-              : !previousWait && prior?.fact?.code === "pass_proof"
-                ? prior.since
-                : new Date().toISOString();
-          if (
-            pendingProof &&
-            this.resolution.currentPassSnapshot()?.hostPassCompleted(latest.hostId) &&
-            waitAgeMs(this.store, latest.hostId, since) >=
-              PASS_PROOF_WAIT_LIMIT_MINUTES * 60_000
-          ) {
-            const reason = `${error.subject} could not be proved after ${PASS_PROOF_WAIT_LIMIT_MINUTES} minutes while the host was up. ${error.reason}`;
-            const fact: TaskDecisionFact = {
-              code: "pass_proof_exhausted",
-              subject: error.subject.slice(0, 240),
-            };
-            const stop = taskStopRecord(
-              "operator_needed",
-              reason,
-              null,
-              undefined,
-              undefined,
-              undefined,
-              fact,
-            );
+          if (latest.resolution.currentRunId === run.id)
             this.resolution.update(
               latest,
-              { ...release, attention: true, stop, reviewPassProofWait: null },
-              { phase: "needs_attention", reason, reasonFact: fact },
-              "review_pass_proof_exhausted",
-              reason,
+              { currentRunId: null, attention: false, ...unsentReviewIntent(latest, run) },
+              { phase: role === "reviewer" ? "reviewing" : latest.phase },
+              "review_waiting_on_host_snapshot",
+              error.detail,
             );
-            return;
-          }
-          const waiting = this.resolution.update(
-            latest,
-            {
-              ...release,
-              attention: false,
-              ...(pendingProof
-                ? { reviewPassProofWait: { priorRunId, head: run.head, since } }
-                : {}),
-            },
-            { phase: role === "reviewer" ? "reviewing" : latest.phase },
-            pendingProof
-              ? "review_waiting_on_pass_proof"
-              : "review_waiting_on_host_snapshot",
-            pendingProof ? error.message : error.detail,
-          );
-          this.resolution.waiting(
-            waiting,
-            pendingProof
-              ? error.message
-              : `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
-            "lifecycle",
-            pendingProof ? { fact: { code: "pass_proof" } } : undefined,
-          );
         });
+        this.resolution.waiting(
+          this.store.task(t.id),
+          `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+          "lifecycle",
+        );
         return;
       }
       // A proved pre-send transient read failure (e.g. T3 inventory churn on
@@ -872,9 +743,6 @@ export class RunLaunchDeliver {
               {
                 currentRunId: null,
                 attention: true,
-                ...(role === "reviewer" && current.resolution.reviewPassProofWait
-                  ? { reviewPassProofWait: null }
-                  : {}),
                 ...unsentReviewIntent(current, run),
               },
               { phase: "needs_attention", reason },

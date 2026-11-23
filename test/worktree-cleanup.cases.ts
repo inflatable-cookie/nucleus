@@ -812,48 +812,6 @@ test("a complete workspace marker does not mask output from a run created after 
   } finally { f.store.close(); }
 });
 
-weighted(6)('preserved retirement waits for complete bounded projected tool evidence before archive intent', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const { projectedToolTimelineTail, longAnchorToolHistory } = await import('./support/tool-timeline');
-  for (const shape of ['complete', 'live', 'unknown', 'gap', 'changed'] as const) {
-    const f = await preservedFixture(t);
-    try {
-      const history = longAnchorToolHistory('completed');
-      history[100].item = { type: 'tool_call', callId: 'older', name: 'exec', status: shape === 'unknown' ? undefined : 'running' };
-      history[300].item = { type: 'tool_call', callId: shape === 'live' || shape === 'unknown' ? 'other' : 'older', name: 'exec', status: 'completed' };
-      const native = new PaseoAdapter('ws://127.0.0.1:1', '/unused/callback.sock', '/unused/worker-report.mjs');
-      const limits: number[] = [];
-      const counts: number[] = [];
-      (native as any).api = { agents: { ref: () => ({ timeline: { refetch: async ({ limit }: { limit: number }) => {
-        limits.push(limit);
-        const page = projectedToolTimelineTail(history, limit);
-        counts.push(page.entries.length);
-        if (shape === 'gap' && limit > 200) page.gap = true;
-        if (shape === 'changed' && limit > 200) page.endCursor!.seq++;
-        return { ...page, error: null };
-      } } }) } };
-      f.adapter.agentTimelinePage = native.agentTimelinePage.bind(native);
-      const source = await readFile(join(f.directory, 'src/lib.rs'), 'utf8');
-      const result = await f.retry();
-      if (shape === 'complete') {
-        assert.equal(result.resolution.workspaceRetirement?.state, 'archived', result.resolution.workspaceRetirement?.detail);
-        assert.equal(f.archive.count, 1);
-        assert.deepEqual(limits.slice(0, 2), [200, 840]);
-        assert.deepEqual(counts.slice(0, 2), [420, 450]);
-        assert.equal(git(f.repo, 'ls-remote', 'origin', `refs/heads/${f.task.branch}`).split(/\s/)[0], f.head);
-      } else {
-        assert.equal(f.archive.count, 0, shape);
-        assert.equal(result.resolution.workspaceRetirement?.state, 'held', shape);
-        assert.equal(result.resolution.workspaceRetirement?.intentAt, null, shape);
-        assert.match(result.resolution.workspaceRetirement!.detail, /tool|history/, shape);
-        assert.equal(await readFile(join(f.directory, 'src/lib.rs'), 'utf8'), source, shape);
-        assert.equal(git(f.directory, 'rev-parse', 'HEAD'), f.head, shape);
-        assert.equal(git(f.directory, 'status', '--porcelain'), '', shape);
-        assert.ok(await stat(f.target), 'build outputs also remain before sufficient evidence');
-      }
-    } finally { await f.close(); }
-  }
-});
-
 test('owner retry finishes catalog-absent canonical teardown and proves runtime retirement', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
   const f = await preservedFixture(t, [], true);
   try {

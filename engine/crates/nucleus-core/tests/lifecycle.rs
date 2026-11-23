@@ -809,6 +809,33 @@ fn a_prepared_review_rechecks_the_pr_and_worktree_without_charging_a_failure() {
 }
 
 #[test]
+fn a_superseded_review_with_possible_delivery_is_revoked_until_quiescent() {
+    let mut task = task(Entry::ReviewEntry);
+    let current = open('a', CheckState::Ready);
+    let bearer = start(&mut task, &current, Role::Reviewer, "reviewer", "review");
+    let instance = task.run().expect("run").launch().instance.clone();
+    task.record_send(&instance, 1)
+        .expect("record possible send");
+    let changed = open('b', CheckState::Ready);
+    let ready = host(&task, changed.clone(), RunState::ReadyToSend);
+    assert_eq!(task.reconcile(&ready), Action::Revoke);
+    assert!(task.run().expect("stop must settle first").revoked());
+    assert_eq!(task.attempts(), 0);
+    let approval = Report::Review {
+        head: sha('a'),
+        decision: Review::Approve,
+        summary: "old review".into(),
+    };
+    assert_eq!(
+        task.record_report(&instance, bearer.as_bytes(), approval),
+        Err(CommandError::InvalidReportCredential)
+    );
+    let ended = host(&task, changed, RunState::Ended);
+    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
+    assert!(task.run().is_none());
+}
+
+#[test]
 fn a_reservation_after_move_cannot_restore_the_old_bearer() {
     let (mut task, obs) = working();
     let original = start(&mut task, &obs, Role::Worker, "worker", "same wire inputs");

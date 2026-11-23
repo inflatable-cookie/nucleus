@@ -19,7 +19,6 @@ import { z } from "zod";
 import {
   externalWorkspaceArchivePending,
   dispositionWorkPolicy,
-  incidentBindsCurrentWork,
   isDispositionActive,
   taskControlInputSchema,
   taskNextVerbSchema,
@@ -35,7 +34,6 @@ import {
 } from "../../shared/hooks";
 import { isAcceptedReview } from "../recovery/task-reasons";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
-import { uncertainOperationRetryRefusal } from "./verb-fences";
 import { classifyReviewPublication } from "../review/review-publication";
 import { prIdentity } from "./owner-facts";
 import type { OwnerVerbFacts } from "./owner-facts";
@@ -61,7 +59,6 @@ export type OwnerEffect = {
     | "planning_base"
     | "external_workspace_archive"
     | "disposition_workspace"
-    | "task_control_operation"
     | "recovery_effect"
     | "branch_cleanup"
     | "owned_tool";
@@ -236,22 +233,6 @@ function pendingDispositionWorkspaceEffect(task: Task): OwnerEffect | null {
 export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
   const { store, task, hookRecords, events } = facts;
   const effects: OwnerEffect[] = [];
-  const incident = task.resolution.incident;
-  const activeRecoveryRun = facts.runs.some(
-    (run) => run.role === "recovery" && !run.released,
-  );
-  if (
-    incident?.status === "reconciling" &&
-    incidentBindsCurrentWork(task, facts.runs) &&
-    !task.resolution.recoveryActive &&
-    !activeRecoveryRun
-  ) {
-    effects.push({
-      effect: `incident.${incident.id}`,
-      kind: "recovery_effect",
-      summary: `Incident ${incident.id} is still reconciling, but no active recovery run owns it; re-prove and settle the incident`,
-    });
-  }
   const ownedToolState = new Map<string, { held: boolean; reason?: string }>();
   for (const event of events)
     if (
@@ -279,36 +260,9 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
       effects.push({
         effect: `owned_tool.${runId}`,
         kind: "owned_tool",
-        summary: `Run ${runId} is held by an owned tool: ${state.reason}`,
+        summary: `Run ${runId} recorded a tool hold: ${state.reason}`,
+        refusal: `Use record.clear kind=effect id=owned_tool.${runId} and accept owned_tool (${state.reason})`,
       });
-  // A task-control retry may itself be left uncertain after its effect was
-  // applied. Keep that operation visible until an owner re-proves its target
-  // or a later control supersedes it.
-  const blockingOperations = new Set(
-    blockingRecoveryEffects(store, task, { kinds: ["operation"] }).map(
-      (effect) => effect.identity,
-    ),
-  );
-  for (const operation of store.operations({
-    taskId: task.id,
-    states: ["needs_attention"],
-    limit: 1000,
-  })) {
-    if (
-      operation.kind !== "task_control" ||
-      !blockingOperations.has(operation.id)
-    )
-      continue;
-    const payload = store.operationPayload(operation.id) as {
-      control?: { action?: string };
-    } | null;
-    if (payload?.control?.action !== "retry_effect") continue;
-    effects.push({
-      effect: `task_control_operation.${operation.id}`,
-      kind: "task_control_operation",
-      summary: `Task-control operation ${operation.id} is uncertain: ${operation.diagnostic || "no diagnostic was recorded"}`,
-    });
-  }
   // A disposition frozen at its workspace proof or archive is the owner's to
   // re-run; nothing else about the fence changes.
   const dispositionWorkspace = pendingDispositionWorkspaceEffect(task);
@@ -662,41 +616,15 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
         ? `hook.${hookRecord?.eventId ?? blocking.identity}`
         : blocking.kind === "publication"
           ? `review_publication.${blocking.identity}`
-          : blocking.kind === "operation" &&
-              effects.some(
-                (item) =>
-                  item.kind === "task_control_operation" &&
-                  item.effect === `task_control_operation.${blocking.identity}`,
-              )
-            ? null
-            : `${blocking.kind}.${blocking.identity}`;
+          : `${blocking.kind}.${blocking.identity}`;
     if (!key || effects.some((item) => item.effect === key)) continue;
-    const operation =
-      blocking.kind === "operation" ? store.operation(blocking.identity) : null;
-    // nucleus#1428: the same no-write proof retry_effect reads, so next offers
-    // exactly the reconciliation retry_effect will perform.
-    const noWriteProof = operation
-      ? store.unwrittenMergeMoveProof(operation.id)
-      : null;
-    const refusal =
-      operation &&
-      !noWriteProof &&
-      !(
-        operation.result &&
-        operation.effect?.status === "reconciled" &&
-        operation.state === "needs_attention"
-      )
-        ? uncertainOperationRetryRefusal(
-            blocking.identity,
-            blocking.state,
-            blocking.reason,
-          )
-        : null;
     effects.push({
       effect: key,
       kind: "recovery_effect",
-      summary: `${blocking.kind} ${blocking.identity} is ${blocking.state}: ${blocking.reason}${noWriteProof ? `; ${noWriteProof}` : ""}`,
-      ...(refusal ? { refusal } : {}),
+      summary: `${blocking.kind} ${blocking.identity} is ${blocking.state}: ${blocking.reason}`,
+      ...(key !== "project-validation.project-validation"
+        ? { refusal: `Use record.clear kind=effect id=${key} and accept effect_may_land` }
+        : {}),
     });
   }
   // A settled archive intent may no longer be a cleanup candidate (its run's
@@ -747,23 +675,6 @@ export function ownerEffectRetryRefusal(
 ): string | null {
   const { task, runs } = facts;
   if (item.refusal) return item.refusal;
-  const operationId = ownerEffectIdentity(item.effect, "operation");
-  const operation = operationId ? facts.store.operation(operationId) : null;
-  if (
-    operation?.kind === "task_control" &&
-    operation.state === "needs_attention" &&
-    ["restart", "route", "stop"].includes(operation.effect?.target ?? "")
-  )
-    return `${item.summary}. Waiting for the sweep to observe its target.`;
-
-  const runId = ownerEffectIdentity(item.effect, "run-delivery");
-  if (runId && runs.some((run) => run.id === runId && run.released))
-    return `run-delivery ${runId} remains uncertain. Nucleus checks the released run's exact timeline on a sweep`;
-  if (
-    runId &&
-    !runs.some((run) => run.id === runId && run.agentId && run.workspaceId)
-  )
-    return `run-delivery ${runId}: the original agent and workspace are unknown; Nucleus rechecks creation on a sweep`;
   if (
     item.effect.startsWith("project-validation.") &&
     (task.resolution.projectValidation?.state === "running" ||

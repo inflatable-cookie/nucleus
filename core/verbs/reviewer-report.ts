@@ -12,7 +12,6 @@ import {
   latestDeliveredReviewTurn,
   reviewerCannotFinish,
 } from "../review/review-continuation";
-import type { TimelinePage } from "../host/types";
 import {
   hostFailureRefusalDetail,
   ProvenPreSendRefusalError,
@@ -191,27 +190,6 @@ export function reviewerReportPlan(
 }
 
 type ReviewerReportEvents = readonly { kind: string; detail: string }[];
-
-/**
- * Whether one complete timeline page holds this exact user message. The same
- * contract as the delivery observer's `timelineMessage`: an incomplete page
- * (older page, gap, stale cursor, reset) answers unknown, never absence.
- */
-function timelineMessage(
-  page: TimelinePage | null | undefined,
-  messageId: string,
-): "present" | "absent" | "unknown" {
-  if (!page || page.hasOlder || page.gap || page.staleCursor || page.reset)
-    return "unknown";
-  return page.entries.some(
-    (entry) =>
-      entry.item.type === "user_message" &&
-      ((entry.item as Record<string, unknown>).messageId === messageId ||
-        (entry.item as Record<string, unknown>).clientMessageId === messageId),
-  )
-    ? "present"
-    : "absent";
-}
 
 /** The stable identity of the report request a run can receive exactly once. */
 export const reviewerReportMessageId = (runId: string) =>

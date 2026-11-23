@@ -28,15 +28,6 @@ import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { TaskChangedRefusal } from "../../shared/task-version";
 
 /** An unanswered control has no effect-specific retry. Its own observer owns it. */
-export function uncertainOperationRetryRefusal(
-  identity: string,
-  state: string,
-  reason: string,
-): string {
-  return `operation ${identity} remains ${state}: ${reason}; no later task evidence answers its host effect yet. Nucleus rechecks it on a sweep`;
-}
-
-/** Classify a run using only facts already read; observation remains lazy. */
 export function classifyVerbRun(input: {
   settlement: ReturnType<typeof runSettlement>;
   episode: boolean;
@@ -94,9 +85,7 @@ export function classifyVerbRun(input: {
 
 /**
  * Displace or refuse the runs an owner verb would disturb. Same-name `Engine`
- * methods delegate here. `ownedToolHold`, `supersededIdleFence` and
- * `requireOwnerControlCurrent` go back through the engine so tests that replace
- * them on the instance still see these calls.
+ * methods delegate here.
  */
 export class VerbFences {
   constructor(readonly engine: Engine) {}
@@ -448,12 +437,6 @@ export class VerbFences {
       };
     if (!matchingInactiveParticipant(run, state))
       return { outcome: "cancel", observation: state };
-    if (
-      state.status !== "closed" &&
-      (await this.engine.ownedToolHold(run.agentId, run.id, run.taskId))
-        .kind !== "clear"
-    )
-      return { outcome: "cancel", observation: state };
     return { outcome: "settle", observation: state };
   }
 
@@ -595,17 +578,6 @@ export class VerbFences {
       throw Error(
         "The task moved on since the coordinator was asked (its results, head, phase, run or routes changed)",
       );
-    // The durable effect fences are rechecked at the settlement boundary: the
-    // action's observations and cancellations are asynchronous, and an unknown
-    // delivery or blocking effect recorded since then is never settled over.
-    const boundary = this.store.task(taskId);
-    for (const runId of [...settle.runIds, ...(settle.displacedRunIds ?? [])]) {
-      const run = this.store.run(runId);
-      if (!run || run.released) continue;
-      const why = this.runDurableFence(boundary, run);
-      if (why)
-        throw new DurableFenceRefusal(this.displaceRefusal({ run, why }));
-    }
     // Coordinator retry owns its episode and incident; only other run leases
     // settle before it applies the owner's retry in this same transaction.
     if (!settle.preserveEpisode)
@@ -637,7 +609,7 @@ export class VerbFences {
   ): void {
     for (const id of runIds) {
       const run = this.store.run(id);
-      if (!run || run.released) continue;
+      if (!run || run.taskId !== taskId || run.released) continue;
       if (run.completion) {
         this.releaseVerbFinishedRuns(taskId, [run], detail);
         continue;
@@ -738,22 +710,6 @@ export class ContinuationFences {
       taskId,
       `reviewer continuation: ${settle.detail}`,
     );
-    // The durable effect fences are rechecked at the settlement boundary: the
-    // gates, verification and cancellation above are asynchronous, and an unknown
-    // delivery or blocking effect recorded since then is never settled over
-    // (review 5668722168).
-    const boundary = this.store.task(taskId);
-    for (const runId of [...settle.runIds, ...(settle.displacedRunIds ?? [])]) {
-      const run = this.store.run(runId);
-      if (!run || run.released) continue;
-      const why = runSettlementFence(
-        { store: this.store, task: boundary },
-        run,
-      );
-      // Raised typed: the fence is a read-only store projection rechecked before
-      // the action's own send, so the refusal settles the control as refused.
-      if (why) throw new DurableFenceRefusal(runFenceRefusal(run, why));
-    }
     // The episode's own run is settled by the transition that resolves it: a
     // reported run releases with its report, and a run the verb displaced (its
     // turn already cancelled or observed idle) releases whatever its binding
@@ -780,7 +736,7 @@ export class ContinuationFences {
     }
     for (const runId of settle.displacedRunIds ?? []) {
       const run = this.store.run(runId);
-      if (!run || run.released) continue;
+      if (!run || run.taskId !== taskId || run.released) continue;
       if (run.role === "recovery" && run.completion) {
         this.recovery.settleFinishedRun(
           this.store.task(taskId),

@@ -133,7 +133,9 @@ export async function fixture(
           const view = views.get(id)!;
           return {
             directory: view.directory,
-            refresh: async () => {},
+            refresh: async () => {
+              if (delivery.unavailable) throw Error("catalog unavailable");
+            },
             current: () =>
               archived.has(id)
                 ? undefined

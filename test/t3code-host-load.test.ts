@@ -140,7 +140,7 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
     host,
   );
   let processes: HostProcessFact[] = [];
-  adapter.hostProcessListing = async () => processes;
+  adapter.hostProcessListing = async () => Object.assign(processes, { cwdComplete: true });
   const engine = new Engine(store, adapter, 60_000);
   t.after(async () => {
     await engine.stop();
@@ -213,33 +213,10 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
       resolution.endPassSnapshot(snapshot);
     }
   };
-  const hold = () =>
-    inPassWithoutTimeline(() =>
-      resolution.ownedToolHold(agentId, {
-        taskId: task.id,
-        runId,
-        workspaceId,
-        requireCompleteEvidence: true,
-      }),
-    );
+  const lease = () =>
+    inPassWithoutTimeline(() => resolution.executionLease(store.task(task.id)));
 
-  store.event(
-    task.id,
-    "owned_tool_hold",
-    JSON.stringify({ runId, reason: "earlier live tool" }),
-  );
-  assert.deepEqual(await hold(), { kind: "clear" });
-  const settled = store.eventsAll(task.id).find(
-    (event) => event.kind === "owned_tool_settled",
-  );
-  assert.match(settled?.detail ?? "", /exact participant inactivity/);
-  assert.equal(
-    await inPassWithoutTimeline(() =>
-      resolution.executionLease(store.task(task.id)),
-    ),
-    true,
-    "the real merge gate acquires execution custody without a timeline page",
-  );
+  assert.equal(await lease(), true, "merge acquires custody without a timeline page");
 
   const process = {
     pid: 42,
@@ -251,17 +228,16 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   };
   for (const cwd of [directory, temporaryDirectory]) {
     processes = [{ ...process, cwd }];
-    const busy = await hold();
-    assert.equal(busy.kind, "hold");
-    assert.match(busy.reason, /process 42 remains/);
+    assert.equal(await lease(), false);
+    assert.match(store.task(task.id).reason, /process 42 remains/);
   }
   processes = [];
   thread.runtimeRequests = [syntheticRuntimeRequest({ kind: "approval" })];
-  assert.equal((await hold()).kind, "hold");
+  assert.equal(await lease(), false);
   thread.runtimeRequests = [];
   delete server.controls.shellStatuses[agentId];
   thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "running" })];
-  assert.equal((await hold()).kind, "hold");
+  assert.equal(await lease(), false);
   server.controls.shellStatuses[agentId] = "completed";
   thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
   thread.thread.activeProviderThreadId = "current-provider";
@@ -273,22 +249,17 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
       pendingBackgroundTasks: [{ kind: "command", taskId: "running-command" }],
     }),
   ];
-  const background = await hold();
-  assert.equal(background.kind, "hold");
-  assert.match(background.reason, /running-command/);
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /running-command/);
   thread.providerThreads = [];
 
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
   thread.updatedAt = thread.thread.updatedAt;
-  const staleScan = await hold();
-  assert.equal(staleScan.kind, "deferred");
-  assert.match(staleScan.reason, /active after the pass process snapshot/);
+  assert.equal(await lease(), false);
+  assert.match(store.task(task.id).reason, /does not cover the participant's latest inactivity/);
 
   server.threads.delete(agentId);
-  assert.deepEqual(await hold(), {
-    kind: "deferred",
-    reason: "agent timeline page was not captured in this host pass; waiting for the next pass",
-  });
+  assert.equal(await lease(), false);
 });
 
 /** Requests of one method the fake has served, from `from`. */

@@ -1,8 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-} from "../recovery/recovery-effects";
 import { mergeFenced, type Task } from "../../shared/contracts";
 import { now } from "../store/store";
 import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
@@ -18,7 +14,6 @@ export type IntegrationTurnsContext = Pick<
   | "holdsIntegrationTurn"
   | "integrationActive"
   | "paused"
-  | "refreshingCloseoutHook"
   | "requiredCheckPollState"
   | "slotAdmissionReason"
   | "store"
@@ -72,41 +67,7 @@ export class IntegrationTurns {
       ].includes(t.resolution.stop?.reason ?? "")
     )
       return t.reason;
-    // Use the same durable effects as executionLease. Active merge work is
-    // protected by its quantum; stranded intents yield without losing sequence.
-    const refresh = this.resolution.refreshingCloseoutHook(
-      t,
-      t.phase === "syncing",
-    );
-    const ownedCloseout = new Set(
-      this.store
-        .hookEvents(t.id)
-        .filter(
-          (record) =>
-            t.phase === "closing" &&
-            record.event === "task.closeout" &&
-            record.state === "blocked",
-        )
-        .map((record) => record.id),
-    );
-    const effects = blockingRecoveryEffects(this.store, t, {
-      kinds: [
-        "operation",
-        "hook",
-        "run-delivery",
-        "review-delivery",
-        "publication",
-        "attention-notice",
-      ],
-    }).filter(
-      (effect) =>
-        !(
-          effect.kind === "hook" &&
-          (effect.identity === refresh?.id ||
-            ownedCloseout.has(effect.identity))
-        ),
-    );
-    return recoveryEffectsRefusal(effects);
+    return null;
   }
   integrationActive(t: Task) {
     if (!t.resolution.integrationTurn) return false;

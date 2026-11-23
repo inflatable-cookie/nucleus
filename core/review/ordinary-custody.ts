@@ -1,35 +1,23 @@
 /**
- * The ordinary review round's custody proof. One detached reviewer round runs in
- * the task's own workspace, so before it is sent every participant must be
- * idle and permission-free, every tool hold proven complete, no other run may
- * own the checkout, and the task reservation must not have moved. The snapshot
- * re-read at the end is what makes the proof hold inside the send guard.
+ * Guard a retained review round's checkout. The prior round must have
+ * released it, no other run may own it, and the retained reviewer must be
+ * idle and permission-free before a new send. Recheck the reservation after
+ * the host observation.
  */
 import {
   isDispositionActive,
   type Run,
   type Task,
 } from "../../shared/contracts";
-import {
-  blockingRecoveryEffects,
-  BlockingRecoveryEffectsError,
-} from "../recovery/recovery-effects";
-import { participantToolRunIds } from "../recovery/task-reasons";
 import { matchingInactiveParticipant } from "../intake/run-settlement";
 import { taskPrNumber } from "../forge/index";
 import { currentBrief } from "../planning/brief";
 import type { Store } from "../store/store";
 import type { HostFacade } from "../host/host-facade";
-import type { OwnedTools } from "../machine/owned-tool";
-import { PassProofPendingError } from "../host/errors";
-import { custodyProofDeferral } from "../machine/custody-proof";
-import type { Resolution } from "../resolution";
 
 export interface OrdinaryCustodyContext {
   readonly store: Store;
   readonly host: Pick<HostFacade, "observe">;
-  ownedToolHold: OwnedTools["ownedToolHold"];
-  requestPassProof: Resolution["requestPassProof"];
   startsNoRuns(): boolean;
 }
 
@@ -74,73 +62,12 @@ export class OrdinaryCustody {
         .some((other) => other.id !== run.id && !other.released)
     )
       throw Error("Another run owns the ordinary review checkout");
-    const blockingEffects = blockingRecoveryEffects(this.context.store, t, {
-      noticeKinds: "all",
-    });
-    if (blockingEffects.length)
-      throw new BlockingRecoveryEffectsError(blockingEffects);
-    const taskParticipants = new Set(
-      [
-        t.agentId,
-        run.agentId,
-        ...t.retiredWorkers.map((worker) => worker.agentId),
-      ].filter((id): id is string => Boolean(id)),
-    );
-    const participants = new Map(
-      [...taskParticipants].map((id) => [id, t.workspaceId!]),
-    );
-    if (prior.agentId) participants.set(prior.agentId, t.workspaceId!);
-    for (const [id, workspaceId] of participants) {
-      const allowRetired = restoring || id !== run.agentId;
-      if (!allowRetired) {
-        const state = await this.context.host.observe(id).catch((error) => {
-          const deferred = custodyProofDeferral({ kind: "error", error });
-          if (!deferred) throw error;
-          this.context.requestPassProof(t.hostId, id);
-          throw new PassProofPendingError(`Ordinary review participant ${id}`, deferred.reason);
-        });
-        if (
-          !matchingInactiveParticipant({ agentId: id, workspaceId }, state, [
-            "idle",
-          ])
-        )
-          throw Error(
-            "Ordinary review participant is not idle and permission-free in the recorded workspace",
-          );
-      }
-      const participantRunIds = participantToolRunIds(
-        t,
-        this.context.store.runs(t.id),
-        id,
-        workspaceId,
-      );
-      const held = await this.context.ownedToolHold(id, {
-        requireCompleteEvidence: true,
-        allowRetired,
-        runId: participantRunIds[0],
-        runIds: participantRunIds,
-        taskId: t.id,
-        workspaceId,
-      });
-      // A proof the pass could not read yet is demanded from the next pass:
-      // the send waits for it rather than stopping the task (Spec 068 §6).
-      if (held.kind === "deferred")
-        throw new PassProofPendingError(
-          `Ordinary review participant ${id}`,
-          held.reason,
-        );
-      if (held.kind !== "clear") {
-        if (
-          held.reason ===
-          "participant is not idle and permission-free in the recorded workspace"
-        )
-          throw Error(
-            "Ordinary review participant is not idle and permission-free in the recorded workspace",
-          );
+    if (!restoring && run.agentId) {
+      const state = await this.context.host.observe(run.agentId);
+      if (!matchingInactiveParticipant(run, state, ["idle"]))
         throw Error(
-          `Ordinary review participant has live or unknown tools: ${held.reason}`,
+          "Ordinary review participant is not idle and permission-free in the recorded workspace",
         );
-      }
     }
     const latest = this.context.store.task(t.id);
     const reviewIdentity = (task: Task) =>

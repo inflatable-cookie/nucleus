@@ -1,6 +1,5 @@
 import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { exhaustedReviewer, exhaustedReviewerRefusal } from "./reviewer-report";
-import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { ownerStopPendingRefusal } from "./owner-stop";
 /** Owner verb registry; read-side admission lives under verbs/. */
 import { readyReviewAtHead } from "../recovery/task-reasons";
@@ -172,10 +171,11 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     const exhausted =
       role === "reviewer" ? exhaustedReviewer(task, facts.runs) : null;
     const replacementWait =
-      unsettledControlRefusal(facts.store, task) ??
-      (exhausted
-        ? exhaustedReviewerRefusal(facts.store, task, exhausted)
-        : null);
+      task.resolution.ownerStop
+        ? ownerStopPendingRefusal(task.resolution.ownerStop)
+        : exhausted
+          ? exhaustedReviewerRefusal(facts.store, task, exhausted)
+          : null;
     const retainedReviewer = exhausted
       ? "The retained reviewer cannot finish. Use run.start reviewer fresh replacing=<run> or add now to replace it."
       : role === "reviewer" && task.resolution.reviewerAgentId

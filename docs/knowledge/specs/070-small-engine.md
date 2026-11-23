@@ -53,7 +53,15 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    primitives, and its components are reshaped to the new model. Components that
    exist only for the old machinery are deleted. T3 is called directly over its RPC.
 5. **T3 is the only host.** BB and Paseo are dropped, not ported (Tom, 2026-11-23: "Regarding BB and Paseo - I wouldn't be upset if we drop them. I like T3, the workflow can work well.. I'd be tempted to not bother with those two. If I was going to support more ADEs, I would look at something like Zeron, which would get a similar integration to T3."). The host trait stays, so a future ADE gets an adapter shaped like T3's.
-6. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
+6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3.
+7. **The ACP session is written for a person.** Tom, 2026-11-23: "I would like the Nucleus ACP to be much more human friendly than it is now - provide actual useful feedback about the task as things happen, avoid too much noise, make it obvious what each sub agent is doing." The rules:
+   - The lifecycle is one ACP `plan`: Queued, Working, Review (round N), Merge and Close. Each step is pending, in progress or done. A wait shows as that step's status (for example, "Waiting for a review slot"). Waits are never messages.
+   - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
+   - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
+   - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
+8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, load, budgets and usage levels), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped.
+9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out.
+10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
 
@@ -67,7 +75,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
 | `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
-| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds immutable launch inputs and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
+| `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
@@ -82,8 +90,9 @@ reads its own events to decide anything.
 
 Each pass reads, for active tasks only:
 
-- **Host:** for the run's thread, whether it exists, its turn state (running, idle or
-  ended), the report if one was sent, and pending permission or user input.
+- **Host:** for the exact run's thread, whether it exists, its turn state (running,
+  idle or ended), the report if one was sent, and pending permission or user input.
+  On local T3, settlement also checks for processes using that checkout.
 - **Forge:** the PR's state, head, mergeability and checks, and whether it was merged
   and at which commit.
 - **Workspace:** whether it exists, its head, and whether it is clean.
@@ -110,9 +119,12 @@ Every action is idempotent:
 - Launches and sends use a deterministic label, `task-{id}-{phase}-{head}-{attempt}`.
   The task assigns each reservation a distinct launch instance and bearer. Revisiting
   the same phase and head after `move` uses new native command and message IDs.
-  Only the current, unrevoked reservation can be replayed.
-- Before any create, the engine looks up the label. An unknown outcome is simply
-  looked up on the next pass. Nothing is ever resent blindly.
+  Only the current reservation can be replayed. An unrevoked replay can start
+  work. A revoked replay only reconciles uncertain delivery and stops the turn.
+- Before any send, the engine reads the exact native thread and message identity.
+  It records the possible send before writing. If a reply remains unknown, it
+  waits out the host's late-reply window and replays the identical request under
+  the same command ID. An unsent revoked reservation clears directly.
 - A merge is the guarded GitHub merge at the exact head.
 
 ### Faults
@@ -127,6 +139,9 @@ Every action is idempotent:
   exact head. A reservation that no longer fits proceeds to reconciliation
   without charging a failed attempt. A failed attempt counts only when the
   required head observation is known.
+- If the head moved while delivery was uncertain, reconciliation can replay the
+  old request after revoking its credential. It stops the exact turn and archives
+  the thread before clearing the run. The old review cannot report a verdict.
 - **A task needs a person only when the question is about the work itself.**
 
 ### Commands
@@ -163,7 +178,8 @@ A Cargo workspace inside this repository, at `engine/`:
 | `nucleus-hosts` | The host trait and the T3 adapter. No BB or Paseo adapters (ruling 5). |
 | `nucleus-forge` | GitHub: the PR, checks, merge at the exact head, and reviews. |
 | `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
-| `nucleus-service` | The pass loop, the JSON API for the board, and callbacks. |
+| `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands. A thin client of the service (ruling 6). |
+| `nucleus-service` | The pass loop, the JSON API for the board and the ACP agent, and callbacks. |
 | `nucleus-cli` | The `nucleus` command. |
 
 Reuse, to be confirmed by the build when it reads their contracts:
@@ -201,8 +217,8 @@ Cargo builds" rule for the `engine/` workspace only:
    synthetic `inflatable-cookie/nucleus-fixture` repository and its own T3 project.
    For this proof the engine uses standalone role threads and its default worktree
    allocator.
-2. **Milestone 2:** the board reads the new engine's API. New tasks for one project go
-   to the new engine. T3 must show one row per task before the first real project.
+2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
+   to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work.
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
@@ -215,4 +231,4 @@ A task never moves between engines.
 - Papercuts, leads, decisions, plans and milestone QA records keep their current
   store and CLI. The engine reads leads only to admit a promoted task.
 - Usage levels, model selection and budgets carry over as plain settings, not as new
-  state.
+  state. They're part of milestone 2's settings (ruling 8).

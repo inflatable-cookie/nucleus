@@ -336,6 +336,8 @@ pub struct Run {
     pub(crate) launch: PreparedLaunch,
     pub(crate) report: Option<Report>,
     pub(crate) revoked: bool,
+    #[serde(default)]
+    pub(crate) last_send_at_ms: Option<u64>,
 }
 
 impl Run {
@@ -352,6 +354,11 @@ impl Run {
     #[must_use]
     pub const fn revoked(&self) -> bool {
         self.revoked
+    }
+
+    #[must_use]
+    pub const fn last_send_at_ms(&self) -> Option<u64> {
+        self.last_send_at_ms
     }
 }
 

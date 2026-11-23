@@ -9061,7 +9061,7 @@ test("a cleared external-merge check resumes the accepted-PR reconciliation inst
   }
 });
 
-test("ordinary audit routes a long saved external-merge reason before reconciling the accepted reviewer run", async () => {
+test("ordinary audit routes a long saved external-merge reason before applying the accepted reviewer result", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
@@ -9089,9 +9089,10 @@ test("ordinary audit routes a long saved external-merge reason before reconcilin
       reason: savedReason,
     });
 
-    const audit: string[] = [];
+    let routedBeforeReview = false;
     f.adapter.originAgent = async (id) => {
-      audit.push(`origin:${id}`);
+      if (id === "origin" && !f.current().resolution.review)
+        routedBeforeReview = true;
       return {
         id,
         workspaceId: "origin-workspace",
@@ -9099,49 +9100,12 @@ test("ordinary audit routes a long saved external-merge reason before reconcilin
         archived: false,
       };
     };
-    f.adapter.externalMerge = async () => {
-      audit.push("external-merge");
-      return null;
-    };
-    const verifyReview = f.adapter.verifyReview!.bind(f.adapter);
-    f.adapter.verifyReview = async (task, run, verdict) => {
-      if (run.id === originalRun.id && verdict.eventId === callback.eventId)
-        audit.push("review-verified");
-      return verifyReview(task, run, verdict);
-    };
-    const observe = f.adapter.observe.bind(f.adapter);
-    f.adapter.observe = async (id) => {
-      audit.push(`observe:${id}`);
-      return observe(id);
-    };
-    f.adapter.hostProcessListing = async () => {
-      audit.push("processes");
-      return [];
-    };
+    f.adapter.externalMerge = async () => null;
     f.idle(originalRun.agentId!, originalRun.workspaceId);
-    f.engine.resolution.requestPassProof(
-      f.current().hostId,
-      originalRun.agentId!,
-    );
-    // One pass: a full drain would go on to launch the closeout run, which is not a replacement.
+    // One pass leaves follow-up launch to the normal lifecycle.
     await f.step();
 
-    const originAt = audit.indexOf("origin:origin"),
-      threadAt = audit.indexOf(`observe:${originalRun.agentId}`),
-      processesAt = audit.indexOf("processes");
-    assert.ok(originAt >= 0, "ordinary origin routing read the saved record");
-    assert.ok(
-      threadAt >= 0 && processesAt > threadAt,
-      `the host pass observes the reviewer before listing processes: ${audit.join(", ")}`,
-    );
-    assert.ok(
-      audit.indexOf("external-merge") > originAt,
-      `origin routing precedes external-merge reconciliation: ${audit.join(", ")}`,
-    );
-    assert.ok(
-      audit.indexOf("review-verified") > originAt,
-      `origin routing precedes verification of the accepted verdict: ${audit.join(", ")}`,
-    );
+    assert.ok(routedBeforeReview, "origin routing reads the saved record before applying the verdict");
     const released = f.store.run(originalRun.id)!;
     assert.equal(released.released, true);
     assert.equal(released.status, "finished");
@@ -9828,7 +9792,7 @@ test("coordinator retry after an exhausted review budget returns the accepted PR
     await f.close();
   }
 });
-test("a parked restart rechecks an accepted verifying task after its control effect settles", async () => {
+test("a parked restart rechecks an accepted verifying task without another wake", async () => {
   const f = fixture();
   try {
     recordAcceptedReview(f, "verifying");
@@ -9836,25 +9800,14 @@ test("a parked restart rechecks an accepted verifying task after its control eff
       reason: "A repaired check needs retry",
       resolution: { ...f.current().resolution, attention: true },
     });
-    const operationKey = randomUUID();
-    const gateStates: (string | undefined)[] = [];
+    let gates = 0;
     f.adapter.mergeGate = async () => {
-      gateStates.push(f.store.operationForKey(operationKey)?.state);
+      gates++;
       return { head, base, wait: "Waiting at the pre-merge gate" };
-    };
-    const perform = f.engine.performTaskControl.bind(f.engine);
-    f.engine.performTaskControl = async (...args) => {
-      const result = await perform(...args);
-      assert.equal(
-        gateStates.length,
-        0,
-        "the operation effect fences the first wake",
-      );
-      return result;
     };
     const task = f.current();
     const accepted = await f.engine.startOperation({
-      key: operationKey,
+      key: randomUUID(),
       kind: "task_control",
       taskId: task.id,
       expectedVersion: task.version,
@@ -9881,10 +9834,9 @@ test("a parked restart rechecks an accepted verifying task after its control eff
         .some((event) => event.kind === "resolution_retry"),
     );
     assert.ok(
-      gateStates.length > 0,
+      gates > 0,
       "the settled retry reaches the merge gate without another wake",
     );
-    assert.deepEqual([...new Set(gateStates)], ["succeeded"]);
   } finally {
     await f.close();
   }
@@ -10758,42 +10710,6 @@ test("a recorded archive intent reconciles a gone workspace without another arch
     await f.close();
   }
 });
-test("a recorded archive intent without a workspace observer waits instead of archiving blindly", async () => {
-  const { Lifecycle } = await import("../core/closeout/workspace-lifecycle");
-  const f = fixture();
-  try {
-    let archives = 0;
-    assert.equal(f.adapter.taskWorkspaceArchived, undefined);
-    Object.assign(f.adapter, {
-      archiveTaskWorkspace: async () => {
-        archives++;
-        return true;
-      },
-    });
-    const lifecycle = new Lifecycle(f.engine);
-    f.store.update(f.task.id, {
-      phase: "done",
-      resolution: {
-        ...f.current().resolution,
-        mergedCommit: merged,
-        syncedCommit: merged,
-        archiveIntentWorkspaceId: "workspace",
-        cleanupReason:
-          "Workspace archive outcome is uncertain; inspect before retrying",
-      },
-    });
-    await lifecycle.pass();
-    assert.equal(archives, 0);
-    assert.match(
-      f.current().resolution.cleanupReason,
-      /Waiting to reconcile the uncertain workspace archive for workspace: workspace observation is unavailable/,
-    );
-    assert.equal(f.current().resolution.archiveIntentWorkspaceId, "workspace");
-    assert.deepEqual(f.current().resolution.archivedWorkspaceIds, []);
-  } finally {
-    await f.close();
-  }
-});
 test("a recorded archive intent reconciles a gone workspace even when the retention hook fails on the removed worktree", async () => {
   const { Lifecycle } = await import("../core/closeout/workspace-lifecycle");
   const f = fixture();
@@ -10872,7 +10788,7 @@ test("a failed archive observation waits with a transport reason and retries lat
     assert.equal(archives, 0);
     assert.match(
       f.current().resolution.cleanupReason,
-      /Waiting to reconcile the uncertain workspace archive for workspace: Paseo transport dropped/,
+      /Workspace archive for workspace failed: Paseo transport dropped/,
     );
     assert.equal(f.current().resolution.archiveIntentWorkspaceId, "workspace");
     assert.deepEqual(f.current().resolution.archivedWorkspaceIds, []);
@@ -11715,45 +11631,7 @@ test("a settled recovery closes the incident it owns in the same settlement", as
     await f.close();
   }
 });
-test("next offers retry_effect for a reconciling incident with no active recovery and the retry settles it", async () => {
-  const f = fixture();
-  try {
-    const incident = f.engine.resolution.ensureIncident(
-      f.current(),
-      null,
-      "External merge check: workspace identity is unknown",
-    );
-    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
-    const retry = next.verbs.find(
-      (view) =>
-        view.verb === "retry_effect" &&
-        view.available &&
-        view.args?.effect === `incident.${incident.id}`,
-    );
-    assert.ok(retry, "the orphaned incident is exposed as a retryable effect");
-    const result = await f.engine.performTaskControl(
-      taskControlInputSchema.parse({
-        taskId: f.task.id,
-        version: f.current().version,
-        action: "retry_effect",
-        effect: `incident.${incident.id}`,
-        reason: "Re-prove that no recovery run remains",
-      }),
-    );
-    assert.equal(result.resolution.incident?.status, "resolved");
-    assert.match(
-      result.resolution.incident?.detail ?? "",
-      /re-proved no active recovery/,
-    );
-    assert.ok(
-      f.store
-        .events(f.task.id)
-        .some((event) => event.kind === "incident_reproved_settled"),
-    );
-  } finally {
-    await f.close();
-  }
-});
+
 async function recoveryReport(
   f: ReturnType<typeof fixture>,
   status: "recovered" | "escalate",
@@ -14897,44 +14775,21 @@ function restartC4(f: ReturnType<typeof fixture>) {
   });
 }
 
-test("C4 restart requires both exact absence and a settled producer", async () => {
+test("C4 restart directs the owner to the recorded run without a host lookup", async () => {
   const f = fixture();
   const launch = startC4(f);
   try {
     const { run, token } = await launch.started;
     await f.engine.resolution.recovery.pass(f.task.id);
-    assert.equal(f.current().resolution.recovery?.status, "escalated");
-    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
-    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+    let lookups = 0;
+    f.adapter.findRunAgents = async () => {
+      lookups++;
+      return [];
+    };
+    await assert.rejects(restartC4(f), new RegExp(`Use run.release run=${run.id}`));
+    assert.equal(lookups, 0);
     assert.equal(f.store.run(run.id)?.released, false);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-
-    launch.finish();
-    await launch.route;
-    f.adapter.findRunAgents = async () => [
-      { id: "late", workspaceId: "workspace" },
-    ];
-    await assert.rejects(restartC4(f), /no longer proven absent/);
-    assert.equal(f.store.run(run.id)?.released, false);
-
-    f.adapter.findRunAgents = async () => [];
-    await restartC4(f);
-    assert.equal(f.store.run(run.id)?.status, "superseded");
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.ok(f.store.run(run.id)?.absentProvenAt);
-    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
-    assert.equal(f.current().resolution.recovery, null);
-
-    const create = f.adapter.createRun;
-    f.adapter.createRun = async (task, next, credential) => {
-      assert.notEqual(next.id, run.id);
-      return create(task, next, credential);
-    };
-    await f.engine.resolution.recovery.route(f.current());
-    assert.equal(f.creates.filter((item) => item.id === run.id).length, 1);
-    assert.ok(
-      f.creates.some((item) => item.role === "recovery" && item.id !== run.id),
-    );
   } finally {
     launch.finish();
     await launch.route;
@@ -14981,15 +14836,6 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     const resumed = new Engine(reopened, f.adapter, 120_000);
     resumed.profiles = [...f.engine.profiles];
     resumed.lastHookCleanupAt = Date.now();
-    let enterCleanup!: () => void;
-    let releaseCleanup!: () => void;
-    const cleanupStarted = new Promise<void>((resolve) => {
-      enterCleanup = resolve;
-    });
-    const cleanupGate = new Promise<void>((resolve) => {
-      releaseCleanup = resolve;
-    });
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       assert.equal(
         readCreationAttempt(reopened, run)?.settlement?.attemptId,
@@ -15017,40 +14863,7 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       ];
       const attemptsBefore = reopened.task(f.task.id).resolution
         .recoveryAttempts;
-      // The shared listing is available. Hold the actual cleanup quantum the
-      // audit schedules after that listing so recovery must progress alongside it.
-      const scheduleLane = resumed.scheduleLane.bind(resumed);
-      resumed.scheduleLane = (key, priority, work, options) => {
-        if (
-          key !== `cleanup:${f.task.hostId}` ||
-          options?.coalesce !== "settled-run-process-cleanup"
-        )
-          return scheduleLane(key, priority, work, options);
-        return scheduleLane(
-          key,
-          priority,
-          async () => {
-            enterCleanup();
-            await cleanupGate;
-            await work();
-          },
-          options,
-        );
-      };
-      const deadline = new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () =>
-            reject(
-              Error("Expected audit recovery to finish while its cleanup lane was blocked"),
-            ),
-          5_000,
-        );
-      });
-      const [, pass] = await Promise.race([
-        Promise.all([cleanupStarted, resumed.auditPass(true)]),
-        deadline,
-      ]);
-      clearTimeout(timeout);
+      const pass = await resumed.auditPass(true);
       assert.equal(pass.fault, null);
       assert.ok(pass.visited.has(f.task.id));
       const settled = reopened.task(f.task.id);
@@ -15107,8 +14920,6 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
         moved.reason,
       );
     } finally {
-      clearTimeout(timeout);
-      releaseCleanup();
       await resumed.stop();
       reopened.close();
     }
@@ -15201,11 +15012,6 @@ test("C4 sweep releases a settled agentless creation its replaced episode no lon
       ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
         (verb) => verb.verb === "restart",
       );
-    // The orphan is what refuses the owner restart while it is unreleased.
-    await assert.rejects(
-      restartC4(f),
-      /Resolve the other retained runs before restarting coordinator recovery/,
-    );
     // A dispatch hold that lands while the host is being read owns the task now:
     // the lookup completes, and the release waits for a later pass.
     let lookups = 0;
@@ -15322,57 +15128,6 @@ test("C4 keeps an orphaned creation whose recorded attempt never settled", async
       false,
     );
   } finally {
-    await f.close();
-  }
-});
-
-test("C4 needs a complete online lookup and a recorded producer identity", async () => {
-  const f = fixture();
-  const launch = startC4(f);
-  try {
-    const { run, token } = await launch.started;
-    launch.finish();
-    await launch.route;
-    for (const reason of [
-      "Exact inventory page was incomplete",
-      "Host lookup timed out",
-    ]) {
-      f.adapter.findRunAgents = async () => {
-        throw Error(reason);
-      };
-      await f.engine.resolution.recovery.pass(f.task.id);
-      await assert.rejects(restartC4(f), new RegExp(reason));
-      assert.equal(f.store.run(run.id)?.released, false);
-      assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
-    }
-    let lookups = 0;
-    f.adapter.findRunAgents = async () => {
-      lookups++;
-      return [];
-    };
-    f.engine.hostAvailable = () => false;
-    await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(
-      restartC4(f),
-      /waiting for host|host.*online|unavailable/,
-    );
-    assert.equal(lookups, 0);
-    assert.equal(f.store.run(run.id)?.released, false);
-
-    f.engine.hostAvailable = () => true;
-    // Recreate a legacy row from the real writer by removing its typed record.
-    f.store.db
-      .prepare(
-        "DELETE FROM events WHERE taskId=? AND kind='creation_attempt_reserved'",
-      )
-      .run(f.task.id);
-    await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
-    assert.equal(f.store.run(run.id)?.released, false);
-    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-  } finally {
-    launch.finish();
-    await launch.route;
     await f.close();
   }
 });
@@ -18924,235 +18679,6 @@ test("C5 releases an already authorized pre-PR worker in the release sweep", asy
   }
 });
 
-test("C5 finds a committed release after restart and waits for the uncertain reviewer restart to settle", async () => {
-  const f = fixture(true);
-  try {
-    const prerequisite = c5Prerequisite(f);
-    const instruction =
-      "Apply the approved scoped change when the upstream source is ready";
-    const armed = f.engine.resolution.retry(
-      f.current(),
-      true,
-      undefined,
-      true,
-      false,
-      false,
-      instruction,
-    );
-    const waiting = f.store.setPrerequisiteWait(
-      armed,
-      [prerequisite.id],
-      "Wait for the scoped change input",
-    );
-    const observedAt = Date.now();
-    const before = (seconds: number) =>
-      new Date(observedAt - seconds * 1000).toISOString();
-    const oldReviewer = runSchema.parse({
-      id: "old-reviewer",
-      taskId: f.task.id,
-      role: "reviewer",
-      generation: 1,
-      head,
-      base,
-      agentId: "old-reader",
-      workspaceId: f.task.workspaceId,
-      profile: f.engine.profiles[1],
-      status: "running",
-      active: true,
-      released: false,
-      createdAt: before(3),
-      lastObservedAt: null,
-      idleSince: null,
-      completion: null,
-    });
-    f.store.putRun(oldReviewer);
-    f.idle(oldReviewer.agentId!);
-    f.states.set(oldReviewer.agentId!, {
-      ...f.states.get(oldReviewer.agentId!)!,
-      status: "running",
-      active: true,
-    });
-
-    const input = taskControlInputSchema.parse({
-      taskId: waiting.id,
-      version: waiting.version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Continue the retained review",
-    });
-    const { key, payload } = taskControlOperation(input);
-    const intentAt = before(2);
-    const accepted = f.store.acceptOperation(
-      {
-        key,
-        payload,
-        kind: "task_control",
-        inputHash: operationInputHash(payload),
-        taskId: waiting.id,
-        expectedVersion: waiting.version,
-        hostId: waiting.hostId!,
-      },
-      intentAt,
-    );
-    assert.ok("accepted" in accepted);
-    const uncertain = f.store.putOperation({
-      ...accepted.operation,
-      startedAt: intentAt,
-      settledAt: intentAt,
-      attempts: 1,
-      state: "needs_attention",
-      diagnostic: "Transport",
-      result: null,
-      effect: {
-        kind: "task_control",
-        target: "restart",
-        intentAt,
-        status: "uncertain",
-        result: null,
-        resultAt: null,
-      },
-    });
-    f.store.putRun({
-      ...oldReviewer,
-      id: "later-reviewer",
-      agentId: "later-reader",
-      createdAt: before(1),
-      status: "superseded",
-      released: true,
-      active: false,
-    });
-    f.idle("later-reader");
-    f.store.update(prerequisite.id, { phase: "done" });
-
-    // Commit the release transaction and stop before any task quantum sees it.
-    assert.equal(f.store.reconcilePrerequisiteWait(waiting.id), "released");
-    const released = f.current().prerequisiteWait;
-    assert.ok(released?.releasedAt);
-    assert.equal(
-      f.store
-        .notices(waiting.id)
-        .find((notice) => notice.kind === "prerequisite")?.status,
-      "pending",
-    );
-    assert.equal(f.sends.length, 0);
-    await f.engine.stop();
-
-    const reopened = new Store(join(f.dir, "queue.sqlite"));
-    const restarted = new Engine(reopened, f.adapter, 0, () => true);
-    restarted.profiles = [...f.engine.profiles];
-    const events = (kind: string) =>
-      reopened.eventsAll(waiting.id).filter((event) => event.kind === kind);
-    const next = () => c5Next(reopened, waiting.id);
-    const restartEffect = () =>
-      next().verbs.find(
-        (view) =>
-          view.verb === "retry_effect" &&
-          (view.args?.effect === `operation.${uncertain.id}` ||
-            view.refusal?.includes(uncertain.id)),
-      );
-    try {
-      for (let pass = 0; pass < 2; pass++) {
-        await restarted.wake();
-        assert.deepEqual(reopened.task(waiting.id).prerequisiteWait, released);
-        assert.equal(reopened.run(oldReviewer.id)?.released, false);
-        assert.equal(events("operation_superseded").length, 0);
-        assert.equal(events("prerequisite_wait_resumed").length, 0);
-        assert.equal(next().activeRun?.runId, oldReviewer.id);
-        const effect = restartEffect();
-        assert.equal(effect?.available, false);
-        assert.match(effect?.refusal ?? "", /Transport.*Waiting for the sweep/);
-        assert.equal(
-          f.creates.length + f.sends.length + f.continuations.length,
-          0,
-        );
-      }
-
-      f.idle(oldReviewer.agentId!);
-      f.states.set(oldReviewer.agentId!, {
-        ...f.states.get(oldReviewer.agentId!)!,
-        status: "closed",
-      });
-      await restarted.wake();
-      assert.equal(
-        reopened.run(oldReviewer.id)?.released,
-        true,
-        reopened
-          .eventsAll(waiting.id)
-          .slice(-8)
-          .map((event) => `${event.kind}: ${event.detail}`)
-          .join("\n"),
-      );
-      const settled = events("operation_superseded");
-      assert.equal(settled.length, 1);
-      assert.equal(JSON.parse(settled[0]!.detail).id, uncertain.id);
-      assert.deepEqual(
-        reopened.operation(uncertain.id)?.effect,
-        uncertain.effect,
-      );
-
-      await restarted.wake();
-      const revisions = reopened
-        .runs(waiting.id)
-        .filter((run) => run.role === "revision");
-      const current = reopened.task(waiting.id);
-      assert.equal(
-        revisions.length,
-        1,
-        JSON.stringify({
-          phase: current.phase,
-          reason: current.reason,
-          stop: current.resolution.stop,
-          instruction: current.resolution.revisionInstruction,
-          wait: current.prerequisiteWait,
-          events: reopened
-            .eventsAll(waiting.id)
-            .slice(-8)
-            .map((event) => [event.kind, event.detail]),
-        }),
-      );
-      const [revision] = revisions;
-      assert.equal(revision!.instruction, instruction);
-      assert.equal(revision!.agentId, f.task.agentId);
-      assert.equal(revision!.head, f.task.prHead);
-      assert.equal(next().activeRun?.runId, revision!.id);
-      assert.equal(restartEffect(), undefined);
-      assert.equal(reopened.task(waiting.id).prerequisiteWait, null);
-      assert.equal(
-        reopened.task(waiting.id).resolution.revisionInstruction?.runId,
-        revision!.id,
-      );
-
-      const resumed = events("prerequisite_wait_resumed");
-      assert.equal(resumed.length, 1);
-      assert.deepEqual(JSON.parse(resumed[0]!.detail), {
-        waitId: released.id,
-        runId: revision!.id,
-      });
-      await restarted.wake();
-      assert.equal(events("prerequisite_wait_released").length, 1);
-      assert.deepEqual(events("operation_superseded"), settled);
-      assert.deepEqual(events("prerequisite_wait_resumed"), resumed);
-      assert.deepEqual(
-        f.sends.map((run) => run.id),
-        [revision!.id],
-      );
-      assert.equal(f.creates.length + f.continuations.length, 0);
-      const notices = reopened
-        .notices(waiting.id)
-        .filter((notice) => notice.kind === "prerequisite");
-      assert.deepEqual(
-        notices.map((notice) => [notice.id, notice.status]),
-        [[`prerequisite-wait:${released.id}`, "delivered"]],
-      );
-      assert.deepEqual(f.notices, [notices[0]!.id]);
-    } finally {
-      await restarted.stop();
-      reopened.close();
-    }
-  } finally {
-    await f.close();
-  }
-});
 
 test("C5 leaves a changes-requested verdict behind a released wait for an explicit work move", async () => {
   const f = fixture(true);

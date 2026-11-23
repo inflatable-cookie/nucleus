@@ -4,7 +4,6 @@ import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
 import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr, taskPrNumber } from "../../forge/index";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
-import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { refusedRevisionReservation } from "../../recovery/refused-launch";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../../recovery/task-reasons";
 import type { ContinuedPrBinding } from "../../resolution";
@@ -255,8 +254,6 @@ export async function recreateLostWorkspace(engine: Engine, task: Task, reason: 
   if (!task.workspaceId || !available || await available(task.workspaceId)) return task;
   if (!engine.adapter.recoverTaskWorkspace)
     throw Error('The recorded task workspace is gone and this host cannot re-create a worktree; restore the workspace before continuing');
-  const blocking = blockingRecoveryEffectsRefusal(store, task);
-  if (blocking) throw new DurableFenceRefusal(blocking);
   // The worker resumes from its published branch, so the recovery reads the
   // branch on origin rather than the accepted PR head. A workspace whose
   // registration survives but whose directory is gone is re-created, never

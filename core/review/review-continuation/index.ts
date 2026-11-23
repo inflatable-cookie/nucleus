@@ -24,8 +24,6 @@ import { runTicketPath } from "../../dispatch/agent-creation";
 import type { AgentObservation } from "../../host/adapter";
 import type { Adapter } from "../../host/adapter";
 import type { HostFacade } from "../../host/host-facade";
-import type { EffectReconcile } from "../../recovery/effect-reconcile";
-import type { OwnedTools } from "../../machine/owned-tool";
 import type { ContinuationFences } from "../../verbs/verb-fences";
 import { reviewerRuntimeChanged } from "../reviewer-runtime";
 import { matchingInactiveParticipant } from "../../intake/run-settlement";
@@ -44,6 +42,7 @@ import {
   REVIEW_AGENT_CLOSED,
   REVIEW_AGENT_ERRORED,
   reviewContinuationLimit,
+  reviewContinuationWait,
   reviewInProgress,
 } from "./reader";
 import { ordinaryReviewSource } from "../ordinary-review";
@@ -69,10 +68,7 @@ export interface ReviewContinuationContext {
   ) => T;
   readonly host: Pick<HostFacade, "observe">;
   paused(): boolean;
-  ownedToolHold: OwnedTools["ownedToolHold"];
   settleVerbFences: ContinuationFences["settleContinuationFences"];
-  settleReviewDelivery: EffectReconcile["settleReviewDelivery"];
-  reconcileReviewDelivery: EffectReconcile["reconcileReviewDelivery"];
   assertReviewProfileIndependent(task: Task, run: Run): void;
   stopResumeState: ReviewContinuations["stopResumeState"];
   reviewContinuationGate: ReviewContinuations["reviewContinuationGate"];
@@ -217,36 +213,11 @@ export class ReviewContinuations {
           throw new Error(
             "Task version is stale for same-intent delivery inspection; refresh task detail",
           );
-        // Same-intent inspection: never resends; a delivered record may still gain its brief pin from timeline proof.
-        const reconciled = await this.resolution.reconcileReviewDelivery(
-          initialRun!,
-          prior,
-        );
-        if (reconciled.status === "delivered")
-          return this.store.task(input.taskId);
+        if (prior.status === "delivered") return this.store.task(input.taskId);
         throw new Error(
-          `Reviewer delivery ${deliveryId} remains uncertain; the durable hold is retained and no resend occurred`,
+          `Reviewer delivery ${deliveryId} is uncertain. Use record.clear kind=effect id=review-delivery.${deliveryId}`,
         );
       }
-    }
-
-    // A previous checkpoint's unknown send must be reconciled before another
-    // authorization can be reserved, even if the reviewer later checkpointed.
-    const unresolved = initialRun?.reviewDeliveries?.findLast(
-      (item) => item.status === "reserved" || item.status === "uncertain",
-    );
-    if (unresolved) {
-      const reconciled = await this.resolution.reconcileReviewDelivery(
-        initialRun!,
-        unresolved,
-      );
-      if (reconciled.status !== "delivered")
-        throw new Error(
-          `Earlier reviewer delivery ${unresolved.deliveryId} remains uncertain; no new turn was sent`,
-        );
-      throw new Error(
-        "Earlier reviewer delivery was reconciled; refresh the task and explicitly authorize the latest checkpoint",
-      );
     }
 
     return null;
@@ -333,21 +304,6 @@ export class ReviewContinuations {
       );
       recheck();
       this.resolution.assertIdleReviewerObservation(task, run, observed);
-      // A stop-backed resume is the one continuation that follows a delivered
-      // turn, so it carries the same owned-tool proof every displaced run needs:
-      // a live tool on the stopped turn is not a stopped turn.
-      if (checkpoint.resumeStop) {
-        const held = await this.resolution.ownedToolHold(run.agentId!, {
-          requireCompleteEvidence: true,
-          runId: run.id,
-          taskId: task.id,
-        });
-        recheck();
-        if (held.kind !== "clear")
-          throw new Error(
-            `The stopped reviewer cannot be shown to hold no live tool (${held.reason}); no resumed continuation was sent`,
-          );
-      }
       return { ...checkpoint, number, verifyPr, continueReviewer };
     } catch (error) {
       throw error instanceof ProvenPreSendRefusalError
@@ -574,7 +530,7 @@ export class ReviewContinuations {
       );
       if (!result.sent) {
         adapterRefused = true;
-        this.resolution.settleReviewDelivery(
+        this.settleReviewDelivery(
           sendRun.id,
           deliveryId,
           "refused",
@@ -582,18 +538,17 @@ export class ReviewContinuations {
         );
         throw new ProvenPreSendRefusalError(result.reason);
       }
-      this.resolution.settleReviewDelivery(
+      this.settleReviewDelivery(
         sendRun.id,
         deliveryId,
         "delivered",
-        `Paseo accepted message ${deliveryId}`,
-        true,
+        `Host accepted message ${deliveryId}`,
       );
       return this.store.task(task.id);
     } catch (error) {
       if (!adapterInvoked || adapterRefused) {
         if (reservedRunId)
-          this.resolution.settleReviewDelivery(
+          this.settleReviewDelivery(
             reservedRunId,
             deliveryId,
             "refused",
@@ -607,7 +562,7 @@ export class ReviewContinuations {
       }
       // Even a transport exception can follow a successful remote enqueue.
       // Marking uncertain is durable; operation replay will inspect evidence only.
-      this.resolution.settleReviewDelivery(
+      this.settleReviewDelivery(
         reservedRunId!,
         deliveryId,
         "uncertain",
@@ -617,6 +572,76 @@ export class ReviewContinuations {
         `Reviewer delivery ${deliveryId} has an uncertain send outcome; inspect the same reviewer thread, never resend (${String(error).slice(0, 500)})`,
       );
     }
+  }
+
+  /** Record the adapter's answer for the exact send this continuation reserved. */
+  settleReviewDelivery(
+    runId: string,
+    deliveryId: string,
+    status: ReviewDeliveryAuthorization["status"],
+    evidence: string,
+  ) {
+    this.store.transaction(() => {
+      const run = this.store.run(runId);
+      if (!run)
+        throw new Error(
+          "Reviewer run disappeared while settling its delivery intent",
+        );
+      const deliveries = [...(run.reviewDeliveries ?? [])],
+        index = deliveries.findIndex((item) => item.deliveryId === deliveryId);
+      if (index < 0)
+        throw new Error(
+          "Reviewer delivery intent disappeared before settlement",
+        );
+      const previous = deliveries[index];
+      if (previous.status === "delivered" || previous.status === "refused" || previous.status === status) return;
+      deliveries[index] = {
+        ...previous,
+        status,
+        evidence: evidence.slice(0, 2000),
+        observedAt: now(),
+      };
+      const repin =
+        status === "delivered" &&
+        previous.briefVersion !== null
+          ? { briefVersion: previous.briefVersion }
+          : {};
+      const current = this.store.task(run.taskId);
+      const resumed =
+        status === "delivered" &&
+        run.status === "stopped" &&
+        !run.completion &&
+        !run.released &&
+        current.resolution.currentRunId === run.id;
+      this.store.putRun({
+        ...run,
+        ...(resumed ? { status: "running" as const } : {}),
+        reviewDeliveries: deliveries,
+        ...repin,
+      });
+      const reason =
+        status === "uncertain"
+          ? reviewDeliveryReason(deliveryId, "uncertain")
+          : status === "delivered"
+            ? reviewContinuationWait(current, this.store).reason
+            : `Reviewer delivery ${deliveryId} was refused before send: ${evidence.slice(0, 600)}`;
+      if (
+        current.reasonFact?.code === "review_delivery" &&
+        current.reasonFact.subject === deliveryId
+      )
+        this.store.update(
+          current.id,
+          { reason, ...stopClearedPatch(this.store.task(current.id), reason) },
+          `review_delivery_${status}`,
+          `${deliveryId}: ${evidence.slice(0, 1200)}`,
+        );
+      else
+        this.store.event(
+          current.id,
+          `review_delivery_${status}`,
+          `${deliveryId}: ${evidence.slice(0, 1200)}`,
+        );
+    });
   }
 
   reviewContinuationGate(
@@ -652,7 +677,6 @@ export class ReviewContinuations {
     const local = reviewContinuationLocalRefusal(this.store, task, run, input, {
       settling,
       paused: this.resolution.paused(),
-      operationId,
       ownerStopYields:
         (input as { ownerStopYields?: boolean }).ownerStopYields === true,
       provenance: (current, record) =>

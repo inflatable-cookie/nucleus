@@ -38,8 +38,8 @@ pub enum RetainedThread {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunState {
-    /// The native receipt and exact thread/message lookup allow the same request
-    /// to be sent. An earlier possible write cannot still land.
+    /// The exact request can be sent or replayed under the same native receipt
+    /// identity. For a revoked run this means no send was ever recorded.
     ReadyToSend,
     Starting,
     Running,
@@ -139,6 +139,7 @@ pub enum Action {
     },
     Wait(WaitReason),
     Advance(Phase),
+    Revoke,
     Merge {
         head: Head,
     },
@@ -175,6 +176,13 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
     match signal(task, observation) {
         Signal::Finished => Action::Nothing,
         Signal::Wait(reason) => Action::Wait(reason),
+        Signal::ReservationDiscarded(_)
+            if task
+                .run()
+                .is_some_and(|run| run.last_send_at_ms().is_some()) =>
+        {
+            Action::Revoke
+        }
         Signal::Stopped(phase)
         | Signal::HeadChanged(phase)
         | Signal::ReservationDiscarded(phase) => Action::Advance(phase),

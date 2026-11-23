@@ -31,8 +31,7 @@ for (const status of ["intent", "uncertain"] as const)
       status,
       at: new Date().toISOString(),
     });
-    let calls = 0,
-      proofs = 0;
+    let calls = 0;
     const adapter = {
       observe: async () => ({
         id: "worker",
@@ -54,12 +53,8 @@ for (const status of ["intent", "uncertain"] as const)
       },
     } as unknown as Adapter;
     for (let i = 0; i < 3; i++)
-      await archiveFinishedThreads(store, adapter, task.id, async () => {
-        proofs++;
-        return null;
-      });
+      await archiveFinishedThreads(store, adapter, task.id);
     assert.equal(calls, 0);
-    assert.equal(proofs, 0);
     assert.equal(
       store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey("host", "worker"))?.status,
       status,

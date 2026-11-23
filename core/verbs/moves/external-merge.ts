@@ -3,10 +3,8 @@ import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import type { Engine } from "../../engine";
 import type { AgentObservation } from "../../host/adapter";
 import { hostFailureRefusalDetail } from "../../host/errors";
-import type { VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
 import { executionParticipants } from "../../machine/execution-participants";
 import { runFenceRefusal, runSettlementFence } from "../../intake/run-settlement";
-import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { taskPrNumber } from "../../forge/index";
 import { now } from "../../store/store";
 import { qualifiedAcceptanceEligibility } from "../owner-verbs";
@@ -30,7 +28,7 @@ export type ExternalMergeInput = {
   head?: string;
   relayed?: boolean;
   relayNote?: string;
-  enclosing: () => VerifiedEnclosingOperation | undefined;
+  operationId?: string;
 };
 
 /**
@@ -49,16 +47,13 @@ export async function reconcileRetainedExternalMerge(engine: Engine, input: Exte
   const authority = engine.assertOwnerAuthority(input.caller, input.relayed, input.relayNote, 'External-merge source acceptance');
   const project = store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
   if (!project) throw new ExternalMergeRefusal('The task project is not registered');
-  const runs = store.runs(task.id), projectIdentity = JSON.stringify(project), taskIdentity = JSON.stringify(task), runsIdentity = JSON.stringify(runs);
-  const invocation = input.enclosing();
-  if (!invocation) throw new ExternalMergeRefusal('An authenticated durable move operation is required');
+  const runs = store.runs(task.id), projectIdentity = JSON.stringify(project), runsIdentity = JSON.stringify(runs);
+  const operationId = input.operationId;
   const assertState = () => {
-    const current = store.task(task.id), enclosing = input.enclosing();
-    if (!enclosing || enclosing.operationId !== invocation.operationId || JSON.stringify(current) !== taskIdentity || JSON.stringify(store.runs(task.id)) !== runsIdentity
+    const current = store.task(task.id);
+    if (current.version !== task.version || JSON.stringify(store.runs(task.id)) !== runsIdentity
       || JSON.stringify(store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))) !== projectIdentity)
-      throw Error('Task, runs, project or move operation changed during external merge proof');
-    const refusal = blockingRecoveryEffectsRefusal(store, current, { enclosing });
-    if (refusal) throw Error(refusal);
+      throw Error('Task, runs or project changed during external merge observation');
     for (const run of store.runs(task.id).filter(item => !item.released)) {
       const fence = runSettlementFence({ store, task: current }, run);
       if (fence) throw Error(runFenceRefusal(run, fence));
@@ -87,23 +82,18 @@ export async function reconcileRetainedExternalMerge(engine: Engine, input: Exte
       if (!observed.workspaceId || (workspaceId && observed.workspaceId !== workspaceId) || observed.id !== id || observed.active !== false
         || observed.permissions !== false || observed.activeTurnId || !['idle', 'error', 'closed'].includes(observed.status))
         throw Error(`Participant ${id} is active, permission-holding or unobservable`);
-      // The shared owned-tool proof reads the timeline, then freshly observes
-      // the participant and applies the provider-tree or no-process proof.
-      const issue = await engine.resolution.participantToolIssue(task.id, id, workspaceId);
-      if (issue) throw Error(`Participant ${id} has live or unknown tool effects: ${issue}`);
     }
     assertState();
   };
   try {
     assertState();
     const settleOperation = (settled: Task) => {
-      const enclosing = input.enclosing(), operation = store.operation(invocation.operationId);
-      if (!enclosing || enclosing.operationId !== invocation.operationId || !operation || operation.state !== 'running')
-        throw Error('Move operation changed before atomic settlement');
+      const operation = operationId ? store.operation(operationId) : null;
       // The shared owner move releases its own stop hold. Settle it here so
       // an interrupted response cannot strand a hold after a successful move.
       engine.releaseOwnerStopHold(settled.id);
       settled = store.task(settled.id);
+      if (operation?.taskId !== settled.id || operation.state !== 'running') return;
       const at = now();
       store.putOperation({ ...operation, diagnostic: '',
         result: { taskId: settled.id, taskVersion: settled.version, phase: settled.phase, number: settled.number, reference: settled.reference },
@@ -161,13 +151,11 @@ export async function reconcileReviewEntryExternalMerge(engine: Engine, input: E
       if (observed.id !== id || observed.workspaceId !== workspaceId || observed.status !== 'idle' || observed.active !== false || observed.activeTurnId
         || observed.permissions !== false || store.unreleasedRunsForAgent(id, task.hostId).some(run => run.taskId !== task.id))
         throw Error(`Participant ${id} has observed activity, a permission or unknown identity`);
-      const issue = await engine.resolution.participantToolIssue(task.id, id, workspaceId);
-      if (issue) throw Error(`Participant ${id} has running or unknown tool effects (${issue})`);
     }
   };
   try {
     return await engine.resolution.acceptExternalMerge(store.task(task.id), input.reason, `move closeout: ${input.reason}`,
-      engine.coordinatorActionRunId.getStore(), { enclosing: input.enclosing, acceptanceFor, assertQuiet });
+      engine.coordinatorActionRunId.getStore(), { operationId: input.operationId, acceptanceFor, assertQuiet });
   } catch (error) {
     // Every refusal on this path happens before its one transaction, so it is
     // definite: nothing was merged, accepted or dispatched.

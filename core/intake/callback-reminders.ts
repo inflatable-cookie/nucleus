@@ -13,6 +13,8 @@ import { isDispositionActive, pausedStopWaitReason } from '../../shared/contract
 import { dataHome } from '../../shared/data-home.mjs';
 import { wireLabel } from '../../shared/wire-labels';
 import { dispatchBlocked } from '../dispatch/capacity';
+import { readToolTimeline, runningOwnedTool, turnBoundTool } from '../recovery/stall';
+import { observeRunningTool, recordActivityTool } from '../telemetry/task-activity-observation';
 import { timelineDispatchState } from '../recovery/provider-refusal';
 import {
   mcpBindingPathFromHostRecord, observedMcpBindingPath, reportBindingReuseDecision,
@@ -50,7 +52,7 @@ export function reminderDecision(facts: {
 }
 
 /** One bounded reminder to a run that stopped without a result. */
-export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'onTaskHost' | 'ownedJobWait' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
+export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'onTaskHost' | 'readPassTimelinePage' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
 
 export class CallbackReminders {
   constructor(readonly resolution: CallbackRemindersContext) {}
@@ -69,11 +71,28 @@ export class CallbackReminders {
     if (await this.resolution.heavyRunAlive(t)) { this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
     // Papercut 6895edaa: a thread waiting on its own detached job is working, not
     // stopped. The live tool is the wait, and no coordinator is launched over it.
-    const job = run.agentId ? await this.resolution.ownedJobWait(run.agentId, { taskId: t.id, runId: run.id }) : null;
+    const job = run.agentId ? await this.ownedJobWait(t, run.agentId, run.id) : null;
     if (job) { this.resolution.waiting(this.store.task(t.id), `${run.role} is waiting on its own running job: ${job}`, 'lifecycle'); this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
     const incident = this.resolution.ensureIncident(t, run, missingCallbackStopReason(run.role), '', MISSING_CALLBACK_CAUSE);
     await this.deliverCallbackReminder(this.store.task(t.id), incident, run.agentId!, run.id, run.role, run);
   }
+  private async ownedJobWait(task: Task, agentId: string, runId: string): Promise<string | null> {
+    if (!this.resolution.adapter.agentTimelinePage) return null;
+    const timeline = await readToolTimeline({
+      agentTimelinePage: async (id, limit) => {
+        const read = await this.resolution.readPassTimelinePage(id, limit, task.hostId, undefined, {
+          requireCoveredObservation: true,
+        });
+        return read.state === 'ok' ? read.value : null;
+      },
+    }, agentId).catch(() => null);
+    if (timeline?.kind !== 'ok') return null;
+    recordActivityTool(this.store, task.id, runId, agentId, null,
+      observeRunningTool(timeline.entries, null, (entry) => !turnBoundTool(entry)));
+    const running = runningOwnedTool(timeline.entries);
+    return running ? `${running.name} (${running.kind}) has been running since ${running.since}` : null;
+  }
+
   /** Worker variant: the initial run lives on the task, not the runs table. */
   async remindStoppedWorker(t: Task) {
     // Queue #650: a paused-stop marker proves the stop was the operator's, never
@@ -88,7 +107,7 @@ export class CallbackReminders {
     // Papercut 6895edaa: the worker ended its turn to wait on its own timed run.
     // Its provider timeline still shows that tool running, so the thread is
     // waiting on the job rather than stopped without a callback.
-    const job = await this.resolution.ownedJobWait(t.agentId, { taskId: t.id, runId: t.runId });
+    const job = await this.ownedJobWait(t, t.agentId, t.runId);
     if (job) { this.resolution.waiting(this.store.task(t.id), `Worker is waiting on its own running job: ${job}`, 'lifecycle'); this.resolution.extendCallbackReminder(this.store.task(t.id), t.runId); return; }
     const incident = this.resolution.ensureIncident(t, null, 'Worker stopped without a completion callback; inspect the thread');
     await this.deliverCallbackReminder(this.store.task(t.id), incident, t.agentId, t.runId, 'worker', null);

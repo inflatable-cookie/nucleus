@@ -89,7 +89,6 @@ type Loose = any;
 function fixture(t: TestContext, adapter: Loose = {}) {
   const store = new Store(":memory:");
   const engine = new Engine(store, adapter as Adapter, 60_000);
-  engine.currentServiceBuildId = () => "injected-build";
   store.setMeta("paused", false);
   store.setMeta("globalLimit", 0);
   t.after(async () => {
@@ -216,17 +215,14 @@ const TYPED: [string, () => Error][] = [
 ];
 
 for (const [name, make] of TYPED) {
-  test(`operation state: ${name} settles failed with a receipt, whatever its prose says`, async (t) => {
+  test(`operation state: ${name} settles failed regardless of its diagnostic`, async (t) => {
     const operation = await settle(t, make());
     assert.equal(operation.state, "failed");
     assert.equal(operation.effect?.status, "reconciled");
-    assert.equal(operation.preSendReceipt?.boundary, "pre-send-refusal-v1");
-    assert.equal(operation.preSendReceipt?.buildId, "injected-build");
   });
-  test(`operation state: ${name} stays failed past an armed pre-send boundary, with no new receipt`, async (t) => {
+  test(`operation state: ${name} stays failed past an armed send boundary`, async (t) => {
     const operation = await settle(t, make(), undefined, armBoundary);
     assert.equal(operation.state, "failed");
-    assert.equal(operation.preSendReceipt, undefined);
   });
   test(`operation state: rewrapping ${name} into a plain Error makes it uncertain`, async (t) => {
     const operation = await settle(t, new Error(make().message));
@@ -234,30 +230,6 @@ for (const [name, make] of TYPED) {
     assert.equal(operation.effect?.status, "uncertain");
   });
 }
-
-test("operation state: the typed set is exactly these nine classes", () => {
-  // ParkedRestartPreSendRefusal is private to its file, so the set is read from
-  // source rather than thrown. test/restart.cases.ts drives that class.
-  const body =
-    /const typedPreSendRefusal = \(error: unknown\): boolean =>([\s\S]*?);\n/.exec(
-      source(),
-    )?.[1];
-  assert.ok(body, "typedPreSendRefusal is gone or reshaped");
-  assert.deepEqual(
-    [...body.matchAll(/instanceof (\w+)/g)].map((match) => match[1]).sort(),
-    [
-      "DurableFenceRefusal",
-      "ExternalMergeRefusal",
-      "ParkedRestartPreSendRefusal",
-      "PreWriteMergeObservationRefusal",
-      "ProvenPreSendRefusalError",
-      "RepositoryRekeyRefused",
-      "RestartRefusal",
-      "RetainedRunRefusal",
-      "ReviewEntryRefusal",
-    ],
-  );
-});
 
 test("operation state: a typed error outside the set takes the prose classifier", async (t) => {
   const refusal = new ProofExecutionRefusal("live_run", FRIGHTENING);
@@ -297,7 +269,6 @@ test("operation state: any other untyped failure settles failed, and an armed bo
   const plain = await settle(t, new Error("A plain refusal"));
   assert.equal(plain.state, "failed");
   assert.equal(plain.effect?.status, "reconciled");
-  assert.equal(plain.preSendReceipt, undefined);
   assert.equal(
     (await settle(t, new Error("A plain refusal"), undefined, armBoundary))
       .state,
@@ -680,90 +651,6 @@ test("proof race: each real single-flight refusal stands down quietly; other pro
     "A proof execution is already running",
     "only the typed single-flight refusal stands down; other prose still surfaces",
   );
-});
-
-test("store fence: exactly the real fence messages relabel a legacy refusal", async (t) => {
-  const f = fixture(t);
-  const task = f.add();
-  const run = putRun(f.store, task.id);
-  const control = taskControlInputSchema.parse({
-    taskId: task.id,
-    version: task.version,
-    action: "restart",
-    role: "reviewer",
-    reason: "Pin",
-  });
-  const { key, payload } = taskControlOperation(control);
-  const id = operationIdForKey(key),
-    inputHash = operationInputHash(payload);
-  const put = (diagnostic: string) =>
-    f.store.putOperation(
-      queueOperationSchema.parse({
-        id,
-        key,
-        kind: "task_control",
-        inputHash,
-        state: "needs_attention",
-        taskId: task.id,
-        expectedVersion: control.version,
-        createdAt: at,
-        startedAt: at,
-        settledAt: at,
-        attempts: 1,
-        diagnostic,
-        effect: {
-          kind: "task_control",
-          target: "restart",
-          intentAt: at,
-          status: "uncertain",
-          result: diagnostic.slice(0, 2000),
-          resultAt: at,
-        },
-      }),
-      payload,
-    );
-
-  const delivery = runFenceRefusal(run, "its delivery is unknown");
-  const effect = runFenceRefusal(run, "a publication is pending");
-  const verb = f.internals.verbRunFenceRefusal({
-    run,
-    why: "its turn is live",
-  });
-  assert.equal(
-    delivery,
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (its delivery is unknown); restart re-creates it under the same run, or wait for reconciliation to settle it`,
-  );
-  assert.equal(
-    runFenceRefusal(run, "run-delivery x"),
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (run-delivery x); restart re-creates it under the same run, or wait for reconciliation to settle it`,
-  );
-  assert.equal(
-    effect,
-    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (a publication is pending); wait for that delivery or effect to settle, or retry_effect it`,
-  );
-  assert.equal(
-    verb,
-    `A reviewer run (${run.id}) still owns this task: its turn is live`,
-  );
-  for (const diagnostic of [delivery, effect, verb]) {
-    put(diagnostic);
-    const settled = f.store.reconcileTaskControlPreSend(id, inputHash);
-    assert.equal(settled.state, "failed", diagnostic);
-    assert.ok(settled.preSendReconciledAt, diagnostic);
-  }
-  for (const diagnostic of [
-    verb.replace("still owns this task", "owns this task"),
-    delivery.replace("will not act over blindly", "will not act blindly"),
-    effect.replace(", or retry_effect it", ""),
-    runFenceRefusal({ ...run, id: "ghost" }, "its delivery is unknown"),
-  ]) {
-    put(diagnostic);
-    assert.throws(
-      () => f.store.reconcileTaskControlPreSend(id, inputHash),
-      /^Error: The diagnostic is not one of Queue's own pre-send refusal messages; delivery remains uncertain$/,
-      diagnostic,
-    );
-  }
 });
 
 for (const [name, refusal, repair] of [
@@ -1151,13 +1038,6 @@ const PARSED: ParsedText[] = [
     sample: "its delivery is unknown",
   },
   {
-    site: "owned-tool retry refusal",
-    re: /^Owned-tool hold .+ remains:/,
-    sample: "Owned-tool hold run-1 remains: live",
-    writers: ["Owned-tool hold ${runId} remains: ${hold}"],
-    reads: ['startsWith("owned_tool.")'],
-  },
-  {
     site: "coordinator version retry",
     re: COORDINATOR_VERSION_RETRY,
     sample:
@@ -1214,11 +1094,6 @@ const PARSED: ParsedText[] = [
     reads: ["t.reasonFact?.subject === completed.role"],
   },
   {
-    site: "store fence",
-    re: /^A ([a-z]+) run \(([^)]+)\) (?:holds a durable side effect Queue will not act over blindly \(.+\); (?:restart re-creates it under the same run, or wait for reconciliation to settle it|wait for that delivery or effect to settle, or retry_effect it)|still owns this task: .+)$/,
-    sample: "A worker run (run-1) still owns this task: live",
-  },
-  {
     site: "proof hold",
     reads: [
       "`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`",
@@ -1234,27 +1109,6 @@ const PARSED: ParsedText[] = [
     site: "auto-continue fence cleared",
     writers: [
       "An unresolved task incident or recovery fence blocks reviewer continuation",
-    ],
-  },
-  {
-    site: "review recovery wait",
-    reads: [
-      "matchesReviewEffectWait(t, effects)",
-    ],
-    writers: [
-      '`${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`',
-    ],
-  },
-  // The classifier keeps the authored sentence; the reconciler reads the structured stop.
-  {
-    site: "blocked effect attention",
-    reads: [
-      "detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)",
-      'stop.suggestedVerbs[0] === "retry_effect"',
-    ],
-    writers: [
-      'BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"',
-      "`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}",
     ],
   },
   // The check's resume rule moved to its own owner; the parked-phase and accepted-PR
@@ -1505,11 +1359,6 @@ const PARSED: ParsedText[] = [
     ],
     writers: ["label: 'GO — run the qualification'"],
   },
-  {
-    site: "absent catalog archive",
-    readerPattern:
-      /event\s*\.\s*detail\s*\.\s*includes\s*\(\s*(["'])observed absent from the catalog and disk without a Queue archive intent\1\s*,?\s*\)/,
-  },
   // The absent-creation budget is read from the record's own scope, so the
   // legacy sentence it still recognises and the record writer are pinned;
   // nucleus#1243 removed the reader that matched the replacement sentence.
@@ -1603,15 +1452,15 @@ blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_clas
 callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:0:1
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
 delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dispatch_intent:1:1
-disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
-external_merge_observed:2:1 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
+disposition_complete:1:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
+external_merge_observed:2:1 external_workspace_archive_archived:0:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
 incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1
 native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:2
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
-operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:3:2 owned_tool_settled:1:1
+operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_settled:1:1
 owner_control:3:9 owner_restart_instruction_sent:2:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:3:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
@@ -1627,7 +1476,7 @@ reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent
 revision_requested:4:3 role_replacement:1:6 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
-unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3
+unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:0:2 workspace_cleanup_wait:1:1 workspace_contents_discarded:1:2
 workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
     .split(/\s+/)
     .map((row) => {

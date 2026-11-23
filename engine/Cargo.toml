@@ -2,6 +2,7 @@
 members = [
     "crates/nucleus-core",
     "crates/nucleus-forge",
+    "crates/nucleus-hosts",
     "crates/nucleus-store",
     "crates/nucleus-work",
 ]

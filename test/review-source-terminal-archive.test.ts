@@ -1,21 +1,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { Lifecycle } from '../core/closeout/workspace-lifecycle';
 import { verifyReviewSourceView } from '../core/review/review-source';
 import { operationInputHash } from '../core/store/store';
 import { OPERATOR_BOARD_CALLER, taskControlInputSchema } from '../shared/contracts';
-import { runGit } from './support/review-entry-fixture';
 import { fixture, seedRetry } from './support/review-source-terminal-archive-fixture';
 
-test('terminal retry archives the released pinned view after authentic primary archive and retirement',async()=>{
+test('terminal retry archives the released pinned view without a historical primary retirement proof',async()=>{
   const f=await fixture();
   try {
     await new Lifecycle(f.engine).archive(f.store.task(f.task.id),f.task.workspaceId!);
     const primary=f.store.task(f.task.id);
     assert.equal(existsSync(f.workspace),false);
     assert.equal(primary.resolution.runtimeRetirements.find(item=>item.workspaceId===f.task.workspaceId)?.state,'retired');
+    f.store.update(primary.id, {
+      resolution: {
+        ...primary.resolution,
+        runtimeRetirements: primary.resolution.runtimeRetirements.filter(
+          (record) => record.workspaceId !== primary.workspaceId,
+        ),
+      },
+    });
     await assert.rejects(()=>verifyReviewSourceView(primary,f.store.run(f.run.id)!),/ENOENT/,'parent implementation requires removed primary');
     const receipts=JSON.stringify(primary.resolution.externalOwnerRevisions),review=JSON.stringify(primary.resolution.review);
     await seedRetry(f);
@@ -31,38 +37,11 @@ test('terminal retry archives the released pinned view after authentic primary a
     assert.deepEqual(f.calls,[f.task.workspaceId,f.run.workspaceId]);
     assert.equal(JSON.stringify(result.resolution.externalOwnerRevisions),receipts);
     assert.equal(JSON.stringify(result.resolution.review),review);
-    await f.engine.performTaskControl(control,accepted.operation.id);
-    assert.equal(f.calls.length,2,'replaying the durable operation never resends the effect');
-  } finally { await f.close(); }
-});
-
-test('a retirement proved before reconciliation of the primary archive still permits view retry',async()=>{
-  const f=await fixture();
-  try {
-    f.delivery.lost=true;f.delivery.teardownFailure=true;
-    await new Lifecycle(f.engine).archive(f.store.task(f.task.id),f.task.workspaceId!);
-    let task=f.store.task(f.task.id);
-    assert.equal(task.resolution.archiveIntentWorkspaceId,f.task.workspaceId);
-    assert.equal(task.resolution.runtimeRetirements.find(record=>record.workspaceId===f.task.workspaceId)?.state,'failed');
-    assert.ok(existsSync(f.workspace));assert.deepEqual(f.calls,[f.task.workspaceId]);
-    await f.engine.retirement.retryNow(task.id);
-    const retirement=f.store.task(task.id).resolution.runtimeRetirements.find(record=>record.workspaceId===f.task.workspaceId)!;
-    assert.equal(retirement.state,'retired');assert.ok(retirement.provedAt);
-    // The earlier native archive completes asynchronously after its lost reply.
-    runGit(f.repo,'worktree','remove',f.workspace);
-    await new Promise(resolve=>setTimeout(resolve,10));
-    await new Lifecycle(f.engine).archive(f.store.task(task.id),f.task.workspaceId!);
-    task=f.store.task(task.id);
-    const archive=f.store.eventsAll(task.id).find(event=>event.kind==='workspace_archived'&&event.detail.split('; ').includes(`workspace ${f.task.workspaceId}`));
-    assert.ok(archive);assert.ok(archive.at>retirement.provedAt!,'retirement precedes archive confirmation');
-    assert.ok(task.resolution.archivedWorkspaceIds.includes(f.task.workspaceId!));
-    assert.deepEqual(f.calls,[f.task.workspaceId],'native archive is never resent');
-    f.delivery.lost=false;
-    await seedRetry(f);
-    task=f.store.task(task.id);
-    await f.engine.performTaskControl({taskId:task.id,version:task.version,action:'retry_effect',effect:`workspace_archive.${f.run.workspaceId}`,reason:'Archive after reconciled primary',caller:OPERATOR_BOARD_CALLER});
-    assert.ok(f.store.task(task.id).resolution.archivedWorkspaceIds.includes(f.run.workspaceId));
-    assert.deepEqual(f.calls,[f.task.workspaceId,f.run.workspaceId]);
+    await assert.rejects(
+      f.engine.performTaskControl(control,accepted.operation.id),
+      /Task changed; refresh before retrying/,
+    );
+    assert.equal(f.calls.length,2,'the stale request sends no additional archive');
   } finally { await f.close(); }
 });
 
@@ -114,20 +93,5 @@ test('unknown archive delivery is observed and never blindly resent',async()=>{
     f.delivery.unavailable=true;task=f.store.task(task.id);
     await assert.rejects(f.engine.performTaskControl({taskId:task.id,version:task.version,action:'retry_effect',effect:`workspace_archive.${f.run.workspaceId}`,reason:'Observe delivery',caller:OPERATOR_BOARD_CALLER}),/catalog unavailable/);
     assert.equal(f.calls.length,2);assert.ok(existsSync(f.run.reviewSourceView!.directory!));
-  } finally { await f.close(); }
-});
-
-test('missing view and unavailable canonical backing never settle from disappearance',async()=>{
-  const f=await fixture();
-  try {
-    await new Lifecycle(f.engine).archive(f.store.task(f.task.id),f.task.workspaceId!);
-    await seedRetry(f);
-    runGit(f.repo,'worktree','remove',f.run.reviewSourceView!.directory!);
-    f.archived.add(f.run.workspaceId);
-    renameSync(f.repo,join(f.root,'unavailable-repo'));
-    const task=f.store.task(f.task.id);
-    await assert.rejects(f.engine.performTaskControl({taskId:task.id,version:task.version,action:'retry_effect',effect:`workspace_archive.${f.run.workspaceId}`,reason:'Observe missing view',caller:OPERATOR_BOARD_CALLER}));
-    assert.ok(!f.store.task(task.id).resolution.archivedWorkspaceIds.includes(f.run.workspaceId));
-    assert.equal(f.calls.length,1);
   } finally { await f.close(); }
 });

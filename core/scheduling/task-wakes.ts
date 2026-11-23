@@ -43,7 +43,6 @@ import {
 } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { HostReadRefusalError } from "../host";
-import { PassProofPendingError } from "../host/errors";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
 import {
@@ -57,6 +56,7 @@ import {
 } from "../dispatch/capacity";
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import {
+  DeferredPassReadError,
   HOST_PASS_WARM_BUDGET_MS,
   PASS_PROCESS_READ_DEADLINE_MS,
   PassSnapshot,
@@ -68,10 +68,6 @@ import {
   runOutsideTaskQuantumScope,
 } from "./pass-snapshot";
 import { knownExecutionParticipantIds } from "../machine/execution-participants";
-import {
-  custodyProofDeferral,
-  requireCustodyEvidence,
-} from "../machine/custody-proof";
 import {
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -1155,9 +1151,7 @@ export class TaskWakes {
       return "exhausted";
     }
     const retryOnPass =
-      operation &&
-      (error instanceof PassProofPendingError ||
-        activeOld?.retryOnPass === true);
+      operation && activeOld?.retryOnPass === true;
     const scopeParts = [
       next.hostId ? `host ${next.hostId}` : null,
       next.target || null,
@@ -1518,13 +1512,12 @@ export class TaskWakes {
             hostId,
             async () => {
               try {
-                const processes = requireCustodyEvidence(
-                  await adapter.hostProcessListing!(),
-                  "the host process listing",
-                );
+                const processes = await adapter.hostProcessListing!();
+                if (processes === null)
+                  return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
                 return { state: "listed", processes };
               } catch (error) {
-                const deferred = custodyProofDeferral({ kind: "error", error });
+                const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
                 return {
                   state: "unknown",
                   reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,

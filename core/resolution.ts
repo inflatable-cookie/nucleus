@@ -42,6 +42,7 @@ import {
   QUANTUM_TOTAL_READ_BUDGET_MS,
   boundedRead,
   currentTaskQuantumScope,
+  DeferredPassReadError,
   isQuantumDeadlineExceeded,
   runOutsideTaskQuantumScope,
   type BoundedReadResult,
@@ -104,7 +105,6 @@ import {
   type Incident,
   type Profile,
   type RepositoryChecksPolicy,
-  type ReviewDeliveryAuthorization,
   type ReviewCheckpointRecord,
   type Run,
   type Task,
@@ -135,9 +135,8 @@ import {
   type StoppedDeliveryResume,
 } from "./review/review-continuation";
 
-import { Stalls } from "./recovery/stall";
-import { OwnedTools } from "./machine/owned-tool";
-import { custodyProofDeferral, requireCustodyEvidence } from "./machine/custody-proof";
+import { Stalls, type ObservedTurnState } from "./recovery/stall";
+import { HostReadRefusalError } from "./host/errors";
 import { PrAdoption } from "./review/pr-adoption";
 import {
   ProviderRefusals,
@@ -158,7 +157,6 @@ import { Delegation } from "./questions/delegation";
 import type { PlannerRung } from "./questions/delegation";
 import { Ladder } from "./questions/ladder";
 import { TransientResume } from "./recovery/transient-resume";
-import { EffectReconcile } from "./recovery/effect-reconcile";
 import { ValidationEvidence } from "./qa/validation-evidence";
 import { RoleSelection, chooseProfile } from "./dispatch/routing";
 
@@ -195,7 +193,6 @@ import {
 } from "./questions/agent-messages";
 
 import { type WorktreeValidationScan } from "./workspaces/worktree-validation";
-import type { VerifiedEnclosingOperation } from "./planning/enclosing-operation";
 import type { RecoveryDispatchSnapshot } from "./recovery/recovery-context";
 import type { OwnerReviewContext } from "./review/owner-review-context";
 import {
@@ -277,8 +274,8 @@ export interface ProofActivation {
  * existing external-merge route.
  */
 export interface ReviewEntryExternalMerge {
-  /** The authenticated durable invocation executing this move (task 404). */
-  enclosing: () => VerifiedEnclosingOperation | undefined;
+  /** The operation applying this move, when invoked through the operation lane. */
+  operationId?: string;
   /**
    * The operator source acceptance for the head observed at the forge. It is
    * derived per observed head from the shared acceptance rule: a caller-supplied
@@ -611,7 +608,10 @@ export class Resolution {
    */
   readPassProcesses(
     hostId?: string | null,
-    options: { allowMissFetch?: boolean } = {},
+    options: {
+      allowMissFetch?: boolean;
+      participant?: { agentId: string; observation: ObservedTurnState };
+    } = {},
   ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
@@ -619,16 +619,19 @@ export class Resolution {
       if (this.adapter.hostProcessListing) {
         try {
           const list = () => this.adapter.hostProcessListing!();
-          const processes = requireCustodyEvidence(
-            await (options.allowMissFetch
-              ? runOutsideTaskQuantumScope(list)
-              : list()),
-            "the host process listing",
-          );
+          const processes = await (options.allowMissFetch
+            ? runOutsideTaskQuantumScope(list)
+            : list());
+          if (processes === null)
+            return {
+              state: "unknown",
+              reason: "host process listing is unreadable",
+              deferred: true,
+            };
           return { state: "listed", processes, cwdComplete: processes.cwdComplete };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
-          const deferred = custodyProofDeferral({ kind: "error", error });
+          const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
           return {
             state: "unknown",
             reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -640,12 +643,49 @@ export class Resolution {
     };
     const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
     const snapshot = this.currentPassSnapshot();
-    if (snapshot)
-      return snapshot.processes(key, read, deadlineMs, {
-        ...options,
-        cacheOnly: inQuantum && !options.allowMissFetch,
+    const directRead = (): Promise<PassProcessRead> => {
+      const capturedAt = Date.now();
+      return boundedRead(
+        "host process listing",
+        () => options.participant ? runOutsideTaskQuantumScope(read) : read(),
+        deadlineMs,
+      ).then(
+        (result) =>
+          result.state === "ok"
+            ? { ...result.value, capturedAt, fromPassSnapshot: false }
+            : {
+                state: "unknown",
+                reason: result.reason,
+                capturedAt,
+                fromPassSnapshot: false,
+                deferred: true,
+              },
+        (error) => ({
+          state: "unknown",
+          reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+          capturedAt,
+          fromPassSnapshot: false,
+          ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
+        }),
+      );
+    };
+    if (snapshot) {
+      const scan = snapshot.processes(key, read, deadlineMs, {
+        allowMissFetch: options.allowMissFetch,
+        cacheOnly:
+          Boolean(options.participant) || (inQuantum && !options.allowMissFetch),
       });
-    if (inQuantum && !options.allowMissFetch) {
+      const participant = options.participant;
+      if (!participant) return scan;
+      return scan.then((result) =>
+        result.missingFromPass
+          ? snapshot.directProcesses(
+              key, participant.agentId, participant.observation, directRead,
+            )
+          : result,
+      );
+    }
+    if (inQuantum && !options.participant && !options.allowMissFetch) {
       return Promise.resolve({
         state: "unknown",
         reason:
@@ -656,26 +696,7 @@ export class Resolution {
         missingFromPass: true,
       });
     }
-    const capturedAt = Date.now();
-    return boundedRead("host process listing", read, deadlineMs).then(
-      (result) =>
-        result.state === "ok"
-          ? { ...result.value, capturedAt, fromPassSnapshot: false }
-          : {
-              state: "unknown",
-              reason: result.reason,
-              capturedAt,
-              fromPassSnapshot: false,
-              deferred: true,
-            },
-      (error) => ({
-        state: "unknown",
-        reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
-        capturedAt,
-        fromPassSnapshot: false,
-        ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
-      }),
-    );
+    return directRead();
   }
 
   /** Pre-warm one host's process snapshot during its host pass (or host-side cleanup lane). */
@@ -1156,7 +1177,6 @@ export class Resolution {
       "adapter",
       "host",
       "onTaskHost",
-      "ownedToolHold",
       "progressEffectsPending",
       "startsNoRuns",
       "store",
@@ -1310,13 +1330,12 @@ export class Resolution {
       "waiting",
     ]),
   );
-  readonly ownedTools = new OwnedTools(this);
   readonly holds = new Holds(portsContext(this, ["reviewRequired", "store"]));
   readonly continuedPrs = new ContinuedPrs(
     portsContext(this, ["adapter", "continuedPrBinding", "store"]),
   );
   readonly ordinaryCustody = new OrdinaryCustody(
-    portsContext(this, ["host", "ownedToolHold", "requestPassProof", "startsNoRuns", "store"]),
+    portsContext(this, ["host", "startsNoRuns", "store"]),
   );
   readonly reviewAdvances = new ReviewAdvances(
     portsContext(this, [
@@ -1374,7 +1393,7 @@ export class Resolution {
       "heavyRunAlive",
       "host",
       "onTaskHost",
-      "ownedJobWait",
+      "readPassTimelinePage",
       "saveIncident",
       "store",
       "validationEvidence",
@@ -1405,7 +1424,6 @@ export class Resolution {
       "holdsIntegrationTurn",
       "integrationActive",
       "paused",
-      "refreshingCloseoutHook",
       "requiredCheckPollState",
       "slotAdmissionReason",
       "store",
@@ -1458,7 +1476,6 @@ export class Resolution {
       "completeReceipt",
       "completeValidate",
       "readoptReplacedReviewer",
-      "reconcileReviewDelivery",
       "recordFinishedTaskCompletion",
       "recordSupersededProofEvidence",
       "resolveIncident",
@@ -1558,19 +1575,6 @@ export class Resolution {
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
   readonly ladder = new Ladder(this);
-  readonly effectReconcile = new EffectReconcile(
-    portsContext(this, [
-      "adapter",
-      "deliveryInTimeline",
-      "host",
-      "quantumReadTimeoutMs",
-      "readPassTimelinePage",
-      "reconcileReviewDelivery",
-      "reconcileReviewDeliveryOperations",
-      "settleReviewDelivery",
-      "store",
-    ]),
-  );
   // Annotated: the continuation's own forwarders below are typed by the owner it reads.
   readonly reviewContinuations: ReviewContinuations = new ReviewContinuations(
     portsContext(this, [
@@ -1582,11 +1586,8 @@ export class Resolution {
       "host",
       "inspectReviewContinuation",
       "onTaskHost",
-      "ownedToolHold",
       "paused",
-      "reconcileReviewDelivery",
       "reviewContinuationGate",
-      "settleReviewDelivery",
       "settleVerbFences",
       "stopResumeState",
       "store",
@@ -1639,7 +1640,7 @@ export class Resolution {
       "graceMs",
       "onTaskHost",
       "ordinaryRoundCustody",
-      "ownedToolHold",
+      "participantLease",
       "recordBlockedPrIdentity",
       "responsibleBlockerLadder",
       "responsiblePrReportRefused",
@@ -2324,9 +2325,6 @@ export class Resolution {
   reconcileMergeIntent(t: Task): Promise<void> {
     return this.mergeIntent.reconcileMergeIntent(t);
   }
-  reconcileMergeResponseEffect(taskId: string): Promise<Task> {
-    return this.mergeIntent.reconcileMergeResponseEffect(taskId);
-  }
   /** Resume a held or lost validation through its existing operator retry path. */
   retryProjectValidationEffect(task: Task): Task {
     return this.validationRetry.retryProjectValidationEffect(task);
@@ -2422,22 +2420,10 @@ export class Resolution {
   }
   executionLease(
     t: Task,
-    enclosing?: VerifiedEnclosingOperation,
     syncing?: boolean,
     probe?: boolean,
   ): Promise<boolean> {
-    return this.participantLease.executionLease(t, enclosing, syncing, probe);
-  }
-  participantToolIssue(
-    taskId: string,
-    agentId: string,
-    workspaceId: string,
-  ): Promise<string | null> {
-    return this.participantLease.participantToolIssue(
-      taskId,
-      agentId,
-      workspaceId,
-    );
+    return this.participantLease.executionLease(t, syncing, probe);
   }
   retry(
     t: Task,
@@ -2914,28 +2900,6 @@ export class Resolution {
     return this.selection.assertReviewProfileIndependent(task, run);
   }
 
-  ownedToolHold(
-    agentId: string,
-    options: {
-      requireCompleteEvidence?: boolean;
-      allowRetired?: boolean;
-      runId?: string;
-      runIds?: string[];
-      taskId?: string;
-      workspaceId?: string;
-      deadlineAt?: number;
-    } = {},
-  ) {
-    return this.ownedTools.ownedToolHold(agentId, options);
-  }
-  /** Positive evidence that the agent's own detached job is still running, or null. */
-  ownedJobWait(
-    agentId: string,
-    binding?: { taskId: string; runId: string },
-  ): Promise<string | null> {
-    return this.ownedTools.ownedJobWait(agentId, binding);
-  }
-
   assertIdleReviewerObservation(
     task: Task,
     run: Run,
@@ -2945,82 +2909,6 @@ export class Resolution {
       task,
       run,
       observed,
-    );
-  }
-
-  settleReviewDelivery(
-    runId: string,
-    deliveryId: string,
-    status: ReviewDeliveryAuthorization["status"],
-    evidence: string,
-    receiptProven = false,
-  ): void {
-    this.effectReconcile.settleReviewDelivery(
-      runId,
-      deliveryId,
-      status,
-      evidence,
-      receiptProven,
-    );
-  }
-  reconcileArchivedReviewerDispatch(
-    taskId: string,
-    runId: string,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileArchivedReviewerDispatch(
-      taskId,
-      runId,
-    );
-  }
-  reconcileUncertainRunDelivery(
-    taskId: string,
-    runId: string,
-    deadlineAt?: number,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileUncertainRunDelivery(
-      taskId,
-      runId,
-      deadlineAt,
-    );
-  }
-  reconcileReviewDeliveryOperations(
-    taskId: string,
-    runId: string,
-    deliveryId: string,
-    evidence: string,
-  ): void {
-    this.effectReconcile.reconcileReviewDeliveryOperations(
-      taskId,
-      runId,
-      deliveryId,
-      evidence,
-    );
-  }
-  deliveryInTimeline(run: Run, deliveryId: string): Promise<boolean> {
-    return this.effectReconcile.deliveryInTimeline(run, deliveryId);
-  }
-  reconcileReviewDelivery(
-    run: Run,
-    authorization: ReviewDeliveryAuthorization,
-  ): Promise<ReviewDeliveryAuthorization> {
-    return this.effectReconcile.reconcileReviewDelivery(run, authorization);
-  }
-  reconcileReviewDeliveryEffect(
-    taskId: string,
-    deliveryId: string,
-  ): Promise<ReviewDeliveryAuthorization> {
-    return this.effectReconcile.reconcileReviewDeliveryEffect(
-      taskId,
-      deliveryId,
-    );
-  }
-  reconcileAttentionNoticeEffect(
-    taskId: string,
-    noticeId: string,
-  ): Promise<boolean> {
-    return this.effectReconcile.reconcileAttentionNoticeEffect(
-      taskId,
-      noticeId,
     );
   }
 
@@ -3945,7 +3833,6 @@ export class Resolution {
     appliedCoordinatorRunId?: string,
     reviewEntry?: ReviewEntryExternalMerge,
     retained?: RetainedSourceExternalMerge,
-    enclosingOperation?: () => VerifiedEnclosingOperation | undefined,
   ) {
     return this.externalMerge.acceptExternalMerge(
       t,
@@ -3954,7 +3841,6 @@ export class Resolution {
       appliedCoordinatorRunId,
       reviewEntry,
       retained,
-      enclosingOperation,
     );
   }
   recoverExternalMerge(t: Task) {

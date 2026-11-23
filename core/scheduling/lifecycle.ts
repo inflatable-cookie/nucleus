@@ -1,11 +1,5 @@
 import { MISSING_CALLBACK_CAUSE } from "../../shared/incident";
 import { stages } from "../recovery/task-reasons";
-import {
-  blockingRecoveryEffects,
-  recoveryEffectsRefusal,
-  matchesReviewEffectWait,
-} from "../recovery/recovery-effects";
-import { blockedEffectAttentionRecorded } from "../recovery/effect-gates";
 import { proofWaitApplies } from "../qa/proof-wait";
 import { type Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
@@ -367,18 +361,6 @@ export class SchedulingLifecycle {
     if (t.phase === "awaiting_review" && t.skipPRReview) {
       this.context.advanceSkippedReview(t);
     } else if (t.phase === "awaiting_review" || t.phase === "reviewing") {
-      const effects = blockingRecoveryEffects(this.context.store, t, {
-        noticeKinds: "all",
-      });
-      const refusal = recoveryEffectsRefusal(effects);
-      // The recorded wait is `recovery-effects`' sentence: it decodes the blocking
-      // set it named, so this pass compares the set read now with it instead of
-      // rebuilding the writer's words.
-      if (refusal && matchesReviewEffectWait(t, effects)) return;
-      // Nucleus#1159: once this blocked phase is the recorded attention, only
-      // later evidence or the owner's observation-first retry changes it;
-      // relaunching would rewrite the wait and hide the attention again.
-      if (refusal && blockedEffectAttentionRecorded(t)) return;
       await this.context.launch(t, "reviewer");
     } else if (t.phase === "changes_requested") {
       await this.context.advanceChangesRequested(t);

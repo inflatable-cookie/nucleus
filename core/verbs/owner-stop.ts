@@ -694,15 +694,6 @@ export class OwnerStop {
       return;
     }
 
-    const ownedHold =
-      observed.status !== "closed" &&
-      (
-        await this.engine.ownedToolHold(
-          cancellation.agentId,
-          cancellation.runId,
-          taskId,
-        )
-      ).kind !== "clear";
     const inactive =
       matchingInactiveParticipant(
         {
@@ -710,7 +701,7 @@ export class OwnerStop {
           workspaceId: cancellation.workspaceId,
         },
         observed,
-      ) && !ownedHold;
+      );
 
     if (inactive) {
       const observedAt = now();
@@ -1103,8 +1094,7 @@ export class OwnerStop {
       const op = this.store.operation(operationId);
       if (
         op?.result?.taskId &&
-        op.effect?.status === "reconciled" &&
-        !op.preSendReceipt
+        op.effect?.status === "reconciled"
       ) {
         return task;
       }

@@ -15,12 +15,6 @@ import { removesThreads } from "../workspaces/thread-archive-effect";
 import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { isTransportFailure } from "../../shared/transport";
 import {
-  hasRecordedOperationSettlement,
-  historicalFenceRefusal,
-  observedHostEffectEvidence,
-  releasedRunDeliveryEvidence,
-} from "../recovery/recovery-effects";
-import {
   SHELL_NOTICE_MS,
   TOOL_TIMELINE_LIMIT,
   TOOL_TIMELINE_READ_BUDGET,
@@ -640,7 +634,7 @@ export class HostPass {
       // service must not spend thousands of passes walking settled operations.
       const candidates = this.store.db
         .prepare(
-          "SELECT rowid AS position, id FROM operations WHERE rowid>? AND state='needs_attention' AND kind IN ('submit','task_control') AND NOT COALESCE(json_extract(data,'$.settlement.id')=id AND json_extract(data,'$.settlement.inputHash')=inputHash AND json_extract(data,'$.settlement.attempt')=json_extract(data,'$.attempts') AND json_extract(data,'$.settlement.intentAt') IS json_extract(data,'$.effect.intentAt') AND json_type(data,'$.settlement.evidence')='text',0) ORDER BY rowid LIMIT 25",
+          "SELECT rowid AS position, id FROM operations WHERE rowid>? AND state='needs_attention' AND kind='submit' AND NOT COALESCE(json_extract(data,'$.settlement.id')=id AND json_extract(data,'$.settlement.inputHash')=inputHash AND json_extract(data,'$.settlement.attempt')=json_extract(data,'$.attempts') AND json_extract(data,'$.settlement.intentAt') IS json_extract(data,'$.effect.intentAt') AND json_type(data,'$.settlement.evidence')='text',0) ORDER BY rowid LIMIT 25",
         )
         .all(cursor);
       this.terminalOperationCursor.set(
@@ -655,14 +649,14 @@ export class HostPass {
           if (
             !operation ||
             operation.state !== "needs_attention" ||
-            !["submit", "task_control"].includes(operation.kind)
+            operation.kind !== "submit"
           )
             return;
           const taskRow = operation.taskId
             ? this.store.db
                 .prepare("SELECT id FROM tasks WHERE id=?")
                 .get(operation.taskId)
-            : operation.kind === "submit" && operation.submissionId
+            : operation.submissionId
               ? this.store.db
                   .prepare("SELECT id FROM tasks WHERE submission=?")
                   .get(operation.submissionId)
@@ -681,56 +675,22 @@ export class HostPass {
             const payload = this.store.operationPayload(operation.id) as {
               type?: string;
               submission?: unknown;
-              control?: { action?: string; taskId?: string; version?: number };
             } | null;
             if (!payload || operation.inputHash !== operationInputHash(payload))
               return;
             const tombstone =
-              operation.kind === "submit" && operation.submissionId
+              operation.submissionId
                 ? this.store.db
                     .prepare(
                       "SELECT id, input_hash, data FROM tombstones WHERE submission=?",
                     )
                     .get(operation.submissionId)
-                : operation.taskId
-                  ? this.store.db
-                      .prepare(
-                        "SELECT id, input_hash, data FROM tombstones WHERE id=?",
-                      )
-                      .get(operation.taskId)
-                  : undefined;
+                : undefined;
             if (!tombstone) return;
             const record = JSON.parse(String(tombstone.data)) as {
               phase?: string;
             };
             if (!["done", "cancelled"].includes(record.phase ?? "")) return;
-            if (operation.kind === "task_control") {
-              // The same historical fence decision already used by recovery
-              // proves this execution refused before its effect.
-              if (
-                !historicalFenceRefusal(operation) ||
-                payload.type !== "task_control" ||
-                payload.control?.taskId !== operation.taskId ||
-                payload.control?.version !== operation.expectedVersion ||
-                operation.effect?.kind !== "task_control" ||
-                operation.effect.target !== payload.control?.action ||
-                operation.effect.status !== "uncertain" ||
-                operation.effect.result !== operation.diagnostic.slice(0, 2000)
-              )
-                return;
-              this.store.putOperation({
-                ...operation,
-                settlement: {
-                  id: operation.id,
-                  inputHash: operation.inputHash,
-                  attempt: operation.attempts,
-                  intentAt: operation.effect?.intentAt ?? null,
-                  evidence: operation.diagnostic,
-                  kind: "refused",
-                },
-              });
-              return;
-            }
             let parsed: ReturnType<typeof submissionSchema.safeParse>;
             try {
               parsed = submissionSchema.safeParse(
@@ -787,7 +747,6 @@ export class HostPass {
           const payload = this.store.operationPayload(operation.id) as {
             type?: string;
             submission?: unknown;
-            control?: { action?: string; taskId?: string };
           } | null;
           if (
             !payload ||
@@ -795,66 +754,41 @@ export class HostPass {
             operation.inputHash !== operationInputHash(payload)
           )
             return;
-          if (operation.kind === "submit") {
-            let parsed: ReturnType<typeof submissionSchema.safeParse>;
-            try {
-              parsed = submissionSchema.safeParse(
-                submissionRecordFromLegacy(
-                  payload.submission,
-                  "submit operation",
-                ),
-              );
-            } catch {
-              return;
-            }
-            if (
-              payload.type !== "submit" ||
-              !parsed.success ||
-              operation.submissionId !== parsed.data.submissionId ||
-              operation.key !== `submit:${parsed.data.submissionId}`
-            )
-              return;
-            try {
-              if (this.store.existing(parsed.data)?.id !== task.id) return;
-            } catch {
-              return;
-            }
-            if (operation.taskId && operation.taskId !== task.id) return;
-            if (!operation.taskId)
-              operation = this.store.putOperation({
-                ...operation,
-                taskId: task.id,
-              });
-          } else {
-            if (
-              operation.taskId !== task.id ||
-              payload.control?.taskId !== task.id
-            )
-              return;
-            // The shared recovery decision recognises recorded restart
-            // supersessions; cleanup and other controls remain applicable.
-            if (
-              operation.effect?.kind !== "task_control" ||
-              operation.effect.target !== "restart" ||
-              payload.control.action !== "restart"
-            )
-              return;
-          }
-          if (hasRecordedOperationSettlement(this.store, task, operation))
+          let parsed: ReturnType<typeof submissionSchema.safeParse>;
+          try {
+            parsed = submissionSchema.safeParse(
+              submissionRecordFromLegacy(
+                payload.submission,
+                "submit operation",
+              ),
+            );
+          } catch {
             return;
-          const evidence =
-            operation.kind === "task_control"
-              ? observedHostEffectEvidence(this.store, task, operation)
-              : null;
-          if (operation.kind === "task_control" && !evidence) return;
+          }
+          if (
+            payload.type !== "submit" ||
+            !parsed.success ||
+            operation.submissionId !== parsed.data.submissionId ||
+            operation.key !== `submit:${parsed.data.submissionId}`
+          )
+            return;
+          try {
+            if (this.store.existing(parsed.data)?.id !== task.id) return;
+          } catch {
+            return;
+          }
+          if (operation.taskId && operation.taskId !== task.id) return;
+          if (!operation.taskId)
+            operation = this.store.putOperation({
+              ...operation,
+              taskId: task.id,
+            });
           const settlement = {
             id: operation.id,
             inputHash: operation.inputHash,
             attempt: operation.attempts,
             intentAt: operation.effect?.intentAt ?? null,
-            evidence:
-              evidence ??
-              `matching submission belongs to terminal task ${task.phase}`,
+            evidence: `matching submission belongs to terminal task ${task.phase}`,
             kind: "superseded" as const,
           };
           this.store.putOperation({ ...operation, settlement });
@@ -1103,13 +1037,12 @@ export class HostPass {
     }
     // Spec 068 §6: pre-read timelines needed by this host's tasks into the
     // pass's shared snapshot under a single bounded per-host budget. Interleave
-    // delivery, tool, and shell groups round-robin (rotating both group start
+    // tool and shell groups round-robin (rotating both group start
     // and within-group candidate order across passes) so a stable backlog in
     // one group or a persistently slow candidate cannot starve other groups.
     let warmed = 0;
     let primaryToolTaskId: string | null = null;
     type WarmItem =
-      | { kind: "delivery"; agentId: string; workspaceId: string }
       | {
           kind: "tool";
           taskId?: string;
@@ -1119,34 +1052,6 @@ export class HostPass {
           demanded?: boolean;
         }
       | { kind: "shell"; agentId: string };
-
-    const deliveryItems: WarmItem[] = [];
-    if (
-      this.adapter.agentTimelinePage &&
-      this.context.resolution.primePassTimelinePage
-    ) {
-      const seenDelivery = new Set<string>();
-      for (const task of hostTasks) {
-        if (task.removedAt) continue;
-        for (const run of this.store.runs(task.id)) {
-          if (
-            run.released &&
-            run.status === "uncertain" &&
-            run.agentId &&
-            run.workspaceId &&
-            !seenDelivery.has(run.agentId) &&
-            !releasedRunDeliveryEvidence(this.store, run)
-          ) {
-            seenDelivery.add(run.agentId);
-            deliveryItems.push({
-              kind: "delivery",
-              agentId: run.agentId,
-              workspaceId: run.workspaceId,
-            });
-          }
-        }
-      }
-    }
 
     const toolGroupsByTask: WarmItem[][] = [];
     if (
@@ -1287,7 +1192,6 @@ export class HostPass {
       }
     }
 
-    const deliveryQueue = rotate(deliveryItems, passOffset);
     const shellQueue = rotate(shellItems, passOffset);
     const demandQueue = demanded.map((item) => ({
       ...item,
@@ -1299,7 +1203,7 @@ export class HostPass {
       (item) => !demandedIds.has(item.agentId),
     );
     const protectedGroups = rotate(
-      [deliveryQueue, shellQueue].filter((group) => group.length > 0),
+      [shellQueue].filter((group) => group.length > 0),
       passOffset,
     );
     const contested = demandQueue.length > 0 && protectedGroups.length > 0;
@@ -1322,7 +1226,6 @@ export class HostPass {
     };
     const candidateCount =
       demandQueue.length +
-      deliveryQueue.length +
       shellQueue.length +
       routineTools.length;
     function* warmCandidates(): Generator<{
@@ -1358,7 +1261,6 @@ export class HostPass {
       }
       const groups = rotate(
         [
-          deliveryQueue,
           [...demandQueue.slice(nextDemand), ...routineTools],
           shellQueue,
         ].filter((group) => group.length > 0),
@@ -1401,71 +1303,7 @@ export class HostPass {
           };
           const cap = perReadCap();
           if (cap <= 0) continue;
-          if (candidate.kind === "delivery") {
-            let archived = false;
-            if (this.adapter.originAgent) {
-              const originRead = await boundedRead(
-                "origin agent observation",
-                () => this.context.host.originAgent(candidate.agentId),
-                cap,
-              ).catch(() => ({
-                state: "unknown" as const,
-                reason: "origin read failed",
-              }));
-              if (originRead.state === "unknown") {
-                if (budgetRemaining() <= 0) return;
-                continue;
-              }
-              const origin = originRead.value;
-              if (!origin || origin.workspaceId !== candidate.workspaceId)
-                continue;
-              archived = origin.archived === true;
-            }
-            let closedUpdatedAt: string | null | undefined;
-            if (!archived) {
-              const obsCap = perReadCap();
-              if (obsCap <= 0) continue;
-              const obsRead = await boundedRead(
-                "participant observation",
-                () => this.context.host.observe(candidate.agentId),
-                obsCap,
-              ).catch(() => ({
-                state: "unknown" as const,
-                reason: "observe failed",
-              }));
-              if (obsRead.state === "unknown") {
-                if (budgetRemaining() <= 0) return;
-                continue;
-              }
-              const state = obsRead.value;
-              if (
-                state.id !== candidate.agentId ||
-                state.workspaceId !== candidate.workspaceId ||
-                (state.status !== "closed" && state.archived !== true) ||
-                state.active ||
-                state.activeTurnId ||
-                state.permissions
-              )
-                continue;
-              archived = state.archived === true;
-              closedUpdatedAt = archived
-                ? undefined
-                : (state.updatedAt ?? null);
-            }
-            const pageCap = perReadCap();
-            if (pageCap <= 0) continue;
-            warmed++;
-            const pageRead = await this.context.resolution
-              .primePassTimelinePage!(candidate.agentId, 100, host, {
-              provenTerminal: {
-                archived,
-                workspaceId: candidate.workspaceId,
-                ...(archived ? {} : { closedUpdatedAt }),
-              },
-              deadlineMs: pageCap,
-            }).catch(() => null);
-            if (pageRead?.state === "unknown" && budgetRemaining() <= 0) return;
-          } else if (candidate.kind === "tool") {
+          if (candidate.kind === "tool") {
             let coveredObservation = candidate.coveredObservation;
             if (!coveredObservation && !candidate.demanded) {
               const obsRead = await boundedRead(

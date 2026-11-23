@@ -16,7 +16,7 @@ import {
   protectedRunInfrastructure,
   rememberRunProcessHosts,
 } from "../core/machine/run-process-hosts";
-import { runInfrastructurePids } from "../core/machine/owned-tool-process-proof";
+import { runInfrastructurePids } from "../core/machine/run-process-tree";
 import { processParentPid } from "../core/machine/process-identity";
 import type { HostProcessFact } from "../core/host/types";
 import { bbProcessFixture } from "./support/bb-process-fixture";

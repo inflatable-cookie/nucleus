@@ -433,25 +433,19 @@ path in favour of explicit commands and `record.clear`), and the stalled-run han
 shape is served by its own owner: `restart-worker.ts` continues or replaces a
 worker run (owner-stopped, pre-dispatch, absent creation, blocked/retained and
 stopped revision) and owns the worker restart arm; `restart-review.ts` continues a
-reviewer checkpoint or relaunches a stopped reader; `restart-episode.ts` owns the
-absent resolution creation and the coordinator episode; `executor-report.ts` makes
+reviewer checkpoint or relaunches a stopped reader. `RestartControls` re-arms
+an exhausted coordinator episode on owner request. An uncertain resolution
+creation points to `run.release` or `run.start ... replacing=<run>`.
+`executor-report.ts` makes
 the proof executor's one bounded re-report request; `stalled-turn-stop.ts` owns the
 durable targeted stop. Enforces
 [Retained worker recovery](#retained-worker-recovery) and the restart arms in
 [Verbs](#verbs). Delegates remain on Engine.
 
-**RetryEffectControls** (`core/verbs/retry-effect.ts`). The owner
-`retry_effect` verb's order: replayed outcomes, branches that answer before
-observed-idle settlement, the observation-only settlement, then the named effect.
-Each half has its owner: `retry-effect-replay.ts` decodes the persisted operation
-and answers a replay from its recorded outcome, `retry-effect-ordinary.ts` owns the
-ordered pre-settlement rule chain and the ordinary effect kinds,
-`retry-effect-recovery.ts` observes and settles each recovery effect, and
-`retry-effect-archive.ts` owns the terminal, superseded-view and cancelled-workspace
-archive retries with their discard authority. The `kind.identity` effect key is
-decoded once by `splitOwnerEffectKey`/`ownerEffectIdentity` in `owner-effects.ts`.
-Enforces [Durable effects](#durable-effects-and-unknown-delivery). Delegates remain
-on Engine.
+**RetryEffectControls** (`core/verbs/retry-effect.ts`). Applies one named
+ordinary retry through its owner. `retry-effect-ordinary.ts` routes ordinary
+effects and `retry-effect-archive.ts` handles workspace archive retries.
+An interrupted retry keeps its operation record for explicit resolution.
 
 **RouteControls** (`core/verbs/route.ts`). The owner `route` verb, its
 live-run stop and subscription-group refusal, and the profile checks submission
@@ -586,10 +580,10 @@ that keeps the turn while a task's awaited work runs. Enforces
 `turnReleased` stays a late-bound field on Resolution; Closeout calls it when a
 closeout write frees the turn.
 
-**ParticipantLease** (`core/dispatch/participant-lease.ts`). Proves a task's
-participants are settled: the lease over identities that still own work, and
-the execution lease merge and closeout read, including retained runs and
-blocking recovery effects. It reads `agentSettled` from
+**ParticipantLease** (`core/dispatch/participant-lease.ts`). Checks the task's
+execution participants, including retained runs. The merge and closeout lease
+uses participant activity. The read-only effect list keeps old operations,
+hooks and notices available for `record.clear`. It reads `agentSettled` from
 `core/machine/agent-settled.ts`, the one settled-thread predicate, and host
 failures by their typed readers (`isAgentGoneRefusal`, `isStaleIntegrationBaseRefusal`)
 rather than their text. The withdrawn-native-question settlement dispatch runs
@@ -671,10 +665,6 @@ stopped-worker check is `matchingInactiveParticipant`, read through
 `onTaskHost` on the task's own host. Enforces
 [PR identity from reports](#pr-identity-from-reports). Delegates remain on
 Resolution.
-
-**OwnedTools** (`core/machine/owned-tool.ts`). Proves no live tool holds a run and
-records the `owned_tool_*` events. Enforces
-[Owned-tool evidence](#owned-tool-evidence). Delegates remain on Resolution.
 
 **SlotAdmission** (`core/dispatch/capacity.ts`). Slot occupancy and fair-share order,
 and why a task has no slot now, for one dispatch pass or one board batch.
@@ -895,11 +885,6 @@ gate leaves the message queued and refused, and the next pass delivers it throug
 same path. A refusal names its route ("Project message", "Task role message", "Agent
 message", "Reply message").
 
-**EffectReconcile** (`core/recovery/effect-reconcile.ts`). Settles an unknown send from
-its exact message: reviewer deliveries, run creations and attention notices.
-Enforces [Durable effects](#durable-effects-and-unknown-delivery). Pure:
-`timelineMessage`. Delegates remain on Resolution.
-
 **Notices** (`core/questions/notices.ts`). The one durable send every notice shares,
 intent before the send and never resent blindly, and the attention, completion,
 hold, lane-drain and decision delivery loops. Enforces
@@ -927,8 +912,8 @@ the retained author's receipted results.
 and settle. Holds the source-promotion, lead-check and re-key handlers. Enforces
 [Durable effects](#durable-effects-and-unknown-delivery). The pure
 `operationFailureSettlement` in `core/planning/operation-failure.ts` decides from
-the committed result, deferred validation, pre-send receipt, state and effect
-status. Typed refusals settle failed with a receipt whatever their prose says;
+the committed result, deferred validation, the failure type and recorded effect
+state. Typed refusals settle as failed regardless of their diagnostic;
 unexplained failures use the prose classifier. `core/planning/source-promotion-reconcile.ts`
 reconciles interrupted source promotion. `core/planning/submission.ts` owns
 submission intake, and `core/planning/planning-repairs.ts` owns dispatch-base
@@ -1003,11 +988,11 @@ detail, and the class of an error decides how an operation settles. The pin is
 - `ABSENT_WORKER_REASON` `'Agent creation is uncertain or placement differs; no replacement launched'` — CreationRecovery
 - `PRE_AGENT_LAUNCH_FAILURE_REASON` `'Transient worker launch failed before an agent was created'` — CreationRecovery
 
-Typed pre-send refusals that settle an operation failed with a receipt:
+Typed pre-send refusals that settle an operation as failed:
 `ProvenPreSendRefusalError`, `ReviewEntryRefusal`, `ExternalMergeRefusal`,
 `RestartRefusal`, `RepositoryRekeyRefused`, `RetainedRunRefusal`,
-`DurableFenceRefusal`. `ParkedRestartPreSendRefusal` is the eighth class in
-that set, and `PreWriteMergeObservationRefusal` (nucleus#1428) is the ninth. Event-kind reads and writes stay in the census in
+`DurableFenceRefusal` and `PreWriteMergeObservationRefusal` (nucleus#1428).
+Event-kind reads and writes stay in the census in
 `test/control-strings.test.ts`; do not reword a kind.
 
 ### Confidence
@@ -2838,8 +2823,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 - Publication intent at a previous PR head remains history and cannot block or
   offer settlement at the current head. Review credit still binds to its exact head.
-- A reviewer waits while recovery effects block dispatch; it does not repeatedly
-  create runs until those effects change.
+- An earlier unresolved operation, hook or notice remains visible to the owner.
+  It does not hold a new review, an already-published verdict or a merge lease.
 - An uncertain restart stays a conflict until positive evidence makes its
   occurrence obsolete. A later workspace binding alone does not identify its
   target. An exact owner settlement, a verified merge of the task's exact head,
@@ -3586,21 +3571,20 @@ resulting state on its own cadence.
 
 ## Durable effects and unknown delivery
 
-- Effect classification follows the proof, never the diagnostic's words: a
-  refusal a typed gate raises before Nucleus bound or sent anything is a definite
-  failure, and a durable receipt it could not record never turns it into an
-  unknown delivery (Tom, 2026-11-01).
-- A read-only forge observation that fails before a move to merge writes or
-  stops anything is a definite refusal (`PreWriteMergeObservationRefusal`,
-  nucleus#1428). The move proves it by its own journal: a failure counts only
-  while no task event has been recorded since the move began. A timeout
-  message alone never settles a move uncertain, and a later successful move
-  never proves absence. An uncertain move that was journaled inside its own
-  attempt window, or whose boundary was crossed, stays fenced. A legacy
-  uncertain move to merge with an empty window reconciles through
-  `retry_effect operation.<id>`, which settles it failed with the evidence in a
-  `operation_pre_send_reconciled` event. `next` offers that reconciliation only
-  when `retry_effect` would perform it.
+- A typed refusal before any send settles as a definite failure. In particular,
+  a failed PR read before a merge move writes anything settles as failed. An
+  interrupted task control with an effect intent stays uncertain unless its
+  committed result or resumable step is recorded. The scheduler never resends
+  uncertain controls.
+- `operation-status` reads the task-control operation. An owner can supersede
+  uncertain delivery with `record.clear kind=effect id=operation.<id>` after
+  accepting `effect_may_land`. A repeat of the superseded operation's key
+  returns its settled record. Historical pre-send receipts remain readable.
+- Reviewer continuation records the host's acknowledgement against its durable
+  delivery. An unknown reviewer delivery or attention notice stays recorded.
+  A later timeline or task transition does not settle it. Use
+  `record.clear kind=effect` to retire that occurrence. A released run's
+  delivery remains historical.
 - Commands are accepted durably before remote work
   ([Spec 012](../specs/012-durable-asynchronous-operations.md),
   [Spec 013](../specs/013-standalone-queue-service.md)). One operation record
@@ -3746,7 +3730,7 @@ after the task finishes.
 | `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits archive-only and deletion-capable hosts, recording a direct observation of an already archived or absent thread. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Done and completed cancellation where supported |
 | `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
 | `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
-| `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
+| `workspace_archive_intent` | `Lifecycle` and `TaskRemoval.removeTask` | Terminal cleanup uses the recorded workspace and the current catalog to archive it. Archive and local teardown keep the same identity, ownership and source checks. | Done |
 | `workspace_retirement_intent` | `progressWorkspaceRetirement` via `recordWorkspaceRetirement` | The terminal lifecycle schedules the same retirement on the task lane. It reads the catalog before continuing under recorded authority and current proofs. | Cancelled with recorded authorization |
 
 ## Cleanup
@@ -3763,8 +3747,7 @@ after the task finishes.
   its own projection accounting and durable retry state.
 - Up to two terminal thread pipelines overlap under shared Paseo admission.
   A lost archive answer is observed first. A terminal task can reissue for the
-  same idle, owned thread only after fresh identity, workspace and complete
-  owned-tool proof; three durable retries use backoff, then leave a visible
+  same idle, owned thread after checking identity and workspace; three durable retries use backoff, then leave a visible
   wait. A breaker deferral that reached no Paseo call is a wait, not
   uncertainty: it records one `thread_archive_wait` per distinct reason, keeps
   the intent retryable, and the thread archives on the first admitted pass. The
@@ -3776,7 +3759,7 @@ after the task finishes.
   idempotent move to a target state on a terminal task's own thread, so the
   side effect that matters is 'this thread ends up archived'." The ruling
   requires the same identity and workspace, idle or closed state, no active
-  turn, permission or live owned tools, and at most three durable retries.
+  turn or permission, and at most three durable retries.
 
 - T3 task threads stay settled while the task is open; none is archived or
   deleted, including a reviewer or coordinator displaced by replacement or a
@@ -3893,8 +3876,8 @@ after the task finishes.
   is unreleased, no host run holds the checkout
   ([Spec 035](../specs/035-host-run-scheduler.md) "Workspace custody") and the
   checkout shares the repository's common directory. Terminal archive waits on
-  the same host-run hold and checks cwd and open files before removing build
-  output, even for merged tasks.
+  the same host-run hold and checks cwd and open files in the workspace and run
+  scratch before removing output or archiving, even for merged tasks.
 - Installed: run-bound settlement removes only Cargo `target`; `node_modules`
   stays and is reported retained, and only terminal cleanup removes it (Tom,
   2026-10-20). Approved, not yet built: Cargo build-output deletion leaves
@@ -3933,23 +3916,18 @@ after the task finishes.
   owed. A settled manifest discovery per checkout and commit is cached.
 - `next` lists a done task's failed or unconfirmed archive as
   `workspace_archive.<id>`. Owner `retry_effect` bypasses only that deadline,
-  waits for its own cleanup occurrence and re-proves custody, ownership, source,
-  publication, idleness, retention and build-output state.
+  waits for its own cleanup occurrence and checks custody, ownership, clean published source, retention and
+  build-output state.
 - While paused, the retry runs nothing, refuses naming the pause and reports
   the stored failure as history; a validly recorded discard stays durable.
-- An outstanding archive intent is observation, not authority: it owes one
-  catalog observation per retry interval, and before any further removal
-  obsolescence (for a view) or ownership is re-derived. An automatic pass never
-  re-sends an unknown request; the owner's `retry_effect` re-runs the same
-  idempotent request after observing.
-- Archive intent is persisted at the adapter's final permission callback;
-  catalog absence with a retained checkout enters guarded local teardown, and
-  catalog plus directory absence settles it. A failed observation permits no
-  replay.
+- Archive intent is persisted at the adapter's permission callback. Each
+  attempt uses the same workspace-specific request ID and refreshes its
+  registration before sending. Catalog absence with a retained checkout
+  enters guarded local teardown. When the catalog and directory both show
+  absence, cleanup records the workspace as already gone.
 - The thread inventory follows every page (200 at a time) and narrows to the
   workspace's `prj_` project id only when the first pass read it; a
-  contradiction scans daemon-wide for the rest of the attempt. A missing cursor
-  or missing known participant refuses as incomplete.
+  contradiction scans daemon-wide for the rest of the attempt. A missing cursor refuses as incomplete.
 
 ### Pinned review views
 
@@ -4029,56 +4007,13 @@ after the task finishes.
 
 ### Owned-tool evidence
 
-- The shared stopped-run and cleanup reader proves coverage through widening
-  tail reads: 200 entries, then doubling, at most six reads with a 10-second
-  deadline each, retaining every earlier entry as the suffix.
-- The same reader answers the waiting question: `runningOwnedTool` returns the
-  oldest call whose latest state is still `running` and whose kind can outlive
-  its turn, and `ownedJobWait` turns that into the task's visible wait. It never
-  settles anything; a turn-bound kind, a terminal or unrecognised status,
-  ambiguous simultaneous states or an unreadable page returns no job.
-- Every response needs coverage flags, an epoch and matching cursors. Gaps,
-  resets, missing facts, read failures and exhausted budgets refuse. Partial
-  history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool. A T3Code bounded window is explicitly
-  marked `bounded`, and is not complete-history proof. Owned tools clear only
-  with three positive signals: no active run or pending request, no live tool
-  or provider background task in that window, and no owned workspace or run
-  scratch process. Any live or unknown signal holds. The adapter spec records
-  the residual T3 limitation for idle provider tasks outside the window.
-- A host translates its own native execution records into these tool entries; a
-  record it leaves untranslated is evidence the reader cannot judge. T3Code's
-  `command_execution` is a non-turn-bound shell, its edit, search and fetch records
-  are turn-bound; its native subagent can outlive its parent run, and its `dynamic_tool` or any native state the
-  reader does not know is never settled. A page is built from the host's rendered
-  window, not from a list that also carries rows retained from outside it, so a
-  boundary between turns is never manufactured across a gap.
-- Merge, external-merge, closeout, superseded-run, cleanup and author
-  capability-upgrade gates read this proof. In fixtures
-  `observedParticipantTimeline` in `test/support/tool-timeline.ts` supplies
-  complete empty history only for participants the fixture observes.
-- A call is live by its own turn, not by its label. When the same agent's own
-  fresh observation proves no turn is live — `active: false`, the positively
-  reported `activeTurnId: null`, no pending permission and a finished-session
-  status — a running call of a kind that cannot outlive its turn is settled: a
-  provider sub-agent call that a completed turn left running owns no effect once
-  that turn is over (effigy#524). Every one of those facts is read positively, so
-  an observation that omits one settles nothing. A shell command or a worktree
-  setup — the processes a turn detaches, the background shells and terminals
-  that genuinely outlive it — keeps the fence, as does an unknown or missing
-  kind without process proof, a status-less or ambiguous entry,
-  and conflicting identity unless the turn is over and the latest state is terminal
-  or every observed kind is turn-bound. An explicit process-owning kind takes
-  precedence over a turn-bound tool name. Unreadable observations and partial
-  history also hold. A fresh clear observation settles the recorded owned-tool
-  hold for each run bound to that participant. Any non-turn-bound tool left
-  running after a positively finished turn (including an unknown-kind edit)
-  settles only when the host process listing uniquely finds that run's
-  `mcp-report.mjs` ticket helper, identifies its parent provider process, and
-  proves that process has no descendant except the Nucleus helper (or its own
-  descendants) and — once that same fresh observation proves no turn is live —
-  the provider's own standing tool runtimes, which outlive every turn by design
-  (Queue #683).
+- A positive running-job observation can extend a callback wait.
+  Timeline and process activity also inform stall and hung-tool diagnosis.
+  `run.release` stops the recorded process group when the leader still
+  matches, then revokes the run's credential. Historical tool holds can
+  be cleared with `record.clear kind=effect id=owned_tool.<run>` after
+  accepting `owned_tool`.
+- Process identity still protects unrelated sessions from termination.
   A canonical ticket helper for another run still goes through cwd and ancestry
   proof: it blocks inside the task workspace or beneath a workspace process.
   A malformed or truncated helper ticket is unknown only when that helper is
@@ -4126,8 +4061,7 @@ after the task finishes.
   hold, and a command a session's tools start (`node build.mjs`) is work: a shell
   is never a runtime. The same recognition protects these processes from run
   cleanup — which also preserves a plausible ACP parent whose identity it cannot
-  read — and lets the owned-tool proof, review and closeout workspace proof pass
-  while the task is idle (nucleus#1343's host-qualified runtime set, extended per
+  read — and keeps those sessions out of a task process sweep (nucleus#1343's host-qualified runtime set, extended per
   host rather than a second path).
   The provider app-servers that same server hosts are runtime with the standing
   helpers each keeps (nucleus#1397). T3 starts a thread's provider as
@@ -4166,30 +4100,8 @@ after the task finishes.
   bundled application the agent launched, a bundled interpreter running a
   workspace script, and a script in the agent's own temporary directory are all
   commands. Those runtimes' own children are judged one
-  by one, so a command a kernel spawned is still real work and still holds. A
-  live descendant keeps the hold and names its PID; a missing
-  helper, ambiguous match or unreadable process listing keeps the hold as
-  unknown. The evidence is recorded on the task. `next` exposes the hold as
-  `owned_tool.<runId>` and `retry_effect` rechecks the same process tree. The
-  turn proof is read after the evidence it settles, so a turn that started
-  during pagination still holds. Nucleus never reads provider files to settle a
-  call.
-- A participant's non-turn-bound tool keeps a pre-merge lease only for the
-  configured `graceMs` after its first durable hold. Once that grace expires,
-  Nucleus rechecks that the same participant is idle in the same workspace,
-  then uses the host-process reap path and records the stopped processes on the
-  task. While the participant wait is open, the task yields its repository
-  integration turn; after the wait clears it rejoins through the existing FIFO
-  turn mechanism. A live or changed participant is never reaped, and an
-  uncertain merge intent continues to retain its turn.
-- The participant wait says which of the two it is. The grace window and a
-  participant that resumed during it are timed waits that clear on their own
-  (`lifecycle`). What the grace and the reap cannot answer — an unreadable
-  listing, an unrecorded root, a live protected host-runtime process, or a proof
-  that still refuses after its tree was proved empty — is a recorded
-  `operator_needed` stop
-  whose exit is `retry_effect` on the `owned_tool.<runId>` occurrence, so a merge
-  that cannot settle its own participant is visible instead of waiting forever.
+  by one, so a command a kernel spawned is still work. A missing helper,
+  ambiguous match or unreadable process listing remains unknown evidence.
 
 ### History retention
 

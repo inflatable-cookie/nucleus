@@ -24,12 +24,6 @@ import {
   type ArchiveEffect,
 } from "./thread-archive-effect";
 
-/** The workspace archive path's own retry proof, used before reissuing a deletion. */
-type RetryProof = (
-  agentId: string,
-  workspaceId: string,
-) => Promise<string | null>;
-
 /** A proof-only task whose recorded proof is the outcome it was dispatched for. */
 function proofOnlyComplete(task: Task): boolean {
   return Boolean(
@@ -90,7 +84,6 @@ export async function archiveFinishedThreads(
   store: Store,
   adapter: Adapter,
   taskId: string,
-  retryProof?: RetryProof,
 ): Promise<void> {
   const host = new HostFacade({ adapter });
   const task = store.task(taskId);
@@ -102,7 +95,7 @@ export async function archiveFinishedThreads(
   )
     return;
   if (terminalThreadCleanup(task, removesThreads(adapter))) {
-    await archiveTerminalTaskThreads(store, adapter, task, retryProof);
+    await archiveTerminalTaskThreads(store, adapter, task);
     // Ordinary completion can finish before the catch-up query gets here. The
     // common terminal lane owns this marker, so neither route can miss it.
     const current = store.task(taskId),
@@ -192,7 +185,6 @@ async function archiveTerminalTaskThreads(
   store: Store,
   adapter: Adapter,
   task: Task,
-  retryProof?: RetryProof,
 ): Promise<void> {
   const host = new HostFacade({ adapter });
   const taskRuns = store.runs(task.id);
@@ -431,10 +423,10 @@ async function archiveTerminalTaskThreads(
       ) {
         if (task.workspaceId) workspaces.add(task.workspaceId);
       }
-      if (workspaces.size !== 1 || !retryProof) {
+      if (workspaces.size !== 1) {
         wait(
           agentId,
-          "Archive outcome uncertain; workspace or owned-tool proof unavailable",
+          "Archive outcome uncertain; no unique workspace binding",
         );
         return;
       }
@@ -471,17 +463,6 @@ async function archiveTerminalTaskThreads(
           wait(agentId, first);
           return;
         }
-        const tools = await retryProof(agentId, workspaceId);
-        if (tools) {
-          wait(agentId, `Owned-tool proof: ${tools}`);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const second = await safe();
-        if (second) {
-          wait(agentId, second);
-          return;
-        }
         const latest = await host.originAgent(agentId);
         if (latest && latest.id !== agentId) {
           wait(agentId, "Thread identity changed");
@@ -505,7 +486,7 @@ async function archiveTerminalTaskThreads(
         }
         wait(
           agentId,
-          "Archive outcome uncertain; reissuing after identity, idleness and owned-tool proof",
+          "Retrying archive of the bound idle thread",
         );
         await settleArchive(
           store,

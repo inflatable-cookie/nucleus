@@ -35,49 +35,16 @@ Acceptance is one short SQLite transaction. Repeating the same caller key and
 input reopens a definitely `failed` operation as `pending` under its existing ID,
 keeping its attempt count, so it re-checks current state. A typed refusal raised
 before any binding settles `failed` whatever its explanation says; its wording
-never makes an operation `needs_attention`. A `succeeded` or
-`needs_attention` operation replays its stored outcome without another effect.
-A parked restart refused during read-only verification or its rolled-back local
-transaction carries a receipt written by the executing service, and so does any
-task control refused by another typed pre-send refusal — Nucleus's own
-durable-effect fence included. The receipt binds the operation,
-input, attempt, service build, intent and unchanged task and run evidence.
-An interruption after the receipt leaves the operation in attention without
-executing it again. An interruption after the parked boundary starts but before
-the receipt also remains in attention, with its original effect evidence intact.
-`queue.operation-status` with `reconcilePreSendInputHash`
-explicitly settles that occurrence only after the stored identity, effect and
-evidence still match and no reviewer delivery is bound to it; a legacy row from
-before the receipts existed relabels the same way when its diagnostic is one of
-Nucleus's own fence-refusal messages and its journal shows no boundary, retry or
-bound delivery. Its original
-diagnostic and effect remain history. A definite failure can be retried under
-the same key; its receipt and effect are retained before the next attempt.
-A missing receipt, a changed task or run, a conflicting effect or an unproved
-prior attempt keeps the fence. A present source tree, error wording and missing timeline entries do
-not establish what a historical execution did.
-A terminal
-`retry_effect workspace_archive.<id>` that restart resumes settles from its own
-landed archive (2026-10-23). The persisted operation is the identity: a running
-`task_control` for that task, at its expected version, whose stored control is
-this exact request. The workspace must be in `archivedWorkspaceIds`, and an
-event strictly after acceptance must name it (its archive, or its recorded
-content discard) and be followed by its archive. Chronology alone never counts,
-so an operation never borrows another workspace's or an earlier archive. Archive
-events now name their workspace. Nothing is re-enqueued or replayed natively,
-and without that proof the stale version still refuses.
-Concurrent identical retries reopen a failure once. Reusing the key with
-different input fails.
-A `needs_attention` operation is not automatically a permanent fence. Later
-evidence the task itself recorded answers a creation-class host effect: a
-workspace binding event after the control was accepted, then a run created and
-used in that workspace, proves the project registration and the thread in it
-landed. That operation settles as `succeeded` with its effect `reconciled` and the
-evidence recorded on it and in the task timeline, and the shared effect
-projection reports it superseded rather than blocking, so no phase waits on an
-uncertainty the task has already answered (nucleus#1159). Observation settles;
-it never resends. A control whose unknown command has no such artefact in the task
-record keeps its fence.
+never makes an operation `needs_attention`. A succeeded, uncertain or explicitly
+superseded operation returns its stored outcome when the caller repeats the key.
+An interrupted control with a durable effect intent stays uncertain unless its
+committed result or resumable step is recorded. Read its outcome with
+`queue.operation-status` and settle it through the
+[explicit resolution commands](067-explicit-resolution.md#the-explicit-commands).
+Concurrent identical retries reopen a definite failure once. Reusing the key
+with different input fails. An interrupted retry keeps its operation outcome
+and the named effect's recorded state for inspection.
+
 Acceptance returns the operation identity and observed task version without
 waiting for an engine pass, provider call, Git operation or hook execution.
 Brief-bearing lead checks use the same operation record, fenced by lead ID,

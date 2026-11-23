@@ -44,7 +44,7 @@ test("a deferred thread archive waits without recording uncertainty, and archive
   for (let i = 0; i < 3; i++) await admission.run("inventory", async () => { clock.now += 11_000; });
   assert.equal(admission.degradedNow, true);
 
-  const pass = () => archiveFinishedThreads(store, adapter, task.id, async () => null);
+  const pass = () => archiveFinishedThreads(store, adapter, task.id);
   for (let attempt = 0; attempt < 3; attempt++) { await pass(); clock.now += 3_000; }
 
   assert.equal(sends, 0, "a deferral never reaches Paseo");

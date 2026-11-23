@@ -354,7 +354,7 @@ test("an inventory that cannot be read answers nothing while the host still answ
   );
 });
 
-test("terminal history is observed and superseded once on an archive-only host", async (t) => {
+test("an archive-only host records a gone thread once and keeps an uncertain control", async (t) => {
   let active = false;
   let activeTaskId = "";
   const adapter = fakeAdapter({
@@ -434,7 +434,7 @@ test("terminal history is observed and superseded once on an archive-only host",
     f.store
       .eventsAll(controlTask.id)
       .filter((event) => event.kind === "operation_superseded").length,
-    1,
+    0,
   );
   assert.equal(
     f.store
@@ -446,7 +446,7 @@ test("terminal history is observed and superseded once on an archive-only host",
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
       (item) => item.kind === "effect",
     ),
-    false,
+    true,
   );
   await pass();
   await catchUpFinishedTaskThreads(f.store, adapter, taskId);
@@ -454,7 +454,7 @@ test("terminal history is observed and superseded once on an archive-only host",
     f.store
       .eventsAll(controlTask.id)
       .filter((event) => event.kind === "operation_superseded").length,
-    1,
+    0,
   );
   assert.equal(
     f.store
@@ -632,52 +632,32 @@ test("terminal operation pages advance past an unprovable submission", async (t)
     state: "needs_attention",
     attempts: 1,
   });
-  const at = new Date().toISOString();
+  const matchingTasks: string[] = [];
   for (let i = 0; i < 25; i++) {
-    const control = {
-      type: "task_control",
-      control: { action: "restart", taskId: task.id, version: task.version },
-    };
-    const controlKey = `page-${i}`;
-    f.store.putOperation(
-      queueOperationSchema.parse({
-        id: operationIdForKey(controlKey),
-        key: controlKey,
-        kind: "task_control",
-        inputHash: operationInputHash(control),
-        state: "needs_attention",
-        taskId: task.id,
-        hostId: HOST,
-        createdAt: at,
-        startedAt: at,
-        settledAt: at,
-        expectedVersion: task.version,
-        attempts: 1,
-        effect: {
-          kind: "task_control",
-          target: "restart",
-          intentAt: at,
-          status: "uncertain",
-        },
-      }),
-      control,
-    );
+    const input = submission();
+    const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+    f.store.update(task.id, { phase: "done" });
+    const payload = { type: "submit", submission: input };
+    const accepted = f.store.acceptOperation({
+      key: `submit:${input.submissionId}`,
+      kind: "submit",
+      submissionId: input.submissionId,
+      inputHash: operationInputHash(payload),
+      payload,
+      hostId: HOST,
+    });
+    assert.ok("operation" in accepted);
+    f.store.putOperation({ ...accepted.operation, state: "needs_attention", attempts: 1 });
+    matchingTasks.push(task.id);
   }
+  const settledCount = () => matchingTasks.filter((taskId) =>
+    f.store.eventsAll(taskId).some((event) => event.kind === "operation_superseded"),
+  ).length;
   const pass = () => f.engine.withHost(HOST, () => f.hostPass.run(HOST));
   await pass();
-  assert.equal(
-    f.store
-      .eventsAll(task.id)
-      .filter((event) => event.kind === "operation_superseded").length,
-    24,
-  );
+  assert.equal(settledCount(), 24);
   await pass();
-  assert.equal(
-    f.store
-      .eventsAll(task.id)
-      .filter((event) => event.kind === "operation_superseded").length,
-    25,
-  );
+  assert.equal(settledCount(), 25);
   assert.equal(f.store.operation(accepted.operation.id)?.taskId, null);
   assert.ok(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
@@ -1050,7 +1030,7 @@ test("a failed archive read after an idle observation shows its effect detail in
   );
 });
 
-test("engine sweep settles live-shaped terminal and retained operations past history", async (t) => {
+test("engine sweep settles retained submissions past history and preserves unknown controls", async (t) => {
   const f = fixture(t, fakeAdapter({ hostProcessListing: async () => [] }));
   const initial = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
   for (let i = 0; i < 80; i++)
@@ -1191,18 +1171,18 @@ test("engine sweep settles live-shaped terminal and retained operations past his
     f.store
       .eventsAll(initial.id)
       .filter((e) => e.kind === "operation_superseded").length,
-    1,
+    0,
   );
-  const refused = f.store.operation(ids[0]!)!;
-  assert.equal(refused.settlement?.kind, "refused");
+  const unknown = f.store.operation(ids[0]!)!;
+  assert.equal(unknown.settlement, undefined);
   const repeated = f.store.acceptOperation({
-    key: refused.key,
-    kind: refused.kind,
-    inputHash: refused.inputHash,
-    payload: f.store.operationPayload(refused.id),
+    key: unknown.key,
+    kind: unknown.kind,
+    inputHash: unknown.inputHash,
+    payload: f.store.operationPayload(unknown.id),
   });
   assert.ok("accepted" in repeated);
-  assert.deepEqual(repeated.operation, refused);
+  assert.deepEqual(repeated.operation, unknown);
   for (const id of ids.slice(1)) {
     const op = f.store.operation(id)!;
     assert.ok(op.taskId);
@@ -1222,7 +1202,7 @@ test("engine sweep settles live-shaped terminal and retained operations past his
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
       (x) => x.kind === "effect",
     ),
-    false,
+    true,
   );
   await f.engine.sweepOnce();
   await f.engine.quiesce();
@@ -1230,7 +1210,7 @@ test("engine sweep settles live-shaped terminal and retained operations past his
     f.store
       .eventsAll(initial.id)
       .filter((e) => e.kind === "operation_superseded").length,
-    1,
+    0,
   );
   for (const id of ids.slice(1))
     assert.equal(
@@ -1239,26 +1219,7 @@ test("engine sweep settles live-shaped terminal and retained operations past his
         .filter((e) => e.kind === "operation_superseded").length,
       1,
     );
-  // An older event-only settlement is migrated by ordinary retention too.
-  f.store.putOperation({
-    ...f.store.operation(operation.id)!,
-    settlement: undefined,
-  });
-  // Normal retention removes the task events, but never the operation's evidence.
-  assert.ok(
-    f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(initial.id),
-  );
-  assert.equal(f.store.eventsAll(initial.id).length, 0);
-  assert.equal(
-    f.engine.operationStatus(operation.id).settlement?.kind,
-    "superseded",
-  );
-  assert.equal(
-    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
-      (x) => x.kind === "effect",
-    ),
-    false,
-  );
+  assert.equal(f.store.operation(operation.id)?.state, "needs_attention");
 });
 
 test("sweep leaves conflicting tombstone and unreadable process ownership visible", async (t) => {

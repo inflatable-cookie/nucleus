@@ -191,11 +191,10 @@ owner to the rules it enforces.
   every caller imports. It's a leaf, so importing it never closes a cycle through
   `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
   author's receipted results.
-- `core/machine/owned-tool.ts` proves no live tool holds a run and records the
-  `owned_tool_*` events. It decides on the typed tool-issue facts in
-  `core/recovery/stall.ts` and on `core/machine/owned-tool-process-proof.ts`,
-  which owns the provider-runtime and descendant proof and answers with its own
-  reason code. `Resolution.ownedToolHold` delegates to it.
+- `core/machine/run-process-tree.ts` identifies provider runtime and
+  descendants for stall diagnosis and identity-safe process cleanup.
+  Callback reminders use positive tool activity as wait evidence.
+
 - `core/machine/` keeps one owner per process mechanism:
   `host-process-listing.ts` reads the host process table and answers `unknown`
   with its reason rather than an empty list, `host-process-select.ts` makes the
@@ -235,10 +234,9 @@ owner to the rules it enforces.
 - `core/intake/callback-reminders.ts` sends one bounded reminder to a run that stopped
   without a result, then hands the fault to attention when its grace expires.
   `reminderDecision` is the pure rule over already-read facts.
-- `core/recovery/effect-reconcile.ts` settles an unknown send from its exact message:
-  reviewer deliveries, run creations and attention notices. `timelineMessage`
-  classifies whether a page holds one exact user message. `Resolution` keeps
-  each entry point as a delegate.
+- `core/review/review-continuation/index.ts` records the host's answer to an
+  authorized continuation. Unknown outcomes remain visible for explicit
+  resolution.
 - `core/merge/check-waits.ts` polls pending required checks without the integration
   turn, handles the one same-head rerun of runnerless jobs, and reads merge-gate
   and required-check evidence against the settings revision. `Resolution` keeps a
@@ -509,7 +507,7 @@ owner to the rules it enforces.
 - `core/planning/operations.ts` accepts, schedules, runs and settles durable
   operations and holds the source-promotion, lead-check and re-key handlers.
   `core/planning/operation-failure.ts` classifies a failed run from its re-read
-  facts, including committed results, deferred validation, pre-send receipts and
+  facts, including committed results, deferred validation, refusal type and
   effect status. `core/planning/source-promotion-reconcile.ts` reconciles source
   promotion after interruption. `core/planning/submission.ts` owns submission
   intake; `core/planning/planning-repairs.ts` owns dispatch-base re-record and
@@ -648,7 +646,7 @@ owner to the rules it enforces.
   inventory and the ownership and idleness facts read from it.
   They read native workspace and thread observations through the host at their
   original call sites and retain adapter overrides for internal policy seams.
-  Uncertain native archive outcomes do not authorize another archive call.
+  Archive attempts refresh the catalog and reuse the workspace-specific request ID.
 - `hosts/paseo/adapter/host-messages.ts` owns Paseo's retained-agent handles, idle delivery
   queue and interrupt-and-continue call. `core/review/review-policy.ts` owns registration
   and review-entry decisions, review independence, retained binding, workspace

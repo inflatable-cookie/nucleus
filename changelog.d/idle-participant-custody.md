@@ -1,5 +1,4 @@
-Review and merge can proceed when a T3 timeline page is missing and an exact
-thread read plus the workspace and run-process checks prove the participant is
-idle with no pending work.
-Custody checks take a bounded direct process listing when the host pass missed
-its scan, so an idle or archived participant can release its workspace.
+Merge, closeout and retained verdict application check the exact T3 participant
+across all provider sessions and use a complete process listing. If the host
+pass missed its listing, custody checks share one bounded direct scan that
+covers the participants observed inactive before it.

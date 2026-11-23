@@ -12,7 +12,6 @@ import { RETAINED_PREREQUISITE_REFUSAL } from "./verb-refusal-text";
 import { mergeOccurrence } from "../closeout/closeout";
 import { readyReviewAtHead } from "../recovery/task-reasons";
 import {
-  closeoutEffectRefusal,
   closeoutMoveStateRefusal,
   moveStateRefusal,
   recordedCloseoutRefusal,
@@ -41,7 +40,6 @@ import {
   type TaskNextVerb,
 } from "../../shared/contracts";
 import { operatorReplacementPending } from "../recovery/task-reasons";
-import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import {
   reviewInProgress,
   reviewerIdentityAtHead,
@@ -325,15 +323,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         operatorReplacementPending(task)
       )
         return { available: false, refusal: MOVE_REVIEW_WORKSPACE_REFUSAL };
-      const refusal = blockingRecoveryEffectsRefusal(facts.store, task, {
-        kinds: [
-          "run-delivery",
-          "publication",
-          "review-delivery",
-          "merge-response",
-        ],
-      });
-      if (refusal) return { available: false, refusal };
+
     }
     // Tom, 2026-10-27 ("Preserve the reader for everyone"): a valid retained
     // reader at this exact head is preserved and continued by the move. The view
@@ -545,7 +535,6 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       }).hold;
       const refusal =
         durableRunFence(facts) ??
-        closeoutEffectRefusal(facts.store, task) ??
         (hold ? `Recorded merge waits: ${hold}` : null);
       return refusal
         ? { available: false, refusal }
@@ -560,22 +549,11 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         available: false,
         refusal: `Run ${live.id} delivery is unknown; reconcile it before accepting the external merge`,
       };
-    if (!neverDispatchedReviewEntry) {
-      const refusal = closeoutEffectRefusal(facts.store, task);
-      if (refusal) return { available: false, refusal };
-    }
     const fence = durableRunFence(facts);
-    const effects = blockingRecoveryEffectsRefusal(facts.store, task, {
-      noticeKinds: "all",
-    });
-    const descendantRefusal =
-      [fence, effects]
-        .filter((refusal): refusal is string => Boolean(refusal))
-        .join("; ") || null;
     return {
       available: true,
       args: {},
-      note: `Nucleus freshly observes the retained participants before accepting the external merge. A merge at the recorded head needs only the reason. A PR merged at a descendant final head, while the original checkout remains at the recorded source, needs qualification and that exact final head together: Nucleus proves both at the forge and records operator source acceptance separately. The head is never inferred from the recorded head. Activity, permissions, unknown tools or effects, and an unobservable or changed source refuse it.${descendantRefusal ? ` Descendant acceptance currently refuses: ${descendantRefusal}` : ""}`,
+      note: `Nucleus freshly observes the retained participants before accepting the external merge. A merge at the recorded head needs only the reason. A PR merged at a descendant final head, while the original checkout remains at the recorded source, needs qualification and that exact final head together: Nucleus proves both at the forge and records operator source acceptance separately. The head is never inferred from the recorded head. Activity, permissions, a changed source refuse it.${fence ? ` Descendant acceptance currently refuses: ${fence}` : ""}`,
     };
   })();
   return [

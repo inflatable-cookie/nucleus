@@ -42,9 +42,10 @@ Worktrees default to `<workRoot>/<repo-hash>/ns-<task-id>`. Barge's `barge` libr
 provides optional lease, lookup, hold and return. The fixture uses `workRoot`.
 The Barge checkout has the worktree API and no release tag. Enable the pool
 setting after a compatible dependency pin and a hold that covers the T3 turn
-and its tools are available. `existing_worktree` passes a path to T3 and carries
-no Barge hold. A Rust service-side hold survives neither its own crash nor a
-tool left behind by T3. For both backends, inspect cleanliness just before
+and its tools are available. Barge main at `47e52ea9b40e1cb4bc16c8f0e201732d2465eb56`
+has `WorktreeHold` support for an inheriting child. The T3 process spawner needs
+to use that hold for a pool; `existing_worktree` passes only a path. For both
+backends, inspect cleanliness just before
 retirement and keep dirty or unpublished local work in place. Index flags that
 can hide edits also keep the checkout in place.
 
@@ -86,6 +87,7 @@ match (phase, run_state, observation) {
     (_, _, Unknown) => Wait(reason, retry_at),
     (_, Bound(_), Permission | Input) => Wait(reason, retry_at),
     (_, Bound(_), Starting | Running | IdleWithoutTerminalRun) => Wait(reason, retry_at),
+    (Reviewing, Bound(Reviewer), PreparedInvalidAfterPossibleSend) => Revoke,
     (Working | Reviewing, Bound(role), Failed(Remaining)) => Relaunch(role),
     (Working | Reviewing, Bound(_), Failed(Last)) => Ask(retry_question),
     (Queued, Unbound, Ready) => Advance(Working),
@@ -133,28 +135,48 @@ apply to manual commands.
 
 ## T3, reports and GitHub
 
+T3 is the engine's only supported host. The host interface describes the reads
+and effects the task engine needs.
+
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
   provider and model. Pre-register the single fixture project for milestone 1.
 - `orchestration.launchThread` takes explicit command, thread and initial-message
   IDs and `existing_worktree`. Bind the run and immutable launch inputs before
   sending. The task assigns a monotonic launch instance and derives a fresh
-  bearer from it. Derive native IDs from the persisted instance. Before any send,
-  read that exact native thread. Adopt a matching thread that already exists.
-  Retry the same request after proven absence and when the earlier write can no
-  longer land. Keep an unreadable or in-flight request unknown. Before sending a
-  prepared review, re-read the open PR and clean checkout at the exact head.
-- `orchestration.subscribeThread` with `requestCompletionMarker` and
-  `acceptBoundedSnapshot` supplies the run, pending input and terminal state.
-  Require exact thread identity and a complete observation. Use one shared
-  `orchestration.subscribeShell` connection if needed for project and thread
-  lookup. An absent shell entry alone cannot prove the thread is gone.
+  bearer from it. Derive native IDs from the persisted instance and freeze the
+  exact payload. Before any send, read that exact native thread and message.
+  Adopt a matching delivery that already exists. Once an exact read authorizes
+  a send, persist the possible send time before writing. A replay also requires
+  ten minutes since the last possible send. Keep the payload and native receipt
+  ID on every attempt. T3 checks the receipt
+  under its dispatch lock. Launch uses the same receipt path for the thread
+  claim and first message.
+  [Dispatch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L16305)
+  [Launch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ThreadLaunchService.ts#L1389)
+- `orchestration.subscribeThread` requests a synchronized, full snapshot of the
+  exact thread. Settlement requires coverage of all provider sessions and turn
+  items. Pending tasks and active command, tool and subagent items keep the
+  thread busy. An omitted or windowed roster leaves settlement unknown.
+  [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
+- A pass shares one bounded process inventory across checkout checks. The Mac
+  adapter cross-checks `lsof` against a PID enumeration of the local T3 user.
+  An open file or working directory under the checkout is busy. An unaccounted
+  live PID, undecodable path, incomplete listing or warning leaves settlement
+  unknown. Decode `lsof` escapes before comparing path bytes. Run the
+  engine and T3 under the same local user with private task checkout roots.
+  Use a fresh pass after a launch can have started new processes. Barge pools
+  require the host-side inherited hold.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
-  a retained, idle thread. Verify the stable message ID before sending again.
-  `thread.stop` stops the observed run on
-  the engine-owned thread. Re-read it before releasing the checkout. T3's
-  receipts bind a command to its thread but can accept a different body for the
-  same pair. Keep the original request immutable locally. T3's existing one-row
+  a retained, idle thread. Reopen an archived thread before reusing it. On
+  revocation, clear an unsent request directly and stop a confirmed delivery
+  with `run.interrupt` or `queued-run.cancel` at its exact native run ID. If
+  delivery is still uncertain after the late-reply window, replay with the
+  credential already revoked. When the review head is unchanged, replay
+  requires a fresh open PR and clean checkout at that head. When it has moved,
+  reconcile the old wire once, stop any settled delivery's live turn, and
+  archive the thread before clearing the run. Read back the settled state
+  before releasing the checkout. T3's existing one-row
   UX needs an ACP parent, `delegated_task.request` with a live parent run and
   root node, and `delegated_task.completion-delivery.dispose`. Milestone 1's
   standalone threads are for the fixture only. One row per task is an entry

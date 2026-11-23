@@ -51,7 +51,7 @@ import { QueueService } from "../service/transport/server";
 import { findT3Cli } from "../shared/t3/operator";
 import { submissionSchema } from "../shared/contracts";
 import { readHostUidProcesses } from "../core/machine/host-process-listing";
-import { ownedToolAgentProcessTreeVerdict } from "../core/machine/owned-tool-process-proof";
+import { runProcessActivity } from "../core/machine/run-process-tree";
 import {
   participantRuntime,
   t3AcpServerRuntime,
@@ -559,8 +559,8 @@ async function main() {
 
       // 3. An idle worker's owned-tool proof settles: no run ticket, and the
       // workspace tree carries no tool while the parent's turn is held.
-      const idleVerdict = ownedToolAgentProcessTreeVerdict(
-        ["proof-run"],
+      const idleVerdict = runProcessActivity(
+        "proof-run",
         processes,
         { noTurnLive: true, runtime },
       );

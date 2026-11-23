@@ -10,7 +10,7 @@ import { archiveFinishedThreads } from "../core/workspaces/thread-archive";
 import type { Adapter } from "../core/host";
 
 for (const landed of [true, false])
-  test(`lost archive response: ${landed ? "landed request is observed" : "unlanded request is reissued after proof"}`, async (t) => {
+  test(`lost archive response: ${landed ? "landed request is observed" : "unlanded request is retried on the same thread"}`, async (t) => {
     const store = new Store(
       join(mkdtempSync(join(tmpdir(), "archive-unknown-")), "queue.sqlite"),
     );
@@ -36,8 +36,7 @@ for (const landed of [true, false])
       resolution: { ...initial.resolution, mergedCommit: "b".repeat(40) },
     });
     let archived = false,
-      sends = 0,
-      proofs = 0;
+      sends = 0;
     const adapter = {
       observe: async () => ({
         id: "worker",
@@ -63,18 +62,14 @@ for (const landed of [true, false])
         archived = true;
       },
     } as unknown as Adapter;
-    const proof = async () => {
-      proofs++;
-      return null;
-    };
-    await archiveFinishedThreads(store, adapter, task.id, proof);
+    await archiveFinishedThreads(store, adapter, task.id);
     assert.equal(
       store.getMeta<{ status: string }>(
         qualifiedThreadArchiveEffectKey("host", "worker"),
       )?.status,
       "uncertain",
     );
-    await archiveFinishedThreads(store, adapter, task.id, proof);
+    await archiveFinishedThreads(store, adapter, task.id);
     assert.equal(
       store.getMeta<{ status: string }>(
         qualifiedThreadArchiveEffectKey("host", "worker"),
@@ -82,7 +77,6 @@ for (const landed of [true, false])
       "archived",
     );
     assert.equal(sends, landed ? 1 : 2);
-    assert.equal(proofs, landed ? 0 : 1);
     if (!landed)
       assert.ok(
         store
@@ -90,7 +84,7 @@ for (const landed of [true, false])
           .some(
             (event) =>
               event.kind === "thread_archive_wait" &&
-              event.detail.includes("reissuing"),
+              event.detail.includes("Retrying archive"),
           ),
       );
   });

@@ -128,7 +128,7 @@ export class Dispositions {
               attachedAgentIds,
               requireDirectory: true,
               buildOutputCleanup,
-              participantRuns: () => this.store.runs(task.id),
+              workspaceRuns: this.store.runs(task.id),
             },
           ),
         );

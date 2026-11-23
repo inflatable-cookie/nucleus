@@ -18,7 +18,7 @@ import { processStartIdentityLiveness } from "./process-identity-search";
 import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
-import { possibleParticipantRuntimePids } from "./owned-tool-process-proof";
+import { possibleParticipantRuntimePids } from "./run-process-tree";
 import {
   isGroupBirthIdentity,
   provenRecordedPgidsAsync,

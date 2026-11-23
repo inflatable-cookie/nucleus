@@ -611,7 +611,7 @@ export class Closeout {
     if (!this.resolution.claimIntegrationTurn(t)) return;
     t = this.store.task(t.id);
     if (
-      !(await this.resolution.executionLease(t, undefined, true)) ||
+      !(await this.resolution.executionLease(t, true)) ||
       this.resolution.paused()
     )
       return;

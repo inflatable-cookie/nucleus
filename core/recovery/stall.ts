@@ -39,13 +39,11 @@ import { resolve, sep } from "node:path";
 import {
   participantRuntimePids,
   type RuntimeFact,
-} from "../machine/owned-tool-process-proof";
+} from "../machine/run-process-tree";
 import type { ParticipantRuntime } from "../machine/participant-runtime";
 import { readRunProcessCustody } from "../machine/run-process-custody";
 import {
   DeferredPassReadError,
-  QUANTUM_READ_DEADLINE_MS,
-  boundedRead,
   isQuantumDeadlineExceeded,
 } from "../scheduling/pass-snapshot";
 import { HungTools, type ShellPeek } from "./hung-tools";
@@ -1259,65 +1257,6 @@ export function workspaceToolProcessIssue(
     : null;
 }
 
-/**
- * Typed outcome of an owned-tool or process-proof check (Spec 068 §6, Spec 066 R1):
- * - `clear`: positive proof that no live owned tool or process holds the participant.
- * - `deferred`: quantum timeout, uncaptured pass snapshot, or `QuantumDeadlineExceededError`;
- *   callers defer the lease without recording an `operator_needed` stop or clearing durable intents.
- * - `hold`: positive live-tool / unreadable / inconclusive refusal.
- */
-export type OwnedToolHoldResult =
-  | { kind: "clear" }
-  | { kind: "hold"; reason: string }
-  | { kind: "deferred"; reason: string };
-
-/**
- * Typed outcome of one fresh participant turn observation:
- * - `observed`: fresh observation matching `agentId`.
- * - `deferred`: quantum timeout, budget exhaustion, or `QuantumDeadlineExceededError`.
- * - `unavailable`: unreadable observation or identity mismatch.
- */
-export type ObservedTurnStateRead =
-  | { kind: "observed"; state: AgentObservation }
-  | { kind: "deferred"; reason: string }
-  | { kind: "unavailable"; reason: string; error?: unknown };
-
-/**
- * The turn facts of one fresh observation, read after the tool evidence it
- * settles: an unreadable observation, or one about a different agent, is
- * unavailable and settles nothing; a quantum timeout or deadline expiry is
- * deferred.
- */
-export async function observedTurnState(
-  host: { observe(id: string): Promise<AgentObservation> },
-  agentId: string,
-  deadlineMs: number = QUANTUM_READ_DEADLINE_MS,
-): Promise<ObservedTurnStateRead> {
-  try {
-    const read = await boundedRead(
-      "participant observation",
-      () => host.observe(agentId),
-      deadlineMs,
-    );
-    if (read.state === "unknown")
-      return { kind: "deferred", reason: read.reason };
-    const state = read.value;
-    if (!state || state.id !== agentId)
-      return {
-        kind: "unavailable",
-        reason: "participant observation or identity is unavailable",
-      };
-    return { kind: "observed", state };
-  } catch (error) {
-    if (isQuantumDeadlineExceeded(error))
-      return { kind: "deferred", reason: error.message };
-    return {
-      kind: "unavailable",
-      reason: error instanceof Error ? error.message : String(error),
-      error,
-    };
-  }
-}
 
 /**
  * Widen tails instead of splicing projected pages: projection can collapse tool

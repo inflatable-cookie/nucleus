@@ -1,4 +1,4 @@
-import { unsettledControlRefusal } from "../recovery/recovery-effects";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import { restartTerminalRefusal } from "./verb-refusal-text";
 import {
   DISPOSITION_CONTROL_REFUSAL,
@@ -14,6 +14,7 @@ import {
 } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
 import { HostReadRefusalError } from "../host";
+import { coordinatorBoundExhausted } from "../recovery/recovery-bound";
 import { taskPrNumber } from "../forge/index";
 import type { RestartRole } from "./owner-verbs";
 import {
@@ -29,7 +30,7 @@ import {
 import { escalatedWorkerRestart } from "./owner-restart";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { digest, now } from "../store/store";
+import { now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
 import {
@@ -38,28 +39,14 @@ import {
   requireReviewerReplacement,
   reviewerReportPlan,
 } from "./reviewer-report";
-import { verifyEnclosingOperation } from "../planning/enclosing-operation";
 import type { RestartRequest } from "./owner-shared";
-
-/** Raised after read-only verification or the parked transaction has refused. */
-class ParkedRestartPreSendRefusal extends Error {
-  constructor(
-    message: string,
-    readonly taskEvidenceHash: string,
-    readonly runEvidenceHash: string,
-  ) {
-    super(message);
-  }
-}
-export { ParkedRestartPreSendRefusal };
 
 /**
  * The owner's `restart` verb. This module owns the verb's admission: the
  * terminal and disposition gates, the role and shape derivation, the retained
  * workspace recovery, the replacement ceiling, the owner-stop deferral and the
  * parked-step fallback. Each shape is served by its own owner: worker
- * (`restart-worker.ts`), reviewer (`restart-review.ts`), resolution episode
- * (`restart-episode.ts`), the proof executor's one re-report request
+ * (`restart-worker.ts`), reviewer (`restart-review.ts`), the proof executor's one re-report request
  * (`executor-report.ts`) and a stalled turn's stop (`stalled-turn-stop.ts`).
  * `store`, `adapter` and `resolution` read the engine per call: tests replace the
  * adapter.
@@ -75,6 +62,67 @@ export class RestartControls {
   get resolution() {
     return this.engine.resolution;
   }
+  private async restartCoordinator({ task, input, reason }: RestartRequest): Promise<Task> {
+    const episodeRunId = task.resolution.recovery?.runId;
+    const episodeRun = episodeRunId ? this.store.run(episodeRunId) : undefined;
+    if (episodeRun && !episodeRun.released && !episodeRun.agentId)
+      throw new RestartRefusal(
+        `Use run.release run=${episodeRun.id} or run.start coordinator fresh replacing=${episodeRun.id}`,
+      );
+    const finished = await this.engine.collectVerbFinishedRuns(
+      task.id, (run) => run.id === episodeRunId,
+    );
+    if (finished.fenced.length)
+      throw new DurableFenceRefusal(this.engine.verbRunFenceRefusal(finished.fenced[0]!));
+    return this.engine.control(() => this.store.transaction(() => {
+      this.engine.requireOwnerControlCurrent(
+        this.store.task(task.id), task.version, "Task changed; refresh before restarting",
+      );
+      this.engine.settleVerbFences(task.id, {
+        detail: `restart coordinator: ${reason}`,
+        runIds: finished.settleable.map((run) => run.id),
+        preserveEpisode: true,
+      });
+      const current = this.store.task(task.id);
+      const episode = current.resolution.recovery;
+      if (
+        !this.engine.coordinatorActionRunId.getStore() &&
+        episode?.status === "escalated" &&
+        !this.store.runs(task.id).some((run) => !run.released)
+      ) {
+        if (coordinatorBoundExhausted(this.store, task.id) !== null) {
+          this.store.event(task.id, "coordinator_rearm", JSON.stringify({
+            verb: "restart", role: "coordinator", caller: input.caller ?? null,
+            at: now(), reason: reason.slice(0, 2000),
+          }));
+          return this.resolution.operatorReturn(
+            current,
+            { recoveryActive: false, recovery: { ...episode, status: "resolved", summary: reason } },
+            {},
+            "coordinator_rearmed",
+            reason,
+          );
+        }
+        const run = episode.runId ? this.store.run(episode.runId) : undefined;
+        if (
+          run?.taskId === task.id &&
+          run.role === "recovery" &&
+          run.released &&
+          !run.agentId &&
+          run.status === "superseded"
+        )
+          return this.resolution.operatorReturn(
+            current,
+            { recoveryActive: false, recovery: null, recoveryAttempts: 0 },
+            {},
+            "coordinator_rearmed",
+            reason,
+          );
+      }
+      return this.resolution.retry(current, false, undefined, true);
+    }), `task:${task.id}`);
+  }
+
   /** Re-run a parked step for restart's parked fallback; runs inside the caller's transaction. */
   restartParkedStep(
     task: Task,
@@ -190,10 +238,8 @@ export class RestartControls {
     } catch (error) {
       // Verification is read-only and all local writes are rolled back; neither
       // route can authorize or send a continuation before it returns.
-      throw new ParkedRestartPreSendRefusal(
+      throw new RestartRefusal(
         error instanceof Error ? error.message : String(error),
-        digest(JSON.stringify(this.store.task(task.id))),
-        digest(JSON.stringify(this.store.runs(task.id))),
       );
     }
   }
@@ -339,7 +385,6 @@ export class RestartControls {
       );
       const plan = escalatedWorkerRestart(
         collectOwnerVerbFacts(this.store, current),
-        verifyEnclosingOperation(this.store, input, operationId),
       );
       if (!plan) return null;
       if ("refusal" in plan) throw new RestartRefusal(plan.refusal);
@@ -379,7 +424,6 @@ export class RestartControls {
       "Task changed during parent restore; read next again",
     );
     if (
-      !verifyEnclosingOperation(this.store, input, operationId) ||
       task.removedAt ||
       isDispositionActive(task) ||
       ["done", "cancelled"].includes(task.phase) ||
@@ -397,7 +441,6 @@ export class RestartControls {
     if (!reason) throw new RestartRefusal("restart requires a reason");
     const plan = escalatedWorkerRestart(
       collectOwnerVerbFacts(this.store, task),
-      verifyEnclosingOperation(this.store, input, operationId),
     );
     if (plan && !("refusal" in plan))
       return this.applyEscalatedWorkerRestart(
@@ -524,7 +567,6 @@ export class RestartControls {
     if (role === "worker") {
       const preview = escalatedWorkerRestart(
         collectOwnerVerbFacts(this.store, task),
-        verifyEnclosingOperation(this.store, input, operationId),
       );
       let restored = false;
       if (preview && !("refusal" in preview)) {
@@ -549,33 +591,8 @@ export class RestartControls {
       role === "reviewer" && exhaustedReviewer(task, runs)
         ? "stopped_reviewer"
         : restartShape(task, runs, role, this.store.eventsAll(task.id));
-    const controlRefusal = unsettledControlRefusal(this.store, task);
-    if (controlRefusal) {
-      const reading =
-        !fresh && shape === "checkpoint_reviewer"
-          ? runs.find((run) => run.id === task.resolution.currentRunId)
-          : undefined;
-      const delivery = reading?.reviewDeliveries?.findLast(
-        (item) => item.status === "reserved" || item.status === "uncertain",
-      );
-      // This control may observe the exact earlier delivery it is fenced on.
-      // Even a positive answer stops here and never authorizes another send.
-      if (
-        reading &&
-        delivery &&
-        !unsettledControlRefusal(this.store, task, delivery.operationId)
-      ) {
-        const observed = await this.resolution.reconcileReviewDelivery(
-          reading,
-          delivery,
-        );
-        if (observed.status === "delivered") return this.store.task(task.id);
-        throw Error(
-          `Reviewer delivery ${delivery.deliveryId} remains uncertain; the durable hold is retained and no resend occurred`,
-        );
-      }
-      throw new RestartRefusal(controlRefusal);
-    }
+    if (task.resolution.ownerStop)
+      throw new RestartRefusal(ownerStopPendingRefusal(task.resolution.ownerStop));
     // nucleus#1195: the proof executor's one continuation is a re-report request,
     // never a relaunch, a fresh agent or a selector re-run.
     if (shape === "unreported_executor")
@@ -836,9 +853,17 @@ export class RestartControls {
       case "checkpoint_reviewer":
       case "stopped_reviewer":
         return this.engine.restartReviewer(request);
-      case "absent_resolution":
+      case "absent_resolution": {
+        const run = this.store.runs(task.id).find(
+          (candidate) => !candidate.released && !candidate.agentId &&
+            ["intent", "uncertain"].includes(candidate.status),
+        );
+        throw new RestartRefusal(run
+          ? `Use run.release run=${run.id} or run.start ${run.role === "recovery" ? "coordinator" : run.role} fresh replacing=${run.id}`
+          : "Use run.start to start the next resolution run");
+      }
       case "coordinator":
-        return this.engine.restartEpisode(request);
+        return this.restartCoordinator(request);
       default:
         throw Error(`restart does not support the ${shape} state`);
     }

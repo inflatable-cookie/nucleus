@@ -4,7 +4,7 @@ import type { HostProcessFact } from "../host/types";
 import type { Resolution } from "../resolution";
 import type { PassProcessRead } from "../scheduling/pass-snapshot";
 import type { Store } from "../store/store";
-import { bbThreadForAgent, RunProcessTable } from "./owned-tool-process-proof";
+import { bbThreadForAgent, RunProcessTable } from "./run-process-tree";
 import {
   participantTemporaryDirectory,
   runWorkspaceDirectory,

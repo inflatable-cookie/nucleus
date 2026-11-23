@@ -23,7 +23,6 @@ import {
   queueCheckoutStatus,
 } from "../git/index";
 import { commonDirMatchesTask, readGitCheckout } from "../git/git-identity";
-import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
@@ -33,7 +32,6 @@ import type {
   RetainedSourceExternalMerge,
   Resolution,
 } from "../resolution";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now } from "../store/store";
 import {
@@ -81,10 +79,7 @@ export type ExternalMergeContext = Pick<
 
 /** The route whose acceptance this merge follows, with the witnesses that route proved. */
 type AcceptanceRoute =
-  | {
-      kind: "ordinary";
-      enclosingOperation?: () => VerifiedEnclosingOperation | undefined;
-    }
+  | { kind: "ordinary" }
   | { kind: "review-entry"; reviewEntry: ReviewEntryExternalMerge }
   | {
       kind: "retained";
@@ -155,7 +150,6 @@ export class ExternalMerge {
     appliedCoordinatorRunId?: string,
     reviewEntry?: ReviewEntryExternalMerge,
     retained?: RetainedSourceExternalMerge,
-    enclosingOperation?: () => VerifiedEnclosingOperation | undefined,
   ) {
     if (!this.adapter.externalMerge)
       throw new Error("External merge verification is unavailable");
@@ -164,9 +158,8 @@ export class ExternalMerge {
     // boundary is the one the dependency correction reads; the authenticated
     // invocation executing this move is not a competing
     // writer (task 404), and every other unfinished operation still refuses.
-    const enclosing = reviewEntry?.enclosing();
-    const boundary = enclosing
-      ? this.store.reviewEntryUnrunBeforeFirstRun(t, enclosing)
+    const boundary = reviewEntry
+      ? this.store.reviewEntryUnrunBeforeFirstRun(t, reviewEntry.operationId)
       : false;
     if (reviewEntry && !boundary)
       throw new Error(
@@ -212,16 +205,9 @@ export class ExternalMerge {
     if (
       !reviewEntry &&
       !retained &&
-      !(await this.resolution.executionLease(t, enclosingOperation?.()))
+      !(await this.resolution.executionLease(t))
     ) {
-      const effects = blockingRecoveryEffectsRefusal(
-        this.store,
-        this.store.task(t.id),
-        { enclosing: enclosingOperation?.(), noticeKinds: "all" },
-      );
-      throw new DurableFenceRefusal(
-        `Task execution participants or effects are not settled${effects ? `: ${effects}` : ""}`,
-      );
+      throw new DurableFenceRefusal("Task execution participants are not settled");
     }
     await stopped();
     const sourceWitness = retained
@@ -242,7 +228,7 @@ export class ExternalMerge {
         ? { kind: "review-entry", reviewEntry }
         : retained
           ? { kind: "retained", retained, sourceWitness: sourceWitness! }
-          : { kind: "ordinary", enclosingOperation },
+          : { kind: "ordinary" },
     };
     await this.acceptRoute(t, job);
     return this.settleAcceptedExternalMerge(t, job);
@@ -337,16 +323,9 @@ export class ExternalMerge {
     }
     await job.stopped();
     if (
-      !(await this.resolution.executionLease(t, route.enclosingOperation?.()))
+      !(await this.resolution.executionLease(t))
     ) {
-      const effects = blockingRecoveryEffectsRefusal(
-        this.store,
-        this.store.task(t.id),
-        { enclosing: route.enclosingOperation?.(), noticeKinds: "all" },
-      );
-      throw new DurableFenceRefusal(
-        `Task execution participants or effects changed during external merge proof${effects ? `: ${effects}` : ""}`,
-      );
+      throw new DurableFenceRefusal("Task execution participants changed during external merge proof");
     }
   }
   /** One transaction: run release, the route's acceptance, and the observed merge. */
@@ -485,12 +464,10 @@ export class ExternalMerge {
       // authenticated invocation that is executing it. An unverifiable
       // invocation exempts nothing. The acceptance binds the OBSERVED merged
       // head, never the recorded source head and never a previous head's ruling.
-      const invoking = route.reviewEntry.enclosing();
       if (
         current.resolution.mergeIntent ||
         current.resolution.mergedCommit ||
-        !invoking ||
-        !this.store.reviewEntryUnrunBeforeFirstRun(current, invoking)
+        !this.store.reviewEntryUnrunBeforeFirstRun(current, route.reviewEntry.operationId)
       )
         throw new Error(
           "The review-entry boundary or recorded merge changed during the external merge proof; nothing was written",
@@ -666,7 +643,7 @@ export class ExternalMerge {
         this.store.runs(t.id).some((run) => !run.released)
       )
         return false;
-      if (!(await this.resolution.executionLease(t, undefined, false, true)))
+      if (!(await this.resolution.executionLease(t, false, true)))
         return false;
       const runs = JSON.stringify(this.store.runs(t.id));
       let observed: Awaited<
@@ -689,7 +666,7 @@ export class ExternalMerge {
       )
         return false;
       if (
-        !(await this.resolution.executionLease(t, undefined, false, true)) ||
+        !(await this.resolution.executionLease(t, false, true)) ||
         this.resolution.paused()
       )
         return false;
@@ -718,7 +695,7 @@ export class ExternalMerge {
       // identity forces the read immediately.
       if (!this.externalMergeProbeDue(t)) return false;
       if (
-        !(await this.resolution.executionLease(t, undefined, false, true)) ||
+        !(await this.resolution.executionLease(t, false, true)) ||
         this.resolution.paused()
       )
         return false;
@@ -743,7 +720,6 @@ export class ExternalMerge {
         if (
           !(await this.resolution.executionLease(
             this.store.task(t.id),
-            undefined,
             false,
             true,
           )) ||
@@ -791,7 +767,6 @@ export class ExternalMerge {
       if (
         !(await this.resolution.executionLease(
           this.store.task(t.id),
-          undefined,
           false,
           true,
         )) ||
