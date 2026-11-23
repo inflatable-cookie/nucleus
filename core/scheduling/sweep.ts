@@ -626,27 +626,27 @@ export class Sweep {
       // The pass itself runs in no host context: the forge port and the host's
       // availability are read on the task's own host, or every task on a host
       // other than the legacy primary is skipped.
-      for (const task of this.engine.store
-        .activeCapacityTasks()
-        .filter(
-          (task) =>
-            task.hostId &&
-            task.agentId &&
-            !completionReportsPr(task) &&
-            !task.prUrl &&
-            !task.prHead &&
-            !task.resumePrNumber &&
-            ["working", "blocked", "error", "needs_attention"].includes(
-              task.phase,
-            ) &&
-            !this.engine.resolution.recovery.busy(task) &&
-            this.engine.withHost(
-              task.hostId,
-              () =>
-                Boolean(this.engine.adapter.findOpenBranchPr) &&
-                this.engine.taskHostAvailable(task),
-            ),
-        )) {
+      for (const task of this.engine.store.activeCapacityTasks().filter(
+        (task) =>
+          task.hostId &&
+          task.agentId &&
+          !completionReportsPr(task) &&
+          !task.prUrl &&
+          !task.prHead &&
+          !task.resumePrNumber &&
+          ["working", "blocked", "error", "needs_attention"].includes(
+            task.phase,
+          ) &&
+          !this.engine.resolution.recovery.busy(task) &&
+          this.engine.withHost(
+            task.hostId,
+            // Availability first: a host that is not connected has no adapter
+            // to read, and the routed read would refuse with a transport fault.
+            () =>
+              this.engine.taskHostAvailable(task) &&
+              Boolean(this.engine.adapter.findOpenBranchPr),
+          ),
+      )) {
         await this.boundTaskQuantum(
           this.engine
             .scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
