@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { taskStopRecordSchema } from "../../../shared/task-stop";
+
 /**
  * What the ladder's durable records say. The ladder writes each intent twice in
  * one transaction: a readable line, and a typed payload beside it. An episode's
@@ -19,20 +22,36 @@ export type LadderEvent = {
   detail: string;
 };
 
-/** A later applied control or explicit escalation settlement ends the wait's authority. */
+const recordedStopClearSchema = z.object({
+  command: z.literal("record.clear"),
+  arguments: z.object({ kind: z.enum(["stop", "wait"]), id: z.string() }),
+  before: taskStopRecordSchema,
+});
+
+/** Ordinary controls that can dispose of a parked escalation's work. */
+export function ordinaryControlSettlesEscalation(action: string): boolean {
+  return ["move", "restart", "route", "retry_effect", "complete", "stop"].includes(action);
+}
+
+/** Read the disposition of this escalation or a clear of its own stop. */
 export function escalationWaitSettledAfter(events: readonly LadderEvent[], id: string, after: number): boolean {
   return events.some(event => {
     if (event.id <= after) return false;
     if (event.kind === "planner_escalation_resolved") return event.detail.startsWith(`${id}:`);
-    if (event.kind === "operator_control") return event.detail !== "note";
+    if (event.kind === "planner_escalation_answered") return event.detail.startsWith(`${id}: answered by ordinary `);
+    if (event.kind === "operator_control") return ordinaryControlSettlesEscalation(event.detail);
     if (event.kind !== "owner_control" && event.kind !== "owner_resolution") return false;
     try {
       const detail: unknown = JSON.parse(event.detail);
       if (!detail || typeof detail !== "object") return false;
-      const action = event.kind === "owner_control"
-        ? ("verb" in detail ? detail.verb : undefined)
-        : ("command" in detail ? detail.command : undefined);
-      return typeof action === "string" && action !== "note" && action !== "message.send";
+      if (event.kind === "owner_control")
+        return "verb" in detail && typeof detail.verb === "string" && ordinaryControlSettlesEscalation(detail.verb);
+      // These transitions retire the current stop as part of entering merge or closeout.
+      if ("command" in detail && (detail.command === "merge.now" || detail.command === "closeout.now")) return true;
+      const cleared = recordedStopClearSchema.safeParse(detail);
+      if (!cleared.success) return false;
+      const { before, arguments: target } = cleared.data;
+      return before.since === target.id && before.fact?.code === "escalation" && before.fact.subject === id;
     } catch {
       return false;
     }

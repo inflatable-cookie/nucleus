@@ -2434,9 +2434,11 @@ stop names its holder when known. A decision stop names the exact decision ID,
 so a repeated handoff or a roll can restore the operator wait from the journal
 and keep the linked decision. Creating a decision, linking it and recording its
 wait commit together. The decision identity is keyed to the escalation occurrence
-and handoff generation. Recovery can rebuild an older linked decision's missing
-wait while the link still owns the escalation. An applied owner control after the
-link fences wait recovery, including an explicit clear of the prior planner stop.
+and handoff generation. An interrupted older insert can be linked using its
+recorded classification, original task link and choices when they identify one
+decision. Recovery can rebuild a linked decision's missing wait while the link
+still owns the escalation. Clearing the escalation's own stop fences both wait
+recovery and late answers. Clearing an independent hold leaves the wait in place.
 
 When the retained worker's own in-turn ask holds its turn, an escalation's
 worker direction is recorded once and the ask returns pending without being

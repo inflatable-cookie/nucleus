@@ -28,7 +28,15 @@ function handoffFixture() {
       { authority: "operator_choices", choices, context: decisionContext },
     );
   };
-  return { ...f, taskId: task.id, handoff, decisions: new Decisions(f.store) };
+  const clear = async (kind: "stop" | "hold", id: string) => {
+    const cleared = await resolveExplicitly(f.engine, {
+      action: "record.clear", kind, id, taskId: task.id, version: f.current().version,
+      caller: OPERATOR_BOARD_CALLER, reason: "This record has been disposed of",
+      accept: kind === "hold" ? ["hold_owner"] : [],
+    }, () => "next");
+    assert.equal(cleared.explicitResolution?.status, "applied");
+  };
+  return { ...f, taskId: task.id, handoff, clear, decisions: new Decisions(f.store) };
 }
 
 for (const [write, prerequisite] of [
@@ -90,15 +98,53 @@ test("an operator handoff reuses an unlinked decision by identity after its cont
   }
 });
 
+test("an operator handoff adopts the pre-upgrade decision created before its link was written", async () => {
+  const f = handoffFixture();
+  try {
+    f.store.event(f.taskId, "planner_escalation_decision", `${escalationId}: the planner origin said it cannot decide: Scope needs an operator ruling`);
+    const decision = f.decisions.add({
+      question: "Should the import boundary move?",
+      choices,
+      options: choices.map(choice => choice.label),
+      context,
+      askedBy: f.current().agentId ?? "nucleus",
+      tasks: [f.taskId],
+      by: "nucleus",
+    });
+    const unrelated = f.decisions.add({
+      question: "An independent operator decision",
+      choices,
+      context,
+      askedBy: "origin",
+      tasks: [f.taskId],
+    });
+    f.handoff("Reworded context for the same occurrence");
+
+    assert.deepEqual(new Set(f.decisions.list({ task: f.taskId }).map(item => item.id)), new Set([decision.id, unrelated.id]));
+    assert.equal(f.events("planner_escalation_decision_linked")[0]?.detail, `${escalationId}: decision ${decision.id}`);
+    assert.equal(f.engine.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), true);
+  } finally {
+    await f.close();
+  }
+});
+
 for (const [control, name] of [
   ["none", "a roll repairs a linked operator decision whose wait journal is missing"],
   ["move", "a roll respects an owner control after a link with no operator wait journal"],
+  ["hold", "clearing an independent merge hold leaves the linked operator wait recoverable"],
   ["clear", "a roll keeps an explicitly cleared stop cleared after an interrupted operator handoff"],
 ] as const) {
   test(name, async () => {
     const f = handoffFixture();
     let replacement: Engine | undefined;
     try {
+      if (control === "hold") {
+        const task = f.current();
+        await f.engine.performTaskControl({
+          taskId: task.id, version: task.version, action: "hold", kind: "merge",
+          caller: OPERATOR_BOARD_CALLER, reason: "Separate merge freeze",
+        });
+      }
       // Model the legacy handoff interrupted after its link committed.
       const decision = f.decisions.add({
         question: "Should the import boundary move?",
@@ -109,23 +155,17 @@ for (const [control, name] of [
       });
       f.store.event(f.taskId, "planner_escalation_decision_linked", `${escalationId}: decision ${decision.id}`);
       if (control === "move") f.store.event(f.taskId, "operator_control", "move");
-      if (control === "clear") {
+      if (control === "clear" || control === "hold") {
         const task = f.current();
-        const stop = task.resolution.stop;
-        assert.ok(stop);
-        const cleared = await resolveExplicitly(f.engine, {
-          action: "record.clear",
-          kind: "stop",
-          id: stop.since,
-          taskId: task.id,
-          version: task.version,
-          caller: OPERATOR_BOARD_CALLER,
-          reason: "The planner stop has been disposed of",
-          accept: [],
-        }, () => "next");
-        assert.equal(cleared.explicitResolution?.status, "applied");
+        const stopId = task.resolution.stop?.since;
+        assert.ok(stopId);
+        await (control === "clear" ? f.clear("stop", stopId) : f.clear("hold", "merge"));
         assert.equal(f.events("owner_resolution").length, 1);
-        assert.equal(f.current().resolution.stop, null);
+        if (control === "clear") assert.equal(f.current().resolution.stop, null);
+        else {
+          assert.equal(f.current().holds.merge, undefined);
+          assert.equal(f.current().resolution.stop?.since, stopId);
+        }
       }
       await f.engine.stop();
       replacement = new Engine(f.store, f.engine.adapter, 0);
@@ -135,8 +175,9 @@ for (const [control, name] of [
 
       assert.deepEqual(f.decisions.list({ task: f.taskId }).map(item => item.id), [decision.id]);
       assert.equal(f.events("planner_escalation_decision_linked").length, 1);
-      assert.equal(f.events("planner_escalation_wait").length, control === "none" ? 1 : 0);
-      if (control === "none") {
+      const shouldRestore = control === "none" || control === "hold";
+      assert.equal(f.events("planner_escalation_wait").length, shouldRestore ? 1 : 0);
+      if (shouldRestore) {
         assert.deepEqual(f.current().resolution.stop?.fact?.escalationWait, { kind: "decision", target: decision.id });
         assert.equal(f.current().resolution.stop?.detail, escalationWaitDetail.operator(escalationId, decision.id));
       }
@@ -144,11 +185,48 @@ for (const [control, name] of [
         assert.equal(f.current().resolution.stop, null);
         await replacement.resolution.blockerLadderStep(f.current());
         assert.equal(f.current().resolution.stop, null);
+
+        const answered = f.decisions.answer({
+          id: decision.id, version: decision.version, answer: choices[0]!.label,
+          answeredBy: OPERATOR_BOARD_CALLER, relayed: false, note: "",
+        });
+        let settlements = 0;
+        replacement.resolution.settlePlannerEscalation = async () => { settlements++; return null; };
+        replacement.resolution.operatorDecisionAnswered(answered);
+        await replacement.resolution.resumeAskQuestions();
+        assert.equal(settlements, 0, "a late answer cannot act on the cleared wait");
       }
-      assert.equal(replacement.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), control === "none");
+      assert.equal(replacement.resolution.ladder.operatorDecisionApplied(f.taskId, escalationId), shouldRestore);
     } finally {
       await replacement?.stop();
       await f.close();
     }
   });
 }
+
+test("clearing an installed operator stop fences both live answer delivery and journal replay", async () => {
+  const f = handoffFixture();
+  try {
+    f.handoff();
+    const [decision] = f.decisions.list({ task: f.taskId });
+    const stop = f.current().resolution.stop;
+    assert.ok(decision && stop);
+    assert.equal(stop.fact?.escalationWait?.target, decision.id);
+    await f.clear("stop", stop.since);
+
+    const answered = f.decisions.answer({
+      id: decision.id, version: decision.version, answer: choices[0]!.label,
+      answeredBy: OPERATOR_BOARD_CALLER, relayed: false, note: "",
+    });
+    let settlements = 0;
+    f.engine.resolution.settlePlannerEscalation = async () => { settlements++; return null; };
+    f.engine.resolution.operatorDecisionAnswered(answered);
+    await f.engine.resolution.resumeAskQuestions();
+
+    assert.equal(settlements, 0);
+    assert.equal(f.current().resolution.stop, null);
+    assert.equal(f.events("planner_escalation_wait_superseded").length, 1);
+  } finally {
+    await f.close();
+  }
+});

@@ -1,7 +1,7 @@
 import { type DecisionView, type Task, type TaskControlInput } from '../../shared/contracts';
 import { taskControlInputSchema } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
-import { plannerEscalations, type LadderEvent } from './ladder';
+import { plannerEscalationsHoldingTask } from './ladder';
 import { operatorQuestionFor, type OperatorQuestion, type OperatorQuestionChoice, type OperatorQuestionKind } from './operator-question';
 import { delegatedAuthorityNote, type DelegatedAnswer } from './question-delegation';
 import { decisionAnswerLinks, intentNamesQuestion, operatorQuestionRecord, operatorQuestionRecords, questionRecordKinds } from './question-events';
@@ -114,8 +114,9 @@ export class QuestionAnswers {
         // classified as the operator's; the same settlement applies its verb.
         if (link.kind === 'planner_escalation_decision_linked') {
           const escalationId = link.id;
-          const open = plannerEscalations(this.store.eventsAll(taskId) as LadderEvent[]).find(item => item.id === escalationId);
-          if (open && !open.answered && !this.resolution.settlingOperatorEscalations.has(escalationId)) {
+          const open = plannerEscalationsHoldingTask(this.store.eventsAll(taskId))
+            .some(item => item.id === escalationId && item.decisionId === view.id);
+          if (open && !this.resolution.settlingOperatorEscalations.has(escalationId)) {
             this.resolution.settlingOperatorEscalations.add(escalationId);
             void this.resolution.settlePlannerEscalation(this.store.task(taskId), escalationId, view.answer.text, view.answer.answeredBy)
               .finally(() => this.resolution.settlingOperatorEscalations.delete(escalationId));

@@ -3,6 +3,7 @@ import { clipDecisionQuestion, isOperatorOrigin, taskOwner, taskPlanner } from '
 import { normalizeRepositoryOrigin } from '../../../shared/lanes';
 import { Decisions } from '../../planning/decisions';
 import { digest } from '../../store/store-core';
+import { decisionAnswerLinks } from '../question-events';
 import { establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { plannerEscalationSuggestedVerbs } from './proof';
@@ -64,6 +65,38 @@ function escalationDecisionId(taskId: string, id: string, generation: number): s
   const hash = digest(JSON.stringify(['escalation decision', taskId, id, generation]));
   // UUID version 8 with the RFC variant. Decision readers expect UUIDs.
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+/** Before stable IDs, the recorded classification preceded the decision insert. */
+function legacyUnlinkedOperatorDecision(ladder: Ladder, task: Task, events: LadderEvent[], anchor: LadderEvent, choices: readonly OperatorEscalationChoice[]): Decision | undefined {
+  const nextClassification = events.find(event => event.id > anchor.id && event.kind === 'planner_escalation_decision');
+  const candidates = ladder.store.listDecisions({ task: task.id }).filter(decision => {
+    if (decision.status !== 'open' && decision.status !== 'answered') return false;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(decision.id)) return false;
+    if (decision.createdAt < anchor.at || (nextClassification && decision.createdAt > nextClassification.at)) return false;
+    const original = decision.versions.find(version => version.version === 1);
+    if (original?.by !== 'nucleus' || original.at !== decision.createdAt || !original.links?.tasks.includes(task.id) || isPlaceholderDecisionRecord(original)) return false;
+    // Other Nucleus decision writers commit their links with the row. A row
+    // already claimed by any question or escalation belongs to that record.
+    return !decision.links.tasks.some(linkedTaskId =>
+      decisionAnswerLinks(linkedTaskId === task.id ? events : ladder.store.eventsAll(linkedTaskId), decision.id).some(link =>
+        link.kind === 'planner_escalation_decision_linked' || link.kind === 'operator_question_decision' || link.kind === 'agent_ask_decision'));
+  });
+  const [candidate] = candidates;
+  const id = anchor.detail.split(':', 1)[0];
+  if (candidates.length > 1 || (candidate && events.some(event => event.id !== anchor.id && event.at === candidate.createdAt
+    && event.kind === 'planner_escalation_decision'))) {
+    throw Error(`Escalation ${id} has ambiguous unlinked operator decisions`);
+  }
+  if (candidate) {
+    const original = candidate.versions.find(version => version.version === 1);
+    if (candidate.askedBy.agentId !== (task.agentId ?? 'nucleus') || original?.options.length !== choices.length
+      || !choices.every((choice, index) => original.options[index] === choice.label
+        && original.choices?.some(item => item.label === choice.label && item.consequence === choice.consequence))) {
+      throw Error(`Escalation ${id} could not verify its unlinked operator decision against the handoff`);
+    }
+  }
+  return candidate;
 }
 
 function operatorWait(id: string, decisionId: string): EscalationWait {
@@ -273,7 +306,8 @@ export function classifyEscalationToOperator(
     if (operatorDecisionApplied(ladder, t.id, id)) return;
     const current = store.task(t.id);
     const events = store.eventsAll(t.id);
-    let classification = events.findLast(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`));
+    const recordedClassification = events.findLast(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`));
+    let classification = recordedClassification;
     if (!classification) {
       store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
       classification = store.eventsAll(t.id).at(-1);
@@ -284,14 +318,16 @@ export function classifyEscalationToOperator(
       ? prior.detail.match(/decision ([0-9a-f-]{36})/)?.[1]
       : undefined;
     const decisionId = escalationDecisionId(t.id, id, prior?.id ?? 0);
+    const legacyAnchor = prior && (!recordedClassification || prior.id > recordedClassification.id) ? prior : recordedClassification;
+    const choices = handoff!.choices!.map(choice => ({ label: choice.label.trim(), consequence: choice.consequence.trim() }));
     const existing = (linkedId && readOperatorDecision(ladder, t.id, linkedId))
-      || readOperatorDecision(ladder, t.id, decisionId);
+      || readOperatorDecision(ladder, t.id, decisionId)
+      || (legacyAnchor && legacyUnlinkedOperatorDecision(ladder, current, events, legacyAnchor, choices));
     let target = existing?.id;
     if (!target) {
       const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
       let question = handoff?.question ?? `The blocker escalation ${id} on "${current.title}" needs the operator.`;
       try { if (!handoff?.question && payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
-      const choices = handoff!.choices!.map(choice => ({ label: choice.label.trim(), consequence: choice.consequence.trim() }));
       const recommended = handoff?.recommended?.trim() || choices[0]!.label;
       target = new Decisions(store).add({
         question: clipDecisionQuestion(question),
