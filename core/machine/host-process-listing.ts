@@ -30,6 +30,7 @@ import {
   runProcessEnvironments,
 } from "./run-process-identity";
 import { boundedPromise } from "./bounded-promise";
+import { pidAlive } from "./pid";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
@@ -43,6 +44,7 @@ export type HostProcessListRead =
   | {
       state: "listed";
       processes: HostProcessFact[];
+      cwdComplete?: boolean;
       enumeratedPids?: ReadonlySet<number>;
     }
   | { state: "unknown"; reason: string };
@@ -122,7 +124,7 @@ async function linuxCwd(pid: number): Promise<CwdState> {
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    return code === "ENOENT" || code === "ESRCH"
+    return (code === "ENOENT" || code === "ESRCH") && !pidAlive(pid)
       ? { state: "gone" }
       : { state: "unreadable" };
   }
@@ -203,6 +205,9 @@ async function linuxProcesses(
   return {
     state: "listed",
     processes: listed,
+    cwdComplete: listed.every(
+      (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
+    ),
     enumeratedPids: new Set(
       entries.filter((entry) => /^\d+$/.test(entry)).map(Number),
     ),
@@ -213,7 +218,8 @@ async function darwinProcesses(
   uid: number,
   requested?: readonly number[],
 ): Promise<HostProcessListRead> {
-  if (requested && !requested.length) return { state: "listed", processes: [] };
+  if (requested && !requested.length)
+    return { state: "listed", processes: [], cwdComplete: true };
   const args = requested
     ? [
         "-p",
@@ -252,25 +258,25 @@ async function darwinProcesses(
     });
   }
   const pids = facts.map((fact) => fact.pid);
-  if (!pids.length) return { state: "listed", processes: [] };
+  if (!pids.length) return { state: "listed", processes: [], cwdComplete: true };
   // One bounded cwd read for the PIDs from this snapshot; a failed read stays unknown.
-  const cwds = cwdMapFromLsof(
-    pids,
-    await processListing("lsof", [
-      "-a",
-      "-d",
-      "cwd",
-      "-Fn",
-      "-p",
-      pids.join(","),
-    ]),
-  );
-  if (cwds)
-    for (const fact of facts) {
-      const cwd = cwds.get(fact.pid);
-      if (cwd?.state === "read") fact.cwd = cwd.path;
-    }
-  return { state: "listed", processes: dropExitedProcesses(facts, cwds) };
+  const cwdListing = await processListing("lsof", [
+    "-a", "-d", "cwd", "-Fn", "-p", pids.join(","),
+  ]);
+  const cwds = cwdMapFromLsof(pids, cwdListing) ?? new Map<number, CwdState>();
+  for (const fact of facts) {
+    const cwd = cwds.get(fact.pid);
+    if (cwd?.state === "read" && isAbsolute(cwd.path)) fact.cwd = cwd.path;
+    else cwds.set(fact.pid, { state: pidAlive(fact.pid) ? "unreadable" : "gone" });
+  }
+  const processes = dropExitedProcesses(facts, cwds);
+  return {
+    state: "listed",
+    processes,
+    cwdComplete: processes.every(
+      (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
+    ),
+  };
 }
 
 /**

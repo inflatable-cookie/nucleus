@@ -1,11 +1,23 @@
 [workspace]
-members = ["crates/nucleus-core"]
+members = [
+    "crates/nucleus-core",
+    "crates/nucleus-forge",
+    "crates/nucleus-store",
+    "crates/nucleus-work",
+]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.97.1"
 publish = false
+
+[workspace.dependencies]
+longhorn-config = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-core = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-git-workspace = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-redact = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
+longhorn-storage-layout = { git = "https://github.com/inflatable-cookie/longhorn.git", rev = "0549175ae075f3d530df69f0e3571bff0fbcf671" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

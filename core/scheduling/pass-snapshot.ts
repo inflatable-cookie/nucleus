@@ -5,6 +5,7 @@ import type {
   HostTimelinePage,
 } from "../../shared/host";
 import type { HostProcessListRead } from "../machine/host-process-listing";
+import type { ObservedTurnState } from "../recovery/stall";
 
 /**
  * Default deadline for a single host process-table read (Spec 068 §6).
@@ -30,7 +31,8 @@ export const QUANTUM_TOTAL_READ_BUDGET_MS = 30_000;
 /**
  * Shared read-phase scope carried across one exclusive task quantum (`task:<id>`).
  * Every `boundedRead` inside the quantum shares `deadlineAt`, and expensive
- * reads (process tables and timelines) never start directly on the task lane.
+ * reads use pass snapshots. A custody check may use a bounded direct process
+ * listing when the pass did not capture one.
  */
 export interface TaskQuantumReadScope {
   readonly deadlineAt: number;
@@ -239,6 +241,10 @@ export type PassProcessRead = HostProcessListRead & {
   fromPassSnapshot: boolean;
   /** True when the listing was deferred (quantum deadline/timeout or uncaptured pass snapshot). */
   deferred?: boolean;
+  /** No listing was attempted for this host in the pass. */
+  missingFromPass?: true;
+  /** Pre-scan evidence for this participant when reusing a direct listing. */
+  directBeforeScan?: ObservedTurnState | null;
 };
 
 /**
@@ -395,6 +401,11 @@ export class PassSnapshot {
     Map<string, HostObservation>
   >();
   private readonly processReads = new Map<string, Promise<PassProcessRead>>();
+  private readonly directProcessReads = new Map<string, {
+    read: Promise<PassProcessRead>;
+    beforeScan: ReadonlyMap<string, ObservedTurnState>;
+    invalidated?: true;
+  }>();
   private readonly timelineReads = new Map<
     string,
     Promise<BoundedReadResult<HostTimelineEntry[] | null>>
@@ -417,6 +428,7 @@ export class PassSnapshot {
     this.isActive = false;
     this.hostInventories.clear();
     this.processReads.clear();
+    this.directProcessReads.clear();
     this.timelineReads.clear();
     this.timelinePageReads.clear();
     this.timelineBudgetExhausted.clear();
@@ -550,6 +562,7 @@ export class PassSnapshot {
         capturedAt: Date.now(),
         fromPassSnapshot: true,
         deferred: true,
+        missingFromPass: true,
       });
     }
     const promise = run(true);
@@ -563,7 +576,43 @@ export class PassSnapshot {
    * reused by later tasks in the same pass.
    */
   invalidateProcesses(hostId?: string | null): void {
-    this.processReads.delete(hostKeyOf(hostId));
+    const key = hostKeyOf(hostId);
+    this.processReads.delete(key);
+    const direct = this.directProcessReads.get(key);
+    if (direct) direct.invalidated = true;
+  }
+
+  /** Share the direct read without lending one participant's inactivity to another. */
+  directProcesses(
+    hostId: string | null | undefined,
+    agentId: string,
+    participant: ObservedTurnState | null | undefined,
+    read: () => Promise<PassProcessRead>,
+  ): Promise<PassProcessRead> {
+    if (!this.isActive) return read();
+    const key = hostKeyOf(hostId);
+    const cached = this.directProcessReads.get(key);
+    if (cached)
+      return cached.read.then((scan): PassProcessRead => {
+        if (cached.invalidated)
+          return {
+            state: "unknown",
+            reason: "the direct process listing was invalidated; waiting for the next host pass",
+            capturedAt: scan.capturedAt,
+            fromPassSnapshot: true,
+            deferred: true,
+          };
+        return {
+          ...scan,
+          fromPassSnapshot: true,
+          directBeforeScan: cached.beforeScan.get(agentId) ?? null,
+        };
+      });
+    const beforeScan = new Map<string, ObservedTurnState>(this.hostInventories.get(key));
+    if (participant) beforeScan.set(agentId, participant);
+    const listing = read();
+    this.directProcessReads.set(key, { read: listing, beforeScan });
+    return listing;
   }
 
   /**

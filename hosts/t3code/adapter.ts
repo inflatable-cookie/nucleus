@@ -646,6 +646,9 @@ export class T3CodeHost implements Host {
   async observe(id: string) {
     return await this.reads.observe(id);
   }
+  observeParticipant(id: string) {
+    return this.reads.observeParticipant(id);
+  }
   async originAgent(id: string) {
     this.requireConnection();
     const record = await this.reads.readThreadRecord(id);

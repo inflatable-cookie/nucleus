@@ -31,7 +31,7 @@ function fakeAdapter(calls: Calls[], label: string, options: { withCatalog?: boo
 const FACADE_METHODS: HostFacadeMethod[] = [
   "catalog", "profiles", "capabilities",
   "findWorkspaces", "workspaceAvailable", "workspaceCatalog", "workspaceArchived",
-  "originAgent", "observe", "observationInventory", "listLiveAgents",
+  "originAgent", "observe", "observeParticipant", "observationInventory", "listLiveAgents",
   "agentTimelinePage", "agentTimeline", "stopAgentTurn", "archiveAgent", "deleteAgent", "subscribeRunUsage",
   "sendMessage", "enqueueMessage", "steerOrNotify", "interruptAndContinue",
   "pendingQuestions", "answeredQuestions", "answerNativeQuestion", "answerNativePermission", "dismissNativeQuestion",

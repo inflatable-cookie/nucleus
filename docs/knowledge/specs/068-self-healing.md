@@ -245,6 +245,14 @@ reservation still preserves its instructions and named checks when a host read
 fails. Run release uses the recorded process identity, and workspace cleanup
 keeps the checkout ownership and source checks.
 
+The remaining T3 custody checks for merge, closeout and retained verdict
+application read the exact bound participant across all provider sessions.
+They require inactivity, an empty background roster, and a complete scan
+covering the participant's workspace and run scratch. If the host pass
+missed its scan, the checks share one bounded direct scan per host pass.
+A shared scan covers only a participant observed inactive before the scan
+whose activity stamp still matches.
+
 ### 7. Attention reaches the planner quickly
 
 Tom, 2026-11-23: "It takes way too long for a task to be marked as blocked or
@@ -280,6 +288,11 @@ The rules:
   stays only for a running tool whose state can't be observed. Tool output,
   provider events and permissions renew activity. Release and termination
   still need process identity and complete host evidence.
+  A turn-end hint asks for an exact read of the task's live bindings.
+  A worker launch arms its own bounded read even before its first sweep.
+  A confirmed turn end records its source and time, and the grace deadline
+  wakes the task again. A due tool check primes the timeline and process
+  evidence before entering the task lane.
 - **Publish and route on receipt.** An authenticated blocker shows on the
   board and opens its next ladder rung in the same step. A classified blocker
   always has a next rung or a named owner, never a bare classification wait.
@@ -337,7 +350,7 @@ Each batch is at most 3 modules and about 1.5k lines, so batches 3, 4 and 5 are 
 | 5a | direct PR (nucleus#1553 cancelled) | Budget policy and outage time, typed budget and cap stops, round-3 automatic continue, and the coordinator cap counting failures. Built: see [Batch 5a as built](#batch-5a-as-built). | 1 |
 | 5b | nucleus#1556 (cancelled; built as a direct PR) | Hung-tool limit, permission policy and orphan-phase readmission. Done. | 1, 3b |
 | 6 | nucleus#1557 | Reads leave the task lane. | nucleus#1545 |
-| 7a | lead | Wake on facts: confirmed turn end, process death, thread absence and callbacks wake the task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
+| 7a | nucleus#1560 | Delivered. Confirmed turn end, process death, thread absence and callbacks wake the affected task; the stall threshold stays only for opaque tools ([§7](#7-attention-reaches-the-planner-quickly)). | — |
 | 7b | nucleus#1561 (delivered) | Publish and route on receipt: the blocker opens its ladder rung in the same step, no bare classification wait, recovery due times wake the task, transient deferrals stay Nucleus's move. | — |
 | 7c | lead | One delivery record per planner message (routed, accepted, queued, turn started); an idle planner gets the send at once; no steering. | 7b |
 

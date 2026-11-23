@@ -25,11 +25,13 @@ Cargo deny and the whole workspace run at milestone QA. The fixture exercises
 success, a stopped run, and readback after uncertain delivery before the
 planner's live check.
 
-Use the `v0.5.0` Longhorn git tag with `publish = false` for workspace packages.
+Use `publish = false` for workspace packages. The Longhorn revision
+`0549175ae075f3d530df69f0e3571bff0fbcf671` is an interim pin until `v0.6.0` is
+tagged. Crates using Longhorn require Rust 1.97.1.
 `longhorn-config` owns the versioned engine and Storage settings domains, atomic
 updates and config backups. `longhorn-storage-layout` resolves their roots and
-the separate engine data root. `longhorn-git-workspace` reads identity and
-cleanliness and supplies the bounded Git executor. `nucleus-work` owns allocation
+the separate engine data root. `longhorn-git-workspace` compares exact worktree
+and repository identity and supplies the bounded Git executor. `nucleus-work` owns allocation
 and uses explicit `git worktree add/remove` without force. `longhorn-redact` and
 `longhorn-support-log` cover adapter diagnostics. `longhorn-operation` leaves
 persistence, deduplication and restart recovery to the caller, so it adds no
@@ -43,42 +45,26 @@ setting after a compatible dependency pin and a hold that covers the T3 turn
 and its tools are available. `existing_worktree` passes a path to T3 and carries
 no Barge hold. A Rust service-side hold survives neither its own crash nor a
 tool left behind by T3. For both backends, inspect cleanliness just before
-retirement and keep dirty or unpublished local work in place.
+retirement and keep dirty or unpublished local work in place. Index flags that
+can hide edits also keep the checkout in place.
+
+Git receives a pathname after the no-follow directory check. A root or bucket
+replaced during that interval can redirect allocation. The work root belongs
+to the operator on the single-user host. A follow-up will anchor the destination
+to a verified directory handle through the Git write.
+
+The engine opens its own explicit Longhorn portable profile. Its machine-state
+settings are versioned in `state/engine.json`, with the engine disabled by
+default. The database, work and scratch roots must stay on the configured
+writable volume. Check the pinned native volume ID and walk directories without
+following links before creating storage.
 
 ## State and decisions
 
-The engine stores the latest task state in a dedicated SQLite database. First
-schema, with the compact nullable fields encoded as typed JSON objects or SQL
-`NULL`:
-
-```sql
-CREATE TABLE tasks (
-  id TEXT PRIMARY KEY, reference TEXT NOT NULL,
-  repository TEXT NOT NULL, base TEXT NOT NULL,
-  entry TEXT NOT NULL CHECK (entry IN ('brief','review_entry')),
-  brief TEXT NOT NULL CHECK (json_valid(brief)),
-  phase TEXT NOT NULL CHECK (phase IN
-    ('queued','working','reviewing','merging','closing','done','cancelled')),
-  threads TEXT NOT NULL CHECK (json_valid(threads)),
-  run TEXT CHECK (json_valid(run)),
-  pr TEXT CHECK (json_valid(pr)),
-  verdict TEXT CHECK (json_valid(verdict)),
-  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 3),
-  question TEXT CHECK (json_valid(question)),
-  hold TEXT CHECK (json_valid(hold)),
-  UNIQUE (repository, reference)
-) STRICT;
-CREATE INDEX active_tasks ON tasks (id)
-  WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL;
-CREATE TABLE events (
-  sequence INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
-  at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL
-) STRICT;
-CREATE INDEX task_history ON events (task_id, sequence);
-```
-
-Use WAL and transactional schema versioning. Store the brief's text, version
-and digest together. Store a human acceptance, when needed, as an exact-head
+The [SQLite schema](crates/nucleus-store/src/schema.sql) stores tasks and display
+history in its own `engine.sqlite`. It uses WAL and transactional schema
+versioning. The brief's text, version and digest are stored together. Store
+a human acceptance, when needed, as an exact-head
 alternative in the verdict slot, including the accepting actor and authority.
 Resolve the task's planner through repository settings. Append audit history in
 the state transaction. The pass loop only reads active task rows. API history
@@ -188,6 +174,7 @@ apply to manual commands.
   and the reviewed `sha`. On a lost response or head mismatch, read the PR
   again. Use `merged` and its merge commit for readback, including squash merges.
   An externally merged head with no verdict requires recorded human acceptance.
+  [GitHub's exact-head merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
 
 ## Board
 

@@ -21,6 +21,8 @@ import {
 import { HostFacade } from "../core/host/host-facade";
 import { LANE_PRIORITY_TASK } from "../core/scheduling/lane-priorities";
 import { readProcessSubset } from "../core/machine/host-process-listing";
+import { workspaceToolProcessIssue } from "../core/recovery/stall";
+import type { HostProcessTable } from "../core/host/types";
 import { observeAssignedThread } from "../core/dispatch/run-launch/assigned-thread";
 import type { LaunchThreadContext } from "../core/dispatch/launch";
 import { fakeAdapter, submission } from "./support/fakes";
@@ -3120,4 +3122,80 @@ test("launch delivery, worker creation, and permission denial handle pre-send an
   assert.equal(workerAfter.runId, null);
   assert.equal(workerAfter.resolution.incident, null);
   assert.equal(workerAfter.resolution.stop, null);
+});
+
+test("execution custody uses an exact idle roster and shares only a covering complete scan", async (t) => {
+  const stamp = new Date(Date.now() - 60_000).toISOString();
+  const idle = (id: string, workspaceId: string): AgentObservation => ({
+    id, workspaceId, status: "idle", active: false, activeTurnId: null,
+    permissions: false, error: "", updatedAt: stamp,
+  });
+  let scans = 0;
+  let processes: HostProcessTable | null = Object.assign([], { cwdComplete: true });
+  let background: string[] = [];
+  const f = engineFixture(t, {
+    observeParticipant: async (id: string) => ({
+      ...idle(id, `ws-${id.replace(/^agent-/, "")}`),
+      pendingBackgroundTasks: background,
+    }),
+    agentTimelinePage: async () => null,
+    hostProcessListing: async () => {
+      scans++;
+      return processes;
+    },
+    noLiveWorkspaceProcesses: async (
+      workspace: string,
+      runIds: string[],
+      _runtime: unknown,
+      listing: HostProcessFact[],
+    ) => workspaceToolProcessIssue(listing, join(tmpdir(), workspace), runIds),
+  });
+  const seed = (slug: string) => {
+    const { task, runId } = seedFinishedWorkerTask(f.store, slug);
+    const temporaryDirectory = join(tmpdir(), `synthetic-${slug}-scratch`);
+    const run = f.store.run(runId)!;
+    f.store.putRun({ ...run, temporaryDirectory, released: true });
+    return f.store.update(task.id, { temporaryDirectory });
+  };
+  const first = seed("custody-first");
+  const second = seed("custody-second");
+  const missed = async (work: (snapshot: PassSnapshot) => Promise<void>) => {
+    const snapshot = f.engine.resolution.beginPassSnapshot();
+    snapshot.sealHost(HOST);
+    try {
+      await runInTaskQuantumScope(1000, () => work(snapshot), snapshot);
+    } finally {
+      f.engine.resolution.endPassSnapshot(snapshot);
+    }
+  };
+  const lease = (task = first, syncing = false) =>
+    f.engine.resolution.executionLease(task, syncing, true);
+
+  await missed(async (snapshot) => {
+    snapshot.recordHostObservation(HOST, second.agentId!, idle(second.agentId!, second.workspaceId!));
+    assert.equal(await lease(), true);
+    assert.equal(await lease(second, true), true);
+    assert.equal(scans, 1);
+  });
+  await missed(async () => {
+    assert.equal(await lease(), true);
+    assert.equal(await lease(second), false, "the shared scan has no prior observation of this participant");
+    assert.equal(scans, 2);
+  });
+
+  background = ["shell previous-provider-session"];
+  await missed(async () => assert.equal(await lease(), false));
+  assert.equal(scans, 2, "known background work declines before scanning");
+  background = [];
+  processes = Object.assign([], { cwdComplete: false });
+  await missed(async () => assert.equal(await lease(), false));
+  processes = null;
+  await missed(async () => assert.equal(await lease(), false));
+  for (const cwd of [join(tmpdir(), first.workspaceId!), first.temporaryDirectory!]) {
+    processes = Object.assign([{
+      pid: 42, ppid: 1, pgid: 42, uid: 501, startIdentity: "synthetic-start",
+      command: "synthetic-writer", cwd,
+    }], { cwdComplete: true });
+    await missed(async () => assert.equal(await lease(), false));
+  }
 });

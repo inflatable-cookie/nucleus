@@ -44,6 +44,7 @@ import {
   currentTaskQuantumScope,
   DeferredPassReadError,
   isQuantumDeadlineExceeded,
+  runOutsideTaskQuantumScope,
   type BoundedReadResult,
   type CoveredObservationSnapshot,
   type PassProcessRead,
@@ -134,7 +135,7 @@ import {
   type StoppedDeliveryResume,
 } from "./review/review-continuation";
 
-import { Stalls } from "./recovery/stall";
+import { Stalls, type ObservedTurnState } from "./recovery/stall";
 import { HostReadRefusalError } from "./host/errors";
 import { PrAdoption } from "./review/pr-adoption";
 import {
@@ -607,7 +608,10 @@ export class Resolution {
    */
   readPassProcesses(
     hostId?: string | null,
-    options: { allowMissFetch?: boolean } = {},
+    options: {
+      allowMissFetch?: boolean;
+      participant?: { agentId: string; observation: ObservedTurnState };
+    } = {},
   ): Promise<PassProcessRead> {
     const key = this.passHostKey(hostId);
     const deadlineMs = this.passProcessReadTimeoutMs;
@@ -616,8 +620,12 @@ export class Resolution {
         try {
           const processes = await this.adapter.hostProcessListing();
           if (processes === null)
-            return { state: "unknown", reason: "host process listing is unreadable", deferred: true };
-          return { state: "listed", processes };
+            return {
+              state: "unknown",
+              reason: "host process listing is unreadable",
+              deferred: true,
+            };
+          return { state: "listed", processes, cwdComplete: processes.cwdComplete };
         } catch (error) {
           if (isQuantumDeadlineExceeded(error)) throw error;
           const deferred = error instanceof HostReadRefusalError || error instanceof DeferredPassReadError;
@@ -632,12 +640,48 @@ export class Resolution {
     };
     const inQuantum = Boolean(currentTaskQuantumScope()?.inTaskQuantum);
     const snapshot = this.currentPassSnapshot();
-    if (snapshot)
-      return snapshot.processes(key, read, deadlineMs, {
-        ...options,
-        cacheOnly: inQuantum && !options.allowMissFetch,
+    const directRead = (): Promise<PassProcessRead> => {
+      const capturedAt = Date.now();
+      return boundedRead(
+        "host process listing",
+        () => options.participant ? runOutsideTaskQuantumScope(read) : read(),
+        deadlineMs,
+      ).then(
+        (result) =>
+          result.state === "ok"
+            ? { ...result.value, capturedAt, fromPassSnapshot: false }
+            : {
+                state: "unknown",
+                reason: result.reason,
+                capturedAt,
+                fromPassSnapshot: false,
+                deferred: true,
+              },
+        (error) => ({
+          state: "unknown",
+          reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
+          capturedAt,
+          fromPassSnapshot: false,
+          ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
+        }),
+      );
+    };
+    if (snapshot) {
+      const scan = snapshot.processes(key, read, deadlineMs, {
+        cacheOnly:
+          Boolean(options.participant) || (inQuantum && !options.allowMissFetch),
       });
-    if (inQuantum) {
+      const participant = options.participant;
+      if (!participant) return scan;
+      return scan.then((result) =>
+        result.missingFromPass
+          ? snapshot.directProcesses(
+              key, participant.agentId, participant.observation, directRead,
+            )
+          : result,
+      );
+    }
+    if (inQuantum && !options.participant) {
       return Promise.resolve({
         state: "unknown",
         reason:
@@ -645,28 +689,10 @@ export class Resolution {
         capturedAt: Date.now(),
         fromPassSnapshot: true,
         deferred: true,
+        missingFromPass: true,
       });
     }
-    const capturedAt = Date.now();
-    return boundedRead("host process listing", read, deadlineMs).then(
-      (result) =>
-        result.state === "ok"
-          ? { ...result.value, capturedAt, fromPassSnapshot: false }
-          : {
-              state: "unknown",
-              reason: result.reason,
-              capturedAt,
-              fromPassSnapshot: false,
-              deferred: true,
-            },
-      (error) => ({
-        state: "unknown",
-        reason: `host process listing failed: ${error instanceof Error ? error.message : String(error)}`,
-        capturedAt,
-        fromPassSnapshot: false,
-        ...(isQuantumDeadlineExceeded(error) ? { deferred: true } : {}),
-      }),
-    );
+    return directRead();
   }
 
   /** Pre-warm one host's process snapshot during its host pass (or host-side cleanup lane). */
@@ -1610,6 +1636,7 @@ export class Resolution {
       "graceMs",
       "onTaskHost",
       "ordinaryRoundCustody",
+      "participantLease",
       "recordBlockedPrIdentity",
       "responsibleBlockerLadder",
       "responsiblePrReportRefused",

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HostProcessFact } from "../../../core/host";
+import type { HostProcessTable } from "../../../core/host/types";
 
 /**
  * Paseo's own runtime, recognised on the adapter side only. Shared cleanup reads
@@ -66,12 +67,16 @@ function commandLooksLikePaseo(command: string): boolean {
  * absent or readable one marks the table.
  */
 export function paseoRuntimeListing(
-  processes: HostProcessFact[] | null,
+  processes: HostProcessTable | null,
   daemon: PaseoDaemonPidEvidence,
-): HostProcessFact[] | null {
+): HostProcessTable | null {
   if (!processes) return null;
   if (daemon.state === "unreadable") return null;
-  return markPaseoRuntime(processes, daemon.state === "pid" ? daemon.pid : null);
+  const table: HostProcessTable = markPaseoRuntime(
+    processes, daemon.state === "pid" ? daemon.pid : null,
+  );
+  if (processes.cwdComplete !== undefined) table.cwdComplete = processes.cwdComplete;
+  return table;
 }
 
 /**

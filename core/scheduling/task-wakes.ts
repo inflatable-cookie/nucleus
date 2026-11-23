@@ -1,5 +1,11 @@
 import type { Engine } from "../engine";
-import type { Run, Task } from "../../shared/contracts";
+import {
+  isDispositionActive,
+  isDispositionComplete,
+  type Run,
+  type Task,
+} from "../../shared/contracts";
+import type { AgentObservation } from "../host/adapter";
 import { coordinatorObservationDeferral } from "../../shared/task-activity";
 import { COORDINATOR_UNOBSERVED_BOUND_MS } from "../recovery/coordinator-pass";
 import { publishBlockerReceipt } from "../questions/ladder/park";
@@ -71,6 +77,62 @@ import { now, type Store } from "../store/store";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { markPhaseFact } from "./phase-latency";
 import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
+import {
+  processDeathProof,
+  threadDeathEvidence,
+} from "../recovery/dead-participant";
+import { observedActive } from "../recovery/task-reasons";
+
+const RECOVERY_OBSERVATION_MS = 25_000;
+
+type RecoveryParticipant = {
+  run: Run | null;
+  runId: string;
+  agentId: string;
+  workspaceId: string | null;
+  idleSince: string | null;
+};
+
+function recoveryParticipants(task: Task, runs: Run[]): RecoveryParticipant[] {
+  const participants = runs.flatMap((run): RecoveryParticipant[] =>
+    !run.released &&
+    run.role !== "recovery" &&
+    run.hostId === task.hostId &&
+    run.agentId
+      ? [
+          {
+            run,
+            runId: run.id,
+            agentId: run.agentId,
+            workspaceId: run.workspaceId,
+            idleSince: run.idleSince,
+          },
+        ]
+      : [],
+  );
+  if (
+    task.agentId &&
+    task.runId &&
+    !task.pausedStop &&
+    ["working", "dispatching", "blocked", "error", "needs_attention"].includes(
+      task.phase,
+    ) &&
+    !(task.completion && task.phase !== "working") &&
+    !participants.some((participant) => participant.agentId === task.agentId)
+  )
+    participants.push({
+      run: null,
+      runId: task.runId,
+      agentId: task.agentId,
+      workspaceId: task.workspaceId ?? null,
+      idleSince: task.idleSince,
+    });
+  return participants;
+}
+
+function stoppedStatus(status: string): boolean {
+  return ["idle", "error", "closed"].includes(status);
+}
 
 /**
  * A wake that threw after its caller stopped waiting. The engine being stopped is
@@ -368,6 +430,293 @@ export class TaskWakes {
     );
     timer.unref();
     this.recoveryDeadlines.set(id, { ...due, timer });
+  }
+
+  private readonly recoveryTimers = new Map<
+    string,
+    { at: number; deadline: boolean; timer: ReturnType<typeof setTimeout> }
+  >();
+  private readonly recoveryFactWakes = new Set<string>();
+  private readonly absentParticipants = new Map<string, string>();
+  private readonly processProbes = new Map<
+    string,
+    { at: number; done: Promise<unknown> }
+  >();
+
+  private canObserveRecovery(task: Task): task is Task & { hostId: string } {
+    return Boolean(
+      task.hostId &&
+        !this.engine.stopped &&
+        !task.removedAt &&
+        !["done", "cancelled"].includes(task.phase) &&
+        !isDispositionActive(task) &&
+        !isDispositionComplete(task) &&
+        !startsNoRuns(this.store) &&
+        !dispatchBlocked(task) &&
+        this.engine.taskHostAvailable(task),
+    );
+  }
+
+  /**
+   * The task owns its callback grace. The exact-read probe is a backstop for
+   * hosts without turn events and for a process-table fact arriving between
+   * quanta. A probe only admits a quantum for a changed, actionable fact.
+   */
+  armRecoveryObservation(taskId: string, startedAt: number): void {
+    if (this.engine.stopped) return;
+    const task = this.store.taskOrNull(taskId);
+    const previous = this.recoveryTimers.get(taskId);
+    const participants =
+      task && this.canObserveRecovery(task)
+        ? recoveryParticipants(task, this.store.runs(taskId))
+        : [];
+    const graceMs = this.resolution.graceMs;
+    const times = participants.flatMap(({ run, idleSince }) => {
+      const subject = run ?? task;
+      const tool = !idleSince && subject?.participantActivity?.tool;
+      let toolDeadline = NaN;
+      if (tool && task?.hostId) {
+        const quietDeadline = this.engine.withHost(task.hostId, () =>
+          this.resolution.stalls.toolQuietDeadline(task, tool),
+        );
+        toolDeadline = Number.isFinite(quietDeadline)
+          ? quietDeadline
+          : Date.parse(subject?.lastActivityAt ?? tool.startedAt) +
+            (this.resolution.stalls?.thresholdMs() ?? Infinity);
+      } else if (
+        !idleSince &&
+        task &&
+        subject?.participantActivity?.turnStartedAt
+      ) {
+        // Discover the call when a short quiet limit can expire before a shell notice.
+        toolDeadline =
+          Date.parse(subject.participantActivity.turnStartedAt) +
+          this.store.toolQuietLimitMsFor(task);
+      }
+      return [
+        Date.parse(
+          run?.completionReceivedAt ?? this.workerReceiptAt(task, run) ?? "",
+        ) + graceMs,
+        Date.parse(idleSince ?? "") + graceMs,
+        toolDeadline,
+      ];
+    });
+    const incident = task?.resolution.incident;
+    if (
+      incident?.action === "callback_reminder" &&
+      incident.status !== "escalated"
+    )
+      times.push(Date.parse(incident.updatedAt) + graceMs);
+    const deadlineAt = Math.min(...times.filter((at) => at > startedAt));
+    const probeAt =
+      previous && !previous.deadline
+        ? previous.at
+        : Date.now() + RECOVERY_OBSERVATION_MS;
+    const at = Math.min(deadlineAt, probeAt);
+    const deadline = at === deadlineAt;
+    if (
+      participants.length &&
+      previous?.at === at &&
+      previous.deadline === deadline
+    )
+      return;
+    if (previous) clearTimeout(previous.timer);
+    this.recoveryTimers.delete(taskId);
+    if (!participants.length) return;
+    const timer = setTimeout(
+      () => {
+        this.recoveryTimers.delete(taskId);
+        this.engine.cleanContext(() => {
+          if (deadline) void this.wakeRecovery(taskId);
+          else
+            void this.probeRecovery(taskId).catch((error) =>
+              recordWakeFailure(
+                this.store,
+                this.engine.stopped,
+                taskId,
+                "Recovery observation",
+                error,
+              ),
+            );
+        });
+      },
+      Math.max(0, at - Date.now()),
+    );
+    timer.unref();
+    this.recoveryTimers.set(taskId, { at, deadline, timer });
+  }
+
+  private async probeRecovery(taskId: string): Promise<void> {
+    if (this.engine.stopped) return;
+    const task = this.store.taskOrNull(taskId);
+    if (!task || !this.canObserveRecovery(task)) return;
+    const participants = recoveryParticipants(task, this.store.runs(taskId));
+    try {
+      await this.engine.withHost(task.hostId, async () => {
+        const hasDeadProcess = () =>
+          participants.some(
+            ({ run }) =>
+              !(run ? run.completion : task.completion) &&
+              processDeathProof(this.store, task, run),
+          );
+        if (
+          !hasDeadProcess() &&
+          participants.some(
+            ({ run }) =>
+              (run ? run.participantActivity : task.participantActivity)
+                ?.process,
+          )
+        )
+          await this.probeProcessTable(task.hostId).catch(() => undefined);
+        if (hasDeadProcess()) {
+          await this.wakeRecovery(taskId);
+          return;
+        }
+        for (const participant of participants) {
+          if (this.engine.stopped) return;
+          const { run, runId, agentId, workspaceId, idleSince } = participant;
+          let observation: AgentObservation | null = null;
+          try {
+            const read = await boundedRead(
+              "recovery thread observation",
+              () => this.engine.host.observe(agentId),
+              this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS,
+            );
+            if (read.state === "ok") observation = read.value;
+          } catch {
+            // An unsuccessful observation can ask for an exact absence proof.
+          }
+          if (
+            observation?.id === agentId &&
+            observation.workspaceId === workspaceId
+          ) {
+            const subject = run ?? task;
+            const busy =
+              observedActive(observation) || Boolean(observation.activeTurnId);
+            const ended = !busy && stoppedStatus(observation.status);
+            if (
+              (!idleSince &&
+                ended &&
+                (run || task.lastAgentStatus !== observation.status)) ||
+              (idleSince && busy) ||
+              (observation.permissions &&
+                (!subject.participantActivity?.permission ||
+                  Date.parse(observation.updatedAt ?? "") >
+                    Date.parse(subject.lastActivityAt ?? "")))
+            ) {
+              await this.wakeRecovery(taskId);
+              return;
+            }
+          }
+          if (
+            (!observation ||
+              (observation.id === agentId &&
+                observation.workspaceId === workspaceId &&
+                observation.status === "gone")) &&
+            (await threadDeathEvidence(this.engine, task, run, agentId))
+          ) {
+            const current = this.store.taskOrNull(taskId);
+            if (
+              current &&
+              recoveryParticipants(current, this.store.runs(taskId)).some(
+                (candidate) =>
+                  candidate.runId === runId && candidate.agentId === agentId,
+              )
+            ) {
+              this.absentParticipants.set(taskId, runId);
+              await this.wakeRecovery(taskId);
+            }
+            return;
+          }
+        }
+      });
+    } finally {
+      if (!this.engine.stopped && !this.recoveryTimers.has(taskId))
+        this.armRecoveryObservation(taskId, Date.now());
+    }
+  }
+
+  private wakeRecovery(taskId: string): Promise<void> {
+    this.recoveryFactWakes.add(taskId);
+    return this.engine.wakeTask(taskId);
+  }
+
+  /** A bridge hint widens the next task wake to its fresh run bindings. The host read proves the end. */
+  noteTurnEndHint(input: {
+    agentId?: string | null;
+    workspaceId?: string | null;
+    hostId?: string | null;
+  }): void {
+    if (this.engine.stopped || !input.agentId) return;
+    for (const taskId of this.store.taskIdsForIdentities(input)) {
+      const task = this.store.taskOrNull(taskId);
+      if (
+        task &&
+        this.canObserveRecovery(task) &&
+        recoveryParticipants(task, this.store.runs(taskId)).some(
+          (participant) =>
+            participant.agentId === input.agentId &&
+            (!input.workspaceId ||
+              participant.workspaceId === input.workspaceId),
+        )
+      )
+        this.recoveryFactWakes.add(taskId);
+    }
+  }
+
+  /** Concurrent probes on one host share the same bounded, out-of-lane sample. */
+  private probeProcessTable(hostId: string): Promise<unknown> {
+    const previous = this.processProbes.get(hostId);
+    const at = Date.now();
+    if (previous && at - previous.at < RECOVERY_OBSERVATION_MS)
+      return previous.done;
+    const done = runOutsideTaskQuantumScope(() =>
+      this.resolution.readPassProcesses(hostId),
+    );
+    this.processProbes.set(hostId, { at, done });
+    return done;
+  }
+
+  private workerReceiptAt(
+    task: Task | null,
+    run: Run | null,
+  ): string | undefined {
+    const completion = !run && task?.completion;
+    if (
+      !task ||
+      !completion ||
+      completion.runId !== task.runId ||
+      !this.store.receiptHash(completion.eventId, task.id, completion.runId)
+    )
+      return undefined;
+    return this.store
+      .events(task.id)
+      .find((event) => event.kind === "completion_received")?.at;
+  }
+
+  private recordTurnEnds(
+    taskId: string,
+    before: Task,
+    beforeRuns: Run[],
+  ): void {
+    const task = this.store.taskOrNull(taskId);
+    if (!task) return;
+    const runs = this.store.runs(taskId);
+    for (const { run, runId, idleSince } of recoveryParticipants(task, runs)) {
+      const previous = run
+        ? beforeRuns.find((row) => row.id === run.id)
+        : before;
+      if (idleSince && idleSince !== previous?.idleSince)
+        this.store.event(
+          taskId,
+          "recovery_evidence",
+          JSON.stringify({
+            source: "host_turn_end",
+            runId,
+            at: idleSince,
+          }),
+        );
+    }
   }
 
   /**
@@ -933,15 +1282,24 @@ export class TaskWakes {
     if (
       !task ||
       task.removedAt ||
-      ["queued", "working", "reviewing", "done", "cancelled"].includes(
-        task.phase,
-      ) ||
+      ["queued", "done", "cancelled"].includes(task.phase) ||
       !task.hostId ||
       !this.engine.taskHostAvailable(task)
     )
       return false;
-    const adapter = this.engine.adapter;
-    if (!adapter.agentTimelinePage && !adapter.hostProcessListing) return false;
+    if (
+      ["working", "reviewing"].includes(task.phase) &&
+      !this.recoveryFactWakes.has(taskId)
+    )
+      return false;
+    const canPrime = this.engine.withHost(task.hostId, () =>
+      Boolean(
+        this.engine.adapter.agentTimelinePage ||
+          this.engine.adapter.agentTimeline ||
+          this.engine.adapter.hostProcessListing,
+      ),
+    );
+    if (!canPrime) return false;
     const runs = this.store.runs(taskId);
     return knownExecutionParticipantIds(task, runs).length > 0;
   }
@@ -971,11 +1329,15 @@ export class TaskWakes {
     )
       return undefined;
     const adapter = this.engine.adapter;
-    if (!adapter.agentTimelinePage && !adapter.hostProcessListing)
-      return undefined;
     const runs = this.store.runs(taskId);
     const participants = knownExecutionParticipantIds(task, runs);
     if (!participants.length) return undefined;
+    const live = new Map(
+      recoveryParticipants(task, runs).map((participant) => [
+        participant.agentId,
+        (participant.run ?? task).participantActivity,
+      ]),
+    );
 
     const hostId = task.hostId;
     const snapshot = new PassSnapshot();
@@ -1048,12 +1410,27 @@ export class TaskWakes {
                 !obs.activeTurnId &&
                 ["idle", "error", "closed", "gone"].includes(obs.status ?? ""),
             ) || obs.archived === true;
+          const needsActivePage =
+            !inactive &&
+            this.resolution.stalls?.shouldPeek(task, obs, live.get(agentId));
           if (
             obs.status === "closed" ||
             obs.status === "gone" ||
             obs.archived === true
           )
             needsProcesses = true;
+          if (needsActivePage && adapter.agentTimeline && remaining() > 0) {
+            await snapshot
+              .timeline(
+                hostId,
+                agentId,
+                undefined,
+                () => this.engine.host.agentTimeline(agentId),
+                Math.min(remaining(), perReadMs),
+              )
+              .catch(() => null);
+            needsProcesses = true;
+          }
           if (adapter.agentTimelinePage && inactive && remaining() > 0) {
             const pageRead = await snapshot
               .timelinePage(
@@ -1169,6 +1546,8 @@ export class TaskWakes {
       `task:${taskId}`,
       LANE_PRIORITY_TASK,
       async () => {
+        const startedAt = Date.now();
+        const targeted = this.recoveryFactWakes.delete(taskId);
         try {
           const task = this.store.task(taskId);
           if (!task.hostId) return;
@@ -1197,9 +1576,32 @@ export class TaskWakes {
                   beforeRuns,
                 );
                 const occupied = occupiesSlot(before, beforeRuns);
+                const absentRunId = this.absentParticipants.get(taskId);
+                this.absentParticipants.delete(taskId);
+                if (this.canObserveRecovery(before)) {
+                  const gone = recoveryParticipants(before, beforeRuns).find(
+                    ({ run, runId }) =>
+                      !(run ? run.completion : before.completion) &&
+                      (runId === absentRunId ||
+                        (!run && processDeathProof(this.store, before, null))),
+                  );
+                  if (gone)
+                    await this.resolution.releaseDeadParticipant?.(
+                      before,
+                      gone.run,
+                    );
+                }
                 // The sweep observes retained runs separately; a callback or status hint must
                 // be able to observe its own reported run without waiting for that pass.
                 if (
+                  targeted &&
+                  !settlementHeld(this.store, this.engine.stopped)
+                )
+                  await this.resolution.observation.observeFact(
+                    taskId,
+                    task.hostId!,
+                  );
+                else if (
                   !settlementHeld(this.store, this.engine.stopped) &&
                   beforeRuns.some(
                     (run) =>
@@ -1230,6 +1632,7 @@ export class TaskWakes {
                 await this.resolution.integrationQuantum(taskId, () =>
                   this.engine.taskQuantum(taskId),
                 );
+                this.recordTurnEnds(taskId, before, beforeRuns);
                 if (settlementHeld(this.store, this.engine.stopped)) return;
                 publishBlockerReceipt(
                   this.resolution.ladder,
@@ -1250,6 +1653,8 @@ export class TaskWakes {
           );
         } finally {
           passSnapshot?.expire();
+          if (!this.engine.stopped)
+            this.armRecoveryObservation(taskId, startedAt);
         }
       },
       { coalesce: "task-quantum" },
@@ -1478,32 +1883,35 @@ export class TaskWakes {
     });
     // A callback or control is authoritative evidence that this task's agents
     // changed state, so its cached observations must not answer for them.
-    const admission = this.admission;
     try {
       const task = this.store.task(taskId);
       const runs = this.store.runs(taskId);
       const callbacks = runs
-        .filter((run) => !run.released && run.completion)
-        .map((run) => run.completion!);
-      if (task.phase === "working" && task.completion?.runId === task.runId)
-        callbacks.push(task.completion);
-      const events = callbacks.length ? this.store.eventsAll(taskId) : [];
-      for (const callback of callbacks) {
-        const event = events.findLast(
-          (item) =>
-            item.kind ===
-            (callback.runId === task.runId
-              ? "completion_received"
-              : "run_completion"),
+        .filter((run) => !run.released)
+        .flatMap((run) =>
+          run.completion
+            ? [{ callback: run.completion, at: run.completionReceivedAt }]
+            : [],
         );
+      if (task.phase === "working" && task.completion?.runId === task.runId)
+        callbacks.push({
+          callback: task.completion,
+          at: this.workerReceiptAt(task, null),
+        });
+      for (const { callback, at } of callbacks) {
+        if (!this.store.receiptHash(callback.eventId, taskId, callback.runId))
+          continue;
         markPhaseFact(
           this.store,
           taskId,
           `callback:${callback.eventId}`,
-          "Accepted result awaiting task admission",
-          event?.at ?? now(),
+          "Authenticated callback awaiting task admission",
+          at ?? now(),
         );
       }
+      const admission = task.hostId
+        ? this.engine.withHost(task.hostId, () => this.admission)
+        : this.admission;
       if (admission)
         for (const id of [
           task.agentId,
@@ -1590,6 +1998,11 @@ export class TaskWakes {
     for (const timer of this.hostReadTransientTimers.values())
       clearTimeout(timer);
     this.hostReadTransientTimers.clear();
+    for (const { timer } of this.recoveryTimers.values()) clearTimeout(timer);
+    this.recoveryTimers.clear();
+    this.recoveryFactWakes.clear();
+    this.absentParticipants.clear();
+    this.processProbes.clear();
     this.engine.completionFollowUps.stop();
   }
 }

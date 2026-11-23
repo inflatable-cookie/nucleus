@@ -176,6 +176,9 @@ Reuse, to be confirmed by the build when it reads their contracts:
   - `longhorn-operation` for action lifecycle, if it fits idempotent labels;
   - `longhorn-support-log` and `longhorn-redact` for logs;
   - `longhorn-update-install` for installing a verified build on roll.
+  - Use the exact Longhorn worktree-identity API. Tom's interim pin (relayed
+    2026-11-23) is `rev = "0549175ae075f3d530df69f0e3571bff0fbcf671"` until
+    the `v0.6.0` tag is available.
 - **Barge:** the storage library and the worktree lease contract (lease, return, run).
 - **Toolchain:** the rs-toolchain gates (clippy, rustfmt, nextest, cargo-deny), run
   through Effigy.

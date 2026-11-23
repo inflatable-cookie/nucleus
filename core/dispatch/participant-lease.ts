@@ -3,6 +3,8 @@ import {
   coordinative,
 } from "../recovery/task-reasons";
 import { executionParticipants } from "../machine/execution-participants";
+import { participantTemporaryDirectory } from "../machine/participant-roots";
+import { participantRuntime, storeDataHome } from "../machine/participant-runtime";
 import {
   runBindsCurrentWork,
   type Run,
@@ -12,7 +14,10 @@ import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
 import { agentSettled } from "../machine/agent-settled";
 import { isAgentGoneRefusal } from "../host/errors";
 import type { Adapter } from "../host/adapter";
+import type { HostProcessTable } from "../host/types";
 import type { Resolution } from "../resolution";
+import { noTurnLive, workspaceToolProcessIssue } from "../recovery/stall";
+import { participantToolRunIds } from "../recovery/task-reasons/participants";
 import {
   QUANTUM_READ_DEADLINE_MS,
   boundedRead,
@@ -223,6 +228,85 @@ export class ParticipantLease {
           )
       : undefined;
   }
+  /**
+   * Check the exact participant roster and process custody on hosts that support it.
+   * Review launch does not use this check.
+   */
+  async exactCustodyIssue(
+    task: Task,
+    agentId: string,
+    workspaceId: string,
+  ): Promise<string | null> {
+    const deadline =
+      this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
+    const observe = await boundedRead(
+      "exact participant observation",
+      () => this.resolution.host.observeParticipant(agentId),
+      deadline,
+    );
+    if (observe.state === "unknown") return observe.reason;
+    const state = observe.value;
+    if (!state || state.id !== agentId || state.workspaceId !== workspaceId)
+      return "the exact participant or its workspace could not be read";
+    if (!noTurnLive(state))
+      return "the participant has an active turn, pending permission or unsettled state";
+    if (state.pendingBackgroundTasks.length)
+      return `the provider reports outstanding background work: ${state.pendingBackgroundTasks.join(", ")}`;
+    const { hostProcessListing, noLiveWorkspaceProcesses } = this.adapter;
+    if (!hostProcessListing || !noLiveWorkspaceProcesses)
+      return "the host cannot check workspace and run processes";
+
+    const runs = this.store.runs(task.id);
+    const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
+    if (!runIds.length) return "the participant has no recorded run";
+    const roots = new Set(
+      runIds.map((id) => participantTemporaryDirectory(task, runs, id)),
+    );
+    if (roots.has(undefined))
+      return "a participant run temporary directory is unrecorded";
+
+    const scan = await this.resolution.readPassProcesses(task.hostId, {
+      participant: { agentId, observation: state },
+    });
+    if (scan.state === "unknown") return scan.reason;
+    const complete = scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+    if (complete !== true)
+      return "the host process listing has incomplete working-directory coverage";
+    const beforeScan =
+      scan.directBeforeScan === undefined
+        ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
+        : scan.directBeforeScan;
+    const observedAt = Date.parse(state.updatedAt ?? "");
+    if (
+      !Number.isFinite(observedAt) ||
+      observedAt > scan.capturedAt ||
+      (scan.fromPassSnapshot &&
+        (!noTurnLive(beforeScan) || beforeScan?.updatedAt !== state.updatedAt))
+    ) {
+      this.resolution.requestPassProof(task.hostId, agentId);
+      return "the process listing does not cover the participant's latest inactivity";
+    }
+
+    const runtime = participantRuntime({
+      dataHome: storeDataHome(this.store),
+      tasks: [task],
+      runs,
+    });
+    const workspace = await boundedRead(
+      "workspace process probe",
+      () => noLiveWorkspaceProcesses.call(this.adapter, workspaceId, runIds, runtime, scan.processes),
+      deadline,
+    );
+    if (workspace.state === "unknown") return workspace.reason;
+    if (workspace.value !== null)
+      return workspace.value || "the workspace process probe returned no result";
+    for (const root of roots) {
+      const issue = workspaceToolProcessIssue(scan.processes, root!, runIds, runtime);
+      if (issue) return issue;
+    }
+    return null;
+  }
+
   /** Merge and closeout observe execution bindings, including retained runs. */
   async executionLease(
     t: Task,
@@ -241,11 +325,19 @@ export class ParticipantLease {
         )
       )
         continue;
-      // Archived and removed participants may no longer have a readable live
-      // timeline. Their existing custody proof checks the exact binding and both
-      // workspace and run-rooted processes before releasing this lease.
       let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
       try {
+        if (this.adapter.observeParticipant) {
+          const issue = await this.exactCustodyIssue(t, id, workspace);
+          if (!issue) continue;
+          if (!probe)
+            this.resolution.waiting(
+              t,
+              `Merge waits for participant ${id} in workspace ${workspace}: ${issue}`,
+              "lifecycle",
+            );
+          return false;
+        }
         const read = await boundedRead(
           "participant observation",
           () => this.resolution.host.observe(id),
@@ -260,7 +352,7 @@ export class ParticipantLease {
         }
         state = read.value;
       } catch (error) {
-        if (isAgentGoneRefusal(error)) continue;
+        if (!this.adapter.observeParticipant && isAgentGoneRefusal(error)) continue;
         if (!probe)
           this.resolution.waiting(
             t,
