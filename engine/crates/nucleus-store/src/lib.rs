@@ -1,4 +1,4 @@
-//! The Rust engine's independent SQLite database.
+//! The Rust engine's independent `SQLite` database.
 
 use std::{fs, path::Path, time::Duration};
 
@@ -92,7 +92,7 @@ impl Store {
     /// Look up one task by its engine ID.
     ///
     /// # Errors
-    /// Returns an error if SQLite cannot read or decode the row.
+    /// Returns an error if the database cannot read or decode the row.
     pub fn get(&self, id: &str) -> Result<Option<Task>, StoreError> {
         Ok(load(&self.connection, id)?)
     }
@@ -100,7 +100,7 @@ impl Store {
     /// Read tasks that can still take an engine pass, including pending stops.
     ///
     /// # Errors
-    /// Returns an error if SQLite cannot read or decode the rows.
+    /// Returns an error if the database cannot read or decode the rows.
     pub fn active(&self) -> Result<Vec<Task>, StoreError> {
         let mut query = self.connection.prepare_cached(&format!(
             "SELECT {TASK_COLUMNS} FROM tasks WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL ORDER BY id"
@@ -152,7 +152,7 @@ impl Store {
     /// Read a page of display history, newest first.
     ///
     /// # Errors
-    /// Returns an error if SQLite cannot read the history.
+    /// Returns an error if the database cannot read the history.
     pub fn history(
         &self,
         id: &str,

@@ -26,6 +26,7 @@ success, a stopped run, and readback after uncertain delivery before the
 planner's live check.
 
 Use the `v0.5.0` Longhorn git tag with `publish = false` for workspace packages.
+Crates using Longhorn require Rust 1.95.
 `longhorn-config` owns the versioned engine and Storage settings domains, atomic
 updates and config backups. `longhorn-storage-layout` resolves their roots and
 the separate engine data root. `longhorn-git-workspace` reads identity and
