@@ -2,6 +2,7 @@ import { budgetOutageIntervals } from "../scheduling/host-outage";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { sameCallerIdentity } from "../../shared/agent-identity";
 import {
   authorModelKey,
   queueAuthorModelKey,
@@ -10,7 +11,9 @@ import {
 import {
   REVISION_BUDGET,
   WORKER_REPLACEMENT_CEILING,
+  holdOwnerOf,
   holdsOf,
+  isOperatorOrigin,
   runSchema,
   type Profile,
   type Run,
@@ -193,11 +196,18 @@ const reviewerStartTransitions: readonly Task["phase"][] = [
 ];
 
 function assertReviewerStartAllowed(
-  store: Store,
+  engine: Engine,
   task: Task,
   caller: string | undefined,
 ): void {
-  const { mergedCommit, unreviewedMerge, incident, recovery } = task.resolution;
+  const {
+    mergedCommit,
+    unreviewedMerge,
+    mergeIntent,
+    integrationTurn,
+    incident,
+    recovery,
+  } = task.resolution;
   if (mergedCommit || unreviewedMerge)
     throw Error("Cannot start a reviewer after a merge has been recorded.");
   if (
@@ -206,12 +216,30 @@ function assertReviewerStartAllowed(
     )
   )
     throw Error(`Cannot start a reviewer while the task is ${task.phase}.`);
+  if (mergeIntent || integrationTurn) {
+    const blocker = mergeIntent
+      ? "a merge request is pending"
+      : "the task holds an integration turn";
+    throw Error(`Cannot start a reviewer while ${blocker}.`);
+  }
   const { dispatch } = holdsOf(task);
-  if (dispatch && dispatch.owner !== caller)
-    throw Error(
-      `Dispatch is held by ${dispatch.owner}: ${dispatch.reason}. Release the hold before starting a reviewer.`,
-    );
-  const escalation = plannerEscalations(store.eventsAll(task.id)).find(
+  if (dispatch) {
+    const owner = holdOwnerOf(task, dispatch.owner);
+    const sameOperator = isOperatorOrigin(owner) && isOperatorOrigin(caller);
+    if (
+      !sameOperator &&
+      !sameCallerIdentity(
+        owner,
+        caller,
+        task.originHostId,
+        engine.legacyPaseoHostId(),
+      )
+    )
+      throw Error(
+        `Dispatch is held by ${owner}: ${dispatch.reason}. Release the hold before starting a reviewer.`,
+      );
+  }
+  const escalation = plannerEscalations(engine.store.eventsAll(task.id)).find(
     (item) => !item.answered,
   );
   if (escalation)
@@ -536,7 +564,7 @@ export async function preflightExplicitRunStart(
   input: Extract<ExplicitResolution, { action: "run.start" }>,
 ): Promise<ExplicitRunStartPreflight> {
   if (input.role === "reviewer")
-    assertReviewerStartAllowed(engine.store, task, input.caller);
+    assertReviewerStartAllowed(engine, task, input.caller);
   // Spec 068 §4: every run.start launches into the task checkout, so the one
   // reattach step runs first. It moves no commit and names its refusal instead
   // of leaving a detached checkout unexplained.
@@ -872,7 +900,7 @@ export function runStartPlan(
 ): ExplicitPlan {
   const store = engine.store;
   if (input.role === "reviewer")
-    assertReviewerStartAllowed(store, task, input.caller);
+    assertReviewerStartAllowed(engine, task, input.caller);
   const { runs, runRole, retainedAgentId, agentMode, replacedRun, replacedInitial } =
     runStartTarget(store, task, input);
   if (agentMode === "retained" && !retainedAgentId) {

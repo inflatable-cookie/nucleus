@@ -2677,6 +2677,9 @@ process.stdout.write(JSON.stringify(entry.body));
     await git(worktree, "remote", "set-url", "origin", remote);
   }
 
+  // Finish the integration fixture before probing a new reviewer start.
+  await command({ action: "turn.release" });
+
   // 3. Checkout ahead of forge head (unpushed local commit): returns head_mismatch, never moves branch,
   // accepting starts on checkout as it is and never overwrites task.prHead.
   writeFileSync(join(worktree, "a.txt"), "v3-unpushed\n");
@@ -2987,6 +2990,53 @@ test("run.start reviewer refuses phases owned by integration and tasks with a re
   await assert.rejects(f.command(freshReviewer), /merge has been recorded/);
   assert.deepEqual(f.store.runs(task.id), []);
   assert.deepEqual(f.calls, []);
+});
+
+test("run.start reviewer refuses a parked merge intent or integration turn", async (t) => {
+  const f = await reviewStartFixture(t);
+  const task = f.current();
+  const integrationTurn = { sequence: 1, acceptedAt: new Date().toISOString() };
+  const pendingMerge = {
+    mergeIntent: true,
+    mergeHead: task.prHead,
+    mergeBase: task.planningCommit,
+    mergeRequestedAt: integrationTurn.acceptedAt,
+    mergeResponseOutcome: "uncertain" as const,
+  };
+  const parked = { ...task.resolution, attention: true };
+  for (const resolution of [
+    { ...parked, ...pendingMerge, integrationTurn },
+    { ...parked, ...pendingMerge },
+    { ...parked, integrationTurn },
+  ]) {
+    f.store.update(task.id, { phase: "needs_attention", resolution });
+    const before = f.current();
+    await assert.rejects(
+      f.command(freshReviewer),
+      /Cannot start a reviewer while (a merge request is pending|the task holds an integration turn)/,
+    );
+    assert.equal(f.current().phase, before.phase);
+    assert.deepEqual(f.current().resolution, before.resolution);
+    assert.deepEqual(f.store.runs(task.id), []);
+  }
+  assert.deepEqual(f.calls, []);
+});
+
+test("run.start reviewer recognizes the board caller as the owner of its dispatch hold", async (t) => {
+  const f = await reviewStartFixture(t);
+  await f.command({
+    action: "hold",
+    kind: "dispatch",
+    reason: "Keep scheduled dispatch paused while starting the reviewer",
+  });
+  const dispatch = f.current().holds.dispatch;
+  assert.equal(dispatch?.owner, "operator");
+
+  const started = await f.command(freshReviewer);
+
+  assert.equal(started.explicitResolution?.status, "applied");
+  assert.equal(started.phase, "reviewing");
+  assert.deepEqual(f.current().holds.dispatch, dispatch);
 });
 
 test("run.start reviewer refuses another owner's dispatch hold and an escalated incident", async (t) => {

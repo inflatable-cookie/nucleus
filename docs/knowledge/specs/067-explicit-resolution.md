@@ -107,8 +107,11 @@ No command changes anything it does not name.
 `run.start role=reviewer` enters `reviewing` from `needs_attention`, `blocked`,
 `awaiting_review` or `changes_requested` when it reserves the run. It refuses
 while an escalation is open, another owner holds dispatch, or an escalated
-recovery incident or episode owns the task. A reviewer start also refuses in
+recovery incident or episode owns the task. The operator at the board owns
+dispatch holds placed by the board. A reviewer start also refuses in
 `verifying`, `merging`, `syncing`, `closing` and after a recorded merge.
+A pending merge request or retained integration turn blocks reviewer starts
+even when the task is parked.
 
 Reviewer callbacks follow the ordinary verdict path, with authorship checked
 before publication. Accepting `discard_reported_verdict` records the displaced
