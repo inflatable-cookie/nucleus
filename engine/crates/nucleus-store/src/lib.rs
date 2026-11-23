@@ -3,7 +3,7 @@
 mod settings;
 mod volume;
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use nucleus_core::Task;
 use rusqlite::{
@@ -55,6 +55,12 @@ pub struct Event {
 pub struct TaskRow {
     pub task: Task,
     pub version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadProvenance {
+    Dispatcher,
+    TaskRole,
 }
 
 pub struct Store {
@@ -155,14 +161,37 @@ impl Store {
         Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
     }
 
-    /// Read bounded project provenance for responsible planner discovery.
+    /// Read provenance only for threads in the current native inventory.
     /// # Errors
     /// Returns an error if task identities or their retained roles cannot be read.
-    pub fn routing_tasks(&self, repository: &str, limit: u32) -> Result<Vec<Task>, StoreError> {
-        let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {TASK_COLUMNS} FROM tasks WHERE repository = ?1 ORDER BY id LIMIT ?2"
-        ))?;
-        let rows = query.query_map(params![repository, limit], decode_task)?;
+    pub fn routing_provenance(
+        &self,
+        repository: &str,
+        candidates: &[&str],
+    ) -> Result<BTreeMap<String, ThreadProvenance>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "WITH provenance(thread, is_task_role) AS (
+               SELECT origin_thread, 0 FROM tasks WHERE repository = ?1
+               UNION ALL
+               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE repository = ?1
+               UNION ALL
+               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE repository = ?1
+             )
+             SELECT thread, max(is_task_role)
+               FROM provenance JOIN json_each(?2) AS candidate ON candidate.value = thread
+               GROUP BY thread",
+        )?;
+        let rows = query.query_map(
+            params![repository, serde_json::to_string(candidates)?],
+            |row| {
+                let role = if row.get::<_, bool>(1)? {
+                    ThreadProvenance::TaskRole
+                } else {
+                    ThreadProvenance::Dispatcher
+                };
+                Ok((row.get(0)?, role))
+            },
+        )?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

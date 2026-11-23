@@ -255,12 +255,53 @@ fn revoke(task: &mut Task, observation: &Observation) {
 }
 
 async fn send(pass: &impl TaskHost, task: &mut Task) -> Result<SendOutcome, HostError> {
-    let permit = pass
+    let mut permit = pass
         .authorize_send(task.run().expect("reserved run"))
         .await?;
-    permit.record(task)?;
-    pass.send(task.run().expect("run after marker"), permit)
+    if let Some(unarchive) = permit.unarchive() {
+        pass.write_control(unarchive).await?;
+        permit = pass
+            .authorize_send(task.run().expect("reserved run"))
+            .await?;
+    }
+    pass.send(permit.record(task)?).await
+}
+
+async fn stop(
+    pass: &impl TaskHost,
+    run: &nucleus_core::Run,
+    binding: &Binding,
+    now: u64,
+    archive: bool,
+) -> Result<StopProgress, HostError> {
+    match pass.stop(run, binding, now, archive).await? {
+        StopProgress::Write(dispatch) => {
+            pass.write_control(dispatch).await?;
+            Ok(StopProgress::Waiting)
+        }
+        progress => Ok(progress),
+    }
+}
+
+async fn ready_notice(
+    client: &T3,
+    notice: &nucleus_core::QuestionDelivery,
+) -> crate::NoticeAuthorization {
+    let permit = client
+        .authorize_notice(notice)
         .await
+        .expect("read planner")
+        .expect("authorized");
+    if permit.needs_unsettle() {
+        client.unsettle_notice(&permit).await.expect("wake planner");
+        client
+            .authorize_notice(notice)
+            .await
+            .expect("read back wake")
+            .expect("ready")
+    } else {
+        permit
+    }
 }
 
 #[tokio::test]
@@ -383,12 +424,13 @@ async fn settlement_needs_every_provider_and_background_turn_item() {
 #[tokio::test]
 async fn an_unsent_revoked_reservation_clears_without_contacting_t3() {
     let checkout = checkout_fixture();
-    let (mut task, observation, instance) = reserve(binding(checkout.path()));
+    let binding = binding(checkout.path());
+    let (mut task, observation, instance) = reserve(binding.clone());
     revoke(&mut task, &observation);
     let client = T3::new("http://127.0.0.1:9", "fixture-key").expect("client");
     assert_eq!(
         quiet_pass(&client)
-            .stop(task.run().expect("run"), 2, true)
+            .stop(task.run().expect("run"), &binding, 2, true)
             .await
             .expect("unsent settled"),
         StopProgress::Settled(Host::Current {
@@ -434,7 +476,6 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     let command = "orchestration.dispatchCommand";
     let (client, server) = server(vec![
         (probe, Response::Snapshot(archived.clone())),
-        (probe, Response::Snapshot(archived.clone())),
         (probe, Response::Snapshot(archived)),
         (command, Response::Success),
         (probe, Response::Snapshot(restored)),
@@ -470,8 +511,8 @@ async fn next_review_resumes_the_same_thread_after_archival() {
         SendOutcome::Sent
     );
     let sent = server.await.expect("scripted host");
-    let unarchive: Value = serde_json::from_str(sent[3].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[5].payload.get()).expect("continuation payload");
+    let unarchive: Value = serde_json::from_str(sent[2].payload.get()).expect("unarchive payload");
+    let message: Value = serde_json::from_str(sent[4].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
@@ -492,9 +533,7 @@ fn replay_script(
     let ended = snapshot(binding, instance, "interrupted", false);
     let mut steps = vec![
         (probe, absent()),
-        (probe, absent()),
         (launch, Response::Failure(json!([]))),
-        (probe, absent()),
         (probe, absent()),
         (probe, absent()),
         (probe, absent()),
@@ -542,6 +581,7 @@ async fn revoked_replay(archive: bool) {
         quiet_pass(&client)
             .stop(
                 task.run().expect("run"),
+                &binding,
                 sent_at + LATE_REPLY_MS - 1,
                 archive
             )
@@ -556,7 +596,7 @@ async fn revoked_replay(archive: bool) {
     let expired = sent_at;
     assert_eq!(
         quiet_pass(&client)
-            .stop(task.run().expect("run"), expired, archive)
+            .stop(task.run().expect("run"), &binding, expired, archive)
             .await
             .expect("expired window"),
         StopProgress::ReplayDue
@@ -568,13 +608,14 @@ async fn revoked_replay(archive: bool) {
     );
     let run = task.run().expect("run");
     assert_eq!(
-        pass.stop(run, expired, archive).await.expect("interrupt"),
+        stop(&pass, run, &binding, expired, archive)
+            .await
+            .expect("interrupt"),
         StopProgress::Waiting
     );
     if archive {
         assert_eq!(
-            quiet_pass(&client)
-                .stop(run, expired, true)
+            stop(&quiet_pass(&client), run, &binding, expired, true)
                 .await
                 .expect("archive"),
             StopProgress::Waiting
@@ -582,7 +623,7 @@ async fn revoked_replay(archive: bool) {
     }
     assert_eq!(
         quiet_pass(&client)
-            .stop(run, expired, archive)
+            .stop(run, &binding, expired, archive)
             .await
             .expect("settled"),
         StopProgress::Settled(Host::Current {
@@ -593,21 +634,80 @@ async fn revoked_replay(archive: bool) {
 
     let sent = server.await.expect("scripted host");
     assert_eq!(
-        sent[2].payload.get().as_bytes(),
-        sent[7].payload.get().as_bytes()
+        sent[1].payload.get().as_bytes(),
+        sent[5].payload.get().as_bytes()
     );
-    let stop: Value = serde_json::from_str(sent[9].payload.get()).expect("stop payload");
+    let stop: Value = serde_json::from_str(sent[7].payload.get()).expect("stop payload");
     assert_eq!(
         stop,
         json!({"type":"run.interrupt", "threadId":THREAD, "commandId":format!("{instance}-run.interrupt"), "runId": NATIVE_RUN})
     );
     if archive {
-        let archive: Value = serde_json::from_str(sent[11].payload.get()).expect("archive payload");
+        let archive: Value = serde_json::from_str(sent[9].payload.get()).expect("archive payload");
         assert_eq!(
             archive,
             json!({"type":"thread.archive", "threadId":THREAD, "commandId":format!("{instance}-archive")})
         );
     }
+}
+
+#[tokio::test]
+async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, observation, instance) = reserve(binding.clone());
+    task.record_send(&instance, 1).expect("possible send");
+    revoke(&mut task, &observation);
+    task.record_rejected_stop(&instance)
+        .expect("durable rejection");
+    let probe = "orchestration.subscribeThread";
+    let command = "orchestration.dispatchCommand";
+    let mut idle = snapshot(&binding, &instance, "interrupted", false);
+    idle["projection"]["runs"] = json!([]);
+    let mut archived = idle.clone();
+    archived["projection"]["thread"]["archivedAt"] = json!("2026-11-23T16:00:00Z");
+    let (client, server) = server(vec![
+        (probe, Response::Snapshot(idle.clone())),
+        (command, Response::Success),
+        (probe, Response::Snapshot(idle)),
+        (probe, Response::Snapshot(archived)),
+    ])
+    .await;
+    let run = task.run().expect("revoked reservation");
+    assert_eq!(
+        stop(&quiet_pass(&client), run, &binding, 2, true)
+            .await
+            .expect("archive still unconfirmed"),
+        StopProgress::Waiting
+    );
+    let durable = serde_json::to_value(&task).expect("persist rejection");
+    let restored: Task = serde_json::from_value(durable).expect("restart");
+    let run = restored.run().expect("rejection holds custody");
+    let late = LATE_REPLY_MS + 2;
+    let pass = quiet_pass(&client);
+    assert!(matches!(
+        pass.authorize_send(run).await,
+        Err(HostError::Uncertain)
+    ));
+    assert!(matches!(
+        pass.stop(run, &binding, late, true)
+            .await
+            .expect("stale archive readback"),
+        StopProgress::Write(_)
+    ));
+    assert_eq!(
+        pass.stop(run, &binding, late, true)
+            .await
+            .expect("archive confirmed"),
+        StopProgress::Settled(Host::Current {
+            instance: instance.clone(),
+            state: RunState::Rejected
+        })
+    );
+    let requests = server.await.expect("trace");
+    let archive: Value = serde_json::from_str(requests[1].payload.get()).expect("archive request");
+    assert_eq!(archive["type"], "thread.archive");
+    assert_eq!(archive["threadId"], THREAD);
 }
 
 #[tokio::test]
@@ -644,11 +744,7 @@ async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
         (probe, Response::Snapshot(started)),
     ])
     .await;
-    let permit = client
-        .authorize_notice(&notice)
-        .await
-        .expect("read planner")
-        .expect("authorized");
+    let permit = ready_notice(&client, &notice).await;
     assert_eq!(notice.last_send_at_ms, None);
     let dispatch = permit.record(&mut notice).expect("persist native marker");
     assert_eq!(
@@ -720,11 +816,7 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         (command, Response::Failure(rejected)),
     ])
     .await;
-    let permit = client
-        .authorize_notice(&notice)
-        .await
-        .expect("first read")
-        .expect("first permit");
+    let permit = ready_notice(&client, &notice).await;
     let mut edited = T3::prepare_notice(THREAD.into(), notice.command.clone(), "Different text")
         .expect("same ID with different text");
     assert!(matches!(
@@ -732,11 +824,7 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         Err(HostError::Binding)
     ));
     assert_eq!(edited.last_send_at_ms, None);
-    let permit = client
-        .authorize_notice(&notice)
-        .await
-        .expect("fresh read")
-        .expect("new permit");
+    let permit = ready_notice(&client, &notice).await;
     let dispatch = permit
         .record(&mut notice)
         .expect("record the original bytes");

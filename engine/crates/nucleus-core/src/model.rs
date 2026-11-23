@@ -360,6 +360,8 @@ pub struct Run {
     pub(crate) revoked: bool,
     #[serde(default)]
     pub(crate) last_send_at_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) rejected_awaiting_archive: bool,
 }
 
 impl Run {
@@ -381,6 +383,12 @@ impl Run {
     #[must_use]
     pub const fn last_send_at_ms(&self) -> Option<u64> {
         self.last_send_at_ms
+    }
+
+    /// A definite rejection still requires confirmation of reviewer archival.
+    #[must_use]
+    pub const fn rejected_awaiting_archive(&self) -> bool {
+        self.rejected_awaiting_archive
     }
 }
 
@@ -452,7 +460,11 @@ impl TryFrom<StoredTask> for Task {
             let role = run.launch.role;
             (!run.revoked && stored.phase.role() != Some(role))
                 || (role == Role::Reviewer) != run.launch.review_head.is_some()
-                || stored.threads.get(role) != Some(run.launch.thread.as_str())
+                || stored.threads.get(role.other()) == Some(run.launch.thread.as_str())
+                || (run.last_send_at_ms.is_some()
+                    && stored.threads.get(role) != Some(run.launch.thread.as_str()))
+                || (run.rejected_awaiting_archive
+                    && (!run.revoked || role != Role::Reviewer || run.last_send_at_ms.is_none()))
                 || run.launch.instance
                     != format!(
                         "task-{}-run-{}",
@@ -556,6 +568,22 @@ impl Task {
             return false;
         };
         question.delivery = Some(delivery);
+        true
+    }
+
+    /// Drop only the exact notice that was proven not delivered.
+    pub fn clear_question_delivery(&mut self, command: &str) -> bool {
+        let Some(question) = &mut self.question else {
+            return false;
+        };
+        if question
+            .delivery
+            .as_ref()
+            .is_none_or(|delivery| delivery.command != command)
+        {
+            return false;
+        }
+        question.delivery = None;
         true
     }
 

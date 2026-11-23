@@ -1,12 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use nucleus_core::QuestionDelivery;
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    HostError, LATE_REPLY_MS, T3, dispatch_rejected,
+    HostError, LATE_REPLY_MS, T3, clock_ms, dispatch_rejected,
     launch::message_id,
     projection,
     rpc::{Read, Reply},
@@ -19,6 +17,7 @@ pub struct PlannerThread {
     pub project_id: String,
     pub updated_at: String,
     pub latest_user_message_at: Option<String>,
+    pub worktree_path: Option<String>,
     pub archived_at: Option<String>,
     pub deleted_at: Option<String>,
 }
@@ -39,12 +38,20 @@ pub enum NoticeSend {
     Rejected,
 }
 
-/// Exact wire prepared by a fresh native read and any required unsettle.
+#[derive(Clone)]
+pub struct NoticeTarget {
+    pub thread: String,
+    pub project_id: String,
+    pub worktree_path: Option<String>,
+}
+
+/// Exact wire and thread evidence prepared by a fresh native read.
 pub struct NoticeAuthorization {
-    thread: String,
+    target: NoticeTarget,
     command: String,
     payload: Box<RawValue>,
     previous: Option<u64>,
+    wake: Option<u64>,
 }
 
 /// The caller must persist the corresponding send marker before dispatch.
@@ -54,11 +61,22 @@ pub struct NoticeDispatch {
 }
 
 impl NoticeAuthorization {
+    #[must_use]
+    pub const fn target(&self) -> &NoticeTarget {
+        &self.target
+    }
+
+    #[must_use]
+    pub const fn needs_unsettle(&self) -> bool {
+        self.wake.is_some()
+    }
+
     /// Advance the notice marker before persisting and using the permit.
     /// # Errors
     /// Returns an error if the notice changed after authorization.
     pub fn record(self, delivery: &mut QuestionDelivery) -> Result<NoticeDispatch, HostError> {
-        if delivery.thread != self.thread
+        if self.wake.is_some()
+            || delivery.thread != self.target.thread
             || delivery.command != self.command
             || delivery.payload != self.payload.get()
             || delivery.last_send_at_ms != self.previous
@@ -77,6 +95,8 @@ impl NoticeAuthorization {
 #[serde(rename_all = "camelCase")]
 struct NoticeThread {
     id: String,
+    project_id: String,
+    worktree_path: Option<String>,
     archived_at: Option<String>,
     deleted_at: Option<String>,
     settled_at: Option<String>,
@@ -122,6 +142,22 @@ impl T3 {
         Ok(self.notice_projection(thread).await?.is_some())
     }
 
+    /// Recheck the actual thread and workspace of an authorized notice.
+    /// # Errors
+    /// Returns an error if the destination changed or could not be read.
+    pub async fn check_notice_target(&self, target: &NoticeTarget) -> Result<(), HostError> {
+        let snapshot = self
+            .notice_projection(&target.thread)
+            .await?
+            .ok_or(HostError::Binding)?;
+        if snapshot.thread.project_id != target.project_id
+            || snapshot.thread.worktree_path != target.worktree_path
+        {
+            return Err(HostError::Binding);
+        }
+        Ok(())
+    }
+
     /// Freeze a queued planner notification under one native command ID.
     /// # Errors
     /// Returns an error when the request cannot be encoded.
@@ -156,8 +192,7 @@ impl T3 {
         notice_state(&snapshot.projection, &delivery.command)
     }
 
-    /// Reconcile any preceding send and unsettle the exact planner if needed.
-    /// The caller holds the question's task fence across this operation.
+    /// Reconcile any preceding send and prepare a dispatch or unsettle.
     /// # Errors
     /// Returns an error when the request is unreadable.
     pub async fn authorize_notice(
@@ -169,7 +204,7 @@ impl T3 {
             .last_send_at_ms
             .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
-        let Some(mut snapshot) = self.notice_projection(&delivery.thread).await? else {
+        let Some(snapshot) = self.notice_projection(&delivery.thread).await? else {
             return Ok(None);
         };
         let state = notice_state(&snapshot.projection, &delivery.command)?;
@@ -181,35 +216,41 @@ impl T3 {
         if !ready || snoozed(&snapshot.thread)? {
             return Ok(None);
         }
-        if settled(&snapshot.thread) {
+        let wake = if settled(&snapshot.thread) {
             if snapshot.sequence == 0 {
                 return Err(HostError::Uncertain);
             }
-            let command_id = format!("unsettle:{}:{}", snapshot.thread.id, snapshot.sequence);
-            self.thread_command(json!({
-                "type":"thread.unsettle", "threadId":delivery.thread,
-                "commandId":command_id, "reason":"user",
-            }))
-            .await?;
-            let Some(fresh) = self.notice_projection(&delivery.thread).await? else {
-                return Err(HostError::Uncertain);
-            };
-            snapshot = fresh;
-            if settled(&snapshot.thread) || snoozed(&snapshot.thread)? {
-                return Ok(None);
-            }
-        }
-        if reply_may_arrive
-            || notice_state(&snapshot.projection, &delivery.command)? != NoticeState::Absent
-        {
-            return Ok(None);
-        }
+            Some(snapshot.sequence)
+        } else {
+            None
+        };
         Ok(Some(NoticeAuthorization {
-            thread: delivery.thread.clone(),
+            target: NoticeTarget {
+                thread: snapshot.thread.id,
+                project_id: snapshot.thread.project_id,
+                worktree_path: snapshot.thread.worktree_path,
+            },
             command: delivery.command.clone(),
             payload,
             previous: delivery.last_send_at_ms,
+            wake,
         }))
+    }
+
+    /// Unsettle an authorized planner destination. Re-read before dispatch.
+    /// # Errors
+    /// Returns an error when the wake is inapplicable or uncertain.
+    pub async fn unsettle_notice(
+        &self,
+        authorization: &NoticeAuthorization,
+    ) -> Result<(), HostError> {
+        let sequence = authorization.wake.ok_or(HostError::Binding)?;
+        let thread = &authorization.target.thread;
+        self.thread_command(json!({
+            "type":"thread.unsettle", "threadId":thread,
+            "commandId":format!("unsettle:{thread}:{sequence}"), "reason":"user",
+        }))
+        .await
     }
 
     /// Send the recorded wire. An exact rejection permits a fresh binding.
@@ -281,13 +322,6 @@ impl T3 {
 
 fn settled(thread: &NoticeThread) -> bool {
     thread.settled_at.is_some() || thread.settled_override.as_deref() == Some("settled")
-}
-
-fn clock_ms() -> Result<u64, HostError> {
-    let clock = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| HostError::Uncertain)?;
-    u64::try_from(clock.as_millis()).map_err(|_| HostError::Uncertain)
 }
 
 fn snoozed(thread: &NoticeThread) -> Result<bool, HostError> {

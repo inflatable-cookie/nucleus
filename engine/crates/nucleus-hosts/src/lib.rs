@@ -20,7 +20,9 @@ use launch::{Method, Wire, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
 use process::{Activity, Inventory};
 use projection::Projection;
-pub use questions::{NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, PlannerThread};
+pub use questions::{
+    NoticeAuthorization, NoticeDispatch, NoticeSend, NoticeState, NoticeTarget, PlannerThread,
+};
 use rpc::{Read, Reply, Rpc};
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
@@ -56,7 +58,6 @@ pub enum HostError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendOutcome {
     Sent,
-    Adopted,
     /// T3 returned a durable rejection for this exact native command ID.
     Rejected,
 }
@@ -64,36 +65,81 @@ pub enum SendOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopProgress {
     Waiting,
+    Write(ControlDispatch),
     /// No matching delivery was visible after the late-reply window. Persist a
     /// new send timestamp before replaying the reserved wire, then stop again.
     ReplayDue,
     Settled(Host),
 }
 
+/// A control command bound to the destination read by native reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlDispatch {
+    binding: Binding,
+    payload: Value,
+}
+
+impl ControlDispatch {
+    #[must_use]
+    pub const fn binding(&self) -> &Binding {
+        &self.binding
+    }
+}
+
 /// A single exact send, scoped to the run and timestamp that authorized it.
 pub struct ReplayAuthorization {
     instance: String,
+    thread: String,
+    input: String,
+    wire: Wire,
     prior_send: Option<u64>,
-    send_at: u64,
     revoked: bool,
+    archived: bool,
+}
+
+/// Frozen native write whose send marker must be committed before dispatch.
+pub struct RunDispatch {
+    instance: String,
+    wire: Wire,
 }
 
 impl ReplayAuthorization {
+    #[must_use]
+    pub const fn binding(&self) -> &Binding {
+        &self.wire.binding
+    }
+
+    #[must_use]
+    pub fn unarchive(&self) -> Option<ControlDispatch> {
+        self.archived.then(|| ControlDispatch {
+            binding: self.wire.binding.clone(),
+            payload: json!({
+                "type":"thread.unarchive", "commandId":format!("{}-unarchive", self.instance), "threadId":self.thread,
+            }),
+        })
+    }
+
     /// Apply the marker to the exact task used to prepare the authorization.
     /// Persist the resulting task before using the authorization on the wire.
     ///
     /// # Errors
     /// Returns an error if the run or its delivery state changed after authorization.
-    pub fn record(&self, task: &mut nucleus_core::Task) -> Result<(), HostError> {
+    pub fn record(self, task: &mut nucleus_core::Task) -> Result<RunDispatch, HostError> {
         let run = task.run().ok_or(HostError::Binding)?;
-        if run.launch().instance != self.instance
+        if self.archived
+            || run.launch().instance != self.instance
+            || run.launch().input != self.input
             || run.revoked() != self.revoked
             || run.last_send_at_ms() != self.prior_send
         {
             return Err(HostError::Binding);
         }
-        task.record_send(&self.instance, self.send_at)
-            .map_err(|_| HostError::Binding)
+        task.record_send(&self.instance, clock_ms()?)
+            .map_err(|_| HostError::Binding)?;
+        Ok(RunDispatch {
+            instance: self.instance,
+            wire: self.wire,
+        })
     }
 }
 
@@ -124,15 +170,21 @@ pub trait TaskHost: Send + Sync {
 
     fn send(
         &self,
-        run: &Run,
-        authorization: ReplayAuthorization,
+        dispatch: RunDispatch,
     ) -> impl Future<Output = Result<SendOutcome, HostError>> + Send;
 
+    fn write_control(
+        &self,
+        dispatch: ControlDispatch,
+    ) -> impl Future<Output = Result<(), HostError>> + Send;
+
     /// Reconcile the revoked run. Request archival for a replay at a superseded
-    /// review head. Unsent reservations and deleted threads need no archive.
+    /// review head. This read-only method proposes any necessary native write
+    /// for the service to authorize at its destination gate.
     fn stop(
         &self,
         run: &Run,
+        expected: &Binding,
         now_ms: u64,
         archive: bool,
     ) -> impl Future<Output = Result<StopProgress, HostError>> + Send;
@@ -165,6 +217,17 @@ impl T3 {
         T3Pass {
             host: self,
             processes: OnceCell::new(),
+            sent: AtomicBool::new(false),
+        }
+    }
+
+    /// Give a loopback RPC fixture a known process census.
+    #[cfg(feature = "loopback-fixture")]
+    #[must_use]
+    pub fn fixture_pass(&self) -> T3Pass<'_> {
+        T3Pass {
+            host: self,
+            processes: OnceCell::new_with(Some(Ok(Inventory::quiet_fixture()))),
             sent: AtomicBool::new(false),
         }
     }
@@ -363,11 +426,10 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
-        let elapsed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| HostError::Uncertain)?;
-        let now_ms = u64::try_from(elapsed.as_millis()).map_err(|_| HostError::Uncertain)?;
-        if awaiting_reply(run, now_ms) || (run.revoked() && run.last_send_at_ms().is_none()) {
+        if run.rejected_awaiting_archive()
+            || awaiting_reply(run, clock_ms()?)
+            || (run.revoked() && run.last_send_at_ms().is_none())
+        {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
@@ -377,62 +439,45 @@ impl TaskHost for T3Pass<'_> {
         }
         Ok(ReplayAuthorization {
             instance: run.launch().instance.clone(),
+            thread: run.launch().thread.clone(),
+            input: run.launch().input.clone(),
+            archived: wire.method == Method::Continue
+                && thread.is_some_and(|thread| thread.archived()),
+            wire,
             prior_send: run.last_send_at_ms(),
-            send_at: now_ms,
             revoked: run.revoked(),
         })
     }
 
-    async fn send(
-        &self,
-        run: &Run,
-        authorization: ReplayAuthorization,
-    ) -> Result<SendOutcome, HostError> {
-        let launch = run.launch();
-        if run.last_send_at_ms() != Some(authorization.send_at)
-            || launch.instance != authorization.instance
-            || run.revoked() != authorization.revoked
-        {
-            return Err(HostError::Binding);
-        }
-        let wire = Wire::read(run)?;
-        let (thread, state) = self.host.delivery(run, &wire).await?;
-        match state {
-            RunState::ReadyToSend if self.quiet(&wire.binding, thread.as_ref()).await? => {}
-            RunState::Starting
-            | RunState::Running
-            | RunState::Permission
-            | RunState::Input
-            | RunState::Ended => {
-                return Ok(SendOutcome::Adopted);
-            }
-            _ => return Err(HostError::Uncertain),
-        }
-        if wire.method == Method::Continue && thread.is_some_and(|thread| thread.archived()) {
-            self.host.thread_command(json!({
-                "type": "thread.unarchive", "commandId": format!("{}-unarchive", launch.instance), "threadId": launch.thread,
-            })).await?;
-            let (thread, state) = self.host.delivery(run, &wire).await?;
-            if state != RunState::ReadyToSend || thread.is_none_or(|thread| thread.archived()) {
-                return Err(HostError::Uncertain);
-            }
-        }
-        self.sent.store(true, Ordering::Release);
-        match self
+    async fn write_control(&self, dispatch: ControlDispatch) -> Result<(), HostError> {
+        self.host.thread_command(dispatch.payload).await
+    }
+
+    async fn send(&self, dispatch: RunDispatch) -> Result<SendOutcome, HostError> {
+        let wire = dispatch.wire;
+        let reply = self
             .host
             .rpc
             .call(wire.method.rpc(), wire.payload.as_ref(), Read::One)
-            .await?
+            .await;
+        if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))
         {
+            return Ok(SendOutcome::Rejected);
+        }
+        self.sent.store(true, Ordering::Release);
+        match reply? {
             Reply::Value(_) => Ok(SendOutcome::Sent),
-            Reply::Failure(cause) if rejected(&cause, &wire, &launch.instance) => {
-                Ok(SendOutcome::Rejected)
-            }
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
     }
 
-    async fn stop(&self, run: &Run, now_ms: u64, archive: bool) -> Result<StopProgress, HostError> {
+    async fn stop(
+        &self,
+        run: &Run,
+        expected: &Binding,
+        now_ms: u64,
+        archive: bool,
+    ) -> Result<StopProgress, HostError> {
         if !run.revoked() {
             return Err(HostError::Binding);
         }
@@ -441,18 +486,24 @@ impl TaskHost for T3Pass<'_> {
         }
         let launch = run.launch();
         let wire = Wire::read(run)?;
+        if wire.binding != *expected {
+            return Err(HostError::Binding);
+        }
+        if run.rejected_awaiting_archive() {
+            return self.observe_rejected_archive(run, &wire).await;
+        }
         let (thread, state) = self.host.delivery(run, &wire).await?;
         if let Some((command, target)) = thread
             .as_ref()
             .and_then(|thread| thread.stop_command(&message_id(&launch.instance)))
         {
-            self.host
-                .thread_command(json!({
+            return Ok(StopProgress::Write(ControlDispatch {
+                binding: wire.binding,
+                payload: json!({
                     "type": command, "commandId": format!("{}-{command}", launch.instance),
                     "threadId": launch.thread, "runId": target,
-                }))
-                .await?;
-            return Ok(StopProgress::Waiting);
+                }),
+            }));
         }
         match state {
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
@@ -463,16 +514,58 @@ impl TaskHost for T3Pass<'_> {
                     && state == RunState::Ended
                     && thread.is_some_and(|thread| !thread.archived())
                 {
-                    self.host.thread_command(json!({
-                        "type": "thread.archive", "commandId": format!("{}-archive", launch.instance), "threadId": launch.thread,
-                    })).await?;
-                    return Ok(StopProgress::Waiting);
+                    return Ok(archive_command(run, &wire));
                 }
                 Ok(StopProgress::Settled(current(run, state)))
             }
             _ => Ok(StopProgress::Waiting),
         }
     }
+}
+
+impl T3Pass<'_> {
+    async fn observe_rejected_archive(
+        &self,
+        run: &Run,
+        wire: &Wire,
+    ) -> Result<StopProgress, HostError> {
+        let settled = StopProgress::Settled(current(run, RunState::Rejected));
+        let Some(thread) = self
+            .host
+            .thread(&wire.binding, &run.launch().thread)
+            .await?
+        else {
+            return Ok(settled);
+        };
+        if thread.retained()? == RetainedThread::Gone {
+            return Ok(settled);
+        }
+        if !self.quiet(&wire.binding, Some(&thread)).await? {
+            return Ok(StopProgress::Waiting);
+        }
+        Ok(if thread.archived() {
+            settled
+        } else {
+            archive_command(run, wire)
+        })
+    }
+}
+
+fn archive_command(run: &Run, wire: &Wire) -> StopProgress {
+    let launch = run.launch();
+    StopProgress::Write(ControlDispatch {
+        binding: wire.binding.clone(),
+        payload: json!({
+            "type":"thread.archive", "commandId":format!("{}-archive", launch.instance), "threadId":launch.thread,
+        }),
+    })
+}
+
+fn clock_ms() -> Result<u64, HostError> {
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| HostError::Uncertain)?;
+    u64::try_from(clock.as_millis()).map_err(|_| HostError::Uncertain)
 }
 
 fn current(run: &Run, state: RunState) -> Host {

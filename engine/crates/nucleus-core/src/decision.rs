@@ -206,6 +206,10 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
 fn signal(task: &Task, observation: &Observation) -> Signal {
     if let Some(run) = task.run().filter(|run| run.revoked()) {
         return match observation.current(&run.launch.instance) {
+            Some(RunState::Rejected) if run.rejected_awaiting_archive() => {
+                Signal::Stopped(task.phase)
+            }
+            _ if run.rejected_awaiting_archive() => Signal::Wait(WaitReason::Stopping),
             Some(state) if state.quiescent() => Signal::Stopped(task.phase),
             _ => Signal::Wait(WaitReason::Stopping),
         };
@@ -224,6 +228,13 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     }
     if let Some(run) = task.run() {
         let role = run.launch.role;
+        if role == Role::Reviewer
+            && run.last_send_at_ms().is_none()
+            && run.report().is_none()
+            && observation.workspace == Observed::Known(Workspace::Absent)
+        {
+            return Signal::ReservationDiscarded(Phase::Reviewing);
+        }
         return match observation.current(&run.launch.instance) {
             None => Signal::Wait(WaitReason::HostUnknown),
             Some(RunState::ReadyToSend) => {
@@ -311,6 +322,16 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
 }
 
 fn unbound(task: &Task, observation: &Observation) -> Signal {
+    if task.phase == Phase::Merging
+        && task.verdict.is_none()
+        && task.pr.as_ref().is_some_and(|cached| {
+            observation
+                .pr()
+                .is_none_or(|current| current.head == cached.head)
+        })
+    {
+        return Signal::Wait(WaitReason::ForgeUnknown);
+    }
     if matches!(
         task.phase,
         Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
@@ -351,12 +372,10 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
             (Observed::Known(Forge::Open { pr, .. }), _) if Some(pr) != task.pr.as_ref() => {
                 Signal::HeadChanged(Phase::Reviewing)
             }
-            (Observed::Known(Forge::Open { .. }), Observed::Unknown) => {
-                Signal::Wait(WaitReason::WorkspaceUnknown)
-            }
-            (Observed::Known(Forge::Open { .. }), Observed::Known(Workspace::Absent)) => {
-                launch(task, observation, Role::Reviewer)
-            }
+            (
+                Observed::Known(Forge::Open { .. }),
+                Observed::Unknown | Observed::Known(Workspace::Absent),
+            ) => Signal::Wait(WaitReason::WorkspaceUnknown),
             (Observed::Known(Forge::Open { pr, .. }), Observed::Known(Workspace::Clean(head)))
                 if *head == pr.head =>
             {

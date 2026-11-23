@@ -6,6 +6,11 @@ by default, uses its own settings and database, and admits only the explicitly
 configured fixture repository. The planner checks the run by hand. The board
 switch starts in milestone 2.
 
+A missing review checkout is recovered at the verified PR head before
+reserving a run. If recovery fails, the task waits for another check.
+An unsent create only has a provisional thread in its run slot. A possible
+send or a positively observed completed turn binds the retained thread.
+
 ## Crates and review slices
 
 | Slice | Crates | Boundary |
@@ -70,8 +75,9 @@ history in its own `engine.sqlite`. It uses WAL and transactional schema
 versioning. The brief's text, version and digest are stored together. Store
 a human acceptance, when needed, as an exact-head
 alternative in the verdict slot, including the accepting actor and authority.
-Resolve the task's planner through repository settings. Append audit history in
-the state transaction. The pass loop only reads active task rows. API history
+Resolve the responsible planner from the task's origin and live host inventory.
+Append audit history in the state transaction. The pass loop schedules active
+rows. API history
 and live notifications may read the event log.
 
 Normalize the relevant observations to one signal per phase. The bound run
@@ -140,6 +146,13 @@ apply to manual commands.
 
 T3 is the engine's only supported host. The host interface describes the reads
 and effects the task engine needs.
+
+Every T3 mutation goes through the destination gate after the exact native
+read. The gate checks the frozen destination against the fixture's Git origin
+and current T3 project root. This includes interrupt, queue cancellation,
+archive, unarchive and unsettle. Role writes need their owned checkout.
+Planner writes need an exact thread in the fixture project. Review sends
+also check the open PR and clean checkout after native authorization.
 
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
@@ -226,6 +239,13 @@ native write. The board reads committed rows without waiting on GitHub or T3.
 Keep due times, load observations and displayed waits in memory. An idle process
 slot and acceptable local load permit a new launch. Pressure reschedules it
 without spending an attempt. A fresh pass checks process custody after launch.
+
+A definite GitHub head mismatch retires approval and keeps the bound PR in
+Merging until a read shows a new head. A refusal followed by incomplete
+readback waits for fresh evidence and honours any forge retry deadline.
+A confirmed rejection of a superseded review stays in the revoked run slot
+until T3 confirms archival or absence. Later passes only reconcile that
+disposition. They never replay the rejected launch.
 
 `next` and commands call the same preflight. A command that needs a fresh forge
 fact fetches it at execution. An unavailable check is shown as pending. The

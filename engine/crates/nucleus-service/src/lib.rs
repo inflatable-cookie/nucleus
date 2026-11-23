@@ -1,0 +1,559 @@
+//! Service entry points for the isolated Rust task engine.
+
+mod pass;
+mod project;
+mod question;
+mod schedule;
+#[cfg(test)]
+mod tests;
+mod ticket;
+
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    os::fd::OwnedFd,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use longhorn_redact::{RedactionRules, Redactor};
+use nucleus_core::{Action, Authority, Command, Entry, Identity, Report, Task, WaitReason};
+use nucleus_forge::{Branches, ForgeError, GitHub};
+use nucleus_hosts::{HostError, T3};
+use nucleus_store::{
+    EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
+};
+use nucleus_work::{WorkError, Worktrees};
+use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
+use schedule::Schedule;
+use tokio::{
+    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc},
+    time::Instant,
+};
+
+pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
+pub use ticket::ReportTicket;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ServiceError {
+    #[error("the task is outside this engine's configured project")]
+    Project,
+    #[error("task was not found")]
+    Missing,
+    #[error("task input is invalid")]
+    Input,
+    #[error("an isolated engine is already serving this profile or its lock is unreadable")]
+    ProfileLock,
+    #[error("the callback configuration or ticket is invalid")]
+    Ticket,
+    #[error("local I/O failed")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Core(#[from] nucleus_core::CommandError),
+    #[error(transparent)]
+    Settings(#[from] StorageError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Workspace(#[from] WorkError),
+    #[error(transparent)]
+    Host(#[from] HostError),
+    #[error(transparent)]
+    Forge(#[from] ForgeError),
+}
+
+pub struct Service {
+    storage: EngineStorage,
+    project: Project,
+    host: T3,
+    forge: GitHub,
+    callback: String,
+    report_command: PathBuf,
+    state: Mutex<State>,
+    changes: broadcast::Sender<TaskChange>,
+    wake: Notify,
+    forge_until: AtomicU64,
+    // Keep the exclusive OS lock for the service lifetime.
+    _profile: OwnedFd,
+}
+
+struct State {
+    store: Store,
+    schedule: Schedule,
+    fences: BTreeMap<String, Arc<Mutex<()>>>,
+    waits: BTreeMap<String, WaitReason>,
+    thread_tasks: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskChange {
+    pub task_id: String,
+    pub version: i64,
+}
+
+pub struct PassOutcome {
+    pub task: String,
+    pub result: Result<Action, ServiceError>,
+}
+
+impl Service {
+    /// Open the enabled engine on its pinned volume and claim its write lock.
+    ///
+    /// # Errors
+    /// Returns an error if configuration, storage, or project scope is invalid.
+    pub fn open(
+        settings: &SettingsFile,
+        project: Project,
+        host: T3,
+        forge: GitHub,
+        callback: SocketAddr,
+        report_command: PathBuf,
+    ) -> Result<Self, ServiceError> {
+        project.verify()?;
+        let storage = settings.storage()?;
+        if !callback.ip().is_loopback()
+            || callback.port() == 0
+            || !report_command.is_absolute()
+            || !report_command.is_file()
+        {
+            return Err(ServiceError::Ticket);
+        }
+        let database = storage.database();
+        database.ensure()?;
+        let profile = open(
+            database.path().join("service.lock"),
+            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| ServiceError::ProfileLock)?;
+        flock(&profile, FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| ServiceError::ProfileLock)?;
+        let store = Store::open(&storage)?;
+        let (changes, _) = broadcast::channel(64);
+        Ok(Self {
+            storage,
+            project,
+            host,
+            forge,
+            callback: format!("http://{callback}"),
+            report_command,
+            state: Mutex::new(State {
+                store,
+                schedule: Schedule::new(),
+                fences: BTreeMap::new(),
+                waits: BTreeMap::new(),
+                thread_tasks: BTreeMap::new(),
+            }),
+            changes,
+            wake: Notify::new(),
+            forge_until: AtomicU64::new(0),
+            _profile: profile,
+        })
+    }
+
+    /// Admit a brief on the configured synthetic project.
+    ///
+    /// # Errors
+    /// Returns an error for malformed or duplicate input, an unavailable
+    /// role profile, or a storage failure.
+    pub async fn admit(
+        &self,
+        id: String,
+        reference: String,
+        brief: String,
+        caller: &Authority,
+    ) -> Result<Task, ServiceError> {
+        let identity = Identity {
+            id,
+            reference,
+            repository: self.project.repository.clone(),
+            base: self.project.base.clone(),
+            entry: Entry::Brief,
+            origin_thread: match caller {
+                Authority::Planner { actor } => Some(actor.clone()),
+                Authority::Operator { .. } => None,
+            },
+        };
+        self.project.scope(&identity)?;
+        if identity.reference.trim().is_empty() || brief.trim().is_empty() {
+            return Err(ServiceError::Input);
+        }
+        self.storage.database().verify()?;
+        self.check_project().await?;
+        self.host
+            .check(&[&self.project.worker, &self.project.reviewer])
+            .await?;
+        let task = Task::new(identity, brief, None);
+        let mut state = self.state.lock().await;
+        state.store.create(&task, &event("admitted"))?;
+        self.wake_task(&mut state, &task.identity().id, 1);
+        Ok(task)
+    }
+
+    /// Wait for a due task and process one bounded batch.
+    ///
+    /// # Errors
+    /// Returns an error if the engine cannot verify its volume or read its rows.
+    pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
+        self.storage.database().verify()?;
+        let ids = self.due_tasks().await?;
+        let host = self.host.pass();
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let row = match self.task(&id).await {
+                Ok(row) if active(&row.task) => row,
+                Ok(_) | Err(ServiceError::Missing) => continue,
+                Err(error) => return Err(error),
+            };
+            {
+                let mut state = self.state.lock().await;
+                track(&mut state, &row.task);
+            }
+            let result = Box::pin(self.advance(&row, &host)).await;
+            self.schedule_result(&row, &result).await?;
+            results.push(PassOutcome { task: id, result });
+        }
+        Ok(results)
+    }
+
+    /// Use native thread changes to advance due times. Exact reads still own
+    /// every decision, and the due queue stays live across stream failures.
+    pub async fn watch_host(&self) {
+        loop {
+            let (sender, mut hints) = mpsc::channel(128);
+            let watch = self.host.watch_threads(&sender);
+            tokio::pin!(watch);
+            loop {
+                tokio::select! {
+                    _ = &mut watch => break,
+                    Some(thread) = hints.recv() => {
+                        let mut state = self.state.lock().await;
+                        let ids: Vec<_> = state.thread_tasks.iter().filter(|(_, threads)| threads.contains(&thread)).map(|(id, _)| id.clone()).collect();
+                        for id in ids {
+                            state.schedule.wake(&id, Instant::now());
+                            self.wake.notify_one();
+                        }
+                    }
+                }
+            }
+            {
+                let mut state = self.state.lock().await;
+                let ids: Vec<_> = state.thread_tasks.keys().cloned().collect();
+                for id in ids {
+                    state.schedule.wake(&id, Instant::now());
+                }
+                self.wake.notify_one();
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    }
+
+    async fn launch_capacity(&self, id: &str) -> Result<bool, ServiceError> {
+        let budget = &self.project.launch_budget;
+        if self.state.lock().await.store.occupied_slots(id)? >= budget.slots {
+            return Ok(false);
+        }
+        let mut command = tokio::process::Command::new("/usr/sbin/sysctl");
+        command
+            .args(["-n", "vm.loadavg"])
+            .env_clear()
+            .kill_on_drop(true);
+        let load = tokio::time::timeout(Duration::from_secs(2), command.output()).await;
+        let Ok(Ok(load)) = load else {
+            return Ok(false);
+        };
+        Ok(load.status.success()
+            && std::str::from_utf8(&load.stdout)
+                .ok()
+                .and_then(|raw| raw.trim().strip_prefix('{'))
+                .and_then(|raw| raw.split_whitespace().next())
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= budget.max_load))
+    }
+
+    async fn due_tasks(&self) -> Result<Vec<String>, ServiceError> {
+        loop {
+            let next;
+            {
+                let mut state = self.state.lock().await;
+                let now = Instant::now();
+                let State {
+                    store, schedule, ..
+                } = &mut *state;
+                schedule.seed(store, now)?;
+                let ready = schedule.ready(now);
+                if !ready.is_empty() {
+                    return Ok(ready);
+                }
+                next = schedule.next();
+            }
+            tokio::select! {
+                () = self.wake.notified() => {},
+                () = tokio::time::sleep_until(next) => {},
+            }
+        }
+    }
+
+    async fn schedule_result(
+        &self,
+        row: &TaskRow,
+        result: &Result<Action, ServiceError>,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let wait = match result {
+            Ok(Action::Wait(reason)) => Some(*reason),
+            Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
+            Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
+            Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
+            _ => None,
+        };
+        let mut state = self.state.lock().await;
+        let current = self.lookup(&state, id)?;
+        if !active(&current.task) {
+            state.waits.remove(id);
+            return Ok(());
+        }
+        if current.version != row.version {
+            state.schedule.wake(id, Instant::now());
+            return Ok(());
+        }
+        let millis = if wait == Some(WaitReason::ForgeUnknown) {
+            self.forge_until
+                .load(Ordering::Relaxed)
+                .saturating_sub(now_ms())
+                .max(3000)
+        } else {
+            3000
+        };
+        let due = Instant::now() + Duration::from_millis(millis);
+        state.schedule.wake(id, due);
+        let prior = match wait {
+            Some(reason) => state.waits.insert(id.clone(), reason),
+            None => state.waits.remove(id),
+        };
+        if prior != wait {
+            self.publish(id, current.version);
+        }
+        Ok(())
+    }
+
+    /// Read the current task and its committed row version.
+    ///
+    /// # Errors
+    /// Returns an error if the task is missing, unreadable or outside the project.
+    pub async fn task(&self, id: &str) -> Result<TaskRow, ServiceError> {
+        self.storage.database().verify()?;
+        let state = self.state.lock().await;
+        self.lookup(&state, id)
+    }
+
+    /// Read a page of display-only task history.
+    ///
+    /// # Errors
+    /// Returns an error for lost task scope or unreadable storage.
+    pub async fn history(
+        &self,
+        id: &str,
+        before: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<Event>, ServiceError> {
+        let state = self.state.lock().await;
+        let _ = self.lookup(&state, id)?;
+        Ok(state.store.history(id, before, limit.min(100))?)
+    }
+
+    /// Subscribe to revision changes. A subscriber refetches its own task views.
+    #[must_use]
+    pub fn changes(&self) -> broadcast::Receiver<TaskChange> {
+        self.changes.subscribe()
+    }
+
+    /// Apply an authenticated command against fresh facts.
+    ///
+    /// # Errors
+    /// Returns an error if the task, authorization gate or store refuses it.
+    pub async fn command(
+        &self,
+        id: &str,
+        authority: &Authority,
+        command: Command,
+    ) -> Result<TaskRow, ServiceError> {
+        let prior = self.task(id).await?;
+        let observation = self.command_observation(&prior.task, &command).await?;
+        let updated = preflight(&prior.task, authority, &observation, command)?;
+        let _fence = self.effect(&prior).await?;
+        self.save(&prior, updated, &event("command")).await
+    }
+
+    /// Accept an idempotent report only for the current unrevoked run.
+    ///
+    /// # Errors
+    /// Returns an error for a stale credential, a conflicting report or a failed write.
+    pub async fn report(
+        &self,
+        id: &str,
+        instance: &str,
+        credential: &[u8; 32],
+        report: Report,
+    ) -> Result<(), ServiceError> {
+        let _fence = self.fence(id).await;
+        let prior = self.task(id).await?;
+        let mut task = prior.task.clone();
+        task.record_report(instance, credential, report)?;
+        if let Some(Report::Work(pr)) = task.run().and_then(nucleus_core::Run::report) {
+            let identity = task.identity();
+            let branches = Branches::new(
+                &identity.repository,
+                &identity.base,
+                &format!("ns-{}", identity.id),
+            )?;
+            branches.target(&pr.url).map_err(|_| ServiceError::Input)?;
+        }
+        self.save(&prior, task, &event("reported")).await?;
+        Ok(())
+    }
+
+    fn lookup(&self, state: &State, id: &str) -> Result<TaskRow, ServiceError> {
+        let row = state.store.row(id)?.ok_or(ServiceError::Missing)?;
+        self.project.scope(row.task.identity())?;
+        Ok(row)
+    }
+
+    async fn fence(&self, id: &str) -> OwnedMutexGuard<()> {
+        let fence = {
+            let mut state = self.state.lock().await;
+            Arc::clone(state.fences.entry(id.into()).or_default())
+        };
+        fence.lock_owned().await
+    }
+
+    async fn effect(&self, expected: &TaskRow) -> Result<OwnedMutexGuard<()>, ServiceError> {
+        let id = &expected.task.identity().id;
+        let fence = self.fence(id).await;
+        if self.task(id).await? != *expected {
+            return Err(StoreError::StaleTask.into());
+        }
+        Ok(fence)
+    }
+
+    async fn check_project(&self) -> Result<(), ServiceError> {
+        let project = self.project.clone();
+        tokio::task::spawn_blocking(move || project.verify())
+            .await
+            .map_err(|_| ServiceError::Project)??;
+        let root = self
+            .project
+            .checkout
+            .to_str()
+            .ok_or(ServiceError::Project)?;
+        self.host
+            .check_project(&self.project.host_project, root)
+            .await?;
+        Ok(())
+    }
+
+    fn worktrees(&self) -> Result<Worktrees<'static>, ServiceError> {
+        Ok(Worktrees::new(
+            &self.storage,
+            &project::GIT_POLICY,
+            Redactor::new([], RedactionRules::common()),
+        )?)
+    }
+
+    async fn save(
+        &self,
+        prior: &TaskRow,
+        task: Task,
+        audit: &EventDraft,
+    ) -> Result<TaskRow, ServiceError> {
+        if prior.task == task {
+            return Ok(prior.clone());
+        }
+        self.storage.database().verify()?;
+        let id = task.identity().id.clone();
+        let version = {
+            let mut state = self.state.lock().await;
+            let version = state.store.save_row(prior, &task, audit)?;
+            track(&mut state, &task);
+            state.waits.remove(&id);
+            self.wake_task(&mut state, &id, version);
+            version
+        };
+        if task.run().is_none()
+            && let Some(run) = prior.task.run()
+        {
+            ticket::clear(self.storage.scratch(), run);
+        }
+        Ok(TaskRow { task, version })
+    }
+
+    fn wake_task(&self, state: &mut State, id: &str, version: i64) {
+        state.schedule.wake(id, Instant::now());
+        self.wake.notify_one();
+        self.publish(id, version);
+    }
+
+    fn publish(&self, id: &str, version: i64) {
+        let _ = self.changes.send(TaskChange {
+            task_id: id.into(),
+            version,
+        });
+    }
+}
+
+fn track(state: &mut State, task: &Task) {
+    let id = &task.identity().id;
+    if !active(task) {
+        state.thread_tasks.remove(id);
+        return;
+    }
+    let mut threads: Vec<_> = [nucleus_core::Role::Worker, nucleus_core::Role::Reviewer]
+        .into_iter()
+        .filter_map(|role| task.threads().get(role).map(str::to_owned))
+        .collect();
+    if let Some(binding) = task.question_delivery() {
+        threads.push(binding.thread.clone());
+    }
+    state.thread_tasks.insert(id.clone(), threads);
+}
+
+fn active(task: &Task) -> bool {
+    !matches!(
+        task.phase(),
+        nucleus_core::Phase::Done | nucleus_core::Phase::Cancelled
+    ) || task.run().is_some()
+}
+
+fn preflight(
+    task: &Task,
+    actor: &Authority,
+    observation: &nucleus_core::Observation,
+    command: Command,
+) -> Result<Task, ServiceError> {
+    let mut updated = task.clone();
+    updated.command(command, actor, observation)?;
+    Ok(updated)
+}
+
+fn now_ms() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
+fn event(kind: &str) -> EventDraft {
+    EventDraft {
+        at: i64::try_from(now_ms()).unwrap_or(i64::MAX),
+        kind: kind.into(),
+        detail: String::new(),
+    }
+}

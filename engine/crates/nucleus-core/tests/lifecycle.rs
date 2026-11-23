@@ -276,7 +276,59 @@ fn a_replaced_head_never_inherits_approval_and_keeps_the_reviewer() {
         }
     );
     start(&mut task, &gone, Role::Reviewer, "replacement", "review-2");
+    assert_eq!(task.threads().get(Role::Reviewer), Some("reviewer"));
+    task.record_send(&instance(&task), 1)
+        .expect("possible send");
     assert_eq!(task.threads().get(Role::Reviewer), Some("replacement"));
+}
+
+#[test]
+fn discarding_an_unsent_review_keeps_only_an_established_thread() {
+    let mut task = task(Entry::ReviewEntry);
+    let open = open('a', CheckState::Ready);
+    let missing = Observation {
+        workspace: Observed::Known(Workspace::Absent),
+        ..open.clone()
+    };
+    start(
+        &mut task,
+        &open,
+        Role::Reviewer,
+        "provisional",
+        "unsent create",
+    );
+    assert_eq!(task.reconcile(&missing), Action::Advance(Phase::Reviewing));
+    assert!(task.run().is_none());
+    assert_eq!(task.threads().get(Role::Reviewer), None);
+    assert_eq!(
+        decide(&task, &missing),
+        Action::Wait(WaitReason::WorkspaceUnknown)
+    );
+
+    start(
+        &mut task,
+        &open,
+        Role::Reviewer,
+        "established",
+        "first send",
+    );
+    task.record_send(&instance(&task), 1)
+        .expect("possible send");
+    task.command(Command::Move(Phase::Reviewing), &planner(), &open)
+        .expect("revoke");
+    let ended = host(&task, open.clone(), RunState::Ended);
+    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
+    let idle = retained(open, "established", RetainedThread::Idle);
+    start(
+        &mut task,
+        &idle,
+        Role::Reviewer,
+        "established",
+        "unsent continuation",
+    );
+    assert_eq!(task.reconcile(&missing), Action::Advance(Phase::Reviewing));
+    assert!(task.run().is_none());
+    assert_eq!(task.threads().get(Role::Reviewer), Some("established"));
 }
 
 #[test]
@@ -632,10 +684,7 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         ),
         (
             Observed::Known(Workspace::Absent),
-            Action::Launch {
-                role: Role::Reviewer,
-                via: Launch::Create,
-            },
+            Action::Wait(WaitReason::WorkspaceUnknown),
         ),
     ] {
         assert_eq!(
