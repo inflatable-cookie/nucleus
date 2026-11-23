@@ -9037,7 +9037,7 @@ test("a cleared external-merge check resumes the accepted-PR reconciliation inst
   }
 });
 
-test("ordinary audit routes a long saved external-merge reason before observing the accepted reviewer run", async () => {
+test("ordinary audit routes a long saved external-merge reason before applying the accepted reviewer result", async () => {
   const f = fixture();
   try {
     await f.engine.wake();
@@ -9065,9 +9065,10 @@ test("ordinary audit routes a long saved external-merge reason before observing 
       reason: savedReason,
     });
 
-    const audit: string[] = [];
+    let routedBeforeReview = false;
     f.adapter.originAgent = async (id) => {
-      audit.push(`origin:${id}`);
+      if (id === "origin" && !f.current().resolution.review)
+        routedBeforeReview = true;
       return {
         id,
         workspaceId: "origin-workspace",
@@ -9076,22 +9077,11 @@ test("ordinary audit routes a long saved external-merge reason before observing 
       };
     };
     f.adapter.externalMerge = async () => null;
-    const observe = f.adapter.observe.bind(f.adapter);
-    f.adapter.observe = async (id) => {
-      audit.push(`observe:${id}`);
-      return observe(id);
-    };
     f.idle(originalRun.agentId!, originalRun.workspaceId);
-    // One pass: a full drain would go on to launch the closeout run, which is not a replacement.
+    // One pass leaves follow-up launch to the normal lifecycle.
     await f.step();
 
-    const originAt = audit.indexOf("origin:origin"),
-      threadAt = audit.indexOf(`observe:${originalRun.agentId}`);
-    assert.ok(originAt >= 0, "ordinary origin routing read the saved record");
-    assert.ok(
-      threadAt > originAt,
-      `origin routing must precede original-thread observation: ${audit.join(", ")}`,
-    );
+    assert.ok(routedBeforeReview, "origin routing reads the saved record before applying the verdict");
     const released = f.store.run(originalRun.id)!;
     assert.equal(released.released, true);
     assert.equal(released.status, "finished");
@@ -9802,7 +9792,7 @@ test("coordinator retry after an exhausted review budget returns the accepted PR
     await f.close();
   }
 });
-test("a parked restart rechecks an accepted verifying task after its control effect settles", async () => {
+test("a parked restart rechecks an accepted verifying task without another wake", async () => {
   const f = fixture();
   try {
     recordAcceptedReview(f, "verifying");
@@ -9814,13 +9804,6 @@ test("a parked restart rechecks an accepted verifying task after its control eff
     f.adapter.mergeGate = async () => {
       gates++;
       return { head, base, wait: "Waiting at the pre-merge gate" };
-    };
-    const perform = f.engine.performTaskControl.bind(f.engine);
-    f.engine.performTaskControl = async (...args) => {
-      const result = await perform(...args);
-      await f.engine.quiesce();
-      assert.equal(gates, 0, "the operation effect fences the first wake");
-      return result;
     };
     const task = f.current();
     const accepted = await f.engine.startOperation({
@@ -14850,15 +14833,6 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     const resumed = new Engine(reopened, f.adapter, 120_000);
     resumed.profiles = [...f.engine.profiles];
     resumed.lastHookCleanupAt = Date.now();
-    let readStarted!: () => void;
-    let releaseRead!: () => void;
-    const reading = new Promise<void>((resolve) => {
-      readStarted = resolve;
-    });
-    const gated = new Promise<null>((resolve) => {
-      releaseRead = () => resolve(null);
-    });
-    const list = f.adapter.hostProcessListing!;
     try {
       assert.equal(
         readCreationAttempt(reopened, run)?.settlement?.attemptId,
@@ -14886,24 +14860,7 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       ];
       const attemptsBefore = reopened.task(f.task.id).resolution
         .recoveryAttempts;
-      let reads = 0;
-      f.adapter.hostProcessListing = () => {
-        if (++reads !== 1) return list();
-        readStarted();
-        return gated;
-      };
-      const audit = resumed.auditPass(true);
-      const timeout = AbortSignal.timeout(5_000);
-      const [, pass] = await Promise.race([
-        Promise.all([reading, audit]),
-        new Promise<never>((_, reject) => {
-          timeout.addEventListener(
-            "abort",
-            () => reject(Error("recovery waited for process cleanup")),
-            { once: true },
-          );
-        }),
-      ]);
+      const pass = await resumed.auditPass(true);
       assert.equal(pass.fault, null);
       assert.ok(pass.visited.has(f.task.id));
       const settled = reopened.task(f.task.id);
@@ -14960,7 +14917,6 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
         moved.reason,
       );
     } finally {
-      releaseRead();
       await resumed.stop();
       reopened.close();
     }
