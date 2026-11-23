@@ -6,6 +6,9 @@ by default, uses its own settings and database, and admits only the explicitly
 configured fixture repository. The planner checks the run by hand. The board
 switch starts in milestone 2.
 
+Dispatch verifies the fixture's Git origin and the current T3 project root
+before sending a standalone worker or reviewer.
+
 ## Crates and review slices
 
 | Slice | Crates | Boundary |

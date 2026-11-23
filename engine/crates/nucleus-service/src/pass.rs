@@ -164,6 +164,7 @@ impl Service {
         let _fence = self.effect(row).await?;
         let task = &row.task;
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
+            self.project.verify()?;
             observation.workspace = Observed::Known(checkout.allocate(&self.project.start)?);
         }
         let instance = task.next_launch_instance()?;
@@ -257,6 +258,7 @@ impl Service {
             .authorize_send(task.run().ok_or(ServiceError::Input)?)
             .await?;
         let _fence = self.effect(row).await?;
+        self.check_project().await?;
         let mut sent = task.clone();
         authorization.record(&mut sent)?;
         let sent = self.save(row, sent, &event("host_send")).await?;

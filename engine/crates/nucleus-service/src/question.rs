@@ -153,7 +153,10 @@ fn notice_text(task: &Task, question: &Question) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use axum::{
         Json, Router,
@@ -166,6 +169,40 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[tokio::test]
+    async fn the_native_fixture_binding_expires_when_its_root_changes() {
+        let (_home, mut service) =
+            crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        let retargeted = Arc::new(AtomicBool::new(false));
+        let changed = Arc::clone(&retargeted);
+        let checkout = service.project.checkout.clone();
+        let project = service.project.host_project.clone();
+        let (host, server) = native_fixture(move |request| {
+            assert_eq!(request["tag"], "orchestration.subscribeShell");
+            let root = if changed.load(Ordering::Relaxed) {
+                "/synthetic/other-project"
+            } else {
+                checkout.to_str().expect("fixture root")
+            };
+            json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                {"kind":"snapshot","snapshot":{"projects":[{"id":project,"workspaceRoot":root}]}},
+                {"kind":"synchronized"}
+            ]})
+        })
+        .await;
+        service.host = host;
+        service
+            .check_project()
+            .await
+            .expect("exact fixture binding");
+        retargeted.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            service.check_project().await,
+            Err(ServiceError::Host(HostError::Binding))
+        ));
+        server.abort();
+    }
 
     #[tokio::test]
     async fn exact_origin_wins_and_fallback_respects_rank_and_unknown() {

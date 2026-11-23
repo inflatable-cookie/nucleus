@@ -31,7 +31,7 @@ use nucleus_work::{WorkError, Worktrees};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use schedule::Schedule;
 use tokio::{
-    sync::{Mutex, Notify, OnceCell, OwnedMutexGuard, broadcast, mpsc},
+    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc},
     time::Instant,
 };
 
@@ -70,7 +70,6 @@ pub struct Service {
     storage: EngineStorage,
     project: Project,
     host: T3,
-    checked_project: OnceCell<()>,
     forge: GitHub,
     callback: String,
     report_command: PathBuf,
@@ -140,7 +139,6 @@ impl Service {
             storage,
             project,
             host,
-            checked_project: OnceCell::new(),
             forge,
             callback: format!("http://{callback}"),
             report_command,
@@ -216,10 +214,7 @@ impl Service {
                 let mut state = self.state.lock().await;
                 track(&mut state, &row.task);
             }
-            let result = match self.check_project().await {
-                Ok(()) => Box::pin(self.advance(&row, &host)).await,
-                Err(error) => Err(error),
-            };
+            let result = Box::pin(self.advance(&row, &host)).await;
             self.schedule_result(&row, &result).await?;
             results.push(PassOutcome { task: id, result });
         }
@@ -447,13 +442,17 @@ impl Service {
     }
 
     async fn check_project(&self) -> Result<(), ServiceError> {
+        let project = self.project.clone();
+        tokio::task::spawn_blocking(move || project.verify())
+            .await
+            .map_err(|_| ServiceError::Project)??;
         let root = self
             .project
             .checkout
             .to_str()
             .ok_or(ServiceError::Project)?;
-        self.checked_project
-            .get_or_try_init(|| self.host.check_project(&self.project.host_project, root))
+        self.host
+            .check_project(&self.project.host_project, root)
             .await?;
         Ok(())
     }

@@ -283,11 +283,6 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         .create(&task, &event("fixture"))
         .expect("seed");
     let stale = service.task(id).await.expect("old version");
-    service
-        .checked_project
-        .set(())
-        .expect("fixture project verified");
-
     let (result, moved) = tokio::join!(service.pass(), async {
         entered.notified().await;
         let outcome = tokio::time::timeout(
