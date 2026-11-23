@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +19,16 @@ import { Engine } from "../core/engine";
 import { runInTaskQuantumScope } from "../core/scheduling/pass-snapshot";
 import { Store } from "../core/store/store";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
-import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, type Task } from "../shared/contracts";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
+import {
+  OPERATOR_BOARD_CALLER,
+  runSchema,
+  submissionSchema,
+  type Task,
+} from "../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import {
   STAMP,
@@ -140,7 +149,8 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
     host,
   );
   let processes: HostProcessFact[] = [];
-  adapter.hostProcessListing = async () => Object.assign(processes, { cwdComplete: true });
+  adapter.hostProcessListing = async () =>
+    Object.assign(processes, { cwdComplete: true });
   const engine = new Engine(store, adapter, 60_000);
   t.after(async () => {
     await engine.stop();
@@ -201,10 +211,13 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
       const requestsBefore = server.requests.length;
       const result = await runInTaskQuantumScope(5_000, work, snapshot);
       assert.equal(
-        server.requests.slice(requestsBefore).filter((request) =>
-          request.tag === "orchestration.subscribeThread" &&
-          request.payload.acceptBoundedSnapshot === false,
-        ).length,
+        server.requests
+          .slice(requestsBefore)
+          .filter(
+            (request) =>
+              request.tag === "orchestration.subscribeThread" &&
+              request.payload.acceptBoundedSnapshot === false,
+          ).length,
         1,
         "one exact read replaces the missing timeline page",
       );
@@ -216,7 +229,11 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   const lease = () =>
     inPassWithoutTimeline(() => resolution.executionLease(store.task(task.id)));
 
-  assert.equal(await lease(), true, "merge acquires custody without a timeline page");
+  assert.equal(
+    await lease(),
+    true,
+    "merge acquires custody without a timeline page",
+  );
 
   const fact = {
     pid: 42,
@@ -231,7 +248,14 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
     assert.equal(await lease(), false);
     assert.match(store.task(task.id).reason, /process 42 remains/);
   }
-  processes = [{ ...fact, state: "Z", cwd: null, openFiles: { paths: [], complete: false } }];
+  processes = [
+    {
+      ...fact,
+      state: "Z",
+      cwd: null,
+      openFiles: { paths: [], complete: false },
+    },
+  ];
   assert.equal(await lease(), true, "a zombie cannot hold custody");
   processes = [];
   thread.runtimeRequests = [syntheticRuntimeRequest({ kind: "approval" })];
@@ -266,97 +290,159 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
   assert.match(store.task(task.id).reason, /command synthetic-item-1/);
   thread.turnItems[0].status = "completed";
   thread.thread.pullRequests = [
-    { host: "github.com", repository: "example/repo", number: 12, source: "agent", watch: {} },
+    {
+      host: "github.com",
+      repository: "example/repo",
+      number: 12,
+      source: "agent",
+      watch: {},
+    },
   ];
   assert.equal(await lease(), false);
-  assert.match(store.task(task.id).reason, /pull-request-watch:github.com\/example\/repo#12/);
+  assert.match(
+    store.task(task.id).reason,
+    /pull-request-watch:github.com\/example\/repo#12/,
+  );
   thread.thread.pullRequests = [];
   assert.equal(await lease(), true);
 
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
   thread.updatedAt = thread.thread.updatedAt;
   assert.equal(await lease(), false);
-  assert.match(store.task(task.id).reason, /does not cover the participant's latest inactivity/);
+  assert.match(
+    store.task(task.id).reason,
+    /does not cover the participant's latest inactivity/,
+  );
 
   server.threads.delete(agentId);
   assert.equal(await lease(), false);
 });
 
 test("owner complete waits for a finished T3 participant's background work and process custody", async (t) => {
-  const { host, server, liveIds, workspaceId, directory } = await fixture(t, { live: 1 });
+  const { host, server, liveIds, workspaceId, directory } = await fixture(t, {
+    live: 1,
+  });
   const agentId = liveIds[0]!;
   const runId = "run-complete";
-  const temporaryDirectory = await realpath(mkdtempSync(join(tmpdir(), "t3code-complete-scratch-")));
+  const temporaryDirectory = await realpath(
+    mkdtempSync(join(tmpdir(), "t3code-complete-scratch-")),
+  );
   const thread = server.threads.get(agentId)!;
   thread.runs = [syntheticRun(agentId, 1, { id: runId, status: "completed" })];
   server.controls.shellStatuses[agentId] = "completed";
-  thread.turnItems = [syntheticTurnItem(agentId, 1, {
-    type: "command_execution", runId, status: "running",
-  })];
+  thread.turnItems = [
+    syntheticTurnItem(agentId, 1, {
+      type: "command_execution",
+      runId,
+      status: "running",
+    }),
+  ];
   host.state.update((state) => {
     delete state.workspaces[workspaceId]!.archivedAt;
   });
 
   const store = new Store(":memory:");
-  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  const adapter = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  );
   adapter.findAnyOpenBranchPr = async () => [];
   let processes: HostProcessFact[] = [];
-  adapter.hostProcessListing = async () => Object.assign(processes, { cwdComplete: true });
+  adapter.hostProcessListing = async () =>
+    Object.assign(processes, { cwdComplete: true });
   const engine = new Engine(store, adapter, 60_000);
   t.after(async () => {
     await engine.stop();
     store.close();
   });
   const head = "a".repeat(40);
-  const inserted = store.insert(submissionSchema.parse({
-    submissionId: "owner-complete-custody",
-    title: "Complete a report after background work",
-    repoPath: directory,
-    planningCommit: head,
-    handoffPath: "handoff.md",
-    originAgentId: "synthetic-planner",
-  }), host.hostId, "handoff.md", head);
+  const inserted = store.insert(
+    submissionSchema.parse({
+      submissionId: "owner-complete-custody",
+      title: "Complete a report after background work",
+      repoPath: directory,
+      planningCommit: head,
+      handoffPath: "handoff.md",
+      originAgentId: "synthetic-planner",
+    }),
+    host.hostId,
+    "handoff.md",
+    head,
+  );
   const task = store.update(inserted.id, {
-    phase: "working", agentId, workspaceId, directory, runId, temporaryDirectory,
+    phase: "working",
+    agentId,
+    workspaceId,
+    directory,
+    runId,
+    temporaryDirectory,
   });
-  store.putRun(runSchema.parse({
-    id: runId, taskId: task.id, hostId: host.hostId, agentId, workspaceId,
-    temporaryDirectory, role: "revision", generation: 1, head, base: head,
-    status: "running", released: false, createdAt: STAMP, profile: null,
-    lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null,
-  }));
+  store.putRun(
+    runSchema.parse({
+      id: runId,
+      taskId: task.id,
+      hostId: host.hostId,
+      agentId,
+      workspaceId,
+      temporaryDirectory,
+      role: "revision",
+      generation: 1,
+      head,
+      base: head,
+      status: "running",
+      released: false,
+      createdAt: STAMP,
+      profile: null,
+      lastObservedAt: STAMP,
+      active: false,
+      idleSince: STAMP,
+      completion: null,
+    }),
+  );
   store.setCredential(runId, "synthetic-complete-secret");
-  const complete = () => engine.performTaskControl({
-    taskId: task.id,
-    version: store.task(task.id).version,
-    action: "complete",
-    reason: "Accept the finished report",
-    caller: OPERATOR_BOARD_CALLER,
-  });
+  const complete = () =>
+    engine.performTaskControl({
+      taskId: task.id,
+      version: store.task(task.id).version,
+      action: "complete",
+      reason: "Accept the finished report",
+      caller: OPERATOR_BOARD_CALLER,
+    });
   const refuses = async (reason: RegExp) => {
     await assert.rejects(complete, reason);
     assert.equal(store.task(task.id).phase, "working");
     assert.equal(store.run(runId)?.released, false);
-    assert.doesNotThrow(() => store.authenticate(runId, "synthetic-complete-secret"));
+    assert.doesNotThrow(() =>
+      store.authenticate(runId, "synthetic-complete-secret"),
+    );
   };
   assert.equal((await host.observe(agentId)).status, "idle");
   await refuses(/outstanding background work: command synthetic-item-1/);
   thread.turnItems[0].status = "completed";
-  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: "older-items" };
+  server.controls.threadCoverage = {
+    hasMoreHistory: true,
+    historyCursor: "older-items",
+  };
   await refuses(/incomplete projection/);
   server.controls.threadCoverage = {};
 
   const serviceUid = process.getuid?.() ?? 501;
   const fact = {
-    pid: 42, ppid: 1, pgid: 42, uid: serviceUid,
+    pid: 42,
+    ppid: 1,
+    pgid: 42,
+    uid: serviceUid,
     startIdentity: "synthetic-start",
     command: "synthetic-detached-command",
     cwd: "/",
   };
   for (const root of [directory, temporaryDirectory]) {
-    processes = [{
-      ...fact, openFiles: { paths: [join(root, "output.log")], complete: true },
-    }];
+    processes = [
+      {
+        ...fact,
+        openFiles: { paths: [join(root, "output.log")], complete: true },
+      },
+    ];
     await refuses(/process 42 still has an open file/);
   }
   processes = [{ ...fact, openFiles: { paths: [], complete: false } }];
@@ -364,43 +450,61 @@ test("owner complete waits for a finished T3 participant's background work and p
   processes = [{ ...fact, cwd: null }];
   await refuses(/incomplete working-directory or open-file coverage/);
 
-  processes = [{
-    ...fact, uid: serviceUid === 0 ? 501 : 0,
-    cwd: null, openFiles: { paths: [], complete: false },
-  }];
+  processes = [
+    {
+      ...fact,
+      uid: serviceUid === 0 ? 501 : 0,
+      cwd: null,
+      openFiles: { paths: [], complete: false },
+    },
+  ];
   assert.equal((await complete()).phase, "done");
   assert.equal(store.run(runId)?.released, true);
-  assert.throws(() => store.authenticate(runId, "synthetic-complete-secret"), /unauthorized callback/i);
+  assert.throws(
+    () => store.authenticate(runId, "synthetic-complete-secret"),
+    /unauthorized callback/i,
+  );
 });
 
 for (const provider of ["codex", "pi"]) {
   test(`an unlisted ${provider} thread is observed again after its turn ends`, async (t) => {
-    const { host, server, liveIds, tasks, workspaceId } = await fixture(t, { live: 2 });
+    const { host, server, liveIds, tasks, workspaceId } = await fixture(t, {
+      live: 2,
+    });
     const id = liveIds[1]!;
     const thread = server.threads.get(id)!;
     const ordinal = provider === "pi" ? 3 : 1;
     const turnId = `run:thread:${id}:ordinal:${ordinal}`;
     thread.thread.providerInstanceId = provider;
     thread.thread.modelSelection.instanceId = provider;
-    thread.runs = [syntheticRun(id, ordinal, {
-      id: turnId,
-      status: "running",
-      completedAt: null,
-    })];
+    thread.runs = [
+      syntheticRun(id, ordinal, {
+        id: turnId,
+        status: "running",
+        completedAt: null,
+      }),
+    ];
     if (provider === "pi") {
       thread.runs.unshift(syntheticRun(id, 1), syntheticRun(id, 2));
-      thread.providerThreads = [syntheticProviderThread({
-        driver: provider,
-        providerInstanceId: provider,
-        nativeThreadRef: { nativeId: `native-thread:pending:run:thread:${id}:ordinal:1` },
-        status: "idle",
-      })];
+      thread.providerThreads = [
+        syntheticProviderThread({
+          driver: provider,
+          providerInstanceId: provider,
+          nativeThreadRef: {
+            nativeId: `native-thread:pending:run:thread:${id}:ordinal:1`,
+          },
+          status: "idle",
+        }),
+      ];
     }
     server.controls.shellUnlisted = [id];
     assert.equal(await host.reads.shellRow(id), undefined);
     assert.equal((await host.observe(id)).activeTurnId, turnId);
 
-    Object.assign(thread.runs.at(-1), { status: "completed", completedAt: STAMP });
+    Object.assign(thread.runs.at(-1), {
+      status: "completed",
+      completedAt: STAMP,
+    });
     host.reads.beginPass(tasks);
     t.after(() => host.reads.endPass());
     const observed = await host.observe(id);
@@ -412,8 +516,14 @@ for (const provider of ["codex", "pi"]) {
 
     const exact = await host.observeParticipant(id);
     assert.deepEqual(exact, {
-      id, workspaceId, status: "idle", active: false, permissions: false,
-      activeTurnId: null, updatedAt: STAMP, pendingBackgroundTasks: [],
+      id,
+      workspaceId,
+      status: "idle",
+      active: false,
+      permissions: false,
+      activeTurnId: null,
+      updatedAt: STAMP,
+      pendingBackgroundTasks: [],
     });
   });
 }
@@ -471,14 +581,20 @@ test("steady state: passes over 40 idle threads read no thread snapshot, no shel
   const first = counts(server, start);
   const steady = server.requests.length;
   const PASSES = 10;
-  for (let index = 0; index < PASSES; index++)
-    await pass(host, tasks, liveIds);
+  for (let index = 0; index < PASSES; index++) await pass(host, tasks, liveIds);
   const after = counts(server, steady);
   t.diagnostic(
     `first pass ${JSON.stringify(first)}; ${PASSES} steady passes ${JSON.stringify(after)}`,
   );
-  assert.ok(first.subscribeThread <= LIVE, "each live thread is read at most once");
-  assert.equal(after.subscribeThread, 0, "an idle unchanged thread is never re-read");
+  assert.ok(
+    first.subscribeThread <= LIVE,
+    "each live thread is read at most once",
+  );
+  assert.equal(
+    after.subscribeThread,
+    0,
+    "an idle unchanged thread is never re-read",
+  );
   assert.equal(after.subscribeShell, 0, "the held shell subscription answers");
   assert.equal(after.archived, 0, "finished tasks cost no archived read");
   assert.equal(after.total, 0, "a steady pass sends T3 nothing at all");
@@ -518,7 +634,11 @@ test("a derived notice thread T3 never created costs no RPC, and a revision run 
     .filter((request) => request.tag === "orchestration.subscribeThread")
     .map((request) => (request.payload as { threadId: string }).threadId);
   assert.equal(asked.includes(reminder), false, "the reminder is never read");
-  assert.equal(asked.includes(revision), false, "the revision id is never read");
+  assert.equal(
+    asked.includes(revision),
+    false,
+    "the revision id is never read",
+  );
   assert.ok(
     host.state.read().followUps?.[revision],
     "an unseen follow-up stays a candidate while its task runs",
@@ -606,7 +726,10 @@ test("live lists, held observations and the catalog answer promptly while T3 is 
   assert.ok((await host.activeThreads()).length >= LIVE);
   assert.ok(host.projectObservation()?.length);
   assert.equal((await host.observe(liveIds[0]!)).id, liveIds[0]);
-  assert.ok(Date.now() - started < 500, "live lists and held state answer at once");
+  assert.ok(
+    Date.now() - started < 500,
+    "live lists and held state answer at once",
+  );
   started = Date.now();
   assert.deepEqual(
     await host.catalog(),
@@ -708,7 +831,11 @@ test("retention reads T3's archived threads only on its own interval, and delete
     hosts: { deleted: number; error: string }[];
   }>("threadRetention");
   assert.equal(health?.hosts[0]?.error, "");
-  assert.equal(health?.hosts[0]?.deleted, 0, "the second walk finds nothing left");
+  assert.equal(
+    health?.hosts[0]?.deleted,
+    0,
+    "the second walk finds nothing left",
+  );
 });
 
 test("a running thread is re-read once per pass when its projection moves under an unchanged row", async (t) => {
@@ -755,7 +882,11 @@ test("a running thread is re-read once per pass when its projection moves under 
   await host.observe(running);
   await host.observe(running);
   host.reads.endPass();
-  assert.equal(server.snapshots.length - again, 1, "once per pass, not per read");
+  assert.equal(
+    server.snapshots.length - again,
+    1,
+    "once per pass, not per read",
+  );
 });
 
 test("a live shell whose tail has gone quiet past its bound is re-snapshotted, and the live-agent list is served the last copy meanwhile", async (t) => {
@@ -815,14 +946,21 @@ test("a shell snapshot slower than its deadline is a timeout, never an incompati
   host.reads.live.close();
   server.controls.slowShellMs = 600;
   await assert.rejects(host.reads.shell(), (error: unknown) => {
-    assert.ok(!(error instanceof T3CompatibilityError), "not an incompatibility");
+    assert.ok(
+      !(error instanceof T3CompatibilityError),
+      "not an incompatibility",
+    );
     return (
       error instanceof T3RpcError &&
       error.code === "timeout" &&
       error.method === "orchestration.subscribeShell"
     );
   });
-  assert.equal(host.reads.compatibilityFailure, "", "nothing is reported to the operator");
+  assert.equal(
+    host.reads.compatibilityFailure,
+    "",
+    "nothing is reported to the operator",
+  );
   assert.equal(host.connected, true, "the connection stays up");
   // A decision read during the backoff is a bounded refusal, not another open.
   const opens = served(server, "orchestration.subscribeShell");
@@ -850,3 +988,138 @@ test("a settled delete receipt confirms the removal before T3's shell streams it
   await host.deleteAgent(target);
   assert.equal(await host.reads.threadArchiveState(target), null);
 });
+
+for (const variant of ["idle", "archived", "quantum-scoped"] as const) {
+  test(`finished report_ready task completes via exact per-task read during an active pass snapshot (${variant})`, async (t) => {
+    const { host, server, liveIds, workspaceId, directory } = await fixture(t, {
+      live: 1,
+    });
+    const agentId = liveIds[0]!;
+    const runId = `run-report-complete-${variant}`;
+    const temporaryDirectory = await realpath(
+      mkdtempSync(join(tmpdir(), "t3code-report-complete-")),
+    );
+    const thread = server.threads.get(agentId)!;
+    thread.runs = [
+      syntheticRun(agentId, 1, { id: runId, status: "completed" }),
+    ];
+    server.controls.shellStatuses[agentId] = "completed";
+    if (variant === "archived") {
+      const archivedAt = new Date(Date.parse(STAMP) + 2_000).toISOString();
+      thread.thread.archivedAt = archivedAt;
+      thread.thread.updatedAt = archivedAt;
+      thread.updatedAt = archivedAt;
+    }
+    host.state.update((state) => {
+      delete state.workspaces[workspaceId]!.archivedAt;
+    });
+
+    const store = new Store(":memory:");
+    const adapter = createAdapter(
+      HostPolicies as unknown as HostPolicyConstructor,
+      host,
+    );
+    adapter.findAnyOpenBranchPr = async () => [];
+    let passListingCalls = 0;
+    adapter.hostProcessListing = async () => {
+      passListingCalls++;
+      // First call simulates a primed pass snapshot with incomplete cwd coverage;
+      // the direct per-task read must bypass it and observe a clean table.
+      return passListingCalls === 1
+        ? Object.assign([], { cwdComplete: false })
+        : Object.assign([], { cwdComplete: true });
+    };
+    const engine = new Engine(store, adapter, 60_000);
+    t.after(async () => {
+      await engine.stop();
+      store.close();
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    });
+
+    const head = "b".repeat(40);
+    const inserted = store.insert(
+      submissionSchema.parse({
+        submissionId: `report-complete-${variant}`,
+        title: "Complete a finished report_ready task during a host pass",
+        repoPath: directory,
+        planningCommit: head,
+        handoffPath: "handoff.md",
+        originAgentId: "synthetic-planner",
+      }),
+      host.hostId,
+      "handoff.md",
+      head,
+    );
+    const task = store.update(inserted.id, {
+      phase: "report_ready",
+      agentId,
+      workspaceId,
+      directory,
+      runId,
+      temporaryDirectory,
+      reason: "Report delivered",
+    });
+    store.putRun(
+      runSchema.parse({
+        id: runId,
+        taskId: task.id,
+        hostId: host.hostId,
+        agentId,
+        workspaceId,
+        temporaryDirectory,
+        role: "revision",
+        generation: 1,
+        head,
+        base: head,
+        status: "finished",
+        released: true,
+        createdAt: STAMP,
+        profile: null,
+        lastObservedAt: STAMP,
+        active: false,
+        idleSince: STAMP,
+        completion: null,
+      }),
+    );
+
+    const completeVerb = ownerTaskNext(
+      collectOwnerVerbFacts(store, store.task(task.id)),
+    ).verbs.find((verb) => verb.verb === "complete");
+    assert.equal(completeVerb?.available, true, completeVerb?.refusal);
+
+    // Simulate an active sweep PassSnapshot with a primed process listing and
+    // no pre-scan observation of this finished report_ready participant.
+    const snapshot = engine.resolution.beginPassSnapshot();
+    try {
+      await engine.resolution.primePassProcesses(host.hostId);
+      engine.resolution.sealPassHost(host.hostId);
+      assert.equal(passListingCalls, 1);
+
+      const runComplete = () =>
+        engine.performTaskControl({
+          taskId: task.id,
+          version: store.task(task.id).version,
+          action: "complete",
+          reason: "Accept the finished report",
+          caller: OPERATOR_BOARD_CALLER,
+        });
+      const completed =
+        variant === "quantum-scoped"
+          ? await runInTaskQuantumScope(5_000, runComplete, snapshot)
+          : await runComplete();
+      assert.equal(completed.phase, "done");
+      assert.equal(
+        passListingCalls,
+        2,
+        "complete takes a fresh exact per-task process listing",
+      );
+      assert.deepEqual(
+        engine.resolution.takePassProofs(host.hostId),
+        [],
+        "complete does not enqueue a pass proof demand",
+      );
+    } finally {
+      engine.resolution.endPassSnapshot(snapshot);
+    }
+  });
+}
