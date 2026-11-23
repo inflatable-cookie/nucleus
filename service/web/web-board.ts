@@ -45,6 +45,7 @@ import {
   METHOD_PATTERN,
   ProtocolError,
 } from "../../shared/service/protocol";
+import { boardThemeSnapshotSchema } from "../../shared/web-theme";
 import { sourcePathFromModule } from "../../shared/service/build";
 
 const LOOPBACK = "127.0.0.1";
@@ -220,6 +221,8 @@ export interface WebBoardHost {
   call(method: string, input: unknown): Promise<unknown>;
   /** The latest published board projection, or null before the first publication. */
   board(): UiBoard | null;
+  /** Optional environment theme read, independent of board publication. */
+  t3Theme?(): Promise<unknown>;
   /** Why the board cannot be served right now, or null. */
   unavailable(): string | null;
   /** Subscribe to executor publications; returns the unsubscribe. */
@@ -434,6 +437,7 @@ export class WebBoard {
     }
     if (url.pathname === "/api/pair") return this.pair(request, response);
     if (url.pathname === "/api/session") return this.session(request, response);
+    if (url.pathname === "/api/theme") return this.theme(request, response);
     if (url.pathname === "/api/rpc") return this.rpc(request, response);
     if (url.pathname === "/api/events") return this.events(request, response);
     if (url.pathname.startsWith("/api/")) {
@@ -563,6 +567,25 @@ export class WebBoard {
     }
     if (!(await this.authorize(request, response))) return;
     sendJson(response, 200, { paired: true });
+  }
+
+  private async theme(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    if (request.method !== "GET") {
+      sendJson(response, 405, refusal("method", "GET to read the board theme."));
+      return;
+    }
+    const key = await this.authorize(request, response);
+    if (!key) return;
+    const theme =
+      this.surfaces.get(key) === BOARD_SURFACE_T3
+        ? await this.options.host.t3Theme?.().catch(() => null)
+        : null;
+    sendJson(response, 200, {
+      theme: boardThemeSnapshotSchema.safeParse(theme).data ?? null,
+    });
   }
 
   private async authorize(

@@ -667,10 +667,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   - A card takes the next step up from its pane, with no border: the section step
     on the canvas, raised (`surface2`) on a section pane or in a dialog. Lists
     inside a pane part with spacing. Settings sections part with a wider gap.
-  - Hover is a low-alpha foreground wash and selection a stronger one, laid over
-    the resting fill, so they read on any surface; secondary buttons, cards, rows,
-    tabs, menu items and chips all use them. A status card (warning, danger, a
-    draft) is a tinted fill instead of a toned border.
+  - Hover and selection use the host's interaction colours when supplied.
+    Otherwise they use low-alpha foreground washes, with the stronger wash
+    for selection. Secondary buttons, cards, rows, tabs, menu items and chips
+    use those roles. A status card (warning, danger, a draft) uses a tinted fill.
   - Only editable fields (inputs, selects, checkboxes) keep a border. A floating
     surface (popover, menu, dialog) keeps a hairline edge, since it otherwise
     blends into what it covers; so do the rows of a dense settings table. Keyboard
@@ -678,6 +678,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   - Components paint with the roles in `client/design.ts` (`canvas`, `section`,
     `raised`, `hover`, `selected`, `hairline`, `border` for fields), derived from
     the theme colours, never a literal, so a host theme supplies the palette.
+  - The standalone web board follows `prefers-color-scheme`. In a T3 pane the
+    board also applies the environment's appearance and any colours the host
+    makes available. Paseo continues to supply its own theme.
+    [T3 host adapter](t3code-host-adapter.md#board-appearance-in-the-browser-pane)
   - **Detail only:** routing sentences, host identity and kind, profile names, host
     waits beyond "on the host", attempt counts, report headlines beyond the status
     line, prerequisite counts and promotion, a decision's choices, a lane's aim, and the

@@ -1347,6 +1347,30 @@ cannot be revealed through any supported call; `ui` shows the board by replacing
 the tab with a freshly revealed open** (nucleus#1415). The adapter keeps T3's
 native manual maximize control with no T3 patches or client-state hacks.
 
+#### Board appearance in the browser pane
+
+The web board uses the browser's `prefers-color-scheme` for its light and dark
+palettes. A paired T3 tab also reads `/api/theme` when it loads, independently of
+the board snapshot and live channel. The adapter uses the existing
+`orchestration:read` bearer for `server.getSettings` and the first
+`environmentThemesUpdated` event from `subscribeServerConfig` with
+`environmentThemes: true`. The event provides published theme definitions.
+The settings read provides the environment's `defaultTheme` and
+`defaultAppearance`.
+
+The spike against nightly `0.1.12-nightly.20261122.5098` found that definitions
+may supply colours and light/dark variants, canvas/accent seeds, or both. The
+renderer resolves the seeds itself. Nucleus maps supplied roles to the board,
+uses its own surface steps for seeds, and fills missing roles from the board
+palette. A fixed environment appearance takes precedence over the browser's
+preference. A theme with one usable appearance uses that palette. An unavailable
+read or missing definition leaves a usable board palette.
+
+The planner ruled on 2026-11-23 that the board follows the environment defaults.
+T3 stores per-renderer choices and built-in palettes in its renderer. The board
+can use a built-in's colours only if the server supplies its definition. Exact
+parity with local T3 choices needs a supported T3 API.
+
 ### Native question answers
 
 A native answer reads the bounded window, the same read that lists the pending

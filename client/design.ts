@@ -90,8 +90,8 @@ export const wash = {
  * The colour roles components paint with, read from the host theme. Surfaces tell
  * regions apart (nucleus#1540, T3-style): `canvas` for the header, menu and detail
  * pane, `section` for the list pane and section cards on the canvas, `raised` for
- * controls and cards on a section. Hover and selection are foreground washes, and
- * `hairline` is the barely visible edge for a floating surface or an otherwise
+ * controls and cards on a section. Hover and selection default to foreground
+ * washes. `hairline` is the barely visible edge for a floating surface or an otherwise
  * ambiguous boundary. `border` stays for editable fields only. Dark is the first
  * mapping; light derives from the same theme colours.
  */
@@ -100,8 +100,8 @@ export function roles(c: Colors) {
     canvas: c.surface0,
     section: c.surface1,
     raised: c.surface2,
-    hover: toneSurface(c.foreground, c.surface2, wash.hover),
-    selected: toneSurface(c.foreground, c.surface2, wash.selected),
+    hover: c.surfaceHover ?? toneSurface(c.foreground, c.surface2, wash.hover),
+    selected: c.surfaceSelected ?? toneSurface(c.foreground, c.surface2, wash.selected),
     hairline: toneSurface(c.foreground, c.border, wash.hairline),
     /** Editable field edges (inputs, selects, checkboxes); never cards or panes. */
     border: c.border,

@@ -14,25 +14,10 @@ import {
   readLiveFrames,
 } from "./live-channel";
 import { errorText } from "../error-text";
-import type { BoardTheme } from "../shell/types";
-
-const theme: BoardTheme = {
-  colors: {
-    surface0: "#111318",
-    surface1: "#1a1d24",
-    surface2: "#252932",
-    border: "#39404b",
-    foreground: "#f1f3f5",
-    foregroundMuted: "#a5acb8",
-    accent: "#8caaff",
-    accentForeground: "#101521",
-    statusSuccess: "#71c99a",
-    statusWarning: "#e9bc68",
-    statusDanger: "#ef8282",
-  },
-};
+import { useWebTheme } from "./theme";
 
 export function WebApp() {
+  const { appearance, theme } = useWebTheme();
   const [live, setLive] = useState(false);
   // The live channel's last failure. A stream that drops reconnects below, and
   // the reader says why in the meantime instead of failing silently.
@@ -108,6 +93,7 @@ export function WebApp() {
               height: "100vh",
               width: "100%",
               overflowX: "auto",
+              colorScheme: appearance,
               background: theme.colors.surface0,
               color: theme.colors.foreground,
             }}

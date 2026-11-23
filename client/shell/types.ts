@@ -15,6 +15,8 @@ export interface BoardTheme {
     readonly surface0: string;
     readonly surface1: string;
     readonly surface2: string;
+    readonly surfaceHover?: string;
+    readonly surfaceSelected?: string;
     readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
