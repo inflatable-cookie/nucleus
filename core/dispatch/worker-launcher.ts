@@ -105,6 +105,11 @@ export class WorkerLauncher {
       );
       return;
     }
+    // Every worker creation passes here: a first dispatch, a dead worker's
+    // redispatch, a resumed dispatch and a failover. The budget gate is the one
+    // run launches pass (Spec 068 Decision 1), read after the drain, hold and
+    // catalog refusals so a held or draining task keeps its own reason.
+    if (this.resolution.holdForSpentBudget(task)) return;
     if (!task.directory || !task.workspaceId || !task.profile)
       throw new Error("Missing workspace or route");
     task = await this.engine.ensureSiblings(task);

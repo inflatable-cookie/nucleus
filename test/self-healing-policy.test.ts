@@ -8,6 +8,7 @@ import { REPOSITORY_CONTENTION_GRACE_MS, repositoryContentionNeedsAttention } fr
 import { automaticIncidentPending } from "../core/recovery/incident";
 import { HOST_OUTAGE_HISTORY_META_KEY } from "../shared/host-outage";
 import { Store, digest } from "../core/store/store";
+import { DISPATCH_HELD_REASON } from "../core/dispatch/capacity";
 import {
   recordServiceAlive,
   recordServiceStart,
@@ -618,4 +619,48 @@ test("a wait's age leaves out host outages and service downtime, so a restart ne
     assert.equal(repositoryContentionNeedsAttention(store, store.task(leader.id), reason, at + REPOSITORY_CONTENTION_GRACE_MS), true,
       "the grace runs once both are up");
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a held task on its second spend keeps its held reason: the worker launcher's own refusals come before the budget gate", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    spentTask(f, "dispatching", 1);
+    f.store.update(f.submitted.id, {
+      agentId: null, runId: null, held: true,
+      holds: { dispatch: { owner: "Operator (Board)", reason: "Synthetic hold", at: new Date().toISOString(), generation: 1, until: null } },
+      resolution: { ...f.current().resolution, budgetLimits: null },
+    });
+    await f.engine.launchAgentOnce(f.current());
+    const held = f.current();
+    assert.equal(held.reason, DISPATCH_HELD_REASON);
+    assert.notEqual(held.resolution.stop?.reason, "budget", "the hold is the task's stop, not the budget");
+    assert.equal(f.events("budget_extended").length, 0);
+    for (let pass = 0; pass < 5; pass++) await tick();
+    assert.equal(f.asks.length, 0, "no budget question while the operator holds the task");
+  } finally { await f.close(); }
+});
+
+test("a callback reminder sent just before a long downtime keeps its grace on restart; wall time alone would escalate it", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    Object.defineProperty(f.engine.resolution, "graceMs", { value: 10 * MINUTE });
+    f.store.update(f.submitted.id, { phase: "working", completion: null, reason: "Worker running" });
+    f.idle("worker");
+    await f.engine.resolution.remindStoppedWorker(f.current());
+    assert.equal(f.events("callback_reminder").length, 1, "the one reminder went out");
+    // The reminder went out an hour ago; the service was down for 58 minutes of it.
+    const sentAt = iso(Date.now() - 60 * MINUTE);
+    f.store.db.prepare("UPDATE events SET at=? WHERE taskId=? AND kind='callback_reminder'").run(sentAt, f.submitted.id);
+    f.store.update(f.submitted.id, { resolution: { ...f.current().resolution,
+      incident: { ...f.current().resolution.incident!, updatedAt: sentAt } } });
+    f.store.setMeta(SERVICE_DOWNTIME_HISTORY_META_KEY, [{ since: iso(Date.now() - 59 * MINUTE), until: iso(Date.now() - MINUTE) }]);
+    await f.engine.resolution.remindStoppedWorker(f.current());
+    assert.equal(f.current().resolution.incident?.action, "callback_reminder", "two minutes of its ten-minute grace have run");
+    assert.doesNotMatch(f.current().reason, /reminder expired/);
+
+    // Without the downtime the same hour expires the grace.
+    f.store.setMeta(SERVICE_DOWNTIME_HISTORY_META_KEY, []);
+    await f.engine.resolution.remindStoppedWorker(f.current());
+    assert.match(f.current().reason, /callback reminder expired/);
+  } finally { await f.close(); }
 });

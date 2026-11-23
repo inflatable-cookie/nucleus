@@ -381,15 +381,18 @@ Two gaps the first run found are closed:
 - **One budget gate for every start.** Run launches and every worker creation (a
   first dispatch, a dead initial worker's redispatch, a resumed dispatch and a
   failover) pass the same gate: the first spend is extended once, and a later
-  spend records the typed `budget` stop and starts nothing. A task that never ran
-  reads nothing used, so the gate holds only a task with a recorded run.
+  spend records the typed `budget` stop and starts nothing. The worker launcher
+  reads it after its own drain, hold and catalog refusals, so a held or draining
+  task keeps its own reason and is neither extended nor asked about. A task that
+  never ran reads nothing used, so the gate holds only a task with a recorded run.
 - **Stall windows skip downtime.** A wait's age is measured as budgets measure
   time: the wall span less the task host's outages and the service's own downtime
   (`waitAgeMs`). The coordinator route reads every stall window through it: the
   mechanical stall window, the idle grace after a coordinator's reporting
   reminder, the automatic reconciliation window and the repository contention
-  grace. After a restart an ordinary wait (checks pending, say) admits no
-  coordinator.
+  grace, and the callback reminder's own grace reads it too. After a restart an
+  ordinary wait (checks pending, say) admits no coordinator, and a reminder sent
+  just before a roll does not escalate.
 
 ## Decisions
 
