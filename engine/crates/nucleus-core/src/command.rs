@@ -1,11 +1,14 @@
 use std::fmt;
 
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-use crate::decision::{Action, CloseWorkspace, Forge, Launch, Observation, Observed, decide};
+use crate::decision::{
+    Action, CloseWorkspace, Forge, Launch, Observation, Observed, RunState, decide,
+};
 use crate::model::{
-    Acceptance, Authority, Brief, CredentialDigest, Entry, Head, Hold, Phase, PreparedLaunch,
-    Question, Report, Role, Run, Task, Verdict,
+    Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, LaunchInputs,
+    OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +35,7 @@ pub enum CommandError {
     AnswerDoesNotMatch,
     OperatorRequired,
     BriefVersionsExhausted,
+    LaunchSequenceExhausted,
     LaunchNoLongerApplies,
     InvalidReportCredential,
     ReportDoesNotMatch,
@@ -46,6 +50,7 @@ impl fmt::Display for CommandError {
             Self::AnswerDoesNotMatch => "the answer does not match the current question",
             Self::OperatorRequired => "the operator must accept the head of a review entry",
             Self::BriefVersionsExhausted => "the brief version cannot be incremented",
+            Self::LaunchSequenceExhausted => "the launch sequence cannot be incremented",
             Self::LaunchNoLongerApplies => {
                 "the launch does not match the current task and observation"
             }
@@ -73,15 +78,16 @@ impl Task {
             }
             Action::Ask(question) => {
                 self.run = None;
+                if let Some(pr) = observation.pr() {
+                    self.observe_pr(pr);
+                }
                 if matches!(question, Question::Retry { .. }) {
                     self.attempts = 3;
                 }
-                if matches!(question, Question::Accept { .. }) {
-                    if let Some(pr) = observation.pr() {
-                        self.observe_pr(pr);
-                    }
-                }
-                self.question = Some(question.clone());
+                self.question = Some(OpenQuestion {
+                    head: self.pr.as_ref().map(|pr| pr.head.clone()),
+                    question: question.clone(),
+                });
             }
             Action::Launch { .. }
             | Action::Wait(_)
@@ -104,7 +110,9 @@ impl Task {
             head,
             decision,
             summary,
-        }) = run.and_then(|run| run.report)
+        }) = run
+            .filter(|run| observation.current(&run.launch.instance) == Some(RunState::Ended))
+            .and_then(|run| run.report)
         {
             if self.pr.as_ref().is_some_and(|pr| pr.head == head) {
                 self.verdict = Some(Verdict::Reviewed {
@@ -137,43 +145,66 @@ impl Task {
         }
     }
 
-    /// Reserve a run before sending it to T3. The service generates a new instance
-    /// for each reservation, even when the readable label repeats after a move.
+    /// Reserve a new run before sending it to T3. The task assigns a new instance
+    /// and derives its bearer from the supplied random seed. Keep the bearer in
+    /// the owner-only ticket. A replay reads the existing prepared launch.
     ///
     /// # Errors
-    /// Returns an error when the observation no longer calls for this launch.
+    /// Returns an error if the launch no longer applies or IDs are exhausted.
     pub fn reserve_launch(
         &mut self,
         observation: &Observation,
-        launch: PreparedLaunch,
-    ) -> Result<(), CommandError> {
-        let valid_review_head = match launch.role {
-            Role::Worker => launch.review_head.is_none(),
-            Role::Reviewer => launch.review_head.as_ref() == observation.pr().map(|pr| &pr.head),
-        };
+        inputs: LaunchInputs,
+        seed: &[u8; 32],
+    ) -> Result<CallbackCredential, CommandError> {
         let Action::Launch { role, via } = decide(self, observation) else {
             return Err(CommandError::LaunchNoLongerApplies);
         };
         let valid_thread = match via {
-            Launch::Create => self.threads.get(role) != Some(launch.thread.as_str()),
-            Launch::Continue { thread } => launch.thread == thread,
+            Launch::Create => self.threads.get(role) != Some(inputs.thread.as_str()),
+            Launch::Continue { thread } => inputs.thread == thread,
             Launch::SendPrepared => false,
         };
-        if !valid_review_head
-            || !valid_thread
-            || launch.role != role
-            || self.phase.role() != Some(role)
-            || self.threads.get(role.other()) == Some(launch.thread.as_str())
-        {
+        if !valid_thread || self.threads.get(role.other()) == Some(inputs.thread.as_str()) {
             return Err(CommandError::LaunchNoLongerApplies);
         }
-        self.threads.set(role, launch.thread.clone());
+        let sequence = self
+            .threads
+            .launch_sequence
+            .checked_add(1)
+            .ok_or(CommandError::LaunchSequenceExhausted)?;
+        let id = &self.identity.id;
+        let instance = format!("task-{id}-run-{sequence}");
+        let (phase, review_head) = match role {
+            Role::Worker => ("working", None),
+            Role::Reviewer => ("reviewing", observation.pr().map(|pr| pr.head.clone())),
+        };
+        let head = observation.pr().map_or("none", |pr| pr.head.as_str());
+        let label = format!("task-{id}-{phase}-{head}-{}", self.attempts);
+        let bearer = CallbackCredential(
+            Sha256::new()
+                .chain_update(seed)
+                .chain_update(instance.as_bytes())
+                .finalize()
+                .into(),
+        );
+        self.threads.launch_sequence = sequence;
+        self.threads.set(role, inputs.thread.clone());
         self.run = Some(Run {
-            launch,
+            launch: PreparedLaunch {
+                instance,
+                thread: inputs.thread,
+                role,
+                label,
+                started_at: inputs.started_at,
+                credential: CredentialDigest(Sha256::digest(bearer.as_bytes()).into()),
+                input: inputs.input,
+                review_head,
+            },
             report: None,
             revoked: false,
         });
-        Ok(())
+        Ok(bearer)
     }
 
     /// Keep one authenticated report until the service observes the turn settle.
@@ -185,16 +216,17 @@ impl Task {
     pub fn record_report(
         &mut self,
         instance: &str,
-        credential: &CredentialDigest,
+        credential: &[u8; 32],
         report: Report,
     ) -> Result<(), CommandError> {
+        let digest: [u8; 32] = Sha256::digest(credential).into();
         let run = self
             .run
             .as_mut()
             .filter(|run| {
                 !run.revoked
                     && run.launch.instance == instance
-                    && bool::from(run.launch.credential.0.ct_eq(&credential.0))
+                    && bool::from(run.launch.credential.0.ct_eq(&digest))
             })
             .ok_or(CommandError::InvalidReportCredential)?;
         match (&report, run.launch.role) {
@@ -278,7 +310,10 @@ impl Task {
         authority: &Authority,
         observation: &Observation,
     ) -> Result<(), CommandError> {
-        match (&self.question, answer) {
+        if observation.supersedes_question(self) {
+            return Err(CommandError::AnswerDoesNotMatch);
+        }
+        match (self.question(), answer) {
             (Some(Question::Work { .. } | Question::Repair(_)), Answer::Work(answer)) => {
                 self.amend(format!(
                     "{}\n\nPlanner guidance\n\n{answer}",
@@ -295,9 +330,7 @@ impl Task {
                 if head != pr.head {
                     return Err(CommandError::AnswerDoesNotMatch);
                 }
-                if self.identity.entry == Entry::ReviewEntry
-                    && matches!(authority, Authority::Planner { .. })
-                {
+                if !authority.can_accept(self.identity.entry) {
                     return Err(CommandError::OperatorRequired);
                 }
                 self.verdict = Some(Verdict::Accepted {

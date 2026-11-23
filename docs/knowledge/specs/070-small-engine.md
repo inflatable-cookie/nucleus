@@ -66,12 +66,12 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `id`, `reference`, `repository`, `base`, `entry` | Identity. Entry is `brief` or `review_entry`, fixed at admission. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
-| `threads` | Retained worker and reviewer thread IDs. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
+| `threads` | Retained worker and reviewer thread IDs and a monotonic launch sequence. Reuse each role's thread when it is idle. Replace its ID only after the host confirms the thread is gone. |
 | `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds immutable launch inputs and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. |
 | `attempts` | Failed launches or silent ends at the current phase and head. |
-| `question` | At most one open question to the task's planner, with its options. |
+| `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
 | `hold` | An optional operator or planner hold, with its reason. |
 
 Anything else is observed, never stored as a record that something must clear.
@@ -108,8 +108,9 @@ A pure function, `decide(task, observation) -> Action`, written as one exhaustiv
 Every action is idempotent:
 
 - Launches and sends use a deterministic label, `task-{id}-{phase}-{head}-{attempt}`.
-  Each reservation has a distinct launch instance, so revisiting the same phase
-  and head after `move` uses new native command and message IDs.
+  The task assigns each reservation a distinct launch instance and bearer. Revisiting
+  the same phase and head after `move` uses new native command and message IDs.
+  Only the current, unrevoked reservation can be replayed.
 - Before any create, the engine looks up the label. An unknown outcome is simply
   looked up on the next pass. Nothing is ever resent blindly.
 - A merge is the guarded GitHub merge at the exact head.
@@ -122,6 +123,10 @@ Every action is idempotent:
   planner.
 - **Timeouts, deferrals, unreadable state and uncertain launches** are not faults.
   The engine waits and looks again on the next pass.
+- A prepared review can send only with a fresh clean checkout at the open PR's
+  exact head. A reservation that no longer fits proceeds to reconciliation
+  without charging a failed attempt. A failed attempt counts only when the
+  required head observation is known.
 - **A task needs a person only when the question is about the work itself.**
 
 ### Commands

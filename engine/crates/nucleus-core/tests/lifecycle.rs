@@ -1,11 +1,11 @@
 use nucleus_core::{
-    Action, Answer, Authority, CheckState, CloseWorkspace, Command, CommandError, CredentialDigest,
-    Entry, Forge, Head, Host, Identity, Launch, Observation, Observed, Phase, PreparedLaunch,
-    PullRequest, Question, Repair, Report, RetainedThread, Review, Role, RunState, Task, Verdict,
-    WaitReason, Workspace, decide,
+    Action, Answer, Authority, CallbackCredential, CheckState, CloseWorkspace, Command,
+    CommandError, Entry, Forge, Head, Host, Identity, Launch, LaunchInputs, Observation, Observed,
+    Phase, PullRequest, Question, Repair, Report, RetainedThread, Review, Role, RunState, Task,
+    Verdict, WaitReason, Workspace, decide,
 };
 
-const CREDENTIAL: CredentialDigest = CredentialDigest([7; 32]);
+const SEED: [u8; 32] = [7; 32];
 
 fn sha(digit: char) -> Head {
     digit.to_string().repeat(40).parse().expect("test SHA")
@@ -82,30 +82,34 @@ fn retained(observation: Observation, thread: &str, state: RetainedThread) -> Ob
     }
 }
 
-fn start(task: &mut Task, obs: &Observation, role: Role, thread: &str, instance: &str) {
-    let review_head = match &obs.forge {
-        Observed::Known(Forge::Open { pr, .. }) if role == Role::Reviewer => Some(pr.head.clone()),
-        _ => None,
-    };
-    task.reserve_launch(
-        obs,
-        PreparedLaunch {
-            instance: instance.into(),
-            thread: thread.into(),
-            role,
-            label: "fixture-label".into(),
-            started_at: 1,
-            credential: CREDENTIAL,
-            input: "immutable wire body".into(),
-            review_head,
-        },
-    )
-    .expect("reserve launch");
+fn start(
+    task: &mut Task,
+    obs: &Observation,
+    role: Role,
+    thread: &str,
+    input: &str,
+) -> CallbackCredential {
+    let bearer = task
+        .reserve_launch(
+            obs,
+            LaunchInputs {
+                thread: thread.into(),
+                started_at: 1,
+                input: input.into(),
+            },
+            &SEED,
+        )
+        .expect("reserve launch");
+    assert_eq!(task.run().expect("bound run").launch().role, role);
+    bearer
 }
 
-fn report(task: &mut Task, value: Report) {
-    let instance = task.run().expect("bound run").launch().instance.clone();
-    task.record_report(&instance, &CREDENTIAL, value)
+fn instance(task: &Task) -> String {
+    task.run().expect("bound run").launch().instance.clone()
+}
+
+fn report(task: &mut Task, bearer: &CallbackCredential, value: Report) {
+    task.record_report(&instance(task), bearer.as_bytes(), value)
         .expect("record report");
 }
 
@@ -137,14 +141,15 @@ fn ready_for_merge() -> Task {
             via: Launch::Create
         }
     );
-    start(&mut task, &obs, Role::Worker, "worker", "work-1");
-    report(&mut task, Report::Work(pr('a')));
+    let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
+    report(&mut task, &bearer, Report::Work(pr('a')));
     let review = open('a', CheckState::Pending);
     let ended = host(&task, review.clone(), RunState::Ended);
     assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
-    start(&mut task, &review, Role::Reviewer, "reviewer", "review-1");
+    let bearer = start(&mut task, &review, Role::Reviewer, "reviewer", "review-1");
     report(
         &mut task,
+        &bearer,
         Report::Review {
             head: sha('a'),
             decision: Review::Approve,
@@ -276,7 +281,7 @@ fn a_replaced_head_never_inherits_approval_and_keeps_the_reviewer() {
 #[test]
 fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() {
     let mut task = task(Entry::ReviewEntry);
-    start(
+    let bearer = start(
         &mut task,
         &open('a', CheckState::Ready),
         Role::Reviewer,
@@ -285,6 +290,7 @@ fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() 
     );
     report(
         &mut task,
+        &bearer,
         Report::Review {
             head: sha('a'),
             decision: Review::Approve,
@@ -305,14 +311,15 @@ fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() 
 #[test]
 fn changes_continue_the_worker_and_require_a_new_head() {
     let (mut task, obs) = working();
-    start(&mut task, &obs, Role::Worker, "worker", "work-1");
-    report(&mut task, Report::Work(pr('a')));
+    let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
+    report(&mut task, &bearer, Report::Work(pr('a')));
     let review = open('a', CheckState::Ready);
     let ended = host(&task, review.clone(), RunState::Ended);
     task.reconcile(&ended);
-    start(&mut task, &review, Role::Reviewer, "reviewer", "review-1");
+    let bearer = start(&mut task, &review, Role::Reviewer, "reviewer", "review-1");
     report(
         &mut task,
+        &bearer,
         Report::Review {
             head: sha('a'),
             decision: Review::Changes,
@@ -331,8 +338,8 @@ fn changes_continue_the_worker_and_require_a_new_head() {
             }
         }
     );
-    start(&mut task, &worker, Role::Worker, "worker", "work-2");
-    report(&mut task, Report::Work(pr('a')));
+    let bearer = start(&mut task, &worker, Role::Worker, "worker", "work-2");
+    report(&mut task, &bearer, Report::Work(pr('a')));
     let ended = host(&task, review, RunState::Ended);
     assert_eq!(
         task.reconcile(&ended),
@@ -357,7 +364,10 @@ fn uncertain_or_blocked_host_observations_do_not_spend_attempts() {
             via: Launch::SendPrepared
         }
     );
-    assert_eq!(task.run().expect("reserved").launch().instance, "work-1");
+    assert_eq!(
+        task.run().expect("reserved").launch().instance,
+        "task-task-1-run-1"
+    );
     for (state, reason) in [
         (RunState::Starting, WaitReason::Starting),
         (RunState::Running, WaitReason::Running),
@@ -421,13 +431,14 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
         let failed = host(&task, obs.clone(), RunState::Ended);
         task.reconcile(&failed);
         let idle = retained(obs.clone(), "worker", RetainedThread::Idle);
-        start(&mut task, &idle, Role::Worker, "worker", "work-2");
+        let bearer = start(&mut task, &idle, Role::Worker, "worker", "work-2");
+        let old_instance = instance(&task);
         task.command(command, &planner(), &obs).expect("revoke");
         assert_eq!(task.phase(), phase);
         assert_eq!(task.attempts(), 0);
         assert!(task.run().expect("still bound").revoked());
         assert_eq!(
-            task.record_report("work-2", &CREDENTIAL, Report::Work(pr('a'))),
+            task.record_report(&old_instance, bearer.as_bytes(), Report::Work(pr('a'))),
             Err(CommandError::InvalidReportCredential)
         );
         assert_eq!(task.reconcile(&obs), Action::Wait(WaitReason::Stopping));
@@ -442,7 +453,10 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
             assert_eq!(decide(&task, &ended), Action::Nothing);
         } else {
             start(&mut task, &idle, Role::Worker, "worker", "work-3");
-            assert_eq!(task.run().expect("fresh run").launch().instance, "work-3");
+            assert_eq!(
+                task.run().expect("fresh run").launch().instance,
+                "task-task-1-run-3"
+            );
         }
     }
 }
@@ -521,16 +535,16 @@ fn an_authenticated_question_updates_the_brief_and_a_hold_survives_amendment() {
     assert_eq!(decide(&task, &obs), Action::Wait(WaitReason::Hold));
     task.command(Command::Release, &planner(), &obs)
         .expect("release");
-    start(&mut task, &obs, Role::Worker, "worker", "work-1");
+    let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
     let question = Report::Question {
         prompt: "Which spelling?".into(),
         options: vec!["UK".into(), "US".into()],
     };
     let prior_digest = task.brief().digest;
-    report(&mut task, question.clone());
-    report(&mut task, question);
+    report(&mut task, &bearer, question.clone());
+    report(&mut task, &bearer, question);
     assert_eq!(
-        task.record_report("work-1", &CREDENTIAL, Report::Work(pr('a'))),
+        task.record_report(&instance(&task), bearer.as_bytes(), Report::Work(pr('a'))),
         Err(CommandError::ReportAlreadyReceived)
     );
     let ended = host(&task, obs, RunState::Ended);
@@ -594,18 +608,18 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         decide(&task, &closed),
         Action::Ask(Question::Repair(Repair::PullRequestUnavailable))
     );
-    start(&mut task, &open, Role::Reviewer, "reviewer", "review-1");
+    let bearer = start(&mut task, &open, Role::Reviewer, "reviewer", "review-1");
     let report = Report::Review {
         head: sha('b'),
         decision: Review::Approve,
         summary: "Wrong head".into(),
     };
     assert_eq!(
-        task.record_report("review-1", &CredentialDigest([0; 32]), report.clone()),
+        task.record_report(&instance(&task), &[0; 32], report.clone()),
         Err(CommandError::InvalidReportCredential)
     );
     assert_eq!(
-        task.record_report("review-1", &CREDENTIAL, report),
+        task.record_report(&instance(&task), bearer.as_bytes(), report),
         Err(CommandError::ReportDoesNotMatch)
     );
     let prepare = host(&task, open.clone(), RunState::ReadyToSend);
@@ -624,4 +638,195 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         decide(&task, &unavailable),
         Action::Wait(WaitReason::ForgeUnknown)
     );
+}
+
+#[test]
+fn restoring_a_review_entry_rejects_planner_acceptance() {
+    let (mut task, _) = working();
+    let forge = merged('a', Workspace::Dirty);
+    task.reconcile(&forge);
+    task.command(
+        Command::Answer(Answer::Accept {
+            head: sha('a'),
+            reason: "checked the work".into(),
+        }),
+        &planner(),
+        &forge,
+    )
+    .expect("brief entry permits planner acceptance");
+    let mut saved = serde_json::to_value(&task).expect("encode routine state");
+    assert_eq!(
+        serde_json::from_value::<Task>(saved.clone()).expect("restore routine state"),
+        task
+    );
+    saved["identity"]["entry"] = serde_json::json!("review_entry");
+    assert!(serde_json::from_value::<Task>(saved).is_err());
+}
+
+#[test]
+fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions() {
+    let mut task = task(Entry::ReviewEntry);
+    let old_head = open('a', CheckState::Ready);
+    let idle = retained(old_head.clone(), "reviewer", RetainedThread::Idle);
+    start(
+        &mut task,
+        &old_head,
+        Role::Reviewer,
+        "reviewer",
+        "first review",
+    );
+    for _ in 0..2 {
+        let ended = host(&task, old_head.clone(), RunState::Ended);
+        assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Reviewer));
+        start(&mut task, &idle, Role::Reviewer, "reviewer", "retry review");
+    }
+
+    let outage = host(&task, observation(), RunState::Ended);
+    assert_eq!(
+        task.reconcile(&outage),
+        Action::Wait(WaitReason::ForgeUnknown)
+    );
+    assert_eq!(task.attempts(), 2);
+    assert_eq!(task.question(), None);
+
+    let new_head = open('b', CheckState::Ready);
+    let mut recovered = task.clone();
+    let ended_at_new_head = host(&recovered, new_head.clone(), RunState::Ended);
+    assert_eq!(
+        recovered.reconcile(&ended_at_new_head),
+        Action::Advance(Phase::Reviewing)
+    );
+    assert_eq!(recovered.attempts(), 0);
+    assert_eq!(recovered.question(), None);
+
+    let ended_at_old_head = host(&task, old_head, RunState::Ended);
+    assert_eq!(
+        task.reconcile(&ended_at_old_head),
+        Action::Ask(Question::Retry {
+            role: Role::Reviewer
+        })
+    );
+    assert_eq!(task.attempts(), 3);
+    assert_eq!(
+        task.command(Command::Answer(Answer::Retry), &planner(), &new_head),
+        Err(CommandError::AnswerDoesNotMatch)
+    );
+    assert_eq!(task.reconcile(&new_head), Action::Advance(Phase::Reviewing));
+    assert_eq!(task.attempts(), 0);
+    assert_eq!(task.question(), None);
+}
+
+#[test]
+fn a_prepared_review_rechecks_the_pr_and_worktree_without_charging_a_failure() {
+    let mut task = task(Entry::ReviewEntry);
+    let current = open('a', CheckState::Ready);
+    start(
+        &mut task,
+        &current,
+        Role::Reviewer,
+        "reviewer",
+        "prepared review",
+    );
+    let unknown_workspace = Observation {
+        workspace: Observed::Unknown,
+        ..current.clone()
+    };
+    let unknown = host(&task, unknown_workspace, RunState::ReadyToSend);
+    assert_eq!(
+        task.reconcile(&unknown),
+        Action::Wait(WaitReason::WorkspaceUnknown)
+    );
+    assert!(task.run().is_some());
+
+    let wrong_head = Observation {
+        workspace: Observed::Known(Workspace::Clean(sha('b'))),
+        ..current.clone()
+    };
+    let dirty = Observation {
+        workspace: Observed::Known(Workspace::Dirty),
+        ..current.clone()
+    };
+    let closed = Observation {
+        forge: Observed::Known(Forge::Closed(pr('a'))),
+        ..current
+    };
+    for invalid in [wrong_head, dirty, closed, open('b', CheckState::Ready)] {
+        let mut task = task.clone();
+        let ready = host(&task, invalid, RunState::ReadyToSend);
+        assert_eq!(task.reconcile(&ready), Action::Advance(Phase::Reviewing));
+        assert!(task.run().is_none());
+        assert_eq!(task.attempts(), 0);
+        assert_eq!(task.question(), None);
+    }
+}
+
+#[test]
+fn a_reservation_after_move_cannot_restore_the_old_bearer() {
+    let (mut task, obs) = working();
+    let original = start(&mut task, &obs, Role::Worker, "worker", "same wire inputs");
+    let prepared = task.run().expect("bound").launch().clone();
+    let ready = host(&task, obs.clone(), RunState::ReadyToSend);
+    assert_eq!(
+        task.reconcile(&ready),
+        Action::Launch {
+            role: Role::Worker,
+            via: Launch::SendPrepared
+        }
+    );
+    assert_eq!(task.run().expect("still bound").launch(), &prepared);
+    task.command(Command::Move(Phase::Working), &planner(), &obs)
+        .expect("move");
+    let ended = host(&task, obs.clone(), RunState::Ended);
+    task.reconcile(&ended);
+    let saved = serde_json::to_string(&task).expect("encode");
+    let mut task: Task = serde_json::from_str(&saved).expect("restore counter");
+
+    let idle = retained(obs, "worker", RetainedThread::Idle);
+    let fresh = start(&mut task, &idle, Role::Worker, "worker", "same wire inputs");
+    let current = instance(&task);
+    assert_eq!(task.run().expect("bound").launch().label, prepared.label);
+    assert_ne!(current, prepared.instance);
+    assert_ne!(fresh.as_bytes(), original.as_bytes());
+    for supplied in [&prepared.instance, &current] {
+        assert_eq!(
+            task.record_report(supplied, original.as_bytes(), Report::Work(pr('a'))),
+            Err(CommandError::InvalidReportCredential)
+        );
+    }
+    report(&mut task, &fresh, Report::Work(pr('a')));
+}
+
+#[test]
+fn a_settled_reviewer_report_survives_forge_outage_and_applies_to_a_fresh_merge() {
+    let mut task = task(Entry::ReviewEntry);
+    let bearer = start(
+        &mut task,
+        &open('a', CheckState::Ready),
+        Role::Reviewer,
+        "reviewer",
+        "review",
+    );
+    report(
+        &mut task,
+        &bearer,
+        Report::Review {
+            head: sha('a'),
+            decision: Review::Approve,
+            summary: "Reviewed".into(),
+        },
+    );
+    let timeout = host(&task, observation(), RunState::Ended);
+    assert_eq!(
+        task.reconcile(&timeout),
+        Action::Wait(WaitReason::ForgeUnknown)
+    );
+    assert_eq!(task.attempts(), 0);
+    assert!(task.run().expect("waiting for forge").report().is_some());
+
+    let merged = host(&task, merged('a', Workspace::Absent), RunState::Ended);
+    assert_eq!(task.reconcile(&merged), Action::Advance(Phase::Closing));
+    assert!(
+        matches!(task.verdict(), Some(Verdict::Reviewed { head, decision: Review::Approve, .. }) if *head == sha('a'))
+    );
+    assert!(task.finish_close(&merged));
 }

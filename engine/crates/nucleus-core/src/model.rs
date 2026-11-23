@@ -156,6 +156,15 @@ pub enum Authority {
     Operator { actor: String },
 }
 
+impl Authority {
+    pub(crate) const fn can_accept(&self, entry: Entry) -> bool {
+        matches!(
+            (self, entry),
+            (Self::Operator { .. }, _) | (Self::Planner { .. }, Entry::Brief)
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Acceptance {
     pub authority: Authority,
@@ -177,14 +186,16 @@ pub enum Verdict {
 }
 
 impl Verdict {
-    pub(crate) fn approves(&self, target: &Head) -> bool {
+    pub(crate) fn approves(&self, entry: Entry, target: &Head) -> bool {
         match self {
             Self::Reviewed {
                 head,
                 decision: Review::Approve,
                 ..
+            } => head == target,
+            Self::Accepted { head, acceptance } => {
+                head == target && acceptance.authority.can_accept(entry)
             }
-            | Self::Accepted { head, .. } => head == target,
             Self::Reviewed {
                 decision: Review::Changes,
                 ..
@@ -207,6 +218,18 @@ pub enum Question {
         head: Head,
     },
     Repair(Repair),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OpenQuestion {
+    pub(crate) head: Option<Head>,
+    pub(crate) question: Question,
+}
+
+impl OpenQuestion {
+    pub(crate) fn outdated_at(&self, head: &Head) -> bool {
+        self.head.as_ref() != Some(head)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,11 +264,44 @@ pub enum Report {
 
 /// Only the digest of the bearer is stored. Its debug form is safe for diagnostics.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CredentialDigest(pub [u8; 32]);
+pub(crate) struct CredentialDigest(pub(crate) [u8; 32]);
 
 impl fmt::Debug for CredentialDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CredentialDigest([redacted])")
+    }
+}
+
+/// Inputs for forming a new reservation. The task assigns its own identity.
+#[derive(Clone)]
+pub struct LaunchInputs {
+    pub thread: String,
+    pub started_at: u64,
+    pub input: String,
+}
+
+impl fmt::Debug for LaunchInputs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LaunchInputs")
+            .field("thread", &self.thread)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Returned once when a run is reserved. The caller prepares the owner-only ticket.
+pub struct CallbackCredential(pub(crate) [u8; 32]);
+
+impl CallbackCredential {
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CallbackCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CallbackCredential([redacted])")
     }
 }
 
@@ -257,7 +313,7 @@ pub struct PreparedLaunch {
     pub role: Role,
     pub label: String,
     pub started_at: u64,
-    pub credential: CredentialDigest,
+    pub(crate) credential: CredentialDigest,
     pub input: String,
     pub review_head: Option<Head>,
 }
@@ -303,6 +359,7 @@ impl Run {
 pub struct Threads {
     pub(crate) worker: Option<String>,
     pub(crate) reviewer: Option<String>,
+    pub(crate) launch_sequence: u64,
 }
 
 impl Threads {
@@ -323,6 +380,7 @@ impl Threads {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "StoredTask")]
 pub struct Task {
     pub(crate) identity: Identity,
     pub(crate) brief: Brief,
@@ -332,8 +390,61 @@ pub struct Task {
     pub(crate) pr: Option<PullRequest>,
     pub(crate) verdict: Option<Verdict>,
     pub(crate) attempts: u8,
-    pub(crate) question: Option<Question>,
+    pub(crate) question: Option<OpenQuestion>,
     pub(crate) hold: Option<Hold>,
+}
+
+#[derive(Deserialize)]
+struct StoredTask {
+    identity: Identity,
+    brief: Brief,
+    phase: Phase,
+    threads: Threads,
+    run: Option<Run>,
+    pr: Option<PullRequest>,
+    verdict: Option<Verdict>,
+    attempts: u8,
+    question: Option<OpenQuestion>,
+    hold: Option<Hold>,
+}
+
+impl TryFrom<StoredTask> for Task {
+    type Error = &'static str;
+
+    fn try_from(stored: StoredTask) -> Result<Self, Self::Error> {
+        if matches!(&stored.verdict, Some(Verdict::Accepted { acceptance, .. }) if !acceptance.authority.can_accept(stored.identity.entry))
+        {
+            return Err("stored acceptance is not authorized for this task entry");
+        }
+        if stored.attempts > 3 {
+            return Err("stored attempt count exceeds the retry limit");
+        }
+        if stored.run.as_ref().is_some_and(|run| {
+            let role = run.launch.role;
+            (!run.revoked && stored.phase.role() != Some(role))
+                || (role == Role::Reviewer) != run.launch.review_head.is_some()
+                || stored.threads.get(role) != Some(run.launch.thread.as_str())
+                || run.launch.instance
+                    != format!(
+                        "task-{}-run-{}",
+                        stored.identity.id, stored.threads.launch_sequence
+                    )
+        }) {
+            return Err("stored run does not match its task reservation");
+        }
+        Ok(Self {
+            identity: stored.identity,
+            brief: stored.brief,
+            phase: stored.phase,
+            threads: stored.threads,
+            run: stored.run,
+            pr: stored.pr,
+            verdict: stored.verdict,
+            attempts: stored.attempts,
+            question: stored.question,
+            hold: stored.hold,
+        })
+    }
 }
 
 impl Task {
@@ -398,8 +509,8 @@ impl Task {
     }
 
     #[must_use]
-    pub const fn question(&self) -> Option<&Question> {
-        self.question.as_ref()
+    pub fn question(&self) -> Option<&Question> {
+        self.question.as_ref().map(|open| &open.question)
     }
 
     #[must_use]
@@ -410,15 +521,19 @@ impl Task {
     pub(crate) fn approves(&self, head: &Head) -> bool {
         self.verdict
             .as_ref()
-            .is_some_and(|verdict| verdict.approves(head))
+            .is_some_and(|verdict| verdict.approves(self.identity.entry, head))
     }
 
     pub(crate) fn observe_pr(&mut self, pr: &PullRequest) {
+        if self
+            .question
+            .as_ref()
+            .is_some_and(|open| open.outdated_at(&pr.head))
+        {
+            self.question = None;
+        }
         if self.pr.as_ref() != Some(pr) {
             self.attempts = 0;
-            if matches!(&self.question, Some(Question::Accept { head }) if &pr.head != head) {
-                self.question = None;
-            }
             self.pr = Some(pr.clone());
         }
     }

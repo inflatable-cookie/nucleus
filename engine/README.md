@@ -152,10 +152,12 @@ apply to manual commands.
   provider and model. Pre-register the single fixture project for milestone 1.
 - `orchestration.launchThread` takes explicit command, thread and initial-message
   IDs and `existing_worktree`. Bind the run and immutable launch inputs before
-  sending. Derive the IDs from its persisted launch identity. Before any send,
+  sending. The task assigns a monotonic launch instance and derives a fresh
+  bearer from it. Derive native IDs from the persisted instance. Before any send,
   read that exact native thread. Adopt a matching thread that already exists.
   Retry the same request after proven absence and when the earlier write can no
-  longer land. Keep an unreadable or in-flight request unknown.
+  longer land. Keep an unreadable or in-flight request unknown. Before sending a
+  prepared review, re-read the open PR and clean checkout at the exact head.
 - `orchestration.subscribeThread` with `requestCompletionMarker` and
   `acceptBoundedSnapshot` supplies the run, pending input and terminal state.
   Require exact thread identity and a complete observation. Use one shared

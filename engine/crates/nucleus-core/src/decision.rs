@@ -29,22 +29,29 @@ pub enum Host {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetainedThread {
+    /// A complete observation of the exact thread shows no active or pending turn.
     Idle,
     Busy,
+    /// Host-authoritative absence or a tombstone for the exact thread ID.
     Gone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunState {
-    /// An authoritative lookup permits the reserved request to be sent.
+    /// The native receipt and exact thread/message lookup allow the same request
+    /// to be sent. An earlier possible write cannot still land.
     ReadyToSend,
     Starting,
     Running,
     IdleWithoutTerminalRun,
     Permission,
     Input,
+    /// The exact native turn associated with this reservation is terminal.
     Ended,
+    /// A previously confirmed run or thread disappeared on an authoritative read.
     Gone,
+    /// A checked receipt or a proven pre-send failure confirms that the exact
+    /// reservation failed. Timeouts, deferrals and ambiguous errors are unknown.
     Rejected,
 }
 
@@ -84,8 +91,12 @@ pub enum CheckState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Workspace {
+    /// The expected task checkout is definitively absent.
     Absent,
     Dirty,
+    /// Fresh Git evidence from the owned checkout binds its current head and
+    /// confirms no staged, modified, conflicted or untracked files. The adapter
+    /// rechecks this immediately before any unforced removal.
     Clean(Head),
 }
 
@@ -144,6 +155,7 @@ enum Signal {
     Finished,
     Wait(WaitReason),
     Stopped(Phase),
+    ReservationDiscarded(Phase),
     HeadChanged(Phase),
     Admitted,
     Start(Role, Launch),
@@ -163,7 +175,9 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
     match signal(task, observation) {
         Signal::Finished => Action::Nothing,
         Signal::Wait(reason) => Action::Wait(reason),
-        Signal::Stopped(phase) | Signal::HeadChanged(phase) => Action::Advance(phase),
+        Signal::Stopped(phase)
+        | Signal::HeadChanged(phase)
+        | Signal::ReservationDiscarded(phase) => Action::Advance(phase),
         Signal::Admitted | Signal::ReviewerReported(Review::Changes) => {
             Action::Advance(Phase::Working)
         }
@@ -189,8 +203,7 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     if task.phase.is_terminal() {
         return Signal::Finished;
     }
-    if matches!(&task.question, Some(Question::Accept { head }) if observation.pr().is_some_and(|pr| pr.head != *head))
-    {
+    if observation.supersedes_question(task) {
         return Signal::HeadChanged(task.phase);
     }
     if task.hold.is_some() {
@@ -203,14 +216,9 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
         let role = run.launch.role;
         return match observation.current(&run.launch.instance) {
             None => Signal::Wait(WaitReason::HostUnknown),
-            Some(RunState::ReadyToSend) => match (&run.launch.review_head, &observation.forge) {
-                (Some(_), Observed::Unknown) => Signal::Wait(WaitReason::ForgeUnknown),
-                (Some(head), Observed::Known(Forge::Open { pr, .. })) if *head == pr.head => {
-                    Signal::Start(role, Launch::SendPrepared)
-                }
-                (Some(_), Observed::Known(_)) => settled(task, observation, role, None),
-                (None, _) => Signal::Start(role, Launch::SendPrepared),
-            },
+            Some(RunState::ReadyToSend) => {
+                prepared(observation, role, run.launch.review_head.as_ref())
+            }
             Some(RunState::Starting) => Signal::Wait(WaitReason::Starting),
             Some(RunState::Running) => Signal::Wait(WaitReason::Running),
             Some(RunState::IdleWithoutTerminalRun) => {
@@ -225,7 +233,30 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     unbound(task, observation)
 }
 
+fn prepared(observation: &Observation, role: Role, review_head: Option<&Head>) -> Signal {
+    let Some(head) = review_head else {
+        return Signal::Start(role, Launch::SendPrepared);
+    };
+    match (&observation.forge, &observation.workspace) {
+        (Observed::Unknown, _) => Signal::Wait(WaitReason::ForgeUnknown),
+        (Observed::Known(Forge::Open { pr, .. }), workspace) if pr.head == *head => match workspace
+        {
+            Observed::Unknown => Signal::Wait(WaitReason::WorkspaceUnknown),
+            Observed::Known(Workspace::Clean(observed)) if observed == head => {
+                Signal::Start(role, Launch::SendPrepared)
+            }
+            Observed::Known(_) => Signal::ReservationDiscarded(Phase::Reviewing),
+        },
+        (Observed::Known(_), _) => Signal::ReservationDiscarded(Phase::Reviewing),
+    }
+}
+
 fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&Report>) -> Signal {
+    if matches!(observation.forge, Observed::Unknown)
+        && (role == Role::Reviewer || task.pr.is_some() || matches!(report, Some(Report::Work(_))))
+    {
+        return Signal::Wait(WaitReason::ForgeUnknown);
+    }
     if let Observed::Known(Forge::Merged { pr, .. }) = &observation.forge {
         let reported_approval = matches!(report, Some(Report::Review { head, decision: Review::Approve, .. }) if *head == pr.head);
         return merged_signal(task, pr, reported_approval);
@@ -392,6 +423,10 @@ fn launch(task: &Task, observation: &Observation, role: Role) -> Signal {
 }
 
 impl Observation {
+    pub(crate) fn supersedes_question(&self, task: &Task) -> bool {
+        matches!((&task.question, self.pr()), (Some(question), Some(pr)) if question.outdated_at(&pr.head))
+    }
+
     pub(crate) fn current(&self, expected: &str) -> Option<RunState> {
         match &self.host {
             Observed::Known(Host::Current { instance, state }) if instance == expected => {
