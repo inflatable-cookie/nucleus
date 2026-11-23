@@ -69,6 +69,10 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
    - Host calls have a fixed concurrency cap per host. An unavailable host backs off to a due time and is never retried in a loop.
    - Views update by push (task and version invalidations), never by polling. Nothing a viewer does causes a host call.
+12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
+   - Plans, lanes and lane documents, decisions and the idea and issue records move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
+   - Leads and papercuts become one record kind with a type: `idea` or `issue`. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board.
+   - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
 
 ## The model
 
@@ -225,7 +229,7 @@ Cargo builds" rule for the `engine/` workspace only:
 2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
    to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
-   takes no new work.
+   takes no new work. Planning records move into the new service (ruling 12).
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
    skill and the contracts are rewritten for the new commands.
 
@@ -233,7 +237,7 @@ A task never moves between engines.
 
 ## Out of scope until milestone 3
 
-- Papercuts, leads, decisions, plans and milestone QA records keep their current
-  store and CLI. The engine reads leads only to admit a promoted task.
+- Papercuts, leads, decisions and plans keep their current store and CLI until they
+  move in (ruling 12). Until then the engine reads leads only to admit a promoted task.
 - Usage levels, model selection and budgets carry over as plain settings, not as new
   state. They're part of milestone 2's settings (ruling 8).
