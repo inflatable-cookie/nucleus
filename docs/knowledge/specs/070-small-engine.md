@@ -53,7 +53,8 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    primitives, and its components are reshaped to the new model. Components that
    exist only for the old machinery are deleted. T3 is called directly over its RPC.
 5. **T3 is the only host.** BB and Paseo are dropped, not ported (Tom, 2026-11-23: "Regarding BB and Paseo - I wouldn't be upset if we drop them. I like T3, the workflow can work well.. I'd be tempted to not bother with those two. If I was going to support more ADEs, I would look at something like Zeron, which would get a similar integration to T3."). The host trait stays, so a future ADE gets an adapter shaped like T3's.
-6. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
+6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3.
+7. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
 
@@ -170,7 +171,8 @@ A Cargo workspace inside this repository, at `engine/`:
 | `nucleus-hosts` | The host trait and the T3 adapter. No BB or Paseo adapters (ruling 5). |
 | `nucleus-forge` | GitHub: the PR, checks, merge at the exact head, and reviews. |
 | `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
-| `nucleus-service` | The pass loop, the JSON API for the board, and callbacks. |
+| `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands. A thin client of the service (ruling 6). |
+| `nucleus-service` | The pass loop, the JSON API for the board and the ACP agent, and callbacks. |
 | `nucleus-cli` | The `nucleus` command. |
 
 Reuse, to be confirmed by the build when it reads their contracts:
@@ -209,7 +211,7 @@ Cargo builds" rule for the `engine/` workspace only:
    For this proof the engine uses standalone role threads and its default worktree
    allocator.
 2. **Milestone 2:** the board reads the new engine's API. New tasks for one project go
-   to the new engine. T3 must show one row per task before the first real project.
+   to the new engine. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
 3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
    takes no new work.
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
