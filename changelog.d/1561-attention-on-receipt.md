@@ -1,0 +1,1 @@
+Authenticated blockers now appear on the board and open the next planner-ladder step as soon as Nucleus accepts them. Recovery deadlines wake the affected task directly, and an expired task quantum leaves the task waiting for Nucleus to retry.

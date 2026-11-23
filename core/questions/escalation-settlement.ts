@@ -17,10 +17,12 @@ import {
   extractFirstIsoTimestamp,
   extractTaskReferenceCandidates,
   plannerEscalations,
+  reviewerConsults,
   type EscalationVerbChoice,
   type LadderEvent,
 } from "./ladder";
 import { closeEscalationFollowups } from "./ladder/continuation";
+import { waitForBlockerSettlement } from "./ladder/park";
 import {
   HostReadRefusalError,
   ProvenPreSendRefusalError,
@@ -186,6 +188,60 @@ export class EscalationSettlement {
     Promise<string | null>
   >();
   constructor(readonly resolution: Resolution) {}
+  /** A valid forward correction withdraws the wait opened by that run's blocker. */
+  retireCorrectedBlocker(t: Task, runId: string): void {
+    const events = this.store.eventsAll(t.id);
+    const correction = events.findLast(
+      (event) => event.kind === "run_completion_corrected",
+    );
+    if (!correction) return;
+    const belongsToReceipt = (rung: { runId: string | null; cause: string }) =>
+      rung.runId === runId &&
+      events.some(
+        (event) =>
+          event.id < correction.id &&
+          event.kind === "blocker_ladder_classified" &&
+          event.detail.endsWith(`: ${rung.cause}`),
+      );
+    const escalations = plannerEscalations(events).filter(
+      (item) => !item.answered && belongsToReceipt(item),
+    );
+    const consults = reviewerConsults(events).filter(
+      (item) => !item.answered && !item.unknown && belongsToReceipt(item),
+    );
+    if (!escalations.length && !consults.length) return;
+
+    const detail = "Authenticated result corrected the blocker";
+    this.store.transaction(() => {
+      for (const item of escalations) {
+        this.store.event(
+          t.id,
+          "planner_escalation_resolved",
+          `${item.id}: ${detail}`,
+        );
+        retireEscalationSurfaces(this.store, t.id, item.id, detail, {
+          withdrawDecision: true,
+        });
+      }
+      for (const item of consults)
+        this.store.event(
+          t.id,
+          "reviewer_consult_missed",
+          `${item.id}: ${detail}`,
+        );
+      const current = this.store.task(t.id);
+      if (
+        consults.some(
+          (item) => current.resolution.stop?.fact?.subject === item.id,
+        )
+      )
+        this.resolution.update(
+          current,
+          { stop: null },
+          { reason: "Corrected result received; waiting for run release" },
+        );
+    });
+  }
   get store() {
     return this.resolution.store;
   }
@@ -366,6 +422,9 @@ export class EscalationSettlement {
     answerer: Answerer,
   ): Promise<string | null> {
     const delegatedAnswer = answerer.role !== "operator";
+    await waitForBlockerSettlement(this.resolution.ladder, t.id, id);
+    if (this.resolution.stopped())
+      return "Nucleus stopped before applying the answer";
     closeTerminalEscalations(this.store, this.store.task(t.id));
     if (
       plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(
