@@ -689,6 +689,14 @@ export class CoordinatorRoute {
         ? current
         : null;
     };
+    const standDown = () => {
+      this.store.event(
+        t.id,
+        "recovery_superseded",
+        "The recovery episode changed before its coordinator run was recorded",
+      );
+      return null;
+    };
     try {
       // Existing closeout without a callback: preserve its run and MCP binding.
       const owed = this.store
@@ -735,10 +743,10 @@ export class CoordinatorRoute {
         (!mechanicalStallDue &&
           !stalledTurnDue &&
           !(await this.resolution.lease(t))) ||
-        this.resolution.startsNoRuns() ||
-        !currentContinuation()
+        this.resolution.startsNoRuns()
       )
         return null;
+      if (!currentContinuation()) return standDown();
       let agentId = t.coordinatorAgentId || null,
         workspaceId = t.resolution.coordinatorWorkspaceId ?? t.workspaceId,
         profile =
@@ -1032,14 +1040,7 @@ export class CoordinatorRoute {
         if (group)
           this.store.chargeAssignment(group, profile!.id, "coordinator");
       });
-      if (superseded) {
-        this.store.event(
-          t.id,
-          "recovery_superseded",
-          "An operator control replaced this recovery before its coordinator run was recorded",
-        );
-        return null;
-      }
+      if (superseded) return standDown();
       if (heldForDispatch) return null;
       if (waitingForCapacity) return null;
       const reserved = this.store.run(run.id);
