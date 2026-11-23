@@ -2,7 +2,7 @@ import type { Decision, DecisionView, Task } from '../../../shared/contracts';
 import { clipDecisionQuestion, isOperatorOrigin, taskOwner, taskPlanner } from '../../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../../shared/lanes';
 import { Decisions } from '../../planning/decisions';
-import { establishEscalationWait } from './hold';
+import { establishEscalationWait, matchesEscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { plannerEscalationSuggestedVerbs } from './proof';
 import { plannerEscalations, type LadderEvent } from './records';
@@ -96,18 +96,13 @@ export function operatorDecisionApplied(ladder: Ladder, taskId: string, id: stri
   if (!linked || !decisionId) return false;
   if (events.some(event => event.kind === 'planner_escalation_returned' && event.id > linked.id && event.detail.startsWith(`${id}:`)))
     return false;
-  const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`) && event.id > linked.id
-    && !events.some(superseded => superseded.kind === 'planner_escalation_wait_superseded' && superseded.id > event.id && superseded.detail.startsWith(`${id}:`))
-    && (() => {
-      try {
-        const wait = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string };
-        return wait.kind === 'decision' && wait.target === decisionId && wait.stopDetail === escalationWaitDetail.operator(id, decisionId);
-      } catch { return false; }
-    })());
-  if (!waitEvent) return false;
+  const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
+  if (!waitEvent || waitEvent.id <= linked.id || events.some(event => event.kind === 'planner_escalation_wait_superseded' && event.id > waitEvent.id && event.detail.startsWith(`${id}:`))) return false;
   const stop = ladder.store.task(taskId).resolution.stop;
-  if (stop?.reason !== 'escalated' || stop.fact?.subject !== id) return false;
+  if (!matchesEscalationWait(stop, id, { kind: 'decision', target: decisionId })) return false;
   try {
+    const wait: { kind?: string; target?: string } = JSON.parse(waitEvent.detail.slice(id.length + 2));
+    if (wait.kind !== 'decision' || wait.target !== decisionId) return false;
     const stored = ladder.store.decision(decisionId);
     if (stored.status === 'withdrawn' || isPlaceholderDecisionRecord(stored)) return false;
     return stored.links.tasks.includes(taskId);

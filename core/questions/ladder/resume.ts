@@ -6,7 +6,7 @@ import { threadRunningReason } from '../../intake/thread-waits';
 import { liveWorkingParticipant, type LiveParticipant } from '../../recovery/live-noop';
 import { collectOwnerVerbFacts, ownerVerbViews, restartShape } from '../../verbs/owner-verbs';
 import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
-import { escalationWaitState, establishEscalationWait, type EscalationWait } from './hold';
+import { escalationWaitState, establishEscalationWait, matchesEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
 import { reconcileLegacyPlaceholderDecisions } from './operator';
@@ -185,8 +185,9 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
 export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise<void> {
   reconcileLegacyPlaceholderDecisions(ladder, task);
   const events = ladder.store.eventsAll(task.id);
-  for (const event of events.filter(item => item.kind === 'planner_escalation_wait')) {
-    const id = event.detail.split(':', 1)[0]!;
+  const waits = new Map(events.filter(item => item.kind === 'planner_escalation_wait')
+    .map(event => [event.detail.slice(0, event.detail.indexOf(':')), event]));
+  for (const [id, event] of waits) {
     if (events.some(item => item.kind === 'planner_escalation_wait_superseded' && item.id > event.id && item.detail.startsWith(`${id}:`))) continue;
     const intent = events.some(item => item.kind === 'planner_escalation_wake_intent' && item.detail.startsWith(`${id}:`));
     if (intent) {
@@ -215,10 +216,10 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
       continue;
     }
     if (wait.kind !== 'task') {
-      const waitControl: EscalationWait = { kind: wait.kind as 'time' | 'decision', target: wait.target,
+      const waitControl: EscalationWait = { kind: wait.kind, target: wait.target,
         stopDetail: wait.stopDetail, stopReason: wait.stopReason };
-      const expected = escalationWaitState(id, waitControl);
-      if (current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
+      const stop = current.resolution.stop;
+      if (!matchesEscalationWait(stop, id, waitControl)) {
         const pending = events.findLast(item => item.kind === 'planner_escalation_answer_pending' && item.detail.startsWith(`${id}:`)
           && item.id < event.id && (() => {
             try {
@@ -226,16 +227,22 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
               return answer.control?.kind === waitControl.kind && answer.control.target === waitControl.target;
             } catch { return false; }
           })());
-        const linkedClassification = waitControl.kind === 'decision'
-          && expected.stopDetail === escalationWaitDetail.operator(id, waitControl.target)
-          && events.some(item => item.kind === 'planner_escalation_decision_linked' && item.detail === `${id}: decision ${waitControl.target}`);
-        const repaired = (pending || linkedClassification)
+        const linked = events.findLast(item => item.kind === 'planner_escalation_decision_linked' && item.detail.startsWith(`${id}:`));
+        const linkedClassification = waitControl.kind === 'decision' && linked && linked.id < event.id
+          && linked.detail === `${id}: decision ${waitControl.target}`;
+        // Older waits can predate answer intents. Upgrade a surviving stop
+        // against its exact journal entry before using it to wake the task.
+        const { stopReason, stopDetail } = escalationWaitState(id, waitControl);
+        const legacyWait = stop?.reason === stopReason
+          && stop.fact?.code === 'escalation' && stop.fact.subject === id && !stop.fact.escalationWait
+          && stop.detail === stopDetail;
+        const repaired = (pending || linkedClassification || legacyWait)
           && establishEscalationWait(ladder, task.id, id, waitControl, pending?.id ?? 0);
-        current = ladder.store.task(task.id);
-        if (!repaired || current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
+        if (!repaired) {
           ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: task stop changed and the recorded wait could not be restored`);
           continue;
         }
+        current = ladder.store.task(task.id);
       }
     }
     if (wait.kind === 'task' && !current.prerequisiteWait?.releasedAt) continue;

@@ -1,4 +1,5 @@
 import type { DecisionView } from '../../../shared/contracts';
+import type { TaskDecisionFact, TaskStopRecord } from '../../../shared/task-stop';
 import { Decisions } from '../../planning/decisions';
 import type { Ladder } from './ladder';
 
@@ -15,6 +16,17 @@ export type EscalationWait = {
   stopDetail?: string;
   stopReason?: 'lifecycle' | 'escalated';
 };
+
+export function escalationWaitFact(id: string, { kind, target }: EscalationWait): TaskDecisionFact {
+  return { code: 'escalation', subject: id, escalationWait: { kind, target } };
+}
+
+export function matchesEscalationWait(stop: TaskStopRecord | null, id: string, wait: EscalationWait): boolean {
+  const fact = stop?.fact;
+  return stop?.reason === escalationWaitState(id, wait).stopReason
+    && fact?.code === 'escalation' && fact.subject === id
+    && fact.escalationWait?.kind === wait.kind && fact.escalationWait.target === wait.target;
+}
 
 /** The stop the wait writes, with the recorded detail and reason winning. */
 export function escalationWaitState(id: string, wait: EscalationWait) {
@@ -38,22 +50,20 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
       if (!['open', 'answered'].includes(decision.status)) return false;
     }
     const { stopDetail, stopReason } = escalationWaitState(id, wait);
-    const expected = escalationWaitState(id, wait);
-    const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`)
-      && !events.some(superseded => superseded.kind === 'planner_escalation_wait_superseded' && superseded.id > event.id && superseded.detail.startsWith(`${id}:`))
+    const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`));
+    const matchesRecordedWait = recordedWait
+      && !events.some(event => event.kind === 'planner_escalation_wait_superseded' && event.id > recordedWait.id && event.detail.startsWith(`${id}:`))
       && (() => {
         try {
-          const value = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string; stopReason?: string };
-          const prior = escalationWaitState(id, { ...wait, stopDetail: value.stopDetail, stopReason: value.stopReason as 'lifecycle' | 'escalated' | undefined });
-          return value.kind === wait.kind && value.target === wait.target
-            && prior.stopDetail === expected.stopDetail && prior.stopReason === expected.stopReason;
+          const prior: EscalationWait = JSON.parse(recordedWait.detail.slice(id.length + 2));
+          const state = escalationWaitState(id, prior);
+          return prior.kind === wait.kind && prior.target === wait.target
+            && state.stopDetail === stopDetail && state.stopReason === stopReason;
         } catch { return false; }
-      })());
-    if (!recordedWait) ladder.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
-    const stop = ladder.store.task(taskId).resolution.stop;
-    if (stop?.reason !== stopReason || stop.fact?.subject !== id)
-      ladder.resolution.waiting(ladder.store.task(taskId), stopDetail, stopReason, { fact: { code: "escalation", subject: id } });
-    const established = ladder.store.task(taskId).resolution.stop;
-    return established?.reason === stopReason && established.fact?.subject === id;
+      })();
+    if (!matchesRecordedWait) ladder.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
+    if (!matchesEscalationWait(current.resolution.stop, id, wait) || current.resolution.stop?.detail !== stopDetail)
+      ladder.resolution.waiting(current, stopDetail, stopReason, { fact: escalationWaitFact(id, wait) });
+    return matchesEscalationWait(ladder.store.task(taskId).resolution.stop, id, wait);
   });
 }

@@ -1,5 +1,7 @@
 import type { Completion } from "../../../shared/contracts";
+import type { TaskDecisionFact } from "../../../shared/task-stop";
 import { isProviderFailure } from "./causes";
+import { escalationWaitFact } from "./hold";
 import type { PlannerEscalation, ReviewerConsult } from "./records";
 import { escalationWaitDetail } from "./waits";
 
@@ -13,7 +15,7 @@ import { escalationWaitDetail } from "./waits";
 /** What a parked blocked or errored responsible task does on one advance pass. */
 export type BlockerLadderStep =
   | { kind: "classify" }
-  | { kind: "wait"; detail: string; holderAgentId?: string }
+  | { kind: "wait"; detail: string; holderAgentId?: string; fact?: TaskDecisionFact }
   /** An unknown-delivery escalation outlived the stall threshold: surface it, never resend it. */
   | { kind: "attention"; escalation: PlannerEscalation }
   | { kind: "continue" };
@@ -50,18 +52,22 @@ export function blockerLadderStep(facts: {
     (consult) => !consult.answered && !consult.unknown,
   );
   const latest = openEscalations.at(-1);
-  if (latest?.routingWait && !latest.decisionId)
+  if (latest?.decisionId)
+    return {
+      kind: "wait",
+      detail: escalationWaitDetail.operator(latest.id, latest.decisionId),
+      fact: escalationWaitFact(latest.id, { kind: "decision", target: latest.decisionId }),
+    };
+  if (latest?.routingWait)
     return { kind: "wait", ...latest.routingWait };
   const wait = latest
-    ? latest.decisionId
-      ? escalationWaitDetail.operator(latest.id, latest.decisionId)
-      : latest.unknown
-        ? escalationWaitDetail.unknown(latest.id)
-        : latest.returnExhausted || (latest.returned && latest.missed)
-          ? escalationWaitDetail.returnedNoPlanner(latest.id)
-          : latest.returned
-            ? escalationWaitDetail.returned(latest.id)
-            : escalationWaitDetail.planner(latest.id)
+    ? latest.unknown
+      ? escalationWaitDetail.unknown(latest.id)
+      : latest.returnExhausted || (latest.returned && latest.missed)
+        ? escalationWaitDetail.returnedNoPlanner(latest.id)
+        : latest.returned
+          ? escalationWaitDetail.returned(latest.id)
+          : escalationWaitDetail.planner(latest.id)
     : openConsults.length
       ? escalationWaitDetail.reviewer(openConsults.at(-1)!.id)
       : null;

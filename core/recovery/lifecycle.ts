@@ -144,6 +144,7 @@ export class RecoveryLifecycle {
     } else if (first.kind === "wait") {
       this.context.waiting(t, first.detail, "escalated", {
         holderAgentId: first.holderAgentId,
+        fact: first.fact,
       });
       return null;
     } else if (first.kind === "continue") {
@@ -171,6 +172,7 @@ export class RecoveryLifecycle {
     if (after.kind === "wait") {
       this.context.waiting(t, after.detail, "escalated", {
         holderAgentId: after.holderAgentId,
+        fact: after.fact,
       });
       return null;
     }
