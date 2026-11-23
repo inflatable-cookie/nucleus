@@ -75,6 +75,10 @@ impl Schedule {
             .min()
             .map_or(self.scan_at, |due| due.min(self.scan_at))
     }
+
+    pub(crate) fn due(&self, id: &str) -> Option<Instant> {
+        self.tasks.get(id).copied()
+    }
 }
 
 #[cfg(test)]

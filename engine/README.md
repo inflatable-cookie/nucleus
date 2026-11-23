@@ -247,13 +247,18 @@ A confirmed rejection of a superseded review stays in the revoked run slot
 until T3 confirms archival or absence. Later passes only reconcile that
 disposition. They never replay the rejected launch.
 
-`next` and commands call the same preflight. A command that needs a fresh forge
-fact fetches it at execution. An unavailable check is shown as pending. The
-board reads committed task data separately from those checks.
+`next` and commands run the same preflight using the pass's forge observation
+for the committed task version. Answers bound to a PR head, amendments to
+tasks with a bound PR, and moves through the merge gates check that head.
+On missing evidence, the command returns
+HTTP 202 with `status: pending` and the version, and wakes a check. The client
+can retry the command when `next` shows it ready. Merge and worktree removal
+still check fresh evidence at the effect.
 
 An open question owns its message intent. Resolve the project's most active
 responsible planner at send time. Keep the thread ID only as part of the native delivery
 binding. Reconcile that binding before rebinding when the planner changes.
+A planner answer must match the current binding.
 Unsettle a settled thread using its ID and the high-water sequence from the
 same exact snapshot, then read it back. A settle emits a thread event, and the
 snapshot reads the largest event sequence for that thread in the projection
@@ -322,6 +327,17 @@ and optional pool controls follow their migration milestones.
 interval invalidates the list and visible task views. Task commands use the configured control
 credential. Each run has its own callback credential, including its task and
 role checks. The API exposes the run's progress without its ticket or wire.
+
+The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
+--enable` with an existing profile on the pinned volume. Start `serve` with
+that profile, a project file for the authorized fixture, and the local T3
+endpoint. Set the control key, T3 bearer and GitHub token in the environment.
+The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
+API. Every route requires the configured loopback Host and a same-origin Origin
+when supplied. `report` reads the role's owner-only ticket and the report from stdin.
+For the live proof, bind a separate key to the idle fixture origin thread with
+`--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. Use that key
+to submit and answer as the bound fixture planner.
 
 | Keep | Reshape | Remove from Rust tasks |
 | --- | --- | --- |

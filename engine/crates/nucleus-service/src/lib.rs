@@ -7,6 +7,7 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 mod ticket;
+mod web;
 
 use std::{
     collections::BTreeMap,
@@ -21,7 +22,10 @@ use std::{
 };
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Action, Authority, Command, Entry, Identity, Report, Task, WaitReason};
+use nucleus_core::{
+    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
+    Report, Task, WaitReason,
+};
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostError, T3};
 use nucleus_store::{
@@ -37,6 +41,7 @@ use tokio::{
 
 pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
+pub use web::{Controller, router};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -46,6 +51,8 @@ pub enum ServiceError {
     Missing,
     #[error("task input is invalid")]
     Input,
+    #[error("the question is assigned to a different planner")]
+    QuestionPlanner,
     #[error("an isolated engine is already serving this profile or its lock is unreadable")]
     ProfileLock,
     #[error("the callback configuration or ticket is invalid")]
@@ -71,7 +78,7 @@ pub struct Service {
     project: Project,
     host: T3,
     forge: GitHub,
-    callback: String,
+    callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
     changes: broadcast::Sender<TaskChange>,
@@ -86,7 +93,18 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, WaitReason>,
+    observed_forge: BTreeMap<String, (i64, Forge)>,
     thread_tasks: BTreeMap<String, Vec<String>>,
+}
+
+pub enum CommandOutcome {
+    Applied(Box<TaskRow>),
+    Pending { version: i64 },
+}
+
+enum Preflight {
+    Ready,
+    Pending,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -140,13 +158,14 @@ impl Service {
             project,
             host,
             forge,
-            callback: format!("http://{callback}"),
+            callback,
             report_command,
             state: Mutex::new(State {
                 store,
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                observed_forge: BTreeMap::new(),
                 thread_tasks: BTreeMap::new(),
             }),
             changes,
@@ -206,8 +225,8 @@ impl Service {
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             let row = match self.task(&id).await {
-                Ok(row) if active(&row.task) => row,
-                Ok(_) | Err(ServiceError::Missing) => continue,
+                Ok(row) => row,
+                Err(ServiceError::Missing) => continue,
                 Err(error) => return Err(error),
             };
             {
@@ -373,7 +392,8 @@ impl Service {
         self.changes.subscribe()
     }
 
-    /// Apply an authenticated command against fresh facts.
+    /// Apply an authenticated command using the pass's observation for this
+    /// row revision. A pending command wakes a pass to refresh the evidence.
     ///
     /// # Errors
     /// Returns an error if the task, authorization gate or store refuses it.
@@ -382,12 +402,33 @@ impl Service {
         id: &str,
         authority: &Authority,
         command: Command,
-    ) -> Result<TaskRow, ServiceError> {
-        let prior = self.task(id).await?;
-        let observation = self.command_observation(&prior.task, &command).await?;
-        let updated = preflight(&prior.task, authority, &observation, command)?;
-        let _fence = self.effect(&prior).await?;
-        self.save(&prior, updated, &event("command")).await
+    ) -> Result<CommandOutcome, ServiceError> {
+        let _fence = self.fence(id).await;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let prior = self.lookup(&state, id)?;
+        let observation = state.command_observation(&prior);
+        let mut task = prior.task.clone();
+        let explicit_move = matches!(command, Command::Move(_));
+        match preflight(&mut task, authority, &observation, command)? {
+            Preflight::Ready => {
+                let version = if explicit_move || prior.task != task {
+                    self.commit(&mut state, &prior, &task, &event("command"))?
+                } else {
+                    prior.version
+                };
+                Ok(CommandOutcome::Applied(Box::new(TaskRow { task, version })))
+            }
+            Preflight::Pending => {
+                let deadline = self.forge_until.load(Ordering::Relaxed);
+                let delay = Duration::from_millis(deadline.saturating_sub(now_ms()));
+                state.schedule.wake(id, Instant::now() + delay);
+                self.wake.notify_one();
+                Ok(CommandOutcome::Pending {
+                    version: prior.version,
+                })
+            }
+        }
     }
 
     /// Accept an idempotent report only for the current unrevoked run.
@@ -475,14 +516,9 @@ impl Service {
             return Ok(prior.clone());
         }
         self.storage.database().verify()?;
-        let id = task.identity().id.clone();
         let version = {
             let mut state = self.state.lock().await;
-            let version = state.store.save_row(prior, &task, audit)?;
-            track(&mut state, &task);
-            state.waits.remove(&id);
-            self.wake_task(&mut state, &id, version);
-            version
+            self.commit(&mut state, prior, &task, audit)?
         };
         if task.run().is_none()
             && let Some(run) = prior.task.run()
@@ -490,6 +526,44 @@ impl Service {
             ticket::clear(self.storage.scratch(), run);
         }
         Ok(TaskRow { task, version })
+    }
+
+    fn commit(
+        &self,
+        state: &mut State,
+        prior: &TaskRow,
+        task: &Task,
+        audit: &EventDraft,
+    ) -> Result<i64, ServiceError> {
+        let id = &task.identity().id;
+        let version = state.store.save_row(prior, task, audit)?;
+        track(state, task);
+        state.waits.remove(id);
+        state.observed_forge.remove(id);
+        self.wake_task(state, id, version);
+        Ok(version)
+    }
+
+    async fn observe_commands(
+        &self,
+        row: &TaskRow,
+        forge: &Observed<Forge>,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        if self.lookup(&state, id)?.version != row.version {
+            return Err(StoreError::StaleTask.into());
+        }
+        let prior = match forge {
+            Observed::Known(forge) => state
+                .observed_forge
+                .insert(id.clone(), (row.version, forge.clone())),
+            Observed::Unknown => state.observed_forge.remove(id),
+        };
+        if prior.as_ref() != state.observed_forge.get(id) {
+            self.publish(id, row.version);
+        }
+        Ok(())
     }
 
     fn wake_task(&self, state: &mut State, id: &str, version: i64) {
@@ -503,6 +577,23 @@ impl Service {
             task_id: id.into(),
             version,
         });
+    }
+}
+
+impl State {
+    fn command_observation(&self, row: &TaskRow) -> Observation {
+        let forge = self
+            .observed_forge
+            .get(&row.task.identity().id)
+            .filter(|(version, _)| *version == row.version)
+            .map_or(Observed::Unknown, |(_, forge)| {
+                Observed::Known(forge.clone())
+            });
+        Observation {
+            host: Observed::Unknown,
+            forge,
+            workspace: Observed::Unknown,
+        }
     }
 }
 
@@ -530,14 +621,28 @@ fn active(task: &Task) -> bool {
 }
 
 fn preflight(
-    task: &Task,
+    task: &mut Task,
     actor: &Authority,
-    observation: &nucleus_core::Observation,
+    observation: &Observation,
     command: Command,
-) -> Result<Task, ServiceError> {
-    let mut updated = task.clone();
-    updated.command(command, actor, observation)?;
-    Ok(updated)
+) -> Result<Preflight, ServiceError> {
+    let awaiting_planner = if let (Command::Answer(_), Authority::Planner { actor }) =
+        (&command, actor)
+    {
+        match task.question_delivery() {
+            Some(binding) if binding.thread != *actor => return Err(ServiceError::QuestionPlanner),
+            Some(_) => false,
+            None => true,
+        }
+    } else {
+        false
+    };
+    match task.command(command, actor, observation) {
+        Ok(()) if awaiting_planner => Ok(Preflight::Pending),
+        Ok(()) => Ok(Preflight::Ready),
+        Err(CommandError::HeadUnverified) => Ok(Preflight::Pending),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn now_ms() -> u64 {

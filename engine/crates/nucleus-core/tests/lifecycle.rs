@@ -232,7 +232,7 @@ fn a_replaced_head_never_inherits_approval_and_keeps_the_reviewer() {
     let new_head = open('b', CheckState::Ready);
     assert_eq!(
         task.command(Command::Move(Phase::Merging), &planner(), &new_head),
-        Err(CommandError::MergeAuthorityRequired)
+        Err(CommandError::HeadChanged)
     );
     assert_eq!(task.reconcile(&new_head), Action::Advance(Phase::Reviewing));
     assert_eq!(task.pull_request(), Some(&pr('b')));
@@ -803,6 +803,11 @@ fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions
         Action::Ask(Question::Retry {
             role: Role::Reviewer
         })
+    );
+    assert_eq!(task.attempts(), 3);
+    assert_eq!(
+        task.command(Command::Answer(Answer::Retry), &planner(), &outage),
+        Err(CommandError::HeadUnverified)
     );
     assert_eq!(task.attempts(), 3);
     assert_eq!(

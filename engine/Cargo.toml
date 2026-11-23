@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/nucleus-cli",
     "crates/nucleus-core",
     "crates/nucleus-forge",
     "crates/nucleus-hosts",
