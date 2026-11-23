@@ -53,10 +53,11 @@ test("stored very-high work uses Frontier automatically only at Extra high or Ma
       assert.equal(workerClimbTarget(store.task(task.id), store.pool(), usage), null);
       assert.equal(pick(usage), "heavyweight");
     }
-    for (const usage of ["extra_high", "maximum"] as const) {
-      assert.equal(workerClimbTarget(store.task(task.id), store.pool(), usage)?.to, "frontier");
-      assert.equal(pick(usage), "frontier");
-    }
+    assert.equal(workerClimbTarget(store.task(task.id), store.pool(), "extra_high")?.to, "frontier");
+    assert.equal(pick("extra_high"), "frontier");
+    // At Maximum very-high work starts on Frontier (Tom, 2026-11-23), so there is no climb to make.
+    assert.equal(workerClimbTarget(store.task(task.id), store.pool(), "maximum"), null);
+    assert.equal(pick("maximum"), "frontier");
   } finally {
     store.close();
   }

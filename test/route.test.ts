@@ -813,7 +813,7 @@ test("a workerless review entry honours the owner-routed reviewer on a declared 
         } as never,
         "reviewer",
       )?.profile.id,
-      "coord",
+      "luna",
       "an optional request never waives the current author model",
     );
     // A real Queue author whose current model was never recorded is unknown, so no

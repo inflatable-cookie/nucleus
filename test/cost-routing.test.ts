@@ -99,7 +99,7 @@ const pick=(usage:'low'|'normal'|'high'|'extra_high'|'maximum',recent:Record<str
   }finally{f.close()}
 };
 
-test('Spec 053: the level starts a run at its own bracket, and Maximum keeps to the top two',()=>{
+test('Spec 053: the level starts a run at its own bracket, and Maximum starts a medium task on Heavyweight',()=>{
   assert.equal(pick('normal'),'mid','a medium task selects the Worker pool, the first Worker leading an equal rotation');
   assert.equal(pick('normal',{'profile:mid':50}),'pricey','history rotates inside the one Worker pool, never above it');
   assert.equal(pick('normal',{},new Set(['mid','pricey'])),'cheap','with no Worker profile, the nearest covered profile below is the shortfall');
@@ -107,9 +107,12 @@ test('Spec 053: the level starts a run at its own bracket, and Maximum keeps to 
   assert.equal(pick('extra_high'),'mid','Extra high starts on Worker too');
   assert.notEqual(pick('high'),'frontier-a','a profile above the climb bracket is never automatic');
   assert.notEqual(pick('extra_high'),'frontier-b','the tier bound holds at Extra high too');
-  assert.match(String(pick('maximum')),/^frontier-[ab]$/,'at Maximum workers use the top two tiers');
-  assert.equal(pick('maximum',{'profile:frontier-a':3}),'frontier-b','rotation stays inside the top two tiers');
-  assert.equal(pick('maximum',{},new Set(['frontier-a','frontier-b'])),null,'Maximum never falls below the top two tiers');
+  // Maximum follows the 2026-11-23 matrix: a medium task starts on Heavyweight,
+  // and it no longer reserves the top two tiers.
+  assert.equal(pick('maximum'),'frontier-a','at Maximum a medium task starts on Heavyweight');
+  assert.equal(pick('maximum',{'profile:frontier-a':3}),'frontier-a','rotation stays inside the Heavyweight bracket; Frontier is not pooled with it');
+  assert.equal(pick('maximum',{},new Set(['frontier-a'])),'frontier-b','with no Heavyweight profile, the nearest bracket above serves');
+  assert.match(String(pick('maximum',{},new Set(['frontier-a','frontier-b']))),/^(mid|pricey)$/,'with neither top bracket available, Maximum falls short to the Worker pool');
   assert.equal(pick('low'),'cheap','a medium task at Low starts one bracket below: Mechanical');
 });
 
