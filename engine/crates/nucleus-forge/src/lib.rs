@@ -463,11 +463,35 @@ impl GitHub {
     /// Returns an error when evidence is unreadable, incomplete, or bound to
     /// another branch, repository or head. The engine treats errors as unknown.
     pub async fn observe(&self, target: &PullTarget) -> Result<Forge, ForgeError> {
-        let pull = self
-            .confirm_merge_commit(target, self.pull(target).await?)
-            .await?;
+        self.observe_with_checks(target, false).await
+    }
+
+    /// Read the check names GitHub marks required for a task due to merge.
+    ///
+    /// # Errors
+    /// Returns the same evidence and transport errors as [Self::observe].
+    pub async fn observe_for_merge(&self, target: &PullTarget) -> Result<Forge, ForgeError> {
+        self.observe_with_checks(target, true).await
+    }
+
+    async fn observe_with_checks(
+        &self,
+        target: &PullTarget,
+        merge: bool,
+    ) -> Result<Forge, ForgeError> {
+        self.observe_pull(target, self.pull(target).await?, merge)
+            .await
+    }
+
+    async fn observe_pull(
+        &self,
+        target: &PullTarget,
+        pull: Pull,
+        merge: bool,
+    ) -> Result<Forge, ForgeError> {
+        let pull = self.confirm_merge_commit(target, pull).await?;
         let checks = if !pull.merged && pull.state == PullState::Open {
-            self.query_pull(target, CHECKS_QUERY).await?.checks(
+            self.query_pull(target, CHECKS_QUERY, merge).await?.checks(
                 &pull.head.sha,
                 &target.branches.base,
                 &target.branches.required_checks,
@@ -485,7 +509,7 @@ impl GitHub {
     ) -> Result<Pull, ForgeError> {
         if pull.merged && pull.state == PullState::Closed && pull.merge_commit_sha.is_none() {
             pull.merge_commit_sha = Some(
-                self.query_pull(target, MERGE_COMMIT_QUERY)
+                self.query_pull(target, MERGE_COMMIT_QUERY, false)
                     .await?
                     .merge_commit(&pull.head.sha, &target.branches.base)?,
             );
@@ -493,14 +517,20 @@ impl GitHub {
         Ok(pull)
     }
 
-    async fn query_pull(&self, target: &PullTarget, query: &str) -> Result<GraphReply, ForgeError> {
+    async fn query_pull(
+        &self,
+        target: &PullTarget,
+        query: &str,
+        named_checks: bool,
+    ) -> Result<GraphReply, ForgeError> {
         let mut variables = json!({
             "owner": target.branches.owner,
             "repo": target.branches.repository,
             "number": target.number,
         });
         if query == CHECKS_QUERY {
-            variables["namedChecks"] = json!(!target.branches.required_checks.is_empty());
+            variables["namedChecks"] =
+                json!(named_checks || !target.branches.required_checks.is_empty());
         }
         let response = self
             .client
@@ -548,8 +578,10 @@ impl GitHub {
         {
             return Err(ForgeError::Identity);
         }
+        let pull = self.pull(target).await?;
+        let base = pull.base.sha.clone();
         let observation = Observation {
-            forge: Observed::Known(self.observe(target).await?),
+            forge: Observed::Known(self.observe_pull(target, pull, true).await?),
             host: Observed::Unknown,
             workspace: Observed::Unknown,
         };
@@ -574,6 +606,12 @@ impl GitHub {
                     .and_then(|pull| pull.forge(CheckState::Unknown)),
             });
         }
+        if latest.base.sha != base {
+            return Ok(MergeAttempt {
+                write: MergeWrite::Skipped,
+                observed: latest.forge(CheckState::BaseMoved),
+            });
+        }
         let url = format!("{}/{}/merge", self.origin, target.path());
         let reply = self
             .client
@@ -591,7 +629,7 @@ impl GitHub {
                 observed: Err(ForgeError::Deferred { until }),
             });
         }
-        let mut observed = self.observe(target).await;
+        let mut observed = self.observe_for_merge(target).await;
         if write == MergeWrite::HeadMismatch
             && matches!(&observed, Ok(Forge::Open { pr, .. }) if pr.head == head)
         {

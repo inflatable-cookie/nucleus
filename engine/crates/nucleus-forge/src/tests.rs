@@ -600,7 +600,7 @@ fn a_pull_target_stays_inside_the_configured_repository() {
 
 #[tokio::test]
 async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
-    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Pending)] {
+    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Unreported)] {
         let mut response = checks('a', "SUCCESS");
         response["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"] = json!({
             "pageInfo": {"hasNextPage": false},

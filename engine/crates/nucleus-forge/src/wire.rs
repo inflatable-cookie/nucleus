@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use nucleus_core::{CheckState, Forge, Head, PullRequest};
 use serde::{Deserialize, de::DeserializeOwned};
 
@@ -126,24 +128,49 @@ enum NamedCheck {
 }
 
 impl NamedCheck {
-    fn required_result(&self, requested: &str) -> Option<bool> {
+    fn required_result(&self) -> Option<(&str, CheckResult)> {
+        use CheckResult::{Failed, Passed, Pending, Unknown};
         match self {
             Self::CheckRun {
                 name,
                 conclusion,
                 required: true,
-            } if name == requested => Some(matches!(
-                conclusion.as_deref(),
-                Some("SUCCESS" | "NEUTRAL" | "SKIPPED")
+            } => Some((
+                name,
+                match conclusion.as_deref() {
+                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => Passed,
+                    Some(
+                        "ACTION_REQUIRED" | "CANCELLED" | "FAILURE" | "STALE" | "STARTUP_FAILURE"
+                        | "TIMED_OUT",
+                    ) => Failed,
+                    None => Pending,
+                    Some(_) => Unknown,
+                },
             )),
             Self::StatusContext {
                 context,
                 state,
                 required: true,
-            } if context == requested => Some(state == "SUCCESS"),
+            } => Some((
+                context,
+                match state.as_str() {
+                    "SUCCESS" => Passed,
+                    "ERROR" | "FAILURE" => Failed,
+                    "EXPECTED" | "PENDING" => Pending,
+                    _ => Unknown,
+                },
+            )),
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CheckResult {
+    Passed,
+    Pending,
+    Unknown,
+    Failed,
 }
 
 #[derive(Deserialize)]
@@ -189,11 +216,7 @@ impl GraphReply {
         if checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
-        let state = checks.state();
-        if state != CheckState::Ready || required.is_empty() {
-            return Ok(state);
-        }
-        Ok(checks.required_state(required))
+        Ok(checks.state(required))
     }
 
     pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
@@ -238,34 +261,78 @@ fn verify_graph_pull(
 impl Checks {
     fn required_state(&self, required: &[String]) -> CheckState {
         let Some(rollup) = &self.status_check_rollup else {
-            return CheckState::Pending;
+            return if required.is_empty() {
+                CheckState::Ready
+            } else {
+                CheckState::Unreported
+            };
         };
         let Some(contexts) = &rollup.contexts else {
-            return CheckState::Unknown;
+            return if required.is_empty() {
+                CheckState::Ready
+            } else {
+                CheckState::Unknown
+            };
         };
-        for name in required {
-            let mut results = contexts
-                .nodes
-                .iter()
-                .flatten()
-                .filter_map(|check| check.required_result(name));
-            match results.next() {
-                Some(true) if results.all(|passes| passes) => {}
-                Some(_) => return CheckState::Blocked,
-                None if contexts.page_info.has_next_page
-                    || contexts.nodes.iter().any(Option::is_none) =>
-                {
-                    return CheckState::Unknown;
-                }
-                None => return CheckState::Pending,
+        let mut results = BTreeMap::new();
+        for (name, result) in contexts
+            .nodes
+            .iter()
+            .flatten()
+            .filter_map(NamedCheck::required_result)
+        {
+            if name.trim().is_empty() {
+                return CheckState::Unknown;
             }
+            results
+                .entry(name)
+                .and_modify(|prior: &mut CheckResult| *prior = (*prior).max(result))
+                .or_insert(result);
+        }
+        let failures = results
+            .iter()
+            .filter(|(_, result)| **result == CheckResult::Failed)
+            .map(|(name, _)| (*name).to_owned())
+            .collect::<Vec<_>>();
+        if !failures.is_empty() {
+            return CheckState::FailedRequired(failures);
+        }
+        if contexts.page_info.has_next_page
+            || contexts.nodes.iter().any(Option::is_none)
+            || results
+                .values()
+                .any(|result| *result == CheckResult::Unknown)
+        {
+            return CheckState::Unknown;
+        }
+        if required
+            .iter()
+            .any(|name| !results.contains_key(name.as_str()))
+        {
+            return CheckState::Unreported;
+        }
+        if results
+            .values()
+            .any(|result| *result == CheckResult::Pending)
+        {
+            return CheckState::Pending;
         }
         CheckState::Ready
     }
 
-    fn state(&self) -> CheckState {
-        if self.is_draft || self.mergeable == "CONFLICTING" {
+    fn state(&self, required: &[String]) -> CheckState {
+        if self.is_draft {
             return CheckState::Blocked;
+        }
+        if self.mergeable == "CONFLICTING" || self.merge_state_status == "DIRTY" {
+            return CheckState::Conflict;
+        }
+        if self.mergeable == "MERGEABLE" && self.merge_state_status == "BEHIND" {
+            return CheckState::BaseMoved;
+        }
+        let named = self.required_state(required);
+        if matches!(named, CheckState::FailedRequired(_)) {
+            return named;
         }
         let review = self.review_decision.as_deref();
         let rollup = self
@@ -278,13 +345,14 @@ impl Checks {
             review,
             rollup,
         ) {
-            (_, _, Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED"), _)
-            | (_, _, _, Some("ERROR" | "FAILURE")) => CheckState::Blocked,
+            (_, _, Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED"), _) => CheckState::Blocked,
+            _ if named != CheckState::Ready => named,
+            (_, _, _, Some("ERROR" | "FAILURE")) => CheckState::Blocked,
             (_, _, _, Some("PENDING" | "EXPECTED")) => CheckState::Pending,
             ("MERGEABLE", "CLEAN", None | Some("APPROVED"), None | Some("SUCCESS")) => {
                 CheckState::Ready
             }
-            (_, "BEHIND" | "BLOCKED" | "DIRTY" | "DRAFT" | "UNSTABLE", _, _) => CheckState::Blocked,
+            (_, "BEHIND" | "BLOCKED" | "DRAFT" | "UNSTABLE", _, _) => CheckState::Blocked,
             _ => CheckState::Unknown,
         }
     }

@@ -97,11 +97,15 @@ impl Forge {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckState {
     Unknown,
     Pending,
+    Unreported,
     Blocked,
+    Conflict,
+    BaseMoved,
+    FailedRequired(Vec<String>),
     Ready,
 }
 
@@ -456,11 +460,15 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
                 ..
             }) => Signal::Wait(WaitReason::ForgeUnknown),
             Observed::Known(Forge::Open {
-                checks: CheckState::Pending,
+                checks: CheckState::Pending | CheckState::Unreported,
                 ..
             }) => Signal::Wait(WaitReason::ChecksPending),
             Observed::Known(Forge::Open {
-                checks: CheckState::Blocked,
+                checks:
+                    CheckState::Blocked
+                    | CheckState::Conflict
+                    | CheckState::BaseMoved
+                    | CheckState::FailedRequired(_),
                 ..
             }) => Signal::Question(Question::Repair(Repair::MergeBlocked)),
             Observed::Known(Forge::Open {
@@ -550,7 +558,11 @@ impl Observation {
             Repair::MergeBlocked => !matches!(
                 forge,
                 Forge::Open {
-                    checks: CheckState::Blocked | CheckState::Unknown,
+                    checks: CheckState::Blocked
+                        | CheckState::Conflict
+                        | CheckState::BaseMoved
+                        | CheckState::FailedRequired(_)
+                        | CheckState::Unknown,
                     ..
                 }
             ),
