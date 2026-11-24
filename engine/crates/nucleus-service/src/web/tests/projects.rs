@@ -1426,6 +1426,7 @@ fn occupy_slot(task: &mut Task, head: &nucleus_core::Head) {
     task.reserve_launch(
         &observation,
         LaunchInputs {
+            scratch: None,
             thread: "fixture-worker".into(),
             started_at: 1,
             input: "fixture-only wire".into(),

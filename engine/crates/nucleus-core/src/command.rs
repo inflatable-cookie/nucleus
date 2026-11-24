@@ -354,6 +354,7 @@ impl Task {
                 credential: CredentialDigest(Sha256::digest(bearer.as_bytes()).into()),
                 input: inputs.input,
                 review_head,
+                scratch: inputs.scratch,
                 profile,
                 subscription_group,
             },

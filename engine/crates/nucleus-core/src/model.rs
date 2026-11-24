@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -441,6 +441,7 @@ pub struct LaunchInputs {
     pub thread: String,
     pub started_at: u64,
     pub input: String,
+    pub scratch: Option<PathBuf>,
 }
 
 impl fmt::Debug for LaunchInputs {
@@ -479,6 +480,8 @@ pub struct PreparedLaunch {
     pub(crate) credential: CredentialDigest,
     pub input: String,
     pub review_head: Option<Head>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) profile: Option<BoundProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

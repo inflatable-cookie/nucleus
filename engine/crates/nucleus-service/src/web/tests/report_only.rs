@@ -548,6 +548,7 @@ impl ReportFixture {
             .reserve_launch(
                 &observation,
                 LaunchInputs {
+                    scratch: None,
                     thread: WORKER.into(),
                     started_at: 1,
                     input: prompt,

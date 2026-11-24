@@ -53,6 +53,7 @@ fn task_with_approval() -> Task {
         .reserve_launch(
             &obs,
             LaunchInputs {
+                scratch: None,
                 thread: "reviewer".into(),
                 started_at: 1,
                 input: "review".into(),

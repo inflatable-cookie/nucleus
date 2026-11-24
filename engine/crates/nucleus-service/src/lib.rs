@@ -16,6 +16,7 @@ mod prompt;
 mod question;
 mod report_only;
 mod schedule;
+mod scratch;
 mod tell;
 #[cfg(test)]
 mod tests;
@@ -67,6 +68,8 @@ pub use web::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("run scratch is already reserved for another run")]
+    RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
     Project,
     #[error("the controller cannot access this project")]

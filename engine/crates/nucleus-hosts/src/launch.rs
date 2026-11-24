@@ -133,6 +133,7 @@ impl RunRequest {
             thread,
             started_at,
             input,
+            scratch: None,
         })
     }
 }

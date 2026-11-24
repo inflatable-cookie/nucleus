@@ -421,6 +421,7 @@ fn reserve(
         .reserve_profile_launch(
             obs,
             LaunchInputs {
+                scratch: None,
                 thread: thread.into(),
                 started_at: 1,
                 input: format!("immutable native wire {instance}"),
@@ -500,6 +501,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
         task.reserve_profile_launch(
             &obs,
             LaunchInputs {
+                scratch: None,
                 thread: "worker-1".into(),
                 started_at: 1,
                 input: "bad child".into(),

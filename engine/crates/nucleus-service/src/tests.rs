@@ -156,6 +156,7 @@ pub(super) fn reservation(
         .reserve_launch(
             &observation,
             LaunchInputs {
+                scratch: None,
                 thread: format!("thread:{id}"),
                 started_at: 1,
                 input: "fixture-only wire".into(),
