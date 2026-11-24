@@ -13,7 +13,7 @@ use nucleus_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, RowObservation, T3, clock_ms, message_id,
+    Binding, HostError, ProfileCatalog, RowObservation, RowVisibility, T3, clock_ms, message_id,
     projection::ParentCustody,
     rpc::{Read, Reply},
     task_row::ThreadVisibility,
@@ -80,20 +80,12 @@ impl ParentWrite {
         self.payload["commandId"].as_str()
     }
 
-    /// The current row state a prepared message would deliver over.
+    /// The row and ACP provider bound to a prepared message.
     #[must_use]
-    pub const fn delivery_row(&self) -> Option<RowObservation> {
-        match &self.delivery {
-            Some(delivery) => Some(delivery.row),
-            None => None,
-        }
-    }
-
-    #[must_use]
-    pub fn delivery_provider(&self) -> Option<&str> {
+    pub fn delivery_row(&self) -> Option<(RowObservation, &str)> {
         self.delivery
             .as_ref()
-            .map(|delivery| delivery.provider.as_str())
+            .map(|delivery| (delivery.row, delivery.provider.as_str()))
     }
 
     #[must_use]
@@ -414,20 +406,7 @@ impl T3 {
                 let Some(row) = fresh.row_observation()? else {
                     return Err(refuse("parent row is unavailable", observed));
                 };
-                if row.visibility.settled {
-                    return Err(refuse("parent row is still settled", observed));
-                }
-                let now = clock_ms()?;
-                if row
-                    .visibility
-                    .snoozed_until_ms
-                    .is_some_and(|until| until > now)
-                {
-                    return Err(HostError::ParentSnoozed {
-                        until: row.visibility.snoozed_until_ms.unwrap_or_default(),
-                        revision: row.sequence,
-                    });
-                }
+                verify_delivery_visibility(row.visibility, *sequence, observed)?;
                 delivery.row = row;
                 delivery.shell = shell;
             } else if fresh.retained()? != RetainedThread::Idle || fresh.sequence() != *sequence {
@@ -500,19 +479,31 @@ impl T3 {
         let visibility = visibility
             .read()
             .map_err(|_| refuse("held shell visibility is invalid"))?;
-        if visibility.settled {
-            return Err(refuse("held shell shows a settled parent"));
-        }
-        if let Some(until) = visibility.snoozed_until_ms
-            && until > clock_ms()?
-        {
-            return Err(HostError::ParentSnoozed {
-                until,
-                revision: delivery.row.sequence,
-            });
-        }
-        Ok(())
+        verify_delivery_visibility(visibility, delivery.row.sequence, observed)
     }
+}
+
+fn verify_delivery_visibility(
+    visibility: RowVisibility,
+    prepared: u64,
+    observed: Option<u64>,
+) -> Result<(), HostError> {
+    if visibility.settled {
+        return Err(HostError::ParentPreflight {
+            predicate: "parent row is still settled",
+            prepared,
+            observed,
+        });
+    }
+    if let Some(until) = visibility.snoozed_until_ms
+        && until > clock_ms()?
+    {
+        return Err(HostError::ParentSnoozed {
+            until,
+            revision: observed.unwrap_or(prepared),
+        });
+    }
+    Ok(())
 }
 
 fn prepare_delivery(

@@ -286,17 +286,12 @@ impl Service {
 
     /// Wake an exact task parent before an already authorized native message.
     /// The caller holds the task and project fences. Readback gates delivery.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep the visibility claims and their readback in order"
-    )]
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,
-        provider: &str,
         write: &ParentWrite,
     ) -> Result<(), ServiceError> {
-        let Some(initial) = write.delivery_row() else {
+        let Some((initial, provider)) = write.delivery_row() else {
             return Ok(());
         };
         let binding = write.binding();
@@ -331,25 +326,12 @@ impl Service {
             } else {
                 return Ok(());
             };
-            let Some(fresh) = self
-                .host
-                .observe_task_row(binding, provider)
-                .await
-                .map_err(|error| {
-                    self.parent_not_sent(format!("pre-wake visibility read failed: {error}"))
-                })?
-            else {
-                return Err(self.parent_not_sent(format!(
-                    "parent row unavailable before {change:?} (prepared revision {})",
-                    observed.sequence
-                )));
+            let fresh = match self.host.observe_task_row(binding, provider).await {
+                Ok(Some(fresh)) if fresh.visibility == visibility => fresh,
+                actual => return Err(self.parent_not_sent(format!(
+                    "visibility preflight for {change:?} expected {observed:?}, observed {actual:?}"
+                ))),
             };
-            if fresh.visibility != visibility {
-                return Err(self.parent_not_sent(format!(
-                    "visibility changed before {change:?} (revision {} {visibility:?}, revision {} {:?})",
-                    observed.sequence, fresh.sequence, fresh.visibility,
-                )));
-            }
             let (command, cleared) = if matches!(change, RowChange::Unsettle) {
                 let occurrence = visibility
                     .settled_at_ms
@@ -383,32 +365,17 @@ impl Service {
                 .host
                 .write_row_visibility(binding, &command, change, None, &[])
                 .await;
-            let fresh = self
-                .host
-                .observe_task_row(binding, provider)
-                .await
-                .map_err(|error| {
-                    self.parent_not_sent(format!(
-                        "{change:?} readback failed (write {result:?}): {error}"
-                    ))
-                })?;
-            if let Some(receipt) = cleared {
-                self.record_row_readback(id, &thread, receipt, fresh)
+            let readback = self.host.observe_task_row(binding, provider).await;
+            if let (Some(receipt), Ok(fresh)) = (cleared, &readback) {
+                self.record_row_readback(id, &thread, receipt, *fresh)
                     .await?;
             }
-            let Some(fresh) = fresh else {
-                return Err(self.parent_not_sent(format!(
-                    "parent row unavailable after {change:?} (revision {}, write {result:?})",
-                    observed.sequence
-                )));
+            observed = match readback {
+                Ok(Some(fresh)) if fresh.visibility != visibility => fresh,
+                actual => return Err(self.parent_not_sent(format!(
+                    "{change:?} has no visibility readback (prepared {observed:?}, observed {actual:?}, write {result:?})"
+                ))),
             };
-            if fresh.visibility == visibility {
-                return Err(self.parent_not_sent(format!(
-                    "{change:?} has no visibility readback (revision {} to {}, visibility {visibility:?}, write {result:?})",
-                    observed.sequence, fresh.sequence,
-                )));
-            }
-            observed = fresh;
         }
         if observed.visibility.settled
             || observed

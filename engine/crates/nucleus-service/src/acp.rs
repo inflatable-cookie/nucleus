@@ -171,9 +171,7 @@ impl Service {
     ) -> Result<bool, ServiceError> {
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let message = write.starts_turn();
-        if let Some(provider) = write.delivery_provider()
-            && let Err(error) = self.wake_parent_delivery(row, provider, &write).await
-        {
+        if let Err(error) = self.wake_parent_delivery(row, &write).await {
             if let ServiceError::ParentNotSent { reason, .. } = &error {
                 self.record_parent_refusal(row, &command, "preflight", None, reason)
                     .await?;

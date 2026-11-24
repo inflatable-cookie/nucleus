@@ -405,10 +405,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .prepare_parent_refresh(&fixture.binding, PROVIDER)
     };
     let write = prepare().await.unwrap().unwrap();
-    service
-        .wake_parent_delivery(&row, PROVIDER, &write)
-        .await
-        .unwrap();
+    service.wake_parent_delivery(&row, &write).await.unwrap();
     service.host.write_parent(write).await.unwrap();
     assert_eq!(
         fixture.commands(),
@@ -429,10 +426,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
 
     fixture.native.lock().unwrap().until = Value::Null;
     let write = prepare().await.unwrap().unwrap();
-    service
-        .wake_parent_delivery(&row, PROVIDER, &write)
-        .await
-        .unwrap();
+    service.wake_parent_delivery(&row, &write).await.unwrap();
     service.host.write_parent(write).await.unwrap();
     assert_eq!(
         fixture.commands()[4..],
