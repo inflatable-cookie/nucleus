@@ -78,6 +78,8 @@ const task = (
   nextCheckAt: null,
   question: null,
   hold: null,
+  stateLabel: phase[0]!.toUpperCase() + phase.slice(1),
+  stateSinceMs: null,
 });
 
 test("Rust task detail keeps Answer available alongside unknown command names", async (t) => {
@@ -286,6 +288,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         nextCheckAt: row.nextCheckAt,
         attention: row.attention,
         allowance: { usedMs: 180_000, limitMs: 3_600_000, exhausted: false },
+        stateLabel: row.stateLabel,
+        stateSinceMs: row.stateSinceMs,
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
@@ -331,6 +335,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     }
     json({
       ...row,
+      createdAtMs: 1_700_000_000_000,
       brief: { text: "Fixture brief", version: 1, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
@@ -662,6 +667,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
+  // A planner-held task as the engine projects it: its native-title label and when the hold began.
+  const held = {
+    ...task("held-task", "queued", "D2"),
+    title: "Held task",
+    wait: "hold",
+    hold: { reason: "Wait for the schema review. Then continue with the API." },
+    stateLabel: "Held by planner",
+    stateSinceMs: Date.now() - 3 * 3_600_000 - 60_000,
+  };
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
     projectSlotOverrides: {},
@@ -717,7 +731,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     if (path === "/api/engine/profiles/catalog")
       return Response.json({ providers: null, readAtMs: null, status: "pending" });
     if (path === "/api/engine/tasks")
-      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }]);
+      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }, held]);
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
@@ -752,8 +766,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const text = () => dom.window.document.body.textContent ?? "";
   dom.window.eval(`(() => { ${script} })()`);
   // The shared navigation, header and project filter render from the Rust data.
-  await click("Queue, 1");
+  await click("Queue, 2");
   await eventually(() => text().includes("Standalone task"), "task title renders");
+  // The card's state is the engine's label, its detail the hold reason preview, and its
+  // age counts from the state's start with the TypeScript card's coarse wording.
+  await eventually(() => text().includes("Held by planner"), "the engine state label renders");
+  assert.ok(text().includes("Wait for the schema review."), "the hold reason preview renders");
+  assert.ok(!text().includes("Then continue with the API."), "the card shows the first sentence only");
+  assert.ok(text().includes("3h ago"), "the card age counts from stateSinceMs");
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";

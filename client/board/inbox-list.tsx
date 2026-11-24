@@ -35,7 +35,9 @@ import {
   row,
   type Colors,
 } from "../controls";
-import { projectName } from "./text";
+import { holdReasonPreview, projectName } from "./text";
+import { useTick } from "../use-tick";
+import { relativeAge } from "../../shared/pipeline-board";
 import {
   BoardCard,
   BoardCardVariantContext,
@@ -49,7 +51,7 @@ import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
-import { rustPhaseLabels, rustQuestionText, rustTaskLabel, rustWaitText, type RustTask } from "../web/rust-board";
+import { rustQuestionText, rustTaskLabel, rustWaitDetail, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -874,20 +876,25 @@ export function RustListRows({ c, rust, view }: {
   const [limit, setLimit] = useState(rustPageSize);
   const tasks = rust.tasks ?? [];
   const remaining = tasks.length - limit;
+  // Ages read the clock, as TypeScript cards do; a list without one does not tick.
+  useTick(tasks.some((task) => task.stateSinceMs !== null) ? 30_000 : null);
   return <>
     {tasks.slice(0, limit).map((task) => {
       // The task number alone, as on TypeScript cards; the project shows beside it.
       const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
-      const wait = rustWaitText(task);
+      // The engine's state label is the status, as in the native title; the hold
+      // reason or a wait the label does not name is the one detail under it.
+      const detail = task.hold ? holdReasonPreview(task.hold.reason) : rustWaitDetail(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
-        status={wait || view === "history" ? {
+        status={{
           tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
-          state: question ? "Question" : rustPhaseLabels[task.phase], detail: question ? null : wait,
-        } : null}
+          state: question ? "Question" : task.stateLabel, detail: question ? null : detail,
+        }}
+        age={task.stateSinceMs === null ? null : relativeAge(task.stateSinceMs)}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
     {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}

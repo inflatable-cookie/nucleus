@@ -52,6 +52,10 @@ const current = z.object({
   attention: z.enum(["finished", "attention", "active", "waiting"]),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
+  // The engine's one state wording, shared with the native thread title.
+  stateLabel: z.string(),
+  // When the state the label names began; the card's age counts from it.
+  stateSinceMs: timestamp.nullable(),
 });
 const summary = current.extend({
   title: z.string().optional(),
@@ -89,6 +93,7 @@ const allowance = z.object({
 });
 const detail = summary.extend({
   allowance: allowance.optional(),
+  createdAtMs: timestamp,
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
@@ -495,6 +500,16 @@ const waits: Record<string, string> = {
   workspace_unknown: "Checking the workspace",
   checks_pending: "Waiting for checks",
 };
+
+/**
+ * The wait text a card or the detail adds under the state label, or null when the
+ * label already names a wait (the engine's "Waiting on …" and "Waiting for …").
+ */
+export function rustWaitDetail(
+  task: Pick<RustTask, "wait" | "phase" | "stateLabel">,
+): string | null {
+  return task.stateLabel.startsWith("Waiting") ? null : rustWaitText(task);
+}
 
 export function rustWaitText({
   wait,
