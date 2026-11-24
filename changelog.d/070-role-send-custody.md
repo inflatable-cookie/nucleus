@@ -1,0 +1,1 @@
+- Fresh role sends and pinned retained continuations proceed without a writer census or idle coverage. Exact native binding, review head and operator snoozes still govern delivery.

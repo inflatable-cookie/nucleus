@@ -1217,8 +1217,8 @@ impl Service {
             }
             return Err(error);
         }
-        let worker_parent = authorization.queued_worker_parent().map(str::to_owned);
-        let owned_parent_snoozes = if let Some(thread) = worker_parent.as_deref() {
+        let queued_parent = authorization.queued_parent().map(str::to_owned);
+        let owned_parent_snoozes = if let Some(thread) = queued_parent.as_deref() {
             self.owned_delivery_snoozes(row, thread).await?
         } else {
             Vec::new()
@@ -1258,17 +1258,17 @@ impl Service {
         let result = match host.send(dispatch).await {
             Err(
                 error @ (HostError::Deferred { .. }
-                | HostError::WorkerBindingChanged
+                | HostError::RetainedBindingChanged
                 | HostError::OperatorSnoozed { .. }
-                | HostError::WorkerParentSnoozed { .. }),
+                | HostError::RetainedParentSnoozed { .. }),
             ) => {
                 let mut audit = event("host_send_not_sent");
                 audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
                 let restored = self.save(&sent, row.task.clone(), &audit).await?;
                 let (thread, until) = match error {
                     HostError::OperatorSnoozed { until } => (run.launch().thread.clone(), until),
-                    HostError::WorkerParentSnoozed { until } => {
-                        (worker_parent.ok_or(ServiceError::Input)?, until)
+                    HostError::RetainedParentSnoozed { until } => {
+                        (queued_parent.ok_or(ServiceError::Input)?, until)
                     }
                     error => return Err(error.into()),
                 };
@@ -1769,12 +1769,8 @@ async fn read_retained(
         _ => return Ok(Observed::Unknown),
     };
     match task.threads().get(role) {
-        Some(thread) if role == Role::Worker => host
-            .observe_retained_worker(binding, thread)
-            .await
-            .map(Observed::Known),
         Some(thread) => host
-            .observe_retained(binding, thread)
+            .observe_retained_role(binding, thread)
             .await
             .map(Observed::Known),
         None => Ok(Observed::Unknown),

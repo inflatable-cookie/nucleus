@@ -158,8 +158,9 @@ Later decisions carry their own attribution.
    availability, binding and operator snooze at send time.
    Older parent holds still require an idle thread. Delegated launch absence
    still requires an exact terminal parent run and an authoritative child absence.
-   New retained worker continuations pin provider and model and can enter the
-   native queue without an idle or presentation check. A reservation proven
+   New retained role continuations pin provider and model and can enter the
+   native queue without waiting for idle coverage or a prior send deadline.
+   The engine respects operator snoozes and checks the exact destination. A reservation proven
    unsent is replanned with a pin and a fresh command ID. For an older
    reservation that may have been sent, the engine waits for matching native
    evidence and uses the actual run's provider and model when it observes it.
@@ -387,9 +388,10 @@ Later decisions carry their own attribution.
     assignment for reconciliation. Nucleus applies the report with the ordinary
     head and forge checks, even while the role thread has activity or missing
     background coverage. A stale report about an earlier PR head carries no
-    authority at the current head. A fresh reviewer can claim an exact clean
-    head while the reporting worker is still active. Checkout removal still
-    checks writer custody.
+    authority at the current head. Fresh role sends can proceed while a
+    retained role or local process is still active. A reviewer still needs the
+    exact clean head. Checkout removal and revoked runs still check writer
+    custody.
 
     The planner also ruled that a task row snoozes only when the held shell
     shows its retained and sent role children quiet. An unsent reservation adds no
@@ -453,7 +455,7 @@ Later decisions carry their own attribution.
 | Prerequisites | Resolved task IDs for first dispatch, plus an optional post-dispatch wait with its reason and release time. Task edits and wait release commit with the row version and audit event. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. Report-only tasks also use `report_ready`, `blocked` and `error`. |
-| `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |
+| `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's exact bound thread when it can receive the next pinned assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |
 | `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request and selected profile, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
 | `work_continuation` | The next code worker instruction and, for automatic merge recovery, the head that must be replaced before review. Cleared when the task leaves work. |
 | `report_task` | For a [report-only task](../contracts/milestone-qa.md), the delivery lane, planning base, authenticated reports and planner disposition. |

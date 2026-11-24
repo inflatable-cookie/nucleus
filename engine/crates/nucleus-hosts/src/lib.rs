@@ -58,8 +58,8 @@ pub fn thread_link(thread: &str) -> Option<String> {
 
 pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};
-use projection::Projection;
 pub use projection::RunActivity;
+use projection::{MissingReceipt, Projection};
 pub use provider_setup::{
     NUCLEUS_RUST_PROVIDER, ProviderRegistration, ProviderSetup, ProviderSetupError,
 };
@@ -106,16 +106,16 @@ pub enum HostError {
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
     Binding,
-    #[error("the retained worker binding changed before the send")]
-    WorkerBindingChanged,
+    #[error("the retained role thread binding changed before the send")]
+    RetainedBindingChanged,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
     #[error("T3 rejected the pinned parent hold")]
     ParentHoldRejected,
     #[error("the operator snoozed the destination until {until} ms")]
     OperatorSnoozed { until: u64 },
-    #[error("the operator snoozed the retained worker's parent until {until} ms")]
-    WorkerParentSnoozed { until: u64 },
+    #[error("the operator snoozed the retained role thread’s parent until {until} ms")]
+    RetainedParentSnoozed { until: u64 },
     #[error(
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]
@@ -216,14 +216,14 @@ pub struct ReplayAuthorization {
     archived: bool,
     wake: Option<ControlDispatch>,
     parent_row: Option<RowObservation>,
-    worker_continuation: bool,
+    queued_continuation: bool,
 }
 
 /// Frozen native write whose send marker must be committed before dispatch.
 pub struct RunDispatch {
     instance: String,
     wire: Wire,
-    worker_continuation: bool,
+    queued_continuation: bool,
     owned_parent_snoozes: Vec<u64>,
 }
 
@@ -255,13 +255,13 @@ impl ReplayAuthorization {
         })
     }
 
-    /// The parent of a queueable retained worker, if it has one.
+    /// The parent of a queued role continuation, if it has one.
     #[must_use]
-    pub fn queued_worker_parent(&self) -> Option<&str> {
+    pub fn queued_parent(&self) -> Option<&str> {
         self.wire
             .parent
             .as_deref()
-            .filter(|_| self.worker_continuation)
+            .filter(|_| self.queued_continuation)
     }
 
     /// Get the explicit wake for continuations using the visibility fence.
@@ -282,6 +282,7 @@ impl ReplayAuthorization {
             || run.launch().instance != self.instance
             || run.launch().input != self.input
             || run.revoked() != self.revoked
+            || (!run.revoked() && run.report().is_some())
             || run.last_send_at_ms() != self.prior_send
         {
             return Err(HostError::Binding);
@@ -290,7 +291,7 @@ impl ReplayAuthorization {
             .map_err(|_| HostError::Binding)?;
         Ok(RunDispatch {
             instance: self.instance,
-            worker_continuation: self.worker_continuation,
+            queued_continuation: self.queued_continuation,
             owned_parent_snoozes: Vec::new(),
             wire: self.wire,
         })
@@ -338,7 +339,7 @@ pub trait TaskHost: Send + Sync {
         thread: &str,
     ) -> impl Future<Output = Result<Host, HostError>> + Send;
 
-    fn observe_retained_worker(
+    fn observe_retained_role(
         &self,
         binding: &Binding,
         thread: &str,
@@ -661,16 +662,9 @@ impl T3 {
                 // This only permits unarchiving. A send still needs a live exact read.
                 RunState::ReadyToSend
             }
-            Some(thread)
-                if thread.archived_in_shell() && run.report().is_some() && !run.revoked() =>
-            {
-                // An archive alone cannot identify the outcome of the reported run.
-                return Err(HostError::Uncertain);
-            }
             Some(thread) => thread.run(
                 &wire.message_id(&launch.instance),
-                wire.method == Method::Continue,
-                run.launch().role == Role::Worker && wire.method == Method::Continue,
+                missing_receipt(run, wire),
             )?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
@@ -678,22 +672,22 @@ impl T3 {
         Ok((thread, state))
     }
 
-    fn verify_worker_target(
+    fn verify_retained_target(
         &self,
         wire: &Wire,
         owned_parent_snoozes: &[u64],
     ) -> Result<(), HostError> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct WorkerTarget<'a> {
+        struct RetainedTarget<'a> {
             thread_id: &'a str,
         }
-        let target: WorkerTarget<'_> = serde_json::from_str(wire.payload.get())
-            .map_err(|_| HostError::WorkerBindingChanged)?;
+        let target: RetainedTarget<'_> = serde_json::from_str(wire.payload.get())
+            .map_err(|_| HostError::RetainedBindingChanged)?;
         let row = self
             .rpc
             .thread_row(target.thread_id)
-            .ok_or(HostError::WorkerBindingChanged)?;
+            .ok_or(HostError::RetainedBindingChanged)?;
         let parent = wire.parent.as_deref();
         let lineage = &row["lineage"];
         if row["projectId"] != wire.binding.project_id
@@ -707,7 +701,7 @@ impl T3 {
                     || lineage["relationshipToParent"] != "subagent"
             })
         {
-            return Err(HostError::WorkerBindingChanged);
+            return Err(HostError::RetainedBindingChanged);
         }
         if let Some(parent) = parent
             && let Some(row) = self.rpc.thread_row(parent)
@@ -715,7 +709,7 @@ impl T3 {
             task_row::check_delivery_snooze(&row, owned_parent_snoozes).map_err(
                 |error| match error {
                     HostError::OperatorSnoozed { until } => {
-                        HostError::WorkerParentSnoozed { until }
+                        HostError::RetainedParentSnoozed { until }
                     }
                     error => error,
                 },
@@ -873,20 +867,22 @@ impl TaskHost for T3Pass<'_> {
             .host
             .read_thread(binding, thread, ThreadRead::Observation)
             .await?;
-        let state = if self.quiet(binding, thread, projection.as_ref()).await? {
-            projection
-                .as_ref()
-                .map_or(Ok(RetainedThread::Gone), Projection::retained)?
-        } else {
-            RetainedThread::Busy
-        };
+        let retained = projection
+            .as_ref()
+            .map_or(Ok(RetainedThread::Gone), Projection::retained)?;
+        let state =
+            if retained == RetainedThread::Busy || !self.quiet(binding, thread, None).await? {
+                RetainedThread::Busy
+            } else {
+                retained
+            };
         Ok(Host::Retained {
             thread: thread.into(),
             state,
         })
     }
 
-    async fn observe_retained_worker(
+    async fn observe_retained_role(
         &self,
         binding: &Binding,
         thread: &str,
@@ -895,12 +891,10 @@ impl TaskHost for T3Pass<'_> {
             .host
             .read_thread(binding, thread, ThreadRead::Observation)
             .await?;
-        let state = if projection.as_ref().is_some_and(|view| !view.deleted()) {
-            RetainedThread::QueueableWorker
-        } else if self.quiet(binding, thread, projection.as_ref()).await? {
-            RetainedThread::Gone
+        let state = if projection.is_some_and(|view| !view.deleted()) {
+            RetainedThread::Queueable
         } else {
-            RetainedThread::Busy
+            RetainedThread::Gone
         };
         Ok(Host::Retained {
             thread: thread.into(),
@@ -909,7 +903,7 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<RunObservation, HostError> {
-        if run.revoked() {
+        if run.revoked() || run.report().is_some() {
             return Err(HostError::Binding);
         }
         let wire = Wire::read(run)?;
@@ -930,22 +924,22 @@ impl TaskHost for T3Pass<'_> {
             });
         }
         if state == RunState::ReadyToSend
+            && !queued_continuation(run, &wire)
             && (awaiting_reply(run, now_ms)
-                || (wire.method == Method::Continue
-                    && !wire.pinned
-                    && run.launch().role == Role::Worker
-                    && run.last_send_at_ms().is_some()))
+                || (worker_continuation(run, &wire) && run.last_send_at_ms().is_some()))
         {
             return Err(HostError::Uncertain);
         }
+        let quiet = !matches!(state, RunState::Ended | RunState::Gone)
+            || self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?;
         let message = wire.message_id(&run.launch().instance);
-        if state == RunState::Ended
+        if quiet
+            && state == RunState::Ended
             && thread
                 .as_ref()
                 .is_some_and(|thread| thread.rejected_assignment(&message))
-            && self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
         {
             return Ok(assignment_rejected(run));
         }
@@ -953,11 +947,7 @@ impl TaskHost for T3Pass<'_> {
             .as_ref()
             .filter(|_| state == RunState::Ended)
             .and_then(|thread| thread.provider_limit(&message));
-        let state = if matches!(state, RunState::Ended | RunState::Gone)
-            && !self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
-        {
+        let state = if !quiet {
             RunState::Running
         } else if provider_limit.is_some() {
             RunState::UsageLimited
@@ -991,7 +981,10 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
-        if run.rejected_awaiting_archive() || (run.revoked() && run.last_send_at_ms().is_none()) {
+        if run.rejected_awaiting_archive()
+            || (run.revoked() && run.last_send_at_ms().is_none())
+            || (!run.revoked() && run.report().is_some())
+        {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
@@ -999,14 +992,12 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::AssignmentLimit);
         }
         let continuation = wire.method == Method::Continue;
-        let role = run.launch().role;
-        let worker_continuation = continuation && role == Role::Worker;
-        if (worker_continuation && (!wire.pinned || run.revoked() || run.report().is_some()))
-            || (!worker_continuation && awaiting_reply(run, clock_ms()?))
-        {
+        let worker = worker_continuation(run, &wire);
+        let queued = queued_continuation(run, &wire);
+        if !queued && (worker || awaiting_reply(run, clock_ms()?)) {
             return Err(HostError::Uncertain);
         }
-        let parent_row = if !worker_continuation && let Some(parent) = &wire.parent {
+        let parent_row = if !worker && let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
@@ -1025,13 +1016,13 @@ impl TaskHost for T3Pass<'_> {
         } else {
             None
         };
-        let policy = if worker_continuation {
+        let policy = if queued {
             ThreadRead::Observation
         } else {
             ThreadRead::Exact
         };
         let (thread, state) = self.host.delivery(run, &wire, policy).await?;
-        if !worker_continuation
+        if !worker
             && continuation
             && run.launch().profile().is_some()
             && !wire.selection.as_ref().is_some_and(|selection| {
@@ -1045,15 +1036,14 @@ impl TaskHost for T3Pass<'_> {
         if state != RunState::ReadyToSend {
             return Err(HostError::Uncertain);
         }
-        if !worker_continuation
-            && (run.revoked() || role != Role::Reviewer || continuation)
+        if (run.revoked() || (continuation && !queued))
             && !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
                 .await?
         {
             return Err(HostError::WorkspaceBusy);
         }
-        let wake = if !worker_continuation
+        let wake = if !worker
             && continuation
             && let Some(projection) = &thread
             && let Some(observed) = projection.row_observation()?
@@ -1087,7 +1077,7 @@ impl TaskHost for T3Pass<'_> {
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
             parent_row,
-            worker_continuation,
+            queued_continuation: queued,
         })
     }
 
@@ -1101,9 +1091,9 @@ impl TaskHost for T3Pass<'_> {
             .host
             .rpc
             .call_guarded(wire.method.rpc(), wire.payload.as_ref(), Read::One, || {
-                if dispatch.worker_continuation && self.host.rpc.uses_held_shell() {
+                if dispatch.queued_continuation && self.host.rpc.uses_held_shell() {
                     self.host
-                        .verify_worker_target(&wire, &dispatch.owned_parent_snoozes)?;
+                        .verify_retained_target(&wire, &dispatch.owned_parent_snoozes)?;
                 }
                 Ok(true)
             })
@@ -1167,11 +1157,7 @@ impl TaskHost for T3Pass<'_> {
             return Ok(StopProgress::Settled(current(run, RunState::ParentEnded)));
         }
         match state {
-            RunState::ReadyToSend
-                if run.launch().role == Role::Worker && wire.method == Method::Continue =>
-            {
-                Ok(StopProgress::Waiting)
-            }
+            RunState::ReadyToSend if worker_continuation(run, &wire) => Ok(StopProgress::Waiting),
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
             RunState::Ended | RunState::Gone
                 if self
@@ -1276,6 +1262,25 @@ fn assignment_rejected(run: &Run) -> RunObservation {
         provider_limit: None,
         routing: None,
         active_child: None,
+    }
+}
+
+fn worker_continuation(run: &Run, wire: &Wire) -> bool {
+    run.launch().role == Role::Worker && wire.method == Method::Continue
+}
+
+fn queued_continuation(run: &Run, wire: &Wire) -> bool {
+    !run.revoked() && wire.method == Method::Continue && wire.pinned
+}
+
+fn missing_receipt(run: &Run, wire: &Wire) -> MissingReceipt {
+    if queued_continuation(run, wire) || worker_continuation(run, wire) {
+        // An older worker wire may be observed, but can never be authorized to send.
+        MissingReceipt::Queue
+    } else if wire.method == Method::Continue {
+        MissingReceipt::LegacyContinuation
+    } else {
+        MissingReceipt::Fresh
     }
 }
 
