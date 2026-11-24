@@ -350,6 +350,8 @@ including when a command is unavailable. The scheduler uses the same recorded
 edges for first dispatch and open waits. Native assignments carry the recorded
 prerequisite references and any released wait as context.
 
+The board skips unrecognized `next` command names and logs a browser console
+warning once per name. It validates the readiness of each recognized command.
 
 | Command | Effect |
 |---|---|

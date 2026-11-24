@@ -116,27 +116,38 @@ const detail = summary.extend({
     .nullable(),
 });
 const readiness = z.enum(["ready", "pending", "unavailable"]);
+const commandName = z.enum([
+  "answer",
+  "cancel",
+  "amend",
+  "hold",
+  "release",
+  "complete",
+  "move_work",
+  "set_dependencies",
+  "set_prerequisite_wait",
+]);
+const nextCommand = z.discriminatedUnion("name", [
+  z.object({ name: z.literal("move"), phase, preflight: readiness }),
+  z.object({ name: commandName, preflight: readiness }),
+]);
+const warnedUnknownCommands = new Set<string>();
+const nextCommands = z
+  .array(z.looseObject({ name: z.string() }))
+  .transform((commands) =>
+    commands.filter(({ name }) => {
+      if (name === "move" || commandName.safeParse(name).success) return true;
+      if (!warnedUnknownCommands.has(name)) {
+        warnedUnknownCommands.add(name);
+        console.warn("Ignoring unknown Rust board command", name);
+      }
+      return false;
+    }),
+  )
+  .pipe(z.array(nextCommand));
 const next = current.extend({
   allowance: allowance.optional(),
-  commands: z.array(
-    z.union([
-      z.object({ name: z.literal("move"), phase, preflight: readiness }),
-      z.object({
-        name: z.enum([
-          "answer",
-          "cancel",
-          "amend",
-          "hold",
-          "release",
-          "complete",
-          "move_work",
-          "set_dependencies",
-          "set_prerequisite_wait",
-        ]),
-        preflight: readiness,
-      }),
-    ]),
-  ),
+  commands: nextCommands,
 });
 const historyRecord = z.discriminatedUnion("kind", [
   z.object({
