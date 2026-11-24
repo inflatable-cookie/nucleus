@@ -277,6 +277,74 @@ test("a deferred complete returns retry and can be submitted again at the same t
   }
 });
 
+test("a Rust cutover refuses new admissions while accepted TS work drains", async () => {
+  const f = fixture();
+  try {
+    const pilot = join(f.dir, "pilot");
+    const other = join(f.dir, "other");
+    for (const [path, repository] of [[pilot, "pilot"], [other, "other"]] as const) {
+      mkdirSync(path);
+      execFileSync("git", ["init", "--quiet", path]);
+      execFileSync("git", ["-C", path, "remote", "add", "origin", `git@github.com:example/${repository}.git`]);
+    }
+    const submission = submissionSchema.parse({
+      submissionId: "already-accepted",
+      title: "Existing work",
+      repoPath: pilot,
+      planningCommit: "a".repeat(40),
+      originAgentId: "origin",
+    });
+    const acceptedRequest = {
+      key: "prior-submission",
+      kind: "submit" as const,
+      payload: { type: "submit", submission },
+      deferSchedule: true,
+    };
+    const first = opened(await f.engine.startOperation(acceptedRequest));
+    f.engine.rustEngineRepository = "example/pilot";
+
+    const replay = opened(await f.engine.startOperation(acceptedRequest));
+    assert.equal(replay.id, first.id);
+
+    const refusal = /example\/pilot now runs on the Rust engine.*nucleus-engine admit/;
+    await assert.rejects(
+      f.engine.startSubmission({ ...submission, submissionId: "fresh-direct" }),
+      refusal,
+    );
+    await assert.rejects(
+      f.engine.startOperation({ ...acceptedRequest, key: "fresh-queued" }),
+      refusal,
+    );
+    await assert.rejects(
+      f.engine.startOperation({
+        ...acceptedRequest,
+        key: "fresh-review",
+        kind: "review_entry",
+        payload: { type: "review_entry", input: { submission } },
+      }),
+      refusal,
+    );
+    await assert.rejects(
+      f.engine.startOperation({
+        ...acceptedRequest,
+        key: "fresh-promotion",
+        kind: "source_promote",
+        payload: { type: "source_promote", source: { repository: "example/pilot" } },
+      }),
+      refusal,
+    );
+    assert.equal(f.store.operations({ limit: 50 }).length, 1);
+    const unrelated = opened(await f.engine.startOperation({
+      ...acceptedRequest,
+      key: "unrelated",
+      payload: { type: "submit", submission: { ...submission, repoPath: other } },
+    }));
+    assert.notEqual(unrelated.id, first.id);
+  } finally {
+    await f.close();
+  }
+});
+
 test("acceptance is idempotent on the caller key and fails closed on different input", async () => {
   const f = fixture();
   try {

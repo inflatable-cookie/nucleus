@@ -374,6 +374,14 @@ The opening prompt establishes the session. The adapter can supply silent hold
 and ignore patterns. ACP cancellation releases the presentation turn. Task
 cancellation goes through the same command preflight as other clients.
 
+An ACP launcher can bring up the local service using
+`python3 ensure-local-service.py <port> <controller-key-file> <lock-file> <serve-launcher>`.
+Put the lock beside the engine's settings and keep the serve launcher's log
+under its configured log root. The helper reuses a healthy loopback service.
+When the port is absent, it serializes startup and passes the lock to the
+detached engine for its lifetime. A later ACP start can recover the service
+after it exits. An unverified listener never triggers a second start.
+
 Keep host execution and parenting separate. The engine uses its host interface
 to prepare a launch, observe a run and stop it. A host's parenting adapter
 ensures the session is open and creates or continues the role's child there.
@@ -441,6 +449,20 @@ controller for a planner board. Both preflight and writes use that same
 controller. Paired browsers receive only the capability flag and talk to
 same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
+
+For a one-repository cutover, the TypeScript service reads an owner-only
+`rust-engine-pilot.json` beside its own settings at startup. Set `repository` to
+the canonical GitHub slug, `endpoint` to the Rust loopback HTTP origin,
+`boardKeyFile` and `inboxKeyFile` to the absolute paths to their separate
+owner-only keys, and `inboxEngine` to the engine's Inbox namespace. The Rust
+service needs the same Inbox key file and namespace.
+
+After the service rolls, fresh TypeScript admissions for that repository direct
+the planner to `nucleus-engine admit <id> <reference>` with the brief on stdin.
+Already accepted TypeScript operations and existing tasks keep their original
+engine. The same board shows both engines' task rows. If the Rust service is
+unavailable, its board section can retry while the TypeScript board stays usable.
+An invalid pilot file is logged, and the TypeScript service starts with the pilot off.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
