@@ -9,8 +9,8 @@ use std::{
 };
 
 use nucleus_core::{
-    Identity, Phase, PullRequest, Question, Role, Verdict,
-    acp::{InboxAnswer, InboxSnapshot, SessionBinding, session_id},
+    Identity, Phase, PullRequest,
+    acp::{InboxAnswer, InboxSnapshot, SessionBinding, lifecycle::Lifecycle, session_id},
 };
 use reqwest::{
     Client, Method, Response, StatusCode,
@@ -130,14 +130,13 @@ pub(crate) struct Detail {
     pub identity: Identity,
     pub reference: Option<String>,
     pub phase: Phase,
-    pub lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
-    pub question: Option<Question>,
+    pub lifecycle: Lifecycle,
     #[serde(default)]
     pub operator_inbox: bool,
+    pub plan_scope_id: Option<String>,
     pub parent_hold: Option<String>,
     #[serde(default)]
     pub active_child: bool,
-    pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
 }
@@ -145,56 +144,6 @@ pub(crate) struct Detail {
 #[derive(Deserialize)]
 pub(crate) struct Report {
     pub delivery: Option<nucleus_core::ReportDelivery>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Run {
-    pub instance: String,
-    pub role: Role,
-    pub purpose: String,
-    pub last_send_at: Option<u64>,
-    pub activity: Option<Activity>,
-}
-
-#[derive(Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Activity {
-    pub label: String,
-    pub started_at: Option<u64>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct Event {
-    pub sequence: i64,
-    #[serde(default)]
-    pub presentation: Vec<Milestone>,
-}
-
-#[derive(Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub(crate) enum Milestone {
-    RunStarted {
-        instance: String,
-        role: Role,
-        purpose: String,
-    },
-    RunEnded {
-        instance: String,
-    },
-    PullRequest {
-        url: String,
-    },
-    Verdict {
-        verdict: Verdict,
-    },
-    Merged,
-    #[serde(other)]
-    Other,
 }
 
 impl ServiceClient {
@@ -255,25 +204,6 @@ impl ServiceClient {
             return Err(Failure::Binding);
         }
         Ok(detail)
-    }
-
-    pub(crate) async fn history(&self, after: i64) -> Result<Vec<Event>, Failure> {
-        let mut events = Vec::new();
-        let mut before = i64::MAX;
-        loop {
-            let page: Vec<Event> = self
-                .get(&format!("/history?limit=100&before={before}"))
-                .await?;
-            let next = page.last().map_or(after, |event| event.sequence);
-            let more = page.len() == 100 && next > after && next < before;
-            events.extend(page.into_iter().filter(|event| event.sequence > after));
-            if !more {
-                break;
-            }
-            before = next;
-        }
-        events.reverse();
-        Ok(events)
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Failure> {

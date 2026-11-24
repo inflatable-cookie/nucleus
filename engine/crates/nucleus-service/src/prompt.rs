@@ -312,6 +312,7 @@ impl Prompt<'_> {
                 let example = serde_json::json!({"work": {
                     "url": self.pr.map_or("https://github.com/OWNER/REPO/pull/NUMBER", |pr| &pr.url),
                     "head": "FULL_SHA",
+                    "summary": "ONE_SENTENCE_DESCRIBING_THE_CHANGE",
                 }});
                 let _ = writeln!(text, "Ready for review: {example}");
             }
@@ -324,6 +325,7 @@ impl Prompt<'_> {
                 ] {
                     let example = serde_json::json!({"review": {
                         "head": head, "decision": decision, "summary": "FULL_FINDINGS",
+                        "finding_titles": if decision == Review::Changes { vec!["SHORT_TITLE_FOR_EACH_FINDING"] } else { vec![] },
                     }});
                     let _ = writeln!(text, "{label}: {example}");
                 }

@@ -59,14 +59,36 @@ Later decisions carry their own attribution.
 6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3. Workers and reviewers are never top-level threads. They are child threads under the task's ACP session, as in the TypeScript engine. Tom, 2026-11-23: "when I said no worker or reviewer threads, I meant top-level.. it should work with the ACP the way the TS version does now". A person sees one row per task, and each run appears inside it as that session's `tool_call` (ruling 7).
 7. **The ACP session is written for a person.** Tom, 2026-11-23: "I would like the Nucleus ACP to be much more human friendly than it is now - provide actual useful feedback about the task as things happen, avoid too much noise, make it obvious what each sub agent is doing." The rules:
    - The lifecycle is one ACP `plan`. Code tasks show Queued, Working, Review (round N), Merge and Close. Report-only tasks show Queued, Working, Report ready and Done. Each step is pending, in progress or done. A wait shows as that step's status (for example, "Waiting for a review slot"). Waits are never messages.
-   - The engine projects the plan and task detail's progress strip from the
-     same task and local audit records. Applied reviewer verdicts determine the round.
+   - One lifecycle audit projects the plan, the task detail's progress strip
+     and the task session's role cards from the committed task and local records.
+     Applied reviewer verdicts determine the round.
      Role durations use the recorded send and report times. A reservation alone
      does not start the clock. The task retains its worker and reviewer bindings
      between runs.
    - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
-   - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
+   - A role's outcome is one message on its card. The transcript also records the task's finish and any decisions made outside a run.
    - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
+
+   Tom approved the transcript design on 2026-11-24 (“The mockup looks good,
+   lets try it”). A short step label opens the turn. Its hold identity stays
+   in metadata. Each run has one card with its role, provider, model, start
+   time and link to the child thread. The same card survives reattach and
+   gains a duration and one outcome when the role finishes. Every worker
+   outcome includes a one-line summary, with a PR link when available. A
+   reviewer shows the verdict and findings. A question stays actionable in
+   the role's outcome until answered. Waits update the plan once per episode.
+   The finish records the merge or report, closure, elapsed time and review
+   rounds. All of this comes from engine records without additional T3 reads.
+   Card updates reuse the run instance, and plan updates reuse the session plan.
+   Parent holds end with their existing launch or child custody. The next
+   update or attach shows outcomes and the finish from the lifecycle audit.
+   When the engine has no recorded change summary, the worker outcome says
+   so. If the recorded send and report times cannot establish a duration,
+   the finished card says it is unavailable. Older cards show participant
+   details when an exact binding survives. Provider and model show as
+   observed only with evidence from that exact run. Otherwise the card labels
+   any recorded assignment and leaves missing details unknown. Previously
+   journalled hold payloads replay with their original text.
 8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);

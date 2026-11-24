@@ -295,8 +295,18 @@ pub fn launch_diagnostic(run: &Run) -> String {
     )
 }
 
+const DELEGATED_THREAD_PREFIX: &str = "thread:delegated-task:";
+
+/// The instance whose fresh launch owns this deterministic native child.
+#[must_use]
+pub fn child_origin_instance(thread: &str) -> Option<&str> {
+    thread
+        .strip_prefix(DELEGATED_THREAD_PREFIX)
+        .filter(|instance| !instance.is_empty())
+}
+
 pub(crate) fn delegated_child(instance: &str) -> String {
-    format!("thread:delegated-task:{instance}")
+    format!("{DELEGATED_THREAD_PREFIX}{instance}")
 }
 
 pub(crate) fn message_id(instance: &str) -> String {

@@ -37,8 +37,8 @@ pub use inbox::{
     InboxWrite,
 };
 pub use launch::{
-    Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_diagnostic,
-    launch_provider_instance,
+    Binding, Dispatch, ModelOption, RoleProfile, RunRequest, child_origin_instance,
+    launch_diagnostic, launch_provider_instance,
 };
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
@@ -46,6 +46,16 @@ pub use parenting::{
     ArchiveCustody, ArchiveReceipt, ArchiveStep, ParentAttempt, ParentRun, ParentSendError,
     ParentStep, ParentWrite, parent_thread,
 };
+/// A link within the same T3 environment as the task thread.
+#[must_use]
+pub fn thread_link(thread: &str) -> Option<String> {
+    (!thread.is_empty()
+        && thread
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:%".contains(&byte)))
+    .then(|| format!("t3-thread://v1/{thread}"))
+}
+
 pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};
 use projection::Projection;

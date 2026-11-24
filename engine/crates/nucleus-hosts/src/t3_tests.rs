@@ -1072,6 +1072,7 @@ async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
         &binding,
         "fixture-acp",
         "Synthetic task",
+        "Starting work",
         Some(crate::ParentAttempt {
             command: "fixture-parent-command",
             released: false,
@@ -1103,6 +1104,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         &binding,
         "fixture-acp",
         "Synthetic task",
+        "Starting work",
         Some(crate::ParentAttempt {
             command: "fixture-parent-command",
             released: true,
@@ -1170,6 +1172,7 @@ async fn missing_parent_send_reuses_its_id_while_its_idle_marker_holds() {
         &binding,
         "fixture-acp",
         "Fixture",
+        "Starting work",
         Some(crate::ParentAttempt {
             command: &command,
             released: false,
@@ -1205,6 +1208,7 @@ async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() 
         &binding,
         "fixture-acp",
         "Fixture",
+        "Starting work",
         Some(crate::ParentAttempt {
             command: "ambiguous-command",
             released: false,
@@ -1263,6 +1267,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
                 &binding,
                 "fixture-acp",
                 "Fixture",
+                "Starting work",
                 prior.map(|command| crate::ParentAttempt {
                     command,
                     released: false,

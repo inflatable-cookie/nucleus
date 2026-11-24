@@ -73,6 +73,52 @@ fn observation() -> Observation {
 }
 
 #[test]
+fn a_parent_retry_keeps_the_first_recorded_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    store
+        .create(&task("fixture", "fixture"), &event("admitted"))
+        .unwrap();
+    let mut append = |kind, command, prompt: Option<&str>| {
+        let mut entry = event(kind);
+        let mut detail = serde_json::json!({"command":command,"version":1,"session":"host"});
+        if let Some(prompt) = prompt {
+            detail["prompt"] = prompt.into();
+        }
+        entry.detail = detail.to_string();
+        store.claim_task_effect("fixture", &entry, false).unwrap();
+    };
+    append("native_turn_intent", "legacy-hold", None);
+    append("native_turn_replay", "legacy-hold", Some("Starting worker"));
+    append(
+        "native_turn_intent",
+        "new-hold",
+        Some("Starting reviewer round 2"),
+    );
+    append(
+        "native_turn_replay",
+        "new-hold",
+        Some("Starting reviewer round 3"),
+    );
+    drop(store);
+
+    let store = Store::open(&storage).unwrap();
+    assert_eq!(
+        store.task_turn_prompt("fixture", "legacy-hold").unwrap(),
+        Some(nucleus_core::acp::legacy_parent_hold_prompt("legacy-hold"))
+    );
+    assert_eq!(
+        store
+            .task_turn_prompt("fixture", "new-hold")
+            .unwrap()
+            .as_deref(),
+        Some("Starting reviewer round 2")
+    );
+    assert_eq!(store.task_turn_prompt("fixture", "unknown").unwrap(), None);
+}
+
+#[test]
 fn delivery_fences_follow_pending_attempts_across_reopen() {
     let home = tempfile::tempdir().unwrap();
     let storage = fixture_storage(home.path());

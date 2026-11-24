@@ -565,7 +565,7 @@ async fn list(
             .iter()
             .filter(|row| api.service.task_scope(row.task.identity()).is_ok())
             .filter(|row| scope.task(&state, row.task.identity()).is_ok())
-            .map(|row| Summary::read(row, &state, &scope, Some(&authority)))
+            .map(|row| Summary::read(row, &state, &scope, Some(&authority), None))
             .collect::<Result<_, _>>()?,
     ))
 }
@@ -581,22 +581,29 @@ async fn detail(
     let row = api.service.lookup(&state, &id)?;
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
-    let summary = Summary::read(&row, &state, &scope, authority.as_deref())?;
-    let run = RunView::read(
-        &row,
-        state.activity.get(&id),
-        summary.lifecycle.review_round,
-    );
+    let activity = state.activity.get(&id);
+    let transcript = credential
+        .as_ref()
+        .map(|_| crate::presentation::TranscriptRequest {
+            activity: crate::presentation::run_activity(&row, activity)
+                .map(|activity| activity.label.as_str()),
+        });
+    let summary = Summary::read(&row, &state, &scope, authority.as_deref(), transcript)?;
+    let run = RunView::read(&row, activity, summary.lifecycle.review_round);
     let (parent_hold, active_child) = if credential.is_some() {
         api.service.acp_turn_view(&state, &row)?
     } else {
         (None, false)
     };
+    // The native host supports a plan that is updated across role turns.
+    let plan_scope_id =
+        (credential.is_some() && api.service.acp_provider().is_some()).then_some("task-lifecycle");
     Ok(Json(Detail {
         created_at_ms: summary.created_at_ms,
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
+        plan_scope_id,
         parent_hold,
         active_child,
         source: state.store.task_source(&id).map_err(ServiceError::from)?,
@@ -622,7 +629,7 @@ async fn next(
     let row = api.service.lookup(&state, &id)?;
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
-    let summary = Summary::read(&row, &state, &scope, Some(&authority))?;
+    let summary = Summary::read(&row, &state, &scope, Some(&authority), None)?;
     let dependency_edits = summary.dependency_edits;
     let mut commands = command_options(
         task,
@@ -972,7 +979,7 @@ async fn summary_after(
     let state = service.state.lock().await;
     let row = service.lookup(&state, &row.task.identity().id)?;
     scope.task(&state, row.task.identity())?;
-    Summary::read(&row, &state, scope, Some(authority))
+    Summary::read(&row, &state, scope, Some(authority), None)
 }
 
 #[derive(Serialize)]
@@ -1005,6 +1012,7 @@ impl Summary {
         state: &EngineState,
         scope: &ControllerScope,
         authority: Option<&Authority>,
+        transcript: Option<crate::presentation::TranscriptRequest<'_>>,
     ) -> Result<Self, ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
@@ -1071,6 +1079,7 @@ impl Summary {
                 wait_detail.unwrap_or(&state_label),
                 wait,
                 created_at_ms,
+                transcript,
             )?,
             state_label,
             state_since_ms,
@@ -1101,6 +1110,8 @@ struct Detail {
     created_at_ms: Option<u64>,
     brief: Brief,
     operator_inbox: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_scope_id: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_hold: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]

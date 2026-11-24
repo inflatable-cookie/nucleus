@@ -411,7 +411,7 @@ impl Service {
             )
         } else {
             let reported = task.run().and_then(|run| match run.report() {
-                Some(Report::Work(pr)) if !run.revoked() => Some(pr),
+                Some(Report::Work(report)) if !run.revoked() => Some(&report.pull_request),
                 _ => None,
             });
             (
@@ -756,7 +756,7 @@ impl Service {
         }
         let session = self.host.runtime_identity().ok_or(HostError::Uncertain)?;
         let failed_scope = self.turn_failure_scope(&session);
-        let (prior_turn, released_at) = {
+        let (prior_turn, released_at, start_line) = {
             let state = self.state.lock().await;
             if state
                 .store
@@ -775,6 +775,7 @@ impl Service {
                 state.wait_reason(&identity.id).filter(|reason| {
                     !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
                 }),
+                crate::presentation::role_start_line(task, &state.store),
             )
         };
         match self
@@ -783,6 +784,7 @@ impl Service {
                 binding,
                 provider,
                 &identity.reference,
+                &start_line,
                 prior_turn.as_deref().map(|command| ParentAttempt {
                     command,
                     released: released_at.is_some(),
@@ -2227,6 +2229,7 @@ mod tests {
                     head: head.clone(),
                     decision: Review::Approve,
                     summary: "Approved exact head".into(),
+                    finding_titles: Vec::new(),
                 },
             )
             .expect("report");

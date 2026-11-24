@@ -8,11 +8,12 @@ pub(super) use lifecycle::read as task_lifecycle;
 
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
-    Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason, profiles::Provider,
+    Forge, Head, Observed, Phase, Question, Report, Review, Role, Task, Verdict, WaitReason,
+    acp::lifecycle::{Milestone, Outcome},
 };
 use nucleus_hosts::RunActivity;
 use nucleus_store::{DependencyClock, Event, EventDraft, Store, StoreError, TaskRow};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::{State, dependencies::checks_prerequisites, titles};
@@ -134,63 +135,24 @@ impl RunView {
             review_head: launch.review_head.clone(),
             reported: run.report().is_some(),
             revoked: run.revoked(),
-            activity: activity
-                .filter(|seen| {
-                    !run.revoked()
-                        && seen.version == row.version
-                        && seen.instance == launch.instance
-                })
-                .map(|seen| seen.activity.clone()),
+            activity: run_activity(row, activity).cloned(),
         })
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-enum Milestone {
-    RunStarted {
-        instance: String,
-        role: Role,
-        purpose: String,
-        review_head: Option<Head>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        thread: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        provider: Option<Provider>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        started_at_ms: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        round: Option<u64>,
-    },
-    RunReported {
-        instance: String,
-        sent_at_ms: u64,
-    },
-    RunEnded {
-        instance: String,
-    },
-    PullRequest {
-        url: String,
-    },
-    Verdict {
-        verdict: Verdict,
-    },
-    Question {
-        question: Question,
-    },
-    Merged {
-        commit: Head,
-    },
-    Finished {
-        phase: Phase,
-        previous_phase: Option<Phase>,
-    },
+pub(super) fn run_activity<'a>(
+    row: &TaskRow,
+    activity: Option<&'a ActivityAt>,
+) -> Option<&'a RunActivity> {
+    let run = row.task.run().filter(|run| !run.revoked())?;
+    activity
+        .filter(|seen| seen.version == row.version && seen.instance == run.launch().instance)
+        .map(|seen| &seen.activity)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TranscriptRequest<'a> {
+    pub(super) activity: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -253,19 +215,21 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
                 thread: Some(launch.thread.clone()),
                 provider: launch.profile().map(|profile| profile.provider),
                 model: launch.profile().map(|profile| profile.model.clone()),
+                model_observed: false,
                 started_at_ms: run.last_send_at_ms(),
                 round,
             });
         }
     }
     if let Some(run) = run
-        && run.report().is_some()
+        && let Some(report) = run.report()
         && prior_run.is_some_and(|prior| prior.report().is_none())
         && let Some(sent_at_ms) = run.last_send_at_ms()
     {
         records.push(Milestone::RunReported {
             instance: run.launch().instance.clone(),
             sent_at_ms,
+            outcome: Some(report_outcome(task, report)),
         });
     }
     if let Some(pr) = task.pull_request()
@@ -292,12 +256,7 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
         .filter(|question| prior.question() != Some(question))
     {
         let mut question = question.clone();
-        if let Question::Work { prompt, options } = &mut question {
-            *prompt = excerpt(prompt, 320);
-            for option in options {
-                *option = excerpt(option, 160);
-            }
-        }
+        redact_question(&mut question);
         records.push(Milestone::Question { question });
     }
 
@@ -321,6 +280,95 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
         audit.detail = Value::Object(detail).to_string();
     }
     audit
+}
+
+fn report_outcome(task: &Task, report: &Report) -> Outcome {
+    match report {
+        Report::Work(report) => Outcome::Work {
+            url: report.pull_request.url.clone(),
+            summary: report.summary.as_deref().and_then(summary_line),
+            revision: is_revision(task),
+        },
+        Report::Review {
+            head,
+            decision,
+            summary,
+            finding_titles,
+        } => Outcome::Review {
+            decision: *decision,
+            summary: one_line(summary, 240),
+            finding_titles: finding_titles
+                .iter()
+                .map(|title| one_line(title, 120))
+                .filter(|title| !title.is_empty())
+                .take(20)
+                .collect(),
+            change_url: task
+                .pull_request()
+                .filter(|pr| pr.head == *head)
+                .map(|pr| format!("{}/commits/{head}", pr.url.trim_end_matches('/'))),
+        },
+        Report::ReportReady(delivery) => Outcome::Report {
+            summary: summary_line(&delivery.summary)
+                .or_else(|| delivery.headline.as_deref().and_then(summary_line))
+                .unwrap_or_default(),
+        },
+        Report::Blocked(failure) | Report::Error(failure) => Outcome::Blocked {
+            reason: summary_line(&failure.summary)
+                .or_else(|| failure.headline.as_deref().and_then(summary_line))
+                .unwrap_or_else(|| "The worker did not supply a reason.".into()),
+        },
+        Report::Question { prompt, options } => {
+            let mut question = Question::Work {
+                prompt: prompt.clone(),
+                options: options.clone(),
+            };
+            redact_question(&mut question);
+            Outcome::Question { question }
+        }
+    }
+}
+
+fn redact_question(question: &mut Question) {
+    if let Question::Work { prompt, options } = question {
+        *prompt = excerpt(prompt, 320);
+        for option in options {
+            *option = excerpt(option, 160);
+        }
+    }
+}
+
+pub(super) fn is_revision(task: &Task) -> bool {
+    matches!(
+        task.verdict(),
+        Some(Verdict::Reviewed {
+            decision: Review::Changes,
+            ..
+        })
+    )
+}
+
+fn summary_line(text: &str) -> Option<String> {
+    let line = one_line(text, 240);
+    (!line.is_empty()).then_some(line)
+}
+
+fn one_line(text: &str, limit: usize) -> String {
+    excerpt(text, limit)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(super) fn role_start_line(task: &Task, store: &Store) -> String {
+    match task.phase() {
+        Phase::Reviewing => lifecycle::Audit::read(store, task).map_or_else(
+            |_| "Starting review".into(),
+            |audit| format!("Starting reviewer round {}", audit.next_review_round()),
+        ),
+        Phase::Working if is_revision(task) => "Starting revisions".into(),
+        _ => "Starting work".into(),
+    }
 }
 
 fn purpose(task: &Task, role: Role, review_round: Option<u64>) -> String {

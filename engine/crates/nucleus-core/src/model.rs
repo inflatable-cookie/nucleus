@@ -331,7 +331,7 @@ pub enum HoldBy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Report {
-    Work(PullRequest),
+    Work(WorkReport),
     ReportReady(ReportDelivery),
     Blocked(ReportFailure),
     Error(ReportFailure),
@@ -339,11 +339,31 @@ pub enum Report {
         head: Head,
         decision: Review,
         summary: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        finding_titles: Vec<String>,
     },
     Question {
         prompt: String,
         options: Vec<String>,
     },
+}
+
+/// A worker's PR and the optional summary supplied with older and newer callbacks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkReport {
+    #[serde(flatten)]
+    pub pull_request: PullRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+impl From<PullRequest> for WorkReport {
+    fn from(pull_request: PullRequest) -> Self {
+        Self {
+            pull_request,
+            summary: None,
+        }
+    }
 }
 
 /// An exact version and digest of a durable lane document.

@@ -1,120 +1,282 @@
 use nucleus_core::{
     Phase, Review, Role, Task, Verdict, WaitReason,
-    acp::lifecycle::{Lifecycle, Participant, Step, StepKey, StepState, StepTone},
+    acp::lifecycle::{
+        Lifecycle, Milestone, Outcome, Participant, RoleCard, Step, StepKey, StepState, StepTone,
+        Transcript,
+    },
+    profiles::Profile,
 };
 use nucleus_store::{Store, StoreError};
 
-use super::{HistoryEvent, Milestone};
+use super::{HistoryEvent, TranscriptRequest, purpose, redact_question};
 use crate::titles::phase_label;
 
 #[derive(Default)]
 pub(super) struct Audit {
+    transcript: Transcript,
     finished_at_ms: Option<u64>,
     phase_before_finish: Option<Phase>,
     last_phase: Option<Phase>,
-    completed_reviews: u64,
-    work_ms: Option<u64>,
-    review_ms: Option<u64>,
-}
-
-struct SentRun {
-    instance: String,
-    role: Role,
     sent_at_ms: Option<u64>,
+    pull_request_url: Option<String>,
 }
 
 impl Audit {
     pub(super) fn read(store: &Store, task: &Task) -> Result<Self, StoreError> {
         let mut audit = Self::default();
-        let mut sent: Option<SentRun> = None;
         for event in store.lifecycle_events(&task.identity().id)? {
-            let at = u64::try_from(event.content.at).ok();
-            let event = HistoryEvent::from(event);
-            // Earlier engines recorded send/replay and report times as separate audit rows.
-            if let Some(run) = &mut sent {
-                if event.event.content.kind == "host_send" {
-                    run.sent_at_ms = at;
-                }
-                if event.event.content.kind == "reported" && event.presentation.is_empty() {
-                    audit.record_duration(run, at);
-                }
-            }
-
-            for record in event.presentation {
-                match record {
-                    Milestone::RunStarted {
-                        instance,
-                        role,
-                        started_at_ms,
-                        ..
-                    } => {
-                        audit.last_phase = Some(match role {
-                            Role::Worker => Phase::Working,
-                            Role::Reviewer => Phase::Reviewing,
-                        });
-                        sent = Some(SentRun {
-                            instance,
-                            role,
-                            sent_at_ms: started_at_ms.or(at),
-                        });
-                    }
-                    Milestone::RunReported {
-                        instance,
-                        sent_at_ms,
-                    } => {
-                        if let Some(run) = &mut sent
-                            && run.instance == instance
-                        {
-                            run.sent_at_ms = Some(sent_at_ms);
-                            audit.record_duration(run, at);
-                        }
-                    }
-                    Milestone::RunEnded { instance }
-                        if sent.as_ref().is_some_and(|run| run.instance == instance) =>
-                    {
-                        sent = None;
-                    }
-                    Milestone::PullRequest { .. } => audit.last_phase = Some(Phase::Reviewing),
-                    Milestone::Verdict { verdict } => {
-                        audit.last_phase = Some(match verdict {
-                            Verdict::Reviewed {
-                                decision: Review::Changes,
-                                ..
-                            } => Phase::Working,
-                            _ => Phase::Merging,
-                        });
-                        if event.event.content.kind == "phase_reconciled"
-                            && matches!(verdict, Verdict::Reviewed { .. })
-                        {
-                            audit.completed_reviews += 1;
-                        }
-                    }
-                    Milestone::Merged { .. } => audit.last_phase = Some(Phase::Closing),
-                    Milestone::Finished { previous_phase, .. } => {
-                        audit.finished_at_ms = at;
-                        audit.phase_before_finish = previous_phase.or(audit.last_phase);
-                    }
-                    _ => {}
-                }
-            }
+            audit.apply(HistoryEvent::from(event), task);
         }
         Ok(audit)
     }
 
-    fn record_duration(&mut self, run: &mut SentRun, reported_at_ms: Option<u64>) {
-        if let (Some(sent_at_ms), Some(reported_at_ms)) = (run.sent_at_ms.take(), reported_at_ms)
-            && let Some(elapsed) = reported_at_ms.checked_sub(sent_at_ms)
+    fn apply(&mut self, event: HistoryEvent, task: &Task) {
+        let at = u64::try_from(event.event.content.at).ok();
+        let kind = event.event.content.kind.as_str();
+        let cards = &mut self.transcript.cards;
+        if event.presentation.is_empty()
+            && let Some(card) = cards.last_mut().filter(|card| !card.ended)
         {
-            let total = match run.role {
-                Role::Worker => &mut self.work_ms,
-                Role::Reviewer => &mut self.review_ms,
-            };
-            *total = Some(total.unwrap_or(0).saturating_add(elapsed));
+            match kind {
+                "host_send" => self.sent_at_ms = at,
+                "reported" => record_duration(card, self.sent_at_ms, at),
+                _ => {}
+            }
+        }
+        let mut ended = None;
+        for record in event.presentation {
+            let cards = &mut self.transcript.cards;
+            match record {
+                Milestone::RunStarted {
+                    instance,
+                    role,
+                    purpose,
+                    thread,
+                    provider,
+                    model,
+                    model_observed,
+                    started_at_ms,
+                    ..
+                } => {
+                    self.last_phase = Some(if role == Role::Worker {
+                        Phase::Working
+                    } else {
+                        Phase::Reviewing
+                    });
+                    self.sent_at_ms = started_at_ms.or(at);
+                    cards.push(RoleCard {
+                        instance,
+                        role,
+                        purpose,
+                        thread_url: thread.as_deref().and_then(nucleus_hosts::thread_link),
+                        provider,
+                        model,
+                        model_observed,
+                        started_at_ms: self.sent_at_ms,
+                        elapsed_ms: None,
+                        ended: false,
+                        outcome: None,
+                        activity: None,
+                    });
+                }
+                Milestone::RunReported {
+                    instance,
+                    sent_at_ms,
+                    outcome,
+                } => {
+                    if let Some(card) = cards.last_mut().filter(|card| card.instance == instance) {
+                        record_duration(card, Some(sent_at_ms), at);
+                        card.outcome = outcome;
+                    }
+                }
+                Milestone::RunEnded { instance } => {
+                    let index = cards.len().checked_sub(1);
+                    if let Some(card) = cards.last_mut().filter(|card| card.instance == instance) {
+                        card.ended = true;
+                        ended = index;
+                    }
+                }
+                Milestone::PullRequest { url } => {
+                    self.last_phase = Some(Phase::Reviewing);
+                    if let Some(card) = ended
+                        .map(|i| &mut cards[i])
+                        .filter(|card| card.role == Role::Worker)
+                    {
+                        card.outcome.get_or_insert_with(|| Outcome::Work {
+                            url: url.clone(),
+                            summary: None,
+                            revision: false,
+                        });
+                    }
+                    self.pull_request_url = Some(url);
+                }
+                Milestone::Verdict { verdict } => {
+                    self.verdict(verdict, &event.event, task, ended);
+                }
+                Milestone::Question { question } => {
+                    if let Some(i) = ended {
+                        cards[i]
+                            .outcome
+                            .get_or_insert(Outcome::Question { question });
+                    }
+                }
+                Milestone::Merged { .. } => {
+                    self.last_phase = Some(Phase::Closing);
+                    self.transcript.merged = true;
+                }
+                Milestone::Finished { previous_phase, .. } => {
+                    self.finished_at_ms = at;
+                    self.phase_before_finish = previous_phase.or(self.last_phase);
+                }
+            }
+        }
+    }
+
+    fn verdict(
+        &mut self,
+        verdict: Verdict,
+        event: &nucleus_store::Event,
+        task: &Task,
+        ended: Option<usize>,
+    ) {
+        match verdict {
+            Verdict::Reviewed {
+                head,
+                decision,
+                summary,
+            } => {
+                self.last_phase = Some(if decision == Review::Changes {
+                    Phase::Working
+                } else {
+                    Phase::Merging
+                });
+                if event.content.kind == "phase_reconciled" {
+                    self.transcript.completed_reviews += 1;
+                }
+                if let Some(card) = ended
+                    .map(|i| &mut self.transcript.cards[i])
+                    .filter(|card| card.role == Role::Reviewer)
+                {
+                    card.outcome.get_or_insert_with(|| Outcome::Review {
+                        decision,
+                        summary,
+                        finding_titles: Vec::new(),
+                        change_url: self
+                            .pull_request_url
+                            .as_deref()
+                            .or_else(|| {
+                                task.pull_request()
+                                    .filter(|pr| pr.head == head)
+                                    .map(|pr| pr.url.as_str())
+                            })
+                            .map(|url| format!("{}/commits/{head}", url.trim_end_matches('/'))),
+                    });
+                }
+            }
+            Verdict::Accepted { acceptance, .. } => {
+                self.last_phase = Some(Phase::Merging);
+                self.transcript
+                    .external_acceptances
+                    .push((event.sequence, acceptance.reason));
+            }
         }
     }
 
     pub(super) const fn next_review_round(&self) -> u64 {
-        self.completed_reviews.saturating_add(1)
+        self.transcript.completed_reviews.saturating_add(1)
+    }
+
+    fn elapsed(&self, role: Role) -> Option<u64> {
+        self.transcript
+            .cards
+            .iter()
+            .filter(|card| card.role == role)
+            .filter_map(|card| card.elapsed_ms)
+            .reduce(u64::saturating_add)
+    }
+
+    fn transcript(
+        mut self,
+        task: &Task,
+        review_round: Option<u64>,
+        request: TranscriptRequest<'_>,
+    ) -> Transcript {
+        let cards = &mut self.transcript.cards;
+        if let Some(run) = task.run()
+            && let Some(sent) = run.last_send_at_ms()
+        {
+            let launch = run.launch();
+            if cards
+                .last()
+                .is_none_or(|card| card.instance != launch.instance)
+            {
+                cards.push(RoleCard {
+                    instance: launch.instance.clone(),
+                    role: launch.role,
+                    purpose: purpose(task, launch.role, review_round),
+                    thread_url: None,
+                    provider: None,
+                    model: None,
+                    model_observed: false,
+                    started_at_ms: Some(sent),
+                    elapsed_ms: None,
+                    ended: false,
+                    outcome: None,
+                    activity: None,
+                });
+            }
+            if let Some(card) = cards.last_mut() {
+                bind_card(card, &launch.thread, launch.profile());
+                card.started_at_ms.get_or_insert(sent);
+                card.activity = request.activity.map(str::to_owned);
+            }
+        }
+        for role in [Role::Worker, Role::Reviewer] {
+            let Some(thread) = task.threads().get(role) else {
+                continue;
+            };
+            let Some(origin) = nucleus_hosts::child_origin_instance(thread) else {
+                continue;
+            };
+            if let Some(card) = cards
+                .iter_mut()
+                .find(|card| card.role == role && card.instance == origin)
+            {
+                bind_card(card, thread, task.threads().profile(role));
+            }
+        }
+        self.transcript.question = task.question().cloned();
+        self.transcript.question_url = task
+            .question_delivery()
+            .filter(|delivery| delivery.last_send_at_ms.is_some())
+            .and_then(|delivery| nucleus_hosts::thread_link(&delivery.thread));
+        if let Some(question) = &mut self.transcript.question {
+            redact_question(question);
+            self.transcript.question_owner = cards.iter().rev()
+                .find(|card| matches!(&card.outcome, Some(Outcome::Question { question: asked }) if asked == question))
+                .map(|card| card.instance.clone());
+        }
+        self.transcript
+    }
+}
+
+fn bind_card(card: &mut RoleCard, thread: &str, profile: Option<&Profile>) {
+    if card.thread_url.is_none() {
+        card.thread_url = nucleus_hosts::thread_link(thread);
+    }
+    if !card.model_observed
+        && let Some(profile) = profile
+    {
+        card.provider.get_or_insert(profile.provider);
+        card.model.get_or_insert_with(|| profile.model.clone());
+    }
+}
+
+fn record_duration(card: &mut RoleCard, sent: Option<u64>, reported: Option<u64>) {
+    if card.elapsed_ms.is_none() {
+        card.elapsed_ms = reported
+            .zip(sent)
+            .and_then(|(reported, sent)| reported.checked_sub(sent));
     }
 }
 
@@ -124,6 +286,7 @@ pub(crate) fn read(
     state_label: &str,
     wait: Option<WaitReason>,
     admitted_at_ms: Option<u64>,
+    transcript: Option<TranscriptRequest<'_>>,
 ) -> Result<Lifecycle, StoreError> {
     let audit = Audit::read(store, task)?;
     let phase = task.phase();
@@ -155,7 +318,7 @@ pub(crate) fn read(
     } else if step_phase == Phase::Reviewing {
         Some(audit.next_review_round())
     } else {
-        Some(audit.completed_reviews).filter(|&round| round > 0)
+        Some(audit.transcript.completed_reviews).filter(|&round| round > 0)
     };
     let active_run = task
         .run()
@@ -181,8 +344,8 @@ pub(crate) fn read(
                 StepState::Current => current_tone(phase, wait),
             };
             let (role, elapsed_ms) = match key {
-                StepKey::Working => (Some(Role::Worker), audit.work_ms),
-                StepKey::Review => (Some(Role::Reviewer), audit.review_ms),
+                StepKey::Working => (Some(Role::Worker), audit.elapsed(Role::Worker)),
+                StepKey::Review => (Some(Role::Reviewer), audit.elapsed(Role::Reviewer)),
                 _ => (None, None),
             };
             let active_since_ms = active_run
@@ -215,6 +378,7 @@ pub(crate) fn read(
         review_round,
         worker: participant(task, Role::Worker),
         reviewer: participant(task, Role::Reviewer),
+        transcript: transcript.map(|request| audit.transcript(task, review_round, request)),
     })
 }
 
@@ -251,8 +415,9 @@ fn current_note(task: &Task, step: StepKey, state_label: &str) -> Option<String>
 fn participant(task: &Task, role: Role) -> Option<Participant> {
     let threads = task.threads();
     let profile = threads.profile(role);
+    let thread = threads.get(role)?;
     Some(Participant {
-        thread: threads.get(role)?.into(),
+        thread: thread.into(),
         provider: profile.map(|profile| profile.provider),
         model: profile.map(|profile| profile.model.clone()),
     })

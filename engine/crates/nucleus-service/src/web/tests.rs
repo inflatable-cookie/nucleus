@@ -160,10 +160,8 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         post_json(&api, path, key, &json!({})).await,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(
-        get_as(&api, "/v1/tasks/task-one", key).await.status(),
-        StatusCode::OK
-    );
+    let read = json_body(get_as(&api, "/v1/tasks/task-one", key).await).await;
+    assert_eq!(read["lifecycle"]["transcript"]["cards"], json!([]));
     assert_eq!(
         post_json(
             &api,
@@ -362,7 +360,19 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     };
     let mut updated = row.task.clone();
     updated
-        .record_report(&instance, key.as_bytes(), Report::Work(pr.clone()))
+        .record_report(
+            &instance,
+            key.as_bytes(),
+            Report::Work(nucleus_core::WorkReport {
+                pull_request: pr.clone(),
+                summary: Some(
+                    "Fixed the synthetic change.
+
+"
+                    .into(),
+                ),
+            }),
+        )
         .expect("stage report");
     row = service
         .save(&row, updated.clone(), &at("reported", reported_at_ms))
@@ -399,28 +409,13 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         }],
     );
     let history = json_body(get_as(&api, "/v1/tasks/worker/history", &BOARD_KEY).await).await;
-    assert_eq!(
-        history[0]["presentation"],
-        json!([
-            {"kind":"run_ended","instance":instance}, {"kind":"pull_request","url":PR}
-        ])
-    );
-    assert_eq!(
-        history[1]["presentation"],
-        json!([{"kind":"run_reported","instance":instance,"sentAtMs":sent_at_ms}])
-    );
-    assert_eq!(history[2]["presentation"], json!([]));
-    assert_eq!(
-        history[3]["presentation"],
-        json!([
-            {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null,
-                "thread":task.run().unwrap().launch().thread,"startedAtMs":sent_at_ms - 2_000}
-        ])
-    );
+    let thread = &task.run().unwrap().launch().thread;
+    assert_worker_history(&history, &instance, thread, sent_at_ms);
     let detail = json_body(get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await).await;
     let list = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
     let lifecycle = &detail["lifecycle"];
     assert_eq!(list[0]["lifecycle"], *lifecycle);
+    assert!(lifecycle.get("transcript").is_none());
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
@@ -433,6 +428,29 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         task.run().unwrap().launch().thread
     );
     assert!(lifecycle["reviewer"].is_null());
+}
+
+fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_ms: u64) {
+    assert_eq!(
+        history[0]["presentation"],
+        json!([
+            {"kind":"run_ended","instance":instance}, {"kind":"pull_request","url":PR}
+        ])
+    );
+    assert_eq!(
+        history[1]["presentation"],
+        json!([{"kind":"run_reported","instance":instance,"sentAtMs":sent_at_ms,
+            "outcome":{"kind":"work","url":PR,"summary":"Fixed the synthetic change.","revision":false}}])
+    );
+    assert_eq!(history[2]["presentation"], json!([]));
+    assert_eq!(
+        history[3]["presentation"],
+        json!([
+            {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null,
+                "thread":thread,
+                "startedAtMs":sent_at_ms - 2_000}
+        ])
+    );
 }
 
 #[tokio::test]
@@ -459,6 +477,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
             head,
             decision: Review::Changes,
             summary: "Add a regression".into(),
+            finding_titles: Vec::new(),
         },
     )
     .expect("stage verdict");
@@ -2106,9 +2125,15 @@ async fn reopen_and_finish_review(
         let state = service.state.lock().await;
         for row in [done, &reopened] {
             let label = crate::titles::task_state_label(&row.task, None);
-            let lifecycle =
-                crate::presentation::task_lifecycle(&row.task, &state.store, &label, None, None)
-                    .expect("project current finish");
+            let lifecycle = crate::presentation::task_lifecycle(
+                &row.task,
+                &state.store,
+                &label,
+                None,
+                None,
+                None,
+            )
+            .expect("project current finish");
             assert_eq!(
                 lifecycle.finished_at_ms.is_some(),
                 row.task.phase().is_terminal()
@@ -2136,6 +2161,7 @@ async fn reopen_and_finish_review(
             head,
             decision: Review::Approve,
             summary: "Synthetic review of the reopened task".into(),
+            finding_titles: Vec::new(),
         },
     )
     .expect("new review report");

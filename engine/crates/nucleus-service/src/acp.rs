@@ -8,7 +8,7 @@ use std::{
 use crate::{ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget};
 use nucleus_core::{
     Authority, Phase, RunState, WaitReason,
-    acp::{Binding, InboxBinding, parent_hold_prompt, session_id},
+    acp::{Binding, InboxBinding, session_id},
 };
 use nucleus_store::{AcpSession, TaskRow};
 use rustix::fs::{Mode, OFlags, open};
@@ -113,7 +113,11 @@ impl Service {
         {
             return Ok((None, false));
         }
-        Ok((command.as_deref().map(parent_hold_prompt), false))
+        let prompt = match command {
+            Some(command) => state.store.task_turn_prompt(id, &command)?,
+            None => None,
+        };
+        Ok((prompt, false))
     }
 
     pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
@@ -190,6 +194,7 @@ impl Service {
         kind: &str,
         session: &str,
         command: &str,
+        prompt: &str,
     ) -> Result<Option<i64>, ServiceError> {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
@@ -205,6 +210,7 @@ impl Service {
         let mut intent = event(kind);
         intent.detail = serde_json::json!({
             "command": command, "version": row.version, "session": session, "retryOf": retry_of,
+            "prompt": prompt,
         })
         .to_string();
         let starting = matches!(kind, "native_turn_intent" | "native_turn_replay");
@@ -256,8 +262,18 @@ impl Service {
             });
         }
         let attempt = if let Some(kind) = intent_kind {
+            let frozen = self
+                .state
+                .lock()
+                .await
+                .store
+                .task_turn_prompt(&row.task.identity().id, &command)?;
+            if let Some(prompt) = frozen {
+                write.set_prompt(prompt);
+            }
+            let prompt = write.prompt().ok_or(ServiceError::Input)?;
             let Some(attempt) = self
-                .claim_parent_intent(row, kind, session, &command)
+                .claim_parent_intent(row, kind, session, &command, prompt)
                 .await?
             else {
                 return Ok(ParentEffect::AlreadyClaimed);

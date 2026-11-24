@@ -399,10 +399,13 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
                 options: vec!["Small".into(), "Large".into()],
             }
         } else {
-            nucleus_core::Report::Work(PullRequest {
-                url: PR.into(),
-                head,
-            })
+            nucleus_core::Report::Work(
+                PullRequest {
+                    url: PR.into(),
+                    head,
+                }
+                .into(),
+            )
         };
         task.record_report(&instance, credential.as_bytes(), report)
             .unwrap();
