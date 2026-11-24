@@ -68,6 +68,8 @@ impl SessionBinding {
 #[serde(rename_all = "camelCase")]
 pub struct InboxSnapshot {
     pub pending: Vec<InboxForm>,
+    #[serde(default)]
+    pub replies_ready: bool,
 }
 
 #[derive(Serialize, Deserialize)]

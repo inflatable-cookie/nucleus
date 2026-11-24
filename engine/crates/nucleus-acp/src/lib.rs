@@ -262,7 +262,8 @@ impl Agent {
             return;
         }
         if client.is_inbox() {
-            session.turn = Some(inbox::prompt(client, &self.output, session_id, id));
+            let ui = prompt_text(&params["prompt"]) == "ui";
+            session.turn = Some(inbox::prompt(client, &self.output, session_id, id, ui));
             return;
         }
         let prompt = prompt_text(&params["prompt"]);

@@ -170,6 +170,7 @@ pub struct Service {
     forge: GitHub,
     inbox: Option<inbox::Inbox>,
     native_inbox: Option<native_inbox::NativeInbox>,
+    board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
@@ -332,6 +333,7 @@ impl Service {
             forge,
             inbox: None,
             native_inbox: None,
+            board: std::sync::OnceLock::new(),
             callback,
             report_command,
             state: Mutex::new(State {

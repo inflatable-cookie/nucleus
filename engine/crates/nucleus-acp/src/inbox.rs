@@ -5,7 +5,10 @@ use std::{
 
 use nucleus_core::acp::{InboxAnswer, InboxForm};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::{
+    sync::mpsc,
+    time::{Instant, sleep_until},
+};
 
 use crate::{
     Output, Turn,
@@ -23,13 +26,22 @@ pub(crate) fn response_session(frame: &Value) -> Option<&str> {
     Some(session)
 }
 
-pub(crate) fn prompt(client: ServiceClient, output: &Output, session: &str, id: &Value) -> Turn {
+pub(crate) fn prompt(
+    client: ServiceClient,
+    output: &Output,
+    session: &str,
+    id: &Value,
+    wait_for_ui_reply: bool,
+) -> Turn {
     let (send, receive) = mpsc::channel(64);
     let output = output.clone();
     let session = session.to_owned();
     let request = id.clone();
     let job = tokio::spawn(async move {
-        match follow(&client, &output, &session, receive).await {
+        // ACP text is only a hint to wait for a reply. The scheduler proves
+        // that T3 actually recorded a direct operator message.
+        let until = wait_for_ui_reply.then(|| Instant::now() + Duration::from_secs(8));
+        match follow(&client, &output, &session, receive, until).await {
             Ok(()) => stop(&output, &request, "end_turn"),
             Err(failure) => error(&output, &request, -32000, &failure.to_string()),
         }
@@ -46,6 +58,7 @@ async fn follow(
     output: &Output,
     session: &str,
     mut replies: mpsc::Receiver<Value>,
+    mut wait_for_ui: Option<Instant>,
 ) -> Result<(), Failure> {
     // Carry requests across reconnects. An ambiguous HTTP response never repeats an answer.
     let mut cards = BTreeMap::<String, Card>::new();
@@ -54,10 +67,11 @@ async fn follow(
         let result = async {
             let mut changes = client.stream().await?;
             loop {
+                let deadline = wait_for_ui;
                 tokio::select! {
                     change = changes.next() => {
                         change?;
-                        if !refresh_cards(client, output, session, &mut cards).await? {
+                        if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
                             return Ok(());
                         }
                         delay = 1;
@@ -70,9 +84,21 @@ async fn follow(
                             // The client settled this request. Read back the ordinary
                             // decision before offering a fresh form.
                             cards.remove(&answer.field);
-                            if !refresh_cards(client, output, session, &mut cards).await? {
+                            if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
                                 return Ok(());
                             }
+                        }
+                    }
+                    () = async {
+                        if let Some(deadline) = deadline {
+                            sleep_until(deadline).await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    } => {
+                        wait_for_ui = None;
+                        if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
+                            return Ok(());
                         }
                     }
                 }
@@ -94,8 +120,18 @@ async fn refresh_cards(
     output: &Output,
     session: &str,
     cards: &mut BTreeMap<String, Card>,
+    wait_for_ui: &mut Option<Instant>,
 ) -> Result<bool, Failure> {
     let snapshot = client.inbox().await?;
+    if snapshot.replies_ready {
+        let replies = client.take_inbox_replies().await?;
+        if !replies.is_empty() {
+            *wait_for_ui = None;
+        }
+        for reply in replies {
+            notify(output, session, message(&reply));
+        }
+    }
     let has_pending = !snapshot.pending.is_empty();
     cards.retain(|field, _| snapshot.pending.iter().any(|form| &form.field == field));
     for form in snapshot.pending.into_iter().filter(|form| form.offer) {
@@ -103,7 +139,7 @@ async fn refresh_cards(
             slot.insert(elicit(output, session, &form)?);
         }
     }
-    Ok(has_pending)
+    Ok(has_pending || wait_for_ui.is_some())
 }
 
 struct Card {

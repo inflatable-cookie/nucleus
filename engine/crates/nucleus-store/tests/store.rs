@@ -107,6 +107,30 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
 }
 
 #[test]
+fn inbox_ui_messages_cannot_repeat_their_open_across_restarts() {
+    let home = tempfile::tempdir().expect("fixture volume");
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).expect("before restart");
+    assert!(
+        store
+            .claim_inbox_message("fixture-ui-1", 1)
+            .expect("first message")
+    );
+    drop(store);
+    let mut store = Store::open(&storage).expect("after restart");
+    assert!(
+        !store
+            .claim_inbox_message("fixture-ui-1", 2)
+            .expect("old message")
+    );
+    assert!(
+        store
+            .claim_inbox_message("fixture-ui-2", 3)
+            .expect("new message")
+    );
+}
+
+#[test]
 fn provider_pauses_survive_reopen_and_expire_at_the_deadline() {
     let home = tempfile::tempdir().expect("fixture volume");
     let storage = fixture_storage(home.path());

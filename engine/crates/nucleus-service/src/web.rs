@@ -41,6 +41,7 @@ mod board;
 mod inbox;
 mod planning;
 mod settings;
+pub(crate) use board::Board;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
 

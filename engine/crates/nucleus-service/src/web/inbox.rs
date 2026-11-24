@@ -21,6 +21,16 @@ pub(super) fn routes() -> Router<Api> {
         .route("/v1/acp/inbox", get(snapshot))
         .route("/v1/acp/inbox/events", get(events))
         .route("/v1/acp/inbox/answer", post(answer))
+        .route("/v1/acp/inbox/replies", post(take_replies))
+}
+
+async fn take_replies(
+    State(api): State<Api>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, ApiError> {
+    Ok(Json(
+        api.service.take_inbox_replies(&credential(&headers)?)?,
+    ))
 }
 
 async fn snapshot(
