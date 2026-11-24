@@ -390,7 +390,12 @@ export function ProfilesPanel({
             <TabRow
               c={c}
               label="Usage view"
-              tabs={USAGE_ROLE_TABS}
+              // Rust engine (Spec 070 ruling 1): the coordinator role is retired.
+              tabs={
+                profileCatalog
+                  ? USAGE_ROLE_TABS
+                  : USAGE_ROLE_TABS.filter((tab) => tab.id !== "coordinator")
+              }
               value={usageRole}
               onChange={setUsageRole}
               nowrap

@@ -45,6 +45,16 @@ export class RustUnsupported extends Error {
 const iso = (ms: number | null | undefined) =>
   ms == null ? null : new Date(ms).toISOString();
 
+/** Waits that mean a run is live on the host. */
+const EXECUTING = new Set([
+  "starting",
+  "running",
+  "permission",
+  "input",
+  "idle_without_terminal_run",
+  "retained_thread_busy",
+]);
+
 const PROJECT_KEY = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /**
@@ -336,7 +346,21 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       projects: rows
         .filter(({ project }) => !project.archived)
         .map(({ board }) => board),
-      projectActivity: [],
+      // A task with a live run is executing work as of this read. The engine's
+      // summaries carry no history times yet, so idle tasks add no activity.
+      projectActivity: rows.map(({ board, project }) => {
+        const origins = new Set(project.repositories.map((repo) => repo.origin.toLowerCase()));
+        const at = new Date().toISOString();
+        const items = tasks
+          .filter(
+            (task) =>
+              origins.has(task.identity.repository.toLowerCase()) &&
+              task.wait !== null &&
+              EXECUTING.has(task.wait),
+          )
+          .map((task) => ({ id: task.identity.id, at, executing: true }));
+        return { key: board.key, items, lastAt: items.length ? at : null };
+      }),
       pendingSubmissions: [],
       projectBadges: undefined,
       // The saved T3 project title gives each repository the shared generated badge.
@@ -569,7 +593,18 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       if (!board) throw new Error("The engine did not keep that project.");
       return board;
     },
-    "project.archive": async (input: { project: string; archived: boolean }) => {
+    "rust.dispatch.allowance": async () => {
+      const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
+      return { minutes: dispatch.value.allowanceMinutes };
+    },
+    "rust.dispatch.allowance.set": async (input: { minutes: number | null }) => {
+      const saved = await editDispatch((value) => ({
+        ...value,
+        allowanceMinutes: input.minutes,
+      }));
+      return { minutes: saved.value.allowanceMinutes };
+    },
+    "rust.project.archive": async (input: { project: string; archived: boolean }) => {
       const id = keys.id(input.project);
       await editProjects((value) => {
         const project = value.projects[id];

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as api from "../shared/contracts";
 import { createRustApi } from "../client/web/rust-api";
 import { createRustAdapter, projectKeys, RustUnsupported } from "../client/web/rust-adapter";
+import { rustAllowance, rustProjectArchive, rustSetAllowance } from "../client/rust-contracts";
 
 /**
  * The Rust engine's board adapter (Spec 070 ruling 4): the shared screens'
@@ -133,4 +134,19 @@ test("retired machinery is refused by name instead of guessed", async () => {
     ["orbit", "Orbit_Main", "orbit.main"].map(projectKeys(["orbit", "Orbit_Main", "orbit.main"]).key),
     ["orbit", "p-orbit-main", "p-orbit-main-2"],
   );
+});
+
+test("the allowance and archive controls write the Dispatch and Projects domains", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  assert.deepEqual(await adapter.rpc(rustAllowance, {}), { minutes: 600 });
+  assert.deepEqual(await adapter.rpc(rustSetAllowance, { minutes: null }), { minutes: null });
+  await adapter.rpc(api.uiSnapshot, {});
+  await adapter.rpc(rustProjectArchive, { project: "p-orbit-main", archived: true });
+  const projects = fake.writes.find((write) => write.domain === "projects")!.body.value as {
+    projects: Record<string, { archived: boolean }>;
+  };
+  assert.equal(projects.projects.Orbit_Main!.archived, true);
+  const board = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board) && board.projects.length === 0, "an archived project leaves the board");
 });

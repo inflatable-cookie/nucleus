@@ -3,6 +3,8 @@ import { errorText as failureText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useRpc } from "./shell";
+import { useQuery } from "@tanstack/react-query";
+import { rustAllowance, rustSetAllowance } from "./rust-contracts";
 import {
   ActionButton,
   Button,
@@ -754,6 +756,7 @@ function ProjectLimitRow({
  * slots, project overrides.
  */
 export function DispatchLimits(props: DispatchLimitsProps) {
+  const features = useEngineFeatures();
   const { c, state, authority } = props;
   const values = authority?.effective ?? null;
   return (
@@ -766,6 +769,7 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         retry={props.retryAuthority}
         save={props.saveCapacity}
       />
+      {features.engine === "rust" && <Allowance c={c} />}
       <ProjectOverrides
         c={c}
         state={state}
@@ -774,5 +778,44 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         pendingOverrideRemovals={props.pendingOverrideRemovals}
       />
     </View>
+  );
+}
+
+/**
+ * Rust engine (Spec 070 ruling 17): the one allowance that replaces budgets,
+ * in minutes of run time. 0 means no limit.
+ */
+function Allowance({ c }: { c: Colors }) {
+  const read = useRpc(rustAllowance);
+  const write = useRpc(rustSetAllowance);
+  const query = useQuery({ queryKey: ["nucleus", "rust-allowance"], queryFn: () => read({}) });
+  const [draft, setDraft] = useState<number | null>(null);
+  const auto = useSectionAutoSave(async (minutes: number) => {
+    await write({ minutes: minutes > 0 ? minutes : null });
+    await query.refetch();
+  });
+  const value = draft ?? query.data?.minutes ?? 0;
+  return (
+    <Section c={c} title="Allowance" status={auto.status} description="Run time the engine may spend, in minutes. 0 means no limit.">
+      {query.data && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
+        <NumberStepper
+          card
+          c={c}
+          label="Allowance"
+          a11yLabel="Allowance in minutes (0 for no limit)"
+          value={value}
+          min={0}
+          max={100000}
+          unit="min"
+          onChange={(next) => {
+            setDraft(next);
+            auto.enqueue(next, 600);
+          }}
+          onCommit={() => void auto.saver.flush()}
+        />
+        </View>
+      )}
+    </Section>
   );
 }
