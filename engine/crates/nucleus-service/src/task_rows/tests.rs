@@ -641,6 +641,147 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
 }
 
 #[tokio::test]
+async fn a_delivery_wake_stays_visible_across_checking_and_allows_one_message() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    let row = create_visibility_row(&fixture, &task).await;
+    let session = service.host.runtime_identity().unwrap();
+    let prepare = || {
+        service
+            .host
+            .prepare_parent_refresh(&fixture.binding, PROVIDER)
+    };
+    let fence = service.effect(&row).await.unwrap();
+    let result = service
+        .deliver_parent(
+            &row,
+            prepare().await.unwrap().unwrap(),
+            &session,
+            Some("native_turn_intent"),
+        )
+        .await
+        .map(|_| Action::Nothing);
+    assert!(matches!(result, Err(ServiceError::ParentNotSent { .. })));
+    drop(fence);
+
+    // The watcher can run before the pass publishes its retry decision.
+    fixture.sync().await;
+    service
+        .schedule_result(&row, &result, Priority::Effect)
+        .await
+        .unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Err(ServiceError::Host(nucleus_hosts::HostError::Uncertain)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    fixture.sync().await;
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::HostUnknown)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.attention().await, TaskAttention::Waiting);
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+
+    let _fence = service.effect(&row).await.unwrap();
+    let sent = service
+        .deliver_parent(
+            &row,
+            prepare().await.unwrap().unwrap(),
+            &session,
+            Some("native_turn_intent"),
+        )
+        .await
+        .unwrap();
+    assert!(sent);
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "message.dispatch"]
+    );
+}
+
+#[tokio::test]
+async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    let row = create_visibility_row(&fixture, &task).await;
+    let session = service.host.runtime_identity().unwrap();
+    let prepare = || {
+        service
+            .host
+            .prepare_parent_refresh(&fixture.binding, PROVIDER)
+    };
+    let fence = service.effect(&row).await.unwrap();
+    let result = service
+        .deliver_parent(
+            &row,
+            prepare().await.unwrap().unwrap(),
+            &session,
+            Some("native_turn_intent"),
+        )
+        .await;
+    assert!(matches!(result, Err(ServiceError::ParentNotSent { .. })));
+    fixture.publish_shell();
+    let write = prepare().await.unwrap().unwrap();
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let refusal = service
+        .deliver_parent(&row, write, &session, Some("native_turn_intent"))
+        .await
+        .map(|_| Action::Nothing);
+    assert!(matches!(refusal, Err(ServiceError::ParentNotSent { .. })));
+    drop(fence);
+    service
+        .schedule_result(&row, &refusal, Priority::Effect)
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+
+    // The operator clears their horizon and the next plan genuinely waits.
+    fixture.native.lock().unwrap().until = Value::Null;
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+}
+
+async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
+    let row = {
+        let mut state = fixture.service.state.lock().await;
+        state.store.create(task, &event("fixture")).unwrap();
+        fixture.service.desire_title(&state, task, None);
+        fixture.service.lookup(&state, ID).unwrap()
+    };
+    fixture.sync().await;
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    row
+}
+
+#[tokio::test]
 async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
     let pending = pending_task();
     let fixture = Fixture::new(&pending).await;

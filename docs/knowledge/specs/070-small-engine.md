@@ -238,6 +238,10 @@ Later decisions carry their own attribution.
       is visible. A native receipt or an observed clear or replacement
       retires the claim. A later Nucleus-owned snooze starts a new effect.
       An operator snooze holds delivery.
+    - When Nucleus wakes a parent to deliver, the row stays shown through
+      delivery checks. A sent message or an ordinary wait replanned after a
+      pre-wire refusal ends that visibility. Checking alone asks nothing
+      of the operator.
     - A retained role can send directly to its own thread. The scheduler uses
       the exact parent read under the task fence to keep the parent visible
       at that send. It records Starting with the first role send intent and

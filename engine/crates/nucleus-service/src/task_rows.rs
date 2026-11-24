@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Role, Task};
+use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
     ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
     SendOutcome,
@@ -10,7 +10,8 @@ use nucleus_hosts::{
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
 use crate::{
-    Service, ServiceError, State, attention::TaskAttention, event, now_ms, pass::DispatchTarget,
+    Service, ServiceError, State, WaitDetail, attention::TaskAttention, event, now_ms,
+    pass::DispatchTarget,
 };
 
 const HORIZON_MS: u64 = 48 * 60 * 60 * 1_000;
@@ -353,6 +354,22 @@ impl Service {
         Ok(())
     }
 
+    async fn show_until_delivery(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let mut state = self.state.lock().await;
+        if state.observe_wait_detail(
+            &row.task,
+            Some(WaitReason::HostUnknown),
+            Some(WaitDetail::ShowingForDelivery(
+                "Checking the task thread before sending.",
+            )),
+        )? {
+            self.desire_title(&state, &row.task, row.number);
+            self.title_wake.notify_one();
+            self.publish(&row.task.identity().id, row.version);
+        }
+        Ok(())
+    }
+
     pub(super) async fn wake_task_parent(
         &self,
         row: &TaskRow,
@@ -453,6 +470,7 @@ impl Service {
                 observed.sequence
             )));
         }
+        self.show_until_delivery(row).await?;
         Err(self.parent_not_sent(format!(
             "{change:?} is waiting for shell confirmation (revision {}, write {result:?})",
             observed.sequence
@@ -473,6 +491,14 @@ fn row_attention_for_effect(
     row: &TaskRow,
 ) -> Result<Option<TaskAttention>, ServiceError> {
     let attention = state.task_attention(row)?;
+    if attention == TaskAttention::Waiting
+        && matches!(
+            state.wait_detail(&row.task.identity().id),
+            Some(WaitDetail::ShowingForDelivery(_) | WaitDetail::ConfirmingDelivery(_))
+        )
+    {
+        return Ok(Some(TaskAttention::Active));
+    }
     // After a cold start a recorded send alone gives no evidence that a child is quiet.
     let awaiting_child_read = attention == TaskAttention::Waiting
         && row.task.run().is_some_and(|run| {

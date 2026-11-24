@@ -79,7 +79,7 @@ impl Service {
         if task.phase().is_terminal()
             || matches!(
                 state.wait_detail(id),
-                Some(crate::WaitDetail::BeforeSend(_))
+                Some(crate::WaitDetail::BeforeSend(_) | crate::WaitDetail::ShowingForDelivery(_))
             )
             || crate::attention::waiting_for_person(task, wait)
             || task.hold().is_some()
