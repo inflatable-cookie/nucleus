@@ -1,0 +1,1 @@
+- Git-ignored build output no longer blocks exact-head review or clean worktree removal. A fresh clean read clears an earlier workspace mismatch question.

@@ -95,7 +95,7 @@ pub enum Workspace {
     Absent,
     Dirty,
     /// Fresh Git evidence from the owned checkout binds its current head and
-    /// confirms no staged, modified, conflicted or untracked files. The adapter
+    /// confirms no staged, modified, conflicted or non-ignored untracked files. The adapter
     /// rechecks this immediately before any unforced removal.
     Clean(Head),
 }
@@ -161,6 +161,7 @@ enum Signal {
     Stopped(Phase),
     ReservationDiscarded(Phase),
     HeadChanged(Phase),
+    WorkspaceRepaired,
     Admitted,
     Start(Role, Launch),
     Failed(Role),
@@ -192,7 +193,9 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
         Signal::Admitted | Signal::ReviewerReported(Review::Changes) => {
             Action::Advance(Phase::Working)
         }
-        Signal::WorkerReported | Signal::NeedsReview => Action::Advance(Phase::Reviewing),
+        Signal::WorkerReported | Signal::NeedsReview | Signal::WorkspaceRepaired => {
+            Action::Advance(Phase::Reviewing)
+        }
         Signal::ReviewerReported(Review::Approve) => Action::Advance(Phase::Merging),
         Signal::MergeConfirmed => Action::Advance(Phase::Closing),
         Signal::Start(role, via) => Action::Launch { role, via },
@@ -220,6 +223,9 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     }
     if observation.supersedes_question(task) {
         return Signal::HeadChanged(task.phase);
+    }
+    if observation.repairs_workspace(task) {
+        return Signal::WorkspaceRepaired;
     }
     if task.hold.is_some() {
         return Signal::Wait(WaitReason::Hold);
@@ -455,6 +461,17 @@ fn launch(task: &Task, observation: &Observation, role: Role) -> Signal {
 impl Observation {
     pub(crate) fn supersedes_question(&self, task: &Task) -> bool {
         matches!((&task.question, self.pr()), (Some(question), Some(pr)) if question.outdated_at(&pr.head))
+    }
+
+    pub(crate) fn repairs_workspace(&self, task: &Task) -> bool {
+        task.phase == Phase::Reviewing
+            && task.run.is_none()
+            && matches!((&task.question, &self.forge, &self.workspace),
+                (Some(question), Observed::Known(Forge::Open { pr, .. }), Observed::Known(Workspace::Clean(head)))
+                    if question.question == Question::Repair(Repair::WorkspaceHeadMismatch)
+                        && question.head.as_ref() == Some(head)
+                        && &pr.head == head
+                        && task.pr.as_ref() == Some(pr))
     }
 
     pub(crate) fn current(&self, expected: &str) -> Option<RunState> {

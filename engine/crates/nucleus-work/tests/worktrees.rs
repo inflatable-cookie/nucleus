@@ -95,20 +95,28 @@ fn allocation_is_idempotent_and_closeout_only_removes_the_published_clean_checko
         checkout.allocate(&head).expect("verify retry"),
         Workspace::Clean(head.clone())
     );
-    for file in ["untracked.md", "local.settings"] {
-        let local = checkout.path().join(file);
-        fs::write(&local, "keep this local work")
-            .expect("create local file after initial inspection");
-        assert_eq!(
-            checkout.retire(&head).expect("preserve workspace"),
-            Retirement::Retained
-        );
-        assert_eq!(
-            fs::read_to_string(&local).expect("file remains"),
-            "keep this local work"
-        );
-        fs::remove_file(local).expect("remove fixture file");
-    }
+    let local = checkout.path().join("untracked.md");
+    fs::write(&local, "keep this local work").expect("create local work");
+    assert_eq!(
+        checkout.observe().expect("inspect local work"),
+        Workspace::Dirty
+    );
+    assert_eq!(
+        checkout.retire(&head).expect("preserve workspace"),
+        Retirement::Retained
+    );
+    assert_eq!(
+        fs::read_to_string(&local).expect("file remains"),
+        "keep this local work"
+    );
+    fs::remove_file(local).expect("remove fixture file");
+
+    let ignored = checkout.path().join("local.settings");
+    fs::write(&ignored, "discardable output").expect("create ignored output");
+    assert_eq!(
+        checkout.observe().expect("inspect ignored output"),
+        Workspace::Clean(head.clone())
+    );
     let different: Head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         .parse()
         .expect("other head");
@@ -122,6 +130,7 @@ fn allocation_is_idempotent_and_closeout_only_removes_the_published_clean_checko
         checkout.retire(&head).expect("remove the clean worktree"),
         Retirement::Removed
     );
+    assert!(!ignored.exists());
     assert_eq!(
         checkout.retire(&head).expect("replay closeout"),
         Retirement::Absent
