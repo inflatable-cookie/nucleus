@@ -179,9 +179,17 @@ pub(super) fn reservation_at(
 pub(super) async fn forge_fixture(
     head: &Head,
 ) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    forge_fixture_for_branch(head, "ns-reviewer").await
+}
+
+async fn forge_fixture_for_branch(
+    head: &Head,
+    branch: &str,
+) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let reads = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&reads);
-    let pull = forge_pull(head);
+    let mut pull = forge_pull(head);
+    pull["head"]["ref"] = Value::from(branch);
     let checks = forge_checks(head);
     let server = Router::new()
         .route(
@@ -380,7 +388,7 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
     for question in [false, true] {
         let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
-        let (forge, _, server) = forge_fixture(&head).await;
+        let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
         service.forge = forge;
         let (mut task, credential, _) = reservation("worker", Entry::Brief, &head);
         let instance = task.run().unwrap().launch().instance.clone();

@@ -42,7 +42,7 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ArchiveStep, ParentAttempt, ParentRun, ParentStep, ParentWrite, parent_thread,
+    ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite, parent_thread,
 };
 use process::{Activity, Inventory};
 use projection::Projection;
@@ -113,7 +113,7 @@ pub enum HostError {
         matches: [bool; 3],
     },
     #[error(
-        "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, idle before {idle_before:?}, idle now {idle_now:?}; values are fingerprints)"
+        "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, custody before {activity_before:?}, custody now {activity_now:?}; values are fingerprints)"
     )]
     ParentShellChanged {
         field: &'static str,
@@ -121,11 +121,9 @@ pub enum HostError {
         observed: Option<u64>,
         before: u64,
         after: u64,
-        idle_before: Option<bool>,
-        idle_now: Option<bool>,
+        activity_before: RowChildren,
+        activity_now: RowChildren,
     },
-    #[error("parent message could not open the transport before send: {cause}")]
-    ParentConnection { cause: &'static str },
     #[error("the held shell could not confirm all recorded role children are quiet")]
     RowChildBusy,
     #[error("the local process census could not confirm workspace custody")]

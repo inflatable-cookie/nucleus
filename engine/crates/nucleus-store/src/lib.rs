@@ -707,10 +707,10 @@ impl Store {
         session: &str,
         command: &str,
     ) -> Result<Option<(i64, bool)>, StoreError> {
-        let latest = self
+        Ok(self
             .connection
-            .query_row(
-                "SELECT sequence, kind FROM events
+            .prepare_cached(
+                "SELECT sequence, (kind = 'native_turn_not_sent') FROM events
              WHERE task_id = ?1 AND kind IN (?2, 'native_turn_not_sent', 'native_turn_replay')
              AND json_valid(detail) AND json_extract(detail, '$.version') = ?3
              AND json_extract(detail, '$.command') = ?5
@@ -718,11 +718,11 @@ impl Store {
                   (kind = 'native_turn_replay' AND
                    instr(json_extract(detail, '$.session'), ?4 || '/') = 1))
              ORDER BY sequence DESC LIMIT 1",
-                params![id, kind, version, session, command],
-                |row| Ok((row.get(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()?;
-        Ok(latest.map(|(sequence, kind)| (sequence, kind == "native_turn_not_sent")))
+            )?
+            .query_row(params![id, kind, version, session, command], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?)
     }
 
     /// Restore a delivery fence for this task version and native runtime.
@@ -752,8 +752,7 @@ impl Store {
                        AND json_valid(refusal.detail)
                        AND json_extract(refusal.detail, '$.version') = ?2
                        AND json_extract(refusal.detail, '$.session') = 'preflight'
-                       AND (instr(json_extract(refusal.detail, '$.command'), '-hold-') > 0
-                         OR instr(json_extract(refusal.detail, '$.command'), '-refresh-') > 0)
+                       AND json_type(refusal.detail, '$.command') = 'text'
                        AND NOT EXISTS (
                          SELECT 1 FROM events AS sent
                          WHERE sent.task_id = blocked.task_id AND sent.sequence < blocked.sequence

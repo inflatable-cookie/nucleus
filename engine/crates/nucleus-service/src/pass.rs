@@ -143,7 +143,7 @@ impl Service {
                 Ok(Action::Nothing)
             }
             ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
-            ArchiveStep::Write(mut write) => {
+            ArchiveStep::Write(write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         &row.task,
@@ -159,9 +159,7 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.verify_native_parent(row, &mut write).await?;
-                self.write_claimed_parent(row, "archive", write, "archive")
-                    .await?;
+                self.deliver_parent(row, write, "archive", None).await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
@@ -764,7 +762,7 @@ impl Service {
                 }
                 Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
             }
-            ParentStep::Write(mut write) => {
+            ParentStep::Write(write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         task,
@@ -778,22 +776,19 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
-                self.wake_parent_delivery(row, provider, &mut write).await?;
+                self.wake_parent_delivery(row, provider, &write).await?;
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
-                self.verify_native_parent(row, &mut write).await?;
                 let command = write.command_id().ok_or(ServiceError::Input)?;
                 let (scope, kind) = if prior_turn.as_deref() == Some(command) {
                     (&failed_scope, "native_turn_replay")
                 } else {
                     (&session, "native_turn_intent")
                 };
-                if write.starts_turn()
-                    && !self.claim_parent_intent(row, kind, scope, command).await?
-                {
+                let intent = write.starts_turn().then_some(kind);
+                if !self.deliver_parent(row, write, scope, intent).await? {
                     return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain));
                 }
-                self.write_claimed_parent(row, scope, write, kind).await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))
             }

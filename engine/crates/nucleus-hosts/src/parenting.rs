@@ -17,7 +17,7 @@ use crate::{
     projection::ParentCustody,
     rpc::{Read, Reply},
     task_row::ThreadVisibility,
-    thread_snapshots::ThreadRead,
+    thread_snapshots::{ShellCustody, ThreadRead},
 };
 
 /// Evidence for the exact active turn and root node that can parent a child.
@@ -39,6 +39,12 @@ pub enum ParentStep {
 pub struct ParentAttempt<'a> {
     pub command: &'a str,
     pub released: bool,
+}
+
+/// Whether failure happened before the command could enter the transport.
+pub enum ParentSendError {
+    NotSent(HostError),
+    Unknown(HostError),
 }
 
 pub enum ArchiveStep {
@@ -80,13 +86,6 @@ impl ParentWrite {
         match &self.delivery {
             Some(delivery) => Some(delivery.row),
             None => None,
-        }
-    }
-
-    /// Replace stale idle evidence after a visibility-only wake.
-    pub fn after_row_wake(&mut self, row: RowObservation) {
-        if let Some(delivery) = &mut self.delivery {
-            delivery.row = row;
         }
     }
 
@@ -353,7 +352,11 @@ impl T3 {
     /// Returns an error if the native receipt cannot be confirmed.
     pub async fn write_parent(&self, mut write: ParentWrite) -> Result<(), HostError> {
         self.verify_parent_write(&mut write).await?;
-        self.write_verified_parent(write).await
+        self.write_verified_parent(write)
+            .await
+            .map_err(|error| match error {
+                ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
+            })
     }
 
     /// Verify the destination before the owner records the send intent.
@@ -433,10 +436,9 @@ impl T3 {
     /// Send the verified effect, checking any newer shell evidence at the wire.
     /// # Errors
     /// Returns an error if T3 cannot confirm the command.
-    pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), HostError> {
-        let starts_turn = write.starts_turn();
+    pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
         let mut reached_send = false;
-        let reply = self
+        match self
             .rpc
             .call_guarded(write.rpc, write.payload, Read::One, || {
                 if let (Some(delivery), Some((thread, _))) = (&write.delivery, &write.idle_at) {
@@ -446,30 +448,11 @@ impl T3 {
                 Ok(true)
             })
             .await
-            .map_err(|error| {
-                if !starts_turn
-                    || reached_send
-                    || matches!(
-                        error,
-                        HostError::Deferred { .. }
-                            | HostError::ParentPreflight { .. }
-                            | HostError::ParentShellChanged { .. }
-                            | HostError::ParentSnoozed { .. }
-                    )
-                {
-                    return error;
-                }
-                let cause = match error {
-                    HostError::Timeout => "connection deadline elapsed",
-                    HostError::Unavailable => "host unreachable",
-                    HostError::Configuration => "endpoint or credential invalid",
-                    _ => "transport setup failed",
-                };
-                HostError::ParentConnection { cause }
-            })?;
-        match reply {
-            Reply::Value(_) => Ok(()),
-            Reply::Failure(_) => Err(HostError::Uncertain),
+        {
+            Ok(Reply::Value(_)) => Ok(()),
+            Ok(Reply::Failure(_)) => Err(ParentSendError::Unknown(HostError::Uncertain)),
+            Err(cause) if reached_send => Err(ParentSendError::Unknown(cause)),
+            Err(cause) => Err(ParentSendError::NotSent(cause)),
         }
     }
 
@@ -492,36 +475,18 @@ impl T3 {
                 "held shell added or lost the parent after verification",
             ));
         };
-        for field in [
-            "id",
-            "projectId",
-            "worktreePath",
-            "branch",
-            "lineage",
-            "providerInstanceId",
-            "modelSelection",
-            "activeProviderThreadId",
-            "archivedAt",
-            "deletedAt",
-            "activeRunId",
-            "status",
-            "latestRunId",
-            "latestRunCompletedAt",
-            "pendingRuntimeRequest",
-            "pendingBackgroundTasks",
-        ] {
-            if prior[field] != row[field] {
-                let digest = RandomState::new();
-                return Err(HostError::ParentShellChanged {
-                    field,
-                    prepared: delivery.row.sequence,
-                    observed,
-                    before: digest.hash_one(prior[field].to_string()),
-                    after: digest.hash_one(row[field].to_string()),
-                    idle_before: shell_idle(prior),
-                    idle_now: shell_idle(&row),
-                });
-            }
+        let (before, after) = (ShellCustody(prior), ShellCustody(&row));
+        if let Some(field) = before.changed_field(&after) {
+            let digest = RandomState::new();
+            return Err(HostError::ParentShellChanged {
+                field,
+                prepared: delivery.row.sequence,
+                observed,
+                before: digest.hash_one(prior[field].to_string()),
+                after: digest.hash_one(row[field].to_string()),
+                activity_before: before.activity(),
+                activity_now: after.activity(),
+            });
         }
         let visibility: ThreadVisibility = serde_json::from_value((*row).clone())
             .map_err(|_| refuse("held shell visibility is invalid"))?;
@@ -541,18 +506,6 @@ impl T3 {
         }
         Ok(())
     }
-}
-
-fn shell_idle(row: &Value) -> Option<bool> {
-    Some(
-        row.get("activeRunId")?.is_null()
-            && row.get("pendingRuntimeRequest")?.is_null()
-            && row["pendingBackgroundTasks"].as_array()?.is_empty()
-            && matches!(
-                row["status"].as_str()?,
-                "idle" | "completed" | "failed" | "interrupted" | "cancelled"
-            ),
-    )
 }
 
 fn prepare_delivery(

@@ -16,6 +16,74 @@ pub(crate) enum ThreadRead {
     Terminal,
 }
 
+pub(crate) struct ShellCustody<'a>(pub &'a Value);
+
+impl<'a> ShellCustody<'a> {
+    pub(crate) fn parent(&self) -> Option<&'a str> {
+        let lineage = &self.0["lineage"];
+        let parent = lineage["parentThreadId"].as_str()?;
+        (lineage["rootThreadId"] == parent && lineage["relationshipToParent"] == "subagent")
+            .then_some(parent)
+    }
+
+    pub(crate) fn background(&self) -> Option<bool> {
+        self.0["pendingBackgroundTasks"]
+            .as_array()
+            .map(|tasks| !tasks.is_empty())
+    }
+
+    pub(crate) fn has_active_turn(&self) -> bool {
+        let row = self.0;
+        !row["activeRunId"].is_null()
+            || !row["pendingRuntimeRequest"].is_null()
+            || matches!(
+                row["status"].as_str(),
+                Some("pending" | "preparing" | "queued" | "starting" | "running" | "waiting")
+            )
+    }
+
+    pub(crate) fn activity(&self) -> RowChildren {
+        let row = self.0;
+        if self.has_active_turn() || self.background() == Some(true) {
+            RowChildren::Active
+        } else if row.get("activeRunId").is_some_and(Value::is_null)
+            && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
+            && self.background() == Some(false)
+            && matches!(
+                row["status"].as_str(),
+                Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
+            )
+        {
+            RowChildren::Quiet
+        } else {
+            RowChildren::Unknown
+        }
+    }
+
+    pub(crate) fn changed_field(&self, other: &Self) -> Option<&'static str> {
+        [
+            "id",
+            "projectId",
+            "worktreePath",
+            "branch",
+            "lineage",
+            "providerInstanceId",
+            "modelSelection",
+            "activeProviderThreadId",
+            "archivedAt",
+            "deletedAt",
+            "activeRunId",
+            "status",
+            "latestRunId",
+            "latestRunCompletedAt",
+            "pendingRuntimeRequest",
+            "pendingBackgroundTasks",
+        ]
+        .into_iter()
+        .find(|&field| self.0[field] != other.0[field])
+    }
+}
+
 pub(crate) struct ThreadSnapshots {
     rows: BTreeMap<String, Arc<Value>>,
     row_revisions: BTreeMap<String, u64>,
@@ -128,42 +196,17 @@ impl ThreadSnapshots {
     }
 
     pub(crate) fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
-        let mut unknown = roles.iter().any(|role| !self.rows.contains_key(*role));
-        let attached = self.rows.values().filter(|row| {
-            row["lineage"]["parentThreadId"] == parent
-                && row["lineage"]["rootThreadId"] == parent
-                && row["lineage"]["relationshipToParent"] == "subagent"
-        });
-        for row in roles
+        let attached = self
+            .rows
+            .values()
+            .filter(|row| ShellCustody(row).parent() == Some(parent));
+        roles
             .iter()
-            .filter_map(|role| self.rows.get(*role))
-            .chain(attached)
-        {
-            let status = row["status"].as_str();
-            let background = row["pendingBackgroundTasks"].as_array();
-            if row["activeRunId"].is_string()
-                || row["pendingRuntimeRequest"].is_object()
-                || background.is_some_and(|tasks| !tasks.is_empty())
-                || matches!(
-                    status,
-                    Some("pending" | "preparing" | "queued" | "starting" | "running" | "waiting")
-                )
-            {
-                return RowChildren::Active;
-            }
-            unknown |= !row.get("activeRunId").is_some_and(Value::is_null)
-                || !row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
-                || background.is_none()
-                || !matches!(
-                    status,
-                    Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
-                );
-        }
-        if unknown {
-            RowChildren::Unknown
-        } else {
-            RowChildren::Quiet
-        }
+            .map(|role| self.rows.get(*role))
+            .chain(attached.map(Some))
+            .map(|row| row.map_or(RowChildren::Unknown, |row| ShellCustody(row).activity()))
+            .max()
+            .unwrap_or(RowChildren::Quiet)
     }
 
     pub(crate) fn background_row(&self, id: &str, revision: u64) -> Option<(Arc<Value>, bool)> {
@@ -207,12 +250,7 @@ impl ThreadSnapshots {
             .rows
             .get(id)
             .is_some_and(|row| Arc::ptr_eq(row, marker))
-            || !marker["pendingRuntimeRequest"].is_null()
-            || !marker["activeRunId"].is_null()
-            || matches!(
-                marker["status"].as_str(),
-                Some("running" | "waiting" | "starting" | "queued" | "preparing")
-            )
+            || ShellCustody(marker).has_active_turn()
         {
             return;
         }

@@ -162,9 +162,8 @@ impl ThreadHint {
                         && thread["activeRunId"].as_str().is_some(),
                     identity: serde_json::from_value(thread.clone()).ok(),
                     inbox_synchronized: false,
-                    parent_thread: (thread["lineage"]["relationshipToParent"] == "subagent")
-                        .then(|| thread["lineage"]["parentThreadId"].as_str())
-                        .flatten()
+                    parent_thread: crate::thread_snapshots::ShellCustody(thread)
+                        .parent()
                         .map(str::to_owned),
                     change: Some(json!([
                         item["location"],

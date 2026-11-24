@@ -29,8 +29,9 @@ fn plan_row(
     visibility: RowVisibility,
     receipt: Option<RowSnooze>,
     now: u64,
+    children: RowChildren,
 ) -> Plan {
-    if visibility.settled {
+    if visibility.settled && children != RowChildren::Active {
         return Plan::Idle(None);
     }
     let shown = visibility.snoozed_until_ms;
@@ -45,7 +46,7 @@ fn plan_row(
             ..receipt.clone()
         });
     }
-    if attention != TaskAttention::Waiting {
+    if attention != TaskAttention::Waiting || children == RowChildren::Active {
         let Some(mut receipt) = receipt else {
             return Plan::Idle(None);
         };
@@ -91,6 +92,9 @@ fn plan_row(
             return Plan::Idle(Some(until - RENEW_BEFORE_MS + 1));
         }
     }
+    if children != RowChildren::Quiet {
+        return Plan::Idle(None);
+    }
     let until = now + HORIZON_MS;
     let episode = receipt
         .as_ref()
@@ -133,7 +137,7 @@ impl Service {
                 };
                 let receipt = state.store.row_snooze(&id, thread)?;
                 let children = self.host.row_children(thread, &visibility_roles(&row.task));
-                match plan_row_with_children(attention, hint, receipt, now, children) {
+                match plan_row(attention, hint, receipt, now, children) {
                     Plan::Idle(deadline) => next = earliest(next, deadline),
                     _ => jobs.push((row, thread)),
                 }
@@ -194,7 +198,7 @@ impl Service {
             };
             let prior = state.store.row_snooze(id, thread)?;
             let children = self.host.row_children(thread, &roles);
-            match plan_row_with_children(
+            match plan_row(
                 attention,
                 observed.visibility,
                 prior.clone(),
@@ -290,7 +294,7 @@ impl Service {
         &self,
         row: &TaskRow,
         provider: &str,
-        write: &mut ParentWrite,
+        write: &ParentWrite,
     ) -> Result<(), ServiceError> {
         let Some(initial) = write.delivery_row() else {
             return Ok(());
@@ -307,27 +311,24 @@ impl Service {
                 .snoozed_until_ms
                 .filter(|&until| until > now_ms());
             let owned = receipt.filter(|receipt| receipt.owns(shown));
-            if shown.is_some() && owned.is_none() {
-                let mut error = self.parent_not_sent(format!(
-                    "operator snooze is active (shown horizon {shown:?}, revision {})",
-                    observed.sequence
-                ));
-                if let (ServiceError::ParentNotSent { retry_at, .. }, Some(until)) =
-                    (&mut error, shown)
-                {
-                    let now = tokio::time::Instant::now();
-                    *retry_at = (*retry_at).max(Some(
-                        now + Duration::from_millis(until.saturating_sub(now_ms()).min(45_000)),
-                    ));
-                }
-                return Err(error);
+            if let Some(until) = shown
+                && owned.is_none()
+            {
+                let retry = tokio::time::Instant::now()
+                    + Duration::from_millis(until.saturating_sub(now_ms()).min(45_000));
+                return Err(ServiceError::ParentNotSent {
+                    reason: format!(
+                        "operator snooze is active (horizon {until}, revision {})",
+                        observed.sequence
+                    ),
+                    retry_at: self.host.request_retry_at().max(Some(retry)),
+                });
             }
             let change = if visibility.settled {
                 RowChange::Unsettle
             } else if shown.is_some() {
                 RowChange::Unsnooze
             } else {
-                write.after_row_wake(observed);
                 return Ok(());
             };
             let Some(fresh) = self
@@ -420,28 +421,7 @@ impl Service {
                 observed.sequence, observed.visibility
             )));
         }
-        write.after_row_wake(observed);
         Ok(())
-    }
-}
-
-fn plan_row_with_children(
-    attention: TaskAttention,
-    visibility: RowVisibility,
-    receipt: Option<RowSnooze>,
-    now: u64,
-    children: RowChildren,
-) -> Plan {
-    let effective = if children == RowChildren::Active {
-        TaskAttention::Active
-    } else {
-        attention
-    };
-    match plan_row(effective, visibility, receipt, now) {
-        Plan::Write(RowChange::SnoozeUntil(_), _) if children != RowChildren::Quiet => {
-            Plan::Idle(None)
-        }
-        plan => plan,
     }
 }
 

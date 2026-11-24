@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility};
+use crate::{
+    Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility,
+    thread_snapshots::ShellCustody,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,18 +208,10 @@ impl Projection {
         binding: &Binding,
         id: &str,
     ) -> Result<Self, HostError> {
+        let shell = ShellCustody(row);
         let state = if !row["deletedAt"].is_null() {
             RetainedThread::Gone
-        } else if !row["activeRunId"].is_null()
-            || !row["pendingRuntimeRequest"].is_null()
-            || row["pendingBackgroundTasks"]
-                .as_array()
-                .is_some_and(|tasks| !tasks.is_empty())
-            || matches!(
-                row["status"].as_str(),
-                Some("running" | "waiting" | "starting" | "queued" | "preparing")
-            )
-        {
+        } else if shell.has_active_turn() || shell.background() == Some(true) {
             RetainedThread::Busy
         } else {
             RetainedThread::Idle
@@ -396,6 +391,7 @@ impl Projection {
     }
 
     pub(crate) fn use_shell_background(&mut self, row: &Value, same_revision: bool) {
+        let shell = ShellCustody(row);
         // T3 derives this summary from the full projection for a settled run.
         // The held shell can publish the same custody revision with a different
         // presentation timestamp. A matching run alone cannot prove an empty
@@ -416,8 +412,7 @@ impl Projection {
                 == self.thread.active_provider_thread_id.as_deref()
             && row["archivedAt"].as_str() == self.thread.archived_at.as_deref()
             && row["deletedAt"].as_str() == self.thread.deleted_at.as_deref()
-            && row["activeRunId"].is_null()
-            && row["pendingRuntimeRequest"].is_null()
+            && !shell.has_active_turn()
             && matches!(
                 row["status"].as_str(),
                 Some("completed" | "failed" | "interrupted" | "cancelled")
@@ -426,9 +421,7 @@ impl Projection {
                 .as_str()
                 .is_some_and(|id| self.terminal_run(id))
         {
-            self.shell_background_work = row["pendingBackgroundTasks"]
-                .as_array()
-                .map(|tasks| !tasks.is_empty());
+            self.shell_background_work = shell.background();
         }
     }
 

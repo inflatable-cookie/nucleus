@@ -213,8 +213,6 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
     host_checks: BTreeMap<String, &'static str>,
-    parent_hold_timers: BTreeMap<String, i64>,
-    row_roles: BTreeMap<String, Vec<String>>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
@@ -229,7 +227,14 @@ struct State {
     enrollments: enrollment::Enrollments,
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
     planner_notice_waiters: BTreeSet<String>,
-    thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
+    thread_tasks: BTreeMap<String, BTreeMap<String, TrackedThread>>,
+}
+
+#[derive(Default)]
+struct TrackedThread {
+    seen: Option<SeenThread>,
+    role: bool,
+    due: bool,
 }
 
 struct SeenThread {
@@ -371,8 +376,6 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 host_checks: BTreeMap::new(),
-                parent_hold_timers: BTreeMap::new(),
-                row_roles: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
@@ -541,8 +544,7 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let id = &row.task.identity().id;
         {
-            let mut state = self.state.lock().await;
-            self.arm_parent_hold_deadline(&mut state, row);
+            let state = self.state.lock().await;
             if row.task.run().is_none()
                 && let Some(runtime) = self.host.runtime_identity()
                 && state
@@ -719,7 +721,7 @@ impl Service {
                     .values_mut()
                     .flat_map(|threads| threads.values_mut())
                 {
-                    *seen = None;
+                    seen.seen = None;
                 }
             }
             tokio::time::sleep(T3_RETRY_DELAY).await;
@@ -739,19 +741,6 @@ impl Service {
         }
         let mut state = self.state.lock().await;
         self.set_cached_host(&mut state, web::CachedHost::Reachable);
-        if state
-            .row_roles
-            .values()
-            .any(|roles| roles.contains(&hint.thread))
-            || hint.parent_thread().is_some_and(|parent| {
-                state
-                    .thread_tasks
-                    .values()
-                    .any(|threads| threads.contains_key(parent))
-            })
-        {
-            self.title_wake.notify_one();
-        }
         let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
         if state.invalidate_enrolled_planner(&hint) {
@@ -762,29 +751,33 @@ impl Service {
         }
         let State {
             thread_tasks,
-            row_roles,
             schedule,
             ..
         } = &mut *state;
         let now = Instant::now();
         for (id, threads) in thread_tasks {
-            if let Some(prior) = threads.get_mut(&hint.thread) {
-                if row_roles
-                    .get(id)
-                    .is_some_and(|roles| roles.contains(&hint.thread))
-                    && hint.has_delivery_change(prior.as_ref().map(|seen| &seen.hint))
-                {
-                    schedule.resume_on_host_evidence(id);
+            if hint
+                .parent_thread()
+                .is_some_and(|parent| threads.contains_key(parent))
+            {
+                self.title_wake.notify_one();
+            }
+            if let Some(tracked) = threads.get_mut(&hint.thread) {
+                let prior = tracked.seen.as_ref().map(|seen| &seen.hint);
+                if tracked.role && prior != Some(&hint) {
+                    self.title_wake.notify_one();
+                    if tracked.due && hint.has_delivery_change(prior) {
+                        schedule.resume_on_host_evidence(id);
+                    }
                 }
-                let changed = prior.as_ref().is_none_or(|prior| prior.hint != hint);
-                *prior = Some(SeenThread {
-                    hint: hint.clone(),
-                    at: now,
-                });
-                if changed {
+                if tracked.due && prior != Some(&hint) {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
+                tracked.seen = Some(SeenThread {
+                    hint: hint.clone(),
+                    at: now,
+                });
             }
         }
     }
@@ -1573,7 +1566,7 @@ impl State {
                 .thread_tasks
                 .get(id)
                 .and_then(|threads| threads.get(&run.launch().thread))
-                .and_then(Option::as_ref)
+                .and_then(|thread| thread.seen.as_ref())
                 .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
     }
 
@@ -1638,17 +1631,9 @@ impl Service {
         let id = &task.identity().id;
         if !active(task) {
             state.thread_tasks.remove(id);
-            state.row_roles.remove(id);
-            state.parent_hold_timers.remove(id);
             return;
         }
-        state.row_roles.insert(
-            id.clone(),
-            task_rows::visibility_roles(task)
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        );
+        let roles = task_rows::visibility_roles(task);
         let thread = task
             .run()
             .map(|run| run.launch().thread.as_str())
@@ -1670,9 +1655,15 @@ impl Service {
             threads.push(binding.thread.clone());
         }
         let tracked = state.thread_tasks.entry(id.clone()).or_default();
-        tracked.retain(|thread, _| threads.contains(thread));
-        for thread in threads {
-            tracked.entry(thread).or_insert(None);
+        tracked.retain(|thread, _| threads.contains(thread) || roles.contains(&thread.as_str()));
+        for thread in roles
+            .iter()
+            .copied()
+            .chain(threads.iter().map(String::as_str))
+        {
+            let tracked = tracked.entry(thread.to_owned()).or_default();
+            tracked.role = roles.contains(&thread);
+            tracked.due = threads.iter().any(|due| due == thread);
         }
     }
 }

@@ -1,6 +1,6 @@
 //! One local read model for the board, next and native task rows.
 
-use nucleus_core::{Host, Observed, Phase, RunState, WaitReason};
+use nucleus_core::{Host, Observed, Phase, RunState, Task, WaitReason};
 use nucleus_store::TaskRow;
 use serde::Serialize;
 
@@ -15,6 +15,20 @@ pub(super) enum TaskAttention {
     Waiting,
 }
 
+pub(super) fn waiting_for_person(task: &Task, wait: Option<WaitReason>) -> bool {
+    (task.operator_decline().is_none()
+        && (task.question().is_some() || task.operator_question().is_some()))
+        || matches!(
+            wait,
+            Some(
+                WaitReason::Question
+                    | WaitReason::Permission
+                    | WaitReason::Input
+                    | WaitReason::UsagePermission
+            )
+        )
+}
+
 impl State {
     pub(super) fn task_attention(&self, row: &TaskRow) -> Result<TaskAttention, ServiceError> {
         let task = &row.task;
@@ -24,16 +38,10 @@ impl State {
         let id = &task.identity().id;
         let wait = self.waits.get(id).map(|(reason, _)| *reason);
         if self.has_open_usage_decision(task)?
-            || (task.question().is_some() && task.operator_decline().is_none())
+            || waiting_for_person(task, wait)
             || matches!(
                 wait,
-                Some(
-                    WaitReason::Question
-                        | WaitReason::Permission
-                        | WaitReason::Input
-                        | WaitReason::HostUnknown
-                        | WaitReason::HostObservationBlocked
-                )
+                Some(WaitReason::HostUnknown | WaitReason::HostObservationBlocked)
             )
         {
             return Ok(TaskAttention::Attention);
@@ -71,9 +79,7 @@ impl State {
     }
 
     pub(super) fn role_observation(&self, task: &nucleus_core::Task) -> Option<RunState> {
-        let run = task
-            .run()
-            .filter(|run| !run.revoked() && run.report().is_none())?;
+        let run = task.run().filter(|run| !run.revoked())?;
         let (instance, state) = self.role_observations.get(&task.identity().id)?;
         (instance == &run.launch().instance).then_some(*state)
     }

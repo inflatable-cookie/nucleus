@@ -59,11 +59,11 @@ pub enum RowChange {
 }
 
 /// What the held shell knows about a task row's role children.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RowChildren {
     Quiet,
-    Active,
     Unknown,
+    Active,
 }
 
 impl T3 {

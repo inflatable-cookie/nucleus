@@ -7,6 +7,15 @@ use nucleus_store::TaskAdmissionFacts;
 use serde_json::{Value, json};
 
 use super::*;
+
+fn plan_row(
+    attention: TaskAttention,
+    visibility: RowVisibility,
+    receipt: Option<RowSnooze>,
+    now: u64,
+) -> Plan {
+    super::plan_row(attention, visibility, receipt, now, RowChildren::Quiet)
+}
 use crate::tests::{REPOSITORY, fixture, native_fixture, reservation};
 
 const ID: &str = "row";
@@ -305,6 +314,14 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
         .observe_role_state(&row, &observed(RunState::IdleWithoutTerminalRun))
         .await
         .unwrap();
+    service
+        .host
+        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1, "projects":[], "threads":[{
+                "id": worker.run().unwrap().launch().thread, "status":"idle", "activeRunId":null,
+                "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
+            }]
+        }}));
     fixture.sync().await;
     worker
         .record_report(
@@ -349,9 +366,9 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .host
             .prepare_parent_refresh(&fixture.binding, PROVIDER)
     };
-    let mut write = prepare().await.unwrap().unwrap();
+    let write = prepare().await.unwrap().unwrap();
     service
-        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .wake_parent_delivery(&row, PROVIDER, &write)
         .await
         .unwrap();
     service.host.write_parent(write).await.unwrap();
@@ -368,9 +385,9 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.until = json!(OPERATOR_SNOOZE);
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
-    let mut write = prepare().await.unwrap().unwrap();
+    let write = prepare().await.unwrap().unwrap();
     let error = service
-        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .wake_parent_delivery(&row, PROVIDER, &write)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("operator snooze is active"));
@@ -378,9 +395,9 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 
     fixture.native.lock().unwrap().until = Value::Null;
-    let mut write = prepare().await.unwrap().unwrap();
+    let write = prepare().await.unwrap().unwrap();
     service
-        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .wake_parent_delivery(&row, PROVIDER, &write)
         .await
         .unwrap();
     service.host.write_parent(write).await.unwrap();
