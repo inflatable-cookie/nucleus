@@ -437,6 +437,33 @@ impl Projection {
             .max_by_key(|activity| activity.started_at)
     }
 
+    pub(crate) fn rejected_assignment(&self, message_id: &str) -> bool {
+        if self.windowed {
+            return false;
+        }
+        self.delivery(message_id).1.is_some_and(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && matches!(run.status, Status::Failed)
+                && self
+                    .turn_items
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|item| {
+                        item.run_id.as_ref() == Some(&run.id)
+                            && item.kind == "error"
+                            && item.failure.as_ref().is_some_and(|failure| {
+                                failure["class"] == "validation_error"
+                                    && failure["message"].as_str().is_some_and(|message| {
+                                        message.starts_with(
+                                    "Message exceeds 120,000 characters after expanding quotes"
+                                )
+                                    })
+                            })
+                    })
+        })
+    }
+
     pub(crate) fn provider_limit(&self, message_id: &str) -> Option<ProviderLimit> {
         if self.windowed || self.thread.deleted_at.is_some() {
             return None;

@@ -1,5 +1,6 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+mod assignment;
 mod catalog;
 mod inbox;
 mod launch;
@@ -26,6 +27,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub use assignment::{T3_ASSIGNMENT_LIMIT, assignment_units};
 pub use catalog::{ProfileCatalog, ProfileOffer};
 pub use inbox::{
     INBOX_THREAD, InboxLifecycle, InboxOperatorMessage, InboxStatus, InboxStep, InboxTarget,
@@ -90,6 +92,8 @@ pub enum HostError {
     Uncertain,
     #[error("the local process census could not confirm workspace custody")]
     ProcessCoverage,
+    #[error("the frozen assignment exceeds T3's 120,000-character input limit")]
+    AssignmentLimit,
     #[error("a process still occupies the task checkout or run scratch directory")]
     WorkspaceBusy,
 }
@@ -639,6 +643,9 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Binding);
         }
         let wire = Wire::read(run)?;
+        if run.last_send_at_ms().is_none() && wire.assignment_too_large() {
+            return Ok(assignment_rejected(run));
+        }
         let (thread, state) = self.host.delivery(run, &wire).await?;
         if thread.is_none() && self.closed_delegation(run, &wire).await? {
             return Ok(RunObservation {
@@ -651,6 +658,16 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let message = wire.message_id(&run.launch().instance);
+        if state == RunState::Ended
+            && thread
+                .as_ref()
+                .is_some_and(|thread| thread.rejected_assignment(&message))
+            && self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
+        {
+            return Ok(assignment_rejected(run));
+        }
         let provider_limit = thread
             .as_ref()
             .filter(|_| state == RunState::Ended)
@@ -682,6 +699,9 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
+        if wire.assignment_too_large() {
+            return Err(HostError::AssignmentLimit);
+        }
         if let Some(parent) = &wire.parent {
             let projection = self
                 .host
@@ -912,6 +932,14 @@ fn current(run: &Run, state: RunState) -> Host {
     Host::Current {
         instance: run.launch().instance.clone(),
         state,
+    }
+}
+
+fn assignment_rejected(run: &Run) -> RunObservation {
+    RunObservation {
+        host: current(run, RunState::AssignmentRejected),
+        activity: None,
+        provider_limit: None,
     }
 }
 

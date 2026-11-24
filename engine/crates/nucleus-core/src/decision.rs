@@ -52,6 +52,8 @@ pub enum RunState {
     UsageLimited,
     /// The frozen parent ended and the exact delegated child is absent.
     ParentEnded,
+    /// A host input-size check rejected the frozen assignment before execution.
+    AssignmentRejected,
     /// A previously confirmed run or thread disappeared on an authoritative read.
     Gone,
     /// A checked receipt or a proven pre-send failure confirms that the exact
@@ -67,6 +69,7 @@ impl RunState {
                 | Self::Ended
                 | Self::UsageLimited
                 | Self::ParentEnded
+                | Self::AssignmentRejected
                 | Self::Gone
                 | Self::Rejected
         )
@@ -147,6 +150,7 @@ pub enum WaitReason {
     ChecksPending,
     Prerequisite,
     Capacity,
+    AssignmentTooLarge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,10 +269,14 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
-            Some(RunState::UsageLimited | RunState::ParentEnded) if run.report.is_none() => {
+            Some(RunState::UsageLimited | RunState::ParentEnded | RunState::AssignmentRejected)
+                if run.report.is_none() =>
+            {
                 Signal::Stopped(task.phase)
             }
-            None | Some(RunState::ParentEnded) => Signal::Wait(WaitReason::HostUnknown),
+            None | Some(RunState::ParentEnded | RunState::AssignmentRejected) => {
+                Signal::Wait(WaitReason::HostUnknown)
+            }
             Some(RunState::Ended | RunState::UsageLimited) => {
                 settled(task, observation, role, run.report.as_ref())
             }

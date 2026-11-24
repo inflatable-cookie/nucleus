@@ -167,6 +167,18 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
+    pub(crate) fn assignment_too_large(&self) -> bool {
+        let Ok(payload) = serde_json::from_str::<Value>(self.payload.get()) else {
+            return false;
+        };
+        let text = match self.method {
+            Method::Delegate => payload["task"].as_str(),
+            Method::Create => payload["initialMessage"]["text"].as_str(),
+            Method::Continue => payload["text"].as_str(),
+        };
+        text.is_some_and(|text| crate::assignment_units(text) > crate::T3_ASSIGNMENT_LIMIT)
+    }
+
     pub(crate) fn delegated_parent_run(&self) -> Result<Option<String>, HostError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]

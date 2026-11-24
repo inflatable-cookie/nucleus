@@ -52,6 +52,7 @@ const EXECUTING = new Set([
   "permission",
   "input",
   "idle_without_terminal_run",
+  "assignment_too_large",
   "retained_thread_busy",
 ]);
 

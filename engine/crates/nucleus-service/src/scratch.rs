@@ -3,6 +3,7 @@
 use std::{
     fs,
     io::{ErrorKind, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -10,7 +11,11 @@ use nucleus_core::PreparedLaunch;
 use nucleus_store::StorageDirectory;
 use sha2::{Digest, Sha256};
 
-use crate::ServiceError;
+use crate::{
+    ServiceError,
+    prompt::{PromptSize, lane_document_path},
+};
+use nucleus_store::planning::Lane;
 
 pub(super) fn relative_path(instance: &str) -> PathBuf {
     let digest = Sha256::digest(instance.as_bytes());
@@ -46,6 +51,67 @@ pub(super) fn allocate(
     }
     root.ensure_child(&relative)?;
     claim(&directory, &launch.instance)
+}
+
+pub(super) fn write_prompt_size(
+    directory: &Path,
+    run: &str,
+    role: &str,
+    size: &PromptSize,
+) -> Result<(), ServiceError> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Record<'a> {
+        run_id: &'a str,
+        role: &'a str,
+        #[serde(flatten)]
+        size: &'a PromptSize,
+    }
+    let body = serde_json::to_vec(&Record {
+        run_id: run,
+        role,
+        size,
+    })
+    .map_err(nucleus_store::StoreError::from)?;
+    write_owned(
+        directory,
+        &directory.join("nucleus-prompt-size.json"),
+        &body,
+        0o600,
+    )
+}
+
+pub(super) fn materialize_lane_documents(
+    root: &StorageDirectory,
+    launch: &PreparedLaunch,
+    pins: &[Lane],
+) -> Result<(), ServiceError> {
+    if pins.is_empty() {
+        return Ok(());
+    }
+    let relative = relative_path(&launch.instance);
+    root.ensure_child(&relative.join("lane-documents"))?;
+    let directory = root.path().join(relative);
+    for pin in pins {
+        let path = directory.join(lane_document_path(&pin.key));
+        write_owned(
+            &directory.join("lane-documents"),
+            &path,
+            pin.document.document.as_bytes(),
+            0o444,
+        )?;
+    }
+    Ok(())
+}
+
+fn write_owned(parent: &Path, path: &Path, bytes: &[u8], mode: u32) -> Result<(), ServiceError> {
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(bytes)?;
+    file.as_file()
+        .set_permissions(fs::Permissions::from_mode(mode))?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 // A short digest can collide. A no-clobber claim permits a retry of this
