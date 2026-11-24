@@ -340,6 +340,16 @@ test("a Rust cutover refuses new admissions while accepted TS work drains", asyn
       payload: { type: "submit", submission: { ...submission, repoPath: other } },
     }));
     assert.notEqual(unrelated.id, first.id);
+    f.engine.rustEngineDraining = true;
+    assert.equal(opened(await f.engine.startOperation(acceptedRequest)).id, first.id);
+    await assert.rejects(
+      f.engine.startOperation({
+        ...acceptedRequest,
+        key: "globally-draining",
+        payload: { type: "submit", submission: { ...submission, repoPath: other } },
+      }),
+      /New tasks now run on the Rust engine/,
+    );
   } finally {
     await f.close();
   }

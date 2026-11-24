@@ -62,6 +62,13 @@ pub struct ThreadHint {
 }
 
 impl ThreadHint {
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn fixture(item: &Value) -> Option<Self> {
+        Self::read(item)
+    }
+
     /// A closure can revoke existing planner authority. It cannot grant it.
     #[must_use]
     pub const fn closed(&self) -> bool {
@@ -220,7 +227,7 @@ impl Rpc {
     pub(crate) async fn watch_threads(
         &self,
         hints: &mpsc::Sender<ThreadHint>,
-        titles: Option<(&crate::title_shell::TitleShell, &str, &str)>,
+        titles: Option<(&crate::title_shell::TitleShell, &str)>,
         inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let socket = time::timeout(DEADLINE, self.connect())
@@ -256,7 +263,7 @@ impl Rpc {
                                     })
                                     .map_err(|_| HostError::Uncertain)?;
                             }
-                            if let Some((titles, project, provider)) = titles {
+                            if let Some((titles, provider)) = titles {
                                 match item["kind"].as_str() {
                                     Some("snapshot")
                                         if item
@@ -266,16 +273,15 @@ impl Rpc {
                                         titles.replace(None);
                                         initial = crate::title_shell::Shell::read(
                                             &item["snapshot"],
-                                            project,
                                             provider,
                                         );
                                     }
                                     Some("synchronized") => titles.replace(initial.take()),
                                     _ => {
                                         if let Some(shell) = &mut initial {
-                                            shell.update(item, project, provider);
+                                            shell.update(item, provider);
                                         } else {
-                                            titles.update(item, project, provider);
+                                            titles.update(item, provider);
                                         }
                                     }
                                 }

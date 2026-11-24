@@ -9,15 +9,23 @@ use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
 
 use crate::pass::DispatchTarget;
-use crate::{RegisteredRole, Service, ServiceError, State, event, project::linked_checkout};
+use crate::{
+    RegisteredRole, Service, ServiceError, State, event,
+    project::{ProjectRoute, linked_checkout},
+};
 
 pub(super) struct PlannerAuthority {
     thread: String,
+    project_id: Option<String>,
     identity: Option<PlannerIdentity>,
     checked_at: Instant,
 }
 
 impl PlannerAuthority {
+    pub(crate) fn project_id(&self) -> Option<&str> {
+        self.project_id.as_deref()
+    }
+
     pub(crate) fn resolved(&self) -> Option<(Instant, &str)> {
         self.identity
             .as_ref()
@@ -55,6 +63,18 @@ impl State {
         task: &Task,
         actor: &str,
     ) -> Result<(), ServiceError> {
+        if let Some((project, _, repo)) = self
+            .settings
+            .project_for_origin(&task.identity().repository)
+            && repo.base == task.identity().base
+            && repo.host_project.is_some()
+        {
+            return if self.live_planner_project(actor) == Some(project) {
+                Ok(())
+            } else {
+                Err(ServiceError::PlannerAuthorityRefused)
+            };
+        }
         if bound_planner(task) != Some(actor) {
             return Err(ServiceError::PlannerAuthorityRefused);
         }
@@ -74,14 +94,8 @@ impl State {
 impl Service {
     pub(super) async fn notify_question(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
-        if self
-            .state
-            .lock()
-            .await
-            .settings
-            .fixture_slots(&self.project)
-            .is_none()
-        {
+        let route = self.project_for(row.task.identity()).await?;
+        if route.slots.is_none() {
             return Ok(wait);
         }
         match (row.task.operator_question(), row.task.operator_decline()) {
@@ -106,7 +120,16 @@ impl Service {
                     return Ok(wait);
                 }
                 NoticeState::Gone | NoticeState::Undelivered => None,
-                NoticeState::Absent | NoticeState::Queued => Some(delivery),
+                NoticeState::Absent | NoticeState::Queued => {
+                    let authorized = self.project.is_some()
+                        || self
+                            .state
+                            .lock()
+                            .await
+                            .live_planner_project(&delivery.thread)
+                            .is_some();
+                    authorized.then_some(delivery)
+                }
             }
         } else {
             None
@@ -134,9 +157,9 @@ impl Service {
             return Ok(wait);
         };
         let target = DispatchTarget::Planner(authorization.target());
-        if self.dispatch_gate(&row.task, target).await?.is_none() {
+        let Some(_permit) = self.dispatch_gate(&row.task, target).await? else {
             return Ok(wait);
-        }
+        };
         if authorization.needs_unsettle() {
             self.host
                 .deliver_notice(NoticeWrite::Prepare(&authorization))
@@ -186,10 +209,14 @@ impl Service {
     }
 
     pub(super) async fn refresh_planner_authority(&self, id: &str) -> Result<(), ServiceError> {
-        let (epoch, thread) = {
+        if self.project.is_none() {
+            return Ok(());
+        }
+        let (epoch, thread, route) = {
             let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            if state.settings.fixture_slots(&self.project).is_none() {
+            let route = self.resolve_project(&state, row.task.identity())?;
+            if route.slots.is_none() {
                 return Ok(());
             }
             let Some(thread) = bound_planner(&row.task).map(str::to_owned) else {
@@ -203,7 +230,7 @@ impl Service {
                 return Ok(());
             }
             state.planner_check = Some(thread.clone());
-            (state.planner_authority_epoch, thread)
+            (state.planner_authority_epoch, thread, route)
         };
         let result = self.host.planner_identity(&thread).await;
         let mut state = self.state.lock().await;
@@ -221,15 +248,17 @@ impl Service {
         };
         self.set_cached_host(&mut state, host);
         let identity = result?.filter(|identity| {
-            identity.project_id == self.project.host_project
+            identity.project_id == route.host_project
                 && !identity.is_child()
-                && !(self.project.acp_provider.is_some()
-                    && self.project.acp_provider == identity.provider_instance_id)
+                && self.acp_provider().is_none_or(|provider| {
+                    identity.provider_instance_id.as_deref() != Some(provider)
+                })
         });
         state.planner_authority.insert(
             id.into(),
             PlannerAuthority {
                 thread,
+                project_id: route.project_id,
                 identity,
                 checked_at: Instant::now(),
             },
@@ -239,14 +268,23 @@ impl Service {
         Ok(())
     }
 
-    async fn responsible_planner(&self, task: &Task) -> Result<Option<String>, ServiceError> {
+    pub(super) async fn responsible_planner(
+        &self,
+        task: &Task,
+    ) -> Result<Option<String>, ServiceError> {
+        let route = self.project_for(task.identity()).await?;
+        if self.project.is_none() {
+            return self.registered_planner(task, &route).await;
+        }
         if let Some(origin) = &task.identity().origin_thread
             && self.host.planner_routable(origin).await?
         {
             return Ok(Some(origin.clone()));
         }
-        for (rank, _, thread) in self.planner_candidates().await? {
-            if self.planner_workspace(rank, thread.worktree_path).await?
+        for (rank, _, thread) in self.planner_candidates(task, &route).await? {
+            if self
+                .planner_workspace(&route, rank, thread.worktree_path)
+                .await?
                 && self.host.planner_routable(&thread.id).await?
             {
                 return Ok(Some(thread.id));
@@ -255,8 +293,71 @@ impl Service {
         Ok(None)
     }
 
+    async fn registered_planner(
+        &self,
+        task: &Task,
+        route: &ProjectRoute,
+    ) -> Result<Option<String>, ServiceError> {
+        let origin = task.identity().origin_thread.as_deref();
+        let matches = |identity: &PlannerIdentity| {
+            identity.project_id == route.host_project
+                && !identity.is_child()
+                && identity.provider_instance_id.as_deref() != self.acp_provider()
+        };
+        if let Some(origin) = origin
+            && self
+                .host
+                .planner_identity(origin)
+                .await?
+                .as_ref()
+                .is_some_and(&matches)
+        {
+            let state = self.state.lock().await;
+            return Ok(
+                (state.live_planner_project(origin) == route.project_id.as_deref())
+                    .then(|| origin.into()),
+            );
+        }
+        let candidate = {
+            let state = self.state.lock().await;
+            state
+                .enrolled_planners
+                .values()
+                .filter(|proof| {
+                    Some(proof.identity.id.as_str()) != origin && matches(&proof.identity)
+                })
+                .max_by_key(|proof| (proof.verified_at, proof.identity.id.as_str()))
+                .map(|proof| (proof.identity.id.clone(), proof.verified_at))
+        };
+        let Some((actor, verified_at)) = candidate else {
+            return Ok(None);
+        };
+        if self
+            .host
+            .planner_identity(&actor)
+            .await?
+            .as_ref()
+            .is_some_and(matches)
+        {
+            return Ok(Some(actor));
+        }
+        let mut state = self.state.lock().await;
+        if state
+            .enrolled_planners
+            .get(&actor)
+            .is_some_and(|proof| proof.verified_at == verified_at)
+        {
+            state.enrolled_planners.remove(&actor);
+            self.project_changes.send_replace(());
+            self.settings_changes.send_replace(());
+        }
+        Ok(None)
+    }
+
     async fn planner_candidates(
         &self,
+        task: &Task,
+        route: &ProjectRoute,
     ) -> Result<Vec<(u8, Reverse<String>, PlannerThread)>, ServiceError> {
         let threads = self.host.planner_threads().await?;
         let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
@@ -265,7 +366,7 @@ impl Service {
             (
                 state
                     .store
-                    .routing_provenance(&self.project.repository, &ids)?,
+                    .routing_provenance(&task.identity().repository, &ids)?,
                 !state.settings.uses_project_registry(),
             )
         };
@@ -274,11 +375,9 @@ impl Service {
             if thread.archived_at.is_some()
                 || thread.deleted_at.is_some()
                 || thread.parent_thread_id.is_some()
-                || self
-                    .project
-                    .acp_provider
-                    .as_ref()
-                    .is_some_and(|instance| thread.provider_instance_id.as_ref() == Some(instance))
+                || self.acp_provider().is_some_and(|instance| {
+                    thread.provider_instance_id.as_deref() == Some(instance)
+                })
                 || provenance.get(&thread.id) == Some(&ThreadProvenance::TaskRole)
             {
                 continue;
@@ -287,8 +386,8 @@ impl Service {
             // rank, with project membership as the last candidate source.
             let registered = self
                 .project
-                .agents
                 .iter()
+                .flat_map(|project| &project.agents)
                 .filter(|agent| use_fixture_registrations && agent.thread == thread.id)
                 .map(|agent| match agent.role {
                     RegisteredRole::Planner => 0,
@@ -299,7 +398,7 @@ impl Service {
                 .or_else(|| {
                     (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher)).then_some(2)
                 })
-                .or_else(|| (thread.project_id == self.project.host_project).then_some(3));
+                .or_else(|| (thread.project_id == route.host_project).then_some(3));
             if let Some(rank) = rank {
                 let interaction = thread.latest_user_message_at.clone().map_or_else(
                     || thread.updated_at.clone(),
@@ -316,13 +415,14 @@ impl Service {
 
     async fn planner_workspace(
         &self,
+        route: &ProjectRoute,
         rank: u8,
         worktree: Option<String>,
     ) -> Result<bool, ServiceError> {
         if rank == 3
             && let Some(worktree) = worktree
         {
-            let project = self.project.checkout.clone();
+            let project = route.checkout.clone();
             let git = self.git.clone();
             return Ok(tokio::task::spawn_blocking(move || {
                 linked_checkout(&project, Path::new(&worktree), &git)
@@ -373,8 +473,8 @@ mod tests {
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
         let retargeted = Arc::new(AtomicBool::new(false));
         let changed = Arc::clone(&retargeted);
-        let checkout = service.project.checkout.clone();
-        let project = service.project.host_project.clone();
+        let checkout = service.fixture().checkout.clone();
+        let project = service.fixture().host_project.clone();
         let (host, server) = native_fixture(move |request| {
             assert_eq!(request["tag"], "orchestration.subscribeShell");
             let root = if changed.load(Ordering::Relaxed) {
@@ -416,12 +516,12 @@ mod tests {
         ] {
             let (_home, mut service) =
                 crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
-            let checkout = service.project.checkout.clone();
+            let checkout = service.fixture().checkout.clone();
             let (host, server) =
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
-            service.project.acp_provider = Some("fixture-acp".into());
-            service.project.agents = [
+            service.fixture_mut().acp_provider = Some("fixture-acp".into());
+            service.fixture_mut().agents = [
                 (strongest, RegisteredRole::Planner),
                 ("planner-other", RegisteredRole::Planner),
                 ("registered-agent", RegisteredRole::Agent),
@@ -438,8 +538,8 @@ mod tests {
                 Identity {
                     id: "notice".into(),
                     reference: "fixture".into(),
-                    repository: service.project.repository.clone(),
-                    base: service.project.base.clone(),
+                    repository: service.fixture().repository.clone(),
+                    base: service.fixture().base.clone(),
                     entry: Entry::Brief,
                     origin_thread: Some(origin.into()),
                 },
@@ -467,7 +567,7 @@ mod tests {
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
         let received = Arc::new(Mutex::new(Vec::new()));
         let native = Arc::clone(&received);
-        let checkout = service.project.checkout.clone();
+        let checkout = service.fixture().checkout.clone();
         let (host, server) = native_fixture(move |request| {
             if request["tag"] != "orchestration.dispatchCommand" {
                 return snapshot_reply(request, "planner", &checkout);
@@ -519,8 +619,8 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
-        service.project.acp_provider = Some("fixture-acp".into());
-        let checkout = service.project.checkout.clone();
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let checkout = service.fixture().checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;
         service.host = host;
@@ -538,7 +638,7 @@ mod tests {
 
     async fn seed_question(service: &Service) -> TaskRow {
         let (mut task, credential, mut observation) =
-            crate::tests::reservation("notice", Entry::Brief, &service.project.start);
+            crate::tests::reservation("notice", Entry::Brief, &service.fixture().start);
         let instance = task.run().expect("worker").launch().instance.clone();
         task.record_report(
             &instance,

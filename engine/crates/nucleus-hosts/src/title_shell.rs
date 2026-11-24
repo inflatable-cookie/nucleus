@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 use crate::{
-    Binding, HostError, T3, parent_thread,
+    Binding, HostError, RegisteredProject, T3, parent_thread,
     rpc::{Read, Reply},
 };
 
@@ -23,7 +23,7 @@ pub(crate) struct TitleShell {
 
 #[derive(Default)]
 pub(crate) struct Shell {
-    project: Option<Project>,
+    projects: BTreeMap<String, Project>,
     threads: BTreeMap<String, TitleThread>,
 }
 
@@ -32,6 +32,7 @@ pub(crate) struct Shell {
 struct Project {
     id: String,
     workspace_root: String,
+    title: Option<String>,
     archived_at: Option<String>,
     deleted_at: Option<String>,
 }
@@ -77,32 +78,33 @@ impl TitleTarget {
 }
 
 impl Shell {
-    pub(crate) fn read(snapshot: &Value, project: &str, provider: &str) -> Option<Self> {
-        let projects = snapshot["projects"].as_array()?;
-        let mut matching = projects.iter().filter(|item| item["id"] == project);
-        let item = matching.next();
-        if matching.next().is_some() {
-            return None;
+    pub(crate) fn read(snapshot: &Value, provider: &str) -> Option<Self> {
+        let mut view = Self::default();
+        let mut project_ids = BTreeSet::new();
+        for item in snapshot["projects"].as_array()? {
+            let id = item["id"].as_str()?;
+            if !project_ids.insert(id) {
+                return None;
+            }
+            if let Ok(project) = serde_json::from_value(item.clone()) {
+                view.projects.insert(id.into(), project);
+            }
         }
-        let mut view = Self {
-            project: item.and_then(|item| serde_json::from_value(item.clone()).ok()),
-            ..Self::default()
-        };
         let mut seen = BTreeSet::new();
         for thread in snapshot["threads"].as_array()? {
             if !seen.insert(thread["id"].as_str()?) {
                 return None;
             }
-            view.update_thread(thread, project, provider);
+            view.update_thread(thread, provider);
         }
         Some(view)
     }
 
-    fn update_thread(&mut self, thread: &Value, project: &str, provider: &str) -> bool {
+    fn update_thread(&mut self, thread: &Value, provider: &str) -> bool {
         let Some(id) = thread["id"].as_str() else {
             return false;
         };
-        let parent = (thread["projectId"] == project && thread["providerInstanceId"] == provider)
+        let parent = (thread["providerInstanceId"] == provider)
             .then(|| serde_json::from_value::<TitleThread>(thread.clone()).ok())
             .flatten();
         match parent {
@@ -115,33 +117,36 @@ impl Shell {
         }
     }
 
-    pub(crate) fn update(&mut self, item: &Value, project: &str, provider: &str) -> bool {
+    pub(crate) fn update(&mut self, item: &Value, provider: &str) -> bool {
         match item["kind"].as_str() {
-            Some("thread.updated") => self.update_thread(&item["thread"], project, provider),
+            Some("thread.updated") => self.update_thread(&item["thread"], provider),
             Some("thread.removed") => item["threadId"]
                 .as_str()
                 .is_some_and(|id| self.threads.remove(id).is_some()),
-            Some("project.updated") if item["project"]["id"] == project => {
-                let next = serde_json::from_value(item["project"].clone()).ok();
-                if self.project == next {
+            Some("project.updated") => {
+                let Some(id) = item["project"]["id"].as_str() else {
                     return false;
+                };
+                match serde_json::from_value(item["project"].clone()) {
+                    Ok(project) if self.projects.get(id) != Some(&project) => {
+                        self.projects.insert(id.into(), project);
+                        true
+                    }
+                    Ok(_) => false,
+                    Err(_) => self.projects.remove(id).is_some(),
                 }
-                self.project = next;
-                true
             }
-            Some("project.removed") if item["projectId"] == project => {
-                self.project.take().is_some()
-            }
+            Some("project.removed") => item["projectId"]
+                .as_str()
+                .is_some_and(|id| self.projects.remove(id).is_some()),
             _ => false,
         }
     }
 
-    fn project_at(&self, root: &str) -> Option<&Project> {
-        self.project.as_ref().filter(|project| {
-            project.workspace_root == root
-                && project.archived_at.is_none()
-                && project.deleted_at.is_none()
-        })
+    fn active_project(&self, id: &str) -> Option<&Project> {
+        self.projects
+            .get(id)
+            .filter(|project| project.archived_at.is_none() && project.deleted_at.is_none())
     }
 }
 
@@ -153,29 +158,47 @@ impl TitleShell {
         }
     }
 
-    pub(crate) fn update(&self, item: &Value, project: &str, provider: &str) {
+    pub(crate) fn update(&self, item: &Value, provider: &str) {
         if let Ok(mut lock) = self.view.write()
             && let Some(view) = lock.as_mut()
-            && view.update(item, project, provider)
+            && view.update(item, provider)
         {
             self.changed.notify_one();
         }
     }
 
-    fn threads(&self, root: &str) -> Vec<String> {
+    fn cached_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
+        let view = self.view.read().map_err(|_| HostError::Uncertain)?;
+        let project = view
+            .as_ref()
+            .ok_or(HostError::Uncertain)?
+            .active_project(id)
+            .ok_or(HostError::Binding)?;
+        Ok(RegisteredProject {
+            root: project.workspace_root.clone(),
+            title: project.title.clone(),
+        })
+    }
+
+    fn projects_synchronized(&self) -> bool {
+        self.view.read().is_ok_and(|view| view.is_some())
+    }
+
+    fn threads(&self) -> Vec<String> {
         let Ok(view) = self.view.read() else {
             return Vec::new();
         };
-        let Some(shell) = view
-            .as_ref()
-            .filter(|shell| shell.project_at(root).is_some())
-        else {
+        let Some(shell) = view.as_ref() else {
             return Vec::new();
         };
         shell
             .threads
             .values()
-            .filter(|parent| parent.archived_at.is_none() && parent.deleted_at.is_none())
+            .filter(|parent| {
+                parent.archived_at.is_none()
+                    && parent.deleted_at.is_none()
+                    && shell.active_project(&parent.project_id).is_some()
+            })
             .map(|parent| parent.id.clone())
             .collect()
     }
@@ -183,10 +206,10 @@ impl TitleShell {
     fn target(&self, binding: &Binding, provider: &str, root: &str) -> Option<TitleTarget> {
         let view = self.view.read().ok()?;
         let shell = view.as_ref()?;
-        let project = shell.project_at(root)?;
+        let project = shell.active_project(&binding.project_id)?;
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let parent = shell.threads.get(&thread)?;
-        if project.id != binding.project_id
+        if project.workspace_root != root
             || parent.project_id != project.id
             || parent.provider_instance_id != provider
             || parent.worktree_path != binding.worktree_path
@@ -211,10 +234,30 @@ impl TitleShell {
 }
 
 impl T3 {
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn fixture_project_shell(&self, snapshot: &Value, provider: &str) {
+        self.titles.replace(Shell::read(snapshot, provider));
+    }
+
+    /// Whether the shared T3 shell has supplied a complete project snapshot.
+    #[must_use]
+    pub fn projects_synchronized(&self) -> bool {
+        self.titles.projects_synchronized()
+    }
+
+    /// Read an active project from the synchronized shell without contacting T3.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown snapshot or an inactive project.
+    pub fn cached_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
+        self.titles.cached_project(id)
+    }
+
     /// Scope title effects to parents visible on the existing shell stream.
     #[must_use]
-    pub fn title_threads(&self, root: &str) -> Vec<String> {
-        self.titles.threads(root)
+    pub fn title_threads(&self) -> Vec<String> {
+        self.titles.threads()
     }
 
     pub async fn title_shell_changed(&self) {

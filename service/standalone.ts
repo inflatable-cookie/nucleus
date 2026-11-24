@@ -42,7 +42,10 @@ export async function runStandaloneService(
   const ownerOptions = {
     dataDir: serviceDataDir,
     ...(pilotOptions.rustPilot
-      ? { rustEngineRepository: pilotOptions.rustPilot.repository }
+      ? {
+          rustEngineDraining: pilotOptions.rustPilot.drain,
+          rustEngineRepository: pilotOptions.rustPilot.repository,
+        }
       : {}),
     ...(hostHomeOverride(env) ||
     argv.some((value) => value.startsWith("--data-dir="))

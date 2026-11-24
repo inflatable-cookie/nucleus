@@ -15,17 +15,17 @@ use crate::{
 };
 
 async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     let pr = PullRequest {
-        url: format!("https://github.com/{}/pull/1", service.project.repository),
+        url: format!("https://github.com/{}/pull/1", service.fixture().repository),
         head: head.clone(),
     };
     let mut task = Task::new(
         Identity {
             id: id.into(),
             reference: "fixture#1".into(),
-            repository: service.project.repository.clone(),
-            base: service.project.base.clone(),
+            repository: service.fixture().repository.clone(),
+            base: service.fixture().base.clone(),
             entry: Entry::ReviewEntry,
             origin_thread: Some("planner".into()),
         },
@@ -148,7 +148,7 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
     let (inbox, requests, bridge) = bridge_fixture(json!({"state":"declined"})).await;
     service.inbox = Some(inbox);
-    let root = service.project.checkout.clone();
+    let root = service.fixture().checkout.clone();
     let notices = Arc::new(Mutex::new(Vec::<Value>::new()));
     let delivered = Arc::clone(&notices);
     let (host, native) = native_fixture(move |request| {

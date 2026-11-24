@@ -16,11 +16,12 @@ use nucleus_hosts::{
 };
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
+use tokio::sync::RwLockReadGuard;
 
 use crate::{
     Service, ServiceError, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
-    project::linked_checkout,
+    project::{ProjectRoute, linked_checkout},
     ticket,
 };
 
@@ -43,18 +44,25 @@ pub(super) enum DispatchTarget<'a> {
     Planner(&'a NoticeTarget),
 }
 
+pub(super) struct DispatchPermit<'a> {
+    _projects: RwLockReadGuard<'a, ()>,
+    superseded: bool,
+}
+
 impl Service {
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
-        let Some(provider) = &self.project.acp_provider else {
+        let Some(provider) = self.acp_provider() else {
             return Ok(Action::Nothing);
         };
-        let id = &row.task.identity().id;
+        let identity = row.task.identity();
+        let route = self.project_for(identity).await?;
+        let id = &identity.id;
         if self.state.lock().await.store.archive_confirmed(id)? {
             return Ok(Action::Nothing);
         }
         let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&self.project.checkout, &self.project.repository, id)?;
-        let scope = self.binding(&checkout)?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, id)?;
+        let scope = route.binding(&checkout)?;
         let retained: Vec<_> = [Role::Worker, Role::Reviewer]
             .into_iter()
             .filter_map(|role| row.task.threads().get(role))
@@ -66,7 +74,12 @@ impl Service {
         let _fence = self.effect(row).await?;
         match archive {
             ArchiveStep::Finished => {
+                let _projects = self.project_writes.read().await;
                 let mut state = self.state.lock().await;
+                let route = self.resolve_project(&state, identity)?;
+                if self.checkout_binding(identity, &route, &checkout)? != scope {
+                    return Err(HostError::Binding.into());
+                }
                 self.commit(
                     &mut state,
                     row,
@@ -78,7 +91,7 @@ impl Service {
             }
             ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
             ArchiveStep::Write(write) => {
-                if self
+                let Some(_permit) = self
                     .dispatch_gate(
                         &row.task,
                         DispatchTarget::Archive {
@@ -87,10 +100,9 @@ impl Service {
                         },
                     )
                     .await?
-                    .is_none()
-                {
+                else {
                     return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
-                }
+                };
                 self.host.write_parent(write).await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
@@ -104,7 +116,8 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
-        self.project.scope(task.identity())?;
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
         let forge_requested = self
             .state
             .lock()
@@ -129,20 +142,16 @@ impl Service {
             None
         };
         let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(
-            &self.project.checkout,
-            &self.project.repository,
-            &task.identity().id,
-        )?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let (forge, target, forge_error) = match self.read_forge(task, &checkout).await {
             Ok((forge, target)) => (Observed::Known(forge), target, None),
             Err(error) => (Observed::Unknown, None, Some(error)),
         };
         self.observe_commands(row, &forge).await?;
         if !active(task) {
-            return forge_error.map_or(Ok(Action::Nothing), |error| Err(error.into()));
+            return forge_error.map_or(Ok(Action::Nothing), Err);
         }
-        let binding = self.binding(&checkout)?;
+        let binding = route.binding(&checkout)?;
         let mut observation = Observation {
             host: Observed::Unknown,
             forge,
@@ -161,8 +170,12 @@ impl Service {
             && let Some(target) = &target
         {
             let _fence = self.effect(row).await?;
-            self.project.verify(&self.git)?;
-            observation.workspace = seen(checkout.allocate_review(&pr.head, target.number()));
+            if let Some(workspace) = self
+                .allocate_checkout(task, &checkout, Some((&pr.head, target.number())))
+                .await?
+            {
+                observation.workspace = workspace;
+            }
         }
         let (host_state, host_error) = match run_host {
             Some(read) => read,
@@ -192,12 +205,8 @@ impl Service {
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
                 self.close(row, &checkout, target, workspace, host).await
             }
-            Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => {
-                Err(error.into())
-            }
-            Action::Wait(_) if forge_requested && let Some(error) = forge_error => {
-                Err(error.into())
-            }
+            Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => Err(error),
+            Action::Wait(_) if forge_requested && let Some(error) = forge_error => Err(error),
             action => self.apply(row, &observation, action).await,
         }
     }
@@ -225,23 +234,21 @@ impl Service {
         &self,
         task: &Task,
         checkout: &Checkout<'_>,
-    ) -> Result<(Forge, Option<PullTarget>), ForgeError> {
+    ) -> Result<(Forge, Option<PullTarget>), ServiceError> {
         let deadline = self.forge_until.load(Ordering::Relaxed);
         if now_ms() < deadline {
             return Err(ForgeError::Deferred {
                 until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
-            });
+            }
+            .into());
         }
-        let required = self
-            .state
-            .lock()
-            .await
-            .settings
-            .fixture_checks(&self.project);
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
+        route.binding(checkout)?;
         let review_entry = task.identity().entry == nucleus_core::Entry::ReviewEntry;
         let (branches, reported) = if review_entry {
             (
-                Branches::for_review_entry(&self.project.repository, &self.project.base)?,
+                Branches::for_review_entry(&identity.repository, &identity.base)?,
                 None,
             )
         } else {
@@ -250,23 +257,19 @@ impl Service {
                 _ => None,
             });
             (
-                Branches::new(
-                    &self.project.repository,
-                    &self.project.base,
-                    checkout.branch(),
-                )?,
+                Branches::new(&identity.repository, &identity.base, checkout.branch())?,
                 reported,
             )
         };
         let target = match reported.or_else(|| task.pull_request()) {
             Some(pr) => Some(branches.target(&pr.url)?),
-            None if review_entry => return Err(ForgeError::Identity),
+            None if review_entry => return Err(ForgeError::Identity.into()),
             None if task.phase() == Phase::Queued => None,
             None => capture_forge(self, self.forge.find_open(&branches).await)?,
         };
         match target {
             Some(target) => {
-                let target = target.with_required_checks(required);
+                let target = target.with_required_checks(route.required_checks);
                 let forge = capture_forge(self, self.forge.observe(&target).await)?;
                 Ok((forge, Some(target)))
             }
@@ -274,9 +277,10 @@ impl Service {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
         Ok(Binding {
-            project_id: self.project.host_project.clone(),
+            project_id: self.fixture().host_project.clone(),
             worktree_path: checkout
                 .path()
                 .to_str()
@@ -284,6 +288,32 @@ impl Service {
                 .into(),
             branch: checkout.branch().into(),
         })
+    }
+
+    async fn allocate_checkout(
+        &self,
+        task: &Task,
+        checkout: &Checkout<'_>,
+        review: Option<(&Head, i32)>,
+    ) -> Result<Option<Observed<Workspace>>, ServiceError> {
+        let _projects = self.project_writes.read().await;
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
+        if route.slots.is_none() {
+            return Ok(None);
+        }
+        self.checkout_binding(identity, &route, checkout)?;
+        let base_head = self.verify_route(identity, &route).await?;
+        let workspace = if let Some((head, pull)) = review {
+            seen(checkout.allocate_review(head, pull))
+        } else {
+            let start = self
+                .project
+                .as_ref()
+                .map_or(&base_head, |project| &project.start);
+            Observed::Known(checkout.allocate(start)?)
+        };
+        Ok(Some(workspace))
     }
 
     async fn apply(
@@ -331,6 +361,8 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
         let selection = match self.select_launch(task, &observation, role, host).await? {
             LaunchSelection::Fixture => None,
             LaunchSelection::Profile(selected) => Some(selected),
@@ -339,8 +371,10 @@ impl Service {
         let selection = selection.as_deref();
         let via = selection.map_or(via, |selected| selected.intent.via().clone());
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
-            self.project.verify(&self.git)?;
-            observation.workspace = Observed::Known(checkout.allocate(&self.project.start)?);
+            let Some(workspace) = self.allocate_checkout(task, checkout, None).await? else {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            };
+            observation.workspace = workspace;
         }
         let instance = task.next_launch_instance()?;
         let head = if role == Role::Reviewer {
@@ -364,9 +398,9 @@ impl Service {
             &ticket_path,
             selection.map(|selected| &selected.intent),
         );
-        let binding = self.binding(checkout)?;
-        let parent = if let Some(provider) = &self.project.acp_provider {
-            if !self.launch_capacity(&task.identity().id, false).await? {
+        let binding = route.binding(checkout)?;
+        let parent = if let Some(provider) = self.acp_provider() {
+            if !self.launch_capacity(identity, false).await? {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
             // Parent creation can retry its stable command ID. The title
@@ -384,9 +418,7 @@ impl Service {
                 ParentStep::Live(parent) => Some(parent),
                 ParentStep::Wait => return Ok(Action::Wait(WaitReason::Starting)),
                 ParentStep::Write(write) => {
-                    self.ensure_parent_reader(&task.identity().id, checkout.path())
-                        .await?;
-                    if self
+                    let Some(_permit) = self
                         .dispatch_gate(
                             task,
                             DispatchTarget::Run {
@@ -396,10 +428,11 @@ impl Service {
                             },
                         )
                         .await?
-                        .is_none()
-                    {
+                    else {
                         return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
-                    }
+                    };
+                    self.ensure_parent_reader(&identity.id, checkout.path())
+                        .await?;
                     self.host.write_parent(write).await?;
                     self.recheck_effect(row, WaitReason::HostUnknown).await;
                     return Ok(Action::Wait(WaitReason::Starting));
@@ -408,7 +441,7 @@ impl Service {
         } else {
             None
         };
-        let profile = selection.map_or(self.project.profile(role), |selected| &selected.native);
+        let profile = self.launch_profile(role, selection)?;
         let inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
@@ -494,7 +527,7 @@ impl Service {
         if let Some(wait) = self.pause_prepared(row, &observation).await? {
             return Ok(wait);
         }
-        if !self.launch_capacity(&task.identity().id, false).await? {
+        if !self.launch_capacity(task.identity(), false).await? {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
@@ -527,7 +560,7 @@ impl Service {
             checkout,
             launch: true,
         };
-        let Some(archive) = self.dispatch_gate(task, target).await? else {
+        let Some(permit) = self.dispatch_gate(task, target).await? else {
             return Ok(None);
         };
         if let Some(unarchive) = authorization.unarchive() {
@@ -535,6 +568,7 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(None);
         }
+        let archive = permit.superseded;
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
             let mut state = self.state.lock().await;
@@ -575,33 +609,52 @@ impl Service {
         &self,
         task: &Task,
         target: DispatchTarget<'_>,
-    ) -> Result<Option<bool>, ServiceError> {
-        self.project.scope(task.identity())?;
+    ) -> Result<Option<DispatchPermit<'_>>, ServiceError> {
+        let projects = self.project_writes.read().await;
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
         match &target {
             DispatchTarget::Run {
                 frozen, checkout, ..
             }
             | DispatchTarget::Archive { frozen, checkout }
             | DispatchTarget::Title { frozen, checkout }
-                if **frozen != self.binding(checkout)? =>
+                if **frozen != self.checkout_binding(identity, &route, checkout)? =>
             {
                 return Err(HostError::Binding.into());
             }
-            DispatchTarget::Planner(target) if target.project_id != self.project.host_project => {
-                return Err(HostError::Binding.into());
+            DispatchTarget::Planner(target) => {
+                let state = self.state.lock().await;
+                if target.project_id != route.host_project
+                    || self.project.is_none()
+                        && state.live_planner_project(&target.thread) != route.project_id.as_deref()
+                {
+                    return Err(HostError::Binding.into());
+                }
             }
             _ => {}
         }
-        if !matches!(target, DispatchTarget::Title { .. }) {
-            self.check_project().await?;
+        if route.slots.is_none()
+            && match &target {
+                DispatchTarget::Planner(_) => true,
+                DispatchTarget::Run { launch, .. } => task
+                    .run()
+                    .is_none_or(|run| *launch && run.last_send_at_ms().is_none()),
+                DispatchTarget::Archive { .. } | DispatchTarget::Title { .. } => false,
+            }
+        {
+            return Ok(None);
         }
-        match target {
+        if !matches!(target, DispatchTarget::Title { .. }) {
+            self.check_project_route(identity, &route).await?;
+        }
+        let result = match target {
             DispatchTarget::Title { checkout, .. } => {
                 // Exact native destination and project came from the synchronized
                 // shell. Keep the usual local identity and ownership fence.
-                self.project.verify(&self.git)?;
+                self.verify_route(identity, &route).await?;
                 let present = checkout.observe()? != Workspace::Absent;
-                Ok((present || task.phase().is_terminal()).then_some(false))
+                (present || task.phase().is_terminal()).then_some(false)
             }
             DispatchTarget::Archive { checkout, .. } => {
                 if task.phase() != Phase::Done {
@@ -610,41 +663,64 @@ impl Service {
                 // Closeout can have already retired the clean checkout. Still
                 // verify its derived destination and pinned worktree root.
                 checkout.observe()?;
-                Ok(Some(false))
+                Some(false)
             }
             DispatchTarget::Run {
                 checkout, launch, ..
             } => {
-                if !launch {
-                    return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
+                if launch {
+                    let run = task.run().ok_or(ServiceError::Input)?;
+                    if let Some(head) = run.launch().review_head.as_ref() {
+                        let forge = Observed::Known(self.read_forge(task, checkout).await?.0);
+                        let workspace = checkout.observe()?;
+                        if workspace == Workspace::Absent {
+                            return Ok(None);
+                        }
+                        let fresh = Observation {
+                            forge,
+                            workspace: Observed::Known(workspace),
+                            host: Observed::Unknown,
+                        };
+                        replay_policy(Some(head), &fresh)
+                            .filter(|&superseded| !superseded || run.revoked())
+                    } else {
+                        (checkout.observe()? != Workspace::Absent).then_some(false)
+                    }
+                } else {
+                    (checkout.observe()? != Workspace::Absent).then_some(false)
                 }
-                let run = task.run().ok_or(ServiceError::Input)?;
-                let Some(head) = run.launch().review_head.as_ref() else {
-                    return Ok((checkout.observe()? != Workspace::Absent).then_some(false));
-                };
-                let forge = Observed::Known(self.read_forge(task, checkout).await?.0);
-                let workspace = checkout.observe()?;
-                if workspace == Workspace::Absent {
-                    return Ok(None);
-                }
-                let fresh = Observation {
-                    forge,
-                    workspace: Observed::Known(workspace),
-                    host: Observed::Unknown,
-                };
-                Ok(replay_policy(Some(head), &fresh)
-                    .filter(|&superseded| !superseded || run.revoked()))
             }
             DispatchTarget::Planner(target) => {
                 self.host.check_notice_target(target).await?;
                 if let Some(path) = &target.worktree_path
-                    && !linked_checkout(&self.project.checkout, Path::new(path), &self.git)?
+                    && !linked_checkout(&route.checkout, Path::new(path), &self.git)?
                 {
                     return Err(HostError::Binding.into());
                 }
-                Ok(Some(false))
+                Some(false)
             }
+        };
+        Ok(result.map(|superseded| DispatchPermit {
+            _projects: projects,
+            superseded,
+        }))
+    }
+
+    fn checkout_binding(
+        &self,
+        identity: &nucleus_core::Identity,
+        route: &ProjectRoute,
+        checkout: &Checkout<'_>,
+    ) -> Result<Binding, ServiceError> {
+        let expected = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        if checkout.path() != expected {
+            return Err(HostError::Binding.into());
         }
+        route.binding(checkout)
     }
 
     async fn stop_run(
@@ -659,7 +735,8 @@ impl Service {
         let head = run.launch().review_head.as_ref();
         let archive = superseded(head, &observation.forge);
         let stopping = Action::Wait(WaitReason::Stopping);
-        let binding = self.binding(checkout)?;
+        let route = self.project_for(task.identity()).await?;
+        let binding = route.binding(checkout)?;
         let progress = host.stop(run, &binding, now_ms(), archive).await?;
         match progress {
             StopProgress::Waiting => Ok(stopping),
@@ -684,7 +761,7 @@ impl Service {
                 if replay_policy(head, &observation).is_none() {
                     return Ok(stopping);
                 }
-                if !self.launch_capacity(&task.identity().id, true).await? {
+                if !self.launch_capacity(task.identity(), true).await? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
                 let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
@@ -724,7 +801,7 @@ impl Service {
             checkout,
             launch: false,
         };
-        if self.dispatch_gate(&row.task, target).await?.is_some() {
+        if let Some(_permit) = self.dispatch_gate(&row.task, target).await? {
             host.write_control(dispatch).await?;
         }
         Ok(Action::Wait(WaitReason::Stopping))
@@ -738,15 +815,13 @@ impl Service {
         head: &Head,
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
+        let _projects = self.project_writes.read().await;
         let task = &row.task;
-        let required = {
-            let state = self.state.lock().await;
-            if state.settings.fixture_slots(&self.project).is_none() {
-                return Ok(Action::Wait(WaitReason::Capacity));
-            }
-            state.settings.fixture_checks(&self.project)
-        };
-        let target = target.clone().with_required_checks(required);
+        let route = self.project_for(task.identity()).await?;
+        if route.slots.is_none() {
+            return Ok(Action::Wait(WaitReason::Capacity));
+        }
+        let target = target.clone().with_required_checks(route.required_checks);
         let attempt = self
             .forge
             .merge(task, &target)
@@ -811,7 +886,8 @@ impl Service {
             ..
         } = &action
         {
-            let binding = self.binding(checkout)?;
+            let route = self.project_for(task.identity()).await?;
+            let binding = route.binding(checkout)?;
             for thread in [Role::Worker, Role::Reviewer]
                 .into_iter()
                 .filter_map(|role| task.threads().get(role))
@@ -827,6 +903,11 @@ impl Service {
                 }
             }
             let _fence = self.effect(row).await?;
+            let _projects = self.project_writes.read().await;
+            let route = self.project_for(task.identity()).await?;
+            if self.checkout_binding(task.identity(), &route, checkout)? != binding {
+                return Err(HostError::Binding.into());
+            }
             let _ = checkout.retire(head)?;
             observed.workspace = seen(checkout.observe());
         }
@@ -1014,8 +1095,8 @@ mod tests {
 
     use super::*;
     use crate::tests::{
-        Due, fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation,
-        serve_forge,
+        Due, REPOSITORY, fixture, forge_checks, forge_fixture, forge_pull, native_fixture,
+        reservation, serve_forge,
     };
 
     #[tokio::test]
@@ -1055,8 +1136,8 @@ mod tests {
                 nucleus_core::Identity {
                     id: id.into(),
                     reference: id.into(),
-                    repository: service.project.repository.clone(),
-                    base: service.project.base.clone(),
+                    repository: REPOSITORY.into(),
+                    base: service.fixture().base.clone(),
                     entry: Entry::Brief,
                     origin_thread: None,
                 },
@@ -1081,7 +1162,7 @@ mod tests {
                 .expect("seed");
             let row = service.task(id).await.expect("row");
             let checkout = worktrees
-                .checkout(&service.project.checkout, &service.project.repository, id)
+                .checkout(&service.fixture().checkout, REPOSITORY, id)
                 .expect("checkout");
             Box::pin(service.reserve(
                 &row,
@@ -1125,14 +1206,14 @@ mod tests {
     #[tokio::test]
     async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
-        let head = service.project.start.clone();
+        let head = service.fixture().start.clone();
         let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
         let worktrees = service.worktrees().expect("worktrees");
         let checkout = worktrees
             .checkout(
-                &service.project.checkout,
-                &service.project.repository,
+                &service.fixture().checkout,
+                &service.fixture().repository,
                 "reviewer",
             )
             .expect("checkout");
@@ -1245,7 +1326,7 @@ mod tests {
         for available in [true, false] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
             let head = if available {
-                service.project.start.clone()
+                service.fixture().start.clone()
             } else {
                 "b".repeat(40).parse().expect("missing local object")
             };
@@ -1290,7 +1371,7 @@ mod tests {
     #[tokio::test]
     async fn an_edit_during_native_authorization_cannot_send_the_review() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
-        let head = service.project.start.clone();
+        let head = service.fixture().start.clone();
         let (forge, reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
         let git = service.git.clone();
@@ -1302,8 +1383,8 @@ mod tests {
         .expect("worktrees");
         let checkout = worktrees
             .checkout(
-                &service.project.checkout,
-                &service.project.repository,
+                &service.fixture().checkout,
+                &service.fixture().repository,
                 "reviewer",
             )
             .expect("checkout");
@@ -1318,7 +1399,7 @@ mod tests {
             state: RunState::ReadyToSend,
         });
         let edit = checkout.path().join("edit-during-authorization.txt");
-        let root = service.project.checkout.clone();
+        let root = service.fixture().checkout.clone();
         let (host, native_server) = native_fixture(move |req| {
             match req["tag"].as_str() {
                 Some("orchestration.subscribeThread") => {
@@ -1367,7 +1448,7 @@ mod tests {
     async fn an_interrupt_requires_the_current_fixture_project_root() {
         for retargeted in [false, true] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
-            let head = service.project.start.clone();
+            let head = service.fixture().start.clone();
             let git = service.git.clone();
             let worktrees = crate::Worktrees::new(
                 &service.storage,
@@ -1377,8 +1458,8 @@ mod tests {
             .expect("worktrees");
             let checkout = worktrees
                 .checkout(
-                    &service.project.checkout,
-                    &service.project.repository,
+                    &service.fixture().checkout,
+                    &service.fixture().repository,
                     "reviewer",
                 )
                 .expect("checkout");
@@ -1399,7 +1480,7 @@ mod tests {
             let root = if retargeted {
                 "/synthetic/unrelated".into()
             } else {
-                service.project.checkout.clone()
+                service.fixture().checkout.clone()
             };
             let owned = checkout.path().to_owned();
             let writes = Arc::new(AtomicUsize::new(0));
@@ -1474,7 +1555,7 @@ mod tests {
             binding: service.binding(checkout).expect("binding"),
             dispatch: Dispatch::Create {
                 title: "Review fixture".into(),
-                profile: service.project.reviewer.clone(),
+                profile: service.fixture().reviewer.clone(),
             },
             text: "Review the fixture".into(),
         }
@@ -1492,7 +1573,7 @@ mod tests {
     async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
         for status in [StatusCode::CONFLICT, StatusCode::METHOD_NOT_ALLOWED] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
-            let head = service.project.start.clone();
+            let head = service.fixture().start.clone();
             let new_head: Head = "b".repeat(40).parse().expect("changed head");
             let next = Arc::new(AtomicBool::new(false));
             let puts = Arc::new(AtomicUsize::new(0));
@@ -1580,7 +1661,7 @@ mod tests {
         .await;
         let (_home, service) = fixture(forge);
         for id in ["first", "second"] {
-            let (reserved, _, _) = reservation(id, Entry::ReviewEntry, &service.project.start);
+            let (reserved, _, _) = reservation(id, Entry::ReviewEntry, &service.fixture().start);
             let task = Task::new(
                 reserved.identity().clone(),
                 reserved.brief().text.clone(),
@@ -1701,7 +1782,7 @@ mod tests {
             (true, true, true, true),
         ] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
-            let head = service.project.start.clone();
+            let head = service.fixture().start.clone();
             let latest = if changed_head {
                 "b".repeat(40).parse().expect("new head")
             } else {
@@ -1712,8 +1793,8 @@ mod tests {
             let worktrees = service.worktrees().expect("worktrees");
             let checkout = worktrees
                 .checkout(
-                    &service.project.checkout,
-                    &service.project.repository,
+                    &service.fixture().checkout,
+                    &service.fixture().repository,
                     "reviewer",
                 )
                 .expect("checkout");

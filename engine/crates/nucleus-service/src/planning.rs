@@ -9,13 +9,14 @@ use nucleus_store::{
 use serde::Deserialize;
 use tokio::sync::MutexGuard;
 
-use crate::{Service, ServiceError, State, event, now_ms, schedule::Priority};
+use crate::{ControllerScope, Service, ServiceError, State, event, now_ms, schedule::Priority};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskAdmission {
     pub id: Option<String>,
     pub reference: Option<String>,
+    pub repository: Option<String>,
     pub brief: String,
     pub review: Option<PullRequest>,
 }
@@ -30,28 +31,41 @@ impl Service {
         if !valid_key(project)
             || !state
                 .settings
-                .knows_planning_project(&self.project, project)
+                .knows_planning_project(self.project.as_ref(), project)
         {
             return Err(ServiceError::Project);
         }
         Ok(state)
     }
 
-    pub(crate) async fn add_planned_task(
+    pub(crate) async fn planning_state_in_scope(
         &self,
         project: &str,
+        scope: &ControllerScope,
+    ) -> Result<MutexGuard<'_, State>, ServiceError> {
+        let state = self.planning_state(project).await?;
+        scope.require(&state, project)?;
+        Ok(state)
+    }
+
+    pub(crate) async fn add_planned_task(
+        &self,
+        project: Option<&str>,
         input: TaskAdmission,
         caller: &Authority,
+        scope: &ControllerScope,
     ) -> Result<TaskRow, ServiceError> {
-        let mut state = self.planning_state(project).await?;
-        self.check_planning_admission(&state, project)?;
+        check_brief(&input.brief)?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let route =
+            self.planning_repository(&mut state, scope, project, input.repository.as_deref())?;
         let id = match input.id {
             Some(id) => id,
             None => new_id("t")?,
         };
         let reference = input.reference.unwrap_or_else(|| id.clone());
-        check_brief(&input.brief)?;
-        let task = self.admission_task(id, reference, input.brief, input.review, caller)?;
+        let task = Self::admission_task(id, reference, input.brief, input.review, caller, route)?;
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
         let number = state.store.create(&task, &admitted)?;
@@ -65,18 +79,20 @@ impl Service {
 
     pub(crate) async fn promote_planning_item(
         &self,
-        project: &str,
+        project: Option<&str>,
         id: &str,
         caller: &Authority,
+        scope: &ControllerScope,
     ) -> Result<(bool, TaskRow), ServiceError> {
-        let mut state = self.planning_state(project).await?;
-        self.check_planning_admission(&state, project)?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let route = self.planning_repository(&mut state, scope, project, None)?;
         let item = state
             .store
-            .item(project, id)?
+            .item(&route.project_id, id)?
             .ok_or(StoreError::PlanningMissing)?;
         let source = ItemSource {
-            project_id: project.into(),
+            project_id: route.project_id.clone(),
             item_id: id.into(),
         };
         if let ItemState::Promoted { task_id } = &item.state
@@ -90,7 +106,7 @@ impl Service {
         let brief = item.content.body;
         check_brief(&brief)?;
         let task_id = new_id("t")?;
-        let task = self.admission_task(task_id.clone(), task_id, brief, None, caller)?;
+        let task = Self::admission_task(task_id.clone(), task_id, brief, None, caller, route)?;
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
         let (_, number) = state
@@ -105,15 +121,6 @@ impl Service {
                 number: Some(number),
             },
         ))
-    }
-
-    fn check_planning_admission(&self, state: &State, project: &str) -> Result<(), ServiceError> {
-        if state.settings.planning_project_id(&self.project) != project
-            || state.settings.fixture_slots(&self.project).is_none()
-        {
-            return Err(ServiceError::Project);
-        }
-        Ok(())
     }
 
     /// Read the same project decisions used by the operator Inbox.
@@ -142,7 +149,18 @@ impl Service {
         input: DecisionInput,
         caller: &Authority,
     ) -> Result<Decision, ServiceError> {
-        let mut state = self.planning_state(project).await?;
+        self.add_decision_in_scope(project, input, caller, &ControllerScope::default())
+            .await
+    }
+
+    pub(crate) async fn add_decision_in_scope(
+        &self,
+        project: &str,
+        input: DecisionInput,
+        caller: &Authority,
+        scope: &ControllerScope,
+    ) -> Result<Decision, ServiceError> {
+        let mut state = self.planning_state_in_scope(project, scope).await?;
         let decision = state
             .store
             .add_decision(project, new_id("d")?, input, stamp(caller))?;

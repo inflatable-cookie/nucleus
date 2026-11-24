@@ -257,13 +257,26 @@ export class Operations {
     )
       throw new Error("Operation submissionId does not match its payload");
     const previous = this.store.operationForKey(input.key);
+    const submissionKind = [
+      "submit",
+      "review_entry",
+      "source_promote",
+    ].includes(input.kind);
+    if (!previous && submissionKind && this.engine.rustEngineDraining) {
+      throw new ProtocolError(
+        "invalid_input",
+        "New tasks now run on the Rust engine. Use nucleus-engine task.add or ask the Nucleus planner.",
+      );
+    }
     const repoPath = input.repoPath ?? submission?.repoPath ?? undefined;
     const promotion = (
       input.payload as { source?: { repository?: string } } | null
     )?.source;
+    const checkoutRepository = repoPath
+      ? await repositoryOrigin(repoPath).catch(() => null)
+      : null;
     const repositoryOriginForSelection =
-      promotion?.repository ??
-      (repoPath ? await repositoryOrigin(repoPath).catch(() => null) : null);
+      promotion?.repository ?? checkoutRepository;
     const taskId = input.taskId ?? control?.taskId ?? removal?.taskId;
     const promotionIdentityHostId = (
       input.payload as {
@@ -276,18 +289,19 @@ export class Operations {
       (input.payload as { identitySource?: { hostId?: string } } | null)
         ?.identitySource?.hostId ??
       promotionIdentityHostId;
-    const submissionKind = [
-      "submit",
-      "review_entry",
-      "source_promote",
-    ].includes(input.kind);
-    if (!previous && submissionKind) {
-      const selectedRepository = this.engine.rustEngineRepository;
-      const registeredRepository = repoPath && selectedRepository
+    const selectedRepository = this.engine.rustEngineRepository;
+    if (!previous && submissionKind && selectedRepository) {
+      const registeredRepository = repoPath
         ? this.store.canonicalRepository(repoPath)?.repository.origin
         : null;
-      if (selectedRepository && [repositoryOriginForSelection, registeredRepository]
-        .some((origin) => normalizeRepositoryOrigin(origin ?? "") === selectedRepository)) {
+      const targetsPilot = [
+        promotion?.repository,
+        checkoutRepository,
+        registeredRepository,
+      ]
+        .map((origin) => normalizeRepositoryOrigin(origin ?? ""))
+        .some((origin) => origin === selectedRepository);
+      if (targetsPilot) {
         throw new ProtocolError(
           "invalid_input",
           `${selectedRepository} now runs on the Rust engine. Admit the brief with nucleus-engine admit or ask the Nucleus planner.`,

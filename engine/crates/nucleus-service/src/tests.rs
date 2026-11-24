@@ -346,7 +346,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
     );
     let worktrees = service.worktrees().expect("worktree root");
     let checkout = worktrees
-        .checkout(&service.project.checkout, REPOSITORY, id)
+        .checkout(&service.fixture().checkout, REPOSITORY, id)
         .expect("checkout");
     assert_eq!(
         checkout.observe().expect("worktree state"),
@@ -359,7 +359,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
 async fn a_settled_run_wakes_the_oldest_slot_waiter() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     for id in ["z-first", "a-second"] {
-        let (task, _, _) = reservation(id, Entry::Brief, &service.project.start);
+        let (task, _, _) = reservation(id, Entry::Brief, &service.fixture().start);
         service
             .state
             .lock()
@@ -377,7 +377,7 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
             .await
             .expect("schedule capacity backstop");
     }
-    let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.project.start);
+    let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.fixture().start);
     let instance = holder
         .run()
         .expect("reserved run")

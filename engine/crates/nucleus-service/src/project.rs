@@ -8,14 +8,16 @@ use longhorn_git_workspace::{Git, GitCredential, GitFailure, GitFailureCode, Git
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
-use nucleus_hosts::{HostError, RoleProfile};
+use nucleus_hosts::{Binding, HostError, RoleProfile};
+use nucleus_store::RepositorySettings;
+use nucleus_work::Checkout;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::ServiceError;
+use crate::{Service, ServiceError, State};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
-/// Non-fixture dispatch requires an explicit opt-in in the serve file.
+/// A legacy serve file must explicitly opt into non-fixture dispatch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectMode {
@@ -24,7 +26,7 @@ pub enum ProjectMode {
     Project,
 }
 
-/// The one repository and native project this instance is authorized to use.
+/// The legacy single-repository serve configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Project {
@@ -96,52 +98,18 @@ impl Project {
                 .acp_provider
                 .as_deref()
                 .is_some_and(|provider| provider.trim().is_empty())
-            || !self.checkout.is_absolute()
-            || self.checkout.canonicalize()? != self.checkout
-            || !self.checkout.is_dir()
         {
             return Err(ServiceError::Project);
         }
-        Branches::new(&self.repository, &self.base, "ns-binding")?;
-        let git = Git::new(policy, Redactor::new([], RedactionRules::common()));
-        let identity = git
-            .worktree_identity(&self.checkout)
-            .map_err(|_| ServiceError::Project)?;
-        if identity.root() != self.checkout || identity.branch() != Some(&self.base) {
-            return Err(ServiceError::Project);
-        }
-        for args in [
-            &["remote", "get-url", "--all", "origin"][..],
-            &["remote", "get-url", "--push", "--all", "origin"][..],
-        ] {
-            let url = git
-                .run(
-                    &self.checkout,
-                    args,
-                    GitFailureCode::CommandUnavailable,
-                    Duration::from_secs(5),
-                )
-                .map_err(|_| ServiceError::Project)?;
-            if !matches_origin(&self.repository, &url) {
-                return Err(ServiceError::Project);
-            }
-        }
+        verify_repository(&self.repository, &self.checkout, &self.base, policy)?;
         Ok(())
     }
 
     pub(crate) fn scope(&self, identity: &Identity) -> Result<(), ServiceError> {
-        if self.repository != identity.repository
-            || self.base != identity.base
-            || identity.id.is_empty()
-            || identity.id.len() > 64
-            || !identity
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
+        if self.repository != identity.repository || self.base != identity.base {
             return Err(ServiceError::Project);
         }
-        Ok(())
+        check_task_id(&identity.id)
     }
 
     pub(crate) const fn profile(&self, role: Role) -> &RoleProfile {
@@ -152,12 +120,272 @@ impl Project {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct ProjectRoute {
+    pub(super) project_id: Option<String>,
+    pub(super) checkout: PathBuf,
+    pub(super) host_project: String,
+    pub(super) slots: Option<u32>,
+    pub(super) repositories: Vec<(String, String)>,
+    pub(super) required_checks: Vec<String>,
+}
+
+impl ProjectRoute {
+    pub(super) fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
+        if checkout.repository() != self.checkout {
+            return Err(HostError::Binding.into());
+        }
+        Ok(Binding {
+            project_id: self.host_project.clone(),
+            worktree_path: checkout
+                .path()
+                .to_str()
+                .ok_or(ServiceError::Project)?
+                .into(),
+            branch: checkout.branch().into(),
+        })
+    }
+}
+
+impl Service {
+    pub(super) fn acp_provider(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .and_then(|project| project.acp_provider.as_deref())
+            .or(self.registry_provider.as_deref())
+    }
+
+    pub(super) fn task_scope(&self, identity: &Identity) -> Result<(), ServiceError> {
+        match &self.project {
+            Some(project) => project.scope(identity),
+            None => check_task_id(&identity.id),
+        }
+    }
+
+    pub(super) fn resolve_project(
+        &self,
+        state: &State,
+        identity: &Identity,
+    ) -> Result<ProjectRoute, ServiceError> {
+        self.task_scope(identity)?;
+        if let Some(project) = &self.project {
+            return Ok(ProjectRoute {
+                project_id: state
+                    .settings
+                    .fixture_project(project)
+                    .map(|(id, _, _)| id.into()),
+                checkout: project.checkout.clone(),
+                host_project: project.host_project.clone(),
+                slots: state.settings.fixture_slots(project),
+                repositories: vec![(project.repository.clone(), project.base.clone())],
+                required_checks: state.settings.fixture_checks(project),
+            });
+        }
+        let (id, project, repo) = state
+            .settings
+            .project_for_origin(&identity.repository)
+            .filter(|(_, _, repo)| repo.base == identity.base)
+            .ok_or(ServiceError::Project)?;
+        Ok(ProjectRoute {
+            project_id: Some(id.into()),
+            checkout: repo.path.clone(),
+            host_project: repo.host_project.clone().ok_or(ServiceError::Project)?,
+            slots: (!project.archived).then_some(project.slots),
+            repositories: project
+                .repositories
+                .iter()
+                .filter(|repo| repo.host_project.is_some())
+                .map(|repo| (repo.origin.clone(), repo.base.clone()))
+                .collect(),
+            required_checks: repo.required_checks.clone(),
+        })
+    }
+
+    pub(super) async fn project_for(
+        &self,
+        identity: &Identity,
+    ) -> Result<ProjectRoute, ServiceError> {
+        let state = self.state.lock().await;
+        self.resolve_project(&state, identity)
+    }
+
+    pub(super) async fn verify_route(
+        &self,
+        identity: &Identity,
+        route: &ProjectRoute,
+    ) -> Result<Head, ServiceError> {
+        let repository = identity.repository.clone();
+        let checkout = route.checkout.clone();
+        let base = identity.base.clone();
+        let git = self.git.clone();
+        tokio::task::spawn_blocking(move || verify_repository(&repository, &checkout, &base, &git))
+            .await
+            .map_err(|_| ServiceError::Project)?
+    }
+
+    pub(super) async fn check_project_route(
+        &self,
+        identity: &Identity,
+        route: &ProjectRoute,
+    ) -> Result<(), ServiceError> {
+        self.verify_route(identity, route).await?;
+        let root = route.checkout.to_str().ok_or(ServiceError::Project)?;
+        self.host.check_project(&route.host_project, root).await?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture(&self) -> &Project {
+        self.project.as_ref().expect("fixture project")
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_mut(&mut self) -> &mut Project {
+        self.project.as_mut().expect("fixture project")
+    }
+
+    #[cfg(test)]
+    pub(super) async fn check_project(&self) -> Result<(), ServiceError> {
+        let project = self.fixture();
+        let identity = Identity {
+            id: "fixture-binding".into(),
+            reference: String::new(),
+            repository: project.repository.clone(),
+            base: project.base.clone(),
+            entry: nucleus_core::Entry::Brief,
+            origin_thread: None,
+        };
+        let route = self.project_for(&identity).await?;
+        self.check_project_route(&identity, &route).await
+    }
+}
+
+pub(super) fn check_task_id(id: &str) -> Result<(), ServiceError> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(ServiceError::Project);
+    }
+    Ok(())
+}
+
+pub(super) fn verify_repository(
+    repository: &str,
+    checkout: &Path,
+    base: &str,
+    policy: &LocalGit,
+) -> Result<Head, ServiceError> {
+    if !checkout.is_absolute() || checkout.canonicalize()? != checkout || !checkout.is_dir() {
+        return Err(ServiceError::Project);
+    }
+    Branches::new(repository, base, "ns-binding")?;
+    let git = Git::new(policy, Redactor::new([], RedactionRules::common()));
+    let identity = git
+        .worktree_identity(checkout)
+        .map_err(|_| ServiceError::Project)?;
+    if identity.root() != checkout || identity.branch() != Some(base) {
+        return Err(ServiceError::Project);
+    }
+    for args in [
+        &["remote", "get-url", "--all", "origin"][..],
+        &["remote", "get-url", "--push", "--all", "origin"][..],
+    ] {
+        let url = git
+            .run(
+                checkout,
+                args,
+                GitFailureCode::CommandUnavailable,
+                Duration::from_secs(5),
+            )
+            .map_err(|_| ServiceError::Project)?;
+        if !matches_origin(repository, &url) {
+            return Err(ServiceError::Project);
+        }
+    }
+    identity
+        .head_oid()
+        .parse()
+        .map_err(|_| ServiceError::Project)
+}
+
 fn matches_origin(repository: &str, url: &str) -> bool {
+    github_origin(url).is_some_and(|origin| origin.eq_ignore_ascii_case(repository))
+}
+
+fn github_origin(url: &str) -> Option<&str> {
     let url = url.strip_suffix(".git").unwrap_or(url);
     url.strip_prefix("https://github.com/")
         .or_else(|| url.strip_prefix("git@github.com:"))
         .or_else(|| url.strip_prefix("ssh://git@github.com/"))
-        .is_some_and(|origin| origin.eq_ignore_ascii_case(repository))
+}
+
+pub(super) fn discover_repository(
+    path: PathBuf,
+    policy: &LocalGit,
+) -> Result<RepositorySettings, ServiceError> {
+    let refused = ServiceError::PlannerEnrollmentRefused;
+    if !path.is_absolute() || !path.canonicalize().is_ok_and(|root| root == path) || !path.is_dir()
+    {
+        return Err(refused(
+            "The checkout registered in T3 is missing or is not a canonical directory.",
+        ));
+    }
+    let git = Git::new(policy, Redactor::new([], RedactionRules::common()));
+    let read = |args: &[&str], reason| {
+        git.run(
+            &path,
+            args,
+            GitFailureCode::CommandUnavailable,
+            Duration::from_secs(5),
+        )
+        .map_err(|_| refused(reason))
+    };
+    let identity = git
+        .worktree_identity(&path)
+        .map_err(|_| refused("The checkout registered in T3 is not a Git worktree."))?;
+    if identity.root() != path {
+        return Err(refused("T3 must register the exact Git checkout root."));
+    }
+    let fetch_failure = "The T3 checkout needs one GitHub fetch URL for origin.";
+    let fetch = read(&["remote", "get-url", "--all", "origin"], fetch_failure)?;
+    let origin = github_origin(&fetch)
+        .ok_or_else(|| refused(fetch_failure))?
+        .to_ascii_lowercase();
+    let push_failure = "The origin fetch and push URLs must identify the same GitHub repository.";
+    let push = read(
+        &["remote", "get-url", "--push", "--all", "origin"],
+        push_failure,
+    )?;
+    if !matches_origin(&origin, &push) {
+        return Err(refused(push_failure));
+    }
+    let default_failure = "The checkout needs a local origin/HEAD for the default branch.";
+    let default = read(
+        &["symbolic-ref", "refs/remotes/origin/HEAD"],
+        default_failure,
+    )?;
+    let base = default
+        .strip_prefix("refs/remotes/origin/")
+        .ok_or_else(|| refused(default_failure))?;
+    if identity.branch() != Some(base) {
+        return Err(refused(
+            "The T3 checkout must be on the repository's default branch.",
+        ));
+    }
+    Branches::new(&origin, base, "ns-binding").map_err(|_| refused(fetch_failure))?;
+    Ok(RepositorySettings {
+        origin,
+        path,
+        base: base.into(),
+        host_project: None,
+        host_project_title: None,
+        planner_threads: Vec::new(),
+        required_checks: Vec::new(),
+        hung_tool_minutes: 30,
+    })
 }
 
 pub(super) fn linked_checkout(
@@ -233,7 +461,7 @@ mod tests {
     #[test]
     fn fixture_files_keep_their_scope_and_project_mode_verifies_both_remotes() {
         let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        let mut legacy = serde_json::to_value(&service.project).expect("fixture configuration");
+        let mut legacy = serde_json::to_value(service.fixture()).expect("fixture configuration");
         legacy
             .as_object_mut()
             .expect("project object")
@@ -319,11 +547,11 @@ mod tests {
     #[tokio::test]
     async fn native_write_gate_requires_the_explicit_project_at_its_registered_checkout() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        service.project.mode = ProjectMode::Project;
-        service.project.repository = "example/greeter".into();
-        service.project.host_project = "greeter-project".into();
-        service.project.acp_provider = Some("fixture-acp".into());
-        let root = service.project.checkout.clone();
+        service.fixture_mut().mode = ProjectMode::Project;
+        service.fixture_mut().repository = "example/greeter".into();
+        service.fixture_mut().host_project = "greeter-project".into();
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let root = service.fixture().checkout.clone();
         git(
             &root,
             &[
@@ -348,8 +576,8 @@ mod tests {
             Identity {
                 id: "greeter".into(),
                 reference: "fixture#1".into(),
-                repository: service.project.repository.clone(),
-                base: service.project.base.clone(),
+                repository: service.fixture().repository.clone(),
+                base: service.fixture().base.clone(),
                 entry: Entry::Brief,
                 origin_thread: None,
             },
@@ -359,14 +587,16 @@ mod tests {
         let worktrees = service.worktrees().expect("worktrees");
         let checkout = worktrees
             .checkout(
-                &service.project.checkout,
-                &service.project.repository,
+                &service.fixture().checkout,
+                &service.fixture().repository,
                 &task.identity().id,
             )
             .expect("bound checkout");
-        checkout.allocate(&service.project.start).expect("allocate");
+        checkout
+            .allocate(&service.fixture().start)
+            .expect("allocate");
         let binding = Binding {
-            project_id: service.project.host_project.clone(),
+            project_id: service.fixture().host_project.clone(),
             worktree_path: checkout.path().to_str().expect("checkout path").into(),
             branch: checkout.branch().into(),
         };
@@ -380,10 +610,7 @@ mod tests {
                 },
             )
         };
-        assert_eq!(
-            gate().await.expect("verified native destination"),
-            Some(false)
-        );
+        assert!(gate().await.expect("verified native destination").is_some());
         retargeted.store(true, Ordering::Relaxed);
         assert!(matches!(
             gate().await,

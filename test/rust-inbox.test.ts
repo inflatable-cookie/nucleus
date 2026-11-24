@@ -42,7 +42,10 @@ test("the pilot settings select one canonical repository from an owner-only file
   chmodSync(settings, 0o644);
   assert.throws(() => readRustPilot(scratch), /owner-only/);
   chmodSync(settings, 0o600);
-  assert.deepEqual(readRustPilot(scratch), configured);
+  const { repository, ...connection } = configured;
+  assert.deepEqual(readRustPilot(scratch), { ...connection, repository });
+  writeFileSync(settings, JSON.stringify({ ...connection, drain: true }));
+  assert.deepEqual(readRustPilot(scratch), { ...connection, drain: true });
   const other = join(scratch, "other.json");
   renameSync(settings, other);
   symlinkSync(other, settings);

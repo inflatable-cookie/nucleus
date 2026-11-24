@@ -28,7 +28,8 @@ use serde_json::{Value, json};
 use tokio::time::{Instant, sleep_until};
 
 use super::{
-    Api, ApiError, Controller, authorize, credential, invalidation_events, routes, settings,
+    Api, ApiError, Controller, ControllerScope, authorize, credential, invalidation_events, routes,
+    settings,
 };
 use crate::Service;
 
@@ -50,12 +51,25 @@ pub fn router_with_board(
     controllers: impl IntoIterator<Item = Controller>,
     assets: &Path,
 ) -> io::Result<Router> {
+    router_with_board_and_t3_callers(service, controllers, assets, None)
+}
+
+/// Serve the paired board and authenticate local T3 callers.
+///
+/// # Errors
+/// Returns an error if the built board files cannot be read.
+pub fn router_with_board_and_t3_callers(
+    service: Arc<Service>,
+    controllers: impl IntoIterator<Item = Controller>,
+    assets: &Path,
+    t3_caller_key: Option<[u8; 32]>,
+) -> io::Result<Router> {
     let board = Board {
         html: fs::read(assets.join("index.html"))?.into(),
         app: fs::read(assets.join("app.js"))?.into(),
         grants: Arc::default(),
     };
-    Ok(routes(service, controllers, Some(board)))
+    Ok(routes(service, controllers, Some(board), t3_caller_key))
 }
 
 #[derive(Clone)]
@@ -74,6 +88,7 @@ struct Grants {
 #[derive(Clone)]
 struct Grant {
     authority: Authority,
+    scope: ControllerScope,
     expires: Instant,
 }
 
@@ -162,6 +177,7 @@ async fn issue(
     State(api): State<Api>,
     Extension(board): Extension<Board>,
     Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
 ) -> Result<Json<Value>, ApiError> {
     let key = random_key()?;
     let now = Instant::now();
@@ -177,6 +193,7 @@ async fn issue(
         key,
         Grant {
             authority,
+            scope,
             expires: now + LINK_TTL,
         },
     );
@@ -210,6 +227,7 @@ async fn pair(
         session,
         Grant {
             authority: grant.authority,
+            scope: grant.scope,
             expires: now + SESSION_TTL,
         },
     );
@@ -252,6 +270,7 @@ async fn authorize_browser(
         .cloned()
         .ok_or(ApiError::Unauthorized)?;
     request.extensions_mut().insert(grant.authority.clone());
+    request.extensions_mut().insert(grant.scope.clone());
     request.extensions_mut().insert(grant);
     Ok(next.run(request).await)
 }
@@ -285,7 +304,10 @@ async fn events(
             Some((Ok(Event::default().event("settings").data("{}")), changes))
         },
     );
-    let changes = stream::select(invalidation_events(api.service, None), settings)
-        .take_until(sleep_until(grant.expires));
+    let changes = stream::select(
+        invalidation_events(api.service, None, grant.scope),
+        settings,
+    )
+    .take_until(sleep_until(grant.expires));
     Sse::new(changes).keep_alive(KeepAlive::default())
 }

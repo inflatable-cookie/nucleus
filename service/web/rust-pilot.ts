@@ -18,17 +18,20 @@ const loopback = z.string().refine((value) => {
     !url.hash
   );
 });
+const repository = z
+  .string()
+  .refine((value) => normalizeRepositoryOrigin(value) === value);
 const pilot = z
   .object({
-    repository: z
-      .string()
-      .refine((value) => normalizeRepositoryOrigin(value) === value),
+    repository: repository.optional(),
+    drain: z.boolean().optional(),
     endpoint: loopback,
     boardKeyFile: filePath,
     inboxKeyFile: filePath,
     inboxEngine: z.string().regex(rustInboxEnginePattern),
   })
-  .strict();
+  .strict()
+  .refine(({ repository, drain }) => drain === true || repository !== undefined);
 
 export type RustPilot = z.infer<typeof pilot>;
 

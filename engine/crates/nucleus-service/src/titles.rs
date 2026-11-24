@@ -134,12 +134,15 @@ impl Service {
         reference: &str,
         wait: Option<WaitReason>,
     ) {
-        if self.project.acp_provider.is_none() {
+        if self.acp_provider().is_none() {
             return;
         }
         let id = &task.identity().id;
-        let path =
-            nucleus_work::checkout_path(self.storage.work().path(), &self.project.repository, id);
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &task.identity().repository,
+            id,
+        );
         let thread = nucleus_hosts::parent_thread(&path);
         match state
             .store
@@ -152,14 +155,11 @@ impl Service {
     }
 
     pub(super) async fn watch_titles(&self) {
-        let (Some(provider), Some(root)) = (
-            self.project.acp_provider.as_deref(),
-            self.project.checkout.to_str(),
-        ) else {
+        let Some(provider) = self.acp_provider() else {
             return;
         };
         loop {
-            let next = self.title_work(&self.host.title_threads(root)).await;
+            let next = self.title_work(&self.host.title_threads()).await;
             let wait = match next {
                 Ok(Some((thread, receipt))) => {
                     let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
@@ -230,15 +230,13 @@ impl Service {
         if !self.title_current(&row, thread, receipt).await? {
             return Ok(());
         }
+        let identity = row.task.identity();
+        let route = self.project_for(identity).await?;
         let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(
-            &self.project.checkout,
-            &self.project.repository,
-            &receipt.task_id,
-        )?;
-        let binding = self.binding(&checkout)?;
-        let Some(target) = self
-            .project
+        let checkout =
+            worktrees.checkout(&route.checkout, &identity.repository, &receipt.task_id)?;
+        let binding = route.binding(&checkout)?;
+        let Some(target) = route
             .checkout
             .to_str()
             .and_then(|root| self.host.title_target(&binding, provider, root))
@@ -250,9 +248,9 @@ impl Service {
             frozen: target.binding(),
             checkout: &checkout,
         };
-        if self.dispatch_gate(&row.task, destination).await?.is_none() {
+        let Some(_permit) = self.dispatch_gate(&row.task, destination).await? else {
             return Ok(());
-        }
+        };
         let key = format!("task-{}-title-{}", receipt.task_id, receipt.generation);
         self.host
             .write_title(target, &key, &receipt.desired)
@@ -364,7 +362,7 @@ mod tests {
         let task = task();
         let subject = Task::new(
             Identity {
-                repository: service.project.repository.clone(),
+                repository: service.fixture().repository.clone(),
                 ..task.identity().clone()
             },
             task.brief().text.clone(),
@@ -373,12 +371,18 @@ mod tests {
         let id = &subject.identity().id;
         let worktrees = service.worktrees().expect("fixture worktrees");
         let checkout = worktrees
-            .checkout(&service.project.checkout, &service.project.repository, id)
+            .checkout(
+                &service.fixture().checkout,
+                &service.fixture().repository,
+                id,
+            )
             .expect("checkout");
-        checkout.allocate(&service.project.start).expect("allocate");
+        checkout
+            .allocate(&service.fixture().start)
+            .expect("allocate");
         let binding = service.binding(&checkout).expect("workspace binding");
         let parent = nucleus_hosts::parent_thread(checkout.path());
-        let root = service.project.checkout.clone();
+        let root = service.fixture().checkout.clone();
         let shell = json!({"kind":"snapshot","snapshot":{"projects":[{"id":binding.project_id,"workspaceRoot":root}],
             "threads":[{"id":parent,"projectId":binding.project_id,"providerInstanceId":"fixture-acp",
             "worktreePath":binding.worktree_path,"branch":binding.branch,"title":"old title"}]}});
@@ -401,7 +405,7 @@ mod tests {
         })
         .await;
         service.host = host;
-        service.project.acp_provider = Some("fixture-acp".into());
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
         {
             let mut state = service.state.lock().await;
             state

@@ -107,6 +107,11 @@ impl<'a> Worktrees<'a> {
 
 impl Checkout<'_> {
     #[must_use]
+    pub fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
