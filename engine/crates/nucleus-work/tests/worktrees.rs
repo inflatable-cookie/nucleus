@@ -177,6 +177,68 @@ fn allocation_is_idempotent_and_closeout_only_removes_the_published_clean_checko
 }
 
 #[test]
+fn a_large_index_is_observed_without_truncating_hidden_flags() {
+    let root = tempfile::tempdir().expect("scratch");
+    let repo = root.path().join("repository");
+    repository(&repo);
+    let path = |index| format!("tracked-{index:04}-{}.txt", "x".repeat(80));
+    for index in 0..800 {
+        fs::write(repo.join(path(index)), "fixture").expect("write fixture");
+    }
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "Create a large index"]);
+    let head: Head = git(&repo, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("head");
+    assert!(git(&repo, &["ls-files", "-v"]).len() > 64 * 1024);
+
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task")
+        .expect("checkout");
+    for _ in 0..2 {
+        assert_eq!(
+            checkout.allocate(&head).expect("allocate or adopt"),
+            Workspace::Clean(head.clone())
+        );
+    }
+    let last = path(799);
+    for (flag, clear) in [
+        ("--skip-worktree", "--no-skip-worktree"),
+        ("--assume-unchanged", "--no-assume-unchanged"),
+    ] {
+        git(checkout.path(), &["update-index", flag, "--", &last]);
+        assert_eq!(
+            checkout.observe().expect("read flagged index"),
+            Workspace::Dirty
+        );
+        git(checkout.path(), &["update-index", clear, "--", &last]);
+    }
+    assert_eq!(
+        checkout.observe().expect("read clean index"),
+        Workspace::Clean(head)
+    );
+    let missing = "f".repeat(40).parse().expect("absent head");
+    let error = checkout
+        .require_commit(&missing)
+        .expect_err("absent commit");
+    let WorkError::Git {
+        command,
+        directory,
+        repository,
+        source,
+    } = error
+    else {
+        panic!("expected a Git diagnostic");
+    };
+    assert!(command.contains("cat-file"));
+    assert_eq!(directory, repo);
+    assert_eq!(repository, repo);
+    assert!(!source.detail().is_empty());
+}
+
+#[test]
 fn a_different_checkout_is_never_adopted_or_removed() {
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository");

@@ -266,6 +266,9 @@ Every action is idempotent:
   without charging a failed attempt. A failed attempt counts only when the
   required head observation is known.
 - Cleanliness checks include tracked files and non-ignored untracked files.
+  The engine scans the whole Git index for flags that can hide changes and
+  retains only the result. Git failures report the command, checkout and
+  redacted diagnostic instead of treating an unreadable tree as clean.
   Fresh evidence of a clean checkout at the exact open PR head resolves an
   existing workspace mismatch question at that head.
 - If the head moved while delivery was uncertain, reconciliation can replay the
