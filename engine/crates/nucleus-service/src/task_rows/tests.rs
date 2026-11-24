@@ -477,6 +477,73 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     assert_terminal_forgets_snooze(&fixture).await;
 }
 
+#[tokio::test]
+async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
+    let pending = pending_task();
+    let fixture = Fixture::new(&pending).await;
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&pending, &event("fixture")).unwrap();
+        service.desire_title(&state, &pending, None);
+        service.lookup(&state, ID).unwrap()
+    };
+    fixture.sync().await;
+    fixture.sync().await;
+    let mut claim = fixture.observed_snooze().await;
+    claim.clear_attempted_for = Some(claim.until_ms);
+    service
+        .restore_row_snooze(ID, &fixture.thread, Some(&claim))
+        .await
+        .unwrap();
+    let frozen = snooze_command(ID, &fixture.thread, RowChange::Unsnooze, &claim);
+    let _fence = service.effect(&row).await.unwrap();
+    let prepare = || {
+        service
+            .host
+            .prepare_parent_refresh(&fixture.binding, PROVIDER)
+    };
+    for _ in 0..2 {
+        let write = prepare().await.unwrap().unwrap();
+        fixture.native.lock().unwrap().fail_next = true;
+        let (ready, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            service.wake_parent_delivery(&row, &write),
+        ))
+        .await;
+        assert!(matches!(ready, Err(ServiceError::ParentNotSent { .. })));
+        assert!(!calls.contains_key("orchestration.subscribeThread"));
+        fixture.publish_shell();
+    }
+    let write = prepare().await.unwrap().unwrap();
+    assert!(matches!(
+        service.wake_parent_delivery(&row, &write).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    {
+        let native = fixture.native.lock().unwrap();
+        assert_eq!(native.commands.len(), 4);
+        assert!(
+            native.commands[1..]
+                .iter()
+                .all(|command| command["commandId"] == frozen)
+        );
+    }
+    fixture.publish_shell();
+    let write = prepare().await.unwrap().unwrap();
+    service.wake_parent_delivery(&row, &write).await.unwrap();
+    assert_eq!(fixture.commands().len(), 4);
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .row_snooze(ID, &fixture.thread)
+            .unwrap()
+            .is_none()
+    );
+}
+
 async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
     let service = &fixture.service;
     fixture.sync().await;
