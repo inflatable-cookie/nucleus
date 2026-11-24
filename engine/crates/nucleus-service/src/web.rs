@@ -2,10 +2,13 @@ use std::{convert::Infallible, sync::Arc};
 
 use axum::{
     Extension, Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, Request, State, rejection::JsonRejection},
+    extract::{
+        DefaultBodyLimit, FromRequestParts, Path, Query, Request, State, rejection::JsonRejection,
+    },
     http::{
         HeaderMap, Method, StatusCode,
         header::{AUTHORIZATION, HOST, ORIGIN},
+        request::Parts,
     },
     middleware::{self, Next},
     response::{
@@ -28,7 +31,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     CommandOutcome, Preflight, Service, ServiceError, State as EngineState,
-    acp::{MintedSession, WriteAccess},
+    acp::{MintedSession, SessionAccess, WriteAccess},
     now_ms,
     presentation::{HistoryEvent, RunView},
 };
@@ -339,9 +342,35 @@ struct SessionCredential {
     controller: [u8; 32],
 }
 
+#[derive(Clone)]
+struct TaskPath(String);
+
+impl FromRequestParts<Api> for TaskPath {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, api: &Api) -> Result<Self, ApiError> {
+        if let Some(task) = parts.extensions.get::<Self>() {
+            return Ok(task.clone());
+        }
+        let Path(selector) = Path::<String>::from_request_parts(parts, api)
+            .await
+            .map_err(|_| ApiError::Invalid)?;
+        if !selector.contains('#') {
+            return Ok(Self(selector));
+        }
+        let scope = parts
+            .extensions
+            .get::<ControllerScope>()
+            .ok_or(ApiError::Unauthorized)?;
+        Ok(Self(
+            api.service.resolve_task_reference(&selector, scope).await?,
+        ))
+    }
+}
+
 async fn authorize_task(
     State(api): State<Api>,
-    Path(id): Path<String>,
+    Path(selector): Path<String>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
@@ -349,12 +378,19 @@ async fn authorize_task(
     if let Some(caller) = request_controller(&api, &supplied, request.headers()) {
         reauthorize_known(&api, &caller.scope, request.method()).await?;
         caller.extend(&mut request);
-    } else if request.method() == Method::POST {
-        let digest = api
-            .service
-            .acp_controller(&id, &supplied)
-            .await
-            .ok_or(ApiError::Unauthorized)?;
+        return Ok(next.run(request).await);
+    }
+    let access = if request.method() == Method::POST {
+        SessionAccess::Write
+    } else {
+        SessionAccess::Read
+    };
+    let (id, digest) = api
+        .service
+        .acp_credential(&selector, &supplied, access)
+        .await
+        .ok_or(ApiError::Unauthorized)?;
+    let scope = if matches!(access, SessionAccess::Write) {
         let caller = controller_for_digest(&api, &digest)
             .await
             .ok_or(ApiError::Unauthorized)?;
@@ -363,12 +399,8 @@ async fn authorize_task(
             credential: supplied,
             controller: digest,
         });
+        caller.scope
     } else {
-        let digest = api
-            .service
-            .acp_reader(&id, &supplied)
-            .await
-            .ok_or(ApiError::Unauthorized)?;
         // Pilot readers are task-scoped independently of the current
         // controller roster. Registry planner readers also carry project scope.
         let scope = if api.service.project.is_some() || digest == [0; 32] {
@@ -379,12 +411,26 @@ async fn authorize_task(
                 .ok_or(ApiError::Unauthorized)?
                 .scope
         };
-        request.extensions_mut().insert(scope);
+        request.extensions_mut().insert(scope.clone());
         request.extensions_mut().insert(SessionCredential {
             key: supplied,
             controller: digest,
         });
+        scope
+    };
+    if selector.contains('#') {
+        // A task session proves its bound ID. Resolve the selector in its
+        // controller's scope before handing that ID to the route.
+        let resolved = api
+            .service
+            .resolve_task_reference(&selector, &scope)
+            .await
+            .map_err(|_| ApiError::Unauthorized)?;
+        if resolved != id {
+            return Err(ApiError::Unauthorized);
+        }
     }
+    request.extensions_mut().insert(TaskPath(id));
     Ok(next.run(request).await)
 }
 
@@ -397,7 +443,7 @@ struct BindOptions {
 
 async fn bind_acp(
     State(api): State<Api>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
     Extension(ControllerDigest(controller)): Extension<ControllerDigest>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
@@ -486,7 +532,7 @@ async fn list(
 
 async fn detail(
     State(api): State<Api>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
     Extension(scope): Extension<ControllerScope>,
 ) -> Result<Json<Detail>, ApiError> {
     let state = api.service.state.lock().await;
@@ -510,7 +556,7 @@ async fn next(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
 ) -> Result<Json<NextView>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
@@ -597,7 +643,7 @@ async fn command(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
     session: Option<Extension<WriteAccess>>,
     input: Result<Json<Command>, JsonRejection>,
 ) -> Result<Response, ApiError> {
@@ -624,7 +670,7 @@ struct Page {
 
 async fn history(
     State(api): State<Api>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
     Extension(scope): Extension<ControllerScope>,
     Query(page): Query<Page>,
 ) -> Result<Json<Vec<HistoryEvent>>, ApiError> {
@@ -647,7 +693,7 @@ async fn events(
 
 async fn task_events(
     State(api): State<Api>,
-    Path(id): Path<String>,
+    TaskPath(id): TaskPath,
     Extension(project): Extension<ControllerScope>,
     credential: Option<Extension<SessionCredential>>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
@@ -878,10 +924,13 @@ impl IntoResponse for ApiError {
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing
+                    | ServiceError::TaskReferenceMissing
                     | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => {
                         StatusCode::NOT_FOUND
                     }
                     ServiceError::Input
+                    | ServiceError::TaskReferenceAmbiguous
+                    | ServiceError::TaskReferenceNeedsRepository
                     | ServiceError::Store(nucleus_store::StoreError::PlanningInput)
                     | ServiceError::Project
                     | ServiceError::Settings(

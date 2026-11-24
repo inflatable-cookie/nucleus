@@ -71,6 +71,12 @@ pub enum ServiceError {
     PlannerEnrollmentUnavailable(&'static str),
     #[error("task was not found")]
     Missing,
+    #[error("task reference was not found")]
+    TaskReferenceMissing,
+    #[error("task reference is ambiguous. Use owner/repo#N.")]
+    TaskReferenceAmbiguous,
+    #[error("bare task numbers require a project with exactly one repository. Use repo#N.")]
+    TaskReferenceNeedsRepository,
     #[error("task input is invalid")]
     Input,
     #[error("answering an operator decision requires the operator binding")]

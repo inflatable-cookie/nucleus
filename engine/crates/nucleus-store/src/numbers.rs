@@ -44,6 +44,28 @@ impl TaskRow {
 }
 
 impl Store {
+    /// Find task IDs by their assigned number and repository slug or full origin.
+    /// Omitting the repository searches all numbered repositories.
+    ///
+    /// # Errors
+    /// Returns an error if the numbering table cannot be read.
+    pub fn numbered_task_ids(
+        &self,
+        repository: Option<&str>,
+        number: i64,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT task_id FROM task_numbers
+             WHERE number = ?1 AND repository IN (
+                 SELECT repository FROM task_number_counters
+                 WHERE ?2 IS NULL OR repository = lower(?2)
+                 OR (instr(?2, '/') = 0 AND substr(repository, -length(?2) - 1) = '/' || lower(?2))
+             )",
+        )?;
+        let rows = query.query_map(params![number, repository], |row| row.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Seed the allocator from a fenced legacy copy and number preexisting tasks.
     /// Replays preserve every number already assigned. This transaction writes
     /// only allocator tables. The execution state and callback digest live in

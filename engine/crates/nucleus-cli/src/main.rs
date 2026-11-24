@@ -3,6 +3,7 @@ mod planning;
 mod t3_setup;
 
 use std::{
+    borrow::Cow,
     env,
     error::Error,
     fs::File,
@@ -516,20 +517,24 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
             ),
         ),
         A::Tasks => (Method::GET, "/v1/tasks".into(), None),
-        A::Task { id } => (Method::GET, format!("/v1/tasks/{}", segment(&id)?), None),
+        A::Task { id } => (
+            Method::GET,
+            format!("/v1/tasks/{}", task_segment(&id)?),
+            None,
+        ),
         A::Next { id } => (
             Method::GET,
-            format!("/v1/tasks/{}/next", segment(&id)?),
+            format!("/v1/tasks/{}/next", task_segment(&id)?),
             None,
         ),
         A::History { id } => (
             Method::GET,
-            format!("/v1/tasks/{}/history", segment(&id)?),
+            format!("/v1/tasks/{}/history", task_segment(&id)?),
             None,
         ),
         A::BindAcp { id, read_only } => (
             Method::POST,
-            format!("/v1/tasks/{}/acp?readOnly={read_only}", segment(&id)?),
+            format!("/v1/tasks/{}/acp?readOnly={read_only}", task_segment(&id)?),
             None,
         ),
         A::Settings => (Method::GET, "/v1/settings".into(), None),
@@ -567,7 +572,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
 fn command_path(id: &str, command: Command) -> Result<(Method, String, Option<Value>)> {
     Ok((
         Method::POST,
-        format!("/v1/tasks/{}/commands", segment(id)?),
+        format!("/v1/tasks/{}/commands", task_segment(id)?),
         Some(serde_json::to_value(command)?),
     ))
 }
@@ -655,6 +660,18 @@ fn segment(value: &str) -> Result<&str> {
     } else {
         Err("invalid task or run ID".into())
     }
+}
+
+fn task_segment(value: &str) -> Result<Cow<'_, str>> {
+    if !value.contains('#') {
+        return segment(value).map(Cow::Borrowed);
+    }
+    if !value.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/' | b'#')
+    }) {
+        return Err("invalid task reference. Use repo#N.".into());
+    }
+    Ok(Cow::Owned(value.replace('/', "%2F").replace('#', "%23")))
 }
 
 fn stdin_text() -> Result<String> {

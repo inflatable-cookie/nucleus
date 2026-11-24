@@ -175,20 +175,37 @@ impl Service {
     pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        state
-            .store
-            .acp_session(task)
-            .ok()
-            .flatten()
-            .filter(|session| bool::from(session.reader.ct_eq(&digest(key))))
-            .map(|session| session.controller)
+        reader_controller(&state, task, key)
     }
 
-    pub(super) async fn acp_controller(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
+    pub(super) async fn acp_credential(
+        &self,
+        selector: &str,
+        key: &[u8; 32],
+        access: SessionAccess,
+    ) -> Option<(String, [u8; 32])> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        writer_controller(&state, task, key)
+        let controller = match access {
+            SessionAccess::Read => reader_controller,
+            SessionAccess::Write => writer_controller,
+        };
+        if !selector.contains('#') {
+            return controller(&state, selector, key).map(|digest| (selector.into(), digest));
+        }
+        crate::numbers::TaskReference::parse(selector)
+            .ok()?
+            .candidates(&state)
+            .ok()?
+            .into_iter()
+            .find_map(|id| controller(&state, &id, key).map(|digest| (id, digest)))
     }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SessionAccess {
+    Read,
+    Write,
 }
 
 fn existing_binding<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ServiceError> {
@@ -261,6 +278,11 @@ fn publish_binding(
 pub(super) fn writer_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
     let session = state.store.acp_session(task).ok()??;
     bool::from(session.writer?.ct_eq(&digest(key))).then_some(session.controller)
+}
+
+fn reader_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
+    let session = state.store.acp_session(task).ok()??;
+    bool::from(session.reader.ct_eq(&digest(key))).then_some(session.controller)
 }
 
 fn random_key() -> Result<[u8; 32], ServiceError> {

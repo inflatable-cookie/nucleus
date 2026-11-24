@@ -2,6 +2,7 @@ use std::{fs, io::Write, os::unix::fs::PermissionsExt, process::Command, time::D
 
 use axum::{
     Json, Router,
+    extract::Path,
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     routing::get,
 };
@@ -15,40 +16,48 @@ async fn controller_key_comes_from_the_selected_environment_variable() {
     let key = hex::encode([4; 32]);
     let expected = format!("Bearer {key}");
     let app = Router::new().route(
-        "/v1/tasks/fixture/next",
-        get(move |headers: HeaderMap| async move {
-            if headers
-                .get(AUTHORIZATION)
-                .is_some_and(|value| *value == expected)
-            {
-                (StatusCode::OK, Json(json!({"version": 7})))
-            } else {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "wrong controller key"})),
-                )
-            }
-        }),
+        "/v1/tasks/{task}/next",
+        get(
+            move |headers: HeaderMap, Path(task): Path<String>| async move {
+                if headers
+                    .get(AUTHORIZATION)
+                    .is_some_and(|value| *value == expected)
+                {
+                    (StatusCode::OK, Json(json!({"task": task})))
+                } else {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({"error": "wrong controller key"})),
+                    )
+                }
+            },
+        ),
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let command = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_nucleus"))
-            .args(["--endpoint", &endpoint, "next", "fixture"])
-            .env("NUCLEUS_ENGINE_CONTROL_KEY", key)
-            .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
-            .output()
+        for task in ["fixture", "fixture#7", "#7", "org/fixture#7"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+                .args(["--endpoint", &endpoint, "next", task])
+                .env("NUCLEUS_ENGINE_CONTROL_KEY", &key)
+                .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
+                .output()
+                .expect("CLI output");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("CLI response"),
+                json!({"task": task})
+            );
+        }
     });
-    let output = tokio::time::timeout(Duration::from_secs(5), command)
+    tokio::time::timeout(Duration::from_secs(5), command)
         .await
         .expect("CLI request completed")
-        .expect("CLI process ran")
-        .expect("CLI output");
+        .expect("CLI process ran");
     server.abort();
-    assert!(output.status.success());
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("CLI response"),
-        json!({"version": 7})
-    );
 }
 
 #[test]
