@@ -38,16 +38,19 @@ impl State {
         {
             return Ok(TaskAttention::Attention);
         }
-        match self.role_observation(task) {
+        let role_state = self.role_observation(task);
+        match role_state {
             Some(RunState::Input | RunState::Permission) => return Ok(TaskAttention::Attention),
             Some(RunState::Running | RunState::Starting) => return Ok(TaskAttention::Active),
             _ => {}
         }
-        if wait == Some(WaitReason::Starting)
-            || ((wait == Some(WaitReason::Running) || (wait.is_none() && task.hold().is_none()))
-                && task
-                    .run()
-                    .is_some_and(|run| !run.revoked() && run.report().is_none()))
+        if role_state.is_none()
+            && (wait == Some(WaitReason::Starting)
+                || ((wait == Some(WaitReason::Running)
+                    || (wait.is_none() && task.hold().is_none()))
+                    && task
+                        .run()
+                        .is_some_and(|run| !run.revoked() && run.report().is_none())))
         {
             return Ok(TaskAttention::Active);
         }
