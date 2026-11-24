@@ -2065,6 +2065,14 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
 fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, String) {
     let (mut task, mut observation, original) = reserve_entry(binding.clone(), Entry::Brief);
     task.record_send(&original, 2).unwrap();
+    task.command(
+        Command::Move(Phase::Working),
+        &Authority::Operator {
+            actor: "fixture".into(),
+        },
+        &observation,
+    )
+    .expect("supersede the old assignment");
     observation.host = Observed::Known(Host::Current {
         instance: original,
         state: RunState::Ended,
