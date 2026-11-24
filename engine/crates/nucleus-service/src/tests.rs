@@ -357,6 +357,43 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
 }
 
 #[tokio::test]
+async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let row = {
+        let (task, _, _) = reservation("unsent", Entry::Brief, &service.fixture().start);
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        let row = service.lookup(&state, "unsent").unwrap();
+        state.set_wait("unsent", Some(WaitReason::Capacity));
+        row
+    };
+    let refused = Err(service.parent_not_sent("preflight custody revision no longer matches"));
+    for _ in 0..2 {
+        service
+            .schedule_result(&row, &refused, Priority::Decision)
+            .await
+            .unwrap();
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due("unsent").unwrap();
+        let scheduled = state.schedule.take_ready(due, &BTreeSet::new()).unwrap();
+        assert_eq!(scheduled.id, "unsent");
+        assert_eq!(
+            service.lookup(&state, "unsent").unwrap().version,
+            row.version
+        );
+        assert_eq!(state.waits["unsent"].0, WaitReason::Capacity);
+    }
+    assert!(
+        !service
+            .history("unsent", None, 100)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "host_observation_blocked")
+    );
+}
+
+#[tokio::test]
 async fn a_settled_run_wakes_the_oldest_slot_waiter() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     for id in ["z-first", "a-second"] {

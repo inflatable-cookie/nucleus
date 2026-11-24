@@ -141,7 +141,7 @@ struct TurnItem {
     started_at: Option<Value>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ParentCustody {
     latest_run: Option<(String, Status)>,
     active_provider_thread: Option<String>,
@@ -450,13 +450,18 @@ impl Projection {
         if children.iter().any(|child| {
             matches!(
                 child.status.as_deref(),
-                Some("pending" | "starting" | "running" | "waiting")
+                Some("pending" | "queued" | "preparing" | "starting" | "running" | "waiting")
             )
         }) {
             return Err("parent has a starting or running child");
         }
-        if children.iter().any(|child| child.status.is_none()) {
-            return Err("delegated child status is missing");
+        if children.iter().any(|child| {
+            !matches!(
+                child.status.as_deref(),
+                Some("idle" | "completed" | "failed" | "cancelled" | "interrupted")
+            )
+        }) {
+            return Err("delegated child status is missing or unknown");
         }
         Ok(ParentCustody {
             latest_run: self.runs.last().map(|run| (run.id.clone(), run.status)),

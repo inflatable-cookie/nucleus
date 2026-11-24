@@ -116,12 +116,41 @@ impl Service {
         let mut state = self.state.lock().await;
         let recorded = state.store.claim_task_effect(id, &intent)?;
         if recorded {
-            if matches!(kind, "native_turn_intent" | "native_turn_replay") {
-                state.set_wait(id, Some(WaitReason::Starting));
-            } else if kind == "native_turn_failed" {
+            if kind == "native_turn_failed" {
                 state.wake_capacity(tokio::time::Instant::now());
                 self.wake.notify_one();
             }
+            self.publish(id, row.version);
+        }
+        Ok(recorded)
+    }
+
+    pub(super) async fn claim_parent_intent(
+        &self,
+        row: &TaskRow,
+        kind: &str,
+        session: &str,
+        command: &str,
+    ) -> Result<bool, ServiceError> {
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        let retry_of =
+            match state
+                .store
+                .task_turn_attempt(id, kind, row.version, session, command)?
+            {
+                Some((sequence, true)) => Some(sequence),
+                Some((_, false)) => return Ok(false),
+                None => None,
+            };
+        let mut intent = event(kind);
+        intent.detail = serde_json::json!({
+            "command": command, "version": row.version, "session": session, "retryOf": retry_of,
+        })
+        .to_string();
+        let recorded = state.store.claim_task_effect(id, &intent)?;
+        if recorded && kind == "native_turn_intent" {
+            state.set_wait(id, Some(WaitReason::Starting));
             self.publish(id, row.version);
         }
         Ok(recorded)
@@ -132,12 +161,36 @@ impl Service {
         row: &TaskRow,
         session: &str,
         write: nucleus_hosts::ParentWrite,
+        intent_kind: &'static str,
     ) -> Result<(), ServiceError> {
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
+        let starts_turn = write.starts_turn();
         let sent = self.host.write_verified_parent(write).await;
-        if matches!(sent, Err(nucleus_hosts::HostError::Deferred { .. })) {
-            self.record_native_turn(row, "native_turn_not_sent", session, &command)
-                .await?;
+        if let Err(error) = sent
+            && matches!(
+                error,
+                nucleus_hosts::HostError::Deferred { .. }
+                    | nucleus_hosts::HostError::ParentPreflight { .. }
+                    | nucleus_hosts::HostError::ParentSnoozed { .. }
+                    | nucleus_hosts::HostError::ParentConnection { .. }
+            )
+        {
+            let id = &row.task.identity().id;
+            let mut state = self.state.lock().await;
+            let attempt =
+                state
+                    .store
+                    .task_turn_attempt(id, intent_kind, row.version, session, &command)?;
+            let mut audit = event("native_turn_not_sent");
+            audit.detail = serde_json::json!({
+                "command": command, "version": row.version, "session": session,
+                "attempt": attempt.map(|(sequence, _)| sequence), "reason": error.to_string(),
+            })
+            .to_string();
+            state.store.claim_task_effect(id, &audit)?;
+            if starts_turn {
+                return Err(self.parent_not_sent(error));
+            }
         }
         Ok(sent?)
     }
@@ -145,7 +198,7 @@ impl Service {
     pub(super) async fn verify_native_parent(
         &self,
         row: &TaskRow,
-        write: &nucleus_hosts::ParentWrite,
+        write: &mut nucleus_hosts::ParentWrite,
     ) -> Result<(), ServiceError> {
         if let Err(error) = self.host.verify_parent_write(write).await {
             if let Some(command) = write.command_id() {
@@ -250,42 +303,36 @@ impl Service {
         else {
             return Ok(false);
         };
+        self.wake_parent_delivery(row, provider, &mut write).await?;
         self.ensure_parent_reader(id, checkout.path()).await?;
-        if let Err(error) = async {
-            self.wake_parent_delivery(row, provider, &mut write).await?;
-            self.verify_native_parent(row, &write).await
-        }
-        .await
-        {
-            let mut state = self.state.lock().await;
-            if self.lookup(&state, id)?.version == row.version {
-                state.acp_refresh_requests.insert(id.into(), row.version);
-            }
-            return Err(error);
-        }
+        self.verify_native_parent(row, &mut write).await?;
         let session = self
             .host
             .runtime_identity()
             .ok_or(nucleus_hosts::HostError::Uncertain)?;
-        if self
-            .state
-            .lock()
-            .await
-            .store
-            .task_turn_command(id, "acp_row_refresh_intent", row.version, &session)?
-            .is_some()
-            || !self
-                .record_native_turn(
-                    row,
-                    "acp_row_refresh_intent",
-                    &session,
-                    write.command_id().ok_or(ServiceError::Input)?,
-                )
-                .await?
+        let kind = "acp_row_refresh_intent";
+        let command = write.command_id().ok_or(ServiceError::Input)?;
+        {
+            let state = self.state.lock().await;
+            if let Some(prior) = state
+                .store
+                .task_turn_command(id, kind, row.version, &session)?
+                && !state
+                    .store
+                    .task_turn_attempt(id, kind, row.version, &session, &prior)?
+                    .is_some_and(|(_, refused)| refused)
+            {
+                return Ok(false);
+            }
+        }
+        if !self
+            .claim_parent_intent(row, kind, &session, command)
+            .await?
         {
             return Ok(false);
         }
-        self.write_claimed_parent(row, &session, write).await?;
+        self.write_claimed_parent(row, &session, write, kind)
+            .await?;
         Ok(true)
     }
 

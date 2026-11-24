@@ -142,6 +142,9 @@ Later decisions carry their own attribution.
     - The audit keeps a small set of typed events (the milestones the ACP session shows, plus faults).
     - One health endpoint reports queue depth per host lane, the oldest waits and host status, readable without opening the database.
     - There is no catalogue of hundreds of event kinds or telemetry stages.
+    - The planner ruled on 2026-11-24 that a pre-wire refusal names the failed
+      predicate and the relevant compared values. The diagnostic omits secrets
+      and message contents.
 17. **Settings beyond Projects shrink too.**
     - Hosts lists T3 (and any later ADE adapter) with no Paseo or BB fields.
     - Storage folds in backups, retention and worktree roots.
@@ -245,6 +248,14 @@ Later decisions carry their own attribution.
     ruling 27. A native turn failure is recorded against the task version,
     T3 session and engine instance. A change to any of these permits one fresh
     attempt. A fenced task without a sent run leaves room for other project work.
+
+    The planner ruled on 2026-11-24 that an effect proven unsent replans on the
+    next eligible pass, even at the same task version. Ambiguous delivery keeps
+    its readback deadline and may block if it stays unresolved. A completed
+    hold uses its own native outcome across subsequent retries and restarts.
+    Title, settle and snooze changes preserve matching custody evidence.
+    Delivery still checks current binding, requests, children, background
+    work and row visibility, including ownership of any snooze it clears.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code

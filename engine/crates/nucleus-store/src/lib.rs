@@ -695,6 +695,36 @@ impl Store {
         )?)
     }
 
+    /// Read the latest exact turn attempt and whether it is proven unsent.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal is unreadable.
+    pub fn task_turn_attempt(
+        &self,
+        id: &str,
+        kind: &str,
+        version: i64,
+        session: &str,
+        command: &str,
+    ) -> Result<Option<(i64, bool)>, StoreError> {
+        let latest = self
+            .connection
+            .query_row(
+                "SELECT sequence, kind FROM events
+             WHERE task_id = ?1 AND kind IN (?2, 'native_turn_not_sent', 'native_turn_replay')
+             AND json_valid(detail) AND json_extract(detail, '$.version') = ?3
+             AND json_extract(detail, '$.command') = ?5
+             AND (json_extract(detail, '$.session') = ?4 OR
+                  (kind = 'native_turn_replay' AND
+                   instr(json_extract(detail, '$.session'), ?4 || '/') = 1))
+             ORDER BY sequence DESC LIMIT 1",
+                params![id, kind, version, session, command],
+                |row| Ok((row.get(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        Ok(latest.map(|(sequence, kind)| (sequence, kind == "native_turn_not_sent")))
+    }
+
     /// Read all subscription groups with a deadline in the future.
     ///
     /// # Errors

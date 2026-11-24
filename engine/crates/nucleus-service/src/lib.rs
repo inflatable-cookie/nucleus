@@ -538,7 +538,15 @@ impl Service {
             state.acp_refresh_requests.remove(id) == Some(row.version)
         };
         if refresh {
-            self.refresh_acp_parent(row).await?;
+            if let Err(error) = self.refresh_acp_parent(row).await {
+                if matches!(error, ServiceError::ParentNotSent { .. }) {
+                    let mut state = self.state.lock().await;
+                    if self.lookup(&state, id)?.version == row.version {
+                        state.acp_refresh_requests.insert(id.into(), row.version);
+                    }
+                }
+                return Err(error);
+            }
         }
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
@@ -879,9 +887,17 @@ impl Service {
             }
             return Ok(());
         }
-        if wait == Some(WaitReason::HostUnknown)
-            && !matches!(result, Err(ServiceError::ParentNotSent { .. }))
-        {
+        if let Err(ServiceError::ParentNotSent { retry_at, .. }) = result {
+            let now = Instant::now();
+            state.schedule.reset_host_backoff(id);
+            state.schedule.wake(
+                id,
+                retry_at.unwrap_or(now).max(now + T3_RETRY_DELAY),
+                previous,
+            );
+            return Ok(());
+        }
+        if wait == Some(WaitReason::HostUnknown) {
             return self.schedule_host_observation(&mut state, row, result);
         }
         state.schedule.reset_host_backoff(id);
@@ -891,9 +907,6 @@ impl Service {
         let now = Instant::now();
         let (delay, priority) = schedule::retry(wait);
         let due = match result {
-            Err(ServiceError::ParentNotSent { retry_at, .. }) => {
-                retry_at.unwrap_or(now).max(now + delay)
-            }
             Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
             Err(ServiceError::InboxUnavailable { until }) => *until,
             _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),

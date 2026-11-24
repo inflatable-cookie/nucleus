@@ -649,8 +649,7 @@ fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
     projection["thread"]["modelSelection"] = json!({"instanceId":"fixture-acp","model":"nucleus"});
     projection["runs"][0]["rootNodeId"] = json!("parent-root");
     projection["runs"][0]["userMessageId"] = json!("fixture-parent-command-message");
-    projection["subagents"] =
-        json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned","status":"completed"}]);
+    projection["subagents"] = json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned","status":"completed"}]);
     reply
 }
 
@@ -736,55 +735,153 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
 }
 
 #[tokio::test]
-async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
+async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
-    let thread = crate::parent_thread(checkout.path());
-    let command = format!("{thread}-hold-12");
     let mut compact = parent_snapshot(&binding, "completed", false);
-    compact["hasMoreHistory"] = json!(false);
+    compact["hasMoreHistory"] = json!(true);
+    compact["historyCursor"] = json!("older-turns");
     compact["turnItemsOmitLocalVisible"] = json!(true);
-    compact["projection"]["turnItems"] = json!([]);
-    compact["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
-    let mut row = compact["projection"]["thread"].clone();
-    row["latestRunId"] = json!(NATIVE_RUN);
-    row["status"] = json!("completed");
-    row["pendingBackgroundTasks"] = json!([]);
-    let mut fresh = compact.clone();
-    fresh["snapshotSequence"] = json!(18);
-    let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(compact),
-        ),
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(fresh),
-        ),
-        ("orchestration.dispatchCommand", Response::Success),
-    ])
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(compact),
+    )])
     .await;
-    host.rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{"threads":[row],"projects":[]}}));
-    let crate::ParentStep::Write(write) = Box::pin(host.prepare_parent(
+    let step = Box::pin(host.prepare_parent(
         &binding,
         "fixture-acp",
         "Fixture",
         Some(crate::ParentAttempt {
-            command: &command,
+            command: "ambiguous-command",
             released: false,
         }),
         quiet_pass(&host).profile_catalog(),
     ))
     .await
-    .unwrap() else {
-        panic!("the unsent intent should become dispatchable");
-    };
-    assert_eq!(write.command_id(), Some(command.as_str()));
-    host.write_parent(write).await.unwrap();
-    let sent = native.await.unwrap();
-    let payload: Value = serde_json::from_str(sent[2].payload.get()).unwrap();
-    assert_eq!(payload["commandId"], command);
+    .unwrap();
+    assert!(matches!(step, crate::ParentStep::DeliveryUnknown));
+    assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn bounded_parent_custody_converges_after_visibility_changes() {
+    for prior in [None, Some("fixture-parent-command")] {
+        let checkout = checkout_fixture();
+        let binding = binding(checkout.path());
+        let thread = crate::parent_thread(checkout.path());
+        let mut prepared = parent_snapshot(&binding, "completed", false);
+        prepared["hasMoreHistory"] = json!(true);
+        prepared["historyCursor"] = json!("older-turns");
+        prepared["turnItemsOmitLocalVisible"] = json!(true);
+        prepared["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
+        let mut fresh = prepared.clone();
+        fresh["snapshotSequence"] = json!(18);
+        fresh["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:39:00Z");
+        let mut row = prepared["projection"]["thread"].clone();
+        row["latestRunId"] = json!(NATIVE_RUN);
+        row["status"] = json!("completed");
+        row["pendingBackgroundTasks"] = json!([]);
+        let mut changed = fresh.clone();
+        changed["snapshotSequence"] = json!(19);
+        changed["projection"]["runtimeRequests"] = json!([{"kind":"approval","status":"pending"}]);
+        let read = "orchestration.subscribeThread";
+        let (host, native) = server(vec![
+            (read, Response::ParentSnapshot(prepared)),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(changed)),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh)),
+            ("orchestration.dispatchCommand", Response::Success),
+        ])
+        .await;
+        host.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":16, "threads":[row], "projects":[]
+            }}));
+        let prepare = || {
+            Box::pin(host.prepare_parent(
+                &binding,
+                "fixture-acp",
+                "Fixture",
+                prior.map(|command| crate::ParentAttempt {
+                    command,
+                    released: false,
+                }),
+                quiet_pass(&host).profile_catalog(),
+            ))
+        };
+        let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {
+            panic!("idle parent should prepare a message");
+        };
+        let error = host
+            .verify_parent_write(&mut first)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("matching shell background coverage missing"),
+            "{error}"
+        );
+        assert!(
+            error.contains("prepared revision 16, observed revision Some(18)"),
+            "{error}"
+        );
+
+        row["title"] = json!("Updated title");
+        host.rpc
+            .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+        let crate::ParentStep::Write(mut second) = prepare().await.unwrap() else {
+            panic!("fresh held-shell revision covers the compact snapshot");
+        };
+        let error = host
+            .verify_parent_write(&mut second)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("active run or runtime request"), "{error}");
+        let crate::ParentStep::Write(last) = prepare().await.unwrap() else {
+            panic!("the task can replan once custody converges");
+        };
+        assert_eq!(
+            last.command_id(),
+            Some(format!("{thread}-hold-18").as_str())
+        );
+        host.write_parent(last).await.unwrap();
+        assert_eq!(native.await.unwrap().len(), 7);
+    }
+}
+
+#[test]
+fn parent_custody_fails_closed_with_an_unknown_or_live_child() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let snapshot = parent_snapshot(&binding, "completed", false);
+    for status in [
+        Value::Null,
+        json!("unknown"),
+        json!("queued"),
+        json!("preparing"),
+        json!("running"),
+    ] {
+        let mut input = snapshot.clone();
+        input["projection"]["subagents"][0]["status"] = status;
+        let projection = crate::Projection::parse(input, &binding, &thread).unwrap();
+        assert!(projection.delivery_custody().unwrap_err().contains("child"));
+    }
+    let mut input = snapshot.clone();
+    input["projection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("subagents");
+    let projection = crate::Projection::parse(input, &binding, &thread).unwrap();
+    assert!(
+        projection
+            .delivery_custody()
+            .unwrap_err()
+            .contains("roster")
+    );
 }
 
 #[tokio::test]

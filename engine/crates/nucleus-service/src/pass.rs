@@ -143,7 +143,7 @@ impl Service {
                 Ok(Action::Nothing)
             }
             ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
-            ArchiveStep::Write(write) => {
+            ArchiveStep::Write(mut write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         &row.task,
@@ -159,8 +159,9 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.verify_native_parent(row, &write).await?;
-                self.write_claimed_parent(row, "archive", write).await?;
+                self.verify_native_parent(row, &mut write).await?;
+                self.write_claimed_parent(row, "archive", write, "archive")
+                    .await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
@@ -739,13 +740,14 @@ impl Service {
             )
             .await
             .map_err(|error| {
-                if prior_turn.is_some() {
+                if prior_turn.is_some() && !matches!(error, HostError::ParentPreflight { .. }) {
                     error.into()
                 } else {
                     self.parent_not_sent(error)
                 }
             })? {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::DeliveryUnknown => Ok(ControlFlow::Break(WaitReason::HostUnknown)),
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
             )),
@@ -773,14 +775,12 @@ impl Service {
                 self.wake_parent_delivery(row, provider, &mut write).await?;
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
-                self.verify_native_parent(row, &write).await?;
-                if !self
-                    .claim_preparation_turn(row, &write, &session, prior_turn.as_deref())
-                    .await?
-                {
+                self.verify_native_parent(row, &mut write).await?;
+                if !self.claim_preparation_turn(row, &write, &session).await? {
                     return Ok(ControlFlow::Break(WaitReason::HostUnknown));
                 }
-                self.write_claimed_parent(row, &session, write).await?;
+                self.write_claimed_parent(row, &session, write, "native_turn_intent")
+                    .await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))
             }
@@ -792,24 +792,13 @@ impl Service {
         row: &TaskRow,
         write: &nucleus_hosts::ParentWrite,
         session: &str,
-        prior: Option<&str>,
     ) -> Result<bool, ServiceError> {
         if !write.starts_turn() {
             return Ok(true);
         }
         let command = write.command_id().ok_or(ServiceError::Input)?;
-        if prior == Some(command) {
-            self.record_native_turn(
-                row,
-                "native_turn_replay",
-                &self.turn_failure_scope(session),
-                command,
-            )
+        self.claim_parent_intent(row, "native_turn_intent", session, command)
             .await
-        } else {
-            self.record_native_turn(row, "native_turn_intent", session, command)
-                .await
-        }
     }
 
     async fn prompt_context(
@@ -1497,7 +1486,11 @@ fn prior_preparation_command(
         .store
         .task_turn_command(id, "native_turn_intent", row.version, session)?;
     if let Some(command) = &prior
-        && state.store.task_turn_failed(id, command)?
+        && (state.store.task_turn_failed(id, command)?
+            || state
+                .store
+                .task_turn_attempt(id, "native_turn_intent", row.version, session, command)?
+                .is_some_and(|(_, refused)| refused))
     {
         return Ok(None);
     }
