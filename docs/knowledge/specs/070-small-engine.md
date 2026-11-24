@@ -148,7 +148,7 @@ Later decisions carry their own attribution.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
-    - When an unknown planner calls `task.add` or `item.promote`, the scheduler reads that exact T3 thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
+    - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
     - Several verified planners can bind to the same project through any of its repositories. Archive or identity changes revoke that caller's cached authority. Task commands accept any live planner binding for the project. Notices address the task's original planner and fall back to the most recently verified live planner in the project after T3 confirms that the origin is gone.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
     - Projects settings edit slots and lanes and show the live planners. Dispatch uses the verified repository route automatically.
@@ -418,13 +418,23 @@ Planning is plain record-keeping in the Rust service. It never calls a host (rul
 - **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
 - **Triage and milestone QA records are not ported** (ruling 12).
 
-The Rust engine keeps these records by project in schema 8. The loopback
-API is under `/v1/planning/{project}`. `plan.get` returns the order and lane
-documents. Use version zero for a new plan or lane and the returned version
-for the next edit. `lane.status` updates the disposition independently.
-`item.list` and `decision.list` read the current records. An operator binding
-answers decisions. A decision that belongs to a task question accepts one
-answer for the bound task version, then wakes the ordinary answer path.
+The Rust engine keeps these records by project in schema 8. A T3 planner can
+omit the project from planning commands (planner ruling, 2026-11-24), for example
+`nucleus plan.get`, `nucleus item.list` or `nucleus item.add papercut "Title"`.
+The project comes from the caller's verified T3 binding. An explicit first
+argument accepts the exact project key or a unique case-insensitive display
+name, and the planner must be bound to that project. Exact keys take precedence.
+Planning record reads and writes use that live binding. Task admission also
+checks the cached checkout before using the repository.
+The loopback API retains `/v1/planning/{project}` and exposes the same handlers
+under `/v1/planning-current` with an optional `project` query parameter.
+
+`plan.get` returns the order and lane documents. Use version zero for a new
+plan or lane and the returned version for the next edit. `lane.status` updates
+the disposition independently. `item.list` and `decision.list` read the current
+records. Answering a decision requires an operator binding and an explicit
+project. A decision that belongs to a task question accepts one answer for the
+bound task version, then wakes the ordinary answer path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item
 body and commits the task, source link and item history together. If promotion

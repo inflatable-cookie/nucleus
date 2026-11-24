@@ -195,6 +195,15 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
             Ok(())
         })
         .expect("imported project container");
+    let dispatch = settings
+        .read::<nucleus_store::DispatchSettings>()
+        .expect("dispatch settings");
+    settings
+        .edit::<nucleus_store::DispatchSettings>(&dispatch.revision, |value| {
+            value.project_slot_overrides.insert("product".into(), 1);
+            Ok(())
+        })
+        .expect("one shared project slot");
 }
 
 fn create_repository(path: &Path, base: &str, origin: &str) {
@@ -350,6 +359,115 @@ async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_re
         2,
         "one exact scheduler read per first contact"
     );
+}
+
+#[tokio::test]
+async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
+    const PLAN: &str = "/v1/planning-current/plan";
+    const ITEMS: &str = "/v1/planning-current/items";
+
+    let registry = registry().await;
+    let api = &registry.api;
+    let actor = "alpha-planner";
+    let item = json!({"kind":"papercut","title":"Own project","body":"A synthetic item."});
+    for (method, path, input) in [
+        (Method::GET, PLAN, Value::Null),
+        (Method::GET, ITEMS, Value::Null),
+        (Method::POST, ITEMS, item.clone()),
+    ] {
+        let response = caller_request(api, method, path, actor, input).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            json_body(response).await["error"],
+            ServiceError::PlannerEnrollmentPending.to_string()
+        );
+    }
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        registry.service.take_enrollment().await.as_deref(),
+        Some(actor)
+    );
+    assert!(registry.service.take_enrollment().await.is_none());
+    registry.service.complete_enrollment(actor).await;
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
+
+    let read = |path| caller_request(api, Method::GET, path, actor, Value::Null);
+    assert_eq!(json_body(read(PLAN).await).await["version"], 0);
+    assert_eq!(json_body(read(ITEMS).await).await, json!([]));
+    let added = caller_request(api, Method::POST, ITEMS, actor, item).await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let added = json_body(added).await;
+    assert_eq!(added["author"], actor);
+    for path in [
+        ITEMS,
+        "/v1/planning/eXaCt%20T3%20aLpHa/items",
+        "/v1/planning-current/items?project=EXACT+t3+ALPHA",
+    ] {
+        assert_eq!(json_body(read(path).await).await, json!([added]));
+    }
+    let id = added["id"].as_str().expect("item ID");
+    let history = format!("/v1/planning-current/history/item/{id}");
+    assert_eq!(json_body(read(&history).await).await[0]["actor"], actor);
+
+    let task = caller_request(
+        api,
+        Method::POST,
+        "/v1/planning-current/tasks?project=EXACT+T3+ALPHA",
+        actor,
+        json!({"id":"by-name","brief":"Use the verified repository."}),
+    )
+    .await;
+    assert_eq!(task.status(), StatusCode::CREATED);
+    assert_eq!(json_body(task).await["identity"]["repository"], ALPHA_REPO);
+
+    registry.enroll("beta-planner").await;
+    let other = "/v1/planning-current/items?project=second";
+    let forbidden = read(other).await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(forbidden).await["error"],
+        ServiceError::ControllerProject.to_string()
+    );
+    assert_eq!(
+        json_body(get_as(api, other, &BOARD_KEY).await).await,
+        json!([])
+    );
+    assert_eq!(
+        get_as(api, ITEMS, &BOARD_KEY).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+async fn planning_records_need_a_live_binding_but_not_a_cached_checkout() {
+    let registry = registry().await;
+    let actor = "alpha-planner";
+    registry.enroll(actor).await;
+    registry.service.host.fixture_project_shell(
+        &json!({"projects":[{"id":"alpha-native","workspaceRoot":registry._home.path()}]}),
+        "fixture-acp",
+    );
+    let api = &registry.api;
+    let plan = "/v1/planning-current/plan";
+    let written = caller_request(
+        api,
+        Method::PUT,
+        plan,
+        actor,
+        json!({"version":0,"lanes":[]}),
+    )
+    .await;
+    assert_eq!(written.status(), StatusCode::OK);
+    let read = caller_request(api, Method::GET, plan, actor, Value::Null).await;
+    assert_eq!(json_body(read).await["version"], 1);
+    let task = submit(api, actor, "moved-checkout", None).await;
+    assert_eq!(task.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        json_body(task).await["error"],
+        "The registered T3 checkout changed or is unavailable. Retry shortly."
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

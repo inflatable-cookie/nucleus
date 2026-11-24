@@ -1,7 +1,7 @@
 use axum::{
     Extension, Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection},
-    http::StatusCode,
+    extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State, rejection::JsonRejection},
+    http::{StatusCode, request::Parts},
     routing::{get, post, put},
 };
 use nucleus_core::Authority;
@@ -26,12 +26,13 @@ pub(super) fn routes() -> Router<Api> {
             "/v1/planning/tasks",
             post(add_task).layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
         )
-        .route("/v1/planning/items/{id}/promote", post(promote_current))
+        .route("/v1/planning/items/{id}/promote", post(promote))
         .nest("/v1/planning/{project}", project_routes())
+        // A separate prefix keeps unqualified record paths out of the project namespace.
+        .nest("/v1/planning-current", project_routes())
 }
 
-/// Every planning record route for one project. The controller API and the
-/// paired board mount the same handlers, so authority checks stay in one place.
+/// The controller API and the paired board mount the same planning handlers.
 pub(super) fn project_routes() -> Router<Api> {
     lane_routes()
         .route("/items", get(items).post(add_item))
@@ -46,12 +47,52 @@ pub(super) fn project_routes() -> Router<Api> {
         .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT))
 }
 
-pub(super) fn lane_routes() -> Router<Api> {
+fn lane_routes() -> Router<Api> {
     Router::new()
         .route("/plan", get(plan).put(set_plan))
         .route("/lanes/{key}", put(put_lane))
         .route("/lanes/{key}/status", post(lane_status))
         .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT))
+}
+
+#[derive(Deserialize)]
+struct ProjectSelector {
+    project: Option<String>,
+}
+
+impl FromRequestParts<Api> for ProjectSelector {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, api: &Api) -> Result<Self, ApiError> {
+        let path = Option::<Path<Self>>::from_request_parts(parts, api)
+            .await
+            .map_err(|_| ApiError::Invalid)?;
+        if let Some(Path(selector)) = path
+            && selector.project.is_some()
+        {
+            return Ok(selector);
+        }
+        let Query(selector) = Query::<Self>::from_request_parts(parts, api)
+            .await
+            .map_err(|_| ApiError::Invalid)?;
+        Ok(selector)
+    }
+}
+
+#[derive(Deserialize)]
+struct LanePath {
+    key: String,
+}
+
+#[derive(Deserialize)]
+struct RecordPath {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct HistoryPath {
+    kind: RecordKind,
+    id: String,
 }
 
 #[derive(Serialize)]
@@ -66,11 +107,11 @@ struct PlanView {
 async fn plan(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
 ) -> Result<Json<PlanView>, ApiError> {
-    let state = api
+    let (state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let plan = state.store.plan(&project).map_err(ServiceError::from)?;
     let idle = !plan.lanes.iter().any(|entry| entry.horizon == Horizon::Now);
@@ -85,14 +126,14 @@ async fn plan(
 async fn set_plan(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
     Extension(caller): Extension<Authority>,
     input: Result<Json<Plan>, JsonRejection>,
 ) -> Result<Json<Plan>, ApiError> {
     let input = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let saved = state
         .store
@@ -112,14 +153,15 @@ struct LaneInput {
 async fn put_lane(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, key)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(LanePath { key }): Path<LanePath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<LaneInput>, JsonRejection>,
 ) -> Result<Json<Lane>, ApiError> {
     let input = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let saved = state
         .store
@@ -138,14 +180,15 @@ async fn put_lane(
 async fn lane_status(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, key)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(LanePath { key }): Path<LanePath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<LaneDisposition>, JsonRejection>,
 ) -> Result<Json<Lane>, ApiError> {
     let input = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let saved = state
         .store
@@ -158,11 +201,11 @@ async fn lane_status(
 async fn items(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
 ) -> Result<Json<Vec<Item>>, ApiError> {
-    let state = api
+    let (state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state.store.items(&project).map_err(ServiceError::from)?,
@@ -179,14 +222,14 @@ struct ItemInput {
 async fn add_item(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
     Extension(caller): Extension<Authority>,
     input: Result<Json<ItemInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Item>), ApiError> {
     let input = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let item = state
         .store
@@ -204,14 +247,15 @@ async fn add_item(
 async fn edit_item(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, id)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<ItemContent>, JsonRejection>,
 ) -> Result<Json<Item>, ApiError> {
     let input = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state
@@ -231,14 +275,15 @@ struct Park {
 async fn park_item(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, id)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<Park>, JsonRejection>,
 ) -> Result<Json<Item>, ApiError> {
     let Park { reason, revisit_at } = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state
@@ -262,14 +307,15 @@ struct DropItem {
 async fn drop_item(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, id)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<DropItem>, JsonRejection>,
 ) -> Result<Json<Item>, ApiError> {
     let DropItem { reason } = body(input)?;
-    let mut state = api
+    let (mut state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state
@@ -282,31 +328,13 @@ async fn drop_item(
 async fn promote(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, id)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
-) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    promote_in_scope(api, Some(&project), &id, &caller, &scope).await
-}
-
-async fn promote_current(
-    State(api): State<Api>,
-    Extension(scope): Extension<ControllerScope>,
-    Path(id): Path<String>,
-    Extension(caller): Extension<Authority>,
-) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    promote_in_scope(api, None, &id, &caller, &scope).await
-}
-
-async fn promote_in_scope(
-    api: Api,
-    project: Option<&str>,
-    id: &str,
-    caller: &Authority,
-    scope: &ControllerScope,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
     let (created, row) = api
         .service
-        .promote_planning_item(project, id, caller, scope)
+        .promote_planning_item(project.as_deref(), &id, &caller, &scope)
         .await?;
     let status = if created {
         StatusCode::CREATED
@@ -319,14 +347,13 @@ async fn promote_in_scope(
 async fn add_task(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    project: Option<Path<String>>,
+    ProjectSelector { project }: ProjectSelector,
     Extension(caller): Extension<Authority>,
     input: Result<Json<TaskAdmission>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    let project = project.as_ref().map(|Path(project)| project.as_str());
     let task = api
         .service
-        .add_planned_task(project, body(input)?, &caller, &scope)
+        .add_planned_task(project.as_deref(), body(input)?, &caller, &scope)
         .await?;
     Ok((StatusCode::CREATED, Json(Summary::new(&task, None))))
 }
@@ -340,12 +367,12 @@ struct DecisionQuery {
 async fn decisions(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
     Query(query): Query<DecisionQuery>,
 ) -> Result<Json<Vec<Decision>>, ApiError> {
-    let state = api
+    let (state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state
@@ -358,26 +385,30 @@ async fn decisions(
 async fn add_decision(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path(project): Path<String>,
+    ProjectSelector { project }: ProjectSelector,
     Extension(caller): Extension<Authority>,
     input: Result<Json<DecisionInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Decision>), ApiError> {
     let decision = api
         .service
-        .add_decision_in_scope(&project, body(input)?, &caller, &scope)
+        .add_decision_in_scope(project.as_deref(), body(input)?, &caller, &scope)
         .await?;
     Ok((StatusCode::CREATED, Json(decision)))
 }
 
 async fn answer_decision(
     State(api): State<Api>,
-    Path((project, id)): Path<(String, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<DecisionAnswerInput>, JsonRejection>,
 ) -> Result<Json<Decision>, ApiError> {
+    let input = body(input)?;
+    // Operators use an explicit project for decisions.
+    let project = project.ok_or(ServiceError::Project)?;
     Ok(Json(
         api.service
-            .answer_decision(&project, &id, body(input)?, &caller)
+            .answer_decision(&project, &id, input, &caller)
             .await?,
     ))
 }
@@ -385,11 +416,12 @@ async fn answer_decision(
 async fn history(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
-    Path((project, kind, id)): Path<(String, RecordKind, String)>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(HistoryPath { kind, id }): Path<HistoryPath>,
 ) -> Result<Json<Vec<History>>, ApiError> {
-    let state = api
+    let (state, project) = api
         .service
-        .planning_state_in_scope(&project, &scope)
+        .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
         state

@@ -94,19 +94,51 @@ pub(crate) struct PlanningRepository {
 }
 
 impl Service {
+    pub(super) fn planning_planner_project(
+        &self,
+        state: &mut State,
+        actor: &str,
+        selector: Option<&str>,
+    ) -> Result<String, ServiceError> {
+        let Some(id) = state.live_planner_project(actor) else {
+            return Err(self.request_enrollment(state, actor));
+        };
+        if selector
+            .is_some_and(|name| state.settings.resolve_planning_project(None, name) != Some(id))
+        {
+            return Err(ServiceError::ControllerProject);
+        }
+        Ok(id.into())
+    }
+
+    fn require_planning_checkout(&self, repo: &RepositorySettings) -> Result<(), ServiceError> {
+        if repo.host_project.as_ref().is_some_and(|host| {
+            self.host
+                .cached_project(host)
+                .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
+        }) {
+            Ok(())
+        } else {
+            Err(ServiceError::PlannerEnrollmentUnavailable(
+                "The registered T3 checkout changed or is unavailable. Retry shortly.",
+            ))
+        }
+    }
+
     /// Resolve an admission's local route, or queue one proof for a new T3 caller.
     pub(crate) fn planning_repository(
         &self,
         state: &mut State,
         scope: &ControllerScope,
-        project_id: Option<&str>,
+        selector: Option<&str>,
         origin: Option<&str>,
     ) -> Result<PlanningRepository, ServiceError> {
         if let Some(project) = &self.project {
             let id = state.settings.planning_project_id(project);
-            if project_id.is_some_and(|requested| requested != id)
-                || origin
-                    .is_some_and(|requested| !project.repository.eq_ignore_ascii_case(requested))
+            if selector.is_some_and(|name| {
+                state.settings.resolve_planning_project(Some(project), name) != Some(id)
+            }) || origin
+                .is_some_and(|requested| !project.repository.eq_ignore_ascii_case(requested))
                 || state.settings.fixture_slots(project).is_none()
             {
                 return Err(ServiceError::Project);
@@ -117,49 +149,45 @@ impl Service {
                 base: project.base.clone(),
             });
         }
-        let exact_checkout = |repo: &RepositorySettings| {
-            repo.host_project.as_ref().is_some_and(|host| {
-                self.host
-                    .cached_project(host)
-                    .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
-            })
-        };
-        let changed_checkout = || {
-            ServiceError::PlannerEnrollmentUnavailable(
-                "The registered T3 checkout changed or is unavailable. Retry shortly.",
-            )
-        };
-        let (id, repo) = if let Some(actor) = scope.actor() {
-            let Some((id, native)) = state.live_planner_route(actor) else {
-                return Err(self.request_enrollment(state, actor));
-            };
-            if project_id.is_some_and(|requested| requested != id) {
-                return Err(ServiceError::ControllerProject);
-            }
-            if !exact_checkout(native) {
-                return Err(changed_checkout());
-            }
+        if let Some(actor) = scope.actor() {
+            let project_id = self.planning_planner_project(state, actor, selector)?;
+            let (_, native) = state
+                .live_planner_route(actor)
+                .ok_or(ServiceError::ControllerProject)?;
+            self.require_planning_checkout(native)?;
             let target = state
                 .settings
-                .repository(id, origin.unwrap_or(&native.origin))
+                .repository(&project_id, origin.unwrap_or(&native.origin))
                 .map_err(|_| ServiceError::ControllerProject)?;
-            if !std::ptr::eq(target, native) && !exact_checkout(target) {
-                return Err(changed_checkout());
+            if !std::ptr::eq(target, native) {
+                self.require_planning_checkout(target)?;
             }
-            (id, target)
-        } else {
-            let origin = origin
-                .or_else(|| state.settings.only_bound_repository(project_id?))
-                .ok_or(ServiceError::Project)?;
-            let (id, _, _) = state
-                .settings
-                .project_for_origin(origin)
-                .ok_or(ServiceError::Project)?;
-            if project_id.is_some_and(|requested| requested != id) {
-                return Err(ServiceError::Project);
-            }
-            (id, state.settings.repository(id, origin)?)
-        };
+            return Ok(PlanningRepository {
+                project_id,
+                repository: target.origin.clone(),
+                base: target.base.clone(),
+            });
+        }
+
+        let project_id = selector
+            .map(|name| {
+                state
+                    .settings
+                    .resolve_planning_project(None, name)
+                    .ok_or(ServiceError::Project)
+            })
+            .transpose()?;
+        let origin = origin
+            .or_else(|| state.settings.only_bound_repository(project_id?))
+            .ok_or(ServiceError::Project)?;
+        let (id, _, _) = state
+            .settings
+            .project_for_origin(origin)
+            .ok_or(ServiceError::Project)?;
+        if project_id.is_some_and(|requested| requested != id) {
+            return Err(ServiceError::Project);
+        }
+        let repo = state.settings.repository(id, origin)?;
         Ok(PlanningRepository {
             project_id: id.into(),
             repository: repo.origin.clone(),
