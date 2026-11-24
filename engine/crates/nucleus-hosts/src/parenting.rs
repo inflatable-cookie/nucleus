@@ -3,7 +3,7 @@ use std::{
     future::Future,
     hash::{BuildHasher, RandomState},
     path::Path,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use nucleus_core::{
@@ -463,7 +463,8 @@ impl T3 {
         };
         let (before, after) = (ShellCustody(prior), ShellCustody(&row));
         if let Some(field) = before.changed_field(&after) {
-            let digest = RandomState::new();
+            static DIAGNOSTIC_HASH: OnceLock<RandomState> = OnceLock::new();
+            let digest = DIAGNOSTIC_HASH.get_or_init(RandomState::new);
             return Err(HostError::ParentShellChanged {
                 field,
                 prepared: delivery.row.sequence,
