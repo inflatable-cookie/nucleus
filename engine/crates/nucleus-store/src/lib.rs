@@ -232,6 +232,7 @@ impl Store {
         // This independent table is additive to every supported task schema.
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
+        tx.execute(titles::INBOX_SCHEMA, [])?;
         Ok(())
     }
 

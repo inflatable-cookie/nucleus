@@ -32,7 +32,7 @@ const DECLINE: &str = "decline";
 
 pub(super) struct NativeInbox {
     credential: [u8; 32],
-    root: String,
+    pub(super) root: String,
     observed: watch::Sender<Observation>,
     reconcile: Notify,
 }
@@ -118,6 +118,7 @@ impl Service {
 
     pub(super) fn inbox_changed(&self) {
         if let Some(inbox) = &self.native_inbox {
+            self.title_wake.notify_one();
             inbox.observed.send_modify(|_| {});
             inbox.wake();
         }
@@ -345,7 +346,7 @@ impl Service {
     }
 }
 
-fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {
+pub(super) fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {
     let mut decisions = Vec::new();
     for project in state.settings.planning_projects(service.project.as_ref()) {
         decisions.extend(state.store.decisions(project, true)?);

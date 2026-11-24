@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use nucleus_core::{HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
-use nucleus_store::{TaskRow, TitleReceipt};
+use nucleus_hosts::{INBOX_THREAD, InboxTarget, TitleTarget};
+use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
 
 use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget, presentation};
 
@@ -129,6 +130,28 @@ fn fit(title: &str) -> String {
     format!("{}…", prefix[..stop].trim_end())
 }
 
+fn inbox_title(decisions: usize, running: usize, mode: DispatchMode) -> String {
+    let prefix = if mode == DispatchMode::Running {
+        ""
+    } else {
+        "Paused: "
+    };
+    let status = if decisions > 0 {
+        let noun = if decisions == 1 {
+            "decision"
+        } else {
+            "decisions"
+        };
+        format!("{decisions} {noun} to answer")
+    } else if running > 0 {
+        let noun = if running == 1 { "task" } else { "tasks" };
+        format!("{running} {noun} running")
+    } else {
+        "All quiet".into()
+    };
+    format!("{prefix}{status}")
+}
+
 impl Service {
     pub(super) fn desire_title(
         &self,
@@ -162,16 +185,15 @@ impl Service {
             return;
         };
         loop {
-            let next = self.title_work(&self.host.title_threads()).await;
+            let next = self.title_work(provider, &self.host.title_threads()).await;
             let wait = match next {
-                Ok(Some((thread, receipt))) => {
+                Ok(Some(receipt)) => {
                     let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
                     if receipt.retry_at > now {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
-                        if let Err(error) = self.apply_title(provider, &thread, &receipt, now).await
-                        {
-                            eprintln!("{}: {error}", receipt.task_id);
+                        if let Err(error) = self.apply_title(provider, &receipt, now).await {
+                            eprintln!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
                         continue;
@@ -196,26 +218,64 @@ impl Service {
 
     async fn title_work(
         &self,
+        provider: &str,
         threads: &[String],
-    ) -> Result<Option<(String, TitleReceipt)>, ServiceError> {
+    ) -> Result<Option<TitleReceipt>, ServiceError> {
         let state = self.state.lock().await;
-        let mut earliest: Option<(String, TitleReceipt)> = None;
+        let mut earliest: Option<TitleReceipt> = None;
         for thread in threads {
-            if let Some(receipt) = state.store.pending_title(thread)?
+            let candidate = if thread == INBOX_THREAD {
+                self.inbox_title_work(&state, provider)?
+            } else {
+                state.store.pending_title(thread)?
+            };
+            if let Some(receipt) = candidate
                 && earliest
                     .as_ref()
-                    .is_none_or(|(_, prior)| receipt.retry_at < prior.retry_at)
+                    .is_none_or(|prior| receipt.retry_at < prior.retry_at)
             {
-                earliest = Some((thread.clone(), receipt));
+                earliest = Some(receipt);
             }
         }
         Ok(earliest)
     }
 
+    fn inbox_title_target(&self, provider: &str) -> Option<TitleTarget> {
+        let inbox = self.native_inbox.as_ref()?;
+        self.host.inbox_title_target(&InboxTarget {
+            provider,
+            root: &inbox.root,
+        })
+    }
+
+    fn inbox_title_work(
+        &self,
+        state: &State,
+        provider: &str,
+    ) -> Result<Option<TitleReceipt>, ServiceError> {
+        if self.inbox_title_target(provider).is_none() {
+            return Ok(None);
+        }
+        let decisions = crate::native_inbox::pending(state, self)?.len();
+        let running = state
+            .waits
+            .values()
+            .filter(|(wait, _)| *wait == WaitReason::Running)
+            .count();
+        let mode = state
+            .settings
+            .dispatch
+            .as_ref()
+            .map_or(DispatchMode::Running, |dispatch| dispatch.mode);
+        state
+            .store
+            .desire_inbox_title(INBOX_THREAD, &inbox_title(decisions, running, mode))?;
+        Ok(state.store.pending_inbox_title(INBOX_THREAD)?)
+    }
+
     async fn apply_title(
         &self,
         provider: &str,
-        thread: &str,
         receipt: &TitleReceipt,
         now: i64,
     ) -> Result<(), ServiceError> {
@@ -225,62 +285,93 @@ impl Service {
                 return Ok(());
             }
         }
-        let row = self.task(&receipt.task_id).await?;
-        let fence = self.task_fence(&receipt.task_id).await;
-        let Ok(_guard) = fence.try_lock_owned() else {
-            return Ok(());
+        let applied = if let Some(task_id) = receipt.task_id.as_deref() {
+            self.write_task_title(provider, task_id, receipt).await?
+        } else {
+            self.write_inbox_title(provider, receipt).await?
         };
-        if !self.title_current(&row, thread, receipt).await? {
-            return Ok(());
+        if applied {
+            self.state.lock().await.store.confirm_title(receipt)?;
+        }
+        Ok(())
+    }
+
+    async fn write_inbox_title(
+        &self,
+        provider: &str,
+        receipt: &TitleReceipt,
+    ) -> Result<bool, ServiceError> {
+        let Some(target) = self.inbox_title_target(provider) else {
+            return Ok(false);
+        };
+        if target.current_title() != Some(&receipt.desired) {
+            let key = format!("nucleus-rust-inbox-title-{}", receipt.generation);
+            self.host
+                .write_title(target, &key, &receipt.desired)
+                .await?;
+        }
+        Ok(true)
+    }
+
+    async fn write_task_title(
+        &self,
+        provider: &str,
+        task_id: &str,
+        receipt: &TitleReceipt,
+    ) -> Result<bool, ServiceError> {
+        let row = self.task(task_id).await?;
+        let fence = self.task_fence(task_id).await;
+        let Ok(_guard) = fence.try_lock_owned() else {
+            return Ok(false);
+        };
+        if !self.title_current(&row, receipt).await? {
+            return Ok(false);
         }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees()?;
-        let checkout =
-            worktrees.checkout(&route.checkout, &identity.repository, &receipt.task_id)?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, task_id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
             .checkout
             .to_str()
             .and_then(|root| self.host.title_target(&binding, provider, root))
-            .filter(|target| target.thread() == thread)
+            .filter(|target| target.thread() == receipt.thread)
         else {
-            return Ok(());
+            return Ok(false);
         };
         let destination = DispatchTarget::Title {
-            frozen: target.binding(),
+            frozen: target.binding().ok_or(ServiceError::AcpBinding)?,
             checkout: &checkout,
         };
         let Some(_permit) = self.dispatch_gate(&row.task, destination).await? else {
-            return Ok(());
+            return Ok(false);
         };
-        let key = format!("task-{}-title-{}", receipt.task_id, receipt.generation);
+        let key = format!("task-{task_id}-title-{}", receipt.generation);
         self.host
             .write_title(target, &key, &receipt.desired)
             .await?;
-        self.state.lock().await.store.confirm_title(receipt)?;
-        Ok(())
+        Ok(true)
     }
 
     async fn title_current(
         &self,
         expected: &TaskRow,
-        thread: &str,
         receipt: &TitleReceipt,
     ) -> Result<bool, ServiceError> {
         let state = self.state.lock().await;
-        let current = self.lookup(&state, &receipt.task_id)?;
+        let current = self.lookup(&state, &expected.task.identity().id)?;
         Ok(current.version == expected.version
             && state
                 .store
-                .pending_title(thread)?
+                .pending_title(&receipt.thread)?
                 .is_some_and(|pending| pending.generation == receipt.generation))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use nucleus_core::{Authority, Command, Entry, Identity};
     use nucleus_forge::GitHub;
@@ -357,6 +448,127 @@ mod tests {
             fit(&format!("{prefix}word")),
             format!("{}…", prefix.trim_end())
         );
+    }
+
+    fn inbox_choice() -> nucleus_store::planning::DecisionInput {
+        use nucleus_store::planning::{DecisionInput, DecisionOption};
+        DecisionInput {
+            question: "Continue?".into(),
+            options: ["yes", "no"]
+                .into_iter()
+                .map(|choice| DecisionOption {
+                    id: choice.into(),
+                    label: choice.into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn inbox_status_titles_only_write_changed_metadata_under_a_fresh_generation() {
+        use nucleus_store::planning::WriteAt;
+
+        let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let provider = "fixture-acp";
+        service.fixture_mut().acp_provider = Some(provider.into());
+        service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
+        let root = &service.native_inbox.as_ref().unwrap().root;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&requests);
+        let (host, server) = native_fixture(move |req| {
+            assert_eq!(req["tag"], "orchestration.dispatchCommand");
+            assert_eq!(req["payload"]["type"], "thread.metadata.update");
+            assert_eq!(req["payload"]["threadId"], INBOX_THREAD);
+            seen.lock().unwrap().push(req["payload"].clone());
+            json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
+        })
+        .await;
+        let shell = |title| {
+            json!({"projects":[{"id":"project:nucleus-rust-inbox","workspaceRoot":root}],
+            "threads":[{"id":INBOX_THREAD,"projectId":"project:nucleus-rust-inbox",
+            "providerInstanceId":provider,"worktreePath":null,"title":title,"pinnedAt":"now"}]})
+        };
+        host.fixture_project_shell(&shell("All quiet"), provider);
+        service.host = host;
+        let inbox = [INBOX_THREAD.to_owned()];
+        let first = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        service.apply_title(provider, &first, 0).await.unwrap();
+        assert!(requests.lock().unwrap().is_empty());
+
+        service
+            .state
+            .lock()
+            .await
+            .set_wait("fixture", Some(WaitReason::Running));
+        let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        service.apply_title(provider, &running, 0).await.unwrap();
+        assert_eq!(running.desired, "1 task running");
+        assert!(
+            service
+                .title_work(provider, &inbox)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        service
+            .host
+            .fixture_project_shell(&shell("1 task running"), provider);
+
+        let project = service.fixture().host_project.clone();
+        let stamp = |actor, at_ms| WriteAt { actor, at_ms };
+        {
+            let mut state = service.state.lock().await;
+            state
+                .settings
+                .dispatch
+                .get_or_insert_with(Default::default)
+                .mode = DispatchMode::Held;
+            state
+                .store
+                .add_decision(
+                    &project,
+                    "test-decision".into(),
+                    inbox_choice(),
+                    stamp("planner", 0),
+                )
+                .unwrap();
+        }
+        let decision = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        service.apply_title(provider, &decision, 0).await.unwrap();
+        assert_eq!(decision.desired, "Paused: 1 decision to answer");
+        service
+            .host
+            .fixture_project_shell(&shell(&decision.desired), provider);
+        {
+            let mut state = service.state.lock().await;
+            state.set_wait("fixture", None);
+            state.settings.dispatch = None;
+            state
+                .store
+                .answer_decision(
+                    &project,
+                    "test-decision",
+                    nucleus_store::planning::DecisionAnswerInput {
+                        option_id: "yes".into(),
+                        note: None,
+                    },
+                    stamp("operator", 1),
+                )
+                .unwrap();
+        }
+        let quiet = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        assert_eq!(quiet.desired, first.desired);
+        service.apply_title(provider, &quiet, 0).await.unwrap();
+        assert_eq!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|payload| payload["commandId"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>(),
+            [2, 3, 4].map(|generation| format!("nucleus-rust-inbox-title-{generation}"))
+        );
+        server.abort();
     }
 
     #[tokio::test]
