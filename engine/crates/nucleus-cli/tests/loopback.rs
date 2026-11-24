@@ -32,7 +32,7 @@ async fn controller_key_comes_from_the_selected_environment_variable() {
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let command = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_nucleus-engine"))
+        Command::new(env!("CARGO_BIN_EXE_nucleus"))
             .args(["--endpoint", &endpoint, "next", "fixture"])
             .env("NUCLEUS_ENGINE_CONTROL_KEY", key)
             .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
@@ -63,7 +63,7 @@ fn report_ticket_parse_failure_does_not_print_the_credential() {
     });
     file.write_all(ticket.to_string().as_bytes())
         .expect("malformed ticket");
-    let output = Command::new(env!("CARGO_BIN_EXE_nucleus-engine"))
+    let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
         .args(["report", "--ticket"])
         .arg(file.path())
         .output()
@@ -78,7 +78,7 @@ fn report_ticket_parse_failure_does_not_print_the_credential() {
 fn t3_status_reports_an_unconfigured_portable_profile() {
     let directory = tempfile::tempdir().expect("portable profile");
     let home = directory.path().canonicalize().expect("canonical home");
-    let output = Command::new(env!("CARGO_BIN_EXE_nucleus-engine"))
+    let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
         .args(["--endpoint", "127.0.0.1:9", "t3", "status", "--home"])
         .arg(&home)
         .env_remove("NUCLEUS_ENGINE_CONTROL_KEY")
@@ -117,7 +117,7 @@ fn barge_is_optional_and_serve_refuses_an_absent_class_volume() {
         fs::create_dir_all(classes.join(class)).expect("class directory");
     }
     let cli = || {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nucleus-engine"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nucleus"));
         command
             .env("HOME", &account)
             .env("XDG_STATE_HOME", account.join("state"))

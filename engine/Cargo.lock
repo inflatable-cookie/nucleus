@@ -1199,8 +1199,6 @@ dependencies = [
 name = "nucleus-acp"
 version = "0.1.0"
 dependencies = [
- "axum",
- "futures-util",
  "getrandom 0.3.4",
  "hex",
  "longhorn-redact",
@@ -1210,7 +1208,6 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror",
  "tokio",
 ]
@@ -1221,7 +1218,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "futures-util",
  "hex",
+ "nucleus-acp",
  "nucleus-core",
  "nucleus-forge",
  "nucleus-hosts",

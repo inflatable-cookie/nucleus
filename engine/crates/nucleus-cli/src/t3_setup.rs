@@ -29,7 +29,6 @@ use crate::{
 const INSTALL_BEARER: &str = "NUCLEUS_ENGINE_T3_INSTALL_BEARER";
 const LAUNCHER: &str = "nucleus-rust-acp";
 const MARKER: &str = "#!/bin/sh\n# nucleus-rust-acp-launcher-v1\n";
-const ENSURE: &str = include_str!("../../../ensure-local-service.py");
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -50,9 +49,6 @@ pub(crate) struct Args {
 enum Action {
     /// Register nucleus-rust and set up the pinned Rust Inbox.
     Install {
-        /// Absolute path to the installed Rust nucleus-acp executable.
-        #[arg(long)]
-        acp_command: PathBuf,
         /// Absolute path to the owner-only engine serve launcher.
         #[arg(long)]
         serve_launcher: PathBuf,
@@ -140,7 +136,6 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
             .await?;
         }
         Action::Install {
-            acp_command,
             serve_launcher,
             adopt,
         } => {
@@ -166,7 +161,7 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
                 &launcher,
                 &key_file,
                 &serve_launcher,
-                &acp_command,
+                &env::current_exe()?.canonicalize()?,
                 adopt
                     && matches!(
                         registration,
@@ -269,7 +264,7 @@ fn inbox_health(health: &Value) -> Option<bool> {
     inbox["observed"].as_bool()
 }
 
-fn same_engine(health: &Value, storage: &EngineStorage) -> bool {
+pub(super) fn same_engine(health: &Value, storage: &EngineStorage) -> bool {
     health["engine"]["databaseRoot"]
         .as_str()
         .is_some_and(|path| Path::new(path) == storage.database().path())
@@ -355,7 +350,7 @@ fn launcher_script(
 ) -> Result<String> {
     let key_file = quote(key_file)?;
     let home = directory.parent().ok_or("invalid engine home")?;
-    let lock = quote(&home.join("serve.lock"))?;
+    let home = quote(home)?;
     let serve = quote(serve)?;
     let acp = quote(acp)?;
     let bindings = quote(&storage.database().path().join("acp-bindings"))?;
@@ -366,17 +361,17 @@ fn launcher_script(
 umask 077
 unset {INSTALL_BEARER} NUCLEUS_ACP_SESSION
 export TMPDIR={scratch} TMP={scratch} TEMP={scratch}
+export PATH={home}/bin:"${{PATH:-/usr/bin:/bin}}"
 exec 2>>{log}
-/usr/bin/env python3 - {port} {key_file} {lock} {serve} <<'NUCLEUS_ENSURE'
-{ENSURE}NUCLEUS_ENSURE
+{acp} --endpoint 127.0.0.1:{port} ensure --home {home} --control-key-file {key_file} --serve-launcher {serve}
 if [ "${{1-}}" = --ensure-only ]; then exit 0; fi
 export NUCLEUS_ACP_BINDINGS={bindings}
-exec {acp} "$@"
+exec {acp} acp "$@"
 "#
     ))
 }
 
-fn canonical_file(path: &Path) -> Result<PathBuf> {
+pub(super) fn canonical_file(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.canonicalize()? != path || !path.is_file() {
         return Err("use a canonical absolute path to a regular file".into());
     }
@@ -439,7 +434,7 @@ fn local_launcher(path: &Path) -> Result<Option<Vec<u8>>> {
     Ok(bytes)
 }
 
-fn read_key_file(path: &Path) -> Result<[u8; 32]> {
+pub(super) fn read_key_file(path: &Path) -> Result<[u8; 32]> {
     let file = private_file(path)?.ok_or("engine health credential file is missing")?;
     let bytes = read(file)?;
     let digits = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
@@ -469,7 +464,7 @@ async fn ensure(launcher: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn engine_health(endpoint: SocketAddr, key: &[u8; 32]) -> Result<Value> {
+pub(super) async fn engine_health(endpoint: SocketAddr, key: &[u8; 32]) -> Result<Value> {
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut response = request(endpoint, Method::GET, "/v1/health", key, None, None)
             .await?

@@ -50,8 +50,11 @@ impl Drop for Turn {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> io::Result<()> {
+/// Serve the Nucleus ACP protocol on standard input and output.
+///
+/// # Errors
+/// Returns an error when startup, binding validation or stdio fails.
+pub async fn run() -> io::Result<()> {
     let launch_cwd = env::current_dir().ok();
     if let Some(workspace) = &launch_cwd
         && let Ok(SessionBinding::Task(binding)) = client::binding(workspace)
