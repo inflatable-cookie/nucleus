@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use nucleus_core::{HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
-use nucleus_hosts::{INBOX_THREAD, InboxTarget, TitleTarget};
+use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
 use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
 
 use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget, presentation};
@@ -208,6 +208,7 @@ impl Service {
             }
         }
         loop {
+            self.host.wait_for_requests().await;
             let threads = self.host.title_threads();
             let next = self.title_work(provider, &threads).await;
             let wait = match next {
@@ -311,21 +312,20 @@ impl Service {
         receipt: &TitleReceipt,
         now: i64,
     ) -> Result<(), ServiceError> {
-        {
-            let state = self.state.lock().await;
-            if !state.store.defer_title(receipt, now)? {
-                return Ok(());
+        let applied = if let Some(task_id) = receipt.task_id.as_deref() {
+            self.write_task_title(provider, task_id, receipt).await
+        } else {
+            self.write_inbox_title(provider, receipt).await
+        };
+        let state = self.state.lock().await;
+        match applied {
+            Ok(true) => state.store.confirm_title(receipt)?,
+            Err(ServiceError::Host(HostError::Deferred { .. })) => {}
+            _ => {
+                state.store.defer_title(receipt, now)?;
             }
         }
-        let applied = if let Some(task_id) = receipt.task_id.as_deref() {
-            self.write_task_title(provider, task_id, receipt).await?
-        } else {
-            self.write_inbox_title(provider, receipt).await?
-        };
-        if applied {
-            self.state.lock().await.store.confirm_title(receipt)?;
-        }
-        Ok(())
+        applied.map(|_| ())
     }
 
     async fn write_inbox_title(
@@ -372,6 +372,9 @@ impl Service {
         else {
             return Ok(false);
         };
+        if target.current_title() == Some(&receipt.desired) {
+            return Ok(true);
+        }
         let destination = DispatchTarget::Presentation {
             frozen: target.binding().ok_or(ServiceError::AcpBinding)?,
             checkout: &checkout,
@@ -604,7 +607,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn title_write_uses_the_existing_shell_without_an_exact_read() {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the live shell and title receipt round trip in one fixture"
+    )]
+    async fn native_title_changes_once_and_idle_reconciliation_makes_no_writes() {
         let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let mut subject = Task::new(
@@ -693,6 +700,26 @@ mod tests {
         })
         .await
         .expect("title confirmed");
+        let counts = service.host.host_calls();
+        assert_eq!(counts["orchestration.subscribeShell"], 1);
+        assert_eq!(counts["orchestration.dispatchCommand"], 1);
+        assert!(!counts.contains_key("orchestration.subscribeThread"));
+        {
+            let state = service.state.lock().await;
+            let row = service.lookup(&state, id).unwrap();
+            service.desire_title(&state, &row.task, row.reference().as_ref(), None);
+        }
+        assert!(
+            service
+                .title_work("fixture-acp", &[parent])
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            service.host.host_calls()["orchestration.dispatchCommand"],
+            1
+        );
         watcher.abort();
         native.abort();
     }

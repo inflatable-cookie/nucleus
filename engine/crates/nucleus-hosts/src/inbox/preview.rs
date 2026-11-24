@@ -95,7 +95,7 @@ impl T3 {
         Ok(())
     }
 
-    async fn preview_call(&self, method: &str, payload: Value) -> Result<Value, HostError> {
+    async fn preview_call(&self, method: &'static str, payload: Value) -> Result<Value, HostError> {
         match self.rpc.call(method, payload, Read::One).await? {
             Reply::Value(value) => Ok(value),
             // Preview errors may echo a pairing URL. Discard the complete failure payload.

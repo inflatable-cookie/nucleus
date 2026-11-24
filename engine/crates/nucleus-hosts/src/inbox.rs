@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use crate::{
     HostError, T3, message_id,
     projection::missing_thread,
-    rpc::{Read, Reply},
+    rpc::{Read, Reply, ThreadReply},
+    thread_snapshots::ThreadRead,
 };
 
 mod preview;
@@ -88,35 +89,24 @@ impl T3 {
         target: &InboxTarget<'_>,
         pending: &BTreeSet<String>,
     ) -> Result<InboxStep, HostError> {
-        let Some(snapshot) = self.inbox_projection(target).await? else {
+        let Some(snapshot) = self
+            .inbox_projection(target, ThreadRead::Observation)
+            .await?
+        else {
             return Ok(InboxStep::Wait);
         };
         let thread = inbox_thread(&snapshot);
         if !thread["archivedAt"].is_null() || !pinned(thread)? {
             return Ok(InboxStep::Wait);
         }
-        match reconcile(&snapshot, pending) {
-            Err(HostError::Protocol) if snapshot["hasMoreHistory"] == true => {
-                let complete = self
-                    .inbox_thread(INBOX_THREAD, false)
-                    .await?
-                    .ok_or(HostError::Uncertain)?;
-                if complete["snapshotSequence"] != snapshot["snapshotSequence"]
-                    || complete["hasMoreHistory"] == true
-                {
-                    return Err(HostError::Uncertain);
-                }
-                reconcile(&complete, pending)
-            }
-            result => result,
-        }
+        reconcile(&snapshot, pending)
     }
 
     /// Observe the exact Rust Inbox without mutating either Inbox.
     /// # Errors
     /// Returns an error when the thread does not match the installed destination.
     pub async fn inbox_status(&self, target: &InboxTarget<'_>) -> Result<InboxStatus, HostError> {
-        let Some(snapshot) = self.inbox_projection(target).await? else {
+        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
             return Ok(InboxStatus::Missing);
         };
         let thread = inbox_thread(&snapshot);
@@ -137,7 +127,7 @@ impl T3 {
         &self,
         target: &InboxTarget<'_>,
     ) -> Result<InboxLifecycle, HostError> {
-        let Some(snapshot) = self.inbox_projection(target).await? else {
+        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
             let shell = self.inbox_shell().await?;
             return self
                 .prepare_inbox_launch(target, &shell)
@@ -162,7 +152,7 @@ impl T3 {
         &self,
         target: &InboxTarget<'_>,
     ) -> Result<InboxLifecycle, HostError> {
-        let Some(snapshot) = self.inbox_projection(target).await? else {
+        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
             return Ok(InboxLifecycle::Complete);
         };
         let thread = inbox_thread(&snapshot);
@@ -217,8 +207,12 @@ impl T3 {
         )))
     }
 
-    async fn inbox_projection(&self, target: &InboxTarget<'_>) -> Result<Option<Value>, HostError> {
-        let Some(snapshot) = self.inbox_thread(INBOX_THREAD, true).await? else {
+    async fn inbox_projection(
+        &self,
+        target: &InboxTarget<'_>,
+        policy: ThreadRead,
+    ) -> Result<Option<Value>, HostError> {
+        let Some(snapshot) = self.inbox_thread(policy).await? else {
             return Ok(None);
         };
         let thread = inbox_thread(&snapshot);
@@ -237,29 +231,26 @@ impl T3 {
         Ok(Some(snapshot))
     }
 
-    async fn inbox_thread(&self, id: &str, bounded: bool) -> Result<Option<Value>, HostError> {
-        match self
-            .rpc
-            .call(
-                "orchestration.subscribeThread",
-            json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":bounded}),
-                Read::Thread,
-            )
-            .await?
-        {
-            Reply::Value(value) => Ok(Some(value)),
-            Reply::Failure(cause) if missing_thread(&cause, id) => Ok(None),
-            Reply::Failure(_) => Err(HostError::Protocol),
+    async fn inbox_thread(&self, policy: ThreadRead) -> Result<Option<Value>, HostError> {
+        match self.rpc.thread(INBOX_THREAD, policy).await? {
+            ThreadReply::Closed { row, .. } if !row["deletedAt"].is_null() => Ok(None),
+            ThreadReply::Closed { row, sequence } => Ok(Some(json!({
+                "snapshotSequence": sequence, "projection": {"thread":row}
+            }))),
+            ThreadReply::Snapshot(Reply::Value(value)) => Ok(Some(value)),
+            ThreadReply::Snapshot(Reply::Failure(cause))
+                if missing_thread(&cause, INBOX_THREAD) =>
+            {
+                Ok(None)
+            }
+            ThreadReply::Snapshot(Reply::Failure(_)) => Err(HostError::Protocol),
         }
     }
 
     async fn inbox_shell(&self) -> Result<Value, HostError> {
-        let Reply::Value(snapshot) = self.rpc.call(
-            "orchestration.subscribeShell",
+        self.rpc.shell(
             json!({"requestCompletionMarker":true,"omitIdleSubagents":true,"omitOlderSettled":true}),
-            Read::Shell,
-        ).await? else { return Err(HostError::Protocol) };
-        Ok(snapshot)
+        ).await
     }
 
     async fn prepare_inbox_launch(
@@ -360,7 +351,7 @@ fn command(id: String, payload: Value) -> InboxWrite {
 }
 
 fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, HostError> {
-    if snapshot["turnItemsOmitLocalVisible"] == true || !snapshot["idTable"].is_null() {
+    if !snapshot["idTable"].is_null() {
         return Err(HostError::Protocol);
     }
     let projection = &snapshot["projection"];

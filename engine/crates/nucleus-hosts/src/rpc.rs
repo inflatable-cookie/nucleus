@@ -1,4 +1,11 @@
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::IpAddr,
+    sync::{
+        Mutex as SyncMutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use longhorn_redact::{RedactionRules, Redactor};
@@ -7,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, mpsc},
+    sync::{Mutex, Semaphore, mpsc},
     time,
 };
 use tokio_tungstenite::{
@@ -15,12 +22,18 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
-use crate::{HostError, T3_RETRY_DELAY};
+use crate::{
+    HostError, T3_RETRY_DELAY,
+    thread_snapshots::{ThreadRead, ThreadSnapshots},
+    traffic::Traffic,
+};
 
 const DEADLINE: Duration = Duration::from_secs(30);
+const MAX_RETRY: Duration = Duration::from_mins(4);
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_TICKET: usize = 64 * 1024;
 const MAX_MESSAGES: usize = 10_000;
+const THREAD_READ_CONCURRENCY: usize = 4;
 
 // The upgrade URL carries a one-use ticket and preview frames can carry board
 // pairing links. Keep Tungstenite's raw request and frame traces compiled out.
@@ -28,28 +41,40 @@ const _: () = assert!(log::STATIC_MAX_LEVEL as usize <= log::LevelFilter::Debug 
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+#[derive(Clone)]
 pub(crate) enum Reply {
     Value(Value),
     Failure(Value),
+}
+
+pub(crate) enum ThreadReply {
+    Snapshot(Reply),
+    Closed { row: Value, sequence: Option<u64> },
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum Read {
     One,
     Shell,
-    Thread,
+    Thread(ThreadRead),
 }
 
 pub(crate) struct Rpc {
     base: Url,
     bearer: HeaderValue,
     http: Client,
-    socket: Mutex<Slot>,
+    socket: Mutex<Option<Connection>>,
+    opening: Mutex<()>,
+    retry: SyncMutex<Retry>,
+    pub(crate) traffic: Traffic,
+    shell_managed: AtomicBool,
+    snapshots: SyncMutex<Option<ThreadSnapshots>>,
+    thread_reads: Semaphore,
 }
 
-struct Slot {
-    connection: Option<Connection>,
-    retry_at: time::Instant,
+struct Retry {
+    until: time::Instant,
+    delay: Duration,
 }
 
 /// A shell delta that can wake an exact read. It never proves run state.
@@ -104,8 +129,9 @@ impl ThreadHint {
         match item["kind"].as_str()? {
             "thread.updated" => {
                 let thread = &item["thread"];
+                let id = thread["id"].as_str()?;
                 Some(Self {
-                    thread: thread["id"].as_str()?.into(),
+                    thread: id.into(),
                     closed: !thread["archivedAt"].is_null() || !thread["deletedAt"].is_null(),
                     running: thread["status"] == "running"
                         && thread["activeRunId"].as_str().is_some(),
@@ -123,6 +149,7 @@ impl ThreadHint {
                         thread["pendingBackgroundTasks"].as_array().map(Vec::len),
                         thread["archivedAt"],
                         thread["settledAt"],
+                        (id == crate::INBOX_THREAD).then(|| &thread["visibleItemCount"]),
                     ])),
                 })
             }
@@ -216,79 +243,295 @@ impl Rpc {
             base,
             bearer,
             http,
-            socket: Mutex::new(Slot {
-                connection: None,
-                retry_at: time::Instant::now(),
+            socket: Mutex::new(None),
+            opening: Mutex::new(()),
+            retry: SyncMutex::new(Retry {
+                until: time::Instant::now(),
+                delay: T3_RETRY_DELAY,
             }),
+            traffic: Traffic::default(),
+            shell_managed: AtomicBool::new(false),
+            snapshots: SyncMutex::new(None),
+            thread_reads: Semaphore::new(THREAD_READ_CONCURRENCY),
         })
+    }
+
+    pub(crate) fn retry_at(&self) -> Option<time::Instant> {
+        let at = self.retry.lock().expect("host retry").until;
+        (at > time::Instant::now()).then_some(at)
+    }
+
+    fn defer(&self) {
+        let mut retry = self.retry.lock().expect("host retry");
+        let now = time::Instant::now();
+        if retry.until <= now {
+            retry.until = now + retry.delay;
+            retry.delay = (retry.delay * 2).min(MAX_RETRY);
+        }
     }
 
     pub(crate) async fn call(
         &self,
-        method: &str,
+        method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
     ) -> Result<Reply, HostError> {
-        self.call_guarded(method, payload, read, || Ok(())).await
+        self.call_guarded(method, payload, read, || Ok(true)).await
     }
 
     pub(crate) async fn call_guarded(
         &self,
-        method: &str,
+        method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
-        check: impl FnOnce() -> Result<(), HostError> + Send,
+        check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
+        self.check_retry()?;
         let mut slot = self.socket.lock().await;
-        if time::Instant::now() < slot.retry_at {
-            return Err(HostError::Deferred {
-                until: slot.retry_at,
+        self.call_locked(&mut slot, method, payload, read, check)
+            .await
+    }
+
+    async fn call_locked(
+        &self,
+        slot: &mut Option<Connection>,
+        method: &'static str,
+        payload: impl Serialize + Send,
+        read: Read,
+        check: impl FnOnce() -> Result<bool, HostError> + Send,
+    ) -> Result<Reply, HostError> {
+        self.check_retry()?;
+        let writes_thread = matches!(
+            method,
+            "orchestration.dispatchCommand" | "orchestration.launchThread"
+        );
+        let thread_args = if writes_thread || matches!(read, Read::Thread(_)) {
+            serde_json::to_value(&payload).map_err(|_| HostError::Protocol)?
+        } else {
+            Value::Null
+        };
+        let threads = [
+            thread_args["threadId"].as_str(),
+            thread_args["parentThreadId"].as_str(),
+            thread_args["childThreadId"].as_str(),
+            thread_args.pointer("/thread/id").and_then(Value::as_str),
+        ];
+        let target = threads.into_iter().flatten().next();
+        if slot.is_none() {
+            *slot = Some(Connection {
+                socket: self
+                    .open()
+                    .await
+                    .inspect_err(|error| self.record_timeout(method, target, *error))?,
+                next_id: 0,
             });
         }
-        let result = async {
-            let mut connection = match slot.connection.take() {
-                Some(connection) => connection,
-                None => Connection {
-                    socket: time::timeout(DEADLINE, self.connect())
-                        .await
-                        .map_err(|_| HostError::Timeout)??,
-                    next_id: 0,
-                },
-            };
-            if let Err(error) = check() {
-                slot.connection = Some(connection);
-                return Err(error);
-            }
-            let reply = time::timeout(DEADLINE, connection.call(method, payload, read))
-                .await
-                .map_err(|_| HostError::Timeout)??;
-            slot.connection = Some(connection);
-            Ok(reply)
+        self.check_retry()?;
+        if !check()? {
+            return Ok(Reply::Value(Value::Null));
         }
-        .await;
-        if matches!(result, Err(HostError::Unavailable | HostError::Timeout)) {
-            slot.retry_at = time::Instant::now() + T3_RETRY_DELAY;
+        if writes_thread
+            && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
+        {
+            for id in threads.into_iter().flatten() {
+                shell.forget(id);
+            }
+        }
+        self.traffic.record(method);
+        if matches!(read, Read::Thread(ThreadRead::Terminal)) {
+            self.traffic.record("threadReads.terminal");
+        }
+        let result = time::timeout(
+            DEADLINE,
+            slot.as_mut()
+                .expect("open RPC socket")
+                .call(method, payload, read),
+        )
+        .await
+        .unwrap_or(Err(HostError::Timeout));
+        match result {
+            Ok(_) => self.retry.lock().expect("host retry").delay = T3_RETRY_DELAY,
+            Err(error) => {
+                *slot = None;
+                self.record_timeout(method, target, error);
+                if matches!(error, HostError::Unavailable | HostError::Timeout) {
+                    self.defer();
+                }
+            }
         }
         result
     }
 
+    pub(crate) fn record_timeout(
+        &self,
+        method: &'static str,
+        thread: Option<&str>,
+        error: HostError,
+    ) {
+        if !matches!(error, HostError::Timeout) {
+            return;
+        }
+        self.traffic.record("timeouts");
+        if method == "orchestration.subscribeThread" {
+            self.traffic.record("threadReads.timeouts");
+        }
+        let thread = thread.map_or("-", |id| {
+            if id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|ch| ch.is_ascii_alphanumeric() || b":.-_%".contains(&ch))
+            {
+                id
+            } else {
+                "<redacted>"
+            }
+        });
+        eprintln!("T3 {method} timed out (thread {thread})");
+    }
+
+    pub(crate) async fn thread(
+        &self,
+        id: &str,
+        policy: ThreadRead,
+    ) -> Result<ThreadReply, HostError> {
+        let _permit = self
+            .thread_reads
+            .acquire()
+            .await
+            .map_err(|_| HostError::Unavailable)?;
+        let mut slot = self.socket.lock().await;
+        let marker = {
+            let mut snapshots = self.snapshots.lock().expect("thread snapshots");
+            if let Some(shell) = snapshots.as_mut() {
+                if let Some((row, sequence)) = shell.closed(id) {
+                    return Ok(ThreadReply::Closed { row, sequence });
+                }
+                if !matches!(policy, ThreadRead::Exact)
+                    && let Some(reply) = shell.get(id)
+                {
+                    return Ok(ThreadReply::Snapshot(reply));
+                }
+            }
+            snapshots.as_ref().and_then(|shell| shell.marker(id))
+        };
+        let reply = self
+            .call_locked(
+                &mut slot,
+                "orchestration.subscribeThread",
+                json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
+                    "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
+                Read::Thread(policy),
+                || Ok(true),
+            )
+            .await?;
+        if marker.is_some()
+            && let Reply::Failure(cause) = &reply
+            && crate::projection::missing_thread(cause, id)
+        {
+            // A contradictory listing and exact read are never proof of absence.
+            return Err(HostError::Uncertain);
+        }
+        if let Reply::Value(value) = &reply
+            && let Some(row) = value.pointer("/projection/thread")
+            && (!row["archivedAt"].is_null() || !row["deletedAt"].is_null())
+        {
+            self.traffic.record("threadReads.archivedOrDeleted");
+        }
+        if let Some(marker) = marker
+            && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
+        {
+            shell.keep(id, &marker, &reply);
+        }
+        Ok(ThreadReply::Snapshot(reply))
+    }
+
+    pub(crate) fn use_held_shell(&self) {
+        self.shell_managed.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn clear_shell(&self) {
+        *self.snapshots.lock().expect("thread snapshots") = None;
+    }
+
+    pub(crate) fn thread_row(&self, id: &str) -> Option<std::sync::Arc<Value>> {
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()?
+            .marker(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_shell(&self, item: &Value) {
+        let mut snapshots = self.snapshots.lock().expect("thread snapshots");
+        if item["kind"] == "snapshot" {
+            *snapshots = ThreadSnapshots::read(item);
+            assert!(snapshots.is_some(), "fixture shell must be valid");
+        } else {
+            snapshots.as_mut().expect("fixture snapshot").update(item);
+        }
+    }
+
+    pub(crate) async fn shell(&self, payload: Value) -> Result<Value, HostError> {
+        if let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_ref() {
+            return Ok(shell.snapshot());
+        }
+        if self.shell_managed.load(Ordering::Acquire) {
+            self.check_retry()?;
+            return Err(HostError::Uncertain);
+        }
+        // Short-lived management commands have no service subscription.
+        match self
+            .call("orchestration.subscribeShell", payload, Read::Shell)
+            .await?
+        {
+            Reply::Value(snapshot) => Ok(snapshot),
+            Reply::Failure(_) => Err(HostError::Protocol),
+        }
+    }
+
+    fn check_retry(&self) -> Result<(), HostError> {
+        match self.retry_at() {
+            Some(until) => Err(HostError::Deferred { until }),
+            None => Ok(()),
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep shell synchronization and its ordered deltas together"
+    )]
     pub(crate) async fn watch_threads(
         &self,
         hints: &mpsc::Sender<ThreadHint>,
         titles: Option<(&crate::title_shell::TitleShell, &str)>,
         mut inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
-        let socket = time::timeout(DEADLINE, self.connect())
-            .await
-            .map_err(|_| HostError::Timeout)??;
+        let socket = self.open().await?;
         let mut connection = Connection { socket, next_id: 0 };
+        self.check_retry()?;
+        self.traffic.record("orchestration.subscribeShell");
         connection.send(json!({"_tag":"Request", "id":"1", "tag":"orchestration.subscribeShell", "headers":[],
-            "payload":{"omitIdleSubagents":true,"omitOlderSettled":true,"requestCompletionMarker":true}})).await?;
+            "payload":{"requestCompletionMarker":true}})).await?;
         let mut initial = None;
+        let mut initial_snapshots = None;
+        let expires = time::Instant::now() + Duration::from_mins(15);
+        let synchronize_by = time::Instant::now() + DEADLINE;
+        let mut synchronized = false;
         loop {
-            let frames = time::timeout(Duration::from_mins(1), connection.frames())
-                .await
-                .map_err(|_| HostError::Timeout)??;
+            if synchronized && time::Instant::now() >= expires {
+                return Ok(());
+            }
+            let due = if synchronized {
+                expires.min(time::Instant::now() + Duration::from_mins(5))
+            } else {
+                synchronize_by
+            };
+            let frames = match time::timeout_at(due, connection.frames()).await {
+                Ok(result) => result?,
+                Err(_) if synchronized && due == expires => return Ok(()),
+                Err(_) => return Err(HostError::Timeout),
+            };
             for frame in frames {
                 match frame["_tag"].as_str() {
                     Some("Ping") => connection.send(json!({"_tag":"Pong"})).await?,
@@ -298,6 +541,41 @@ impl Rpc {
                             .send(json!({"_tag":"Ack","requestId":"1"}))
                             .await?;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            match item["kind"].as_str() {
+                                Some("snapshot")
+                                    if item.get("resolvedRepositoryIdentityRoots").is_none() =>
+                                {
+                                    if synchronized || initial_snapshots.is_some() {
+                                        return Err(HostError::Protocol);
+                                    }
+                                    initial_snapshots = Some(
+                                        ThreadSnapshots::read(item).ok_or(HostError::Protocol)?,
+                                    );
+                                }
+                                Some("synchronized") => {
+                                    if synchronized {
+                                        continue;
+                                    }
+                                    *self.snapshots.lock().expect("thread snapshots") =
+                                        Some(initial_snapshots.take().ok_or(HostError::Protocol)?);
+                                    synchronized = true;
+                                }
+                                Some("snapshot") => {}
+                                Some("snapshot-required") => return Err(HostError::Uncertain),
+                                Some(
+                                    "thread.updated" | "thread.removed" | "project.updated"
+                                    | "project.removed",
+                                ) => {
+                                    if let Some(shell) = initial_snapshots.as_mut() {
+                                        shell.update(item);
+                                    } else if let Some(shell) =
+                                        self.snapshots.lock().expect("thread snapshots").as_mut()
+                                    {
+                                        shell.update(item);
+                                    }
+                                }
+                                _ => return Err(HostError::Protocol),
+                            }
                             if item["kind"] == "synchronized"
                                 && let Some(thread) = inbox_thread.take()
                             {
@@ -352,10 +630,10 @@ impl Rpc {
         &self,
         theme: &tokio::sync::watch::Sender<Option<Value>>,
     ) -> Result<(), HostError> {
-        let socket = time::timeout(DEADLINE, self.connect())
-            .await
-            .map_err(|_| HostError::Timeout)??;
+        let socket = self.open().await?;
         let mut connection = Connection { socket, next_id: 0 };
+        self.check_retry()?;
+        self.traffic.record("subscribeServerConfig");
         connection
             .send(
                 json!({"_tag":"Request", "id":"1", "tag":"subscribeServerConfig", "headers":[],
@@ -396,6 +674,19 @@ impl Rpc {
         }
     }
 
+    async fn open(&self) -> Result<Socket, HostError> {
+        self.check_retry()?;
+        let _opening = self.opening.lock().await;
+        self.check_retry()?;
+        let result = time::timeout(DEADLINE, self.connect())
+            .await
+            .unwrap_or(Err(HostError::Timeout));
+        if matches!(result, Err(HostError::Unavailable | HostError::Timeout)) {
+            self.defer();
+        }
+        result
+    }
+
     async fn connect(&self) -> Result<Socket, HostError> {
         #[derive(Deserialize)]
         struct Ticket {
@@ -405,6 +696,7 @@ impl Rpc {
             .base
             .join("api/auth/websocket-ticket/rpc")
             .map_err(|_| HostError::Configuration)?;
+        self.traffic.record("auth.websocketTicket");
         let mut response = self
             .http
             .post(url)
@@ -434,6 +726,7 @@ impl Rpc {
         let config = WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME))
             .max_frame_size(Some(MAX_FRAME));
+        self.traffic.record("websocket.upgrade");
         let (socket, _) = connect_async_with_config(url.as_str(), Some(config), false)
             .await
             .map_err(|_| HostError::Unavailable)?;
@@ -518,7 +811,7 @@ impl Connection {
                     "Exit" if frame["exit"]["_tag"] == "Success" && matches!(read, Read::One) => {
                         return Ok(Reply::Value(frame["exit"]["value"].clone()));
                     }
-                    "Chunk" if matches!(read, Read::Shell | Read::Thread) => {
+                    "Chunk" if matches!(read, Read::Shell | Read::Thread(_)) => {
                         self.send(json!({"_tag":"Ack","requestId":id})).await?;
                         let items = frame["values"].as_array().ok_or(HostError::Protocol)?;
                         for item in items {
@@ -617,23 +910,48 @@ mod tests {
             .expect("listen");
         let address = listener.local_addr().expect("endpoint");
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("request");
-            let mut request = [0; 1024];
-            assert!(stream.read(&mut request).await.expect("ticket request") > 0);
-            stream
-                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .expect("reply");
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("request");
+                let mut request = [0; 1024];
+                assert!(stream.read(&mut request).await.expect("ticket request") > 0);
+                stream
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .expect("reply");
+            }
         });
         let rpc = Rpc::new(&format!("http://{address}"), "fixture").expect("client");
         assert!(matches!(
             rpc.call("server.getConfig", json!({}), Read::One).await,
             Err(HostError::Unavailable)
         ));
+        let due = rpc.retry_at().expect("one shared deadline");
+        let (hints, _) = mpsc::channel(1);
+        let theme = tokio::sync::watch::channel(None).0;
         assert!(
-            matches!(rpc.call("server.getConfig", json!({}), Read::One).await,
-            Err(HostError::Deferred { until }) if until > time::Instant::now())
+            matches!(rpc.watch_threads(&hints, None, None).await, Err(HostError::Deferred { until }) if until == due)
         );
+        assert!(
+            matches!(rpc.watch_theme(&theme).await, Err(HostError::Deferred { until }) if until == due)
+        );
+        assert!(
+            matches!(rpc.thread("row", ThreadRead::Observation).await, Err(HostError::Deferred { until }) if until == due)
+        );
+        assert!(
+            matches!(rpc.call("orchestration.dispatchCommand", json!({}), Read::One).await, Err(HostError::Deferred { until }) if until == due)
+        );
+        assert_eq!(
+            rpc.traffic.totals().into_iter().collect::<Vec<_>>(),
+            [("auth.websocketTicket", 1)]
+        );
+
+        rpc.retry.lock().expect("host retry").until = time::Instant::now();
+        assert!(matches!(
+            rpc.call("server.getConfig", json!({}), Read::One).await,
+            Err(HostError::Unavailable)
+        ));
+        assert_eq!(rpc.traffic.totals()["auth.websocketTicket"], 2);
+        assert!(rpc.retry_at().expect("second deadline") > time::Instant::now() + T3_RETRY_DELAY);
         server.await.expect("server");
     }
 }

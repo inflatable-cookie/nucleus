@@ -238,6 +238,7 @@ impl Service {
             provider,
         };
         loop {
+            self.host.wait_for_requests().await;
             let retry = match self.reconcile_inbox(inbox, &target).await {
                 Ok(()) => None,
                 Err(error) => {

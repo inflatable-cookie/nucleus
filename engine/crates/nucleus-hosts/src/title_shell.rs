@@ -194,6 +194,7 @@ impl TitleShell {
             .as_ref()
             .ok_or(HostError::Uncertain)?
             .active_project(id)
+            .filter(|project| !project.workspace_root.is_empty())
             .ok_or(HostError::Binding)?;
         Ok(RegisteredProject {
             root: project.workspace_root.clone(),
@@ -356,6 +357,9 @@ impl T3 {
         command_id: &str,
         title: &str,
     ) -> Result<(), HostError> {
+        if target.current_title() == Some(title) {
+            return Ok(());
+        }
         let payload = json!({
             "type": "thread.metadata.update",
             "commandId": command_id,
@@ -372,7 +376,9 @@ impl T3 {
                         root: &target.root,
                     }),
                 };
-                current.map(|_| ()).ok_or(HostError::Binding)
+                current
+                    .map(|current| current.current_title() != Some(title))
+                    .ok_or(HostError::Binding)
             })
             .await?
         {

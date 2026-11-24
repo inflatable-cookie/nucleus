@@ -253,6 +253,7 @@ impl Service {
     }
 
     async fn take_planner_check(&self) -> Option<String> {
+        self.host.wait_for_requests().await;
         self.state.lock().await.planner_requests.pop_first()
     }
 

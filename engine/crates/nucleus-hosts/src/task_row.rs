@@ -69,7 +69,10 @@ impl T3 {
         provider: &str,
     ) -> Result<Option<RowObservation>, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self.thread_snapshot(binding, &thread, true).await? else {
+        let Some(projection) = self
+            .read_thread(binding, &thread, crate::thread_snapshots::ThreadRead::Exact)
+            .await?
+        else {
             return Ok(None);
         };
         let Some(observed) = projection.row_observation()? else {
@@ -118,7 +121,7 @@ impl T3 {
                 {
                     return Err(HostError::Binding);
                 }
-                Ok(())
+                Ok(true)
             })
             .await?;
         match reply {

@@ -296,7 +296,11 @@ impl Service {
     pub(super) async fn watch_enrollments(&self) {
         loop {
             self.enrollment_wake.notified().await;
-            while let Some(actor) = self.take_enrollment().await {
+            loop {
+                self.host.wait_for_requests().await;
+                let Some(actor) = self.take_enrollment().await else {
+                    break;
+                };
                 self.complete_enrollment(&actor).await;
             }
         }

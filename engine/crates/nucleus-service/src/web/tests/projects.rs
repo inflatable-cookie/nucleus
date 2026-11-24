@@ -1740,12 +1740,21 @@ async fn registry_gate_refuses_cross_project_wrong_push_remote_and_moved_native_
     ));
     push_origin(&alpha_route.checkout, ALPHA_REPO);
     registry.moved.store(true, Ordering::Relaxed);
+    service.host.fixture_project_shell(
+        &json!({"projects":[
+            {"id":"alpha-native","workspaceRoot":beta_route.checkout},
+            {"id":"beta-native","workspaceRoot":beta_route.checkout}
+        ],"threads":[]}),
+        "fixture-acp",
+    );
+    let reads = registry.reads.load(Ordering::Relaxed);
     assert!(matches!(
         service
             .dispatch_gate(&alpha, run_target(&alpha_tree, &alpha_binding))
             .await,
         Err(ServiceError::Host(HostError::Binding))
     ));
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 }
 
 fn push_origin(path: &Path, repository: &str) {

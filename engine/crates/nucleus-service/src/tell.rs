@@ -215,6 +215,7 @@ impl Service {
 
     async fn wait_tell(&self) -> Result<TellDelivery, ServiceError> {
         loop {
+            self.host.wait_for_requests().await;
             self.storage.database().verify()?;
             let next = self.state.lock().await.store.next_tell()?;
             if let Some(row) = next {

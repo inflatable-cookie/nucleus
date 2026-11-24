@@ -273,7 +273,14 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
             "databaseRoot": api.service.storage.database().path(),
             "t3Endpoint": api.service.host.endpoint(),
         },
-        "lanes": {"t3": {"depth": state.schedule.depth(), "status": state.settings.host}},
+        "lanes": {"t3": {
+            "depth": state.schedule.depth(),
+            "status": state.settings.host,
+            "hostCalls": {
+                "lastPass": state.last_pass_calls,
+                "total": api.service.host.host_calls(),
+            },
+        }},
         "inbox": api.service.inbox_health(),
         "oldestWaits": oldest,
     }))

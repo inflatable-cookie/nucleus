@@ -9,7 +9,8 @@ use crate::{
     HostError, LATE_REPLY_MS, T3, clock_ms, dispatch_rejected,
     launch::message_id,
     projection,
-    rpc::{Read, Reply},
+    rpc::{Read, Reply, ThreadReply},
+    thread_snapshots::ThreadRead,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -197,6 +198,18 @@ struct NoticeSnapshot {
     sequence: u64,
     thread: NoticeThread,
     projection: Value,
+    paged: bool,
+    omits_turn_items: bool,
+}
+
+impl NoticeSnapshot {
+    fn state(&self, delivery: &QuestionDelivery) -> Result<NoticeState, HostError> {
+        let state = notice_state(&self.projection, &delivery.command, self.omits_turn_items)?;
+        if self.paged && state == NoticeState::Absent && delivery.last_send_at_ms.is_some() {
+            return Err(HostError::Uncertain);
+        }
+        Ok(state)
+    }
 }
 
 impl T3 {
@@ -205,19 +218,10 @@ impl T3 {
     /// # Errors
     /// Returns an error when the host inventory is unreadable.
     pub async fn planner_threads(&self) -> Result<Vec<PlannerThread>, HostError> {
-        let Reply::Value(result) = self
+        let result = self
             .rpc
-            .call(
-                "orchestration.subscribeShell",
-                json!({
-                    "requestCompletionMarker": true,
-                }),
-                Read::Shell,
-            )
-            .await?
-        else {
-            return Err(HostError::Uncertain);
-        };
+            .shell(json!({"requestCompletionMarker": true}))
+            .await?;
         let threads = result
             .pointer("/snapshot/threads")
             .ok_or(HostError::Protocol)?;
@@ -238,14 +242,16 @@ impl T3 {
     /// # Errors
     /// Returns an error for an unreadable or mismatched identity.
     pub async fn planner_identity(&self, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
-        let reply = self.rpc.call("orchestration.subscribeThread", json!({
-            "threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": true,
-            "acceptDeferredWork": true, "acceptCompactTurnItems": true, "acceptDedupedBodies": true,
-        }), Read::Thread).await?;
+        let reply = self.rpc.thread(id, ThreadRead::Observation).await?;
         let value = match reply {
-            Reply::Value(value) => value,
-            Reply::Failure(cause) if projection::missing_thread(&cause, id) => return Ok(None),
-            Reply::Failure(_) => return Err(HostError::Uncertain),
+            ThreadReply::Snapshot(Reply::Value(value)) => value,
+            ThreadReply::Closed { .. } => return Ok(None),
+            ThreadReply::Snapshot(Reply::Failure(cause))
+                if projection::missing_thread(&cause, id) =>
+            {
+                return Ok(None);
+            }
+            ThreadReply::Snapshot(Reply::Failure(_)) => return Err(HostError::Uncertain),
         };
         let thread: PlannerIdentity = serde_json::from_value(value["projection"]["thread"].clone())
             .map_err(|_| HostError::Protocol)?;
@@ -263,13 +269,19 @@ impl T3 {
         authorization: &NoticeAuthorization,
     ) -> Result<(), HostError> {
         let target = authorization.target();
-        let snapshot = self
-            .notice_projection(&target.thread)
-            .await?
-            .ok_or(HostError::Binding)?;
-        if !authorization.matches_planner(&snapshot.thread.planner)
-            || snapshot.thread.worktree_path != target.worktree_path
-            || snapshot.thread.planner.is_child()
+        let thread: NoticeThread = if let Some(row) = self.rpc.thread_row(&target.thread) {
+            serde_json::from_value((*row).clone()).map_err(|_| HostError::Protocol)?
+        } else {
+            self.notice_projection(&target.thread, ThreadRead::Exact)
+                .await?
+                .ok_or(HostError::Binding)?
+                .thread
+        };
+        if !authorization.matches_planner(&thread.planner)
+            || thread.worktree_path != target.worktree_path
+            || thread.planner.is_child()
+            || thread.planner.archived_at.is_some()
+            || thread.planner.deleted_at.is_some()
         {
             return Err(HostError::Binding);
         }
@@ -304,10 +316,13 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<NoticeState, HostError> {
-        let Some(snapshot) = self.notice_projection(&delivery.thread).await? else {
+        let Some(snapshot) = self
+            .notice_projection(&delivery.thread, ThreadRead::Observation)
+            .await?
+        else {
             return Ok(NoticeState::Gone);
         };
-        notice_state(&snapshot.projection, &delivery.command)
+        snapshot.state(delivery)
     }
 
     /// Reconcile any preceding send and prepare a dispatch or unsettle.
@@ -332,13 +347,16 @@ impl T3 {
             .last_send_at_ms
             .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
-        let Some(snapshot) = self.notice_projection(&delivery.thread).await? else {
+        let Some(snapshot) = self
+            .notice_projection(&delivery.thread, ThreadRead::Exact)
+            .await?
+        else {
             return Ok(NoticeObservation {
                 state: NoticeState::Gone,
                 authorization: None,
             });
         };
-        let state = notice_state(&snapshot.projection, &delivery.command)?;
+        let state = snapshot.state(delivery)?;
         let ready = match state {
             NoticeState::Absent => !reply_may_arrive,
             NoticeState::Queued => settled(&snapshot.thread),
@@ -409,26 +427,25 @@ impl T3 {
         }
     }
 
-    async fn notice_projection(&self, id: &str) -> Result<Option<NoticeSnapshot>, HostError> {
-        let result = self
-            .rpc
-            .call(
-                "orchestration.subscribeThread",
-                json!({
-                    "threadId":id, "requestCompletionMarker":true, "acceptBoundedSnapshot":false,
-                }),
-                Read::Thread,
-            )
-            .await?;
+    async fn notice_projection(
+        &self,
+        id: &str,
+        policy: ThreadRead,
+    ) -> Result<Option<NoticeSnapshot>, HostError> {
+        let result = self.rpc.thread(id, policy).await?;
         let value = match result {
-            Reply::Value(value) => value,
-            Reply::Failure(cause) if projection::missing_thread(&cause, id) => return Ok(None),
-            Reply::Failure(_) => return Err(HostError::Uncertain),
+            ThreadReply::Snapshot(Reply::Value(value)) => value,
+            ThreadReply::Closed { .. } => return Ok(None),
+            ThreadReply::Snapshot(Reply::Failure(cause))
+                if projection::missing_thread(&cause, id) =>
+            {
+                return Ok(None);
+            }
+            ThreadReply::Snapshot(Reply::Failure(_)) => return Err(HostError::Uncertain),
         };
-        if value["hasMoreHistory"] == true
-            || value["turnItemsOmitLocalVisible"] == true
-            || value.get("idTable").is_some()
-        {
+        let paged = value["hasMoreHistory"] == true;
+        let omits_turn_items = value["turnItemsOmitLocalVisible"] == true;
+        if value.get("idTable").is_some() || paged != value["historyCursor"].is_string() {
             return Err(HostError::Uncertain);
         }
         let Value::Object(mut snapshot) = value else {
@@ -451,6 +468,8 @@ impl T3 {
             sequence,
             thread,
             projection,
+            paged,
+            omits_turn_items,
         }))
     }
 }
@@ -481,7 +500,11 @@ fn frozen_payload(delivery: &QuestionDelivery) -> Result<Box<RawValue>, HostErro
     Ok(payload)
 }
 
-fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostError> {
+fn notice_state(
+    projection: &Value,
+    command: &str,
+    omits_turn_items: bool,
+) -> Result<NoticeState, HostError> {
     let message = message_id(command);
     let runs = projection["runs"].as_array().ok_or(HostError::Protocol)?;
     let messages = projection["messages"]
@@ -494,7 +517,7 @@ fn notice_state(projection: &Value, command: &str) -> Result<NoticeState, HostEr
             .find(|run| run["id"] == id)
             .ok_or(HostError::Uncertain)?;
         if run["userMessageId"] != message {
-            return promoted_steer(projection, &message, id);
+            return promoted_steer(projection, &message, id, omits_turn_items);
         }
         Some(run)
     } else {
@@ -528,6 +551,7 @@ fn promoted_steer(
     projection: &Value,
     message: &str,
     run_id: &str,
+    omits_turn_items: bool,
 ) -> Result<NoticeState, HostError> {
     let items = projection["turnItems"]
         .as_array()
@@ -538,9 +562,11 @@ fn promoted_steer(
             && item["runId"] == run_id
             && item["status"] == "completed"
     });
-    Ok(if delivered {
-        NoticeState::Started
+    if delivered {
+        Ok(NoticeState::Started)
+    } else if omits_turn_items {
+        Err(HostError::Uncertain)
     } else {
-        NoticeState::Queued
-    })
+        Ok(NoticeState::Queued)
+    }
 }

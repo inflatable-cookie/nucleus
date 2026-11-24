@@ -177,8 +177,161 @@ fn assert_thread_subscription(request: &Request, thread: &str) {
     let payload: Value = serde_json::from_str(request.payload.get()).expect("subscribe body");
     assert_eq!(
         payload,
-        json!({"threadId":thread,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
+        json!({"threadId":thread,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
+            "acceptCompactTurnItems":true,"acceptDedupedBodies":true})
     );
+}
+
+#[tokio::test]
+async fn unchanged_rows_reuse_their_snapshots_and_only_one_changed_row_reads() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let rows: Vec<_> = (0..20)
+        .map(|index| {
+            json!({
+                "id": format!("row-{index}"), "projectId": binding.project_id,
+                "worktreePath": binding.worktree_path, "branch": binding.branch,
+                "status": "idle", "visibleItemCount": 1
+            })
+        })
+        .collect();
+    let response = |row: &Value| {
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(json!({
+                "kind": "snapshot", "snapshotSequence": 16,
+                "projection": {
+                    "thread": row, "runs": [], "messages": [], "runtimeRequests": [],
+                    "providerThreads": [], "turnItems": []
+                }
+            })),
+        )
+    };
+    let mut changed = rows[7].clone();
+    changed["visibleItemCount"] = json!(2);
+    let steps = rows
+        .iter()
+        .map(response)
+        .chain(std::iter::once(response(&changed)))
+        .collect();
+    let (host, server) = server(steps).await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "sequence":1, "threads":rows, "projects":[]
+        }}));
+    let ((), warm) = T3::count_pass_calls(Box::pin(async {
+        for row in &rows {
+            host.fixture_pass()
+                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .await
+                .expect("initial exact observation");
+        }
+    }))
+    .await;
+    assert_eq!(warm["orchestration.subscribeThread"], 20);
+    let ((), unchanged) = T3::count_pass_calls(Box::pin(async {
+        for row in &rows {
+            host.fixture_pass()
+                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .await
+                .expect("unchanged observation");
+        }
+    }))
+    .await;
+    assert!(
+        unchanged.is_empty(),
+        "20 unchanged rows made calls: {unchanged:?}"
+    );
+
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":2,"thread":changed}));
+    let ((), moved) = T3::count_pass_calls(Box::pin(async {
+        for row in &rows {
+            host.fixture_pass()
+                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .await
+                .expect("observation after one row moved");
+        }
+    }))
+    .await;
+    assert_eq!(
+        moved.into_iter().collect::<Vec<_>>(),
+        [("orchestration.subscribeThread", 1)]
+    );
+    let requests = server.await.expect("native traffic");
+    assert_thread_subscription(&requests[20], "row-7");
+}
+
+#[tokio::test]
+async fn done_task_with_archived_roles_settles_from_shell_without_thread_reads() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+    let row = |id: &str| {
+        json!({
+            "id":id, "projectId":binding.project_id, "worktreePath":binding.worktree_path,
+            "branch":binding.branch, "archivedAt":"2026-11-24T15:50:00Z",
+            "providerInstanceId":"fixture-provider",
+            "modelSelection":{"instanceId":"fixture-provider","model":"nucleus"},
+            "parentThreadId":(id != parent).then_some(&parent)
+        })
+    };
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "sequence":1, "threads":[], "projects":[],
+            "archivedThreads":[row(&parent), row("worker"), row("reviewer")]
+        }}));
+    let (archive, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+        &binding,
+        "fixture-provider",
+        &["worker", "reviewer"],
+    )))
+    .await;
+    assert!(matches!(archive, Ok(crate::ArchiveStep::Finished)));
+    assert!(calls.is_empty(), "archival made calls: {calls:?}");
+}
+
+#[tokio::test]
+async fn a_large_planner_thread_uses_compact_bounded_readback_and_keeps_unknown_delivery() {
+    let mut delivery = T3::prepare_notice("planner".into(), "notice-42".into(), "Fixture").unwrap();
+    delivery.last_send_at_ms = Some(1);
+    let bounded = json!({
+        "kind":"snapshot", "snapshotSequence":900, "hasMoreHistory":true,
+        "historyCursor":"previous-items", "turnItemsOmitLocalVisible":true,
+        "projection":{
+            "thread":{"id":"planner","projectId":"fixture-project","providerInstanceId":"host",
+                "visibleItemCount":50_000},
+            "runs":[], "messages":[], "turnItems":[]
+        }
+    });
+    let mut delivered = bounded.clone();
+    delivered["projection"]["runs"] = json!([{"id":"run-42","userMessageId":"notice-42-message",
+        "status":"running","startedAt":"2026-11-24T15:56:03Z"}]);
+    let (client, server) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(bounded),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(delivered),
+        ),
+    ])
+    .await;
+    assert!(matches!(
+        client.observe_notice(&delivery).await,
+        Err(HostError::Uncertain)
+    ));
+    assert_eq!(
+        client.notice_state(&delivery).await.unwrap(),
+        crate::NoticeState::Started
+    );
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        assert_thread_subscription(&request, "planner");
+    }
 }
 
 #[tokio::test]
@@ -628,6 +781,93 @@ async fn archival_finds_displaced_children_and_reads_back_both_threads() {
     );
 }
 
+#[tokio::test]
+async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let updated = "2026-11-24T16:00:00Z";
+    let bounded = |mut value: Value| {
+        value["hasMoreHistory"] = json!(true);
+        value["historyCursor"] = json!("older worker turns");
+        value["turnItemsOmitLocalVisible"] = json!(true);
+        value["projection"]["thread"]["updatedAt"] = json!(updated);
+        value
+    };
+    let mut worker = bounded(snapshot(&binding, "child", "completed", false));
+    worker["projection"]["thread"]["parentThreadId"] = json!(parent);
+    let parent_view = bounded(parent_snapshot(&binding, "completed", false));
+    let read = "orchestration.subscribeThread";
+    let write = "orchestration.dispatchCommand";
+    let (host, native) = server(vec![
+        (read, Response::Snapshot(worker.clone())),
+        (read, Response::ParentSnapshot(parent_view.clone())),
+        (read, Response::Snapshot(worker.clone())),
+        (write, Response::Success),
+        (read, Response::ParentSnapshot(parent_view.clone())),
+        (write, Response::Success),
+    ])
+    .await;
+    let shell_row = |view: &Value| {
+        let mut row = view["projection"]["thread"].clone();
+        row["latestRunId"] = json!(NATIVE_RUN);
+        row["status"] = json!("completed");
+        row["pendingBackgroundTasks"] = json!([]);
+        row["visibleItemCount"] = json!(50_000);
+        row
+    };
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16, "projects":[],
+            "threads":[shell_row(&parent_view), shell_row(&worker)]
+        }}));
+    let mut projection = crate::Projection::parse(worker.clone(), &binding, THREAD).unwrap();
+    let mut stale = shell_row(&worker);
+    stale["updatedAt"] = json!("2026-11-24T15:59:00Z");
+    projection.use_shell_background(&stale);
+    assert!(matches!(projection.retained(), Err(HostError::Uncertain)));
+    let mut busy = shell_row(&worker);
+    busy["pendingBackgroundTasks"] = json!([{"taskId":"before-the-window"}]);
+    projection.use_shell_background(&busy);
+    assert_eq!(projection.retained().unwrap(), RetainedThread::Busy);
+
+    assert_eq!(
+        quiet_pass(&host)
+            .observe_retained(&binding, THREAD)
+            .await
+            .unwrap(),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Idle,
+        }
+    );
+    for (index, view) in [&worker, &parent_view].into_iter().enumerate() {
+        let crate::ArchiveStep::Write(effect) = host
+            .prepare_parent_archive(&binding, "fixture-acp", &[])
+            .await
+            .unwrap()
+        else {
+            panic!("idle bounded thread can be archived");
+        };
+        host.write_parent(effect).await.unwrap();
+        let mut row = shell_row(view);
+        row["archivedAt"] = json!("2026-11-24T16:01:00Z");
+        host.rpc
+            .fixture_shell(&json!({"kind":"thread.updated","sequence":17 + index,"thread":row}));
+    }
+    assert!(matches!(
+        host.prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .await
+            .unwrap(),
+        crate::ArchiveStep::Finished
+    ));
+    let requests = native.await.unwrap();
+    assert_thread_subscription(&requests[0], THREAD);
+    assert_thread_subscription(&requests[1], &parent);
+    assert_thread_subscription(&requests[2], THREAD);
+    assert_thread_subscription(&requests[4], &parent);
+}
+
 #[test]
 fn native_child_lineage_binds_the_exact_parent_without_another_read() {
     let checkout = checkout_fixture();
@@ -1049,6 +1289,10 @@ async fn superseded_review_replay_archives_after_exact_stop() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "assert the full unarchive, operator snooze and continuation sequence"
+)]
 async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -1077,16 +1321,20 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
     let (client, server) = server(vec![
-        (probe, Response::Snapshot(archived.clone())),
-        (probe, Response::Snapshot(archived)),
         (command, Response::Success),
         (probe, Response::Snapshot(operator_snoozed)),
         (probe, Response::Snapshot(settled)),
         (command, Response::Success),
-        (probe, Response::Snapshot(restored)),
+        (probe, Response::Snapshot(restored.clone())),
         (command, Response::Success),
     ])
     .await;
+    client
+        .rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "sequence":1, "projects":[], "threads":[],
+            "archivedThreads":[archived["projection"]["thread"]]
+        }}));
     let pass = quiet_pass(&client);
     let retained = pass
         .observe_retained(&binding, THREAD)
@@ -1119,6 +1367,11 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
     pass.write_control(permit.unarchive().expect("unarchive"))
         .await
         .expect("unarchived");
+    client
+        .rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":2,
+            "thread":restored["projection"]["thread"]
+        }));
     assert!(
         matches!(
             pass.authorize_send(task.run().expect("run")).await,
@@ -1138,9 +1391,9 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
         SendOutcome::Sent
     );
     let sent = server.await.expect("scripted host");
-    let unarchive: Value = serde_json::from_str(sent[2].payload.get()).expect("unarchive payload");
-    let wake: Value = serde_json::from_str(sent[5].payload.get()).expect("unsettle payload");
-    let message: Value = serde_json::from_str(sent[7].payload.get()).expect("continuation payload");
+    let unarchive: Value = serde_json::from_str(sent[0].payload.get()).expect("unarchive payload");
+    let wake: Value = serde_json::from_str(sent[3].payload.get()).expect("unsettle payload");
+    let message: Value = serde_json::from_str(sent[5].payload.get()).expect("continuation payload");
     assert_eq!(wake["type"], "thread.unsettle");
     assert_eq!(wake["reason"], "user");
     assert_eq!(
