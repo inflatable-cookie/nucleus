@@ -46,7 +46,7 @@ pub(crate) enum Activity {
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
     runtime: Option<(u32, HashMap<u32, RuntimeProcess>)>,
-    scoped: Mutex<HashMap<PathBuf, ScopedResult>>,
+    scoped: Mutex<HashMap<(PathBuf, Option<PathBuf>), ScopedResult>>,
 }
 
 type ScopedResult = Result<Option<HashSet<u32>>, HostError>;
@@ -73,6 +73,20 @@ impl Inventory {
             runtime: None,
             scoped: Mutex::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cwd_fixture(path: &Path) -> Self {
+        let mut inventory = Self::quiet_fixture();
+        inventory.processes.insert(
+            2,
+            ProcessPaths {
+                parent: 1,
+                cwd: Some(path.into()),
+                ambiguous_path: false,
+            },
+        );
+        inventory
     }
 
     #[cfg(test)]
@@ -282,21 +296,25 @@ impl Inventory {
     pub(crate) async fn activity_for(
         &self,
         checkout: &Path,
-        scratch: &Path,
+        run_scratch: Option<&Path>,
+        temporary: &Path,
         runtime: &HashSet<u32>,
     ) -> Result<Activity, HostError> {
         match (
             self.activity(checkout, runtime)?,
-            self.activity(scratch, runtime)?,
+            run_scratch.map_or(Ok(Activity::Quiet), |path| self.activity(path, runtime))?,
         ) {
             (Activity::Busy, _) | (_, Activity::Busy) => return Ok(Activity::Busy),
             (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
             (Activity::Quiet, Activity::Quiet) => {}
         }
         let mut scoped = self.scoped.lock().await;
-        let scan = match scoped.entry(checkout.to_path_buf()) {
+        let key = (checkout.to_path_buf(), run_scratch.map(Path::to_path_buf));
+        let scan = match scoped.entry(key) {
             Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => entry.insert(scoped_activity(checkout, scratch).await),
+            Entry::Vacant(entry) => {
+                entry.insert(scoped_activity(checkout, run_scratch, temporary).await)
+            }
         };
         let paths = scan.as_ref().map_err(|error| *error)?;
         Ok(match paths {
@@ -421,10 +439,14 @@ impl<'a> Witness<'a> {
     }
 }
 
-async fn scoped_activity(checkout: &Path, scratch: &Path) -> ScopedResult {
+async fn scoped_activity(
+    checkout: &Path,
+    run_scratch: Option<&Path>,
+    temporary: &Path,
+) -> ScopedResult {
     let mut witnesses = vec![Witness::open(checkout)?];
-    if scratch != checkout {
-        witnesses.push(Witness::open(scratch)?);
+    if let Some(path) = run_scratch.filter(|path| *path != checkout) {
+        witnesses.push(Witness::open(path)?);
     }
     let mut args: Vec<&OsStr> = ["-n", "-P", "-V", "-F0pfn"]
         .into_iter()
@@ -433,7 +455,7 @@ async fn scoped_activity(checkout: &Path, scratch: &Path) -> ScopedResult {
     for witness in &witnesses {
         args.extend([OsStr::new("+D"), witness.path.as_os_str()]);
     }
-    let listing = read_listing("/usr/sbin/lsof", &args, Some(scratch)).await?;
+    let listing = read_listing("/usr/sbin/lsof", &args, Some(temporary)).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
     Ok(scoped_listing(&listing, &witnesses))
@@ -705,21 +727,25 @@ mod tests {
         })
         .collect();
         inventory.runtime = Some((10, runtime));
-        inventory
-            .scoped
-            .get_mut()
-            .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23]))));
+        inventory.scoped.get_mut().insert(
+            (checkout.clone(), Some(scratch.clone())),
+            Ok(Some(HashSet::from([21, 22, 23]))),
+        );
         let runtime = inventory.standing_pids("fixture-thread");
         assert!(matches!(
-            inventory.activity_for(&checkout, &scratch, &runtime).await,
+            inventory
+                .activity_for(&checkout, Some(&scratch), &scratch, &runtime)
+                .await,
             Ok(Activity::Quiet)
         ));
-        inventory
-            .scoped
-            .get_mut()
-            .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23, 24]))));
+        inventory.scoped.get_mut().insert(
+            (checkout.clone(), Some(scratch.clone())),
+            Ok(Some(HashSet::from([21, 22, 23, 24]))),
+        );
         assert!(matches!(
-            inventory.activity_for(&checkout, &scratch, &runtime).await,
+            inventory
+                .activity_for(&checkout, Some(&scratch), &scratch, &runtime)
+                .await,
             Ok(Activity::Busy)
         ));
     }
@@ -735,12 +761,12 @@ mod tests {
         let path = nested.join("tool-file");
         std::fs::File::create(&path).expect("file initially closed");
         assert!(matches!(
-            scoped_activity(&checkout, &scratch).await,
+            scoped_activity(&checkout, Some(&scratch), &scratch).await,
             Ok(Some(pids)) if pids.is_empty()
         ));
         let held = std::fs::File::open(&path).expect("open file outside process cwd");
         assert!(matches!(
-            scoped_activity(&checkout, &scratch).await,
+            scoped_activity(&checkout, Some(&scratch), &scratch).await,
             Ok(Some(pids)) if pids.contains(&std::process::id())
         ));
         drop(held);

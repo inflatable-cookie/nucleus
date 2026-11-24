@@ -1,6 +1,7 @@
 use std::{net::IpAddr, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
+use longhorn_redact::{RedactionRules, Redactor};
 use reqwest::{Client, Url, header::HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -130,6 +131,44 @@ impl ThreadHint {
 }
 
 impl Rpc {
+    pub(crate) fn failure_detail(&self, cause: &Value) -> String {
+        let secret = self
+            .bearer
+            .to_str()
+            .ok()
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(str::to_owned);
+        let redactor = Redactor::new(secret, RedactionRules::common());
+        let mut error = cause
+            .get(0)
+            .and_then(|item| item.get("error"))
+            .unwrap_or(cause);
+        let mut parts = Vec::new();
+        for _ in 0..4 {
+            for field in ["_tag", "name", "message"] {
+                if let Some(text) = error[field].as_str() {
+                    parts.push(
+                        redactor
+                            .redact(text)
+                            .text
+                            .chars()
+                            .take(180)
+                            .collect::<String>(),
+                    );
+                }
+            }
+            let Some(nested) = error.get("cause").filter(|value| value.is_object()) else {
+                break;
+            };
+            error = nested;
+        }
+        if parts.is_empty() {
+            "unrecognized T3 failure shape".into()
+        } else {
+            parts.join(": ")
+        }
+    }
+
     pub(crate) const fn endpoint(&self) -> &Url {
         &self.base
     }

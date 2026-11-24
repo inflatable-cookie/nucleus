@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -12,7 +12,7 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
-    SendOutcome, StopProgress, TaskHost,
+    SendOutcome, StopProgress, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -27,7 +27,11 @@ use crate::{
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
-const RUN_SCRATCH: &str = "run-scratch";
+const LEGACY_RUN_SCRATCH: &str = "run-scratch";
+
+fn run_scratch(task: &Task, instance: &str) -> PathBuf {
+    Path::new(&task.identity().id).join(instance)
+}
 
 pub(super) enum DispatchTarget<'a> {
     Run {
@@ -52,6 +56,18 @@ pub(super) struct DispatchPermit<'a> {
 }
 
 impl Service {
+    pub(super) fn existing_run_scratch(&self, task: &Task) -> Option<PathBuf> {
+        let instance = &task.run()?.launch().instance;
+        let root = self.storage.scratch().path();
+        let path = root.join(run_scratch(task, instance));
+        let legacy = root.join(LEGACY_RUN_SCRATCH).join(instance);
+        Some(if path.exists() || !legacy.exists() {
+            path
+        } else {
+            legacy
+        })
+    }
+
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let provider = self.acp_provider();
         if provider.is_none() && row.task.report_task().is_none() {
@@ -250,7 +266,16 @@ impl Service {
                 }
                 (Observed::Known(seen.host), seen.activity, None)
             }
-            Err(error) => (Observed::Unknown, None, Some(error)),
+            Err(error) => {
+                if run.last_send_at_ms().is_none() {
+                    eprintln!(
+                        "{}: before reading T3 launch state for {}: {error}",
+                        run.launch().instance,
+                        launch_diagnostic(run)
+                    );
+                }
+                (Observed::Unknown, None, Some(error))
+            }
         };
         self.observe_activity(row, activity).await?;
         Ok((state, error))
@@ -464,8 +489,7 @@ impl Service {
             .storage
             .scratch()
             .path()
-            .join(RUN_SCRATCH)
-            .join(&instance);
+            .join(run_scratch(task, &instance));
         if ticket_path.starts_with(checkout.path()) || scratch.starts_with(checkout.path()) {
             return Err(ServiceError::Ticket);
         }
@@ -604,7 +628,7 @@ impl Service {
         self.storage.database().verify()?;
         self.storage
             .scratch()
-            .ensure_child(&Path::new(RUN_SCRATCH).join(&run.launch().instance))?;
+            .ensure_child(&run_scratch(updated, &run.launch().instance))?;
         ticket::prepare(
             self.storage.scratch(),
             updated,
@@ -706,9 +730,14 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Option<(TaskRow, SendOutcome, bool)>, ServiceError> {
         let task = &row.task;
-        let authorization = host
-            .authorize_send(task.run().ok_or(ServiceError::Input)?)
-            .await?;
+        let run = task.run().ok_or(ServiceError::Input)?;
+        let authorization = host.authorize_send(run).await.inspect_err(|error| {
+            eprintln!(
+                "{}: before sending T3 {}: {error}",
+                run.launch().instance,
+                launch_diagnostic(run)
+            );
+        })?;
         let _fence = self.effect(row).await?;
         let target = DispatchTarget::Run {
             frozen: authorization.binding(),

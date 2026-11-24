@@ -389,6 +389,11 @@ outside both the checkout and the run scratch scanned for custody.
 The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
 
+Each run gets its own `<scratch-root>/<task>/<run>` directory. The cwd and
+open-file census covers the checkout and that run's scratch. An existing
+reservation keeps its original scratch path. The shared class root only hosts
+temporary files for the census itself.
+
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
 credential. The service checks current authority locally before committing

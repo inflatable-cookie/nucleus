@@ -1,0 +1,1 @@
+Launch and release check activity in the task checkout and its own run scratch. Unrelated work in shared scratch no longer blocks dispatch. Launch logs name the native operation, profile, and redacted reason.

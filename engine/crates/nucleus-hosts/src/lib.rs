@@ -28,7 +28,8 @@ use std::{
 pub use catalog::{ProfileCatalog, ProfileOffer};
 pub use inbox::{INBOX_THREAD, InboxLifecycle, InboxStatus, InboxStep, InboxTarget, InboxWrite};
 pub use launch::{
-    Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_provider_instance,
+    Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_diagnostic,
+    launch_provider_instance,
 };
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
@@ -82,6 +83,8 @@ pub enum HostError {
     Uncertain,
     #[error("the local process census could not confirm workspace custody")]
     ProcessCoverage,
+    #[error("a process still occupies the task checkout or run scratch directory")]
+    WorkspaceBusy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +256,7 @@ pub struct T3Pass<'a> {
     host: &'a T3,
     evidence: Arc<PassEvidence>,
     scratch: Option<&'a Path>,
+    run_scratch: Option<PathBuf>,
     role_threads: [Option<String>; 2],
 }
 
@@ -294,6 +298,7 @@ impl T3 {
             host: self,
             evidence: Arc::new(PassEvidence::default()),
             scratch: Some(scratch),
+            run_scratch: None,
             role_threads: [None, None],
         }
     }
@@ -309,6 +314,7 @@ impl T3 {
                 ..PassEvidence::default()
             }),
             scratch: None,
+            run_scratch: None,
             role_threads: [None, None],
         }
     }
@@ -411,7 +417,13 @@ impl T3 {
         match reply {
             Reply::Value(value) => Projection::parse(value, binding, id).map(Some),
             Reply::Failure(cause) if projection::missing_thread(&cause, id) => Ok(None),
-            Reply::Failure(_) => Err(HostError::Protocol),
+            Reply::Failure(cause) => {
+                eprintln!(
+                    "{id}: T3 orchestration.subscribeThread: {:?}",
+                    self.rpc.failure_detail(&cause)
+                );
+                Err(HostError::Protocol)
+            }
         }
     }
 
@@ -448,13 +460,14 @@ impl T3 {
 }
 
 impl T3Pass<'_> {
-    /// Scope custody to the task's recorded roles while sharing this pass's census.
+    /// Scope custody to the task's recorded roles and current run scratch.
     #[must_use]
-    pub fn for_task(&self, task: &Task) -> Self {
+    pub fn for_task(&self, task: &Task, run_scratch: Option<PathBuf>) -> Self {
         Self {
             host: self.host,
             evidence: Arc::clone(&self.evidence),
             scratch: self.scratch,
+            run_scratch,
             role_threads: [Role::Worker, Role::Reviewer]
                 .map(|role| task.threads().get(role).map(str::to_owned)),
         }
@@ -508,7 +521,7 @@ impl T3Pass<'_> {
         }
         let activity = match self.scratch {
             Some(scratch) => inventory
-                .activity_for(checkout, scratch, &runtime)
+                .activity_for(checkout, self.run_scratch.as_deref(), scratch, &runtime)
                 .await
                 .map_err(|_| HostError::ProcessCoverage)?,
             None => inventory.activity(checkout, &runtime)?,
@@ -637,12 +650,14 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::Binding);
         }
-        if state != RunState::ReadyToSend
-            || !self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
-        {
+        if state != RunState::ReadyToSend {
             return Err(HostError::Uncertain);
+        }
+        if !self
+            .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+            .await?
+        {
+            return Err(HostError::WorkspaceBusy);
         }
         Ok(ReplayAuthorization {
             instance: run.launch().instance.clone(),
@@ -667,6 +682,16 @@ impl TaskHost for T3Pass<'_> {
             .rpc
             .call(wire.method.rpc(), wire.payload.as_ref(), Read::One)
             .await;
+        match &reply {
+            Ok(Reply::Failure(cause)) => eprintln!(
+                "{}: T3 {} refused with {:?}",
+                dispatch.instance,
+                wire.diagnostic(),
+                self.host.rpc.failure_detail(cause)
+            ),
+            Err(error) => eprintln!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
+            Ok(Reply::Value(_)) => {}
+        }
         if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))
         {
             return Ok(SendOutcome::Rejected);
