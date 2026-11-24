@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import { errorText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -242,6 +243,7 @@ function OpenedProject({
   onOpenProject?: (key: string) => void;
   r: ReturnType<typeof roles>;
 }) {
+  const features = useEngineFeatures();
   const project = entry.project;
   const saves = useProjectSaves(actions.refresh);
   // Fields stay, never blank, but take no edits while the project could not be re-read.
@@ -434,14 +436,15 @@ function OpenedProject({
       <View style={{ ...row, flexWrap: "nowrap" }}>
         {back}
         <View style={{ flex: 1 }} />
-        <ActionButton
+        {/* Rust engine (ruling 8): repositories move one at a time through Add repository. */}
+        {features.projectAgents && <ActionButton
           c={c}
           action="moveInto"
           label={`Move ${project.name} into another project`}
           disabled={disabled || moving}
           onPress={() => setMoving(true)}
-        />
-        {actions.removal && (
+        />}
+        {actions.removal && features.projectAgents && (
           <ActionButton
             c={c}
             action="remove"
@@ -512,14 +515,17 @@ function OpenedProject({
           onBlur={saves.flush}
         />
         <View style={{ gap: space.xs }}>
-          <DropdownSelect
+          {features.projectAgents ? <DropdownSelect
             c={c}
             label="Preferred thread"
             value={planner ?? NONE}
             disabled={disabled}
             options={plannerOptions(entry, candidates.data, planner)}
             onChange={choosePlanner}
-          />
+          /> : (
+            // Rust engine (ruling 8): the planner resolves live and is never typed in.
+            <Field c={c} label="Planner" value={planner ?? "None resolved"} disabled onChange={() => {}} />
+          )}
           {Boolean(candidates.error) && (
             <Text
               style={{
@@ -576,14 +582,14 @@ function OpenedProject({
           />
         </View>
       </View>
-      <AgentsSection
+      {features.projectAgents && <AgentsSection
         c={c}
         project={project}
         agents={entry.agents ?? []}
         disabled={disabled}
         actions={actions}
         r={r}
-      />
+      />}
       <View
         style={{
           gap: space.xs,
