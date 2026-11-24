@@ -857,6 +857,10 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
             (read, Response::ParentSnapshot(fresh.clone())),
             (read, Response::ParentSnapshot(changed)),
             (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh.clone())),
+            (read, Response::ParentSnapshot(fresh.clone())),
             (read, Response::ParentSnapshot(fresh)),
             ("orchestration.dispatchCommand", Response::Success),
         ])
@@ -907,6 +911,32 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
             .unwrap_err()
             .to_string();
         assert!(error.contains("active run or runtime request"), "{error}");
+        let mut verified = Vec::new();
+        for _ in 0..2 {
+            let crate::ParentStep::Write(mut write) = prepare().await.unwrap() else {
+                panic!("prepare an idle parent message");
+            };
+            host.verify_parent_write(&mut write).await.unwrap();
+            verified.push(write);
+        }
+        row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
+        host.rpc
+            .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
+        let mut refusals = Vec::new();
+        for write in verified {
+            let Err(crate::ParentSendError::NotSent(error)) =
+                host.write_verified_parent(write).await
+            else {
+                panic!("new background work must refuse the write before the wire");
+            };
+            refusals.push(error.to_string());
+        }
+        assert_eq!(refusals[0], refusals[1]);
+        assert!(refusals[0].contains("pendingBackgroundTasks changed"));
+        row["pendingBackgroundTasks"] = json!([]);
+        row["updatedAt"] = json!("2026-11-24T17:39:00Z");
+        host.rpc
+            .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
         let crate::ParentStep::Write(last) = prepare().await.unwrap() else {
             panic!("the task can replan once custody converges");
         };
@@ -915,7 +945,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
             Some(format!("{thread}-hold-18").as_str())
         );
         host.write_parent(last).await.unwrap();
-        assert_eq!(native.await.unwrap().len(), 7);
+        assert_eq!(native.await.unwrap().len(), 11);
     }
 }
 
