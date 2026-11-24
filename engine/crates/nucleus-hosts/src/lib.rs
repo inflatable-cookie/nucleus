@@ -930,12 +930,12 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::Uncertain);
         }
-        let quiet = !matches!(state, RunState::Ended | RunState::Gone)
-            || self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?;
+        let background_pending = match &thread {
+            Some(thread) if state == RunState::Ended => thread.terminal_background_pending()?,
+            _ => false,
+        };
         let message = wire.message_id(&run.launch().instance);
-        if quiet
+        if !background_pending
             && state == RunState::Ended
             && thread
                 .as_ref()
@@ -947,7 +947,7 @@ impl TaskHost for T3Pass<'_> {
             .as_ref()
             .filter(|_| state == RunState::Ended)
             .and_then(|thread| thread.provider_limit(&message));
-        let state = if !quiet {
+        let state = if background_pending {
             RunState::Running
         } else if provider_limit.is_some() {
             RunState::UsageLimited

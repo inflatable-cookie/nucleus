@@ -1534,7 +1534,7 @@ async fn ready_notice(
 }
 
 #[tokio::test]
-async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
+async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_removal() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, _, instance) = reserve(binding.clone());
@@ -1579,29 +1579,33 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
     let run = task.run().expect("run");
     let pass = client.pass(checkout.path());
     assert_eq!(
-        pass.observe_run(run, 2).await.expect("busy checkout").host,
-        Host::Current {
-            instance: instance.clone(),
-            state: RunState::Running
-        }
-    );
-    process.kill().await.expect("stop fixture child");
-    assert_eq!(
-        pass.observe_run(run, 3).await.expect("same inventory").host,
-        Host::Current {
-            instance: instance.clone(),
-            state: RunState::Running
-        }
-    );
-    assert_eq!(
-        quiet_pass(&client)
-            .observe_run(run, 3)
+        pass.observe_run(run, 2)
             .await
-            .expect("quiet checkout")
+            .expect("exact turn ended")
             .host,
         Host::Current {
             instance,
             state: RunState::Ended
+        }
+    );
+    assert_eq!(
+        pass.observe_retained(&binding, THREAD)
+            .await
+            .expect("writer present"),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Busy
+        }
+    );
+    process.kill().await.expect("stop fixture child");
+    assert_eq!(
+        quiet_pass(&client)
+            .observe_retained(&binding, THREAD)
+            .await
+            .expect("writer exited"),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Idle
         }
     );
     server.await.expect("scripted host");

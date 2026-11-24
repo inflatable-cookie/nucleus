@@ -508,15 +508,29 @@ impl Projection {
             return Ok(RetainedThread::Busy);
         }
         if !self.has_idle_coverage() {
-            return Err(HostError::RetainedIdleCoverage {
-                revision: self.sequence,
-                providers: self.provider_threads.is_some(),
-                turn_items: self.turn_items.is_some(),
-                shell_background: !(self.windowed || self.compact_turn_items)
-                    || self.shell_background_work.is_some(),
-            });
+            return Err(self.idle_coverage_error());
         }
         Ok(RetainedThread::Idle)
+    }
+
+    pub(crate) fn terminal_background_pending(&self) -> Result<bool, HostError> {
+        if self.background_work() || self.shell_background_work == Some(true) {
+            return Ok(true);
+        }
+        if self.shell_background_work == Some(false) || self.has_idle_coverage() {
+            return Ok(false);
+        }
+        Err(self.idle_coverage_error())
+    }
+
+    fn idle_coverage_error(&self) -> HostError {
+        HostError::RetainedIdleCoverage {
+            revision: self.sequence,
+            providers: self.provider_threads.is_some(),
+            turn_items: self.turn_items.is_some(),
+            shell_background: !(self.windowed || self.compact_turn_items)
+                || self.shell_background_work.is_some(),
+        }
     }
 
     fn busy_reason(&self) -> Option<&'static str> {
