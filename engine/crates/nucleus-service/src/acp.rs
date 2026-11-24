@@ -61,6 +61,10 @@ fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
 }
 
 impl Service {
+    pub(super) fn turn_failure_scope(&self, session: &str) -> String {
+        format!("{session}/{}", self.turn_epoch)
+    }
+
     pub(super) fn acp_turn_view(
         &self,
         state: &State,
@@ -84,17 +88,15 @@ impl Service {
         let Some(session) = self.host.runtime_identity() else {
             return Ok((None, false));
         };
-        if state
-            .store
-            .task_turn_command(id, "native_turn_failed", row.version, &session)?
-            .is_some()
-        {
-            return Ok((None, false));
-        }
         let command =
             state
                 .store
                 .task_turn_command(id, "native_turn_intent", row.version, &session)?;
+        if let Some(command) = &command
+            && state.store.task_turn_failed(id, command)?
+        {
+            return Ok((None, false));
+        }
         Ok((command.as_deref().map(parent_hold_prompt), false))
     }
 
@@ -114,12 +116,45 @@ impl Service {
         let mut state = self.state.lock().await;
         let recorded = state.store.claim_task_effect(id, &intent)?;
         if recorded {
-            if kind == "native_turn_intent" {
+            if matches!(kind, "native_turn_intent" | "native_turn_replay") {
                 state.set_wait(id, Some(WaitReason::Starting));
+            } else if kind == "native_turn_failed" {
+                state.wake_capacity(tokio::time::Instant::now());
+                self.wake.notify_one();
             }
             self.publish(id, row.version);
         }
         Ok(recorded)
+    }
+
+    pub(super) async fn write_claimed_parent(
+        &self,
+        row: &TaskRow,
+        session: &str,
+        write: nucleus_hosts::ParentWrite,
+    ) -> Result<(), ServiceError> {
+        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
+        let sent = self.host.write_verified_parent(write).await;
+        if matches!(sent, Err(nucleus_hosts::HostError::Deferred { .. })) {
+            self.record_native_turn(row, "native_turn_not_sent", session, &command)
+                .await?;
+        }
+        Ok(sent?)
+    }
+
+    pub(super) async fn verify_native_parent(
+        &self,
+        row: &TaskRow,
+        write: &nucleus_hosts::ParentWrite,
+    ) -> Result<(), ServiceError> {
+        if let Err(error) = self.host.verify_parent_write(write).await {
+            if let Some(command) = write.command_id() {
+                self.record_native_turn(row, "native_turn_not_sent", "preflight", command)
+                    .await?;
+            }
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     pub(super) async fn record_failed_parent_turn(
@@ -129,12 +164,17 @@ impl Service {
         command: &str,
     ) -> Result<(), ServiceError> {
         if self
-            .record_native_turn(row, "native_turn_failed", session, command)
+            .record_native_turn(
+                row,
+                "native_turn_failed",
+                &self.turn_failure_scope(session),
+                command,
+            )
             .await?
         {
             let id = &row.task.identity().id;
             eprintln!(
-                "{id}: T3 parent turn failed ({command}); waiting for a task or session change"
+                "{id}: T3 parent turn failed ({command}); waiting for a task, session, or engine change"
             );
         }
         Ok(())
@@ -202,6 +242,7 @@ impl Service {
             .host
             .runtime_identity()
             .ok_or(nucleus_hosts::HostError::Uncertain)?;
+        self.verify_native_parent(row, &write).await?;
         if self
             .state
             .lock()
@@ -220,7 +261,7 @@ impl Service {
         {
             return Ok(false);
         }
-        self.host.write_parent(write).await?;
+        self.write_claimed_parent(row, &session, write).await?;
         Ok(true)
     }
 

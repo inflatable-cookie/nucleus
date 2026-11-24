@@ -7,7 +7,7 @@ use nucleus_core::{
     RetainedThread, Role, Task, WaitReason, Workspace,
 };
 use nucleus_forge::Branches;
-use nucleus_hosts::{NoticeHost, NoticeWrite, T3, TaskHost};
+use nucleus_hosts::{HostError, NoticeHost, NoticeWrite, T3, TaskHost};
 use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
     planning::{Lane, WriteAt},
@@ -275,11 +275,14 @@ impl Service {
         audit.detail =
             serde_json::json!({ "command": attempt.command, "recipient": attempt.thread })
                 .to_string();
-        self.save(row, updated, &audit).await?;
+        let recorded = self.save(row, updated, &audit).await?;
         // The intent is durable before the write. Unknown delivery grants no retry.
-        self.host
-            .deliver_notice(NoticeWrite::Queue(dispatch))
-            .await?;
+        let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        if matches!(send, Err(HostError::Deferred { .. })) {
+            audit.kind = "report_ready_planner_notice_not_sent".into();
+            self.save(&recorded, task.clone(), &audit).await?;
+        }
+        send?;
         Ok(Action::Nothing)
     }
 

@@ -532,9 +532,17 @@ impl Service {
         if claimed {
             self.publish(id, row.version);
             // The recorded attempt fences unknown delivery across retries and restarts.
-            self.host
-                .deliver_notice(NoticeWrite::Queue(dispatch))
-                .await?;
+            let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+            if matches!(send, Err(nucleus_hosts::HostError::Deferred { .. })) {
+                let mut outcome = event("prerequisite_notice_not_sent");
+                outcome.detail.clone_from(&audit.detail);
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .defer_prerequisite_notice(id, version, &audit, &outcome)?;
+            }
+            send?;
         }
         Ok(self
             .state

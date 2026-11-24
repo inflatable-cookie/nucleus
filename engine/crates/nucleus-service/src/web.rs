@@ -990,7 +990,10 @@ impl Summary {
             phase: task.phase(),
             attention: state.task_attention(row)?,
             next_check_at: None,
-            wait: if task.run().is_some_and(nucleus_core::Run::revoked) {
+            wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
+            {
+                wait
+            } else if task.run().is_some_and(nucleus_core::Run::revoked) {
                 Some(WaitReason::Stopping)
             } else if task.phase() == Phase::Done {
                 None

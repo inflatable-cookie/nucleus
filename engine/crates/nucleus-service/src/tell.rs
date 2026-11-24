@@ -324,11 +324,13 @@ impl Service {
             TellDispatch::Advance(TellState::InFlight(attempt.clone())),
         )
         .await?;
-        let next = match self
-            .host
-            .deliver_notice(NoticeWrite::Queue(dispatch))
-            .await?
-        {
+        let result = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        if matches!(result, Err(HostError::Deferred { .. })) {
+            return self
+                .save_tell(rows, TellDispatch::Advance(TellState::Pending))
+                .await;
+        }
+        let next = match result? {
             NoticeSend::Accepted => TellState::Accepted(attempt),
             NoticeSend::Rejected => TellState::Pending,
             NoticeSend::Prepared => return Err(HostError::Protocol.into()),

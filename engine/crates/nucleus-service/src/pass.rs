@@ -159,7 +159,8 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.host.write_parent(write).await?;
+                self.verify_native_parent(row, &write).await?;
+                self.write_claimed_parent(row, "archive", write).await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
@@ -435,12 +436,15 @@ impl Service {
         route: &ProjectRoute,
         slots: u32,
     ) -> Result<bool, ServiceError> {
-        let candidates = self
-            .state
-            .lock()
-            .await
-            .store
-            .project_workspace_candidates(&identity.id, &route.repositories)?;
+        let scope = self
+            .host
+            .runtime_identity()
+            .map(|session| self.turn_failure_scope(&session));
+        let candidates = self.state.lock().await.store.project_workspace_candidates(
+            &identity.id,
+            &route.repositories,
+            scope.as_deref(),
+        )?;
         self.storage.work().verify()?;
         let mut in_flight = 0;
         for (task, repository) in candidates {
@@ -695,22 +699,34 @@ impl Service {
             return Ok(ControlFlow::Break(WaitReason::Capacity));
         }
         let session = self.host.runtime_identity().ok_or(HostError::Uncertain)?;
+        let failed_scope = self.turn_failure_scope(&session);
         let (prior_turn, released_at) = {
             let state = self.state.lock().await;
             if state
                 .store
-                .task_turn_command(&identity.id, "native_turn_failed", row.version, &session)?
+                .task_turn_command(
+                    &identity.id,
+                    "native_turn_failed",
+                    row.version,
+                    &failed_scope,
+                )?
                 .is_some()
             {
                 return Ok(ControlFlow::Break(WaitReason::HostUnknown));
             }
+            let mut prior = state.store.task_turn_command(
+                &identity.id,
+                "native_turn_intent",
+                row.version,
+                &session,
+            )?;
+            if let Some(command) = &prior
+                && state.store.task_turn_failed(&identity.id, command)?
+            {
+                prior = None;
+            }
             (
-                state.store.task_turn_command(
-                    &identity.id,
-                    "native_turn_intent",
-                    row.version,
-                    &session,
-                )?,
+                prior,
                 state
                     .waits
                     .get(&identity.id)
@@ -764,22 +780,42 @@ impl Service {
                 }
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
-                if write.starts_turn()
-                    && !self
-                        .record_native_turn(
-                            row,
-                            "native_turn_intent",
-                            &session,
-                            write.command_id().ok_or(ServiceError::Input)?,
-                        )
-                        .await?
+                self.verify_native_parent(row, &write).await?;
+                if !self
+                    .claim_preparation_turn(row, &write, &session, prior_turn.as_deref())
+                    .await?
                 {
                     return Ok(ControlFlow::Break(WaitReason::HostUnknown));
                 }
-                self.host.write_parent(write).await?;
+                self.write_claimed_parent(row, &session, write).await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))
             }
+        }
+    }
+
+    async fn claim_preparation_turn(
+        &self,
+        row: &TaskRow,
+        write: &nucleus_hosts::ParentWrite,
+        session: &str,
+        prior: Option<&str>,
+    ) -> Result<bool, ServiceError> {
+        if !write.starts_turn() {
+            return Ok(true);
+        }
+        let command = write.command_id().ok_or(ServiceError::Input)?;
+        if prior == Some(command) {
+            self.record_native_turn(
+                row,
+                "native_turn_replay",
+                &self.turn_failure_scope(session),
+                command,
+            )
+            .await
+        } else {
+            self.record_native_turn(row, "native_turn_intent", session, command)
+                .await
         }
     }
 
@@ -1047,7 +1083,15 @@ impl Service {
                 dispatch,
             )
         };
-        let result = host.send(dispatch).await?;
+        let result = match host.send(dispatch).await {
+            Err(error @ HostError::Deferred { .. }) => {
+                let mut audit = event("host_send_not_sent");
+                audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
+                self.save(&sent, row.task.clone(), &audit).await?;
+                return Err(error.into());
+            }
+            result => result?,
+        };
         if archive && result == SendOutcome::Rejected {
             let mut updated = sent.task.clone();
             let instance = &sent
@@ -1297,7 +1341,15 @@ impl Service {
             launch: false,
         };
         if let Some(_permit) = self.dispatch_gate(&row.task, target).await? {
-            host.write_control(dispatch).await?;
+            let command = dispatch.command_id().map(str::to_owned);
+            let written = host.write_control(dispatch).await;
+            if matches!(written, Err(HostError::Deferred { .. }))
+                && let Some(command) = command
+            {
+                self.record_native_turn(row, "native_turn_not_sent", "stop", &command)
+                    .await?;
+            }
+            written?;
         }
         Ok(Action::Wait(WaitReason::Stopping))
     }

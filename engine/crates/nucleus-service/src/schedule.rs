@@ -15,7 +15,6 @@ pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
 pub(crate) const LIVE_CHECK: Duration = Duration::from_secs(45);
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
-const HOST_RETRY_CAP: Duration = Duration::from_mins(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
@@ -76,9 +75,12 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::Question,
         ) => (T3_RETRY_DELAY, Priority::Decision),
         Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),
-        Some(WaitReason::Capacity | WaitReason::Prerequisite | WaitReason::AssignmentTooLarge) => {
-            (Duration::from_mins(1), Priority::Refresh)
-        }
+        Some(
+            WaitReason::Capacity
+            | WaitReason::Prerequisite
+            | WaitReason::AssignmentTooLarge
+            | WaitReason::HostObservationBlocked,
+        ) => (Duration::from_mins(1), Priority::Refresh),
         Some(WaitReason::ChecksPending) => (Duration::from_secs(15), Priority::Decision),
         _ => (Duration::from_secs(3), Priority::Decision),
     }
@@ -86,10 +88,16 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
 
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
-    host_retry: BTreeMap<String, Duration>,
+    host_retry: BTreeMap<String, HostRecovery>,
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostRecovery {
+    CheckAt(Instant),
+    Blocked,
 }
 
 impl Schedule {
@@ -104,6 +112,11 @@ impl Schedule {
     }
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
+        let due = match self.host_retry.get(id) {
+            Some(HostRecovery::CheckAt(after)) => due.max(*after),
+            Some(HostRecovery::Blocked) => return,
+            None => due,
+        };
         self.tasks.entry(id.into()).or_default().wake(due, priority);
     }
 
@@ -111,24 +124,40 @@ impl Schedule {
         self.tasks.entry(id.into()).or_default();
     }
 
-    pub(crate) fn retry_task(
+    pub(crate) fn recover_host_observation(
         &mut self,
         id: &str,
-        wait: Option<WaitReason>,
-    ) -> (Duration, Priority) {
-        if wait == Some(WaitReason::HostUnknown) {
-            let next = self.host_retry.entry(id.into()).or_insert(T3_RETRY_DELAY);
-            let delay = *next;
-            *next = (delay * 2).min(HOST_RETRY_CAP);
-            (delay, Priority::Decision)
-        } else {
-            self.reset_host_backoff(id);
-            retry(wait)
+        now: Instant,
+        deferred_until: Option<Instant>,
+    ) -> bool {
+        let next = match self.host_retry.get(id) {
+            Some(HostRecovery::CheckAt(due)) if *due <= now && deferred_until.is_none() => {
+                HostRecovery::Blocked
+            }
+            Some(HostRecovery::CheckAt(due)) => {
+                HostRecovery::CheckAt((*due).max(deferred_until.unwrap_or(now)))
+            }
+            Some(HostRecovery::Blocked) => HostRecovery::Blocked,
+            None => {
+                HostRecovery::CheckAt((now + T3_RETRY_DELAY).max(deferred_until.unwrap_or(now)))
+            }
+        };
+        self.host_retry.insert(id.into(), next);
+        self.tasks.insert(id.into(), Pending::default());
+        if let HostRecovery::CheckAt(due) = next {
+            self.wake(id, due, Priority::Effect);
         }
+        next == HostRecovery::Blocked
     }
 
     pub(crate) fn reset_host_backoff(&mut self, id: &str) -> bool {
         self.host_retry.remove(id).is_some()
+    }
+
+    pub(crate) fn host_session_changed(&mut self, now: Instant) {
+        for (id, _) in std::mem::take(&mut self.host_retry) {
+            self.wake(&id, now, Priority::Effect);
+        }
     }
 
     pub(crate) fn seed(
@@ -222,17 +251,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_host_reads_back_off_per_task_and_reset_on_evidence() {
+    fn unknown_host_gets_one_due_read_then_waits_for_new_authority() {
         let mut schedule = Schedule::new();
-        let unknown = Some(WaitReason::HostUnknown);
-        for seconds in [15, 30, 60, 120, 240, 240] {
-            assert_eq!(schedule.retry_task("worker", unknown).0.as_secs(), seconds);
-        }
-        assert_eq!(schedule.retry_task("reviewer", unknown).0, T3_RETRY_DELAY);
-        assert!(schedule.reset_host_backoff("worker"));
-        assert_eq!(schedule.retry_task("worker", unknown).0, T3_RETRY_DELAY);
-        schedule.retry_task("worker", Some(WaitReason::Running));
-        assert_eq!(schedule.retry_task("worker", unknown).0, T3_RETRY_DELAY);
+        let now = Instant::now();
+        let due = now + T3_RETRY_DELAY;
+        assert!(!schedule.recover_host_observation("worker", now, None));
+        schedule.wake("worker", now, Priority::Effect);
+        assert!(schedule.take_ready(now, &BTreeSet::new()).is_none());
+        assert_eq!(
+            schedule.take_ready(due, &BTreeSet::new()).unwrap().id,
+            "worker"
+        );
+        let deferred = due + T3_RETRY_DELAY;
+        assert!(!schedule.recover_host_observation("worker", due, Some(deferred)));
+        assert_eq!(schedule.due("worker"), Some(deferred));
+        assert!(schedule.recover_host_observation("worker", deferred, None));
+        schedule.wake("worker", deferred, Priority::Effect);
+        assert!(schedule.take_ready(deferred, &BTreeSet::new()).is_none());
+        schedule.host_session_changed(deferred);
+        assert_eq!(
+            schedule.take_ready(deferred, &BTreeSet::new()).unwrap().id,
+            "worker"
+        );
     }
 
     #[test]

@@ -36,6 +36,8 @@ pub(crate) struct Projection {
     #[serde(skip)]
     windowed: bool,
     #[serde(skip)]
+    compact_turn_items: bool,
+    #[serde(skip)]
     sequence: u64,
     #[serde(skip)]
     shell_closed: Option<RetainedThread>,
@@ -256,8 +258,8 @@ impl Projection {
         {
             return Err(HostError::Binding);
         }
-        projection.windowed =
-            has_more_history == Some(true) || turn_items_omit_local_visible == Some(true);
+        projection.windowed = has_more_history == Some(true);
+        projection.compact_turn_items = turn_items_omit_local_visible == Some(true);
         projection.sequence = sequence;
         Ok(projection)
     }
@@ -386,7 +388,7 @@ impl Projection {
         // T3 derives this summary from the full projection for a settled run.
         // The row must describe this same revision. Provider rosters for
         // older sessions still come from the bounded projection itself.
-        if self.windowed
+        if (self.windowed || self.compact_turn_items)
             && self
                 .thread
                 .updated_at
@@ -420,7 +422,7 @@ impl Projection {
             return Ok(RetainedThread::Busy);
         }
         if self.provider_threads.is_none()
-            || (self.windowed && self.shell_background_work.is_none())
+            || ((self.windowed || self.compact_turn_items) && self.shell_background_work.is_none())
             || self.turn_items.is_none()
         {
             return Err(HostError::Uncertain);
@@ -453,7 +455,11 @@ impl Projection {
         })
     }
 
-    pub(crate) fn run(&self, message_id: &str) -> Result<RunState, HostError> {
+    pub(crate) fn run(
+        &self,
+        message_id: &str,
+        replayable_continuation: bool,
+    ) -> Result<RunState, HostError> {
         if self.shell_closed == Some(RetainedThread::Busy) {
             return Err(HostError::Uncertain);
         }
@@ -468,7 +474,11 @@ impl Projection {
             if message.is_some() {
                 return Ok(RunState::Starting);
             }
-            if self.windowed || self.retained()? != RetainedThread::Idle {
+            // T3's dispatchWithReceiptEffect looks up commandId before applying
+            // message.dispatch. Reuse the frozen wire, even when history is paged.
+            if (self.windowed && !replayable_continuation)
+                || self.retained()? != RetainedThread::Idle
+            {
                 return Err(HostError::Uncertain);
             }
             return Ok(RunState::ReadyToSend);
@@ -486,6 +496,11 @@ impl Projection {
             });
         }
         Ok(run.status.run_state())
+    }
+
+    pub(crate) fn has_delivery(&self, message_id: &str) -> bool {
+        let (message, run) = self.delivery(message_id);
+        message.is_some() || run.is_some()
     }
 
     pub(crate) fn row_observation(&self) -> Result<Option<RowObservation>, HostError> {
