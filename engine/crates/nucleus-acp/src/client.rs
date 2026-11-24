@@ -70,7 +70,11 @@ pub(crate) fn binding(cwd: &Path) -> Result<SessionBinding, Failure> {
         })?,
     );
     let metadata = file.metadata().map_err(|_| Failure::Binding)?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 || metadata.len() > 4096 {
+    if !metadata.is_file()
+        || metadata.uid() != geteuid().as_raw()
+        || metadata.permissions().mode() & 0o077 != 0
+        || metadata.len() > 4096
+    {
         return Err(Failure::Binding);
     }
     let binding: SessionBinding =
@@ -218,6 +222,20 @@ impl ServiceClient {
 
     pub(crate) const fn is_inbox(&self) -> bool {
         self.task.is_none()
+    }
+
+    /// Reload a rotated reader. A valid binding with a different identity
+    /// positively replaces this session. An unreadable file proves neither.
+    pub(crate) fn renew_task_reader(&mut self, cwd: &Path, session: &str) -> Result<bool, Failure> {
+        let SessionBinding::Task(next) = binding(cwd)? else {
+            return Ok(false);
+        };
+        if next.session_id != session || self.task.as_deref() != Some(&next.task_id) {
+            return Ok(false);
+        }
+        self.auth = authorization(&next.credential)?;
+        self.endpoint = next.endpoint;
+        Ok(true)
     }
 
     fn request(&self, method: Method, path: &str, key: &HeaderValue) -> reqwest::RequestBuilder {

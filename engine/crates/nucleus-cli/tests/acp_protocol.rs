@@ -14,6 +14,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::State,
+    http::{HeaderMap, StatusCode},
     response::sse::{Event, Sse},
     routing::{get, post},
 };
@@ -243,9 +244,21 @@ struct Fixture {
     changes: broadcast::Sender<()>,
 }
 
-async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
+async fn view(
+    State(fixture): State<Arc<Fixture>>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let state = fixture.state.load(Ordering::Relaxed);
-    let run = if matches!(state, 0 | 3 | 5) {
+    if state == 6
+        || (state == 7
+            && headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                != Some(&format!("Bearer {}", hex::encode([7; 32]))))
+    {
+        return (StatusCode::UNAUTHORIZED, Json(json!(null)));
+    }
+    let run = if matches!(state, 0 | 3 | 5 | 7) {
         Value::Null
     } else {
         let activity = if state == 2 {
@@ -256,16 +269,19 @@ async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
         json!({"instance":INSTANCE,"role":"worker","purpose":"Write the fixture","lastSendAt":1,
             "reported":state == 4,"activity":activity})
     };
-    Json(json!({
-        "version":1,
-        "reference":"fixture#67",
-        "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
-        "phase": if state == 3 { "done" } else { "working" },
-        "wait": match state { 0 => Some("starting"), 4 => Some("host_unknown"), 5 => Some("prerequisite"), _ => None },
-        "question":null,"run":run,
-        "parentHold": (state == 0).then(|| parent_hold_prompt("fixture-hold")),
-        "activeChild": matches!(state, 1 | 2)
-    }))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "version":1,
+            "reference":"fixture#67",
+            "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
+            "phase": if state == 3 { "done" } else { "working" },
+            "wait": match state { 0 => Some("starting"), 4 => Some("host_unknown"), 5 => Some("prerequisite"), 8 => Some("capacity"), _ => None },
+            "question":null,"run":run,
+            "parentHold": (state == 0).then(|| parent_hold_prompt("fixture-hold")),
+            "activeChild": matches!(state, 1 | 2 | 8)
+        })),
+    )
 }
 
 async fn history(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
@@ -275,7 +291,7 @@ async fn history(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
     let mut history = vec![json!({"sequence":1,"presentation":[
         {"kind":"run_started","instance":INSTANCE,"role":"worker","purpose":"Write the fixture"}
     ]})];
-    if fixture.state.load(Ordering::Relaxed) == 3 {
+    if matches!(fixture.state.load(Ordering::Relaxed), 3 | 7) {
         history.insert(
             0,
             json!({"sequence":2,"presentation":[{"kind":"run_ended","instance":INSTANCE}]}),
@@ -445,6 +461,48 @@ async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() 
     fixture.state.store(5, Ordering::Relaxed);
     let _ = fixture.changes.send(());
     assert_eq!(agent.response(4).await["result"]["stopReason"], "end_turn");
+    assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_active_child_keeps_the_parent_hold_through_pause_and_a_read_failure() {
+    let (mut agent, fixture, home, server) = loopback().await;
+    fixture.state.store(0, Ordering::Relaxed);
+    agent
+        .call(
+            1,
+            "session/load",
+            json!({"sessionId":SESSION,"cwd":"/fixture"}),
+        )
+        .await;
+    agent.update("plan").await;
+    agent
+        .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
+        "params":{"sessionId":SESSION,"prompt":parent_hold_prompt("fixture-hold")}}))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), fixture.stream_ready.notified())
+        .await
+        .expect("authenticated hold enters its follow loop");
+    fixture.state.store(8, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
+    agent.update("plan").await;
+    assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
+    let pointer = home.path().join("binding.json");
+    let mut renewed: Binding =
+        serde_json::from_reader(std::fs::File::open(&pointer).unwrap()).unwrap();
+    renewed.credential = [7; 32];
+    let new_pointer = home.path().join("binding.new");
+    write_pointer(&new_pointer, &renewed);
+    std::fs::rename(new_pointer, pointer).expect("rotate the read binding");
+    fixture.state.store(6, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
+    tokio::time::timeout(Duration::from_secs(10), fixture.stream_ready.notified())
+        .await
+        .expect("read failure reconnects without ending the held turn");
+    fixture.state.store(7, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
+    assert_eq!(agent.response(2).await["result"]["stopReason"], "end_turn");
     assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
     server.abort();
 }

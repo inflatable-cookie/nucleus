@@ -432,10 +432,15 @@ the view. Task commands remain available from the CLI and board.
 The scheduler records the exact launch-preparation prompt before sending it.
 The bound task view identifies that prompt while preparation is active.
 Its turn follows task invalidations while the launch is being prepared or
-its role child is active. A wait without a child ends the turn. A stream
-interruption reconnects with backoff. A failed native turn is recorded for
+its role child is active. A wait without a child ends the turn. Pausing
+Dispatch keeps active turns open. A failed snapshot or interrupted event
+stream retries with backoff. A failed native turn is recorded for
 the task version and T3 session. Normal reconciliation can retry if either
 changes.
+
+If the local reader is refused, the adapter checks the owner-only binding
+file again. It can use a rotated key for the same task and session. Only a
+confirmed replacement ends the turn on this path.
 
 A committed reservation keeps its parent open through the first send. If
 the exact frozen parent turn ends before a delegated child exists, the
