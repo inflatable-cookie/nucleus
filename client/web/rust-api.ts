@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CapabilityLevel } from "../../shared/contracts";
 import { createRustBoardTransport } from "./rust-board";
 
 /**
@@ -330,11 +331,11 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/drop`),
         json("POST", { reason }),
       ),
-    promoteItem: (project: string, id: string) =>
+    promoteItem: (project: string, id: string, complexity?: CapabilityLevel) =>
       board.read(
         z.object({ identity: z.object({ id: z.string() }) }).loose(),
         planning(project, `/items/${encodeURIComponent(id)}/promote`),
-        { method: "POST" },
+        json("POST", { complexity }),
       ),
     decisions: (project: string) =>
       board.read(z.array(decision), planning(project, "/decisions")),

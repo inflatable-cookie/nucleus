@@ -450,6 +450,7 @@ const waits: Record<string, string> = {
   running: "Running",
   idle_without_terminal_run: "Waiting for the host",
   permission: "Waiting for permission",
+  usage_permission: "Low usage requires operator approval",
   input: "Waiting for input",
   retained_thread_busy: "Waiting for the previous turn",
   stopping: "Stopping",

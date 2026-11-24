@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode, request::Parts},
     routing::{get, post, put},
 };
-use nucleus_core::{Authority, ReportArtifact};
+use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent, ItemKind,
     ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan, RecordKind,
@@ -395,16 +395,26 @@ async fn drop_item(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Promotion {
+    complexity: Option<Complexity>,
+}
+
 async fn promote(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
     ProjectSelector { project }: ProjectSelector,
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
+    input: Result<Option<Json<Promotion>>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
+    let complexity = input
+        .map_err(|_| ApiError::Invalid)?
+        .and_then(|Json(input)| input.complexity);
     let (created, row) = api
         .service
-        .promote_planning_item(project.as_deref(), &id, &caller, &scope)
+        .promote_planning_item(project.as_deref(), &id, complexity, &caller, &scope)
         .await?;
     let status = if created {
         StatusCode::CREATED

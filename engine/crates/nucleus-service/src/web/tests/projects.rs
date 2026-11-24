@@ -274,7 +274,7 @@ async fn submit(api: &Router, actor: &str, id: &str, repo: Option<&str>) -> Resp
         "/v1/planning/tasks",
         actor,
         json!({
-            "id": id, "reference": id, "brief": "Use the synthetic repository.", "repository": repo,
+            "id": id, "reference": id, "brief": "---\nqueue:\n  complexity: low\n---\nUse the synthetic repository.", "repository": repo,
         }),
     )
     .await
@@ -414,7 +414,7 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
         Method::POST,
         "/v1/planning-current/tasks?project=EXACT+T3+ALPHA",
         actor,
-        json!({"id":"by-name","brief":"Use the verified repository."}),
+        json!({"id":"by-name","brief":"---\nqueue:\n  complexity: low\n---\nUse the verified repository."}),
     )
     .await;
     assert_eq!(task.status(), StatusCode::CREATED);

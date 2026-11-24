@@ -691,6 +691,9 @@ impl Service {
             .capacity_waiters
             .iter()
             .chain(state.group_waits.keys())
+            .chain(state.waits.iter().filter_map(|(id, (reason, _))| {
+                (*reason == nucleus_core::WaitReason::UsagePermission).then_some(id)
+            }))
         {
             state
                 .schedule

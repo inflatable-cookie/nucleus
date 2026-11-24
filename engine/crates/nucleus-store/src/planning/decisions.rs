@@ -1,12 +1,25 @@
 use std::collections::BTreeSet;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use super::{
-    Decision, DecisionAnswer, DecisionAnswerInput, DecisionInput, DecisionRecord, DecisionTarget,
-    WriteAt, decode, insert, list, read, required, save, task_decision_id, valid_key,
+    Decision, DecisionAnswer, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption,
+    DecisionRecord, DecisionTarget, WriteAt, decode, insert, list, read, required, save, valid_key,
 };
 use crate::{Store, StoreError, load};
+
+pub(crate) const USAGE_PERMISSION_INDEX: &str =
+    "CREATE UNIQUE INDEX IF NOT EXISTS planning_usage_permission
+    ON planning_decisions(id) WHERE json_extract(snapshot, '$.task.kind') = 'usage_permission'";
+
+pub const USAGE_APPROVE: &str = "approve";
+
+/// Data needed to bind a Low usage decision in the task admission transaction.
+pub struct UsagePermission<'a> {
+    pub project: &'a str,
+    pub complexity: &'static str,
+    pub at_ms: u64,
+}
 
 impl Store {
     /// Read the project's decisions, optionally limited to those awaiting answers.
@@ -23,7 +36,9 @@ impl Store {
              AND json_extract(snapshot, '$.withdrawn') IS NULL
              AND (json_extract(snapshot, '$.task') IS NULL OR EXISTS (
                  SELECT 1 FROM tasks WHERE tasks.id = json_extract(snapshot, '$.task.taskId')
-                 AND tasks.version = json_extract(snapshot, '$.task.taskVersion')
+                 AND CASE WHEN json_extract(snapshot, '$.task.kind') = 'usage_permission'
+                     THEN tasks.phase NOT IN ('done', 'cancelled')
+                     ELSE tasks.version = json_extract(snapshot, '$.task.taskVersion') END
              )) ORDER BY id",
         )?;
         let rows = query.query_map([project], |row| decode(row, 0))?;
@@ -47,7 +62,7 @@ impl Store {
         project: &str,
         target: &DecisionTarget,
     ) -> Result<Option<Decision>, StoreError> {
-        let id = task_decision_id(&target.task_id, target.task_version);
+        let id = target.record_id();
         let decision = self.decision(project, &id)?;
         if decision
             .as_ref()
@@ -56,6 +71,22 @@ impl Store {
             return Err(StoreError::PlanningConflict);
         }
         Ok(decision)
+    }
+
+    /// Read the Low usage decision attached to the original admission, even after task edits.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot read the decision.
+    pub fn usage_permission(&self, task: &str) -> Result<Option<Decision>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT snapshot FROM planning_decisions WHERE id = ?1
+             AND json_extract(snapshot, '$.task.kind') = 'usage_permission'",
+                [format!("usage-permission-{task}")],
+                |row| decode(row, 0),
+            )
+            .optional()?)
     }
 
     /// Record an operator question in the same store the Inbox reads.
@@ -132,7 +163,7 @@ impl Store {
         input: DecisionInput,
         stamp: WriteAt<'_>,
     ) -> Result<Decision, StoreError> {
-        let id = task_decision_id(&target.task_id, target.task_version);
+        let id = target.record_id();
         let tx = self.planning_write()?;
         require_task_question(&tx, &target)?;
         if let Some(decision) = read::<Decision>(&tx, DecisionRecord, project, &id)? {
@@ -165,13 +196,15 @@ impl Store {
         target: &DecisionTarget,
         stamp: WriteAt<'_>,
     ) -> Result<(), StoreError> {
-        let id = task_decision_id(&target.task_id, target.task_version);
+        let id = target.record_id();
         let tx = self.planning_write()?;
         if let Some(mut decision) = read::<Decision>(&tx, DecisionRecord, project, &id)? {
             if decision.task.as_ref() != Some(target) {
                 return Err(StoreError::PlanningConflict);
             }
-            if !decision.withdrawn && decision.answer.is_none() {
+            if !decision.withdrawn
+                && (decision.answer.is_none() || target.kind == DecisionKind::UsagePermission)
+            {
                 decision.withdrawn = true;
                 save(
                     &tx,
@@ -187,6 +220,54 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+pub(crate) fn insert_usage_permission(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    reference: &str,
+    permission: UsagePermission<'_>,
+) -> Result<(), StoreError> {
+    let stamp = WriteAt {
+        actor: "Nucleus",
+        at_ms: permission.at_ms,
+    };
+    let target = DecisionTarget {
+        task_id: task_id.into(),
+        task_version: 1,
+        kind: DecisionKind::UsagePermission,
+    };
+    let decision = new_decision(
+        permission.project,
+        target.record_id(),
+        DecisionInput {
+            question: format!(
+                "Run {reference} at Low usage with {} complexity?",
+                permission.complexity
+            ),
+            options: vec![
+                DecisionOption {
+                    id: USAGE_APPROVE.into(),
+                    label: "Approve at Low usage".into(),
+                },
+                DecisionOption {
+                    id: "decline".into(),
+                    label: "Decline and keep held".into(),
+                },
+            ],
+        },
+        stamp,
+        Some(target),
+    )?;
+    insert(
+        tx,
+        DecisionRecord,
+        permission.project,
+        &decision.id,
+        "add",
+        &decision,
+        stamp,
+    )
 }
 
 fn new_decision(
@@ -221,10 +302,13 @@ fn require_task_question(
     connection: &Connection,
     target: &DecisionTarget,
 ) -> Result<(), StoreError> {
-    if load(connection, &target.task_id)?.is_some_and(|row| {
-        row.version == target.task_version
-            && row.task.operator_question().is_some()
-            && row.task.operator_decline().is_none()
+    if load(connection, &target.task_id)?.is_some_and(|row| match target.kind {
+        DecisionKind::Question => {
+            row.version == target.task_version
+                && row.task.operator_question().is_some()
+                && row.task.operator_decline().is_none()
+        }
+        DecisionKind::UsagePermission => !row.task.phase().is_terminal(),
     }) {
         Ok(())
     } else {

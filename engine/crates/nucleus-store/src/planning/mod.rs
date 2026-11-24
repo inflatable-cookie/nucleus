@@ -1,6 +1,6 @@
 //! Project-scoped planning records and their append-only history.
 
-mod decisions;
+pub(super) mod decisions;
 pub mod legacy;
 mod model;
 
@@ -12,6 +12,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{EventDraft, Store, StoreError, admit, decode_error};
 
+pub use decisions::{USAGE_APPROVE, UsagePermission};
 pub use model::*;
 
 /// Space for legacy Markdown even when every character uses four UTF-8 bytes.
@@ -269,6 +270,22 @@ impl Store {
         event: &EventDraft,
         stamp: WriteAt<'_>,
     ) -> Result<(Item, i64), StoreError> {
+        self.promote_item_with_permission(source, &task.brief().text, task, event, stamp, None)
+    }
+
+    /// Promote the item, including any required Low usage permission, in one transaction.
+    ///
+    /// # Errors
+    /// Returns the same conflicts and write errors as [`Self::promote_item`].
+    pub fn promote_item_with_permission(
+        &mut self,
+        source: &ItemSource,
+        expected_body: &str,
+        task: &Task,
+        event: &EventDraft,
+        stamp: WriteAt<'_>,
+        permission: Option<UsagePermission<'_>>,
+    ) -> Result<(Item, i64), StoreError> {
         let tx = self.planning_write()?;
         let ItemSource {
             project_id: project,
@@ -276,11 +293,11 @@ impl Store {
         } = source;
         let mut item: Item = required(&tx, ItemRecord, project, id)?;
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. })
-            || item.content.body != task.brief().text
+            || item.content.body != expected_body
         {
             return Err(StoreError::PlanningConflict);
         }
-        let number = admit(&tx, task, event)?;
+        let number = admit(&tx, task, event, permission)?;
         link_task(&tx, source, &task.identity().id)?;
         item.state = ItemState::Promoted {
             task_id: task.identity().id.clone(),
@@ -492,8 +509,4 @@ pub fn valid_key(key: &str) -> bool {
         && key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-fn task_decision_id(task: &str, version: i64) -> String {
-    format!("task-{task}-{version}")
 }

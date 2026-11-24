@@ -131,6 +131,7 @@ pub enum WaitReason {
     Running,
     IdleWithoutTerminalRun,
     Permission,
+    UsagePermission,
     Input,
     RetainedThreadBusy,
     Stopping,

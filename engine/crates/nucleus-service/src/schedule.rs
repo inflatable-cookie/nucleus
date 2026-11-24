@@ -65,6 +65,7 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::Starting
             | WaitReason::Input
             | WaitReason::Permission
+            | WaitReason::UsagePermission
             | WaitReason::IdleWithoutTerminalRun
             | WaitReason::Hold,
         ) => (LIVE_CHECK, Priority::Refresh),

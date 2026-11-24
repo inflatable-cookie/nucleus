@@ -90,7 +90,9 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
     assert_eq!(item["author"], "planner");
     let id = item["id"].as_str().expect("item ID");
     let promote = format!("{items}/{id}/promote");
-    let first = post_as(&api, &promote, &PLANNER_KEY, &json!({})).await;
+    let missing = post_as(&api, &promote, &PLANNER_KEY, &json!({})).await;
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    let first = post_as(&api, &promote, &PLANNER_KEY, &json!({"complexity":"low"})).await;
     assert_eq!(first.status(), StatusCode::CREATED);
     let admitted = json_body(first).await;
     assert_eq!(admitted["number"], 1);
@@ -104,7 +106,12 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
         task["source"],
         json!({"projectId":"local-fixture","itemId":id})
     );
-    assert_eq!(task["brief"]["text"], brief);
+    let promoted = task["brief"]["text"].as_str().unwrap();
+    assert!(promoted.contains("title: From planning"));
+    assert!(promoted.contains("complexity: low"));
+    assert!(promoted.ends_with("Add a fixture."));
+    let source = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+    assert_eq!(source[0]["body"], brief);
     assert_eq!(task["reference"], "nucleus-fixture#1");
     assert_eq!(task["identity"]["reference"], task_id);
     assert_eq!(task["identity"]["origin_thread"], "planner");
@@ -113,11 +120,25 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
 }
 
 async fn assert_direct_admission_numbers(api: &Router) {
-    let direct = post_as(
+    let missing = post_as(
         api,
         &format!("{PROJECT}/tasks"),
         &PLANNER_KEY,
         &json!({"brief":"A plain brief."}),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(missing).await["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("queue.complexity is required")
+    );
+    let direct = post_as(
+        api,
+        &format!("{PROJECT}/tasks"),
+        &PLANNER_KEY,
+        &json!({"brief":"---\nqueue:\n  complexity: low\n---\nA fixture brief."}),
     )
     .await;
     assert_eq!(direct.status(), StatusCode::CREATED);
@@ -127,7 +148,7 @@ async fn assert_direct_admission_numbers(api: &Router) {
         "/v1/tasks",
         &PLANNER_KEY,
         &json!({
-            "id":"legacy-admission","reference":"legacy-alias","brief":"An existing CLI admission."
+            "id":"legacy-admission","reference":"legacy-alias","brief":"---\nqueue:\n  complexity: low\n---\nAn existing CLI admission."
         }),
     )
     .await;
@@ -182,7 +203,7 @@ async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes()
     let path = format!("{PROJECT}/tasks");
     let input = json!({
         "id":"external",
-        "brief":"Review the existing fixture change.",
+        "brief":"---\nqueue:\n  complexity: low\n---\nReview the existing fixture change.",
         "review":{"url":PR,"head":head},
     });
     let admitted = post_as(&api, &path, &BOARD_KEY, &input).await;

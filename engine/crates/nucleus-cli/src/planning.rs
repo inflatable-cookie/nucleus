@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::Subcommand;
-use nucleus_core::Head;
+use nucleus_core::{Head, profiles::Complexity};
 use nucleus_store::planning::{
     DecisionOption, MAX_TEXT_BYTES, PlanLane,
     legacy::{self, ImportMode},
@@ -115,6 +115,9 @@ pub(super) enum Action {
     ItemPromote {
         #[arg(required = true, num_args = 1..=2, hide = true)]
         args: Vec<String>,
+        /// Complexity for a papercut. Leads name it in the brief.
+        #[arg(long, value_parser = parse_complexity)]
+        complexity: Option<Complexity>,
     },
     /// Admit a task directly. Read the brief from stdin.
     #[command(name = "task.add")]
@@ -301,13 +304,13 @@ impl Action {
                     Some(json!({ "reason": reason })),
                 )
             }
-            A::ItemPromote { args } => {
+            A::ItemPromote { args, complexity } => {
                 let (project, [id]) = project_and_args(args)?;
                 (
                     Method::POST,
                     project,
                     format!("items/{}/promote", segment(&id)?),
-                    None,
+                    complexity.map(|complexity| json!({ "complexity": complexity })),
                 )
             }
             A::TaskAdd {
@@ -399,6 +402,11 @@ fn segment(value: &str) -> Result<&str> {
     } else {
         Err("invalid planning key or record ID".into())
     }
+}
+
+fn parse_complexity(value: &str) -> std::result::Result<Complexity, String> {
+    serde_json::from_value(Value::String(value.into()))
+        .map_err(|_| "use very_low, low, medium, high or very_high".into())
 }
 
 fn decision_option(value: &str) -> std::result::Result<DecisionOption, String> {

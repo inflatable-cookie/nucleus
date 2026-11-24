@@ -145,6 +145,7 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
         let target = DecisionTarget {
             task_id: id.into(),
             task_version: 1,
+            kind: Default::default(),
         };
         let decision = store
             .ensure_task_decision("project", target.clone(), input.clone(), STAMP)

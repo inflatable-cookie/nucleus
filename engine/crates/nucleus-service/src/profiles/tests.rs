@@ -230,7 +230,7 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
             .admit(
                 id.into(),
                 id.into(),
-                "Fixture café".into(),
+                "---\nqueue:\n  complexity: medium\n---\nFixture café".into(),
                 &Authority::Operator {
                     actor: "fixture".into(),
                 },
