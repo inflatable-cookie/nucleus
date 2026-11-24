@@ -1,0 +1,1 @@
+- Merge and closeout no longer wait indefinitely on "the process listing does not cover the participant's latest inactivity": when the shared pass scan predates the participant's idle state, they take one fresh listing after the exact read.

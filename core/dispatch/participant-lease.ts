@@ -243,7 +243,7 @@ export class ParticipantLease {
     task: Task,
     agentId: string,
     workspaceId: string,
-    options: { direct?: boolean } = {},
+    options: { direct?: boolean; directFallback?: boolean } = {},
   ): Promise<string | null> {
     const deadline =
       this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
@@ -273,32 +273,43 @@ export class ParticipantLease {
     if (roots.has(undefined))
       return "a participant run temporary directory is unrecorded";
 
-    const scan = await this.resolution.readPassProcesses(task.hostId, {
-      participant: { agentId, observation: state },
-      direct: options.direct,
-    });
-    if (scan.state === "unknown") return scan.reason;
-    const complete =
-      scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
-    if (complete !== true)
-      return "the host process listing has incomplete working-directory coverage";
-    if (incompleteRunProcessScan(scan))
-      return "the host process listing has incomplete working-directory or open-file coverage";
-    if (scan.fromPassSnapshot) {
+    const readScan = (direct: boolean | undefined) =>
+      this.resolution.readPassProcesses(task.hostId, {
+        participant: { agentId, observation: state },
+        direct,
+      });
+    let scan = await readScan(options.direct);
+    for (;;) {
+      if (scan.state === "unknown") return scan.reason;
+      const complete =
+        scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+      if (complete !== true)
+        return "the host process listing has incomplete working-directory coverage";
+      if (incompleteRunProcessScan(scan))
+        return "the host process listing has incomplete working-directory or open-file coverage";
+      if (!scan.fromPassSnapshot) break;
       const beforeScan =
         scan.directBeforeScan === undefined
           ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
           : scan.directBeforeScan;
       const observedAt = Date.parse(state.updatedAt ?? "");
       if (
-        !Number.isFinite(observedAt) ||
-        observedAt > scan.capturedAt ||
-        !noTurnLive(beforeScan) ||
-        beforeScan?.updatedAt !== state.updatedAt
-      ) {
+        Number.isFinite(observedAt) &&
+        observedAt <= scan.capturedAt &&
+        noTurnLive(beforeScan) &&
+        beforeScan?.updatedAt === state.updatedAt
+      )
+        break;
+      // The pass snapshot predates this participant's latest inactivity, and a
+      // later pass may never line up with it. A fresh listing taken after the
+      // exact inactivity read above covers it by construction, as owner
+      // completion does (#1564). Merge and closeout take that one listing.
+      if (!options.directFallback) {
         this.resolution.requestPassProof(task.hostId, agentId);
         return "the process listing does not cover the participant's latest inactivity";
       }
+      scan = await readScan(true);
+      options = { ...options, directFallback: false };
     }
 
     const runtime = participantRuntime({
@@ -370,7 +381,9 @@ export class ParticipantLease {
       let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
       try {
         if (this.adapter.observeParticipant) {
-          const issue = await this.exactCustodyIssue(t, id, workspace);
+          const issue = await this.exactCustodyIssue(t, id, workspace, {
+            directFallback: true,
+          });
           if (!issue) continue;
           if (!probe)
             this.resolution.waiting(
