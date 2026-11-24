@@ -1,7 +1,9 @@
+use nucleus_core::{Entry, Identity, Task};
 use serde_json::json;
 use sha2::Digest as _;
 
 use super::*;
+use crate::{EngineSettings, EventDraft, SettingsFile, planning::ItemSource};
 
 const DATE: &str = "2026-11-24T09:00:00.321Z";
 const OLDER: &str = "An earlier idea\r\nKeep this line\n";
@@ -94,6 +96,194 @@ fn legacy_copy(root: &Path) -> PathBuf {
 
 fn mapping() -> BTreeMap<String, String> {
     BTreeMap::from([("example/fixture".into(), "fixture".into())])
+}
+
+fn profile(root: &Path) -> EngineStorage {
+    let home = root.canonicalize().expect("scratch root").join("profile");
+    fs::create_dir(&home).expect("profile directory");
+    let settings = SettingsFile::open(&home).expect("settings");
+    settings
+        .save(&EngineSettings {
+            enabled: true,
+            ..EngineSettings::default()
+        })
+        .expect("enable synthetic profile");
+    settings.storage().expect("storage")
+}
+
+fn task(id: &str, brief: &str) -> Task {
+    Task::new(
+        Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: "example/fixture".into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        brief.into(),
+        None,
+    )
+}
+
+fn admitted() -> EventDraft {
+    EventDraft {
+        at: 1,
+        kind: "admitted".into(),
+        detail: String::new(),
+    }
+}
+
+const EDITED: WriteAt<'_> = WriteAt {
+    actor: "rust-planner",
+    at_ms: 1,
+};
+
+#[test]
+fn legacy_planning_apply_preserves_tasks_and_replays_after_rust_edits() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let source = legacy_copy(scratch.path());
+    let source_bytes = fs::read(&source).expect("source bytes");
+    let storage = profile(scratch.path());
+    let mut store = Store::open(&storage).expect("engine database");
+    store
+        .create(&task("pilot", "Keep this Rust task."), &admitted())
+        .expect("pilot task");
+    let pilot = store.row("pilot").expect("read pilot");
+    drop(store);
+
+    let running = storage.lock_profile().expect("service profile lock");
+    assert!(matches!(
+        apply_items(scratch.path(), &source, &mapping(), &storage),
+        Err(ImportError::Storage(StorageError::ProfileLock))
+    ));
+    drop(running);
+    let store = Store::open(&storage).expect("inspect refused apply");
+    assert!(store.items("fixture").expect("items").is_empty());
+    drop(store);
+
+    let first = apply_items(scratch.path(), &source, &mapping(), &storage).expect("apply import");
+    assert_eq!((first.leads, first.papercuts, first.skipped), (1, 2, 0));
+    let mut store = Store::open(&storage).expect("open applied profile");
+    assert_eq!(store.row("pilot").expect("pilot after apply"), pilot);
+    let source_link = ItemSource {
+        project_id: "fixture".into(),
+        item_id: "idea".into(),
+    };
+    let revised = store
+        .edit_item(
+            "fixture",
+            "idea",
+            ItemContent {
+                title: "Rust edit".into(),
+                body: "A revised task brief.".into(),
+                lanes: Vec::new(),
+            },
+            EDITED,
+        )
+        .expect("edit imported item");
+    let promoted = store
+        .promote_item(
+            &source_link,
+            &task("rust-promotion", &revised.content.body),
+            &admitted(),
+            EDITED,
+        )
+        .expect("link imported item to a new Rust task");
+    let history = store
+        .planning_history("fixture", ItemRecord, "idea")
+        .expect("post-edit history");
+    drop(store);
+
+    let replay = apply_items(scratch.path(), &source, &mapping(), &storage).expect("replay");
+    assert_eq!(
+        (
+            replay.leads,
+            replay.papercuts,
+            replay.versions,
+            replay.task_links,
+            replay.skipped
+        ),
+        (0, 0, 0, 0, 3)
+    );
+    let store = Store::open(&storage).expect("open replayed profile");
+    assert_eq!(store.row("pilot").expect("pilot after replay"), pilot);
+    assert_eq!(
+        store.item("fixture", "idea").expect("preserved item"),
+        Some(promoted)
+    );
+    assert_eq!(
+        store.task_source("rust-promotion").expect("preserved link"),
+        Some(source_link)
+    );
+    assert_eq!(
+        store
+            .planning_history("fixture", ItemRecord, "idea")
+            .expect("unchanged history"),
+        history
+    );
+    assert_eq!(
+        fs::read(&source).expect("unchanged source bytes"),
+        source_bytes
+    );
+}
+
+#[test]
+fn legacy_planning_apply_rolls_back_on_a_native_item_collision() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let source = legacy_copy(scratch.path());
+    let storage = profile(scratch.path());
+    let mut store = Store::open(&storage).expect("engine database");
+    let existing = store
+        .add_item(
+            "fixture",
+            "closed".into(),
+            ItemKind::Papercut,
+            ItemContent {
+                title: "A native item".into(),
+                body: "Keep the native item and roll back the rest.".into(),
+                lanes: Vec::new(),
+            },
+            EDITED,
+        )
+        .expect("existing item");
+    drop(store);
+
+    assert!(matches!(
+        apply_items(scratch.path(), &source, &mapping(), &storage),
+        Err(ImportError::Collision { project, id }) if project == "fixture" && id == "closed"
+    ));
+    let store = Store::open(&storage).expect("open after collision");
+    assert_eq!(store.items("fixture").expect("unchanged items"), [existing]);
+    assert!(
+        store
+            .planning_history("fixture", ItemRecord, "idea")
+            .expect("no partial history")
+            .is_empty()
+    );
+}
+
+#[test]
+fn legacy_planning_apply_requires_an_existing_engine_database() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let source = legacy_copy(scratch.path());
+    let storage = profile(scratch.path());
+    storage
+        .database()
+        .ensure()
+        .expect("empty database directory");
+    let database = storage.database().path().join(DATABASE_FILE);
+    assert!(apply_items(scratch.path(), &source, &mapping(), &storage).is_err());
+    assert!(!database.exists());
+    fs::write(&database, []).expect("uninitialized file");
+    assert!(matches!(
+        apply_items(scratch.path(), &source, &mapping(), &storage),
+        Err(ImportError::Store(StoreError::Incompatible {
+            application: 0,
+            version: 0
+        }))
+    ));
+    assert_eq!(database.metadata().expect("uninitialized file").len(), 0);
 }
 
 #[test]

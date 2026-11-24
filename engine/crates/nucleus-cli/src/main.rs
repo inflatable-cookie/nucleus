@@ -82,7 +82,7 @@ enum Action {
     },
     #[command(flatten)]
     Planning(planning::Action),
-    /// Rehearse a TypeScript `SQLite` copy import into Rust scratch.
+    /// Rehearse or apply a legacy planning import from a TypeScript `SQLite` copy.
     #[command(name = "item.import")]
     ImportItems {
         /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
@@ -93,6 +93,9 @@ enum Action {
         /// Keep the resulting scratch database. The default rolls back after rehearsal.
         #[arg(long)]
         keep: bool,
+        /// Append to an existing, stopped Rust profile at this explicit home.
+        #[arg(long, value_name = "PROFILE_HOME", conflicts_with = "keep")]
+        apply: Option<PathBuf>,
     },
     /// Admit a fixture task. Read the brief from stdin.
     Admit { id: String, reference: String },
@@ -207,7 +210,8 @@ async fn main() -> Result<()> {
             source,
             repositories,
             keep,
-        } => planning::import_items(&source, repositories, keep),
+            apply,
+        } => planning::import_items(&source, repositories, keep, apply.as_deref()),
         other => control(endpoint, other).await,
     }
 }

@@ -51,7 +51,15 @@ impl Store {
     ) -> Result<Decision, StoreError> {
         let decision = new_decision(project, id, input, stamp, None)?;
         let tx = self.planning_write()?;
-        insert(&tx, DecisionRecord, project, &decision.id, &decision, stamp)?;
+        insert(
+            &tx,
+            DecisionRecord,
+            project,
+            &decision.id,
+            "add",
+            &decision,
+            stamp,
+        )?;
         tx.commit()?;
         Ok(decision)
     }
@@ -114,7 +122,15 @@ impl Store {
             return Ok(decision);
         }
         let decision = new_decision(project, id, input, stamp, Some(target))?;
-        insert(&tx, DecisionRecord, project, &decision.id, &decision, stamp)?;
+        insert(
+            &tx,
+            DecisionRecord,
+            project,
+            &decision.id,
+            "add",
+            &decision,
+            stamp,
+        )?;
         tx.commit()?;
         Ok(decision)
     }

@@ -376,7 +376,12 @@ the copy. Set `NUCLEUS_SCRATCH_ROOT` to the configured scratch volume and put
 a standalone SQLite backup there. The importer opens it read-only, verifies
 the rebuilt lead history, and retains dispositions and task links. By default
 it rehearses and rolls back. `--keep` saves a new Rust database in scratch
-and prints its path. The importer only reads planning item tables.
+and prints its path. For cutover, `--apply <PROFILE_HOME>` appends to an existing
+Rust profile while holding the same exclusive lock as the service. Stop the
+profile before applying. The import commits in one transaction. It preserves
+existing tasks and skips items already imported into the same project,
+including their Rust edits and task links. A collision with an existing native
+item rolls the import back. The importer only reads planning item tables.
 
 ## Out of scope until milestone 3
 

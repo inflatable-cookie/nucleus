@@ -122,21 +122,33 @@ impl Store {
     }
 
     fn open_database(path: &Path) -> Result<Self, StoreError> {
-        let mut connection = Connection::open_with_flags(
+        let mut connection = Self::connect_database(path, OpenFlags::SQLITE_OPEN_CREATE)?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::prepare_schema(&tx, true)?;
+        tx.commit()?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "foreign_keys", true)?;
+        Ok(Self { connection })
+    }
+
+    fn connect_database(path: &Path, flags: OpenFlags) -> Result<Connection, StoreError> {
+        let connection = Connection::open_with_flags(
             path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW | flags,
         )?;
         connection.busy_timeout(Duration::from_secs(5))?;
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Ok(connection)
+    }
+
+    fn prepare_schema(tx: &Transaction<'_>, may_initialize: bool) -> Result<(), StoreError> {
         let application = tx.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match (application, version) {
             (0, 0)
-                if tx.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
-                    row.get::<_, i64>(0)
-                })? == 0 =>
+                if may_initialize
+                    && tx.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+                        row.get::<_, i64>(0)
+                    })? == 0 =>
             {
                 tx.execute_batch(include_str!("schema.sql"))?;
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
@@ -181,10 +193,7 @@ impl Store {
         }
         // This independent table is additive to every supported task schema.
         tx.execute(usage::PROVIDER_PAUSES, [])?;
-        tx.commit()?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "foreign_keys", true)?;
-        Ok(Self { connection })
+        Ok(())
     }
 
     /// Look up one task by its engine ID.

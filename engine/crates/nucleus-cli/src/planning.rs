@@ -296,6 +296,7 @@ pub(super) fn import_items(
     source: &Path,
     repositories: Vec<(String, String)>,
     keep: bool,
+    apply: Option<&Path>,
 ) -> Result<()> {
     let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
         .map(PathBuf::from)
@@ -306,12 +307,48 @@ pub(super) fn import_items(
             return Err("supply only one project per legacy repository".into());
         }
     }
-    let mode = if keep {
-        ImportMode::Keep
+    let report = if let Some(home) = apply {
+        let storage = super::open_settings(Some(home))?.storage()?;
+        legacy::apply_items(&scratch, source, &mapping, &storage)?
     } else {
-        ImportMode::Rehearse
+        let mode = if keep {
+            ImportMode::Keep
+        } else {
+            ImportMode::Rehearse
+        };
+        legacy::import_items(&scratch, source, &mapping, mode)?
     };
-    let report = legacy::import_items(&scratch, source, &mapping, mode)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use clap::{Parser, error::ErrorKind};
+
+    use crate::{Action, Cli};
+
+    #[test]
+    fn legacy_planning_apply_requires_a_profile_and_conflicts_with_keep() {
+        let args = [
+            "nucleus-engine",
+            "item.import",
+            "copy.sqlite",
+            "--repository",
+            "example/repo=project",
+            "--apply",
+        ];
+        assert!(Cli::try_parse_from(args).is_err());
+        let parsed = Cli::try_parse_from(args.into_iter().chain(["/scratch/profile"]))
+            .expect("explicit profile");
+        assert!(matches!(
+            parsed.action,
+            Action::ImportItems { apply: Some(home), keep: false, .. }
+                if home == Path::new("/scratch/profile")
+        ));
+        let result = Cli::try_parse_from(args.into_iter().chain(["/scratch/profile", "--keep"]));
+        assert!(matches!(result, Err(error) if error.kind() == ErrorKind::ArgumentConflict));
+    }
 }

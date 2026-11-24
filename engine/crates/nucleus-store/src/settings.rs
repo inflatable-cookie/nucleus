@@ -18,6 +18,7 @@ use longhorn_storage_layout::{
     StorageIdentity, StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
     native_platform_directory_facts, resolve_storage_layout,
 };
+use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -51,6 +52,8 @@ pub enum StorageError {
     Directory(#[from] std::io::Error),
     #[error("the engine storage directory could not be opened without following links")]
     ConfinedDirectory(#[from] rustix::io::Errno),
+    #[error("an isolated engine is already serving this profile or its lock is unreadable")]
+    ProfileLock,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +397,23 @@ impl EngineStorage {
     #[must_use]
     pub const fn database(&self) -> &StorageDirectory {
         &self.database
+    }
+
+    /// Claim the same exclusive profile lock used by the running service.
+    ///
+    /// # Errors
+    /// Returns an error if the profile directory or its lock is unavailable.
+    pub fn lock_profile(&self) -> Result<OwnedFd, StorageError> {
+        self.database.ensure()?;
+        let lock = open(
+            self.database.path().join("service.lock"),
+            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| StorageError::ProfileLock)?;
+        flock(&lock, FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| StorageError::ProfileLock)?;
+        Ok(lock)
     }
 
     #[must_use]
