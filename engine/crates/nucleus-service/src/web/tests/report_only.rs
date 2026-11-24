@@ -11,6 +11,58 @@ const WORKER: &str = "worker-report";
 const BRIEF: &str = "---\ntitle: Milestone QA\nqueue:\n  complexity: low\n  lanes: [qa, notes]\n  reportOnly: true\n  reportLane: qa\n---\nQualify the pinned commit.";
 
 #[tokio::test]
+async fn board_and_worker_lane_edits_both_refresh_paired_planning() {
+    let fixture = ReportFixture::new().await;
+    fixture.admit().await;
+    let turn = fixture.reserve().await;
+    let assets = tempfile::tempdir().unwrap();
+    std::fs::write(assets.path().join("index.html"), "").unwrap();
+    std::fs::write(assets.path().join("app.js"), "").unwrap();
+    let api = router_with_board(
+        Arc::clone(&fixture.service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+        assets.path(),
+    )
+    .unwrap();
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let cookie = Some(cookie.as_str());
+    let mut events = browser_request(&api, Method::GET, "/api/engine/events", cookie, None)
+        .await
+        .into_body()
+        .into_data_stream();
+    assert_event(&mut events, &["event: refresh"]).await;
+    let settings = fixture.service.settings_changes.subscribe();
+
+    let lane = format!("/api/engine/planning/{PROJECT}/lanes/qa");
+    let edit = json!({
+        "version": 1, "title": "qa", "aim": "qualification", "document": "board edit",
+    });
+    let saved = browser_request(&api, Method::PUT, &lane, cookie, Some(&edit)).await;
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_event(&mut events, &["event: planning"]).await;
+
+    let saved = fixture.write(&turn, 2, "worker edit").await;
+    assert_eq!(saved["version"], 3);
+    assert_event(&mut events, &["event: planning"]).await;
+    assert!(!settings.has_changed().unwrap());
+
+    let plan = format!("/api/engine/planning/{PROJECT}/plan");
+    let projection = json_body(browser_request(&api, Method::GET, &plan, cookie, None).await).await;
+    let written = projection["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|document| document["key"] == "qa")
+        .unwrap();
+    assert_eq!(written["document"], "worker edit");
+}
+
+#[tokio::test]
 async fn report_only_admits_an_attached_lane_and_proves_the_planning_pin() {
     let fixture = ReportFixture::new().await;
     let tasks = format!("/v1/planning/{PROJECT}/tasks");

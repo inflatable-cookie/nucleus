@@ -707,6 +707,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
+  let workerRunning = false;
   const now = 1_800_000_000_000;
   let clock = now;
   dom.window.Date.now = () => clock;
@@ -807,10 +808,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         ...task("board-task", taskPhase, "board-fixture#80"),
         number: 80,
         title: "Standalone task",
-        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : "Working*",
+        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
         stateSinceMs: now - 12 * 60_000,
-        wait: taskPhase === "queued" ? "capacity" : "hold",
-        hold: taskPhase === "queued" ? null : { reason: "Wait before dispatching again." },
+        wait: taskPhase === "queued" ? "capacity" : workerRunning ? "running" : "hold",
+        hold: taskPhase === "queued" || workerRunning ? null : { reason: "Wait before dispatching again." },
       };
       if (taskPhase === "working") {
         card.lifecycle.steps = card.lifecycle.steps.map((step) =>
@@ -939,6 +940,19 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   emit("invalidate", { taskId: "board-task", version: 9, detailOnly: true });
   await eventually(() => count("/tasks/board-task") === detailReads + 1, "detail changes refresh the open task");
   assert.deepEqual(routes.map((route, i) => count(route) - beforeDetail[i]!), [0, 0, 0, 0]);
+  workerRunning = true;
+  emit("invalidate", { taskId: "board-task", version: 10 });
+  await eventually(() => Boolean(selector("#80, Standalone task")?.textContent?.includes("Working12m ago")),
+    "the task list shows the running worker");
+  const beforePause = taskReads();
+  dispatch = { ...dispatch, mode: "paused" };
+  emit("settings");
+  await eventually(() => Boolean(selector("Draining · 1 active · 0 unconfirmed")), "the paused header keeps the live worker count");
+  assert.equal(taskReads(), beforePause, "pausing reuses the loaded task list");
+  dispatch = { ...dispatch, mode: "running" };
+  emit("settings");
+  await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
+
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");
   await click("Dispatch hold");

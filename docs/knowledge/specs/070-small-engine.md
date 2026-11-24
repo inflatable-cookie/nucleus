@@ -600,10 +600,11 @@ lanes, items, decisions) and the repository reassign action. The session respons
 reports the engine's current project scope. The board reads planning collections
 only on views that use them, refreshes them from engine events, and stops
 requesting a denied project until the session or its scope changes. Settings
-needs no planning reads. Decision changes refresh Needs you independently of
-task activity. The paired board refreshes task cards on list-visible changes,
-and an open task also refreshes on changes to its detail. Profiles reads usage
-on entry and when recorded assignments or timed pauses change. Settings reads
+needs no planning reads. Lane edits from the board and from an authenticated
+report worker both signal a planning change. Decision changes refresh Needs you
+independently of task activity. The paired board refreshes task cards on
+list-visible changes, and an open task also refreshes on changes to its detail.
+Profiles reads usage on entry and when recorded assignments or timed pauses change. Settings reads
 backup health with storage, and the board derives project activity from the task
 list it already displays. Reconnects resync active views. Ages and running
 durations advance locally. Screens leave out

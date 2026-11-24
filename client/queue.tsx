@@ -516,6 +516,11 @@ export function MainSurface({
           c={c}
           workspaceName={workspaceBoard?.name}
           state={state}
+          activeWorkers={
+            features.engine === "rust"
+              ? rustTasks.data?.filter((task) => task.wait === "running").length ?? null
+              : undefined
+          }
           refetchState={stateQuery.refetch}
           busy={busy}
           act={act}
