@@ -15,14 +15,17 @@ mod title_shell;
 use std::{
     future::Future,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 pub use catalog::{ProfileCatalog, ProfileOffer};
 pub use launch::{Binding, Dispatch, ModelOption, RoleProfile, RunRequest};
 use launch::{Method, Wire, delegated_child, message_id};
-use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Run, RunState};
+use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thread};
 use process::{Activity, Inventory};
 use projection::Projection;
@@ -225,9 +228,15 @@ pub struct T3 {
 /// Exact T3 reads share a single bounded process inventory within each pass.
 pub struct T3Pass<'a> {
     host: &'a T3,
+    evidence: Arc<PassEvidence>,
+    scratch: Option<&'a Path>,
+    role_threads: [Option<String>; 2],
+}
+
+#[derive(Default)]
+struct PassEvidence {
     profiles: OnceCell<Result<ProfileCatalog, HostError>>,
     processes: OnceCell<Result<Inventory, HostError>>,
-    scratch: Option<&'a Path>,
     sent: AtomicBool,
 }
 
@@ -260,10 +269,9 @@ impl T3 {
     pub fn pass<'a>(&'a self, scratch: &'a Path) -> T3Pass<'a> {
         T3Pass {
             host: self,
-            profiles: OnceCell::new(),
-            processes: OnceCell::new(),
+            evidence: Arc::new(PassEvidence::default()),
             scratch: Some(scratch),
-            sent: AtomicBool::new(false),
+            role_threads: [None, None],
         }
     }
 
@@ -273,10 +281,12 @@ impl T3 {
     pub fn fixture_pass(&self) -> T3Pass<'_> {
         T3Pass {
             host: self,
-            profiles: OnceCell::new(),
-            processes: OnceCell::new_with(Some(Ok(Inventory::quiet_fixture()))),
+            evidence: Arc::new(PassEvidence {
+                processes: OnceCell::new_with(Some(Ok(Inventory::quiet_fixture()))),
+                ..PassEvidence::default()
+            }),
             scratch: None,
-            sent: AtomicBool::new(false),
+            role_threads: [None, None],
         }
     }
 
@@ -386,6 +396,18 @@ impl T3 {
 }
 
 impl T3Pass<'_> {
+    /// Scope custody to the task's recorded roles while sharing this pass's census.
+    #[must_use]
+    pub fn for_task(&self, task: &Task) -> Self {
+        Self {
+            host: self.host,
+            evidence: Arc::clone(&self.evidence),
+            scratch: self.scratch,
+            role_threads: [Role::Worker, Role::Reviewer]
+                .map(|role| task.threads().get(role).map(str::to_owned)),
+        }
+    }
+
     async fn quiet(
         &self,
         binding: &Binding,
@@ -397,11 +419,12 @@ impl T3Pass<'_> {
         {
             return Ok(false);
         }
-        if self.sent.load(Ordering::Acquire) {
+        if self.evidence.sent.load(Ordering::Acquire) {
             // A fresh launch may have started processes after this inventory.
             return Err(HostError::Uncertain);
         }
         let inventory = self
+            .evidence
             .processes
             .get_or_init(|| async {
                 let server = self
@@ -416,12 +439,27 @@ impl T3Pass<'_> {
             .as_ref()
             .map_err(|_| HostError::ProcessCoverage)?;
         let checkout = Path::new(&binding.worktree_path);
+        let mut runtime = inventory.standing_pids(thread);
+        for sibling in self
+            .role_threads
+            .iter()
+            .flatten()
+            .filter(|id| *id != thread)
+        {
+            let helpers = inventory.bound_helpers(checkout, sibling);
+            if !helpers.is_empty()
+                && let Some(observed) = self.host.thread(binding, sibling).await?
+                && observed.retained()? == RetainedThread::Idle
+            {
+                runtime.extend(helpers);
+            }
+        }
         let activity = match self.scratch {
             Some(scratch) => inventory
-                .activity_for(checkout, scratch, thread)
+                .activity_for(checkout, scratch, &runtime)
                 .await
                 .map_err(|_| HostError::ProcessCoverage)?,
-            None => inventory.activity(checkout, &std::collections::HashSet::new())?,
+            None => inventory.activity(checkout, &runtime)?,
         };
         match activity {
             Activity::Busy => Ok(false),
@@ -433,7 +471,8 @@ impl T3Pass<'_> {
 
 impl TaskHost for T3Pass<'_> {
     async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {
-        self.profiles
+        self.evidence
+            .profiles
             .get_or_init(|| self.host.read_catalog())
             .await
             .as_ref()
@@ -573,7 +612,7 @@ impl TaskHost for T3Pass<'_> {
         {
             return Ok(SendOutcome::Rejected);
         }
-        self.sent.store(true, Ordering::Release);
+        self.evidence.sent.store(true, Ordering::Release);
         match reply? {
             Reply::Value(_) => Ok(SendOutcome::Sent),
             Reply::Failure(_) => Err(HostError::Uncertain),

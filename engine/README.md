@@ -230,6 +230,9 @@ also check the open PR and clean checkout after native authorization.
   Each pass verifies the descriptor origin and server PID, then follows only
   direct app-server and helper ancestry. Shells and work spawned by a helper
   keep custody. Unreadable process facts and conflicting bindings also hold.
+  A standing helper bound to another recorded role of the same task can be
+  excluded when its cwd is inside this checkout and a fresh exact native read
+  confirms that role is idle with no pending work.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery

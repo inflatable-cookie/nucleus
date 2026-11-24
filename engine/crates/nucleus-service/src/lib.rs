@@ -316,7 +316,7 @@ impl Service {
             let result = if defer_refresh {
                 Ok(Action::Wait(WaitReason::Running))
             } else {
-                Box::pin(self.advance_due_task(&row, &host)).await
+                Box::pin(self.advance_due_task(&row, &host.for_task(&row.task))).await
             };
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });

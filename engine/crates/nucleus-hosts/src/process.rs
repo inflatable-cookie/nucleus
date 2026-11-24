@@ -26,7 +26,9 @@ use tokio::{
 
 use crate::{
     HostError,
-    runtime::{RuntimeProcess, ServerRuntime, read_candidates, standing_runtime_pids},
+    runtime::{
+        RuntimeProcess, RuntimeShape, ServerRuntime, read_candidates, standing_runtime_pids,
+    },
 };
 
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -71,6 +73,37 @@ impl Inventory {
             runtime: None,
             scoped: Mutex::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bound_helper_fixture(checkout: &Path, thread: &str, unrelated: bool) -> Self {
+        let mut inventory = Self::quiet_fixture();
+        inventory.processes.insert(
+            4,
+            ProcessPaths {
+                parent: 3,
+                cwd: Some(checkout.to_path_buf()),
+                ambiguous_path: false,
+            },
+        );
+        if unrelated {
+            inventory.processes.insert(
+                5,
+                ProcessPaths {
+                    parent: 4,
+                    cwd: Some(checkout.to_path_buf()),
+                    ambiguous_path: false,
+                },
+            );
+        }
+        let provider = RuntimeProcess::from_command(1, "codex app-server").expect("provider");
+        let helper = RuntimeProcess::from_command(
+            3,
+            &format!("/fixture/node_repl T3CODE_THREAD_ID={thread}"),
+        )
+        .expect("bound helper");
+        inventory.runtime = Some((1, HashMap::from([(3, provider), (4, helper)])));
+        inventory
     }
 
     pub(crate) async fn capture(
@@ -215,21 +248,46 @@ impl Inventory {
         })
     }
 
+    pub(crate) fn standing_pids(&self, thread: &str) -> HashSet<u32> {
+        self.runtime
+            .as_ref()
+            .map_or_else(HashSet::new, |(server, processes)| {
+                standing_runtime_pids(*server, processes, thread)
+            })
+    }
+
+    // A recorded role may still have a standing helper in this checkout after
+    // its turn ends. The caller must establish native idleness for that role.
+    pub(crate) fn bound_helpers(&self, checkout: &Path, thread: &str) -> Vec<u32> {
+        let Some((_, processes)) = &self.runtime else {
+            return Vec::new();
+        };
+        self.standing_pids(thread)
+            .into_iter()
+            .filter(|pid| {
+                processes.get(pid).is_some_and(|process| {
+                    process.shape == RuntimeShape::Helper
+                        && process.thread.as_deref() == Some(thread)
+                }) && self.processes.get(pid).is_some_and(|paths| {
+                    !paths.ambiguous_path
+                        && paths
+                            .cwd
+                            .as_ref()
+                            .is_some_and(|cwd| cwd.starts_with(checkout))
+                })
+            })
+            .collect()
+    }
+
     pub(crate) async fn activity_for(
         &self,
         checkout: &Path,
         scratch: &Path,
-        thread: &str,
+        runtime: &HashSet<u32>,
     ) -> Result<Activity, HostError> {
-        let runtime = self
-            .runtime
-            .as_ref()
-            .map_or_else(HashSet::new, |(server, processes)| {
-                standing_runtime_pids(*server, processes, thread)
-            });
         match (
-            self.activity(checkout, &runtime)?,
-            self.activity(scratch, &runtime)?,
+            self.activity(checkout, runtime)?,
+            self.activity(scratch, runtime)?,
         ) {
             (Activity::Busy, _) | (_, Activity::Busy) => return Ok(Activity::Busy),
             (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
@@ -651,10 +709,9 @@ mod tests {
             .scoped
             .get_mut()
             .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23]))));
+        let runtime = inventory.standing_pids("fixture-thread");
         assert!(matches!(
-            inventory
-                .activity_for(&checkout, &scratch, "fixture-thread")
-                .await,
+            inventory.activity_for(&checkout, &scratch, &runtime).await,
             Ok(Activity::Quiet)
         ));
         inventory
@@ -662,9 +719,7 @@ mod tests {
             .get_mut()
             .insert(checkout.clone(), Ok(Some(HashSet::from([21, 22, 23, 24]))));
         assert!(matches!(
-            inventory
-                .activity_for(&checkout, &scratch, "fixture-thread")
-                .await,
+            inventory.activity_for(&checkout, &scratch, &runtime).await,
             Ok(Activity::Busy)
         ));
     }
