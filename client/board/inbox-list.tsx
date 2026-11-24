@@ -901,7 +901,7 @@ export function RustListRows({ c, rust, view }: {
           state: task.stateLabel, detail: question ? null : detail,
         }}
         age={task.stateSinceMs === null ? null : relativeAge(task.stateSinceMs)}
-        progress={<RustTaskProgress progress={task.lifecycle} c={c} compact />}
+        progress={<RustTaskProgress progress={task.lifecycle} c={c} compact barsOnly />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
     {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}

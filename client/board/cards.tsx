@@ -321,6 +321,7 @@ export const BoardCard = React.memo(function BoardCard({
   status?: CardStatus | null;
   /** Put the state beside the age and leave any detail under the title. */
   statusInHeader?: boolean;
+  /** The task timeline bars below the card body. */
   progress?: React.ReactNode;
   /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
   flags?: React.ReactNode;
@@ -421,7 +422,6 @@ export const BoardCard = React.memo(function BoardCard({
           <StatusLine status={status} c={c} />
         </View>
       ) : null}
-      {progress}
     </View>
   );
   const body = (
@@ -505,6 +505,11 @@ export const BoardCard = React.memo(function BoardCard({
             {actions}
           </View>
         )}
+        {progress && (
+          <View style={{ paddingHorizontal: space.md, paddingBottom: space.sm }}>
+            {progress}
+          </View>
+        )}
       </View>
     );
   // A card rests on the next surface step with no border; hover and selection are
@@ -542,6 +547,7 @@ export const BoardCard = React.memo(function BoardCard({
           {actions}
         </View>
       )}
+      {progress}
     </View>
   );
 });
