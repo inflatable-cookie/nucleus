@@ -137,6 +137,7 @@ pub enum WaitReason {
     Question,
     OperatorDeclined,
     HostUnknown,
+    HostObservationBlocked,
     Starting,
     Running,
     IdleWithoutTerminalRun,

@@ -669,9 +669,15 @@ async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
 async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
+    let mut bounded = parent_snapshot(&binding, "running", false);
+    bounded["hasMoreHistory"] = json!(true);
+    bounded["historyCursor"] = json!("earlier-timeline");
+    bounded["turnItemsOmitLocalVisible"] = json!(true);
+    bounded["projection"]["messages"] = json!([]);
+    bounded["projection"]["turnItems"] = json!([]);
     let (client, native) = server(vec![(
         "orchestration.subscribeThread",
-        Response::ParentSnapshot(parent_snapshot(&binding, "running", false)),
+        Response::ParentSnapshot(bounded),
     )])
     .await;
     let crate::ParentStep::Live(parent) = Box::pin(client.prepare_parent(
@@ -713,6 +719,58 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
     assert_eq!(wire["payload"]["parentNodeId"], "parent-root");
     assert!(wire["payload"].get("workspaceStrategy").is_none());
     native.await.expect("native trace");
+}
+
+#[tokio::test]
+async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let command = format!("{thread}-hold-12");
+    let mut compact = parent_snapshot(&binding, "completed", false);
+    compact["hasMoreHistory"] = json!(false);
+    compact["turnItemsOmitLocalVisible"] = json!(true);
+    compact["projection"]["turnItems"] = json!([]);
+    compact["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
+    let mut row = compact["projection"]["thread"].clone();
+    row["latestRunId"] = json!(NATIVE_RUN);
+    row["status"] = json!("completed");
+    row["pendingBackgroundTasks"] = json!([]);
+    let mut fresh = compact.clone();
+    fresh["snapshotSequence"] = json!(18);
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(compact),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(fresh),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{"threads":[row],"projects":[]}}));
+    let crate::ParentStep::Write(write) = Box::pin(host.prepare_parent(
+        &binding,
+        "fixture-acp",
+        "Fixture",
+        Some(crate::ParentAttempt {
+            command: &command,
+            released: false,
+        }),
+        quiet_pass(&host).profile_catalog(),
+    ))
+    .await
+    .unwrap() else {
+        panic!("the unsent intent should become dispatchable");
+    };
+    assert_eq!(write.command_id(), Some(command.as_str()));
+    host.write_parent(write).await.unwrap();
+    let sent = native.await.unwrap();
+    let payload: Value = serde_json::from_str(sent[2].payload.get()).unwrap();
+    assert_eq!(payload["commandId"], command);
 }
 
 #[tokio::test]
@@ -1313,7 +1371,17 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
     .expect("review again");
 
     let archived = snapshot(&binding, &previous, "interrupted", true);
-    let restored = snapshot(&binding, &previous, "interrupted", false);
+    let mut restored = snapshot(&binding, &previous, "interrupted", false);
+    restored["hasMoreHistory"] = json!(true);
+    restored["historyCursor"] = json!("50000-earlier-items");
+    restored["turnItemsOmitLocalVisible"] = json!(true);
+    restored["projection"]["turnItems"] = json!([]);
+    restored["projection"]["thread"]["updatedAt"] = json!("2026-11-24T16:42:26Z");
+    let mut shell_row = restored["projection"]["thread"].clone();
+    shell_row["latestRunId"] = json!(NATIVE_RUN);
+    shell_row["status"] = json!("interrupted");
+    shell_row["pendingBackgroundTasks"] = json!([]);
+    shell_row["visibleItemCount"] = json!(50_000);
     let mut operator_snoozed = restored.clone();
     operator_snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-06-01T12:00:00.000Z");
     let mut settled = restored.clone();
@@ -1370,7 +1438,7 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
     client
         .rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":2,
-            "thread":restored["projection"]["thread"]
+            "thread":shell_row
         }));
     assert!(
         matches!(
@@ -1401,6 +1469,7 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
     );
     assert_eq!(message["type"], "message.dispatch");
+    assert_eq!(message["commandId"], instance);
     assert_eq!(message["threadId"], THREAD);
     assert_eq!(message["messageId"], format!("{instance}-message"));
 }
@@ -1805,6 +1874,22 @@ fn setup_config(instance: Option<Value>, ready: bool) -> Response {
         "settings":{"providerInstances":settings},
         "providers":providers,
     }))
+}
+
+#[tokio::test]
+async fn catalog_cache_uses_config_revision_across_passes() {
+    let initial = setup_config(Some(setup_instance(RUST_LAUNCHER)), true);
+    let (host, native) = server(vec![("server.getConfig", initial)]).await;
+    for _ in 0..3 {
+        assert!(
+            host.fixture_pass()
+                .profile_catalog()
+                .await
+                .unwrap()
+                .supports_parent("nucleus-rust")
+        );
+    }
+    assert_eq!(native.await.unwrap().len(), 1);
 }
 
 #[tokio::test]

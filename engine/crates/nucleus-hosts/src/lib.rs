@@ -64,7 +64,7 @@ pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
 pub use traffic::HostCalls;
 
-const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
+pub const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
 pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub struct LaunchRequest<'a> {
@@ -290,7 +290,7 @@ pub struct T3Pass<'a> {
 
 #[derive(Default)]
 struct PassEvidence {
-    profiles: OnceCell<Result<ProfileCatalog, HostError>>,
+    profiles: OnceCell<Result<Arc<ProfileCatalog>, HostError>>,
     processes: OnceCell<Result<Inventory, HostError>>,
     sent: AtomicBool,
 }
@@ -419,21 +419,12 @@ impl T3 {
         &self,
         theme: &tokio::sync::watch::Sender<Option<Value>>,
     ) -> Result<(), HostError> {
-        self.rpc.watch_theme(theme).await.inspect_err(|error| {
+        let outcome = self.rpc.watch_theme(theme).await;
+        self.rpc.invalidate_catalog();
+        outcome.inspect_err(|error| {
             self.rpc
                 .record_timeout("subscribeServerConfig", None, *error);
         })
-    }
-
-    async fn read_catalog(&self) -> Result<ProfileCatalog, HostError> {
-        let Reply::Value(config) = self
-            .rpc
-            .call("server.getConfig", json!({}), Read::One)
-            .await?
-        else {
-            return Err(HostError::Protocol);
-        };
-        ProfileCatalog::parse(config)
     }
 
     /// Verify that the selected project is active at the expected local root.
@@ -546,7 +537,10 @@ impl T3 {
                 // An archive alone cannot identify the outcome of the reported run.
                 return Err(HostError::Uncertain);
             }
-            Some(thread) => thread.run(&wire.message_id(&launch.instance))?,
+            Some(thread) => thread.run(
+                &wire.message_id(&launch.instance),
+                wire.method == Method::Continue,
+            )?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
         };
@@ -644,9 +638,10 @@ impl TaskHost for T3Pass<'_> {
     async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {
         self.evidence
             .profiles
-            .get_or_init(|| self.host.read_catalog())
+            .get_or_init(|| self.host.rpc.profile_catalog())
             .await
             .as_ref()
+            .map(Arc::as_ref)
             .map_err(|error| *error)
     }
 

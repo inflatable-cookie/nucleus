@@ -1,7 +1,7 @@
 use std::{
     net::IpAddr,
     sync::{
-        Mutex as SyncMutex,
+        Arc, Mutex as SyncMutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -23,7 +23,8 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    HostError, T3_RETRY_DELAY,
+    HostError, ProfileCatalog, T3_RETRY_DELAY,
+    catalog::CatalogRevision,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
 };
@@ -70,6 +71,8 @@ pub(crate) struct Rpc {
     shell_managed: AtomicBool,
     snapshots: SyncMutex<Option<ThreadSnapshots>>,
     thread_reads: Semaphore,
+    catalog: SyncMutex<CatalogRevision>,
+    catalog_refresh: Mutex<()>,
 }
 
 struct Retry {
@@ -253,6 +256,8 @@ impl Rpc {
             shell_managed: AtomicBool::new(false),
             snapshots: SyncMutex::new(None),
             thread_reads: Semaphore::new(THREAD_READ_CONCURRENCY),
+            catalog: SyncMutex::new(CatalogRevision::default()),
+            catalog_refresh: Mutex::new(()),
         })
     }
 
@@ -268,6 +273,32 @@ impl Rpc {
             retry.until = now + retry.delay;
             retry.delay = (retry.delay * 2).min(MAX_RETRY);
         }
+    }
+
+    pub(crate) async fn profile_catalog(&self) -> Result<Arc<ProfileCatalog>, HostError> {
+        let _refresh = self.catalog_refresh.lock().await;
+        let epoch = {
+            let state = self.catalog.lock().expect("provider catalog");
+            if let Some(catalog) = &state.catalog {
+                return Ok(Arc::clone(catalog));
+            }
+            state.epoch
+        };
+        let Reply::Value(config) = self.call("server.getConfig", json!({}), Read::One).await?
+        else {
+            return Err(HostError::Protocol);
+        };
+        let catalog = Arc::new(ProfileCatalog::parse(config)?);
+        let mut state = self.catalog.lock().expect("provider catalog");
+        if state.epoch != epoch {
+            return state.catalog.clone().ok_or(HostError::Uncertain);
+        }
+        state.catalog = Some(Arc::clone(&catalog));
+        Ok(catalog)
+    }
+
+    pub(crate) fn invalidate_catalog(&self) {
+        self.catalog.lock().expect("provider catalog").invalidate();
     }
 
     pub(crate) async fn call(
@@ -655,6 +686,7 @@ impl Rpc {
                             .await?;
                         let mut changed = false;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            self.catalog.lock().expect("provider catalog").apply(item);
                             changed |= tracker.apply(item);
                         }
                         if changed {

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use nucleus_core::profiles::{Effort, Profile, Provider};
 use serde_json::{Value, json};
@@ -6,6 +6,48 @@ use serde_json::{Value, json};
 use crate::{HostError, ModelOption, RoleProfile, available};
 
 pub struct ProfileCatalog(Vec<Value>);
+
+#[derive(Default)]
+pub(crate) struct CatalogRevision {
+    pub(crate) epoch: u64,
+    pub(crate) catalog: Option<Arc<ProfileCatalog>>,
+    instances: Option<Value>,
+}
+
+impl CatalogRevision {
+    pub(crate) fn apply(&mut self, event: &Value) {
+        match event["type"].as_str() {
+            Some("snapshot") => {
+                self.epoch += 1;
+                self.instances = event.pointer("/config/settings/providerInstances").cloned();
+                self.catalog = ProfileCatalog::parse(event["config"].clone())
+                    .ok()
+                    .map(Arc::new);
+            }
+            Some("providerStatuses") => {
+                self.epoch += 1;
+                self.catalog = event
+                    .pointer("/payload/providers")
+                    .and_then(Value::as_array)
+                    .map(|providers| Arc::new(ProfileCatalog(providers.clone())));
+            }
+            Some("settingsUpdated") => {
+                if let Some(instances) = event.pointer("/payload/settings/providerInstances")
+                    && self.instances.as_ref() != Some(instances)
+                {
+                    self.instances = Some(instances.clone());
+                    self.invalidate();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.epoch += 1;
+        self.catalog = None;
+    }
+}
 
 pub struct ProfileOffer {
     native: RoleProfile,

@@ -27,15 +27,32 @@ impl State {
             || (task.question().is_some() && task.operator_decline().is_none())
             || matches!(
                 wait,
-                Some(WaitReason::Question | WaitReason::Permission | WaitReason::Input)
+                Some(
+                    WaitReason::Question
+                        | WaitReason::Permission
+                        | WaitReason::Input
+                        | WaitReason::HostUnknown
+                        | WaitReason::HostObservationBlocked
+                )
             )
         {
             return Ok(TaskAttention::Attention);
         }
-        match self.role_observation(task) {
+        let role_state = self.role_observation(task);
+        match role_state {
             Some(RunState::Input | RunState::Permission) => return Ok(TaskAttention::Attention),
-            Some(RunState::Running) => return Ok(TaskAttention::Active),
+            Some(RunState::Running | RunState::Starting) => return Ok(TaskAttention::Active),
             _ => {}
+        }
+        if role_state.is_none()
+            && (wait == Some(WaitReason::Starting)
+                || ((wait == Some(WaitReason::Running)
+                    || (wait.is_none() && task.hold().is_none()))
+                    && task
+                        .run()
+                        .is_some_and(|run| !run.revoked() && run.report().is_none())))
+        {
+            return Ok(TaskAttention::Active);
         }
         if task.phase() != Phase::Closing && self.store.dependency_blocked(id)? {
             return Ok(if self.store.dependency_needs_edit(id)? {

@@ -73,6 +73,7 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
             Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => {
                 "Waiting on Nucleus"
             }
+            Some(WaitReason::HostObservationBlocked) => "Blocked on T3",
             _ => phase,
         }
         .into()

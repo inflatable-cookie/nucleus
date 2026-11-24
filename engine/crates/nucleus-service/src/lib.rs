@@ -175,6 +175,7 @@ pub struct Service {
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
+    turn_epoch: String,
     state: Mutex<State>,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
@@ -334,6 +335,8 @@ impl Service {
             host.use_held_shell();
         }
         let (changes, _) = broadcast::channel(64);
+        let mut turn_epoch = [0; 16];
+        getrandom::fill(&mut turn_epoch).map_err(|_| ServiceError::AcpBinding)?;
         Ok(Self {
             storage,
             git,
@@ -347,6 +350,7 @@ impl Service {
             board: std::sync::OnceLock::new(),
             callback,
             report_command,
+            turn_epoch: hex::encode(turn_epoch),
             state: Mutex::new(State {
                 store,
                 allowance_clock,
@@ -640,8 +644,21 @@ impl Service {
     }
 
     async fn watch_thread_hints(&self) {
+        let mut prior_session = None;
         loop {
             self.host.wait_for_requests().await;
+            if let Some(session) = self.host.runtime_identity()
+                && prior_session
+                    .replace(session.clone())
+                    .is_some_and(|old| old != session)
+            {
+                self.state
+                    .lock()
+                    .await
+                    .schedule
+                    .host_session_changed(Instant::now());
+                self.wake.notify_one();
+            }
             let (sender, mut hints) = mpsc::channel(128);
             let inbox = self.native_inbox.as_ref();
             let watch = self.host.watch_threads(
@@ -718,7 +735,6 @@ impl Service {
         let now = Instant::now();
         for (id, threads) in thread_tasks {
             if let Some(prior) = threads.get_mut(&hint.thread) {
-                let backed_off = schedule.reset_host_backoff(id);
                 let changed = prior.as_ref().is_none_or(|prior| prior.hint != hint);
                 *prior = Some(SeenThread {
                     hint: hint.clone(),
@@ -726,9 +742,6 @@ impl Service {
                 });
                 if changed {
                     schedule.wake(id, now, Priority::Decision);
-                    self.wake.notify_one();
-                } else if backed_off {
-                    schedule.wake(id, now + T3_RETRY_DELAY, Priority::Decision);
                     self.wake.notify_one();
                 }
             }
@@ -859,11 +872,15 @@ impl Service {
             }
             return Ok(());
         }
+        if wait == Some(WaitReason::HostUnknown) {
+            return self.schedule_host_observation(&mut state, row, result);
+        }
+        state.schedule.reset_host_backoff(id);
         if state.observe_task_allowance(&current.task, wait)? {
             self.publish(id, current.version);
         }
         let now = Instant::now();
-        let (delay, priority) = state.schedule.retry_task(id, wait);
+        let (delay, priority) = schedule::retry(wait);
         let due = match result {
             Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
             Err(ServiceError::InboxUnavailable { until }) => *until,
@@ -906,6 +923,54 @@ impl Service {
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
         if prior != wait {
             self.publish(id, current.version);
+        }
+        Ok(())
+    }
+
+    fn schedule_host_observation(
+        &self,
+        state: &mut State,
+        row: &TaskRow,
+        result: &Result<Action, ServiceError>,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let deferred = match result {
+            Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+            _ => None,
+        };
+        let now = Instant::now();
+        let reply_due = row
+            .task
+            .run()
+            .and_then(nucleus_core::Run::last_send_at_ms)
+            .and_then(|sent| {
+                sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
+                    .checked_sub(now_ms())
+                    .filter(|&remaining| remaining > 0)
+                    .map(|remaining| now + Duration::from_millis(remaining))
+            });
+        let blocked = state
+            .schedule
+            .recover_host_observation(id, now, deferred.max(reply_due));
+        let wait = Some(if blocked {
+            WaitReason::HostObservationBlocked
+        } else {
+            WaitReason::HostUnknown
+        });
+        let prior = state.set_wait(id, wait);
+        if blocked && prior != wait {
+            let mut audit = event("host_observation_blocked");
+            audit.detail = serde_json::json!({"version": row.version,
+                "session": self.host.runtime_identity().map(|session| self.turn_failure_scope(&session)),
+                "reason": result.as_ref().err().map(ToString::to_string)}).to_string();
+            state.store.claim_task_effect(id, &audit)?;
+            state.wake_capacity(Instant::now());
+            self.wake.notify_one();
+        }
+        if state.observe_task_allowance(&row.task, wait)? || prior != wait {
+            self.desire_title(state, &row.task, row.reference().as_ref(), wait);
+            self.title_wake.notify_one();
+            self.publish(id, row.version);
         }
         Ok(())
     }

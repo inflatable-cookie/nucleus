@@ -265,7 +265,12 @@ impl T3 {
                 json!({"type":"project.create","projectId":PROJECT,"title":TITLE,"workspaceRoot":target.root}),
             ));
         }
-        if !self.read_catalog().await?.supports_parent(target.provider) {
+        if !self
+            .rpc
+            .profile_catalog()
+            .await?
+            .supports_parent(target.provider)
+        {
             return Err(HostError::Configuration);
         }
         let key = "nucleus-rust-inbox-launch";

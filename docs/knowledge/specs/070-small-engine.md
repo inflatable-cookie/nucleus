@@ -98,12 +98,16 @@ Later decisions carry their own attribution.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
      - Each pass records its host calls by method, timeouts, and reads of terminal or archived threads.
 
-   A history window leaves the run, request, provider and delegation rosters
-   intact. Custody checks use those rosters and the held shell's background-work
-   summary for the same settled thread revision. Workspace custody also needs a
-   quiet local process census. A missing delivery key in a history window
-   cannot authorize a retry. Delegated launch absence requires an exact
-   terminal parent run followed by an authoritative absence reply for the child.
+   `hasMoreHistory` describes the history window. `turnItemsOmitLocalVisible`
+   describes the compact timeline representation. Native run and request
+   evidence keeps its meaning in either form. Custody checks use the rosters and
+   the held shell's background-work summary for the same settled revision.
+   Workspace custody also needs a quiet local process census. Delivery follows
+   the matching native run or the command receipt. A missing timeline item
+   cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
+   the exact frozen command ID, so an idle parent hold or continuation can
+   reconcile an ambiguous send under that ID. Delegated launch absence still
+   requires an exact terminal parent run and an authoritative child absence.
 12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
@@ -229,8 +233,9 @@ Later decisions carry their own attribution.
     leave a live hold intact. It ends when the task is terminal or waits
     with no active or pending role. Terminal and agent prompts render the
     current view and end normally. Mutating commands require attested input under
-    ruling 27. A native turn failure is recorded against the task version
-    and T3 session and waits for either to change before another attempt.
+    ruling 27. A native turn failure is recorded against the task version,
+    T3 session and engine instance. A change to any of these permits one fresh
+    attempt. A fenced task without a sent run leaves room for other project work.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code
@@ -325,8 +330,12 @@ Every action is idempotent:
   role, and `attempts` goes up.
 - **Three failed attempts** at the same phase and head end in one question to the
   planner. A report-only task parks as blocked and awaits an owner instruction.
-- **Timeouts, deferrals, unreadable state and uncertain launches** are not faults.
-  The engine waits and looks again on the next pass.
+- **Uncertain T3 observations** have a due check after the host's deferral or
+  the possible send's late-reply window. If that check remains inconclusive,
+  the task shows a blocked cause and waits for a task or T3 session change.
+  An engine restart also reconciles it again. The row stays visible during
+  uncertainty and while a role starts or runs. A guard that proves a command
+  never reached T3 records that outcome separately from unknown delivery.
 - An open repair question is rechecked against the next fresh observation. If
   that observation shows the condition has cleared, retire the question and
   decide again through the same gates. Unknown evidence keeps the question open.

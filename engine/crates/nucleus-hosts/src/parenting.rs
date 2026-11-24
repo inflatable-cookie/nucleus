@@ -236,6 +236,7 @@ impl T3 {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         if let Some(projection) = self.thread(binding, &thread).await? {
             projection.require_parent_provider(provider)?;
+            let mut replay = None;
             if let Some((run, node)) = prior_turn.as_ref().and_then(|attempt| {
                 (!attempt.released)
                     .then(|| projection.live_parent_run(&message_id(attempt.command)))
@@ -256,7 +257,14 @@ impl T3 {
                     return Ok(ParentStep::Failed);
                 }
                 if !completed {
-                    return Ok(ParentStep::Wait);
+                    if projection.has_delivery(&message) {
+                        return Ok(ParentStep::Wait);
+                    }
+                    // A recorded intent is not proof of a send. Reuse the exact
+                    // message.dispatch ID only after proving the thread is idle.
+                    if attempt.command != format!("{thread}-launch") {
+                        replay = Some(attempt.command);
+                    }
                 }
             }
             if projection.retained()? != RetainedThread::Idle {
@@ -272,7 +280,7 @@ impl T3 {
                     payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
                 }));
             }
-            let command = format!("{thread}-hold-{sequence}");
+            let command = replay.map_or_else(|| format!("{thread}-hold-{sequence}"), str::to_owned);
             return Ok(ParentStep::Write(ParentWrite {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
@@ -315,11 +323,21 @@ impl T3 {
     /// # Errors
     /// Returns an error if the native receipt cannot be confirmed.
     pub async fn write_parent(&self, write: ParentWrite) -> Result<(), HostError> {
+        self.verify_parent_write(&write).await?;
+        self.write_verified_parent(write).await
+    }
+
+    /// Verify the destination before the owner records the send intent.
+    /// # Errors
+    /// Returns an error if the current binding, custody or visibility changed.
+    pub async fn verify_parent_write(&self, write: &ParentWrite) -> Result<(), HostError> {
         if let Some((thread, sequence)) = &write.idle_at {
             let Some(fresh) = self.thread(&write.binding, thread).await? else {
                 return Err(HostError::Uncertain);
             };
-            if fresh.sequence() != *sequence || fresh.retained()? != RetainedThread::Idle {
+            if fresh.retained()? != RetainedThread::Idle
+                || (write.delivery.is_none() && fresh.sequence() != *sequence)
+            {
                 return Err(HostError::Uncertain);
             }
             let now = clock_ms()?;
@@ -335,6 +353,13 @@ impl T3 {
                 return Err(HostError::Uncertain);
             }
         }
+        Ok(())
+    }
+
+    /// Send the already verified effect without another destination guard.
+    /// # Errors
+    /// Returns an error if T3 cannot confirm the command.
+    pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), HostError> {
         match self.rpc.call(write.rpc, write.payload, Read::One).await? {
             Reply::Value(_) => Ok(()),
             Reply::Failure(_) => Err(HostError::Uncertain),

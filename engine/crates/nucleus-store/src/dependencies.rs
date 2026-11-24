@@ -162,6 +162,32 @@ impl Store {
         Ok(true)
     }
 
+    /// Re-arm a notice after the host deferred before its command reached the wire.
+    /// # Errors
+    /// Returns an error if the exact attempted release cannot be updated.
+    pub fn defer_prerequisite_notice(
+        &mut self,
+        id: &str,
+        release_version: i64,
+        attempted: &EventDraft,
+        outcome: &EventDraft,
+    ) -> Result<(), StoreError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if tx.execute(
+            "UPDATE task_prerequisite_notices SET attempted_at_ms = NULL
+             WHERE task_id = ?1 AND release_version = ?2 AND attempted_at_ms = ?3",
+            params![id, release_version, attempted.at],
+        )? != 1
+        {
+            return Err(StoreError::StaleTask);
+        }
+        append(&tx, id, outcome)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Replace one dependency list or release the retained wait, with CAS and audit.
     ///
     /// # Errors

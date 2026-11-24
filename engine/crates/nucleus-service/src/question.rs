@@ -227,19 +227,22 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        if self
-            .host
-            .deliver_notice(NoticeWrite::Queue(dispatch))
-            .await?
-            == NoticeSend::Rejected
-        {
+        let result = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        let not_sent = matches!(result, Err(HostError::Deferred { .. }));
+        if not_sent || matches!(result, Ok(NoticeSend::Rejected)) {
             let mut pending = sent.task.clone();
             if !pending.clear_question_delivery(&command) {
                 return Err(ServiceError::Input);
             }
-            self.save(&sent, pending, &event("question_delivery_rejected"))
-                .await?;
+            let mut audit = event(if not_sent {
+                "question_delivery_not_sent"
+            } else {
+                "question_delivery_rejected"
+            });
+            audit.detail = serde_json::json!({"command":command}).to_string();
+            self.save(&sent, pending, &audit).await?;
         }
+        result?;
         Ok(wait)
     }
 
