@@ -309,8 +309,9 @@ impl Service {
             && let Some(worktree) = worktree
         {
             let project = self.project.checkout.clone();
+            let git = self.git.clone();
             return Ok(tokio::task::spawn_blocking(move || {
-                linked_checkout(&project, Path::new(&worktree))
+                linked_checkout(&project, Path::new(&worktree), &git)
             })
             .await
             .map_err(|_| HostError::Uncertain)??);

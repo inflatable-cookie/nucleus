@@ -69,9 +69,13 @@ impl ServerRuntime {
         })
     }
 
-    pub(crate) async fn still_current(&self) -> bool {
-        let Ok((output, _)) =
-            capture("/bin/ps", &["-p", &self.pid.to_string(), "-o", "lstart="]).await
+    pub(crate) async fn still_current(&self, scratch: &Path) -> bool {
+        let Ok((output, _)) = capture(
+            "/bin/ps",
+            &["-p", &self.pid.to_string(), "-o", "lstart="],
+            Some(scratch),
+        )
+        .await
         else {
             return false;
         };
@@ -93,7 +97,10 @@ impl ServerRuntime {
     }
 }
 
-pub(crate) async fn read_candidates(parents: HashMap<u32, u32>) -> HashMap<u32, RuntimeProcess> {
+pub(crate) async fn read_candidates(
+    parents: HashMap<u32, u32>,
+    scratch: &Path,
+) -> HashMap<u32, RuntimeProcess> {
     if parents.is_empty() {
         return HashMap::new();
     }
@@ -112,6 +119,7 @@ pub(crate) async fn read_candidates(parents: HashMap<u32, u32>) -> HashMap<u32, 
             "-o",
             "pid=,ppid=,uid=,stat=,command=",
         ],
+        Some(scratch),
     )
     .await
     else {

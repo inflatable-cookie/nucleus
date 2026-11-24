@@ -202,6 +202,7 @@ fn storage_view(service: &Service, settings: &SettingsSnapshot<EngineSettings>) 
             "workRoot": service.storage.work().path(),
             "scratchRoot": service.storage.scratch().path(),
             "backupRoot": service.storage.backup().path(),
+            "logRoot": service.storage.log().path(),
         },
     })
 }

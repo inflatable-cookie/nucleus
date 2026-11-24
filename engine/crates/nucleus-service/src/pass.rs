@@ -154,7 +154,7 @@ impl Service {
             && task.pull_request() == Some(pr)
         {
             let _fence = self.effect(row).await?;
-            self.project.verify()?;
+            self.project.verify(&self.git)?;
             observation.workspace = seen(checkout.allocate(&pr.head));
         }
         let (host_state, host_error) = match run_host {
@@ -301,7 +301,7 @@ impl Service {
             .as_ref()
             .map_or(via.clone(), |selected| selected.intent.via().clone());
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
-            self.project.verify()?;
+            self.project.verify(&self.git)?;
             observation.workspace = Observed::Known(checkout.allocate(&self.project.start)?);
         }
         let instance = task.next_launch_instance()?;
@@ -573,7 +573,7 @@ impl Service {
             DispatchTarget::Planner(target) => {
                 self.host.check_notice_target(target).await?;
                 if let Some(path) = &target.worktree_path
-                    && !linked_checkout(&self.project.checkout, Path::new(path))?
+                    && !linked_checkout(&self.project.checkout, Path::new(path), &self.git)?
                 {
                     return Err(HostError::Binding.into());
                 }
@@ -1167,7 +1167,13 @@ mod tests {
         let head = service.project.start.clone();
         let (forge, reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
-        let worktrees = service.worktrees().expect("worktrees");
+        let git = service.git.clone();
+        let worktrees = crate::Worktrees::new(
+            &service.storage,
+            &git,
+            crate::Redactor::new([], crate::RedactionRules::common()),
+        )
+        .expect("worktrees");
         let checkout = worktrees
             .checkout(
                 &service.project.checkout,
@@ -1236,7 +1242,13 @@ mod tests {
         for retargeted in [false, true] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.project.start.clone();
-            let worktrees = service.worktrees().expect("worktrees");
+            let git = service.git.clone();
+            let worktrees = crate::Worktrees::new(
+                &service.storage,
+                &git,
+                crate::Redactor::new([], crate::RedactionRules::common()),
+            )
+            .expect("worktrees");
             let checkout = worktrees
                 .checkout(
                     &service.project.checkout,

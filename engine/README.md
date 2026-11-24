@@ -62,11 +62,17 @@ replaced during that interval can redirect allocation. The work root belongs
 to the operator on the single-user host. A follow-up will anchor the destination
 to a verified directory handle through the Git write.
 
-The engine opens its own explicit Longhorn portable profile. Its machine-state
-settings are versioned in `state/engine.json`, with the engine disabled by
-default. The database, work and scratch roots must stay on the configured
-writable volume. Check the pinned native volume ID and walk directories without
-following links before creating storage.
+Run `nucleus-engine configure --enable` to enable the engine with Longhorn's
+platform directories. Use `--home` for a portable profile with its own
+`state/engine.json`. Both profiles support explicit work, scratch and log roots.
+To opt into an external volume, select its mount with `--volume` and put every
+engine root there. The engine checks the volume ID and refuses missing,
+off-volume or symlinked roots before creating storage.
+
+The registered project checkout still anchors Git and retains its Git objects.
+The engine creates task checkouts under its work root and sets `TMPDIR`, `TMP` and
+`TEMP` for local commands. The task launch tells the role to keep command
+temporary files and Cargo build output under the configured scratch root.
 
 ## State and decisions
 
@@ -437,7 +443,7 @@ same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
---enable` with an existing profile on the pinned volume. Start `serve` with
+--enable` with an existing fixture directory. Start `serve` with
 that profile, a project file for the authorized fixture, and the local T3
 endpoint. Set the control key, T3 bearer and GitHub token in the environment.
 The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
@@ -466,7 +472,7 @@ Remove inside the editor.
 | Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, local load, one host call slot and one optional allowance in minutes. |
 | Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
-| Storage | `state/engine.json` | Pinned volume, work and scratch roots, verified Longhorn config archives and retention. |
+| Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
 
 Use `GET /v1/settings/{domain}` to read one domain. `PUT` takes its current
 `revision` and replacement `value`. The operator can save only one domain
