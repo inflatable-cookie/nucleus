@@ -390,11 +390,72 @@ cancellation goes through the same command preflight as other clients.
 
 An ACP launcher can bring up the local service using
 `python3 ensure-local-service.py <port> <controller-key-file> <lock-file> <serve-launcher>`.
-Put the lock beside the engine's settings and keep the serve launcher's log
-under its configured log root. The helper reuses a healthy loopback service.
+Keep the serve launcher's log under its configured log root. The helper reuses
+a healthy loopback service.
 When the port is absent, it serializes startup and passes the lock to the
 detached engine for its lifetime. A later ACP start can recover the service
 after it exits. An unverified listener never triggers a second start.
+
+### Set up T3
+
+`nucleus-engine t3 install` registers the Rust provider `nucleus-rust` in
+the local T3 environment. First enable the engine with `configure --enable`.
+Use the platform Storage defaults or pass the same `--home` to configure,
+serve and T3 setup. Set the T3 origin with `--t3` or the profile's Hosts
+setting. The provider's launcher and startup lock live in `t3-provider` under
+the engine's database root. A configured volume pin applies to that root.
+
+Prepare an owner-only executable serve launcher that sets
+`NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus-engine serve`
+with `acpProvider` set to `nucleus-rust` in the project file. Use the same
+loopback endpoint and the same controller key for serve and install. Supply
+the key in a separate owner-only file containing 64 lowercase hex digits.
+The serve launcher can load service credentials from private files and redirect
+logs under the Storage log root. Install requires Python 3 on the launcher
+PATH for the interim local startup helper.
+
+Use `t3 auth session issue` to mint a short-lived session with
+`--scope providers:manage --scope orchestration:read` and supply its bearer as
+`NUCLEUS_ENGINE_T3_INSTALL_BEARER` for install or uninstall. T3 requires
+`providers:manage` for a provider mutation with an empty settings patch.
+Use a separate Rust runtime bearer with `orchestration:read` and
+`orchestration:operate` in `NUCLEUS_ENGINE_T3_BEARER` (explicit `--t3`) or
+the credential environment variable named by Hosts. Use Rust-specific
+sessions. The generated launcher does not store the management bearer.
+[T3 RPC scopes](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/auth/RpcAuthorization.ts#L268-L283)
+
+```sh
+nucleus-engine t3 install --t3 http://127.0.0.1:3773 \
+  --control-key-file /absolute/path/controller.key \
+  --serve-launcher /absolute/path/serve-engine \
+  --acp-command /absolute/path/nucleus-acp
+nucleus-engine t3 status --t3 http://127.0.0.1:3773 \
+  --control-key-file /absolute/path/controller.key
+nucleus-engine t3 uninstall --t3 http://127.0.0.1:3773
+```
+
+The launcher ensures the engine on `127.0.0.1` and execs Rust ACP over
+stdio with the profile's binding directory and `loadSession: true`. Install
+waits for the exact T3 registration, the `nucleus` model probe and the
+engine's observation of the pinned Rust Inbox. During the TS transition, a
+still-pinned TS Inbox defers Rust Inbox setup. Rerun install once that Inbox
+is retired. The Rust provider can already be ready at that point.
+
+Status uses the runtime bearer for T3 readback and the control key for
+authenticated engine health. It reports configured Storage roots, the CLI
+version, the exact Rust provider and launcher, and native Inbox presence, pin
+and session health. Missing credentials or unavailable reads leave the
+corresponding status unknown.
+
+Uninstall verifies the Rust registration and its local launcher, unpins and
+archives only the verified Rust Inbox, and removes `nucleus-rust`. It keeps
+the launcher, engine data and decisions. T3's remove operation takes only an
+instance ID, so keep the provider unchanged in T3 Settings during uninstall.
+The command checks the exact registration immediately before removal and
+reads it back afterward.
+[T3 provider mutation contract](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/contracts/src/providerInstance.ts#L85-L101)
+For offline setup flag details, run
+`nucleus-engine t3 --help`.
 
 Keep host execution and parenting separate. The engine uses its host interface
 to prepare a launch, observe a run and stop it. A host's parenting adapter

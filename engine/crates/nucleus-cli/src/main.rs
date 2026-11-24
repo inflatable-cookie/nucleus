@@ -1,4 +1,5 @@
 mod planning;
+mod t3_setup;
 
 use std::{
     env,
@@ -97,6 +98,8 @@ enum Action {
         #[arg(long, value_name = "PROFILE_HOME", conflicts_with = "keep")]
         apply: Option<PathBuf>,
     },
+    /// Set up the Nucleus Rust provider in a local T3 environment.
+    T3(t3_setup::Args),
     /// Admit a fixture task. Read the brief from stdin.
     Admit { id: String, reference: String },
     /// List task summaries.
@@ -212,6 +215,7 @@ async fn main() -> Result<()> {
             keep,
             apply,
         } => planning::import_items(&source, repositories, keep, apply.as_deref()),
+        Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
     }
 }
@@ -343,19 +347,8 @@ async fn serve(
 }
 
 async fn report(path: &Path) -> Result<()> {
-    let fd = open(
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    )?;
-    let metadata = fstat(&fd)?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile
-        || metadata.st_uid != geteuid().as_raw()
-        || Mode::from_raw_mode(metadata.st_mode).intersects(Mode::RWXG | Mode::RWXO)
-    {
-        return Err("report ticket must be an owner-only regular file".into());
-    }
-    let ticket: ReportTicket = from_reader(File::from(fd)).map_err(|_| "invalid report ticket")?;
+    let file = private_file(path)?.ok_or("report ticket is missing")?;
+    let ticket: ReportTicket = from_reader(file).map_err(|_| "invalid report ticket")?;
     let endpoint = ticket
         .endpoint
         .strip_prefix("http://")
@@ -376,6 +369,25 @@ async fn report(path: &Path) -> Result<()> {
     .await?;
     let _ = response.error_for_status()?;
     Ok(())
+}
+
+fn private_file(path: &Path) -> Result<Option<File>> {
+    let fd = match open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        result => result?,
+    };
+    let metadata = fstat(&fd)?;
+    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile
+        || metadata.st_uid != geteuid().as_raw()
+        || Mode::from_raw_mode(metadata.st_mode).intersects(Mode::RWXG | Mode::RWXO)
+    {
+        return Err("expected an owner-only regular file".into());
+    }
+    Ok(Some(File::from(fd)))
 }
 
 async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {

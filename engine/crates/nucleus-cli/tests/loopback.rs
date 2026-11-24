@@ -73,3 +73,29 @@ fn report_ticket_parse_failure_does_not_print_the_credential() {
     assert!(error.contains("invalid report ticket"));
     assert!(!error.contains(marker), "the CLI disclosed a credential");
 }
+
+#[test]
+fn t3_status_reports_an_unconfigured_portable_profile() {
+    let directory = tempfile::tempdir().expect("portable profile");
+    let home = directory.path().canonicalize().expect("canonical home");
+    let output = Command::new(env!("CARGO_BIN_EXE_nucleus-engine"))
+        .args(["--endpoint", "127.0.0.1:9", "t3", "status", "--home"])
+        .arg(&home)
+        .env_remove("NUCLEUS_ENGINE_CONTROL_KEY")
+        .env_remove("NUCLEUS_ENGINE_T3_INSTALL_BEARER")
+        .env_remove("NUCLEUS_ENGINE_T3_BEARER")
+        .output()
+        .expect("CLI output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status: serde_json::Value = serde_json::from_slice(&output.stdout).expect("status JSON");
+    assert_eq!(status["provider"], "nucleus-rust");
+    assert!(status["registered"].is_null());
+    assert_eq!(status["launcherVerified"], false);
+    assert_eq!(status["engineHealth"], "credential unavailable");
+    assert!(status["storage"]["database"].is_string());
+    assert_eq!(home.read_dir().expect("unchanged profile").count(), 0);
+}

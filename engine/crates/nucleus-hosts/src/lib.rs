@@ -6,6 +6,7 @@ mod launch;
 mod parenting;
 mod process;
 mod projection;
+mod provider_setup;
 mod questions;
 mod rpc;
 mod runtime;
@@ -34,6 +35,9 @@ pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thre
 use process::{Activity, Inventory};
 use projection::Projection;
 pub use projection::RunActivity;
+pub use provider_setup::{
+    NUCLEUS_RUST_PROVIDER, ProviderRegistration, ProviderSetup, ProviderSetupError,
+};
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeHost, NoticeSend, NoticeState, NoticeTarget,
     NoticeWrite, PlannerIdentity, PlannerThread,
