@@ -161,17 +161,19 @@ pub(crate) fn read(
         .run()
         .filter(|run| !phase.is_terminal() && !run.revoked() && run.report().is_none());
     let mut reached_current = false;
+    let archiving = phase == Phase::Done && wait == Some(WaitReason::Stopping);
     let steps = keys
         .iter()
         .copied()
         .map(|key| {
-            let state = if phase == Phase::Done || (!reached_current && key != current) {
-                StepState::Done
-            } else if key == current {
-                StepState::Current
-            } else {
-                StepState::Todo
-            };
+            let state =
+                if (phase == Phase::Done && !archiving) || (!reached_current && key != current) {
+                    StepState::Done
+                } else if key == current {
+                    StepState::Current
+                } else {
+                    StepState::Todo
+                };
             reached_current |= key == current;
             let tone = match state {
                 StepState::Done => StepTone::Success,

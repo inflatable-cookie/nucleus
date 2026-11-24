@@ -35,6 +35,9 @@ impl PlannerAuthority {
 }
 
 fn bound_planner(task: &Task) -> Option<&str> {
+    if task.phase().is_terminal() {
+        return None;
+    }
     task.question_delivery()
         .map(|delivery| delivery.thread.as_str())
         .or(task.identity().origin_thread.as_deref())
@@ -124,6 +127,16 @@ impl Service {
         let Some(authorization) = self.host.authorize_notice(attempt).await? else {
             return Ok(None);
         };
+        self.permit_planner_notice(row, attempt, authorization)
+            .await
+    }
+
+    async fn permit_planner_notice(
+        &self,
+        row: &TaskRow,
+        attempt: &QuestionDelivery,
+        authorization: NoticeAuthorization,
+    ) -> Result<Option<(NoticeAuthorization, DispatchPermit<'_>)>, ServiceError> {
         let target = DispatchTarget::Planner(&authorization);
         let Some(permit) = self.dispatch_gate(&row.task, target).await? else {
             return Ok(None);
@@ -165,8 +178,9 @@ impl Service {
 
     async fn notify_planner(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
-        let bound = if let Some(delivery) = row.task.question_delivery() {
-            match self.host.notice_state(delivery).await? {
+        if let Some(delivery) = row.task.question_delivery() {
+            let observation = self.host.observe_notice(delivery).await?;
+            match observation.state {
                 NoticeState::Started => {
                     let mut updated = row.task.clone();
                     if updated.notify_operator_decline() {
@@ -176,7 +190,7 @@ impl Service {
                     }
                     return Ok(wait);
                 }
-                NoticeState::Undelivered => None,
+                NoticeState::Undelivered => {}
                 // Neither absence nor a vanished thread disproves a recorded send.
                 NoticeState::Absent | NoticeState::Gone => return Ok(wait),
                 NoticeState::Queued => {
@@ -185,40 +199,34 @@ impl Service {
                     {
                         return Ok(wait);
                     }
-                    Some(delivery)
+                    if let Some(authorization) = observation.authorization {
+                        let _fence = self.effect(row).await?;
+                        self.permit_planner_notice(row, delivery, authorization)
+                            .await?;
+                    }
+                    return Ok(wait);
                 }
             }
-        } else {
-            None
+        }
+        let Some(thread) = self.planner_notice_target(&row.task).await? else {
+            return Ok(wait);
         };
-        let mut attempt = if let Some(delivery) = bound {
-            delivery.clone()
+        let question = row.task.question().ok_or(ServiceError::Input)?;
+        let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
+        let text = if row.task.operator_decline().is_some() {
+            format!(
+                "The operator declined to accept the external merge for {}. Move or cancel the task.",
+                row.reference()
+            )
         } else {
-            let Some(thread) = self.planner_notice_target(&row.task).await? else {
-                return Ok(wait);
-            };
-            let question = row.task.question().ok_or(ServiceError::Input)?;
-            let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
-            let text = if row.task.operator_decline().is_some() {
-                format!(
-                    "The operator declined to accept the external merge for {}. Move or cancel the task.",
-                    row.reference()
-                )
-            } else {
-                notice_text(row.reference().as_ref(), question)
-            };
-            T3::prepare_notice(thread, command, &text)?
+            notice_text(row.reference().as_ref(), question)
         };
+        let mut attempt = T3::prepare_notice(thread, command, &text)?;
         let _fence = self.effect(row).await?;
         let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
             return Ok(wait);
         };
-        if bound.is_some() {
-            // The fresh permit may follow a snapshot change. The existing message
-            // can be woken, but this pass cannot dispatch it again.
-            return Ok(wait);
-        }
         let dispatch = authorization.record(&mut attempt)?;
         let command = attempt.command.clone();
         let mut updated = row.task.clone();
@@ -260,6 +268,9 @@ impl Service {
     }
 
     pub(super) fn request_planner_check(&self, state: &mut State, task: &Task) {
+        if bound_planner(task).is_none() {
+            return;
+        }
         state.planner_requests.insert(task.identity().id.clone());
         self.planner_wake.notify_one();
     }
@@ -271,13 +282,13 @@ impl Service {
         let (epoch, thread, route) = {
             let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
+            let Some(thread) = bound_planner(&row.task).map(str::to_owned) else {
+                return Ok(());
+            };
             let route = self.resolve_project(&state, row.task.identity())?;
             if route.slots.is_none() {
                 return Ok(());
             }
-            let Some(thread) = bound_planner(&row.task).map(str::to_owned) else {
-                return Ok(());
-            };
             if state
                 .planner_authority
                 .get(id)

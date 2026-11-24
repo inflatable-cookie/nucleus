@@ -1,77 +1,24 @@
-//! Presentation proof from the existing synchronized T3 shell subscription.
+//! Presentation proof from the synchronized T3 shell subscription.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-    sync::RwLock,
-};
+use std::{path::Path, sync::Arc};
 
-use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::Notify;
 
 use crate::{
     Binding, HostError, RegisteredProject, T3,
-    inbox::{self, INBOX_THREAD, InboxTarget},
+    inbox::{INBOX_THREAD, InboxTarget, PROJECT},
     parent_thread,
-    rpc::{Read, Reply},
-    task_row::{RowVisibility, ThreadVisibility},
+    rpc::{Read, Reply, closed_row},
+    task_row::{RowVisibility, visibility},
+    thread_snapshots::ThreadSnapshots,
 };
-
-#[derive(Default)]
-pub(crate) struct TitleShell {
-    view: RwLock<Option<Shell>>,
-    pub(crate) changed: Notify,
-}
-
-#[derive(Default)]
-pub(crate) struct Shell {
-    projects: BTreeMap<String, Project>,
-    threads: BTreeMap<String, TitleThread>,
-}
-
-#[derive(PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Project {
-    id: String,
-    workspace_root: String,
-    title: Option<String>,
-    archived_at: Option<String>,
-    deleted_at: Option<String>,
-}
-
-#[derive(PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TitleThread {
-    id: String,
-    project_id: String,
-    provider_instance_id: String,
-    worktree_path: Option<String>,
-    branch: Option<String>,
-    title: Option<String>,
-    pinned_at: Option<String>,
-    #[serde(flatten)]
-    visibility: ThreadVisibility,
-    parent_thread_id: Option<String>,
-    lineage: Option<Lineage>,
-    archived_at: Option<String>,
-    deleted_at: Option<String>,
-}
-
-#[derive(PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Lineage {
-    parent_thread_id: Option<String>,
-}
 
 /// The matching parent record from T3's synchronized shell.
 pub struct TitleTarget {
     binding: Option<Binding>,
-    current_title: Option<String>,
-    thread: String,
-    provider: String,
+    id: String,
+    row: Arc<Value>,
     root: String,
-    visibility: ThreadVisibility,
 }
 
 impl TitleTarget {
@@ -82,256 +29,129 @@ impl TitleTarget {
 
     #[must_use]
     pub fn current_title(&self) -> Option<&str> {
-        self.current_title.as_deref()
+        self.row["title"].as_str()
     }
 
     #[must_use]
     pub fn thread(&self) -> &str {
-        &self.thread
+        &self.id
     }
 
-    pub(crate) fn matches_current_visibility(&self, host: &T3) -> bool {
-        self.binding.as_ref().is_some_and(|binding| {
-            host.title_target(binding, &self.provider, &self.root)
-                .is_some_and(|current| current.visibility == self.visibility)
-        })
-    }
-}
-
-impl Shell {
-    pub(crate) fn read(snapshot: &Value, provider: &str) -> Option<Self> {
-        let mut view = Self::default();
-        let mut project_ids = BTreeSet::new();
-        for item in snapshot["projects"].as_array()? {
-            let id = item["id"].as_str()?;
-            if !project_ids.insert(id) {
-                return None;
-            }
-            if let Ok(project) = serde_json::from_value(item.clone()) {
-                view.projects.insert(id.into(), project);
-            }
-        }
-        let mut seen = BTreeSet::new();
-        for thread in snapshot["threads"].as_array()? {
-            if !seen.insert(thread["id"].as_str()?) {
-                return None;
-            }
-            view.update_thread(thread, provider);
-        }
-        Some(view)
+    pub(crate) const fn marker(&self) -> &Arc<Value> {
+        &self.row
     }
 
-    fn update_thread(&mut self, thread: &Value, provider: &str) -> bool {
-        let Some(id) = thread["id"].as_str() else {
-            return false;
-        };
-        let parent = (thread["providerInstanceId"] == provider)
-            .then(|| serde_json::from_value::<TitleThread>(thread.clone()).ok())
-            .flatten();
-        match parent {
-            Some(parent) if self.threads.get(id) != Some(&parent) => {
-                self.threads.insert(id.to_owned(), parent);
-                true
-            }
-            Some(_) => false,
-            None => self.threads.remove(id).is_some(),
-        }
+    /// Read the captured visibility of this bound shell row.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid native timestamp.
+    pub fn visibility(&self) -> Result<RowVisibility, HostError> {
+        visibility(&self.row)
     }
 
-    pub(crate) fn update(&mut self, item: &Value, provider: &str) -> bool {
-        match item["kind"].as_str() {
-            Some("thread.updated") => self.update_thread(&item["thread"], provider),
-            Some("thread.removed") => item["threadId"]
-                .as_str()
-                .is_some_and(|id| self.threads.remove(id).is_some()),
-            Some("project.updated") => {
-                let Some(id) = item["project"]["id"].as_str() else {
-                    return false;
-                };
-                match serde_json::from_value(item["project"].clone()) {
-                    Ok(project) if self.projects.get(id) != Some(&project) => {
-                        self.projects.insert(id.into(), project);
-                        true
-                    }
-                    Ok(_) => false,
-                    Err(_) => self.projects.remove(id).is_some(),
-                }
-            }
-            Some("project.removed") => item["projectId"]
-                .as_str()
-                .is_some_and(|id| self.projects.remove(id).is_some()),
-            _ => false,
-        }
-    }
-
-    fn active_project(&self, id: &str) -> Option<&Project> {
-        self.projects
-            .get(id)
-            .filter(|project| project.archived_at.is_none() && project.deleted_at.is_none())
-    }
-}
-
-impl TitleShell {
-    pub(crate) fn replace(&self, shell: Option<Shell>) {
-        if let Ok(mut view) = self.view.write() {
-            *view = shell;
-            self.changed.notify_one();
-        }
-    }
-
-    pub(crate) fn update(&self, item: &Value, provider: &str) {
-        if let Ok(mut lock) = self.view.write()
-            && let Some(view) = lock.as_mut()
-            && view.update(item, provider)
-        {
-            self.changed.notify_one();
-        }
-    }
-
-    fn cached_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
-        let view = self.view.read().map_err(|_| HostError::Uncertain)?;
-        let project = view
+    pub(crate) fn row_in(&self, shell: &ThreadSnapshots) -> Option<Arc<Value>> {
+        let project = self
+            .binding
             .as_ref()
-            .ok_or(HostError::Uncertain)?
-            .active_project(id)
-            .filter(|project| !project.workspace_root.is_empty())
-            .ok_or(HostError::Binding)?;
-        Ok(RegisteredProject {
-            root: project.workspace_root.clone(),
-            title: project.title.clone(),
-        })
+            .map_or(PROJECT, |binding| binding.project_id.as_str());
+        presentation_row(
+            shell,
+            self.thread(),
+            project,
+            self.row["providerInstanceId"].as_str()?,
+            &self.root,
+            self.binding.as_ref(),
+        )
     }
+}
 
-    fn projects_synchronized(&self) -> bool {
-        self.view.read().is_ok_and(|view| view.is_some())
+fn presentation_row(
+    shell: &ThreadSnapshots,
+    id: &str,
+    project: &str,
+    provider: &str,
+    root: &str,
+    binding: Option<&Binding>,
+) -> Option<Arc<Value>> {
+    let row = shell.marker(id)?;
+    if shell.project(project)?.root != root
+        || row["projectId"] != project
+        || row["providerInstanceId"] != provider
+        || closed_row(&row)
+        || !row["parentThreadId"].is_null()
+        || !row["lineage"]["parentThreadId"].is_null()
+    {
+        return None;
     }
-
-    fn threads(&self) -> Vec<String> {
-        let Ok(view) = self.view.read() else {
-            return Vec::new();
-        };
-        let Some(shell) = view.as_ref() else {
-            return Vec::new();
-        };
-        shell
-            .threads
-            .values()
-            .filter(|parent| {
-                parent.archived_at.is_none()
-                    && parent.deleted_at.is_none()
-                    && shell.active_project(&parent.project_id).is_some()
-            })
-            .map(|parent| parent.id.clone())
-            .collect()
-    }
-
-    fn target(&self, binding: &Binding, provider: &str, root: &str) -> Option<TitleTarget> {
-        let view = self.view.read().ok()?;
-        let shell = view.as_ref()?;
-        let project = shell.active_project(&binding.project_id)?;
-        let thread = parent_thread(Path::new(&binding.worktree_path));
-        let parent = shell.threads.get(&thread)?;
-        if project.workspace_root != root
-            || parent.project_id != project.id
-            || parent.provider_instance_id != provider
-            || parent.worktree_path.as_deref() != Some(&binding.worktree_path)
-            || parent.branch.as_deref() != Some(&binding.branch)
-            || parent.parent_thread_id.is_some()
-            || parent
-                .lineage
-                .as_ref()
-                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
-            || parent.archived_at.is_some()
-            || parent.deleted_at.is_some()
+    match binding {
+        Some(binding)
+            if row["worktreePath"] == binding.worktree_path.as_str()
+                && row["branch"] == binding.branch.as_str() =>
         {
-            return None;
+            Some(row)
         }
-        Some(TitleTarget {
-            binding: Some(binding.clone()),
-            current_title: parent.title.clone(),
-            thread,
-            provider: provider.into(),
-            root: root.into(),
-            visibility: parent.visibility.clone(),
-        })
-    }
-
-    fn inbox_target(&self, target: &InboxTarget<'_>) -> Option<TitleTarget> {
-        let view = self.view.read().ok()?;
-        let shell = view.as_ref()?;
-        let project = shell.active_project(inbox::PROJECT)?;
-        let thread = shell.threads.get(INBOX_THREAD)?;
-        if project.workspace_root != target.root
-            || thread.project_id != project.id
-            || thread.provider_instance_id != target.provider
-            || thread.worktree_path.is_some()
-            || thread.parent_thread_id.is_some()
-            || thread
-                .lineage
-                .as_ref()
-                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
-            || thread.archived_at.is_some()
-            || thread.deleted_at.is_some()
-            || thread.pinned_at.as_deref().is_none_or(str::is_empty)
-            || thread.title.is_none()
+        None if row["worktreePath"].is_null()
+            && row["title"].is_string()
+            && row["pinnedAt"].as_str().is_some_and(|at| !at.is_empty()) =>
         {
-            return None;
+            Some(row)
         }
-        Some(TitleTarget {
-            binding: None,
-            current_title: thread.title.clone(),
-            thread: thread.id.clone(),
-            provider: target.provider.into(),
-            root: target.root.into(),
-            visibility: thread.visibility.clone(),
-        })
+        _ => None,
     }
 }
 
 impl T3 {
     #[cfg(feature = "loopback-fixture")]
     #[doc(hidden)]
-    pub fn fixture_project_shell(&self, snapshot: &Value, provider: &str) {
-        self.titles.replace(Shell::read(snapshot, provider));
+    pub fn fixture_project_shell(&self, snapshot: &Value, _provider: &str) {
+        self.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":snapshot}));
+    }
+
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn fixture_shell_delta(&self, item: &Value) {
+        self.rpc.fixture_shell(item);
     }
 
     /// Whether the shared T3 shell has supplied a complete project snapshot.
     #[must_use]
     pub fn projects_synchronized(&self) -> bool {
-        self.titles.projects_synchronized()
+        self.rpc.with_shell(|shell| shell.is_some())
     }
 
-    /// Read an active project from the synchronized shell without contacting T3.
+    /// Read an active project from the synchronized shell.
     ///
     /// # Errors
     /// Returns an error for an unknown snapshot or an inactive project.
     pub fn cached_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
-        self.titles.cached_project(id)
+        self.rpc.with_shell(|shell| {
+            shell
+                .ok_or(HostError::Uncertain)?
+                .project(id)
+                .ok_or(HostError::Binding)
+        })
     }
 
     /// Scope title effects to parents visible on the existing shell stream.
     #[must_use]
-    pub fn title_threads(&self) -> Vec<String> {
-        self.titles.threads()
+    pub fn title_threads(&self, provider: &str) -> Vec<String> {
+        self.rpc
+            .with_shell(|shell| shell.map_or_else(Vec::new, |view| view.title_threads(provider)))
     }
 
     pub async fn title_shell_changed(&self) {
-        self.titles.changed.notified().await;
+        self.rpc.shell_changed.notified().await;
     }
 
-    /// Local visibility hints for the presentation scheduler. Mutations use an exact thread read.
+    /// Current visibility from the synchronized shell.
     #[must_use]
     pub fn row_visibility_hint(&self, thread: &str) -> Option<RowVisibility> {
-        let lock = self.titles.view.read().ok()?;
-        let shell = lock.as_ref()?;
-        let parent = shell.threads.get(thread)?;
-        if parent.archived_at.is_some() || parent.deleted_at.is_some() {
-            return None;
-        }
-        parent.visibility.read().ok()
+        let row = self.rpc.thread_row(thread)?;
+        (!closed_row(&row)).then(|| visibility(&row).ok()).flatten()
     }
 
-    /// Prepare a title write with positive local shell proof of its destination.
+    /// Prepare a title write with positive local proof of its destination.
     #[must_use]
     pub fn title_target(
         &self,
@@ -339,13 +159,38 @@ impl T3 {
         provider: &str,
         root: &str,
     ) -> Option<TitleTarget> {
-        self.titles.target(binding, provider, root)
+        self.presentation_target(
+            &parent_thread(Path::new(&binding.worktree_path)),
+            &binding.project_id,
+            provider,
+            root,
+            Some(binding),
+        )
     }
 
-    /// Prepare a title update for the verified pinned Inbox on the cached shell.
+    /// Prepare a title update for the verified pinned Inbox.
     #[must_use]
     pub fn inbox_title_target(&self, target: &InboxTarget<'_>) -> Option<TitleTarget> {
-        self.titles.inbox_target(target)
+        self.presentation_target(INBOX_THREAD, PROJECT, target.provider, target.root, None)
+    }
+
+    fn presentation_target(
+        &self,
+        id: &str,
+        project: &str,
+        provider: &str,
+        root: &str,
+        binding: Option<&Binding>,
+    ) -> Option<TitleTarget> {
+        self.rpc.with_shell(|shell| {
+            let row = presentation_row(shell?, id, project, provider, root, binding)?;
+            Some(TitleTarget {
+                binding: binding.cloned(),
+                id: id.into(),
+                row,
+                root: root.into(),
+            })
+        })
     }
 
     /// Deliver the same title bytes under the receipt ID until T3 confirms it.
@@ -360,26 +205,22 @@ impl T3 {
         if target.current_title() == Some(title) {
             return Ok(());
         }
-        let payload = json!({
-            "type": "thread.metadata.update",
-            "commandId": command_id,
-            "threadId": target.thread,
-            "title": title,
-        });
+        let payload = json!({"type":"thread.metadata.update","commandId":command_id,"threadId":target.thread(),"title":title});
         match self
             .rpc
-            .call_guarded("orchestration.dispatchCommand", payload, Read::One, || {
-                let current = match &target.binding {
-                    Some(binding) => self.titles.target(binding, &target.provider, &target.root),
-                    None => self.titles.inbox_target(&InboxTarget {
-                        provider: &target.provider,
-                        root: &target.root,
-                    }),
-                };
-                current
-                    .map(|current| current.current_title() != Some(title))
-                    .ok_or(HostError::Binding)
-            })
+            .call_guarded(
+                "orchestration.dispatchCommand",
+                payload,
+                Read::Background,
+                || {
+                    self.rpc.with_shell(|shell| {
+                        shell
+                            .and_then(|shell| target.row_in(shell))
+                            .map(|row| row["title"] != title)
+                            .ok_or(HostError::Binding)
+                    })
+                },
+            )
             .await?
         {
             Reply::Value(_) => Ok(()),

@@ -606,7 +606,7 @@ async fn planning_records_need_a_live_binding_but_not_a_cached_checkout() {
     let actor = "alpha-planner";
     registry.enroll(actor).await;
     registry.service.host.fixture_project_shell(
-        &json!({"projects":[{"id":"alpha-native","workspaceRoot":registry.home.path()}]}),
+        &json!({"threads":[],"projects":[{"id":"alpha-native","workspaceRoot":registry.home.path()}]}),
         "fixture-acp",
     );
     let api = &registry.api;
@@ -1324,7 +1324,7 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
     assert!(sent.task.report_task().expect("report").notice_attempted);
     let registry = registry.reopen();
     assert!(matches!(
-        registry.service.notify_report_ready(&sent).await,
+        Box::pin(registry.service.notify_report_ready(&sent)).await,
         Ok(Action::Nothing)
     ));
     let fixture = registry.notices.lock().expect("notices");

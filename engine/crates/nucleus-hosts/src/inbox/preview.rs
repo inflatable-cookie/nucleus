@@ -68,14 +68,25 @@ impl T3 {
     pub async fn preview_inbox_board(
         &self,
         board_url: &str,
+        operator_requested: bool,
         fresh_link: impl FnOnce() -> Option<String> + Send,
     ) -> Result<(), InboxPreviewError> {
         let deadline = Instant::now() + INBOX_PREVIEW_TIMEOUT;
         let origin = Url::parse(board_url)
             .map_err(|_| InboxPreviewError::new("board origin", "invalid configuration"))?
             .origin();
+        let class = if operator_requested {
+            Read::One
+        } else {
+            Read::Background
+        };
         let listed = self
-            .preview_call("preview.list", json!({"threadId": INBOX_THREAD}), deadline)
+            .preview_call(
+                "preview.list",
+                json!({"threadId": INBOX_THREAD}),
+                class,
+                deadline,
+            )
             .await?;
         let listed: PreviewList = serde_json::from_value(listed)
             .map_err(|_| InboxPreviewError::new("preview.list", "unexpected reply"))?;
@@ -92,6 +103,7 @@ impl T3 {
             self.preview_call(
                 "preview.close",
                 json!({"threadId": INBOX_THREAD, "tabId": tab.tab_id}),
+                class,
                 deadline,
             )
             .await?;
@@ -103,6 +115,7 @@ impl T3 {
                 json!({
                     "threadId": INBOX_THREAD, "url": link, "runtime": "server", "reveal": true
                 }),
+                class,
                 deadline,
             )
             .await?;
@@ -121,12 +134,13 @@ impl T3 {
         &self,
         method: &'static str,
         payload: Value,
+        class: Read,
         deadline: Instant,
     ) -> Result<Value, InboxPreviewError> {
         if Instant::now() >= deadline {
             return Err(InboxPreviewError::new(method, "timeout"));
         }
-        let reply = timeout_at(deadline, self.rpc.call(method, payload, Read::One))
+        let reply = timeout_at(deadline, self.rpc.call(method, payload, class))
             .await
             .unwrap_or(Err(HostError::Timeout))
             .map_err(|error| {

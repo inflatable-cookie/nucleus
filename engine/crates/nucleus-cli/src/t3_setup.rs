@@ -12,8 +12,8 @@ use std::{
 
 use clap::Subcommand;
 use nucleus_hosts::{
-    INBOX_THREAD, InboxLifecycle, InboxStatus, InboxTarget, NUCLEUS_RUST_PROVIDER,
-    ProviderRegistration, ProviderSetup, ProviderSetupError, T3,
+    INBOX_THREAD, InboxStatus, InboxTarget, NUCLEUS_RUST_PROVIDER, ProviderRegistration,
+    ProviderSetup, ProviderSetupError, T3,
 };
 use nucleus_service::native_inbox_directory;
 use nucleus_store::{EngineStorage, Hosts, SettingsFile};
@@ -241,24 +241,18 @@ async fn verify_registration(provider: &ProviderSetup) -> Result<ProviderRegistr
 async fn reconcile_inbox(host: &T3, target: &InboxTarget<'_>, favicon: Option<&str>) -> Result<()> {
     tokio::time::timeout(Duration::from_mins(1), async {
         let mut sent = BTreeSet::new();
+        let mut delay = Duration::from_millis(500);
         loop {
-            let step = if favicon.is_some() {
-                host.prepare_inbox_install(target).await?
-            } else {
-                host.prepare_inbox_retire(target).await?
-            };
-            let write = match step {
-                InboxLifecycle::Complete => host.prepare_inbox_favicon(target, favicon).await?,
-                InboxLifecycle::Write(write) => Some(write),
-            };
-            if let Some(write) = write {
+            if let Some(write) = host.prepare_inbox_setup(target, favicon).await? {
                 if sent.insert(write.command_id().to_owned()) {
                     host.write_inbox(write).await?;
+                    delay = Duration::from_millis(500);
                 }
             } else {
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(Duration::from_secs(8));
         }
     })
     .await
@@ -503,18 +497,18 @@ async fn status(
     key_file: Option<&Path>,
 ) -> Result<()> {
     let key = key_file.map_or_else(|| control_key(CONTROL_KEY), read_key_file);
-    let (observed, native_inbox, favicon, health) = tokio::join!(
-        async { target?.provider(launcher, false).ok()?.observe().await.ok() },
-        async { target?.inbox().ok()?.inbox_status(inbox).await.ok() },
+    let host = target.and_then(|target| target.inbox().ok());
+    let (observed, inbox_status, health) = tokio::join!(
         async {
-            target?
-                .inbox()
-                .ok()?
-                .inbox_favicon(inbox)
-                .await
-                .ok()
-                .flatten()
+            if let Some(host) = &host {
+                host.provider_registration(path_string(launcher).ok()?)
+                    .await
+                    .ok()
+            } else {
+                target?.provider(launcher, false).ok()?.observe().await.ok()
+            }
         },
+        async { host.as_ref()?.inbox_status_with_favicon(inbox).await.ok() },
         async {
             match &key {
                 Ok(key) => engine_health(endpoint, key)
@@ -525,6 +519,8 @@ async fn status(
             }
         },
     );
+    let (native_inbox, favicon) =
+        inbox_status.map_or((None, None), |(state, icon)| (Some(state), icon));
     let engine_status = match key {
         Ok(_) if health.is_some() => "healthy",
         Ok(_) => "unverified",

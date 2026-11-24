@@ -385,6 +385,23 @@ impl Projection {
         self.sequence
     }
 
+    pub(crate) fn matches_shell_revision(&self, row: &Value) -> bool {
+        row["updatedAt"].as_str() == self.thread.updated_at.as_deref()
+            && row["projectId"] == self.thread.project_id
+            && row["worktreePath"].as_str() == self.thread.worktree_path.as_deref()
+            && row["branch"].as_str() == self.thread.branch.as_deref()
+            && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
+    }
+
+    pub(crate) fn matches_roster_run(&self, run: &str, shell: &Value) -> bool {
+        self.matches_shell_revision(shell)
+            && if run.is_empty() {
+                self.runs.is_empty()
+            } else {
+                self.terminal_run(run)
+            }
+    }
+
     pub(crate) fn subagents(&self) -> Result<&[Subagent], HostError> {
         // The history bounds apply to timeline items, not the delegation roster.
         self.subagents.as_deref().ok_or(HostError::Uncertain)
@@ -572,6 +589,16 @@ impl Projection {
 
     pub(crate) const fn archived(&self) -> bool {
         self.thread.archived_at.is_some()
+    }
+
+    pub(crate) fn archive_marker(&self) -> Option<(String, Option<String>)> {
+        if self.thread.deleted_at.is_some() {
+            return None;
+        }
+        Some((
+            self.thread.archived_at.clone()?,
+            self.thread.updated_at.clone(),
+        ))
     }
 
     pub(crate) fn archived_in_shell(&self) -> bool {

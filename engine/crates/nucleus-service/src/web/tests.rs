@@ -1177,7 +1177,7 @@ async fn seed_planner_task(service: &Service, id: &str, planner: &str) {
     seed_task(service, &task).await;
 }
 
-async fn json_body(response: Response) -> Value {
+pub(crate) async fn json_body(response: Response) -> Value {
     let body = to_bytes(response.into_body(), 64 * 1024)
         .await
         .expect("response bytes");
@@ -1471,12 +1471,127 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
                 .archive_confirmed("reviewer")
                 .expect("existing receipt")
         );
+        seed_cancelled_notice(&service, &mut state, &row.task);
     }
     // Consume the already queued Done wake as well as excluding it on restart.
     let outcomes = service.pass().await.expect("queued pass");
-    assert_eq!(outcomes.len(), 1);
-    assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
+    assert_eq!(outcomes.len(), 2);
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome.result, Ok(Action::Nothing)))
+    );
+    assert!(service.state.lock().await.last_pass_calls.is_empty());
+    service
+        .refresh_planner_authority("cancelled")
+        .await
+        .unwrap();
+    assert!(service.host.host_calls().is_empty());
     native.abort();
+}
+
+#[tokio::test]
+async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (done, _) = fixture_at_done(&service).await;
+    let id = &done.task.identity().id;
+    let cause = "T3 reconnected during archive and can no longer confirm closure. Unarchive the reviewer thread (fixture-reviewer-thread) in T3 to resume closeout.";
+    service
+        .schedule_result(
+            &done,
+            &Err(ServiceError::ArchiveEvidence(cause.into())),
+            crate::schedule::Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+    assert_eq!(view["phase"], "done");
+    assert_eq!(view["stateLabel"], "Done");
+    assert_eq!(view["wait"], "stopping");
+    assert_eq!(view["waitDetail"], cause);
+    assert_eq!(
+        view["lifecycle"]["steps"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["note"],
+        cause
+    );
+    let next = json_body(get_as(&api, &format!("/v1/tasks/{id}/next"), &BOARD_KEY).await).await;
+    assert_eq!(next["waitDetail"], cause);
+}
+
+fn seed_cancelled_notice(service: &Service, state: &mut EngineState, done: &Task) {
+    let mut cancelled = Task::new(
+        nucleus_core::Identity {
+            id: "cancelled".into(),
+            reference: "cancelled".into(),
+            origin_thread: Some("terminal-planner".into()),
+            ..done.identity().clone()
+        },
+        "Synthetic cancelled task".into(),
+        None,
+    );
+    state.store.create(&cancelled, &event("fixture")).unwrap();
+    let before = service.lookup(state, "cancelled").unwrap();
+    let waiting = state
+        .store
+        .edit_dependencies(
+            "cancelled",
+            before.version,
+            nucleus_store::DependencyEdit::Wait {
+                ids: &["reviewer".into()],
+                reason: "Fixture prerequisite",
+            },
+            &event("fixture_wait"),
+            &mut |_| false,
+        )
+        .unwrap();
+    state
+        .store
+        .edit_dependencies(
+            "cancelled",
+            waiting,
+            nucleus_store::DependencyEdit::ReleaseWait,
+            &event("fixture_release"),
+            &mut |_| false,
+        )
+        .unwrap();
+    let released = service.lookup(state, "cancelled").unwrap();
+    cancelled
+        .command(
+            Command::Cancel,
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            &nucleus_core::Observation {
+                host: Observed::Unknown,
+                forge: Observed::Unknown,
+                workspace: Observed::Unknown,
+            },
+        )
+        .unwrap();
+    service
+        .commit(
+            state,
+            &released,
+            &cancelled,
+            &event("fixture_cancelled"),
+            None,
+        )
+        .unwrap();
+    service.request_planner_check(state, &cancelled);
+    assert!(!state.planner_requests.contains("cancelled"));
+    assert!(
+        state
+            .store
+            .pending_prerequisite_notice("cancelled")
+            .unwrap()
+            .is_some()
+    );
 }
 
 async fn fixture_at_done(service: &Service) -> (nucleus_store::TaskRow, Observed<Forge>) {
@@ -1914,14 +2029,16 @@ async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
         .threads()
         .get(nucleus_core::Role::Reviewer)
         .expect("new child");
-    let (host, parent, archived, native) = archive_roster_fixture(&service, child).await;
+    let (host, parent, archived, publish, native) = archive_roster_fixture(&service, child).await;
     service.host = host;
     for _ in 0..2 {
+        publish(&service.host);
         assert!(matches!(
             service.archive_done(&second).await.expect("archive effect"),
             Action::Wait(WaitReason::Stopping)
         ));
     }
+    publish(&service.host);
     assert!(matches!(
         service
             .archive_done(&second)
@@ -2046,6 +2163,7 @@ async fn archive_roster_fixture(
     T3,
     String,
     Arc<std::sync::Mutex<Vec<String>>>,
+    impl Fn(&T3) + use<>,
     tokio::task::JoinHandle<()>,
 ) {
     let worktrees = service.worktrees().expect("worktree scope");
@@ -2064,13 +2182,39 @@ async fn archive_roster_fixture(
     let child = new_child.to_owned();
     let archived = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let writes = Arc::clone(&archived);
+    let publish_row = {
+        let writes = Arc::clone(&archived);
+        let (path, branch, parent) = (path.clone(), branch.clone(), parent.clone());
+        let child = child.clone();
+        let root = project_root.clone();
+        move |host: &T3| {
+            let writes = writes.lock().unwrap();
+            let threads: Vec<_> = [parent.as_str(), child.as_str(), "thread:reviewer"]
+                .into_iter()
+                .filter(|id| !writes.iter().any(|archived| archived == id))
+                .map(|id| {
+                json!({"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
+                    "parentThreadId":(id != parent).then_some(&parent),
+                    "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
+                    "status":"idle","latestRunId":null,"pendingBackgroundTasks":[],
+                    "activeRunId":null,"pendingRuntimeRequest":null,
+                    "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z")})
+            }).collect();
+            host.fixture_project_shell(
+                &json!({"snapshotSequence":16 + writes.len(),
+                "projects":[{"id":"local-fixture","workspaceRoot":root}],"threads":threads}),
+                "fixture-acp",
+            );
+        }
+    };
     let (host, native) = crate::tests::native_fixture(move |request| {
         if request["tag"] == "orchestration.dispatchCommand" {
             let payload = &request["payload"];
             assert_eq!(payload["type"], "thread.archive");
             let target = payload["threadId"].as_str().expect("archive destination");
-            writes.lock().expect("archive log").push(target.into());
-            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{}}});
+            let mut archived = writes.lock().expect("archive log");
+            archived.push(target.into());
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":16 + archived.len()}}});
         }
         let mut snapshot = json!({"kind":"snapshot","snapshotSequence":16});
         match request["tag"].as_str() {
@@ -2078,13 +2222,13 @@ async fn archive_roster_fixture(
             Some("orchestration.subscribeThread") => {
                 let id = request["payload"]["threadId"].as_str().expect("thread ID");
                 let is_parent = id == parent;
-                let archived = writes.lock().expect("archive log").iter().any(|value| value == id);
+                assert!(!writes.lock().expect("archive log").iter().any(|value| value == id),
+                    "archived thread should be resolved from the shell");
                 snapshot["projection"] = json!({
                     "thread":{"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
                         "parentThreadId":(!is_parent).then_some(&parent),
                         "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
-                        "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z"),
-                        "archivedAt":archived.then_some("2026-11-23T16:10:00Z")},
+                        "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z")},
                     "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],
                     "subagents":[{"id":"new-child","childThreadId":child,"origin":"app_owned"}]
                 });
@@ -2093,7 +2237,8 @@ async fn archive_roster_fixture(
         }
         json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
     }).await;
-    (host, parent_id, archived, native)
+    host.use_held_shell();
+    (host, parent_id, archived, publish_row, native)
 }
 
 #[tokio::test]
@@ -2587,7 +2732,7 @@ async fn pair_board(api: &Router, key: &[u8; 32]) -> String {
     pair_board_link(api, url).await
 }
 
-async fn pair_board_link(api: &Router, url: &str) -> String {
+pub(crate) async fn pair_board_link(api: &Router, url: &str) -> String {
     let token = url
         .strip_prefix("http://127.0.0.1:9/#token=")
         .expect("token in fragment");
@@ -2621,7 +2766,7 @@ async fn pair_board_link(api: &Router, url: &str) -> String {
     session
 }
 
-async fn browser_request(
+pub(crate) async fn browser_request(
     api: &Router,
     method: Method,
     path: &str,

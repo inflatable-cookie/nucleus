@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 
 use crate::{
     HostError, T3, message_id,
-    projection::missing_thread,
-    rpc::{Read, Reply, ThreadReply},
+    rpc::{Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
     thread_snapshots::ThreadRead,
 };
 
@@ -48,11 +47,6 @@ pub struct InboxOperatorMessage {
     pub text: String,
 }
 
-pub enum InboxLifecycle {
-    Complete,
-    Write(InboxWrite),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxStatus {
@@ -66,6 +60,7 @@ pub struct InboxWrite {
     method: &'static str,
     id: String,
     payload: Value,
+    fence: Option<(ThreadFence, String)>,
 }
 
 impl InboxWrite {
@@ -75,6 +70,7 @@ impl InboxWrite {
             method,
             id,
             payload,
+            fence: None,
         }
     }
 
@@ -104,164 +100,168 @@ impl T3 {
         target: &InboxTarget<'_>,
         pending: &BTreeSet<String>,
     ) -> Result<InboxStep, HostError> {
-        let Some(snapshot) = self
-            .inbox_projection(target, ThreadRead::Observation)
-            .await?
-        else {
+        if self.rpc.uses_held_shell() && self.rpc.thread_row(INBOX_THREAD).is_none() {
+            return Ok(InboxStep::Wait);
+        }
+        let ThreadObservation { reply, fence } = self
+            .rpc
+            .observe_thread(INBOX_THREAD, ThreadRead::Inbox)
+            .await?;
+        let ThreadReply::Snapshot(snapshot) = reply else {
             return Ok(InboxStep::Wait);
         };
         let thread = inbox_thread(&snapshot);
+        Self::verify_inbox_thread(target, thread)?;
         if !thread["archivedAt"].is_null() || !pinned(thread)? {
             return Ok(InboxStep::Wait);
         }
-        let shell = self.rpc.thread_row(INBOX_THREAD);
-        let active_run = shell.as_ref().and_then(|row| row["activeRunId"].as_str());
-        reconcile(&snapshot, pending, active_run)
+        self.check_project(PROJECT, target.root).await?;
+        let active_run = fence
+            .row
+            .as_ref()
+            .and_then(|row| row["activeRunId"].as_str());
+        let mut step = reconcile(&snapshot, pending, active_run)?;
+        if let InboxStep::Wake(write) | InboxStep::Write(write) = &mut step {
+            write.fence = Some((fence, target.root.into()));
+        }
+        Ok(step)
     }
 
     /// Observe the exact Rust Inbox without mutating either Inbox.
     /// # Errors
     /// Returns an error when the thread does not match the installed destination.
     pub async fn inbox_status(&self, target: &InboxTarget<'_>) -> Result<InboxStatus, HostError> {
-        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
-            return Ok(InboxStatus::Missing);
+        Ok(self.inbox_status_with_favicon(target).await?.0)
+    }
+
+    /// Observe Inbox status and favicon from one synchronized project inventory.
+    /// # Errors
+    /// Returns an error if the Inbox does not belong to the expected project.
+    pub async fn inbox_status_with_favicon(
+        &self,
+        target: &InboxTarget<'_>,
+    ) -> Result<(InboxStatus, Option<String>), HostError> {
+        let shell = self.inbox_shell().await?;
+        let project = owned_inbox_project(&shell, target.root)?;
+        let Some((thread, _)) = self.inbox_setup_thread(&shell).await? else {
+            return Ok((InboxStatus::Missing, favicon(project)));
         };
-        let thread = inbox_thread(&snapshot);
-        let pinned = pinned(thread)?;
-        if !thread["archivedAt"].is_null() {
-            Ok(InboxStatus::Archived)
-        } else if pinned {
-            Ok(InboxStatus::Pinned)
-        } else {
-            Ok(InboxStatus::Unpinned)
+        Self::verify_inbox_thread(target, &thread)?;
+        if project.is_none() {
+            return Err(HostError::Binding);
         }
-    }
-
-    /// Prepare one explicit install step for the Rust Inbox.
-    /// # Errors
-    /// Returns an error if the project, provider or native thread cannot be verified.
-    pub async fn prepare_inbox_install(
-        &self,
-        target: &InboxTarget<'_>,
-    ) -> Result<InboxLifecycle, HostError> {
-        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
-            let shell = self.inbox_shell().await?;
-            return self
-                .prepare_inbox_launch(target, &shell)
-                .await
-                .map(InboxLifecycle::Write);
-        };
-        let thread = inbox_thread(&snapshot);
-        let action = if !thread["archivedAt"].is_null() {
-            "unarchive"
-        } else if !pinned(thread)? {
-            "pin"
-        } else {
-            return Ok(InboxLifecycle::Complete);
-        };
-        lifecycle_write(&snapshot, action)
-    }
-
-    /// Prepare one explicit removal step for the Rust Inbox alone.
-    /// # Errors
-    /// Returns an error if native ownership cannot be verified.
-    pub async fn prepare_inbox_retire(
-        &self,
-        target: &InboxTarget<'_>,
-    ) -> Result<InboxLifecycle, HostError> {
-        let Some(snapshot) = self.inbox_projection(target, ThreadRead::Exact).await? else {
-            return Ok(InboxLifecycle::Complete);
-        };
-        let thread = inbox_thread(&snapshot);
-        let action = if pinned(thread)? {
-            "unpin"
-        } else if thread["archivedAt"].is_null() {
-            "archive"
-        } else {
-            return Ok(InboxLifecycle::Complete);
-        };
-        lifecycle_write(&snapshot, action)
+        Ok((read_status(&thread)?, favicon(project)))
     }
 
     /// Read the favicon configured on the fixed Rust Inbox project.
     /// # Errors
     /// Returns an error if the native project cannot be verified.
-    pub async fn inbox_favicon(
+    #[cfg(test)]
+    pub(crate) async fn inbox_favicon(
         &self,
         target: &InboxTarget<'_>,
     ) -> Result<Option<String>, HostError> {
         let shell = self.inbox_shell().await?;
-        Ok(owned_inbox_project(&shell, target.root)?
-            .and_then(|project| project["faviconPath"].as_str())
-            .map(str::to_owned))
+        Ok(favicon(owned_inbox_project(&shell, target.root)?))
     }
 
     /// Prepare a favicon update on the fixed Rust Inbox project when it differs.
     /// # Errors
     /// Returns an error if the project or its observed revision cannot be verified.
-    pub async fn prepare_inbox_favicon(
+    #[cfg(test)]
+    pub(crate) async fn prepare_inbox_favicon(
         &self,
         target: &InboxTarget<'_>,
         desired: Option<&str>,
     ) -> Result<Option<InboxWrite>, HostError> {
         let shell = self.inbox_shell().await?;
-        let Some(project) = owned_inbox_project(&shell, target.root)? else {
-            return if desired.is_none() {
-                Ok(None)
+        favicon_write(owned_inbox_project(&shell, target.root)?, desired)
+    }
+
+    /// Prepare a setup mutation using one project inventory per observation.
+    ///
+    /// # Errors
+    /// Returns an error when the project, thread or provider cannot be verified.
+    pub async fn prepare_inbox_setup(
+        &self,
+        target: &InboxTarget<'_>,
+        desired: Option<&str>,
+    ) -> Result<Option<InboxWrite>, HostError> {
+        let shell = self.inbox_shell().await?;
+        let project = owned_inbox_project(&shell, target.root)?;
+        let Some((thread, sequence)) = self.inbox_setup_thread(&shell).await? else {
+            return if desired.is_some() {
+                self.prepare_inbox_launch(target, project).await.map(Some)
             } else {
-                Err(HostError::Binding)
+                favicon_write(project, desired)
             };
         };
-        if project["faviconPath"].as_str() == desired {
-            return Ok(None);
+        Self::verify_inbox_thread(target, &thread)?;
+        if project.is_none() {
+            return Err(HostError::Binding);
         }
-        let revision = project["updatedAt"].as_str().ok_or(HostError::Protocol)?;
-        let action = if desired.is_some() { "set" } else { "clear" };
-        Ok(Some(InboxWrite::new(
-            "projects.mutate",
-            format!("nucleus-rust-inbox-favicon-{action}-{revision}"),
-            json!({"type":"project.update","projectId":PROJECT,"faviconPath":desired}),
+        let archived = !thread["archivedAt"].is_null();
+        let pinned = pinned(&thread)?;
+        let action = match (desired.is_some(), archived, pinned) {
+            (true, true, _) => "unarchive",
+            (true, false, false) => "pin",
+            (false, _, true) => "unpin",
+            (false, false, false) => "archive",
+            _ => return favicon_write(project, desired),
+        };
+        let sequence = sequence.ok_or(HostError::Protocol)?;
+        Ok(Some(command(
+            format!("nucleus-rust-inbox-{action}-{sequence}"),
+            json!({"type":format!("thread.{action}"),"threadId":INBOX_THREAD}),
         )))
     }
 
-    async fn inbox_projection(
-        &self,
-        target: &InboxTarget<'_>,
-        policy: ThreadRead,
-    ) -> Result<Option<Value>, HostError> {
-        let Some(snapshot) = self.inbox_thread(policy).await? else {
-            return Ok(None);
-        };
-        let thread = inbox_thread(&snapshot);
+    fn verify_inbox_thread(target: &InboxTarget<'_>, thread: &Value) -> Result<(), HostError> {
         if thread["id"] != INBOX_THREAD
             || thread["projectId"] != PROJECT
             || thread["providerInstanceId"] != target.provider
             || thread["modelSelection"]["instanceId"] != target.provider
             || thread["modelSelection"]["model"] != "nucleus"
             || !thread["deletedAt"].is_null()
+            || !thread["worktreePath"].is_null()
             || !thread["parentThreadId"].is_null()
             || !thread["lineage"]["parentThreadId"].is_null()
         {
             return Err(HostError::Binding);
         }
-        self.check_project(PROJECT, target.root).await?;
-        Ok(Some(snapshot))
+        Ok(())
     }
 
-    async fn inbox_thread(&self, policy: ThreadRead) -> Result<Option<Value>, HostError> {
-        match self.rpc.thread(INBOX_THREAD, policy).await? {
-            ThreadReply::Closed { row, .. } if !row["deletedAt"].is_null() => Ok(None),
-            ThreadReply::Closed { row, sequence } => Ok(Some(json!({
-                "snapshotSequence": sequence, "projection": {"thread":row}
-            }))),
-            ThreadReply::Snapshot(Reply::Value(value)) => Ok(Some(value)),
-            ThreadReply::Snapshot(Reply::Failure(cause))
-                if missing_thread(&cause, INBOX_THREAD) =>
-            {
-                Ok(None)
+    async fn inbox_setup_thread(
+        &self,
+        shell: &Value,
+    ) -> Result<Option<(Value, Option<u64>)>, HostError> {
+        let inventory = &shell["snapshot"];
+        let mut rows = ["threads", "archivedThreads"]
+            .into_iter()
+            .flat_map(|key| inventory[key].as_array().into_iter().flatten())
+            .filter(|row| row["id"] == INBOX_THREAD);
+        if let Some(row) = rows.next() {
+            if rows.next().is_some() {
+                return Err(HostError::Protocol);
             }
-            ThreadReply::Snapshot(Reply::Failure(_)) => Err(HostError::Protocol),
+            let sequence = inventory["snapshotSequence"]
+                .as_u64()
+                .or_else(|| shell["snapshotSequence"].as_u64());
+            return Ok(row["deletedAt"].is_null().then(|| (row.clone(), sequence)));
         }
+        Ok(
+            match self.rpc.thread(INBOX_THREAD, ThreadRead::Exact).await? {
+                ThreadReply::Snapshot(snapshot) => Some((
+                    inbox_thread(&snapshot).clone(),
+                    snapshot["snapshotSequence"].as_u64(),
+                )),
+                ThreadReply::Closed { row, sequence } if row["deletedAt"].is_null() => {
+                    Some((row, sequence))
+                }
+                _ => None,
+            },
+        )
     }
 
     async fn inbox_shell(&self) -> Result<Value, HostError> {
@@ -273,9 +273,9 @@ impl T3 {
     async fn prepare_inbox_launch(
         &self,
         target: &InboxTarget<'_>,
-        shell: &Value,
+        project: Option<&Value>,
     ) -> Result<InboxWrite, HostError> {
-        if owned_inbox_project(shell, target.root)?.is_none() {
+        if project.is_none() {
             return Ok(InboxWrite::new(
                 "projects.mutate",
                 "nucleus-rust-inbox-project".into(),
@@ -307,9 +307,28 @@ impl T3 {
     /// # Errors
     /// Returns an error if the host did not acknowledge the command.
     pub async fn write_inbox(&self, write: InboxWrite) -> Result<(), HostError> {
+        let class = if write.fence.is_some() {
+            Read::Background
+        } else {
+            Read::One
+        };
         match self
             .rpc
-            .call(write.method, write.payload, Read::One)
+            .call_guarded(write.method, write.payload, class, || {
+                let Some((fence, root)) = &write.fence else {
+                    return Ok(true);
+                };
+                if !self.rpc.with_shell(|shell| {
+                    self.rpc.fence_at(INBOX_THREAD, shell).matches(fence)
+                        && (!self.rpc.uses_held_shell()
+                            || shell
+                                .and_then(|shell| shell.project(PROJECT))
+                                .is_some_and(|project| project.root == *root))
+                }) {
+                    return Err(HostError::Binding);
+                }
+                Ok(self.rpc.claim_effect(&write.id))
+            })
             .await?
         {
             Reply::Value(_) => Ok(()),
@@ -342,18 +361,48 @@ fn owned_inbox_project<'a>(shell: &'a Value, root: &str) -> Result<Option<&'a Va
     }
 }
 
-fn inbox_thread(snapshot: &Value) -> &Value {
-    &snapshot["projection"]["thread"]
+fn favicon(project: Option<&Value>) -> Option<String> {
+    project
+        .and_then(|project| project["faviconPath"].as_str())
+        .map(str::to_owned)
 }
 
-fn lifecycle_write(snapshot: &Value, action: &str) -> Result<InboxLifecycle, HostError> {
-    let sequence = snapshot["snapshotSequence"]
-        .as_u64()
-        .ok_or(HostError::Protocol)?;
-    Ok(InboxLifecycle::Write(command(
-        format!("nucleus-rust-inbox-{action}-{sequence}"),
-        json!({"type":format!("thread.{action}"),"threadId":INBOX_THREAD}),
+fn favicon_write(
+    project: Option<&Value>,
+    desired: Option<&str>,
+) -> Result<Option<InboxWrite>, HostError> {
+    let Some(project) = project else {
+        return if desired.is_none() {
+            Ok(None)
+        } else {
+            Err(HostError::Binding)
+        };
+    };
+    if project["faviconPath"].as_str() == desired {
+        return Ok(None);
+    }
+    let revision = project["updatedAt"].as_str().ok_or(HostError::Protocol)?;
+    let action = if desired.is_some() { "set" } else { "clear" };
+    Ok(Some(InboxWrite::new(
+        "projects.mutate",
+        format!("nucleus-rust-inbox-favicon-{action}-{revision}"),
+        json!({"type":"project.update","projectId":PROJECT,"faviconPath":desired}),
     )))
+}
+
+fn read_status(thread: &Value) -> Result<InboxStatus, HostError> {
+    let is_pinned = pinned(thread)?;
+    Ok(if !thread["archivedAt"].is_null() {
+        InboxStatus::Archived
+    } else if is_pinned {
+        InboxStatus::Pinned
+    } else {
+        InboxStatus::Unpinned
+    })
+}
+
+fn inbox_thread(snapshot: &Value) -> &Value {
+    &snapshot["projection"]["thread"]
 }
 
 fn selection(provider: &str) -> Value {

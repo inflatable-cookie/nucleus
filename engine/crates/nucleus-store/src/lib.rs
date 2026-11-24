@@ -339,9 +339,10 @@ impl Store {
                   OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
              AND id > ?2
-             UNION SELECT task_id FROM inbox_bindings WHERE task_id > ?2
-             UNION SELECT task_id FROM task_prerequisite_notices
-               WHERE task_id > ?2 AND attempted_at_ms IS NULL
+             UNION SELECT b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
+               WHERE b.task_id > ?2 AND t.phase NOT IN ('done','cancelled')
+             UNION SELECT n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
+               WHERE n.task_id > ?2 AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
              UNION SELECT w.task_id FROM task_prerequisite_waits w
                JOIN tasks t ON t.id = w.task_id
                WHERE w.task_id > ?2 AND w.released_at_ms IS NULL
@@ -447,6 +448,35 @@ impl Store {
             &format!("SELECT EXISTS (SELECT 1 FROM tasks WHERE id = ?1 AND phase = 'done' AND {CURRENT_ARCHIVE_RECEIPT})"),
             [id], |row| row.get(0),
         )?)
+    }
+
+    /// Read recorded archive progress for the current closeout.
+    ///
+    /// # Errors
+    /// Returns an error if the task journal cannot be read.
+    pub fn archive_progress(&self, id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT detail FROM events WHERE task_id = ?1 AND kind = 'role_archive_progress'
+             AND sequence > coalesce((SELECT max(sequence) FROM events
+                 WHERE task_id = ?1 AND kind = 'entered_done'), 0)
+             ORDER BY sequence DESC LIMIT 1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Append a task effect observation without changing the task version.
+    ///
+    /// # Errors
+    /// Returns an error if the journal cannot be updated.
+    pub fn record_task_effect(&mut self, id: &str, event: &EventDraft) -> Result<(), StoreError> {
+        let tx = self.connection.transaction()?;
+        append(&tx, id, event)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Read provenance only for threads in the current native inventory.
@@ -670,12 +700,26 @@ impl Store {
         event: &EventDraft,
         entered: bool,
     ) -> Result<Option<i64>, StoreError> {
+        self.claim_task_effect_after(id, event, entered, None)
+    }
+
+    /// Record an effect again after a matching pre-wire refusal.
+    /// # Errors
+    /// Returns an error when the journal cannot be updated.
+    pub fn claim_task_effect_after(
+        &mut self,
+        id: &str,
+        event: &EventDraft,
+        entered: bool,
+        not_sent: Option<&str>,
+    ) -> Result<Option<i64>, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let recorded: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM events WHERE task_id = ?1 AND kind = ?2 AND detail = ?3)",
-            params![id, event.kind, event.detail],
+            "SELECT coalesce((SELECT kind = ?2 FROM events WHERE task_id = ?1
+               AND kind IN (?2, ?4) AND detail = ?3 ORDER BY sequence DESC LIMIT 1), 0)",
+            params![id, event.kind, event.detail, not_sent],
             |row| row.get(0),
         )?;
         let sequence = if recorded {

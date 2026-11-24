@@ -73,11 +73,11 @@ impl ServerRuntime {
         })
     }
 
-    pub(crate) async fn still_current(&self, scratch: &Path) -> bool {
+    pub(crate) async fn still_current(&self, scratch: Option<&Path>) -> bool {
         let Ok((output, _)) = capture(
             "/bin/ps",
             &["-p", &self.pid.to_string(), "-o", "lstart="],
-            Some(scratch),
+            scratch,
         )
         .await
         else {

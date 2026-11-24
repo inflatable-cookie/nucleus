@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
-use crate::{HostError, ProfileCatalog, Read, Reply, Rpc};
+use crate::{HostError, ProfileCatalog, Read, Reply, Rpc, T3};
 
 pub const NUCLEUS_RUST_PROVIDER: &str = "nucleus-rust";
 const DRIVER: &str = "acpRegistry";
@@ -45,17 +45,9 @@ impl ProviderSetup {
     /// # Errors
     /// Returns an error for an invalid endpoint, credential or launcher.
     pub fn new(endpoint: &str, bearer: &str, launcher: &str) -> Result<Self, HostError> {
-        if !std::path::Path::new(launcher).is_absolute() {
-            return Err(HostError::Configuration);
-        }
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
-            instance: json!({
-                "driver": DRIVER,
-                "displayName": "Nucleus Rust",
-                "enabled": true,
-                "config": {"source": "local", "commandPath": launcher},
-            }),
+            instance: wanted(launcher)?,
         })
     }
 
@@ -64,15 +56,9 @@ impl ProviderSetup {
     /// # Errors
     /// Returns an error if T3 cannot provide an authoritative config.
     pub async fn observe(&self) -> Result<ProviderRegistration, ProviderSetupError> {
-        let config = match self
-            .rpc
-            .call("server.getConfig", json!({}), Read::One)
-            .await?
-        {
-            Reply::Value(config) => config,
-            Reply::Failure(_) => return Err(HostError::Protocol.into()),
-        };
-        registration(config, &self.instance).map_err(Into::into)
+        observe_registration(&self.rpc, &self.instance)
+            .await
+            .map_err(Into::into)
     }
 
     /// Create an absent instance or explicitly adopt its existing local launcher.
@@ -145,7 +131,8 @@ impl ProviderSetup {
 
     async fn wait_for(&self, expected: ProviderRegistration) -> Result<(), ProviderSetupError> {
         timeout(READBACK_TIMEOUT, async {
-            loop {
+            let mut delay = Duration::from_millis(500);
+            for _ in 0..8 {
                 let observed = self.observe().await?;
                 if observed == expected {
                     return Ok(());
@@ -155,12 +142,49 @@ impl ProviderSetup {
                     ProviderRegistration::Adoptable => return Err(ProviderSetupError::Unconfirmed),
                     _ => {}
                 }
-                sleep(Duration::from_millis(500)).await;
+                sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(8));
             }
+            Err(ProviderSetupError::Unconfirmed)
         })
         .await
         .map_err(|_| ProviderSetupError::Unconfirmed)?
     }
+}
+
+impl T3 {
+    /// Observe the exact local ACP registration using the existing RPC client.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid launcher or unavailable config.
+    pub async fn provider_registration(
+        &self,
+        launcher: &str,
+    ) -> Result<ProviderRegistration, HostError> {
+        observe_registration(&self.rpc, &wanted(launcher)?).await
+    }
+}
+
+fn wanted(launcher: &str) -> Result<Value, HostError> {
+    if !std::path::Path::new(launcher).is_absolute() {
+        return Err(HostError::Configuration);
+    }
+    Ok(json!({
+        "driver": DRIVER,
+        "displayName": "Nucleus Rust",
+        "enabled": true,
+        "config": {"source": "local", "commandPath": launcher},
+    }))
+}
+
+async fn observe_registration(
+    rpc: &Rpc,
+    instance: &Value,
+) -> Result<ProviderRegistration, HostError> {
+    let Reply::Value(config) = rpc.call("server.getConfig", json!({}), Read::One).await? else {
+        return Err(HostError::Protocol);
+    };
+    registration(config, instance)
 }
 
 fn registration(config: Value, instance: &Value) -> Result<ProviderRegistration, HostError> {

@@ -70,6 +70,8 @@ pub use web::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("{0}")]
+    ArchiveEvidence(String),
     #[error("T3 parent message was not sent: {reason}")]
     ParentNotSent {
         reason: String,
@@ -214,10 +216,11 @@ struct TaskWait {
     detail: Option<WaitDetail>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 enum WaitDetail {
     BeforeSend(&'static str),
     Observation(&'static str),
+    Archive(String),
 }
 
 struct State {
@@ -563,10 +566,19 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
-        if !row.task.phase().is_terminal()
-            && row.task.run().is_none()
-            && self.parent_delivery_fenced(row).await?
-        {
+        let task = &row.task;
+        if task.phase().is_terminal() {
+            if task.run().is_some() {
+                return self.advance(row, host).await;
+            }
+            if task.phase() == Phase::Done
+                && (self.acp_provider().is_some() || task.report_task().is_some())
+            {
+                return self.archive_done(row).await;
+            }
+            return Ok(Action::Nothing);
+        }
+        if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
         self.refresh_acp_if_requested(row).await?;
@@ -578,7 +590,6 @@ impl Service {
         if self.notify_prerequisite_release(row).await.unwrap_or(true) {
             self.recheck_effect(row, WaitReason::Question).await;
         }
-        let task = &row.task;
         if dependencies::checks_prerequisites(task)
             && self.dependencies_blocked(row).await?
             && !self
@@ -606,13 +617,7 @@ impl Service {
             return Err(error);
         }
         if row.task.phase() == Phase::ReportReady {
-            return self.notify_report_ready(row).await;
-        }
-        if row.task.phase() == Phase::Done
-            && row.task.run().is_none()
-            && (self.acp_provider().is_some() || row.task.report_task().is_some())
-        {
-            return self.archive_done(row).await;
+            return Box::pin(self.notify_report_ready(row)).await;
         }
         if row.task.phase() == Phase::Queued
             && row.task.run().is_none()
@@ -697,19 +702,10 @@ impl Service {
                 inbox.map(|_| nucleus_hosts::INBOX_THREAD),
             );
             tokio::pin!(watch);
-            let mut inbox_hint = None;
             let outcome = loop {
                 tokio::select! {
                     result = &mut watch => break result,
-                    Some(hint) = hints.recv() => {
-                        if hint.thread == nucleus_hosts::INBOX_THREAD {
-                            if inbox_hint.as_ref() == Some(&hint) {
-                                continue;
-                            }
-                            inbox_hint = Some(hint.clone());
-                        }
-                        self.wake_from_host(hint).await;
-                    },
+                    Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
             };
             if let Some(inbox) = inbox {
@@ -871,6 +867,10 @@ impl Service {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "preserve scheduling and the published wait under one state lock"
+    )]
     async fn schedule_result(
         &self,
         row: &TaskRow,
@@ -880,6 +880,7 @@ impl Service {
         let id = &row.task.identity().id;
         let wait = match result {
             Ok(Action::Wait(reason)) => Some(*reason),
+            Err(ServiceError::ArchiveEvidence(_)) => Some(WaitReason::Stopping),
             Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
                 Some(WaitReason::HostUnknown)
             }
@@ -965,7 +966,11 @@ impl Service {
             Some(profiles::GroupPause::Manual) => state.schedule.park(id),
             None => state.schedule.wake(id, due, priority),
         }
-        let changed = state.observe_wait(&row.task, wait)?;
+        let detail = match result {
+            Err(ServiceError::ArchiveEvidence(cause)) => Some(WaitDetail::Archive(cause.clone())),
+            _ => None,
+        };
+        let changed = state.observe_wait_detail(&row.task, wait, detail)?;
         self.desire_title(&state, &row.task, row.number);
         if changed {
             self.title_wake.notify_one();
@@ -1450,6 +1455,7 @@ impl Service {
         self.track(state, task);
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
+            state.planner_requests.remove(id);
         }
         if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
@@ -1646,8 +1652,8 @@ impl State {
         self.waits.get(id).and_then(|wait| wait.reason)
     }
 
-    fn wait_detail(&self, id: &str) -> Option<WaitDetail> {
-        self.waits.get(id).and_then(|wait| wait.detail)
+    fn wait_detail(&self, id: &str) -> Option<&WaitDetail> {
+        self.waits.get(id).and_then(|wait| wait.detail.as_ref())
     }
 
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
@@ -1695,11 +1701,18 @@ impl State {
             self.store
                 .record_board_entry(id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
         }
-        let changed = self.apply_observed_wait(task, reason, entered);
-        let detail_changed = self
-            .waits
-            .get_mut(id)
-            .is_some_and(|wait| std::mem::replace(&mut wait.detail, detail) != detail);
+        let changed = if matches!(detail, Some(WaitDetail::Archive(_))) {
+            self.set_wait(id, reason)
+        } else {
+            self.apply_observed_wait(task, reason, entered)
+        };
+        let detail_changed = self.waits.get_mut(id).is_some_and(|wait| {
+            if wait.detail == detail {
+                return false;
+            }
+            wait.detail = detail;
+            true
+        });
         Ok(changed || detail_changed)
     }
 

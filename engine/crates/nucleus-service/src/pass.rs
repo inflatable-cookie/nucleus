@@ -12,9 +12,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeAuthorization,
-    NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost,
-    launch_diagnostic,
+    ArchiveCustody, ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest,
+    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
+    StopProgress, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -93,6 +93,10 @@ impl Service {
         ))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the custody journal and retirement behind the same version fence"
+    )]
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let provider = self.acp_provider();
         if provider.is_none() && row.task.report_task().is_none() {
@@ -101,9 +105,20 @@ impl Service {
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
         let id = &identity.id;
-        if self.state.lock().await.store.archive_confirmed(id)? {
-            return Ok(Action::Nothing);
-        }
+        let mut custody = {
+            let state = self.state.lock().await;
+            if state.store.archive_confirmed(id)? {
+                return Ok(Action::Nothing);
+            }
+            state
+                .store
+                .archive_progress(id)?
+                .map(|progress| serde_json::from_str::<ArchiveCustody>(&progress))
+                .transpose()
+                .map_err(nucleus_store::StoreError::from)?
+                .unwrap_or_default()
+        };
+        let prior_custody = custody.clone();
         let worktrees = self.worktrees()?;
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, id)?;
         let scope = route.binding(&checkout)?;
@@ -114,35 +129,54 @@ impl Service {
         let archive = match provider {
             Some(provider) => {
                 self.host
-                    .prepare_parent_archive(&scope, provider, &retained)
-                    .await?
+                    .prepare_parent_archive(&scope, provider, &retained, &mut custody)
+                    .await
             }
-            None => ArchiveStep::Finished,
+            None => Ok(ArchiveStep::Finished),
         };
         let _fence = self.effect(row).await?;
+        if custody != prior_custody {
+            self.record_archive_progress(id, &custody).await?;
+        }
         let uses_report_checkout = row.task.report_task().is_some();
-        match archive {
+        match archive? {
             ArchiveStep::Finished => {
                 let _projects = self.project_writes.read().await;
                 let route = self.project_for(identity).await?;
                 if self.checkout_binding(identity, &route, &checkout)? != scope {
                     return Err(HostError::Binding.into());
                 }
-                if uses_report_checkout {
-                    let head = self.report_archive_head(row, &checkout).await?;
-                    Self::retire_report_checkout(&checkout, head.as_ref())?;
-                }
+                let head = if uses_report_checkout {
+                    Some(self.report_archive_head(row, &checkout).await?)
+                } else {
+                    None
+                };
                 let mut state = self.state.lock().await;
-                self.commit(
-                    &mut state,
-                    row,
-                    &row.task,
-                    &event("role_threads_archived"),
-                    None,
-                )?;
-                Ok(Action::Nothing)
+                custody
+                    .finish(&self.host, || {
+                        if let Some(head) = head {
+                            Self::retire_report_checkout(&checkout, head.as_ref())?;
+                        }
+                        self.commit(
+                            &mut state,
+                            row,
+                            &row.task,
+                            &event("role_threads_archived"),
+                            None,
+                        )?;
+                        Ok(Action::Nothing)
+                    })
+                    .unwrap_or_else(|| {
+                        Err(ServiceError::ArchiveEvidence(
+                            "T3 changed the task or child threads. Checking archive custody again."
+                                .into(),
+                        ))
+                    })
             }
-            ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
+            ArchiveStep::Wait(wait) => Err(ServiceError::ArchiveEvidence(wait.note(
+                row.task.threads().get(Role::Worker),
+                row.task.threads().get(Role::Reviewer),
+            ))),
             ArchiveStep::Write(write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
@@ -159,11 +193,33 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.deliver_parent(row, write, "archive", None).await?;
+                if let crate::acp::ParentEffect::Archived(receipt) = self
+                    .deliver_parent_effect(row, *write, "archive", None)
+                    .await?
+                {
+                    custody.record_archive(*receipt)?;
+                    self.record_archive_progress(id, &custody).await?;
+                }
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
         }
+    }
+
+    async fn record_archive_progress(
+        &self,
+        id: &str,
+        custody: &ArchiveCustody,
+    ) -> Result<(), ServiceError> {
+        let mut progress = event("role_archive_progress");
+        progress.detail =
+            serde_json::to_string(custody).map_err(nucleus_store::StoreError::from)?;
+        self.state
+            .lock()
+            .await
+            .store
+            .record_task_effect(id, &progress)?;
+        Ok(())
     }
 
     #[expect(
@@ -1210,7 +1266,7 @@ impl Service {
                         )
                         .await?;
                 }
-                self.host.check_notice_target(authorization).await?;
+                self.host.check_notice_target(authorization)?;
                 if let Some(path) = &target.worktree_path
                     && !linked_checkout(&root, Path::new(path), &self.git)?
                 {
@@ -1810,10 +1866,15 @@ mod tests {
         let (host, native_server) = native_fixture(move |req| {
             if req["tag"] == "orchestration.subscribeShell" {
                 return json!({"_tag":"Chunk","requestId":req["id"],"values":[
-                    {"kind":"thread.updated","location":"active","thread":{
+                    {"kind":"snapshot","snapshot":{"snapshotSequence":1,"threads":[],"projects":[]}},
+                    {"kind":"synchronized"},
+                    {"kind":"thread.updated","sequence":2,"location":"active","thread":{
                         "id":thread_id,"status":"running","activeRunId":"native"
                     }}
                 ]});
+            }
+            if req["tag"] == "subscribeServerConfig" {
+                return json!({"_tag":"Chunk","requestId":req["id"],"values":[]});
             }
             assert_eq!(req["tag"], "orchestration.subscribeThread");
             calls.fetch_add(1, Ordering::Relaxed);
