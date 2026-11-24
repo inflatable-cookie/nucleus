@@ -21,7 +21,7 @@ use super::{
     Item, ItemContent, ItemKind, ItemRecord, ItemState, WriteAt, decode, insert, record_history,
     valid_key,
 };
-use crate::{DATABASE_FILE, EngineStorage, StorageError, Store, StoreError};
+use crate::{DATABASE_FILE, EngineStorage, StorageError, Store, StoreError, TaskNumberSeed};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
@@ -37,6 +37,10 @@ pub enum ImportError {
     Collision { project: String, id: String },
     #[error("invalid history for legacy lead {id} at version {version}")]
     History { id: String, version: u32 },
+    #[error("invalid legacy task number range")]
+    NumberSeed,
+    #[error("task number seed scope must be a canonical owner/repository")]
+    NumberSeedScope,
     #[error("invalid legacy timestamp {0}")]
     Timestamp(String),
     #[error(transparent)]
@@ -141,10 +145,7 @@ fn repository_projects(
     }
     let mut mapping = BTreeMap::new();
     for (repository, project) in repositories {
-        let valid_origin = repository
-            .split_once('/')
-            .is_some_and(|(owner, name)| valid_key(owner) && valid_key(name));
-        if !valid_origin
+        if !canonical_repository(repository)
             || !valid_key(project)
             || mapping
                 .insert(repository.to_ascii_lowercase(), project.as_str())
@@ -154,6 +155,68 @@ fn repository_projects(
         }
     }
     Ok(mapping)
+}
+
+/// Read canonical repository counters from a standalone copy made after the
+/// TypeScript allocator was fenced. A single pilot can restrict the seed to
+/// its validated repository. The counter already stores the next number.
+///
+/// # Errors
+/// Returns an error for an unsafe copy path, unreadable legacy tables, an
+/// invalid repository scope, or an invalid counter.
+pub fn read_task_number_seed(
+    scratch: &Path,
+    source: &Path,
+    repository: Option<&str>,
+) -> Result<TaskNumberSeed, ImportError> {
+    let scratch = scratch_root(scratch)?;
+    if repository.is_some_and(|repository| !canonical_repository(repository)) {
+        return Err(ImportError::NumberSeedScope);
+    }
+    let scope = repository.map(str::to_ascii_lowercase);
+    let source = open_copy(&scratch, source)?;
+    let mut query = source.prepare(
+        "SELECT lower(repository), max(next_number), max(assigned)
+         FROM (
+           SELECT repository, next_number, NULL AS assigned FROM task_number_counters
+           UNION ALL
+           SELECT repository, NULL, number FROM task_numbers
+         )
+         WHERE ?1 IS NULL OR lower(repository) = ?1
+         GROUP BY lower(repository)",
+    )?;
+    let mut rows = query.query([&scope])?;
+    let mut floors = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let origin: String = row.get(0)?;
+        if !canonical_repository(&origin) {
+            continue;
+        }
+        let counter: Option<i64> = row.get(1)?;
+        let used: Option<i64> = row.get(2)?;
+        if counter.is_some_and(|value| value < 1) || used.is_some_and(|value| value < 1) {
+            return Err(ImportError::NumberSeed);
+        }
+        let after_used = used
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(ImportError::NumberSeed)?;
+        floors.insert(origin, counter.unwrap_or(1).max(after_used));
+    }
+    let all_repositories = scope.is_none();
+    if let Some(repository) = scope {
+        floors.entry(repository).or_insert(1);
+    }
+    Ok(TaskNumberSeed {
+        floors,
+        all_repositories,
+    })
+}
+
+fn canonical_repository(repository: &str) -> bool {
+    repository
+        .split_once('/')
+        .is_some_and(|(owner, name)| valid_key(owner) && valid_key(name))
 }
 
 fn open_copy(scratch: &Path, path: &Path) -> Result<Connection, ImportError> {

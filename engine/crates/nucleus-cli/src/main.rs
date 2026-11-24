@@ -16,7 +16,7 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{Controller, Project, ReportTicket, Service, router, router_with_board};
-use nucleus_store::{Hosts, SettingsFile};
+use nucleus_store::{Hosts, SettingsFile, TaskNumberSeed, planning::legacy::read_task_number_seed};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -295,18 +295,21 @@ async fn serve(
             authority: Authority::Planner { actor },
         });
     }
+    let repository = project.repository.clone();
     let tcp = TcpListener::bind(endpoint).await?;
-    let service = Arc::new(
-        Service::open(
-            &settings,
-            project,
-            host,
-            forge,
-            tcp.local_addr()?,
-            env::current_exe()?.canonicalize()?,
-        )?
-        .with_inbox_from_env()?,
-    );
+    let service = Service::open(
+        &settings,
+        project,
+        host,
+        forge,
+        tcp.local_addr()?,
+        env::current_exe()?.canonicalize()?,
+    )?
+    .with_inbox_from_env()?;
+    if let Some(seed) = legacy_number_seed(Some(&repository))? {
+        service.seed_task_numbers(&seed).await?;
+    }
+    let service = Arc::new(service);
     let api = match board_assets {
         Some(path) => router_with_board(Arc::clone(&service), controllers, path)?,
         None => router(Arc::clone(&service), controllers),
@@ -340,6 +343,19 @@ async fn serve(
     watcher.abort();
     cycle.abort();
     Ok(result?)
+}
+
+fn legacy_number_seed(repository: Option<&str>) -> Result<Option<TaskNumberSeed>> {
+    let Some(source) = env::var_os("NUCLEUS_ENGINE_LEGACY_NUMBERS_COPY") else {
+        return Ok(None);
+    };
+    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
+        .ok_or("set NUCLEUS_SCRATCH_ROOT for the fenced legacy number snapshot")?;
+    Ok(Some(read_task_number_seed(
+        Path::new(&scratch),
+        Path::new(&source),
+        repository,
+    )?))
 }
 
 async fn report(path: &Path) -> Result<()> {

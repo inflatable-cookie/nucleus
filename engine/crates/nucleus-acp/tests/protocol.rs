@@ -249,6 +249,7 @@ async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
     };
     Json(json!({
         "version":1,
+        "reference":"fixture#67",
         "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
         "phase": if state == 3 { "cancelled" } else { "working" },
         "wait": if state == 4 { Some("host_unknown") } else { None },"question":null,"run":run
@@ -382,7 +383,7 @@ async fn stdio_rebuilds_and_updates_the_exact_run_from_invalidations() {
     let waiting = agent.update("plan").await;
     assert_eq!(
         waiting["entries"][1]["content"],
-        "Working · waiting to confirm the worker is idle"
+        "fixture#67 · Working · waiting to confirm the worker is idle"
     );
     fixture.state.store(2, Ordering::Relaxed);
     let _ = fixture.changes.send(());

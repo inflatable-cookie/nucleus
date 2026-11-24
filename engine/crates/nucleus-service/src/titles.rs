@@ -9,20 +9,16 @@ use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget, presenta
 
 const T3_TITLE_LIMIT: usize = 200;
 
-pub(super) fn child_title(task: &Task, role: Role) -> String {
+pub(super) fn child_title(task: &Task, reference: &str, role: Role) -> String {
     let role = if role == Role::Reviewer {
         " review"
     } else {
         ""
     };
-    fit(&format!(
-        "{}{role}: {}",
-        task.identity().reference,
-        brief(task)
-    ))
+    fit(&format!("{reference}{role}: {}", brief(task)))
 }
 
-fn task_title(task: &Task, wait: Option<WaitReason>) -> String {
+fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> String {
     let phase = match task.phase() {
         Phase::Queued => "Queued",
         Phase::Working
@@ -76,11 +72,7 @@ fn task_title(task: &Task, wait: Option<WaitReason>) -> String {
         }
         .into()
     };
-    fit(&format!(
-        "{label}: {} {}",
-        task.identity().reference,
-        brief(task)
-    ))
+    fit(&format!("{label}: {label_reference} {}", brief(task)))
 }
 
 pub(super) fn brief(task: &Task) -> String {
@@ -135,7 +127,13 @@ fn fit(title: &str) -> String {
 }
 
 impl Service {
-    pub(super) fn desire_title(&self, state: &State, task: &Task, wait: Option<WaitReason>) {
+    pub(super) fn desire_title(
+        &self,
+        state: &State,
+        task: &Task,
+        reference: &str,
+        wait: Option<WaitReason>,
+    ) {
         if self.project.acp_provider.is_none() {
             return;
         }
@@ -145,7 +143,7 @@ impl Service {
         let thread = nucleus_hosts::parent_thread(&path);
         match state
             .store
-            .desire_title(id, &thread, &task_title(task, wait))
+            .desire_title(id, &thread, &task_title(task, reference, wait))
         {
             Ok(true) => self.title_wake.notify_one(),
             Ok(false) => {}
@@ -312,19 +310,19 @@ mod tests {
     fn title_policy_formats_reference_roles_and_waits() {
         let mut task = task();
         assert_eq!(
-            child_title(&task, Role::Worker),
+            child_title(&task, "fixture#1", Role::Worker),
             "fixture#1: Add a greeting"
         );
         assert_eq!(
-            child_title(&task, Role::Reviewer),
+            child_title(&task, "fixture#1", Role::Reviewer),
             "fixture#1 review: Add a greeting"
         );
         assert_eq!(
-            task_title(&task, Some(WaitReason::Capacity)),
+            task_title(&task, "fixture#1", Some(WaitReason::Capacity)),
             "Waiting for capacity: fixture#1 Add a greeting"
         );
         assert_eq!(
-            task_title(&task, Some(WaitReason::HostUnknown)),
+            task_title(&task, "fixture#1", Some(WaitReason::HostUnknown)),
             "Waiting on Nucleus: fixture#1 Add a greeting"
         );
         let authority = Authority::Planner {
@@ -338,19 +336,19 @@ mod tests {
         task.command(Command::Hold("After (fixture#2).".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, Some(WaitReason::Hold)),
+            task_title(&task, "fixture#1", Some(WaitReason::Hold)),
             "Waiting on fixture#2: fixture#1 Add a greeting"
         );
         task.command(Command::Hold("Wait for copy".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, Some(WaitReason::Hold)),
+            task_title(&task, "fixture#1", Some(WaitReason::Hold)),
             "Held by planner: fixture#1 Add a greeting"
         );
         task.command(Command::Cancel, &authority, &obs)
             .expect("cancel");
         assert_eq!(
-            task_title(&task, Some(WaitReason::Stopping)),
+            task_title(&task, "fixture#1", Some(WaitReason::Stopping)),
             "Cancelled: fixture#1 Add a greeting"
         );
         let prefix = "🔬 ".repeat(66);
@@ -395,7 +393,7 @@ mod tests {
                 assert_eq!(
                     req["payload"],
                     json!({"type":"thread.metadata.update","threadId":expected,
-                    "commandId":"task-fixture-title-1","title":"Queued: fixture#1 Add a greeting"})
+                    "commandId":"task-fixture-title-1","title":"Queued: nucleus-fixture#1 Add a greeting"})
                 );
                 json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
             }
@@ -410,7 +408,10 @@ mod tests {
                 .store
                 .create(&subject, &event("admitted"))
                 .expect("seed task");
-            service.desire_title(&state, &subject, None);
+            let row = service
+                .lookup(&state, &subject.identity().id)
+                .expect("task");
+            service.desire_title(&state, &row.task, row.reference().as_ref(), None);
             assert!(
                 state
                     .store

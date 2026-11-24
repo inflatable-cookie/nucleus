@@ -1,0 +1,1 @@
+Rust tasks now get a durable per-repository number at admission. The board, CLI, ACP and native titles show the numbered reference. A fenced legacy snapshot seeds the counter and gives existing Rust tasks numbers without changing their execution state.

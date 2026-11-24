@@ -1,6 +1,7 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod inbox;
+mod numbers;
 pub mod planning;
 mod settings;
 mod settings_domains;
@@ -18,6 +19,7 @@ use rusqlite::{
 use serde_json::{Value, json};
 
 pub use inbox::InboxBinding;
+pub use numbers::TaskNumberSeed;
 pub use settings::{
     Backups, EngineSettings, EngineStorage, RetentionSettings, SettingsFile, SettingsSnapshot,
     SettingsValue, StorageError, VerifiedBackup,
@@ -30,9 +32,10 @@ pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
+const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
 const CURRENT_ARCHIVE_RECEIPT: &str = "EXISTS (
@@ -65,6 +68,12 @@ pub enum StoreError {
     PlanningInput,
     #[error("planning record conflicts with the current state")]
     PlanningConflict,
+    #[error("seed this repository's task numbers from the fenced legacy snapshot")]
+    NumbersNeedSeed,
+    #[error("the legacy range overlaps a Rust task number")]
+    NumberOverlap,
+    #[error("the repository task number counter is exhausted")]
+    NumberExhausted,
     #[error("profile assignment requires a new frozen launch")]
     NoProfileLaunch,
     #[error("could not encode task state")]
@@ -86,11 +95,22 @@ pub struct Event {
     pub content: EventDraft,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A task's execution snapshot plus its public number. Equality fences the
+/// execution snapshot, so backfill cannot invalidate a callback or launch.
+#[derive(Debug, Clone)]
 pub struct TaskRow {
     pub task: Task,
     pub version: i64,
+    pub number: Option<i64>,
 }
+
+impl PartialEq for TaskRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version && self.task == other.task
+    }
+}
+
+impl Eq for TaskRow {}
 
 /// Task-scoped credential digests. The database never holds raw ACP keys.
 pub struct AcpSession {
@@ -157,6 +177,7 @@ impl Store {
                 tx.execute(inbox::SCHEMA, [])?;
                 tx.execute(titles::SCHEMA, [])?;
                 tx.execute_batch(planning::SCHEMA)?;
+                tx.execute_batch(numbers::SCHEMA)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
@@ -181,7 +202,10 @@ impl Store {
                 if version < 7 {
                     tx.execute(titles::SCHEMA, [])?;
                 }
-                tx.execute_batch(planning::SCHEMA)?;
+                if version < 8 {
+                    tx.execute_batch(planning::SCHEMA)?;
+                }
+                tx.execute_batch(numbers::SCHEMA)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -308,7 +332,7 @@ impl Store {
     /// Returns an error if the database cannot read or decode the rows.
     pub fn list(&self) -> Result<Vec<TaskRow>, StoreError> {
         let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {TASK_COLUMNS}, version FROM tasks ORDER BY id"
+            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks ORDER BY id"
         ))?;
         let rows = query.query_map([], decode_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -324,14 +348,13 @@ impl Store {
     ///
     /// # Errors
     /// Returns an error on duplicate identity, invalid state, or database failure.
-    pub fn create(&mut self, task: &Task, event: &EventDraft) -> Result<(), StoreError> {
+    pub fn create(&mut self, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        persist(&tx, task, false)?;
-        append(&tx, &task.identity().id, event)?;
+        let number = admit(&tx, task, event)?;
         tx.commit()?;
-        Ok(())
+        Ok(number)
     }
 
     /// Replace exactly the row version and run read by the caller. State and
@@ -544,7 +567,7 @@ impl Store {
 fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> {
     connection
         .query_row(
-            &format!("SELECT {TASK_COLUMNS}, version FROM tasks WHERE id = ?1"),
+            &format!("SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks WHERE id = ?1"),
             [id],
             decode_row,
         )
@@ -555,6 +578,7 @@ fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         task: decode_task(row)?,
         version: row.get(15)?,
+        number: row.get(16)?,
     })
 }
 
@@ -590,6 +614,15 @@ fn json_column(row: &Row<'_>, column: usize) -> rusqlite::Result<Value> {
 
 fn decode_error(column: usize, error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(column, rusqlite::types::Type::Text, Box::new(error))
+}
+
+fn admit(tx: &Transaction<'_>, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
+    let identity = task.identity();
+    let number = numbers::reserve(tx, identity)?;
+    persist(tx, task, false)?;
+    numbers::assign(tx, &identity.id, &identity.repository, number)?;
+    append(tx, &identity.id, event)?;
+    Ok(number)
 }
 
 fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreError> {

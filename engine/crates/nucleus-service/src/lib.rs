@@ -3,6 +3,7 @@
 mod acp;
 mod inbox;
 mod native_inbox;
+mod numbers;
 mod pass;
 mod planning;
 mod presentation;
@@ -250,16 +251,20 @@ impl Service {
         reference: String,
         brief: String,
         caller: &Authority,
-    ) -> Result<Task, ServiceError> {
+    ) -> Result<TaskRow, ServiceError> {
         let task = self.admission_task(id, reference, brief, None, caller)?;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         if state.settings.fixture_slots(&self.project).is_none() {
             return Err(ServiceError::Project);
         }
-        state.store.create(&task, &event("admitted"))?;
+        let number = state.store.create(&task, &event("admitted"))?;
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok(task)
+        Ok(TaskRow {
+            task,
+            version: 1,
+            number: Some(number),
+        })
     }
 
     fn admission_task(
@@ -607,7 +612,7 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
-        self.desire_title(&state, &row.task, wait);
+        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
         if prior != wait {
             self.publish(id, current.version);
         }
@@ -716,7 +721,11 @@ impl Service {
                 } else {
                     prior.version
                 };
-                Ok(CommandOutcome::Applied(Box::new(TaskRow { task, version })))
+                Ok(CommandOutcome::Applied(Box::new(TaskRow {
+                    task,
+                    version,
+                    number: prior.number,
+                })))
             }
             Preflight::Pending => {
                 state.forge_requested.insert(id.into());
@@ -827,7 +836,11 @@ impl Service {
         {
             ticket::clear(self.storage.scratch(), run);
         }
-        Ok(TaskRow { task, version })
+        Ok(TaskRow {
+            task,
+            version,
+            number: prior.number,
+        })
     }
 
     fn commit(
@@ -852,7 +865,7 @@ impl Service {
             state.planner_authority.remove(id);
         }
         state.set_wait(id, None);
-        self.desire_title(state, task, None);
+        self.desire_title(state, task, prior.reference().as_ref(), None);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);

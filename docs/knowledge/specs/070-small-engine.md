@@ -135,7 +135,8 @@ Later decisions carry their own attribution.
     - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
     - The Dispatch settings domain drops `max_load`, and a saved domain that still carries it loads with the field ignored.
 22. **Native task titles.** Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
-    - The task row shows `<State>: <reference> <brief title>`. The reference stands in for the task number until milestone 3. Worker children use `<reference>: <brief title>` and reviewer children use `<reference> review: <brief title>`. Strip a trailing `worker` and fit the title to the host's limit at a word boundary.
+    - Tom, 2026-11-24: "We'll need the generated project badge icons that match T3 (the screenshot shows a card from rust version and a card from TS version) along with task numbers". Each repository gets its own durable allocator. Seed it from the fenced TypeScript allocator before admitting into a migrated repository and backfill the three pilot tasks in admission order.
+    - The task row shows `<State>: <reference> <brief title>`. The public reference is `repo#N`, with the number shown as assigned. Worker children use `<reference>: <brief title>` and reviewer children use `<reference> review: <brief title>`. Strip a trailing `worker` and fit the title to the host's limit at a word boundary.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
@@ -163,7 +164,8 @@ Later decisions carry their own attribution.
 
 | Field | Meaning |
 |---|---|
-| `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
+| `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Internal identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
+| Task number | Per-repository counter allocated with admission. API task views expose `number` and the public `reference` separately from the immutable identity. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. |
 | `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |

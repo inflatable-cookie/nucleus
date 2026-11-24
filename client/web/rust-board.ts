@@ -50,6 +50,8 @@ const current = z.object({
 });
 const summary = current.extend({
   title: z.string().optional(),
+  number: z.number().int().positive().nullish(),
+  reference: z.string().optional(),
   identity: z.object({
     id: z.string(),
     reference: z.string(),
@@ -457,5 +459,5 @@ export function rustQuestionText(question: RustQuestion): string {
 }
 
 export function rustTaskLabel(task: RustTask): string {
-  return task.identity.reference || task.identity.id;
+  return task.reference || task.identity.reference || task.identity.id;
 }

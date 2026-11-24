@@ -182,7 +182,7 @@ fn legacy_planning_apply_preserves_tasks_and_replays_after_rust_edits() {
             EDITED,
         )
         .expect("edit imported item");
-    let promoted = store
+    let (promoted, _) = store
         .promote_item(
             &source_link,
             &task("rust-promotion", &revised.content.body),

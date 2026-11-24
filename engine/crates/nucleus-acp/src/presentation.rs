@@ -221,6 +221,9 @@ fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
         "Merge".into(),
         "Close".into(),
     ];
+    if let Some(reference) = &detail.reference {
+        titles[step] = format!("{reference} · {}", titles[step]);
+    }
     if detail.phase == Phase::Cancelled {
         titles[step].push_str(" · cancelled");
     } else if !detail.phase.is_terminal()

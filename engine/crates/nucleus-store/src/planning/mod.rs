@@ -10,7 +10,7 @@ use nucleus_core::Task;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{EventDraft, Store, StoreError, append, decode_error, persist};
+use crate::{EventDraft, Store, StoreError, admit, decode_error};
 
 pub use model::*;
 
@@ -231,7 +231,7 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         stamp: WriteAt<'_>,
-    ) -> Result<Item, StoreError> {
+    ) -> Result<(Item, i64), StoreError> {
         let tx = self.planning_write()?;
         let ItemSource {
             project_id: project,
@@ -243,15 +243,14 @@ impl Store {
         {
             return Err(StoreError::PlanningConflict);
         }
-        persist(&tx, task, false)?;
-        append(&tx, &task.identity().id, event)?;
+        let number = admit(&tx, task, event)?;
         link_task(&tx, source, &task.identity().id)?;
         item.state = ItemState::Promoted {
             task_id: task.identity().id.clone(),
         };
         save(&tx, ItemRecord, project, id, "promote", &item, stamp)?;
         tx.commit()?;
-        Ok(item)
+        Ok((item, number))
     }
 
     /// Read the planning source of a task admitted by promotion.

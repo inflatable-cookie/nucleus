@@ -122,10 +122,10 @@ impl Service {
             let text = if row.task.operator_decline().is_some() {
                 format!(
                     "The operator declined to accept the external merge for {}. Move or cancel the task.",
-                    row.task.identity().reference
+                    row.reference()
                 )
             } else {
-                notice_text(&row.task, question)
+                notice_text(row.reference().as_ref(), question)
             };
             T3::prepare_notice(thread, command, &text)?
         };
@@ -334,7 +334,7 @@ impl Service {
     }
 }
 
-fn notice_text(task: &Task, question: &Question) -> String {
+fn notice_text(reference: &str, question: &Question) -> String {
     let request = match question {
         Question::Work { prompt, options } if !options.is_empty() => {
             format!("{prompt}\n\nOptions\n- {}", options.join("\n- "))
@@ -350,10 +350,7 @@ fn notice_text(task: &Task, question: &Question) -> String {
             format!("The task needs a decision about the PR or checkout ({repair:?}).")
         }
     };
-    format!(
-        "Task {} needs input.\n\n{request}\n\nAnswer through Nucleus.",
-        task.identity().reference
-    )
+    format!("Task {reference} needs input.\n\n{request}\n\nAnswer through Nucleus.")
 }
 
 #[cfg(test)]

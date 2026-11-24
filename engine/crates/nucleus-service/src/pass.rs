@@ -369,6 +369,8 @@ impl Service {
             if !self.launch_capacity(&task.identity().id, false).await? {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
+            // Parent creation can retry its stable command ID. The title
+            // receipt publishes the numbered label on its own command.
             match self
                 .host
                 .prepare_parent(
@@ -410,7 +412,7 @@ impl Service {
         let inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            title: crate::titles::child_title(task, role),
+            title: crate::titles::child_title(task, row.reference().as_ref(), role),
             profile,
             via: &via,
             instance: &instance,
@@ -543,7 +545,14 @@ impl Service {
             let mut task = task.clone();
             let dispatch = authorization.record(&mut task)?;
             let version = self.commit(&mut state, row, &task, &event("host_send"), None)?;
-            (TaskRow { task, version }, dispatch)
+            (
+                TaskRow {
+                    task,
+                    version,
+                    number: row.number,
+                },
+                dispatch,
+            )
         };
         let result = host.send(dispatch).await?;
         if archive && result == SendOutcome::Rejected {
