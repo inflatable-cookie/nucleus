@@ -1,8 +1,9 @@
 use std::{
+    collections::VecDeque,
     net::IpAddr,
     sync::{
         Arc, Mutex as SyncMutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, Semaphore, mpsc, watch},
+    sync::{Mutex, Notify, mpsc, watch},
     time,
 };
 use tokio_tungstenite::{
@@ -24,6 +25,7 @@ use tokio_tungstenite::{
 
 use crate::{
     HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
+    admission::Admission,
     catalog::CatalogRevision,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
@@ -34,7 +36,6 @@ const MAX_RETRY: Duration = Duration::from_mins(4);
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_TICKET: usize = 64 * 1024;
 const MAX_MESSAGES: usize = 10_000;
-const THREAD_READ_CONCURRENCY: usize = 4;
 
 // The upgrade URL carries a one-use ticket and preview frames can carry board
 // pairing links. Keep Tungstenite's raw request and frame traces compiled out.
@@ -49,13 +50,47 @@ pub(crate) enum Reply {
 }
 
 pub(crate) enum ThreadReply {
-    Snapshot(Reply),
+    Snapshot(Value),
+    Missing,
     Closed { row: Value, sequence: Option<u64> },
+}
+
+#[derive(Clone)]
+pub(crate) struct ThreadFence {
+    pub(crate) row: Option<Arc<Value>>,
+    revision: (u64, Option<u64>),
+    row_revision: Option<(u64, bool)>,
+}
+
+impl ThreadFence {
+    pub(crate) fn covers(&self, sequence: u64) -> bool {
+        self.row_revision.is_some_and(|(revision, initial)| {
+            if initial {
+                sequence <= revision
+            } else {
+                sequence == revision
+            }
+        })
+    }
+
+    pub(crate) fn matches(&self, current: &Self) -> bool {
+        match (&self.row, &current.row) {
+            (Some(before), Some(after)) => Arc::ptr_eq(before, after),
+            (None, None) => self.revision == current.revision,
+            _ => false,
+        }
+    }
+}
+
+pub(crate) struct ThreadObservation {
+    pub(crate) reply: ThreadReply,
+    pub(crate) fence: ThreadFence,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum Read {
     One,
+    Background,
     Shell,
     Thread(ThreadRead),
 }
@@ -64,13 +99,15 @@ pub(crate) struct Rpc {
     base: Url,
     bearer: HeaderValue,
     http: Client,
-    socket: Mutex<Option<Connection>>,
-    opening: Mutex<()>,
+    socket: SyncMutex<Option<Connection>>,
     retry: SyncMutex<Retry>,
     pub(crate) traffic: Traffic,
     shell_managed: AtomicBool,
+    shell_epoch: AtomicU64,
+    pub(crate) shell_changed: Notify,
     snapshots: SyncMutex<Option<ThreadSnapshots>>,
-    thread_reads: Semaphore,
+    recent_effects: SyncMutex<VecDeque<String>>,
+    admission: Admission,
     catalog: SyncMutex<CatalogRevision>,
     catalog_refresh: Mutex<()>,
     catalog_changes: watch::Sender<()>,
@@ -79,6 +116,17 @@ pub(crate) struct Rpc {
 struct Retry {
     until: time::Instant,
     delay: Duration,
+}
+
+struct InterruptedCall<'a>(Option<&'a Rpc>);
+
+impl Drop for InterruptedCall<'_> {
+    fn drop(&mut self) {
+        if let Some(rpc) = self.0 {
+            rpc.traffic.record("requests.cancelled");
+            rpc.defer();
+        }
+    }
 }
 
 /// A shell delta that can wake an exact read. It never proves run state.
@@ -177,7 +225,8 @@ impl ThreadHint {
                         thread["pendingBackgroundTasks"].as_array().map(Vec::len),
                         thread["archivedAt"],
                         thread["settledAt"],
-                        (id == crate::INBOX_THREAD).then(|| &thread["visibleItemCount"]),
+                        thread["settledOverride"],
+                        thread["snoozedUntil"],
                     ])),
                 })
             }
@@ -272,16 +321,18 @@ impl Rpc {
             base,
             bearer,
             http,
-            socket: Mutex::new(None),
-            opening: Mutex::new(()),
+            socket: SyncMutex::new(None),
             retry: SyncMutex::new(Retry {
                 until: time::Instant::now(),
                 delay: T3_RETRY_DELAY,
             }),
             traffic: Traffic::default(),
             shell_managed: AtomicBool::new(false),
+            shell_epoch: AtomicU64::new(0),
+            shell_changed: Notify::new(),
             snapshots: SyncMutex::new(None),
-            thread_reads: Semaphore::new(THREAD_READ_CONCURRENCY),
+            recent_effects: SyncMutex::new(VecDeque::new()),
+            admission: Admission::default(),
             catalog: SyncMutex::new(CatalogRevision::default()),
             catalog_refresh: Mutex::new(()),
             catalog_changes: watch::channel(()).0,
@@ -297,7 +348,8 @@ impl Rpc {
         let mut retry = self.retry.lock().expect("host retry");
         let now = time::Instant::now();
         if retry.until <= now {
-            retry.until = now + retry.delay;
+            let jitter = crate::clock_ms().unwrap_or_default() % 997;
+            retry.until = now + retry.delay + Duration::from_millis(jitter);
             retry.delay = (retry.delay * 2).min(MAX_RETRY);
         }
     }
@@ -354,19 +406,22 @@ impl Rpc {
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
         self.check_retry()?;
-        let mut slot = self.socket.lock().await;
-        self.call_locked(&mut slot, method, payload, read, check)
-            .await
+        let _admission = self
+            .admission
+            .enter(!matches!(read, Read::Background))
+            .await?;
+        Box::pin(self.call_locked(method, payload, read, check)).await
     }
 
     pub(crate) async fn write_guarded(
         &self,
         method: &'static str,
         payload: Value,
+        class: Read,
         check: impl FnOnce() -> Result<(), HostError> + Send,
     ) -> Result<Reply, ParentSendError> {
         let mut reached_send = false;
-        self.call_guarded(method, payload, Read::One, || {
+        self.call_guarded(method, payload, class, || {
             check()?;
             reached_send = true;
             Ok(true)
@@ -383,7 +438,6 @@ impl Rpc {
 
     async fn call_locked(
         &self,
-        slot: &mut Option<Connection>,
         method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
@@ -406,18 +460,23 @@ impl Rpc {
             thread_args.pointer("/thread/id").and_then(Value::as_str),
         ];
         let target = threads.into_iter().flatten().next();
-        if slot.is_none() {
-            *slot = Some(Connection {
+        let socket = self.socket.lock().expect("request socket").take();
+        let mut socket = match socket {
+            Some(socket) => socket,
+            None => Connection {
                 socket: self
                     .open()
                     .await
                     .inspect_err(|error| self.record_timeout(method, target, *error))?,
                 next_id: 0,
-            });
-        }
-        self.check_retry()?;
-        if !check()? {
-            return Ok(Reply::Value(Value::Null));
+            },
+        };
+        match self.check_retry().and_then(|()| check()) {
+            Ok(true) => {}
+            outcome => {
+                *self.socket.lock().expect("request socket") = Some(socket);
+                return outcome.map(|_| Reply::Value(Value::Null));
+            }
         }
         if writes_thread
             && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
@@ -427,23 +486,34 @@ impl Rpc {
             }
         }
         self.traffic.record(method);
-        if matches!(read, Read::Thread(ThreadRead::Terminal)) {
+        if matches!(read, Read::Thread(policy) if policy.terminal()) {
             self.traffic.record("threadReads.terminal");
         }
-        let result = time::timeout(
-            DEADLINE,
-            slot.as_mut()
-                .expect("open RPC socket")
-                .call(method, payload, read),
-        )
-        .await
-        .unwrap_or(Err(HostError::Timeout));
+        let mut in_flight = InterruptedCall(Some(self));
+        let result = time::timeout(DEADLINE, socket.call(method, payload, read))
+            .await
+            .unwrap_or(Err(HostError::Timeout));
+        in_flight.0 = None;
+        if matches!(read, Read::Thread(_))
+            && let Ok(Reply::Value(value)) = &result
+            && value.pointer("/projection/thread").is_some_and(closed_row)
+        {
+            self.traffic.record("threadReads.archivedOrDeleted");
+            if matches!(read, Read::Thread(policy) if policy.terminal()) {
+                self.traffic.record("threadReads.terminalArchivedOrDeleted");
+            }
+        }
         match result {
-            Ok(_) => self.retry.lock().expect("host retry").delay = T3_RETRY_DELAY,
+            Ok(_) => {
+                *self.socket.lock().expect("request socket") = Some(socket);
+                self.retry.lock().expect("host retry").delay = T3_RETRY_DELAY;
+            }
             Err(error) => {
-                *slot = None;
                 self.record_timeout(method, target, error);
-                if matches!(error, HostError::Unavailable | HostError::Timeout) {
+                if matches!(
+                    error,
+                    HostError::Unavailable | HostError::Timeout | HostError::Protocol
+                ) {
                     self.defer();
                 }
             }
@@ -478,102 +548,153 @@ impl Rpc {
         eprintln!("T3 {method} timed out (thread {thread})");
     }
 
+    pub(crate) fn stream_failed(&self, method: &'static str, error: HostError) {
+        self.record_timeout(method, None, error);
+        if matches!(
+            error,
+            HostError::Unavailable | HostError::Timeout | HostError::Protocol
+        ) {
+            self.defer();
+        }
+    }
+
     pub(crate) async fn thread(
         &self,
         id: &str,
         policy: ThreadRead,
     ) -> Result<ThreadReply, HostError> {
-        let _permit = self
-            .thread_reads
-            .acquire()
-            .await
-            .map_err(|_| HostError::Unavailable)?;
-        let mut slot = self.socket.lock().await;
-        let marker = {
+        Ok(self.observe_thread(id, policy).await?.reply)
+    }
+
+    pub(crate) async fn observe_thread(
+        &self,
+        id: &str,
+        policy: ThreadRead,
+    ) -> Result<ThreadObservation, HostError> {
+        let _admission = self
+            .admission
+            .enter(matches!(policy, ThreadRead::Exact) || policy.terminal())
+            .await?;
+        let before = {
             let mut snapshots = self.snapshots.lock().expect("thread snapshots");
+            let fence = self.fence_at(id, snapshots.as_ref());
             if let Some(shell) = snapshots.as_mut() {
-                if let Some((row, sequence)) = shell.closed(id) {
-                    return Ok(ThreadReply::Closed { row, sequence });
+                if let Some(row) = fence.row.as_deref().filter(|row| closed_row(row)) {
+                    let reply = ThreadReply::Closed {
+                        row: row.clone(),
+                        sequence: shell.revision(),
+                    };
+                    return Ok(ThreadObservation { reply, fence });
                 }
                 if !matches!(policy, ThreadRead::Exact)
                     && let Some(reply) = shell.get(id)
                 {
-                    return Ok(ThreadReply::Snapshot(reply));
+                    return Ok(ThreadObservation {
+                        reply: ThreadReply::Snapshot(reply),
+                        fence,
+                    });
                 }
             }
-            snapshots.as_ref().and_then(|shell| shell.marker(id))
+            fence
         };
-        let reply = self
-            .call_locked(
-                &mut slot,
-                "orchestration.subscribeThread",
-                json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
-                    "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
-                Read::Thread(policy),
-                || Ok(true),
-            )
-            .await?;
-        if marker.is_some()
-            && let Reply::Failure(cause) = &reply
-            && crate::projection::missing_thread(cause, id)
+        self.check_thread_read(before.row.as_deref(), policy)?;
+        let reply = Box::pin(self.call_locked(
+            "orchestration.subscribeThread",
+            json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
+                "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
+            Read::Thread(policy),
+            || {
+                self.check_thread_read(self.thread_row(id).as_deref(), policy)
+                    .map(|()| true)
+            },
+        ))
+        .await?;
+        let mut snapshots = self.snapshots.lock().expect("thread snapshots");
+        let fence = self.fence_at(id, snapshots.as_ref());
+        let same_marker = before.matches(&fence);
+        let row = fence.row.as_deref();
+        let reply = match reply {
+            Reply::Value(value) => {
+                let updated = value
+                    .pointer("/projection/thread/updatedAt")
+                    .and_then(Value::as_str);
+                let expected = row.and_then(|row| row["updatedAt"].as_str());
+                if (!same_marker && (expected.is_none() || updated != expected))
+                    || matches!((updated.and_then(parse_native_time), expected.and_then(parse_native_time)),
+                        (Some(updated), Some(expected)) if updated < expected)
+                {
+                    return Err(HostError::Uncertain);
+                }
+                if let Some(marker) = &fence.row
+                    && let Some(shell) = snapshots.as_mut()
+                {
+                    shell.keep(id, marker, &value, policy);
+                }
+                ThreadReply::Snapshot(value)
+            }
+            Reply::Failure(cause) if crate::projection::missing_thread(&cause, id) => {
+                if !same_marker || row.is_some() {
+                    return Err(HostError::Uncertain);
+                }
+                ThreadReply::Missing
+            }
+            Reply::Failure(cause) => {
+                eprintln!(
+                    "{id}: T3 orchestration.subscribeThread: {:?}",
+                    self.failure_detail(&cause)
+                );
+                return Err(HostError::Uncertain);
+            }
+        };
+        Ok(ThreadObservation { reply, fence })
+    }
+
+    fn check_thread_read(&self, row: Option<&Value>, policy: ThreadRead) -> Result<(), HostError> {
+        if row.is_some_and(closed_row)
+            || (row.is_none()
+                && self.uses_held_shell()
+                && matches!(policy, ThreadRead::Terminal | ThreadRead::Inbox))
         {
-            // A contradictory listing and exact read are never proof of absence.
             return Err(HostError::Uncertain);
         }
-        if let Reply::Value(value) = &reply
-            && let Some(row) = value.pointer("/projection/thread")
-            && (!row["archivedAt"].is_null() || !row["deletedAt"].is_null())
-        {
-            self.traffic.record("threadReads.archivedOrDeleted");
-            if matches!(policy, ThreadRead::Terminal) {
-                self.traffic.record("threadReads.terminalArchivedOrDeleted");
-            }
-        }
-        if let Some(marker) = marker
-            && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
-        {
-            shell.keep(id, &marker, &reply);
-        }
-        Ok(ThreadReply::Snapshot(reply))
+        Ok(())
     }
 
     pub(crate) fn use_held_shell(&self) {
         self.shell_managed.store(true, Ordering::Release);
     }
 
+    pub(crate) fn uses_held_shell(&self) -> bool {
+        self.shell_managed.load(Ordering::Acquire)
+    }
+
     pub(crate) fn clear_shell(&self) {
-        *self.snapshots.lock().expect("thread snapshots") = None;
+        let mut view = self.snapshots.lock().expect("thread snapshots");
+        *view = None;
+        self.shell_epoch.fetch_add(1, Ordering::Relaxed);
+        self.shell_changed.notify_one();
     }
 
-    pub(crate) fn thread_row(&self, id: &str) -> Option<std::sync::Arc<Value>> {
-        self.snapshots
-            .lock()
-            .expect("thread snapshots")
-            .as_ref()?
-            .marker(id)
+    pub(crate) fn fence_at(&self, id: &str, shell: Option<&ThreadSnapshots>) -> ThreadFence {
+        ThreadFence {
+            row: shell.and_then(|shell| shell.marker(id)),
+            row_revision: shell.and_then(|shell| shell.row_revision(id)),
+            revision: (
+                self.shell_epoch.load(Ordering::Relaxed),
+                shell.and_then(ThreadSnapshots::revision),
+            ),
+        }
     }
 
-    pub(crate) fn background_row(
-        &self,
-        id: &str,
-        sequence: u64,
-    ) -> Option<(std::sync::Arc<Value>, bool)> {
-        self.snapshots
-            .lock()
-            .expect("thread snapshots")
-            .as_ref()?
-            .background_row(id, sequence)
-    }
-
-    pub(crate) fn thread_row_with_revision(
-        &self,
-        id: &str,
-    ) -> (Option<std::sync::Arc<Value>>, Option<u64>) {
-        self.snapshots
-            .lock()
-            .expect("thread snapshots")
-            .as_ref()
-            .map_or((None, None), |shell| (shell.marker(id), shell.revision(id)))
+    pub(crate) fn thread_row_with_revision(&self, id: &str) -> (Option<Arc<Value>>, Option<u64>) {
+        self.with_shell(|shell| {
+            shell.map_or((None, None), |shell| {
+                (
+                    shell.marker(id),
+                    shell.row_revision(id).map(|(revision, _)| revision),
+                )
+            })
+        })
     }
 
     pub(crate) fn row_children(
@@ -582,13 +703,37 @@ impl Rpc {
         roles: &[&str],
     ) -> crate::task_row::RowChildren {
         use crate::task_row::RowChildren;
-        self.snapshots
-            .lock()
-            .expect("thread snapshots")
-            .as_ref()
-            .map_or(RowChildren::Unknown, |shell| {
+        self.with_shell(|shell| {
+            shell.map_or(RowChildren::Unknown, |shell| {
                 shell.row_children(parent, roles)
             })
+        })
+    }
+
+    pub(crate) fn same_thread(&self, id: &str, fence: &ThreadFence) -> bool {
+        self.with_shell(|shell| {
+            (shell.is_some() || !self.uses_held_shell()) && self.fence_at(id, shell).matches(fence)
+        })
+    }
+
+    pub(crate) fn claim_effect(&self, key: &str) -> bool {
+        let mut effects = self.recent_effects.lock().expect("host effects");
+        if effects.iter().any(|prior| prior == key) {
+            return false;
+        }
+        if effects.len() == 64 {
+            effects.pop_front();
+        }
+        effects.push_back(key.into());
+        true
+    }
+
+    pub(crate) fn with_shell<T>(&self, read: impl FnOnce(Option<&ThreadSnapshots>) -> T) -> T {
+        read(self.snapshots.lock().expect("thread snapshots").as_ref())
+    }
+
+    pub(crate) fn thread_row(&self, id: &str) -> Option<Arc<Value>> {
+        self.with_shell(|shell| shell?.marker(id))
     }
 
     #[cfg(any(test, feature = "loopback-fixture"))]
@@ -606,7 +751,7 @@ impl Rpc {
         if let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_ref() {
             return Ok(shell.snapshot());
         }
-        if self.shell_managed.load(Ordering::Acquire) {
+        if self.uses_held_shell() {
             self.check_retry()?;
             return Err(HostError::Uncertain);
         }
@@ -634,16 +779,16 @@ impl Rpc {
     pub(crate) async fn watch_threads(
         &self,
         hints: &mpsc::Sender<ThreadHint>,
-        titles: Option<(&crate::title_shell::TitleShell, &str)>,
-        mut inbox_thread: Option<&str>,
+        inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
+        let admission = self.admission.enter(false).await?;
         let socket = self.open().await?;
         let mut connection = Connection { socket, next_id: 0 };
         self.check_retry()?;
         self.traffic.record("orchestration.subscribeShell");
         connection.send(json!({"_tag":"Request", "id":"1", "tag":"orchestration.subscribeShell", "headers":[],
             "payload":{"requestCompletionMarker":true}})).await?;
-        let mut initial = None;
+        drop(admission);
         let mut initial_snapshots = None;
         let expires = time::Instant::now() + Duration::from_mins(15);
         let synchronize_by = time::Instant::now() + DEADLINE;
@@ -696,18 +841,25 @@ impl Rpc {
                                     "thread.updated" | "thread.removed" | "project.updated"
                                     | "project.removed",
                                 ) => {
-                                    if let Some(shell) = initial_snapshots.as_mut() {
-                                        shell.update(item);
-                                    } else if let Some(shell) =
-                                        self.snapshots.lock().expect("thread snapshots").as_mut()
-                                    {
-                                        shell.update(item);
+                                    let applied = if let Some(shell) = initial_snapshots.as_mut() {
+                                        update_shell(shell, item, inbox_thread)
+                                    } else {
+                                        self.snapshots
+                                            .lock()
+                                            .expect("thread snapshots")
+                                            .as_mut()
+                                            .is_some_and(|shell| {
+                                                update_shell(shell, item, inbox_thread)
+                                            })
+                                    };
+                                    if !applied {
+                                        continue;
                                     }
                                 }
                                 _ => return Err(HostError::Protocol),
                             }
                             if item["kind"] == "synchronized"
-                                && let Some(thread) = inbox_thread.take()
+                                && let Some(thread) = inbox_thread
                             {
                                 hints
                                     .try_send(ThreadHint {
@@ -721,29 +873,7 @@ impl Rpc {
                                     })
                                     .map_err(|_| HostError::Uncertain)?;
                             }
-                            if let Some((titles, provider)) = titles {
-                                match item["kind"].as_str() {
-                                    Some("snapshot")
-                                        if item
-                                            .get("resolvedRepositoryIdentityRoots")
-                                            .is_none() =>
-                                    {
-                                        titles.replace(None);
-                                        initial = crate::title_shell::Shell::read(
-                                            &item["snapshot"],
-                                            provider,
-                                        );
-                                    }
-                                    Some("synchronized") => titles.replace(initial.take()),
-                                    _ => {
-                                        if let Some(shell) = &mut initial {
-                                            shell.update(item, provider);
-                                        } else {
-                                            titles.update(item, provider);
-                                        }
-                                    }
-                                }
-                            }
+                            self.shell_changed.notify_one();
                             if let Some(hint) = ThreadHint::read(item) {
                                 hints.try_send(hint).map_err(|_| HostError::Uncertain)?;
                             }
@@ -761,6 +891,7 @@ impl Rpc {
         &self,
         theme: &tokio::sync::watch::Sender<Option<Value>>,
     ) -> Result<(), HostError> {
+        let admission = self.admission.enter(false).await?;
         let socket = self.open().await?;
         let mut connection = Connection { socket, next_id: 0 };
         self.check_retry()?;
@@ -771,6 +902,7 @@ impl Rpc {
             "payload":{"environmentThemes":true,"workspaceSnapshotsOnDemand":true}}),
             )
             .await?;
+        drop(admission);
         let mut tracker = crate::theme::ThemeTracker::default();
         loop {
             let frames = time::timeout(Duration::from_mins(1), connection.frames())
@@ -810,12 +942,13 @@ impl Rpc {
 
     async fn open(&self) -> Result<Socket, HostError> {
         self.check_retry()?;
-        let _opening = self.opening.lock().await;
-        self.check_retry()?;
         let result = time::timeout(DEADLINE, self.connect())
             .await
             .unwrap_or(Err(HostError::Timeout));
-        if matches!(result, Err(HostError::Unavailable | HostError::Timeout)) {
+        if matches!(
+            result,
+            Err(HostError::Unavailable | HostError::Timeout | HostError::Protocol)
+        ) {
             self.defer();
         }
         result
@@ -866,6 +999,25 @@ impl Rpc {
             .map_err(|_| HostError::Unavailable)?;
         Ok(socket)
     }
+}
+
+fn update_shell(shell: &mut ThreadSnapshots, item: &Value, inbox: Option<&str>) -> bool {
+    let duplicate_inbox = inbox.is_some_and(|id| {
+        item["kind"] == "thread.updated"
+            && item["thread"]["id"] == id
+            && shell
+                .marker(id)
+                .is_some_and(|prior| *prior == item["thread"])
+    });
+    shell.update(item) && !duplicate_inbox
+}
+
+pub(crate) fn closed_row(row: &Value) -> bool {
+    !row["archivedAt"].is_null() || !row["deletedAt"].is_null()
+}
+
+fn parse_native_time(value: &str) -> Option<::time::OffsetDateTime> {
+    ::time::OffsetDateTime::parse(value, &::time::format_description::well_known::Rfc3339).ok()
 }
 
 struct Connection {
@@ -942,7 +1094,10 @@ impl Connection {
                     "Exit" if frame["exit"]["_tag"] == "Failure" => {
                         return Ok(Reply::Failure(frame["exit"]["cause"].clone()));
                     }
-                    "Exit" if frame["exit"]["_tag"] == "Success" && matches!(read, Read::One) => {
+                    "Exit"
+                        if frame["exit"]["_tag"] == "Success"
+                            && matches!(read, Read::One | Read::Background) =>
+                    {
                         return Ok(Reply::Value(frame["exit"]["value"].clone()));
                     }
                     "Chunk" if matches!(read, Read::Shell | Read::Thread(_)) => {
@@ -1063,7 +1218,7 @@ mod tests {
         let (hints, _) = mpsc::channel(1);
         let theme = tokio::sync::watch::channel(None).0;
         assert!(
-            matches!(rpc.watch_threads(&hints, None, None).await, Err(HostError::Deferred { until }) if until == due)
+            matches!(rpc.watch_threads(&hints, None).await, Err(HostError::Deferred { until }) if until == due)
         );
         assert!(
             matches!(rpc.watch_theme(&theme).await, Err(HostError::Deferred { until }) if until == due)

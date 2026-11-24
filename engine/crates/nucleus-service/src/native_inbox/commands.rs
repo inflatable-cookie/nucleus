@@ -83,7 +83,9 @@ impl Service {
         let reply = if let Some(board) = self.board.get() {
             let result = self
                 .host
-                .preview_inbox_board(&board_url, || board.inbox_link(self.callback))
+                .preview_inbox_board(&board_url, run_id.is_some(), || {
+                    board.inbox_link(self.callback)
+                })
                 .await;
             if let Err(error) = &result {
                 eprintln!("Nucleus Inbox board: {error}");

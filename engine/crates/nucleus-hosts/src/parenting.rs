@@ -10,14 +10,16 @@ use nucleus_core::{
     RetainedThread,
     acp::{REFRESH_TASK_ROW, parent_hold_prompt, session_id},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, RowObservation, RowVisibility, T3, clock_ms, message_id,
-    projection::ParentCustody,
-    rpc::Reply,
+    Binding, HostError, ProfileCatalog, RowChildren, RowObservation, RowVisibility, T3, clock_ms,
+    message_id,
+    projection::{ParentCustody, Projection, Subagent},
+    rpc::{Read, Reply, ThreadFence},
     task_row::ThreadVisibility,
-    thread_snapshots::{ShellCustody, ThreadRead},
+    thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, row_activity},
 };
 
 /// Evidence for the exact active turn and root node that can parent a child.
@@ -48,10 +50,158 @@ pub enum ParentSendError {
     Unknown(HostError),
 }
 
+/// Closeout evidence journaled for one completed task binding.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchiveCustody {
+    binding: Option<Binding>,
+    provider: Option<String>,
+    roster_run: Option<String>,
+    members: BTreeMap<String, ArchiveMember>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ArchiveMember {
+    owned: bool,
+    closed: Option<Closure>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum Closure {
+    Gone,
+    Archived(String, Option<String>),
+}
+
+impl ArchiveCustody {
+    fn refresh(&mut self, shell: Option<&ThreadSnapshots>) {
+        for (id, member) in &mut self.members {
+            if member
+                .closed
+                .as_ref()
+                .is_some_and(|closed| !closed.holds(shell, id))
+            {
+                member.closed = None;
+            }
+        }
+    }
+
+    /// Check the roster and every saved closure at the archive or checkout gate.
+    #[must_use]
+    pub fn is_current(&self, host: &T3) -> bool {
+        host.rpc
+            .with_shell(|shell| self.holds(shell, host.rpc.uses_held_shell()))
+    }
+
+    fn holds(&self, shell: Option<&ThreadSnapshots>, managed: bool) -> bool {
+        let Some(binding) = &self.binding else {
+            return true;
+        };
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        (shell.is_some() || !managed)
+            && shell.is_none_or(|shell| {
+                shell
+                    .children(&parent)
+                    .all(|id| self.members.contains_key(id))
+            })
+            && self.members.iter().all(|(id, member)| {
+                member
+                    .closed
+                    .as_ref()
+                    .is_none_or(|proof| proof.holds(shell, id))
+            })
+    }
+
+    fn closed(&self, id: &str) -> bool {
+        self.members
+            .get(id)
+            .is_some_and(|member| member.closed.is_some())
+    }
+
+    fn close(&mut self, id: &str, proof: Closure) {
+        self.members.entry(id.into()).or_default().closed = Some(proof);
+    }
+}
+
+impl Closure {
+    fn observed(view: &Projection) -> Self {
+        view.archive_marker()
+            .map_or(Self::Gone, |(archived, updated)| {
+                Self::Archived(archived, updated)
+            })
+    }
+
+    fn holds(&self, shell: Option<&ThreadSnapshots>, id: &str) -> bool {
+        shell
+            .and_then(|shell| shell.marker(id))
+            .is_none_or(|row| match self {
+                Self::Gone => !row["deletedAt"].is_null(),
+                Self::Archived(archived, updated) => {
+                    row["deletedAt"].is_null()
+                        && row["archivedAt"] == archived.as_str()
+                        && row["updatedAt"].as_str() == updated.as_deref()
+                        && row_activity(&row) != RowChildren::Active
+                }
+            })
+    }
+}
+
+fn roster_run(row: &Value) -> Option<&str> {
+    match row.get("latestRunId")? {
+        Value::Null => Some(""),
+        run => run.as_str().filter(|run| !run.is_empty()),
+    }
+}
+
+struct ParentFence {
+    custody: Option<ArchiveCustody>,
+    thread: String,
+    target: ThreadFence,
+}
+
+impl ParentFence {
+    fn holds(&self, host: &T3) -> bool {
+        host.rpc.with_shell(|shell| {
+            self.custody
+                .as_ref()
+                .is_none_or(|custody| custody.holds(shell, host.rpc.uses_held_shell()))
+                && self.target.matches(&host.rpc.fence_at(&self.thread, shell))
+        })
+    }
+}
+
 pub enum ArchiveStep {
     Finished,
-    Write(ParentWrite),
-    Wait,
+    Write(Box<ParentWrite>),
+    Wait(ArchiveWait),
+}
+
+/// Native evidence still needed before closing this family.
+pub enum ArchiveWait {
+    ParentInventory,
+    ParentCustody,
+    ParentRoster,
+    Child(String),
+}
+
+impl ArchiveWait {
+    #[must_use]
+    pub fn note(&self, worker: Option<&str>, reviewer: Option<&str>) -> &'static str {
+        match self {
+            Self::ParentInventory => {
+                "Waiting for T3 to list the task thread so its closure can be confirmed."
+            }
+            Self::ParentCustody => "Waiting to confirm the task thread is quiet before archiving.",
+            Self::ParentRoster => {
+                "Waiting to confirm which child threads belong to the task thread."
+            }
+            Self::Child(thread) if worker == Some(thread) => {
+                "Waiting to confirm the worker thread is closed."
+            }
+            Self::Child(thread) if reviewer == Some(thread) => {
+                "Waiting to confirm the reviewer thread is closed."
+            }
+            Self::Child(_) => "Waiting to confirm a delegated child thread is closed.",
+        }
+    }
 }
 
 /// Native mutation bound to the same project and checkout as the evidence.
@@ -61,6 +211,7 @@ pub struct ParentWrite {
     payload: Value,
     idle_at: Option<(String, u64)>,
     delivery: Option<Box<ParentDelivery>>,
+    fence: Option<Box<ParentFence>>,
 }
 
 struct ParentDelivery {
@@ -112,7 +263,8 @@ impl T3 {
         provider: &str,
     ) -> Result<Option<ParentWrite>, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self.thread(binding, &thread).await? else {
+        let (projection, fence) = self.observe_parent(binding, &thread).await?;
+        let Some(projection) = projection else {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
@@ -130,7 +282,8 @@ impl T3 {
             binding: binding.clone(),
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
-            delivery: prepare_delivery(&projection, provider)?,
+            fence: None,
+            delivery: prepare_delivery(&projection, provider, fence.row)?,
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -140,107 +293,188 @@ impl T3 {
         }))
     }
 
-    /// Retire children before the parent, with a fresh complete read before
-    /// each proposed mutation and readback on the next scheduler pass.
+    /// Retire children before the parent and retain proven terminal evidence.
+    /// The final write checks the destination sequence under the caller's fence.
     /// # Errors
-    /// Returns an error if identity or complete custody evidence is missing.
+    /// Returns an error if identity or custody evidence is missing.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep roster validation and its ordered custody checks together"
+    )]
     pub async fn prepare_parent_archive(
         &self,
         binding: &Binding,
         provider: &str,
         retained: &[&str],
+        custody: &mut ArchiveCustody,
     ) -> Result<ArchiveStep, HostError> {
-        let parent = parent_thread(Path::new(&binding.worktree_path));
-        let snapshot = self
-            .read_thread(binding, &parent, ThreadRead::Terminal)
-            .await?;
-        let mut children: BTreeMap<_, _> = retained.iter().map(|thread| (*thread, None)).collect();
-        let mut sequence = None;
-        if let Some(snapshot) = &snapshot
-            && snapshot.retained()? != RetainedThread::Gone
+        if custody.binding.as_ref() != Some(binding)
+            || custody.provider.as_deref() != Some(provider)
         {
-            snapshot.require_parent_provider(provider)?;
-            sequence = Some(snapshot.sequence());
-            if !snapshot.archived_in_shell() {
-                for child in snapshot
-                    .subagents()?
-                    .iter()
-                    .filter(|child| child.origin == "app_owned")
-                {
-                    if let Some(thread) = child.child_thread_id.as_deref() {
-                        children.insert(thread, Some(child));
+            *custody = ArchiveCustody {
+                binding: Some(binding.clone()),
+                provider: Some(provider.into()),
+                ..ArchiveCustody::default()
+            };
+        }
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        let dormant = self.rpc.with_shell(|shell| {
+            custody.refresh(shell);
+            if let Some(shell) = shell {
+                for id in shell.children(&parent).filter(|id| *id != parent) {
+                    custody.members.entry(id.into()).or_default();
+                }
+            }
+            self.rpc.uses_held_shell() && shell.and_then(|shell| shell.marker(&parent)).is_none()
+        });
+        for &id in retained {
+            if id == parent {
+                return Err(HostError::Binding);
+            }
+            custody.members.entry(id.into()).or_default();
+        }
+        let mut roster = BTreeMap::new();
+        let parent_observation = if custody.closed(&parent) || dormant {
+            None
+        } else {
+            Some(
+                self.observe_thread(binding, &parent, ThreadRead::Terminal)
+                    .await?,
+            )
+        };
+        let mut parent_archive = None;
+        if let Some((view, fence)) = &parent_observation {
+            let state = match view
+                .as_ref()
+                .map_or(Ok(RetainedThread::Gone), Projection::retained)
+            {
+                Ok(state) => state,
+                Err(HostError::Uncertain) => {
+                    return Ok(ArchiveStep::Wait(ArchiveWait::ParentCustody));
+                }
+                Err(error) => return Err(error),
+            };
+            match state {
+                RetainedThread::Busy => return Ok(ArchiveStep::Wait(ArchiveWait::ParentCustody)),
+                RetainedThread::Gone => custody.close(&parent, Closure::Gone),
+                RetainedThread::Idle => {
+                    let view = view.as_ref().ok_or(HostError::Uncertain)?;
+                    view.require_parent_provider(provider)?;
+                    let listed = fence.row.as_deref();
+                    let run = listed.and_then(roster_run);
+                    if view.archived() {
+                        if listed.is_some_and(|row| row_activity(row) == RowChildren::Quiet)
+                            && run.is_some()
+                            && run == custody.roster_run.as_deref()
+                        {
+                            custody.close(&parent, Closure::observed(view));
+                        }
+                    } else {
+                        custody.roster_run = None;
+                        let children = match view.subagents() {
+                            Ok(children) => children,
+                            Err(HostError::Uncertain) => {
+                                return Ok(ArchiveStep::Wait(ArchiveWait::ParentRoster));
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        for child in children.iter().filter(|child| child.origin == "app_owned") {
+                            if let Some(id) = child.child_thread_id.as_deref() {
+                                if id == parent || roster.insert(id, child).is_some() {
+                                    return Err(HostError::Binding);
+                                }
+                                custody.members.entry(id.into()).or_default().owned = true;
+                            }
+                        }
+                        if let Some(row) = listed
+                            && let Some(run) = run.filter(|run| view.matches_roster_run(run, row))
+                        {
+                            parent_archive = Some((view.sequence(), run));
+                        }
                     }
                 }
             }
         }
-        for (thread, child) in children {
-            let Some(observed) = self
-                .read_thread(binding, thread, ThreadRead::Terminal)
-                .await?
-            else {
+        let mut unresolved = None;
+        for (id, member) in custody.members.iter_mut().filter(|(id, _)| **id != parent) {
+            let observation = if member.closed.is_some() {
+                None
+            } else if self.rpc.uses_held_shell() && self.rpc.thread_row(id).is_none() {
+                unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
                 continue;
-            };
-            if !observed.belongs_to_parent(&parent, child.is_some()) {
-                return Err(HostError::Binding);
-            }
-            match observed.retained()? {
-                RetainedThread::Busy => return Ok(ArchiveStep::Wait),
-                RetainedThread::Gone => continue,
-                RetainedThread::Idle => {}
-            }
-            if let Some(child) = child
-                && child
-                    .completion_delivery
+            } else {
+                let (view, fence) = self
+                    .observe_thread(binding, id, ThreadRead::Terminal)
+                    .await?;
+                if let Some(view) = &view {
+                    if !view.belongs_to_parent(&parent, member.owned) {
+                        return Err(HostError::Binding);
+                    }
+                    member.owned |= retained.contains(&id.as_str());
+                }
+                let state = match view
                     .as_ref()
-                    .is_some_and(|state| matches!(state.state.as_str(), "pending" | "claimed"))
+                    .map_or(Ok(RetainedThread::Gone), Projection::retained)
+                {
+                    Ok(RetainedThread::Busy) | Err(HostError::Uncertain) => {
+                        return Ok(ArchiveStep::Wait(ArchiveWait::Child(id.clone())));
+                    }
+                    Ok(state) => state,
+                    Err(error) => return Err(error),
+                };
+                Some((view, fence, state))
+            };
+            if let Some(mut write) = roster
+                .get(id.as_str())
+                .and_then(|child| dispose_completion(binding, &parent, child))
             {
-                return Ok(ArchiveStep::Write(ParentWrite {
-                    binding: binding.clone(),
-                    rpc: "orchestration.dispatchCommand",
-                    idle_at: None,
-                    delivery: None,
-                    payload: json!({
-                        "type":"delegated_task.completion-delivery.dispose",
-                        "commandId":format!("{}-dispose", child.id),
-                        "parentThreadId":parent, "taskId":child.id,
-                    }),
-                }));
+                let target = &parent_observation.as_ref().ok_or(HostError::Uncertain)?.1;
+                write.fence = Some(archive_fence(&parent, target.clone(), custody));
+                return Ok(ArchiveStep::Write(write));
             }
-            if !observed.archived() {
-                return Ok(ArchiveStep::Write(archive(
-                    binding,
-                    thread,
-                    observed.sequence(),
-                )));
-            }
-        }
-
-        let Some(fresh) = self
-            .read_thread(binding, &parent, ThreadRead::Terminal)
-            .await?
-        else {
-            return Ok(ArchiveStep::Finished);
-        };
-        match fresh.retained()? {
-            RetainedThread::Gone => Ok(ArchiveStep::Finished),
-            RetainedThread::Busy => Ok(ArchiveStep::Wait),
-            RetainedThread::Idle => {
-                fresh.require_parent_provider(provider)?;
-                // A change since the child checks can be a new child or wake.
-                if Some(fresh.sequence()) != sequence {
-                    return Ok(ArchiveStep::Wait);
+            if let Some((view, fence, state)) = observation {
+                if state == RetainedThread::Gone {
+                    member.closed = Some(Closure::Gone);
+                    continue;
                 }
-                if fresh.archived() {
-                    Ok(ArchiveStep::Finished)
+                let view = view.ok_or(HostError::Uncertain)?;
+                if view.archived() {
+                    if fence
+                        .row
+                        .as_deref()
+                        .is_some_and(|row| row_activity(row) == RowChildren::Quiet)
+                    {
+                        member.closed = Some(Closure::observed(&view));
+                    } else {
+                        unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
+                    }
+                } else if member.owned {
+                    let thread = id.clone();
+                    return Ok(archive(binding, &thread, view.sequence(), fence, custody));
                 } else {
-                    Ok(ArchiveStep::Write(archive(
-                        binding,
-                        &parent,
-                        fresh.sequence(),
-                    )))
+                    unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
                 }
             }
         }
+        if let Some(cause) = unresolved {
+            return Ok(ArchiveStep::Wait(cause));
+        }
+        if let Some((sequence, run)) = parent_archive {
+            let target = parent_observation
+                .as_ref()
+                .ok_or(HostError::Uncertain)?
+                .1
+                .clone();
+            custody.roster_run = Some(run.into());
+            return Ok(archive(binding, &parent, sequence, target, custody));
+        }
+        Ok(if custody.closed(&parent) {
+            ArchiveStep::Finished
+        } else if dormant {
+            ArchiveStep::Wait(ArchiveWait::ParentInventory)
+        } else {
+            ArchiveStep::Wait(ArchiveWait::ParentRoster)
+        })
     }
 
     /// Read positive delivery evidence for the exact frozen parent messages.
@@ -276,7 +510,8 @@ impl T3 {
         catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
     ) -> Result<ParentStep, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        if let Some(projection) = self.thread(binding, &thread).await? {
+        let (projection, fence) = self.observe_parent(binding, &thread).await?;
+        if let Some(projection) = projection {
             projection.require_parent_provider(provider)?;
             let mut replay = None;
             if let Some((run, node)) = prior_turn
@@ -325,6 +560,7 @@ impl T3 {
                     rpc: "orchestration.dispatchCommand",
                     idle_at: Some((thread.clone(), sequence)),
                     delivery: None,
+                    fence: None,
                     payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
                 }));
             }
@@ -333,7 +569,8 @@ impl T3 {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
                 idle_at: Some((thread.clone(), sequence)),
-                delivery: prepare_delivery(&projection, provider)?,
+                fence: None,
+                delivery: prepare_delivery(&projection, provider, fence.row)?,
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
                     "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
@@ -355,6 +592,7 @@ impl T3 {
             rpc: "orchestration.launchThread",
             idle_at: None,
             delivery: None,
+            fence: None,
             payload: json!({
                 "commandId":command, "threadId":thread, "projectId":binding.project_id,
                 "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
@@ -365,6 +603,19 @@ impl T3 {
                 "initialMessage":{"messageId":message_id(&command),"text":parent_hold_prompt(&command),"attachments":[]}
             }),
         }))
+    }
+
+    async fn observe_parent(
+        &self,
+        binding: &Binding,
+        thread: &str,
+    ) -> Result<(Option<Projection>, ThreadFence), HostError> {
+        let policy = if self.rpc.uses_held_shell() {
+            ThreadRead::Observation
+        } else {
+            ThreadRead::Exact
+        };
+        self.observe_thread(binding, thread, policy).await
     }
 
     /// Execute the prepared parent write after the service's destination gate.
@@ -383,7 +634,26 @@ impl T3 {
     /// # Errors
     /// Returns an error if the current binding, custody or visibility changed.
     pub async fn verify_parent_write(&self, write: &mut ParentWrite) -> Result<(), HostError> {
+        if let Some(fence) = &write.fence {
+            return if fence.holds(self) {
+                Ok(())
+            } else {
+                Err(HostError::Uncertain)
+            };
+        }
         if let Some((thread, sequence)) = &write.idle_at {
+            if self.rpc.uses_held_shell()
+                && let Some(delivery) = &write.delivery
+                && delivery.shell.is_some()
+            {
+                self.check_delivery_shell(thread, delivery)?;
+                return verify_delivery_visibility(
+                    delivery.row.visibility,
+                    *sequence,
+                    Some(delivery.row.sequence),
+                );
+            }
+
             let refuse = |predicate, observed| HostError::ParentPreflight {
                 predicate,
                 prepared: *sequence,
@@ -446,7 +716,12 @@ impl T3 {
     pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
         match self
             .rpc
-            .write_guarded(write.rpc, write.payload, || {
+            .write_guarded(write.rpc, write.payload, Read::One, || {
+                if write.fence.as_ref().is_some_and(|fence| !fence.holds(self)) {
+                    return Err(HostError::Deferred {
+                        until: tokio::time::Instant::now(),
+                    });
+                }
                 if let (Some(delivery), Some((thread, _))) = (&write.delivery, &write.idle_at) {
                     self.check_delivery_shell(thread, delivery)?;
                 }
@@ -527,6 +802,7 @@ fn verify_delivery_visibility(
 fn prepare_delivery(
     projection: &crate::Projection,
     provider: &str,
+    shell: Option<Arc<Value>>,
 ) -> Result<Option<Box<ParentDelivery>>, HostError> {
     let Some(row) = projection.row_observation()? else {
         return Ok(None);
@@ -543,16 +819,57 @@ fn prepare_delivery(
         row,
         provider: provider.into(),
         custody,
-        shell: None,
+        shell: shell.filter(|listed| {
+            projection.matches_shell_revision(listed)
+                && row_activity(listed) == RowChildren::Quiet
+                && crate::task_row::visibility(listed).ok() == Some(row.visibility)
+        }),
     })))
 }
 
-fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {
-    ParentWrite {
+fn archive_fence(thread: &str, target: ThreadFence, custody: &ArchiveCustody) -> Box<ParentFence> {
+    Box::new(ParentFence {
+        custody: Some(custody.clone()),
+        thread: thread.into(),
+        target,
+    })
+}
+
+fn archive(
+    binding: &Binding,
+    thread: &str,
+    sequence: u64,
+    target: ThreadFence,
+    custody: &ArchiveCustody,
+) -> ArchiveStep {
+    ArchiveStep::Write(Box::new(ParentWrite {
         binding: binding.clone(),
         rpc: "orchestration.dispatchCommand",
-        idle_at: Some((thread.into(), sequence)),
+        idle_at: None,
         delivery: None,
+        fence: Some(archive_fence(thread, target, custody)),
         payload: json!({"type":"thread.archive", "threadId":thread, "commandId":format!("{thread}-archive-{sequence}")}),
-    }
+    }))
+}
+
+fn dispose_completion(
+    binding: &Binding,
+    parent: &str,
+    child: &Subagent,
+) -> Option<Box<ParentWrite>> {
+    let delivery = child.completion_delivery.as_ref()?;
+    matches!(delivery.state.as_str(), "pending" | "claimed").then(|| {
+        Box::new(ParentWrite {
+            binding: binding.clone(),
+            rpc: "orchestration.dispatchCommand",
+            idle_at: None,
+            delivery: None,
+            fence: None,
+            payload: json!({
+                "type":"delegated_task.completion-delivery.dispose",
+                "commandId":format!("{}-dispose", child.id),
+                "parentThreadId":parent, "taskId":child.id,
+            }),
+        })
+    })
 }

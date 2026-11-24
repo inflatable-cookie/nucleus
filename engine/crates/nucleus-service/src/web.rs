@@ -1023,30 +1023,39 @@ impl Summary {
             Some(label) => label,
             None => crate::titles::task_state_label(task, state.effective_wait(task)?),
         };
-        let wait =
-            if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal() {
-                wait
-            } else if task.run().is_some_and(nucleus_core::Run::revoked) {
-                Some(WaitReason::Stopping)
-            } else if task.phase() == Phase::Done {
-                None
-            } else if task.hold().is_some() {
-                Some(WaitReason::Hold)
-            } else if task.operator_decline().is_some() {
-                Some(WaitReason::OperatorDeclined)
-            } else if task.question().is_some() {
-                Some(WaitReason::Question)
-            } else {
-                wait
-            };
-        let wait_detail =
-            (wait == state.wait_reason(id) && task.hold().is_none() && task.question().is_none())
-                .then(|| state.wait_detail(id))
-                .flatten()
-                .map(|detail| match detail {
-                    crate::WaitDetail::BeforeSend(message)
-                    | crate::WaitDetail::Observation(message) => message,
-                });
+        let archive_detail = match state.wait_detail(id) {
+            Some(crate::WaitDetail::Archive(message)) if task.phase() == Phase::Done => {
+                Some(message)
+            }
+            _ => None,
+        };
+        let wait = if archive_detail.is_some() {
+            Some(WaitReason::Stopping)
+        } else if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal() {
+            wait
+        } else if task.run().is_some_and(nucleus_core::Run::revoked) {
+            Some(WaitReason::Stopping)
+        } else if task.phase() == Phase::Done {
+            None
+        } else if task.hold().is_some() {
+            Some(WaitReason::Hold)
+        } else if task.operator_decline().is_some() {
+            Some(WaitReason::OperatorDeclined)
+        } else if task.question().is_some() {
+            Some(WaitReason::Question)
+        } else {
+            wait
+        };
+        let wait_detail = archive_detail.or_else(|| {
+            if wait != state.wait_reason(id) || task.hold().is_some() || task.question().is_some() {
+                return None;
+            }
+            match state.wait_detail(id)? {
+                crate::WaitDetail::BeforeSend(message) => Some(message),
+                crate::WaitDetail::Observation(message) => Some(message),
+                crate::WaitDetail::Archive(_) => None,
+            }
+        });
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),

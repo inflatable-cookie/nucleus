@@ -8,8 +8,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use crate::{
     HostError, LATE_REPLY_MS, T3, clock_ms, dispatch_rejected,
     launch::message_id,
-    projection,
-    rpc::{Read, Reply, ThreadReply},
+    rpc::{Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
+    task_row::ThreadVisibility,
     thread_snapshots::ThreadRead,
 };
 
@@ -120,13 +120,13 @@ pub struct NoticeAuthorization {
     command: String,
     payload: Box<RawValue>,
     previous: Option<u64>,
-    wake: Option<u64>,
+    fence: ThreadFence,
+    wake: Option<String>,
 }
 
 /// The caller must persist the corresponding send marker before dispatch.
 pub struct NoticeDispatch {
-    command: String,
-    payload: Box<RawValue>,
+    authorization: NoticeAuthorization,
 }
 
 impl NoticeHost for T3 {
@@ -177,8 +177,7 @@ impl NoticeAuthorization {
         }
         delivery.last_send_at_ms = Some(clock_ms()?);
         Ok(NoticeDispatch {
-            command: self.command,
-            payload: self.payload,
+            authorization: self,
         })
     }
 }
@@ -189,9 +188,8 @@ struct NoticeThread {
     #[serde(flatten)]
     planner: PlannerIdentity,
     worktree_path: Option<String>,
-    settled_at: Option<String>,
-    settled_override: Option<String>,
-    snoozed_until: Option<String>,
+    #[serde(flatten)]
+    visibility: ThreadVisibility,
 }
 
 struct NoticeSnapshot {
@@ -242,19 +240,16 @@ impl T3 {
     /// # Errors
     /// Returns an error for an unreadable or mismatched identity.
     pub async fn planner_identity(&self, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
-        let reply = self.rpc.thread(id, ThreadRead::Observation).await?;
-        let value = match reply {
-            ThreadReply::Snapshot(Reply::Value(value)) => value,
-            ThreadReply::Closed { .. } => return Ok(None),
-            ThreadReply::Snapshot(Reply::Failure(cause))
-                if projection::missing_thread(&cause, id) =>
-            {
-                return Ok(None);
+        let row = if let Some(row) = self.rpc.thread_row(id) {
+            (*row).clone()
+        } else {
+            match self.rpc.thread(id, ThreadRead::Observation).await? {
+                ThreadReply::Snapshot(value) => value["projection"]["thread"].clone(),
+                ThreadReply::Closed { .. } | ThreadReply::Missing => return Ok(None),
             }
-            ThreadReply::Snapshot(Reply::Failure(_)) => return Err(HostError::Uncertain),
         };
-        let thread: PlannerIdentity = serde_json::from_value(value["projection"]["thread"].clone())
-            .map_err(|_| HostError::Protocol)?;
+        let thread: PlannerIdentity =
+            serde_json::from_value(row).map_err(|_| HostError::Protocol)?;
         if thread.id != id {
             return Err(HostError::Binding);
         }
@@ -264,28 +259,14 @@ impl T3 {
     /// Recheck the actual thread and workspace of an authorized notice.
     /// # Errors
     /// Returns an error if the destination changed or could not be read.
-    pub async fn check_notice_target(
+    pub fn check_notice_target(
         &self,
         authorization: &NoticeAuthorization,
     ) -> Result<(), HostError> {
-        let target = authorization.target();
-        let thread: NoticeThread = if let Some(row) = self.rpc.thread_row(&target.thread) {
-            serde_json::from_value((*row).clone()).map_err(|_| HostError::Protocol)?
-        } else {
-            self.notice_projection(&target.thread, ThreadRead::Exact)
-                .await?
-                .ok_or(HostError::Binding)?
-                .thread
-        };
-        if !authorization.matches_planner(&thread.planner)
-            || thread.worktree_path != target.worktree_path
-            || thread.planner.is_child()
-            || thread.planner.archived_at.is_some()
-            || thread.planner.deleted_at.is_some()
-        {
-            return Err(HostError::Binding);
-        }
-        Ok(())
+        self.rpc
+            .same_thread(&authorization.target.thread, &authorization.fence)
+            .then_some(())
+            .ok_or(HostError::Binding)
     }
 
     /// Freeze a queued planner notification under one native command ID.
@@ -316,13 +297,7 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<NoticeState, HostError> {
-        let Some(snapshot) = self
-            .notice_projection(&delivery.thread, ThreadRead::Observation)
-            .await?
-        else {
-            return Ok(NoticeState::Gone);
-        };
-        snapshot.state(delivery)
+        Ok(self.observe_notice(delivery).await?.state)
     }
 
     /// Reconcile any preceding send and prepare a dispatch or unsettle.
@@ -347,32 +322,52 @@ impl T3 {
             .last_send_at_ms
             .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
-        let Some(snapshot) = self
-            .notice_projection(&delivery.thread, ThreadRead::Exact)
-            .await?
-        else {
+        let id = &delivery.thread;
+        let ThreadObservation { reply, fence } =
+            self.rpc.observe_thread(id, ThreadRead::Observation).await?;
+        let Some(snapshot) = Self::notice_projection(id, reply)? else {
             return Ok(NoticeObservation {
                 state: NoticeState::Gone,
                 authorization: None,
             });
         };
+        if snapshot.thread.planner.is_child() {
+            return Err(HostError::Binding);
+        }
         let state = snapshot.state(delivery)?;
+        let visibility = snapshot.thread.visibility.read()?;
         let ready = match state {
             NoticeState::Absent => !reply_may_arrive,
-            NoticeState::Queued => settled(&snapshot.thread),
+            NoticeState::Queued => visibility.settled,
             _ => false,
         };
-        if !ready || snoozed(&snapshot.thread)? {
+        if !ready || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms) {
             return Ok(NoticeObservation {
                 state,
                 authorization: None,
             });
         }
-        let wake = if settled(&snapshot.thread) {
+        if let Some(row) = &fence.row {
+            let current =
+                NoticeThread::deserialize(row.as_ref()).map_err(|_| HostError::Protocol)?;
+            if !snapshot.thread.planner.same_role(&current.planner)
+                || snapshot.thread.worktree_path != current.worktree_path
+                || current.visibility.read()? != visibility
+            {
+                return Err(HostError::Binding);
+            }
+        }
+        let wake = if visibility.settled {
             if snapshot.sequence == 0 {
                 return Err(HostError::Uncertain);
             }
-            Some(snapshot.sequence)
+            Some(
+                snapshot
+                    .thread
+                    .visibility
+                    .settled_at
+                    .unwrap_or_else(|| snapshot.sequence.to_string()),
+            )
         } else {
             None
         };
@@ -388,60 +383,77 @@ impl T3 {
                 command: delivery.command.clone(),
                 payload,
                 previous: delivery.last_send_at_ms,
+                fence,
                 wake,
             }),
         })
     }
 
-    /// Unsettle an authorized planner destination. Re-read before dispatch.
+    /// Unsettle an authorized planner destination once for its settlement.
     /// # Errors
     /// Returns an error when the wake is inapplicable or uncertain.
     async fn unsettle_notice(&self, authorization: &NoticeAuthorization) -> Result<(), HostError> {
-        let sequence = authorization.wake.ok_or(HostError::Binding)?;
+        let occurrence = authorization.wake.as_deref().ok_or(HostError::Binding)?;
         let thread = &authorization.target.thread;
-        self.thread_command(json!({
+        let command = format!("unsettle:{thread}:{occurrence}");
+        let payload = json!({
             "type":"thread.unsettle", "threadId":thread,
-            "commandId":format!("unsettle:{thread}:{sequence}"), "reason":"user",
-        }))
-        .await
+            "commandId":command, "reason":"user",
+        });
+        match self
+            .rpc
+            .call_guarded(
+                "orchestration.dispatchCommand",
+                payload,
+                Read::Background,
+                || {
+                    self.check_notice_target(authorization)?;
+                    Ok(self.rpc.claim_effect(&command))
+                },
+            )
+            .await?
+        {
+            Reply::Value(_) => Ok(()),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
     }
 
     /// Send the recorded wire. An exact rejection permits a fresh binding.
     /// # Errors
     /// Returns an error if the outcome is uncertain.
     async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeSend, HostError> {
+        let authorization = &dispatch.authorization;
         match self
             .rpc
-            .call(
+            .call_guarded(
                 "orchestration.dispatchCommand",
-                dispatch.payload.as_ref(),
-                Read::One,
+                authorization.payload.as_ref(),
+                Read::Background,
+                || {
+                    self.check_notice_target(authorization)
+                        .map_err(|_| HostError::Deferred {
+                            until: tokio::time::Instant::now(),
+                        })?;
+                    Ok(true)
+                },
             )
             .await?
         {
             Reply::Value(_) => Ok(NoticeSend::Accepted),
-            Reply::Failure(cause) if dispatch_rejected(&cause, &dispatch.command) => {
+            Reply::Failure(cause) if dispatch_rejected(&cause, &authorization.command) => {
                 Ok(NoticeSend::Rejected)
             }
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
     }
 
-    async fn notice_projection(
-        &self,
+    fn notice_projection(
         id: &str,
-        policy: ThreadRead,
+        result: ThreadReply,
     ) -> Result<Option<NoticeSnapshot>, HostError> {
-        let result = self.rpc.thread(id, policy).await?;
         let value = match result {
-            ThreadReply::Snapshot(Reply::Value(value)) => value,
-            ThreadReply::Closed { .. } => return Ok(None),
-            ThreadReply::Snapshot(Reply::Failure(cause))
-                if projection::missing_thread(&cause, id) =>
-            {
-                return Ok(None);
-            }
-            ThreadReply::Snapshot(Reply::Failure(_)) => return Err(HostError::Uncertain),
+            ThreadReply::Snapshot(value) => value,
+            ThreadReply::Closed { .. } | ThreadReply::Missing => return Ok(None),
         };
         let paged = value["hasMoreHistory"] == true;
         let omits_turn_items = value["turnItemsOmitLocalVisible"] == true;
@@ -472,17 +484,6 @@ impl T3 {
             omits_turn_items,
         }))
     }
-}
-
-fn settled(thread: &NoticeThread) -> bool {
-    thread.settled_at.is_some() || thread.settled_override.as_deref() == Some("settled")
-}
-
-fn snoozed(thread: &NoticeThread) -> Result<bool, HostError> {
-    thread.snoozed_until.as_deref().map_or(Ok(false), |end| {
-        let end = OffsetDateTime::parse(end, &Rfc3339).map_err(|_| HostError::Protocol)?;
-        Ok(end > OffsetDateTime::now_utc())
-    })
 }
 
 fn frozen_payload(delivery: &QuestionDelivery) -> Result<Box<RawValue>, HostError> {

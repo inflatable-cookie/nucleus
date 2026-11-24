@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
@@ -15,8 +15,14 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadVisibility {
     settled_override: Option<String>,
-    settled_at: Option<String>,
+    pub(crate) settled_at: Option<String>,
     snoozed_until: Option<String>,
+}
+
+pub(crate) fn visibility(row: &Value) -> Result<RowVisibility, HostError> {
+    ThreadVisibility::deserialize(row)
+        .map_err(|_| HostError::Protocol)?
+        .read()
 }
 
 /// The host's current settle and snooze state for an available task row.
@@ -112,6 +118,7 @@ impl T3 {
         change: RowChange,
         shell: Option<&TitleTarget>,
         quiet_roles: &[&str],
+        parent: Option<(RowObservation, &str)>,
     ) -> Result<SendOutcome, ParentSendError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let kind = match change {
@@ -131,23 +138,53 @@ impl T3 {
             }
             RowChange::Unsnooze | RowChange::Unsettle => payload["reason"] = "user".into(),
         }
-        let hint = self.row_visibility_hint(&thread);
         let reply = self
             .rpc
-            .write_guarded("orchestration.dispatchCommand", payload, || {
-                if matches!(change, RowChange::SnoozeUntil(_))
-                    && self.row_children(&thread, quiet_roles) != RowChildren::Quiet
-                {
-                    return Err(HostError::RowChildBusy);
-                }
-                if shell.is_some_and(|target| {
-                    !target.matches_current_visibility(self) || target.thread() != thread
-                }) || (hint.is_some() && self.row_visibility_hint(&thread) != hint)
-                {
-                    return Err(HostError::Binding);
-                }
-                Ok(())
-            })
+            .write_guarded(
+                "orchestration.dispatchCommand",
+                payload,
+                if shell.is_some() {
+                    crate::rpc::Read::Background
+                } else {
+                    crate::rpc::Read::One
+                },
+                || {
+                    self.rpc.with_shell(|view| {
+                        if matches!(change, RowChange::SnoozeUntil(_))
+                            && view.is_none_or(|view| {
+                                view.row_children(&thread, quiet_roles) != RowChildren::Quiet
+                            })
+                        {
+                            return Err(HostError::RowChildBusy);
+                        }
+                        if let Some(target) = shell {
+                            let current = view
+                                .and_then(|view| target.row_in(view))
+                                .ok_or(HostError::Binding)?;
+                            if target.thread() != thread
+                                || !std::sync::Arc::ptr_eq(&current, target.marker())
+                            {
+                                return Err(HostError::Binding);
+                            }
+                        } else if let Some(row) = view.and_then(|view| view.marker(&thread)) {
+                            if crate::rpc::closed_row(&row)
+                                || parent.is_none_or(|(expected, provider)| {
+                                    row["projectId"] != binding.project_id
+                                        || row["worktreePath"] != binding.worktree_path
+                                        || row["branch"] != binding.branch
+                                        || row["providerInstanceId"] != provider
+                                        || visibility(&row).ok() != Some(expected.visibility)
+                                })
+                            {
+                                return Err(HostError::Binding);
+                            }
+                        } else if self.rpc.uses_held_shell() {
+                            return Err(HostError::Binding);
+                        }
+                        Ok(())
+                    })
+                },
+            )
             .await?;
         match reply {
             Reply::Value(_) => Ok(SendOutcome::Sent),

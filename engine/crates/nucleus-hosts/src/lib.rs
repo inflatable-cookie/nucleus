@@ -1,5 +1,6 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+mod admission;
 mod assignment;
 mod catalog;
 mod inbox;
@@ -32,8 +33,8 @@ use std::{
 pub use assignment::{T3_ASSIGNMENT_LIMIT, assignment_units};
 pub use catalog::{ProfileCatalog, ProfileOffer};
 pub use inbox::{
-    INBOX_THREAD, InboxLifecycle, InboxOperatorMessage, InboxPreviewError, InboxStatus, InboxStep,
-    InboxTarget, InboxWrite,
+    INBOX_THREAD, InboxOperatorMessage, InboxPreviewError, InboxStatus, InboxStep, InboxTarget,
+    InboxWrite,
 };
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_diagnostic,
@@ -42,7 +43,8 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite, parent_thread,
+    ArchiveCustody, ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep,
+    ParentWrite, parent_thread,
 };
 pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};
@@ -56,7 +58,7 @@ pub use questions::{
     NoticeTarget, NoticeWrite, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
-use rpc::{Read, Reply, Rpc, ThreadReply};
+use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility};
@@ -312,10 +314,21 @@ pub struct RegisteredProject {
     pub title: Option<String>,
 }
 
+impl RegisteredProject {
+    fn read(row: &Value) -> Option<Self> {
+        Some(Self {
+            root: row["workspaceRoot"]
+                .as_str()
+                .filter(|root| !closed_row(row) && !root.is_empty())?
+                .into(),
+            title: row["title"].as_str().map(str::to_owned),
+        })
+    }
+}
+
 pub struct T3 {
     rpc: Rpc,
     runtime_descriptor: Option<PathBuf>,
-    titles: title_shell::TitleShell,
 }
 
 /// Exact T3 reads share a single bounded process inventory within each pass.
@@ -369,7 +382,6 @@ impl T3 {
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
             runtime_descriptor: None,
-            titles: title_shell::TitleShell::default(),
         })
     }
 
@@ -431,22 +443,17 @@ impl T3 {
     pub async fn watch_threads(
         &self,
         hints: &tokio::sync::mpsc::Sender<ThreadHint>,
-        title_provider: Option<&str>,
+        _title_provider: Option<&str>,
         inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let result = self
             .rpc
-            .watch_threads(
-                hints,
-                Some((&self.titles, title_provider.unwrap_or_default())),
-                inbox_thread,
-            )
+            .watch_threads(hints, inbox_thread)
             .await
             .inspect_err(|error| {
                 self.rpc
-                    .record_timeout("orchestration.subscribeShell", None, *error);
+                    .stream_failed("orchestration.subscribeShell", *error);
             });
-        self.titles.replace(None);
         self.rpc.clear_shell();
         result
     }
@@ -462,8 +469,7 @@ impl T3 {
         let outcome = self.rpc.watch_theme(theme).await;
         self.rpc.invalidate_catalog();
         outcome.inspect_err(|error| {
-            self.rpc
-                .record_timeout("subscribeServerConfig", None, *error);
+            self.rpc.stream_failed("subscribeServerConfig", *error);
         })
     }
 
@@ -505,20 +511,14 @@ impl T3 {
             .and_then(Value::as_array)
             .ok_or(HostError::Protocol)?;
         let mut matched = projects.iter().filter(|project| project["id"] == id);
-        let project = matched.next().ok_or(HostError::Binding)?;
-        if matched.next().is_some()
-            || !project["archivedAt"].is_null()
-            || !project["deletedAt"].is_null()
-        {
+        let project = matched
+            .next()
+            .and_then(RegisteredProject::read)
+            .ok_or(HostError::Binding)?;
+        if matched.next().is_some() {
             return Err(HostError::Binding);
         }
-        let root = project["workspaceRoot"]
-            .as_str()
-            .filter(|root| !root.is_empty())
-            .map(str::to_owned)
-            .ok_or(HostError::Binding)?;
-        let title = project["title"].as_str().map(str::to_owned);
-        Ok(RegisteredProject { root, title })
+        Ok(project)
     }
 
     async fn thread(&self, binding: &Binding, id: &str) -> Result<Option<Projection>, HostError> {
@@ -531,33 +531,30 @@ impl T3 {
         id: &str,
         policy: ThreadRead,
     ) -> Result<Option<Projection>, HostError> {
-        let reply = self.rpc.thread(id, policy).await?;
-        match reply {
+        Ok(self.observe_thread(binding, id, policy).await?.0)
+    }
+
+    async fn observe_thread(
+        &self,
+        binding: &Binding,
+        id: &str,
+        policy: ThreadRead,
+    ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
+        let rpc::ThreadObservation { reply, fence } = self.rpc.observe_thread(id, policy).await?;
+        let projection = match reply {
             ThreadReply::Closed { row, sequence } => {
-                Projection::closed(&row, sequence, binding, id).map(Some)
+                Some(Projection::closed(&row, sequence, binding, id)?)
             }
-            ThreadReply::Snapshot(Reply::Value(value)) => {
+            ThreadReply::Snapshot(value) => {
                 let mut projection = Projection::parse(value, binding, id)?;
-                if let Some((row, same_revision)) =
-                    self.rpc.background_row(id, projection.sequence())
-                {
-                    projection.use_shell_background(&row, same_revision);
+                if let Some(row) = &fence.row {
+                    projection.use_shell_background(row, fence.covers(projection.sequence()));
                 }
-                Ok(Some(projection))
+                Some(projection)
             }
-            ThreadReply::Snapshot(Reply::Failure(cause))
-                if projection::missing_thread(&cause, id) =>
-            {
-                Ok(None)
-            }
-            ThreadReply::Snapshot(Reply::Failure(cause)) => {
-                eprintln!(
-                    "{id}: T3 orchestration.subscribeThread: {:?}",
-                    self.rpc.failure_detail(&cause)
-                );
-                Err(HostError::Protocol)
-            }
-        }
+            ThreadReply::Missing => None,
+        };
+        Ok((projection, fence))
     }
 
     async fn delivery(
@@ -861,10 +858,10 @@ impl TaskHost for T3Pass<'_> {
         }
         let wake = if wire.method == Method::Continue
             && let Some(projection) = &thread
-            && let Some(row) = projection.row_observation()?
+            && let Some(observed) = projection.row_observation()?
         {
             let now = clock_ms()?;
-            let visibility = row.visibility;
+            let visibility = observed.visibility;
             if visibility.snoozed_until_ms.is_some_and(|until| until > now) {
                 // Only the task parent has a snooze we could own.
                 return Err(HostError::Uncertain);

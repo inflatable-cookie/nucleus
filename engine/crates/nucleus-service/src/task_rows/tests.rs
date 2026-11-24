@@ -7,15 +7,6 @@ use nucleus_store::TaskAdmissionFacts;
 use serde_json::{Value, json};
 
 use super::*;
-
-fn plan_row(
-    attention: TaskAttention,
-    visibility: RowVisibility,
-    receipt: Option<RowSnooze>,
-    now: u64,
-) -> Plan {
-    super::plan_row(attention, visibility, receipt, now, RowChildren::Quiet)
-}
 use crate::tests::{REPOSITORY, fixture, native_fixture, reservation};
 
 const ID: &str = "row";
@@ -42,6 +33,8 @@ struct NativeRow {
     until: Value,
     settled_at: Value,
     commands: Vec<Value>,
+    fail_next: bool,
+    child: Option<Value>,
 }
 
 struct Fixture {
@@ -89,6 +82,11 @@ impl Fixture {
                 "orchestration.dispatchCommand" => {
                     let payload = &request["payload"];
                     assert_eq!(payload["threadId"], expected);
+                    row.commands.push(payload.clone());
+                    if std::mem::take(&mut row.fail_next) {
+                        return json!({"_tag":"Exit","requestId":request["id"],
+                            "exit":{"_tag":"Failure","cause":[]}});
+                    }
                     match payload["type"].as_str().unwrap() {
                         "thread.snooze" => row.until = payload["snoozedUntil"].clone(),
                         "thread.unsnooze" => {
@@ -104,13 +102,13 @@ impl Fixture {
                         }
                         other => panic!("unexpected native command {other}"),
                     }
-                    row.commands.push(payload.clone());
                     json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success",
                         "value":{"sequence":1 + row.commands.len()}}})
                 }
                 other => panic!("unexpected native operation {other}"),
             }
         }).await;
+        host.use_held_shell();
         service.host = host;
         service.fixture_mut().acp_provider = Some(PROVIDER.into());
         Self {
@@ -133,53 +131,56 @@ impl Fixture {
             "Synthetic prerequisite".into(),
             None,
         );
-        let mut state = self.service.state.lock().await;
-        state.store.create(&dependency, &event("fixture")).unwrap();
-        state
-            .store
-            .create_with_facts(
-                pending,
-                &event("fixture"),
-                TaskAdmissionFacts {
-                    prerequisites: &["prerequisite".into()],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        self.service.desire_title(&state, pending, None);
+        {
+            let mut state = self.service.state.lock().await;
+            state.store.create(&dependency, &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    pending,
+                    &event("fixture"),
+                    TaskAdmissionFacts {
+                        prerequisites: &["prerequisite".into()],
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            self.service.desire_title(&state, pending, None);
+        }
+    }
+
+    fn publish_shell(&self) {
+        let row = self.native.lock().unwrap();
+        let shell = json!({
+            "projects":[{"id":self.binding.project_id,"workspaceRoot":self.service.fixture().checkout}],
+            "threads":[{"id":self.thread,"projectId":self.binding.project_id,"providerInstanceId":PROVIDER,
+                "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
+                "title":"Fixture","snoozedUntil":row.until,"settledAt":row.settled_at,
+                "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
+        });
+        let mut shell = shell;
+        if let Some(child) = &row.child {
+            shell["threads"].as_array_mut().unwrap().push(child.clone());
+        }
+        self.service.host.fixture_project_shell(&shell, PROVIDER);
     }
 
     async fn sync(&self) {
-        {
-            let row = self.native.lock().unwrap();
-            let shell = json!({
-                "projects":[{"id":self.binding.project_id,"workspaceRoot":self.service.fixture().checkout}],
-                "threads":[{"id":self.thread,"projectId":self.binding.project_id,"providerInstanceId":PROVIDER,
-                    "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
-                    "title":"Fixture","snoozedUntil":row.until,"settledAt":row.settled_at}]
-            });
-            self.service.host.fixture_project_shell(&shell, PROVIDER);
-        }
-        self.service
-            .reconcile_task_rows(PROVIDER, std::slice::from_ref(&self.thread))
-            .await
-            .unwrap();
+        self.publish_shell();
+        let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            self.service
+                .reconcile_task_rows(PROVIDER, std::slice::from_ref(&self.thread)),
+        ))
+        .await;
+        result.unwrap();
+        assert!(!calls.contains_key("orchestration.subscribeThread"));
     }
 
-    fn observe_quiet_child(&self, thread: &str) {
-        self.service
-            .host
-            .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
-                "snapshotSequence":1, "projects":[], "threads":[{
-                    "id": thread, "status":"idle", "activeRunId":null,
-                    "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
-                }]
-            }}));
-    }
-
-    fn observe_empty_shell(&self) {
-        self.service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+    fn child(&self, id: &str, busy: bool) {
+        self.native.lock().unwrap().child = Some(json!({
+            "id":id, "projectId":self.binding.project_id, "parentThreadId":self.thread,
+            "status":"idle", "activeRunId":null, "pendingRuntimeRequest":null,
+            "pendingBackgroundTasks": if busy { json!([{"kind":"tool","taskId":"writer"}]) } else { json!([]) },
         }));
     }
 
@@ -221,6 +222,7 @@ impl Fixture {
                 .deliver_parent(row, write, "fixture", Some(kind))
                 .await
                 .unwrap_err();
+            assert!(matches!(error, ServiceError::ParentNotSent { .. }));
             assert!(error.to_string().contains("operator snooze is active"));
         }
         let history = self.service.history(ID, None, 100).await.unwrap();
@@ -229,89 +231,64 @@ impl Fixture {
             .filter(|event| event.content.kind == "native_turn_not_sent")
             .collect::<Vec<_>>()[..]
         else {
-            panic!("unchanged launch and ACP reattach refusals should share one receipt");
+            panic!("one refusal receipt for the same visibility observation");
         };
         let detail: Value = serde_json::from_str(&receipt.content.detail).unwrap();
         assert_eq!(detail["version"], row.version);
-        assert!(
-            detail["reason"]
-                .as_str()
-                .unwrap()
-                .contains("operator snooze is active")
-        );
     }
+}
+
+#[tokio::test]
+async fn failed_snooze_waits_for_later_shell_evidence() {
+    let pending = pending_task();
+    let fixture = Fixture::new(&pending).await;
+    {
+        let mut state = fixture.service.state.lock().await;
+        state.store.create(&pending, &event("fixture")).unwrap();
+        fixture.service.desire_title(&state, &pending, None);
+    }
+    fixture.native.lock().unwrap().fail_next = true;
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    assert!(
+        !fixture
+            .service
+            .host
+            .host_calls()
+            .contains_key("orchestration.subscribeThread")
+    );
+    let receipt = fixture
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .row_snooze(ID, &fixture.thread)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.outcome, SnoozeOutcome::Unknown);
+    {
+        let mut native = fixture.native.lock().unwrap();
+        assert!(native.until.is_null());
+        native.until = native.commands[0]["snoozedUntil"].clone();
+    }
+    fixture.sync().await;
+    assert_eq!(fixture.observed_snooze().await.until_ms, receipt.until_ms);
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    assert!(
+        !fixture
+            .service
+            .host
+            .host_calls()
+            .contains_key("orchestration.subscribeThread")
+    );
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.server.abort();
     }
-}
-
-#[tokio::test]
-async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
-    let pending = pending_task();
-    let fixture = Fixture::new(&pending).await;
-    let service = &fixture.service;
-    let (mut task, credential, mut observation) =
-        reservation(ID, Entry::Brief, &service.fixture().start);
-    let run = task.run().unwrap().launch();
-    let (child, instance) = (run.thread.clone(), run.instance.clone());
-    task.record_send(&instance, 1).unwrap();
-    let pr = nucleus_core::PullRequest {
-        url: format!("https://github.com/{REPOSITORY}/pull/1"),
-        head: service.fixture().start.clone(),
-    };
-    task.record_report(&instance, credential.as_bytes(), Report::Work(pr.clone()))
-        .unwrap();
-    observation.host = Observed::Known(Host::Current {
-        instance,
-        state: RunState::Ended,
-    });
-    observation.forge = Observed::Known(nucleus_core::Forge::Open {
-        pr,
-        checks: nucleus_core::CheckState::Ready,
-    });
-    task.reconcile(&observation);
-    assert!(task.run().is_none());
-    assert_eq!(task.phase(), nucleus_core::Phase::Reviewing);
-    {
-        let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
-        service.desire_title(&state, &task, None);
-        service.track(&mut state, &task);
-    }
-    let mut row = json!({"id":child, "status":"completed", "activeRunId":null,
-        "pendingRuntimeRequest":null, "pendingBackgroundTasks":[{"taskId":"monitor"}]});
-    service
-        .host
-        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1, "projects":[], "threads":[row]
-        }}));
-    fixture.sync().await;
-    assert!(fixture.commands().is_empty());
-    let retired = json!({"parentThreadId":fixture.thread,"rootThreadId":fixture.thread,
-        "relationshipToParent":"subagent"});
-    for (index, active) in [false, true, false].into_iter().enumerate() {
-        row["pendingBackgroundTasks"] = json!([]);
-        let retired_delta = json!({"kind":"thread.updated","sequence":4+index*2,"thread":{
-            "id":"thread:retired-reviewer", "lineage":retired,"status":"completed","activeRunId":null,
-            "pendingRuntimeRequest":null,
-            "pendingBackgroundTasks":if active { json!([{"taskId":"monitor"}]) } else { json!([]) },
-        }});
-        service.host.fixture_held_shell(
-            &json!({"kind":"thread.updated","sequence":3+index*2,"thread":row}),
-        );
-        service.host.fixture_held_shell(&retired_delta);
-        service
-            .wake_from_host(nucleus_hosts::ThreadHint::fixture(&retired_delta).unwrap())
-            .await;
-        fixture.sync().await;
-    }
-    assert_eq!(
-        fixture.commands(),
-        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
-    );
 }
 
 #[tokio::test]
@@ -324,11 +301,8 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     fixture.seed_prerequisite(&pending).await;
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     fixture.sync().await;
-    assert!(fixture.commands().is_empty());
-    fixture.observe_empty_shell();
     fixture.sync().await;
     assert!(fixture.observed_snooze().await.until_ms > now_ms() + RENEW_BEFORE_MS);
-    fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze"]);
 
     let instance = worker.run().unwrap().launch().instance.clone();
@@ -336,10 +310,15 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     let row = {
         let mut state = service.state.lock().await;
         let prior = service.lookup(&state, ID).unwrap();
-        let release = event("dependency_released");
         state
             .store
-            .save_brief_with_dependencies(&prior, &pending, &release, &[], None)
+            .save_brief_with_dependencies(
+                &prior,
+                &pending,
+                &event("dependency_released"),
+                &[],
+                None,
+            )
             .unwrap();
         let released = service.lookup(&state, ID).unwrap();
         service
@@ -371,7 +350,10 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
         .observe_role_state(&row, &observed(RunState::IdleWithoutTerminalRun))
         .await
         .unwrap();
-    fixture.observe_quiet_child(&worker.run().unwrap().launch().thread);
+    fixture.child(&worker.run().unwrap().launch().thread, true);
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    fixture.child(&worker.run().unwrap().launch().thread, false);
     fixture.sync().await;
     worker
         .record_report(
@@ -393,15 +375,9 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     }
     assert_eq!(fixture.attention().await, TaskAttention::Attention);
     fixture.sync().await;
-    assert_eq!(
-        fixture.commands(),
-        [
-            "thread.snooze",
-            "thread.unsnooze",
-            "thread.snooze",
-            "thread.unsnooze"
-        ]
-    );
+    let commands = fixture.commands();
+    assert_eq!(commands.len(), 4);
+    assert_eq!(&commands[2..], ["thread.snooze", "thread.unsnooze"]);
 }
 
 #[tokio::test]
@@ -415,17 +391,48 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         service.desire_title(&state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
-    fixture.observe_empty_shell();
     fixture.sync().await;
+    fixture.publish_shell();
     let fence = service.effect(&row).await.unwrap();
-    let prepare = || {
-        service
-            .host
-            .prepare_parent_refresh(&fixture.binding, PROVIDER)
+    let prepare = || async {
+        let (write, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            service
+                .host
+                .prepare_parent_refresh(&fixture.binding, PROVIDER),
+        ))
+        .await;
+        assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
+        write
     };
     let write = prepare().await.unwrap().unwrap();
+    let (reused, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+        service
+            .host
+            .prepare_parent_refresh(&fixture.binding, PROVIDER),
+    ))
+    .await;
+    assert!(reused.unwrap().is_some());
+    assert!(calls.is_empty());
+    let (ready, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.wake_parent_delivery(&row, &write)))
+            .await;
+    assert!(matches!(ready, Err(ServiceError::ParentNotSent { .. })));
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+
+    fixture.publish_shell();
+    assert!(matches!(
+        service.wake_parent_delivery(&row, &write).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(service.task(ID).await.unwrap().version, row.version);
+    let write = prepare().await.unwrap().unwrap();
     service.wake_parent_delivery(&row, &write).await.unwrap();
-    service.host.write_parent(write).await.unwrap();
+    let (sent, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
+    sent.unwrap();
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
         fixture.commands(),
         ["thread.snooze", "thread.unsnooze", "message.dispatch"]
@@ -433,26 +440,45 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
 
     drop(fence);
     fixture.sync().await;
+    fixture.sync().await;
     let fence = service.effect(&row).await.unwrap();
     {
         let mut native = fixture.native.lock().unwrap();
         native.until = json!(OPERATOR_SNOOZE);
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
+    fixture.publish_shell();
     fixture.assert_operator_snooze_receipt(&row).await;
     assert_eq!(fixture.commands().len(), 4);
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 
     fixture.native.lock().unwrap().until = Value::Null;
+    fixture.publish_shell();
+    let write = prepare().await.unwrap().unwrap();
+    assert!(matches!(
+        service.wake_parent_delivery(&row, &write).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(fixture.commands()[4..], ["thread.unsettle"]);
+    fixture.publish_shell();
     let write = prepare().await.unwrap().unwrap();
     service.wake_parent_delivery(&row, &write).await.unwrap();
-    service.host.write_parent(write).await.unwrap();
+    let (sent, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
+    sent.unwrap();
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
         fixture.commands()[4..],
         ["thread.unsettle", "message.dispatch"]
     );
     drop(fence);
 
+    assert_terminal_forgets_snooze(&fixture).await;
+}
+
+async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
+    let service = &fixture.service;
     fixture.sync().await;
     let row = service.task(ID).await.unwrap();
     let mut finished = row.task.clone();
@@ -484,6 +510,51 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     }
     fixture.sync().await;
     assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+}
+
+fn plan_row(
+    attention: TaskAttention,
+    row: RowVisibility,
+    receipt: Option<RowSnooze>,
+    now: u64,
+) -> Plan {
+    super::plan_row(attention, row, receipt, now, RowChildren::Quiet)
+}
+
+#[tokio::test]
+async fn wire_veto_uses_child_activity_after_planning() {
+    let fixture = Fixture::new(&pending_task()).await;
+    fixture.publish_shell();
+    let host = &fixture.service.host;
+    let target = host
+        .title_target(
+            &fixture.binding,
+            PROVIDER,
+            fixture.service.fixture().checkout.to_str().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(host.row_children(&fixture.thread, &[]), RowChildren::Quiet);
+    fixture.child("late-writer", true);
+    host.fixture_shell_delta(&json!({"kind":"thread.updated","location":"active",
+        "sequence":2,"thread":fixture.native.lock().unwrap().child}));
+    assert_eq!(host.row_children(&fixture.thread, &[]), RowChildren::Active);
+    let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(host.write_row_visibility(
+        &fixture.binding,
+        "late-snooze",
+        RowChange::SnoozeUntil(now_ms() + HORIZON_MS),
+        Some(&target),
+        &[],
+        None,
+    )))
+    .await;
+    assert!(matches!(
+        result,
+        Err(nucleus_hosts::ParentSendError::NotSent(
+            nucleus_hosts::HostError::RowChildBusy
+        ))
+    ));
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    assert!(!calls.contains_key("orchestration.dispatchCommand"));
 }
 
 #[test]

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use nucleus_forge::GitHub;
-use nucleus_hosts::{InboxLifecycle, InboxStatus};
+use nucleus_hosts::InboxStatus;
 use nucleus_store::{DispatchSettings, ProjectSettings, Projects, planning::USAGE_APPROVE};
 use serde_json::{Value, json};
 
@@ -606,7 +606,11 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
 
 async fn retire(service: &Service, target: &InboxTarget<'_>) {
     for _ in 0..2 {
-        let InboxLifecycle::Write(write) = service.host.prepare_inbox_retire(target).await.unwrap()
+        let Some(write) = service
+            .host
+            .prepare_inbox_setup(target, None)
+            .await
+            .unwrap()
         else {
             panic!("fixture retirement step was not prepared");
         };
@@ -626,8 +630,11 @@ async fn retire(service: &Service, target: &InboxTarget<'_>) {
 async fn install(service: &Service, target: &InboxTarget<'_>, stage: &AtomicUsize) {
     stage.store(1, Ordering::Relaxed);
     for _ in 0..3 {
-        let InboxLifecycle::Write(write) =
-            service.host.prepare_inbox_install(target).await.unwrap()
+        let Some(write) = service
+            .host
+            .prepare_inbox_setup(target, Some("fixture.svg"))
+            .await
+            .unwrap()
         else {
             panic!("fixture install step was not prepared");
         };

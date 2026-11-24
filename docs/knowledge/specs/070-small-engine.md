@@ -124,6 +124,24 @@ Later decisions carry their own attribution.
    the exact frozen command ID, so an idle parent hold or continuation can
    reconcile an ambiguous send under that ID. Delegated launch absence still
    requires an exact terminal parent run and an authoritative child absence.
+   Closeout uses the held shell's lifecycle and lineage with the stored owned
+   roster and closures. A conflicting shell row invalidates stored proof.
+   An unresolved live child can receive its own bounded custody check.
+   The shared task view names the child closure or parent evidence still
+   needed. A removed checkout proves local retirement. Family closeout
+   records its own confirmation after every retained thread is accounted for.
+
+   The same synchronized row keys a decision and its final write fence. It
+   confirms a presentation write when it shows the intended change. Planning
+   and wire both require held evidence that attached and retained children
+   are quiet before snoozing. A delivery wake clears one visibility barrier
+   and replans on the next marker or due observation. Planner notices share a
+   bounded observation for delivery and authorization. Inbox reconciliation
+   uses the shared shell for project and lifecycle and reuses its bounded
+   observation while the marker holds. Explicit setup checks on a bounded
+   schedule after a mutation. Status shares one native client for registration,
+   Inbox state and favicon.
+
 12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"

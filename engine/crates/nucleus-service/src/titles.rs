@@ -247,7 +247,7 @@ impl Service {
         }
         loop {
             self.host.wait_for_requests().await;
-            let threads = self.host.title_threads();
+            let threads = self.host.title_threads(provider);
             let next = self.title_work(provider, &threads).await;
             let wait = match next {
                 Ok(Some(receipt)) => {
@@ -758,6 +758,9 @@ mod tests {
                 json!({"_tag":"Chunk","requestId":req["id"],"values":[
                     shell, {"kind":"synchronized"}
                 ]})
+            }
+            Some("subscribeServerConfig") => {
+                json!({"_tag":"Chunk","requestId":req["id"],"values":[]})
             }
             Some("orchestration.dispatchCommand") => {
                 assert_eq!(

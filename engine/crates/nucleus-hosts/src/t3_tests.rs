@@ -277,7 +277,7 @@ async fn unchanged_rows_reuse_their_snapshots_and_only_one_changed_row_reads() {
 }
 
 #[tokio::test]
-async fn done_task_with_archived_roles_settles_from_shell_without_thread_reads() {
+async fn cold_archived_family_uses_shell_and_waits_for_an_owned_roster() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let parent = crate::parent_thread(checkout.path());
@@ -286,24 +286,259 @@ async fn done_task_with_archived_roles_settles_from_shell_without_thread_reads()
         json!({
             "id":id, "projectId":binding.project_id, "worktreePath":binding.worktree_path,
             "branch":binding.branch, "archivedAt":"2026-11-24T15:50:00Z",
-            "providerInstanceId":"fixture-provider",
-            "modelSelection":{"instanceId":"fixture-provider","model":"nucleus"},
-            "parentThreadId":(id != parent).then_some(&parent)
+            "providerInstanceId":"fixture-acp",
+            "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
+            "parentThreadId":(id != parent).then_some(&parent),
+            "status":"completed", "pendingBackgroundTasks":[], "latestRunId":NATIVE_RUN,
+            "activeRunId":null, "pendingRuntimeRequest":null
         })
     };
     host.rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "sequence":1, "threads":[], "projects":[],
+            "snapshotSequence":1, "threads":[], "projects":[],
             "archivedThreads":[row(&parent), row("worker"), row("reviewer")]
         }}));
-    let (archive, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+    let mut custody = crate::ArchiveCustody::default();
+    for _ in 0..2 {
+        let (archive, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+            &binding,
+            "fixture-acp",
+            &["worker", "reviewer"],
+            &mut custody,
+        )))
+        .await;
+        assert!(matches!(archive, Ok(crate::ArchiveStep::Wait(_))));
+        assert!(calls.is_empty(), "archival made calls: {calls:?}");
+        custody = serde_json::from_value(serde_json::to_value(custody).unwrap()).unwrap();
+    }
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn unlisted_legacy_worker_waits_for_held_closure_without_a_native_read() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent_id = crate::parent_thread(checkout.path());
+    let mut parent = parent_snapshot(&binding, "completed", false);
+    parent["projection"]["subagents"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"review-node","childThreadId":"reviewer","origin":"app_owned"}));
+    let mut listed = parent["projection"]["thread"].clone();
+    listed["status"] = json!("completed");
+    listed["latestRunId"] = json!(NATIVE_RUN);
+    listed["pendingBackgroundTasks"] = json!([]);
+    let archived = |id| {
+        json!({
+            "id":id,"projectId":binding.project_id,"worktreePath":binding.worktree_path,"branch":binding.branch,
+            "parentThreadId":parent_id,"archivedAt":"2026-11-24T17:39:00Z",
+            "status":"completed","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[],
+        })
+    };
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(parent),
+    )])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc.fixture_shell(&json!({"kind":"snapshot","snapshot":{
+        "snapshotSequence":16,"threads":[listed],"archivedThreads":[archived("reviewer")],"projects":[]
+    }}));
+    let mut custody = crate::ArchiveCustody::default();
+    let (step, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
         &binding,
-        "fixture-provider",
-        &["worker", "reviewer"],
+        "fixture-acp",
+        &[THREAD, "reviewer"],
+        &mut custody,
     )))
     .await;
-    assert!(matches!(archive, Ok(crate::ArchiveStep::Finished)));
-    assert!(calls.is_empty(), "archival made calls: {calls:?}");
+    let crate::ArchiveStep::Wait(wait) = step.unwrap() else {
+        panic!("missing worker custody must hold");
+    };
+    assert_eq!(
+        wait.note(Some(THREAD), Some("reviewer")),
+        "Waiting to confirm the worker thread is closed."
+    );
+    assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
+    assert!(!calls.contains_key("threadReads.archivedOrDeleted"));
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":archived(THREAD)}));
+    let (step, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+        &binding,
+        "fixture-acp",
+        &[THREAD, "reviewer"],
+        &mut custody,
+    )))
+    .await;
+    let crate::ArchiveStep::Write(write) = step.unwrap() else {
+        panic!("both children now have held closure evidence");
+    };
+    assert!(write.command_id().unwrap().starts_with(&parent_id));
+    assert!(calls.is_empty());
+    assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn cold_archived_parent_reads_only_its_unresolved_live_child() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let parent_view = parent_snapshot(&binding, "completed", true);
+    let mut worker = snapshot(&binding, "worker", "completed", false);
+    worker["projection"]["thread"]["lineage"] = json!({
+        "parentThreadId":parent, "rootThreadId":parent, "relationshipToParent":"subagent"
+    });
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::Snapshot(worker.clone()),
+    )])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16, "projects":[], "threads":[worker["projection"]["thread"]],
+            "archivedThreads":[parent_view["projection"]["thread"]]
+        }}));
+    let mut custody = crate::ArchiveCustody::default();
+    let (step, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+        &binding,
+        "fixture-acp",
+        &[THREAD],
+        &mut custody,
+    )))
+    .await;
+    let crate::ArchiveStep::Write(write) = step.unwrap() else {
+        panic!("the retained and quiet child has an authorized archive step");
+    };
+    assert!(write.command_id().unwrap().starts_with(THREAD));
+    assert_eq!(calls["orchestration.subscribeThread"], 1);
+    assert!(!calls.contains_key("threadReads.archivedOrDeleted"));
+    assert_thread_subscription(&native.await.unwrap()[0], THREAD);
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the same closeout before and after restart"
+)]
+async fn reopened_child_invalidates_archive_before_dispatch_and_after_restart() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let parent_view = parent_snapshot(&binding, "completed", false);
+    let child = |id: &str, archived: bool| {
+        let mut view = snapshot(
+            &binding,
+            "child",
+            if archived { "completed" } else { "running" },
+            archived,
+        );
+        view["projection"]["thread"]["id"] = json!(id);
+        view["projection"]["thread"]["parentThreadId"] = json!(parent);
+        view["projection"]["thread"]["updatedAt"] = json!(if archived {
+            "2026-11-24T16:00:00Z"
+        } else {
+            "2026-11-24T16:01:00Z"
+        });
+        view
+    };
+    let shell_row = |view: &Value| {
+        let mut row = view["projection"]["thread"].clone();
+        row["pendingBackgroundTasks"] = json!([]);
+        row["latestRunId"] = view["projection"]["runs"][0]["id"].clone();
+        row["status"] = view["projection"]["runs"][0]["status"].clone();
+        row
+    };
+    let update = |host: &T3, sequence: u64, view: &Value| {
+        host.rpc.fixture_shell(
+            &json!({"kind":"thread.updated","sequence":sequence,"thread":shell_row(view)}),
+        );
+    };
+    let install = |host: &T3, a: Value, b: Value, c: Value| {
+        let threads = [&parent_view, &a, &b, &c]
+            .into_iter()
+            .filter(|view| !view.is_null())
+            .map(shell_row)
+            .collect::<Vec<_>>();
+        host.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":16, "projects":[], "threads":threads
+            }}));
+    };
+    let read = "orchestration.subscribeThread";
+    let (host, native) = server(vec![
+        (read, Response::ParentSnapshot(parent_view.clone())),
+        (read, Response::ParentSnapshot(child("old", false))),
+    ])
+    .await;
+    install(&host, child(THREAD, true), child("old", false), Value::Null);
+    let mut custody = crate::ArchiveCustody::default();
+    let provider = "fixture-acp";
+    assert!(matches!(
+        host.prepare_parent_archive(&binding, provider, &["old"], &mut custody)
+            .await
+            .unwrap(),
+        crate::ArchiveStep::Wait(_)
+    ));
+    update(&host, 17, &child("old", true));
+    let crate::ArchiveStep::Write(parent_archive) = host
+        .prepare_parent_archive(&binding, provider, &["old"], &mut custody)
+        .await
+        .unwrap()
+    else {
+        panic!("both children closed");
+    };
+    let saved = serde_json::to_value(&custody).unwrap();
+    update(&host, 18, &child(THREAD, false));
+    assert!(matches!(
+        host.write_verified_parent(*parent_archive).await,
+        Err(crate::ParentSendError::NotSent(HostError::Deferred { .. }))
+    ));
+    update(&host, 19, &child(THREAD, true));
+    let crate::ArchiveStep::Write(parent_archive) = host
+        .prepare_parent_archive(&binding, provider, &["old"], &mut custody)
+        .await
+        .unwrap()
+    else {
+        panic!("the known roster is closed again");
+    };
+    update(&host, 20, &child("replacement", false));
+    assert!(matches!(
+        host.write_verified_parent(*parent_archive).await,
+        Err(crate::ParentSendError::NotSent(HostError::Deferred { .. }))
+    ));
+    assert_eq!(native.await.unwrap().len(), 2);
+
+    let (restarted, native) = server(vec![
+        (read, Response::ParentSnapshot(parent_view.clone())),
+        (read, Response::Snapshot(child(THREAD, false))),
+        (read, Response::ParentSnapshot(child("replacement", false))),
+    ])
+    .await;
+    install(
+        &restarted,
+        child(THREAD, false),
+        child("old", true),
+        child("replacement", false),
+    );
+    let mut restored = serde_json::from_value(saved).unwrap();
+    assert!(matches!(
+        restarted
+            .prepare_parent_archive(&binding, provider, &["replacement"], &mut restored)
+            .await
+            .unwrap(),
+        crate::ArchiveStep::Wait(_)
+    ));
+    update(&restarted, 17, &child(THREAD, true));
+    assert!(matches!(
+        restarted
+            .prepare_parent_archive(&binding, provider, &["replacement"], &mut restored)
+            .await
+            .unwrap(),
+        crate::ArchiveStep::Wait(_)
+    ));
+    let seen = native.await.unwrap();
+    assert_thread_subscription(&seen[1], THREAD);
+    assert_thread_subscription(&seen[2], "replacement");
 }
 
 #[tokio::test]
@@ -578,7 +813,8 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
         "snapshotSequence": 16,
         "projection": {
             "thread": { "id": THREAD, "projectId": binding.project_id, "worktreePath": binding.worktree_path, "branch": binding.branch,
-                "archivedAt": archived.then_some("2026-11-23T16:00:00Z") },
+                "archivedAt": archived.then_some("2026-11-23T16:00:00Z"),
+                "activeRunId":null,"pendingRuntimeRequest":null },
             "runs": [{ "id": NATIVE_RUN, "status": state, "userMessageId": format!("{instance}-message") }],
             "messages": [],
             "runtimeRequests": [],
@@ -749,7 +985,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
 }
 
 #[tokio::test]
-async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
+async fn missing_parent_send_reuses_its_id_while_its_idle_marker_holds() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let thread = crate::parent_thread(checkout.path());
@@ -763,20 +999,15 @@ async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
     row["latestRunId"] = json!(NATIVE_RUN);
     row["status"] = json!("completed");
     row["pendingBackgroundTasks"] = json!([]);
-    let mut fresh = compact.clone();
-    fresh["snapshotSequence"] = json!(18);
     let (host, native) = server(vec![
         (
             "orchestration.subscribeThread",
             Response::ParentSnapshot(compact),
         ),
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(fresh),
-        ),
         ("orchestration.dispatchCommand", Response::Success),
     ])
     .await;
+    host.rpc.use_held_shell();
     host.rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{"threads":[row],"projects":[]}}));
     let crate::ParentStep::Write(write) = Box::pin(host.prepare_parent(
@@ -796,7 +1027,8 @@ async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
     assert_eq!(write.command_id(), Some(command.as_str()));
     host.write_parent(write).await.unwrap();
     let sent = native.await.unwrap();
-    let payload: Value = serde_json::from_str(sent[2].payload.get()).unwrap();
+    assert_eq!(sent.len(), 2);
+    let payload: Value = serde_json::from_str(sent[1].payload.get()).unwrap();
     assert_eq!(payload["commandId"], command);
 }
 
@@ -989,68 +1221,96 @@ fn parent_custody_fails_closed_with_an_unknown_or_live_child() {
 }
 
 #[tokio::test]
-async fn archival_finds_displaced_children_and_reads_back_both_threads() {
+async fn archival_finds_displaced_children_and_confirms_both_from_shell() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let parent = parent_snapshot(&binding, "completed", false);
-    let mut archived_parent = parent_snapshot(&binding, "completed", true);
-    archived_parent["snapshotSequence"] = json!(18);
-    let child = |state, archived| snapshot(&binding, "child", state, archived);
+    let child = |state| snapshot(&binding, "child", state, false);
+    let mut custody = crate::ArchiveCustody::default();
     let read = "orchestration.subscribeThread";
     let write = "orchestration.dispatchCommand";
     let (client, native) = server(vec![
         (read, Response::ParentSnapshot(parent.clone())),
-        (read, Response::Snapshot(child("running", false))),
-        (read, Response::ParentSnapshot(parent.clone())),
-        (read, Response::Snapshot(child("completed", false))),
-        (read, Response::Snapshot(child("completed", false))),
+        (read, Response::Snapshot(child("running"))),
+        (read, Response::Snapshot(child("completed"))),
         (write, Response::Success),
-        (read, Response::ParentSnapshot(parent.clone())),
-        (read, Response::Snapshot(child("completed", true))),
-        (read, Response::ParentSnapshot(parent.clone())),
-        (read, Response::ParentSnapshot(parent)),
         (write, Response::Success),
-        (read, Response::ParentSnapshot(archived_parent.clone())),
-        (read, Response::Snapshot(child("completed", true))),
-        (read, Response::ParentSnapshot(archived_parent)),
     ])
     .await;
+    let row = |snapshot: &Value, archived: bool| {
+        let mut row = snapshot["projection"]["thread"].clone();
+        row["status"] = snapshot["projection"]["runs"][0]["status"].clone();
+        row["latestRunId"] = json!(NATIVE_RUN);
+        row["pendingBackgroundTasks"] = json!([]);
+        if archived {
+            row["archivedAt"] = json!("2026-11-24T16:01:00Z");
+        }
+        row
+    };
+    client.rpc.fixture_shell(&json!({"kind":"snapshot","snapshot":{
+        "snapshotSequence":16, "projects":[], "threads":[row(&parent, false),row(&child("running"), false)]
+    }}));
     assert!(matches!(
         client
-            .prepare_parent_archive(&binding, "fixture-acp", &[])
+            .prepare_parent_archive(&binding, "fixture-acp", &[], &mut custody)
             .await
-            .expect("busy read"),
-        crate::ArchiveStep::Wait
+            .unwrap(),
+        crate::ArchiveStep::Wait(_)
     ));
-    for _ in 0..2 {
+    client.rpc.fixture_shell(
+        &json!({"kind":"thread.updated","sequence":17,"thread":row(&child("completed"), false)}),
+    );
+    for (index, snapshot) in [&child("completed"), &parent].into_iter().enumerate() {
         let crate::ArchiveStep::Write(effect) = client
-            .prepare_parent_archive(&binding, "fixture-acp", &[])
+            .prepare_parent_archive(&binding, "fixture-acp", &[], &mut custody)
             .await
-            .expect("idle read")
+            .unwrap()
         else {
-            panic!("one archive effect");
+            panic!("one archive effect")
         };
-        client.write_parent(effect).await.expect("archive receipt");
+        client.write_parent(*effect).await.unwrap();
+        client.rpc.fixture_shell(
+            &json!({"kind":"thread.updated","sequence":18 + index,"thread":row(snapshot, true)}),
+        );
     }
-    assert!(matches!(
-        client
-            .prepare_parent_archive(&binding, "fixture-acp", &[])
-            .await
-            .expect("readback"),
-        crate::ArchiveStep::Finished
-    ));
-    let requests = native.await.expect("native trace");
-    let archived: Vec<Value> = requests
+    let record = serde_json::to_value(&custody).unwrap();
+    let mut restored = serde_json::from_value(record).unwrap();
+    let restarted = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+    restarted
+        .rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":19, "projects":[], "threads":[],
+            "archivedThreads":[row(&parent,true),row(&child("completed"),true)]
+        }}));
+    for _ in 0..2 {
+        let (step, calls) = T3::count_pass_calls(Box::pin(restarted.prepare_parent_archive(
+            &binding,
+            "fixture-acp",
+            &[],
+            &mut restored,
+        )))
+        .await;
+        assert!(matches!(step, Ok(crate::ArchiveStep::Finished)));
+        assert!(calls.is_empty());
+    }
+    assert!(
+        !client
+            .host_calls()
+            .contains_key("threadReads.archivedOrDeleted")
+    );
+    let requests = native.await.unwrap();
+    let archived = requests
         .iter()
         .filter(|request| request.tag == write)
-        .map(|request| serde_json::from_str(request.payload.get()).expect("archive wire"))
-        .collect();
-    assert_eq!(archived.len(), 2);
-    assert!(archived.iter().all(|wire| wire["type"] == "thread.archive"));
-    assert_eq!(archived[0]["threadId"], THREAD);
+        .map(|request| {
+            let wire: Value = serde_json::from_str(request.payload.get()).unwrap();
+            assert_eq!(wire["type"], "thread.archive");
+            wire["threadId"].as_str().unwrap().to_owned()
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        archived[1]["threadId"],
-        crate::parent_thread(Path::new(&binding.worktree_path))
+        archived,
+        [THREAD, crate::parent_thread(checkout.path()).as_str()]
     );
 }
 
@@ -1096,14 +1356,13 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let mut worker = bounded(snapshot(&binding, "child", "completed", false));
     worker["projection"]["thread"]["parentThreadId"] = json!(parent);
     let parent_view = bounded(parent_snapshot(&binding, "completed", false));
+    let mut custody = crate::ArchiveCustody::default();
     let read = "orchestration.subscribeThread";
     let write = "orchestration.dispatchCommand";
     let (host, native) = server(vec![
         (read, Response::Snapshot(worker.clone())),
         (read, Response::ParentSnapshot(parent_view.clone())),
-        (read, Response::Snapshot(worker.clone())),
         (write, Response::Success),
-        (read, Response::ParentSnapshot(parent_view.clone())),
         (write, Response::Success),
     ])
     .await;
@@ -1142,20 +1401,20 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     );
     for (index, view) in [&worker, &parent_view].into_iter().enumerate() {
         let crate::ArchiveStep::Write(effect) = host
-            .prepare_parent_archive(&binding, "fixture-acp", &[])
+            .prepare_parent_archive(&binding, "fixture-acp", &[], &mut custody)
             .await
             .unwrap()
         else {
             panic!("idle bounded thread can be archived");
         };
-        host.write_parent(effect).await.unwrap();
+        host.write_parent(*effect).await.unwrap();
         let mut row = shell_row(view);
         row["archivedAt"] = json!("2026-11-24T16:01:00Z");
         host.rpc
             .fixture_shell(&json!({"kind":"thread.updated","sequence":17 + index,"thread":row}));
     }
     assert!(matches!(
-        host.prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+        host.prepare_parent_archive(&binding, "fixture-acp", &[THREAD], &mut custody)
             .await
             .unwrap(),
         crate::ArchiveStep::Finished
@@ -1163,8 +1422,9 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let requests = native.await.unwrap();
     assert_thread_subscription(&requests[0], THREAD);
     assert_thread_subscription(&requests[1], &parent);
-    assert_thread_subscription(&requests[2], THREAD);
-    assert_thread_subscription(&requests[4], &parent);
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[2].tag, write);
+    assert_eq!(requests[3].tag, write);
 }
 
 #[test]
@@ -1990,6 +2250,7 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
     first["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let mut second = first.clone();
     second["snapshotSequence"] = json!(18);
+    second["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:02:00Z");
     let mut active_first = idle.clone();
     active_first["snapshotSequence"] = json!(17);
     idle["snapshotSequence"] = json!(19);
@@ -2037,8 +2298,14 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         assert_eq!(wire["type"], "thread.unsettle");
         wire["commandId"].as_str().expect("wake ID").to_owned()
     };
-    assert_eq!(wake_id(1), format!("unsettle:{THREAD}:16"));
-    assert_eq!(wake_id(4), format!("unsettle:{THREAD}:18"));
+    assert_eq!(
+        wake_id(1),
+        format!("unsettle:{THREAD}:2026-11-23T16:00:00Z")
+    );
+    assert_eq!(
+        wake_id(4),
+        format!("unsettle:{THREAD}:2026-11-23T16:02:00Z")
+    );
     assert_eq!(frames[6].payload.get(), notice.payload);
 }
 
@@ -2164,6 +2431,90 @@ async fn held_config_updates_the_board_catalog_and_keeps_choices_after_disconnec
     assert_eq!(catalog["providers"][0]["models"][0]["slug"], "second");
     assert!(catalog["providers"][0].get("skills").is_none());
     assert_eq!(native.await.expect("one config subscription").len(), 1);
+}
+
+#[tokio::test]
+async fn quiet_inbox_reuses_its_projection_and_held_project() {
+    let root = "/fixture/inbox";
+    let provider = "fixture-acp";
+    let project = crate::inbox::PROJECT;
+    let thread = json!({
+        "id":crate::INBOX_THREAD,"projectId":project,"providerInstanceId":provider,
+        "modelSelection":{"instanceId":provider,"model":"nucleus"},
+        "updatedAt":"2026-11-24T16:00:00Z","pinnedAt":"2026-11-24T16:00:00Z",
+        "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[],
+    });
+    let snapshot = json!({"kind":"snapshot","snapshotSequence":1,"projection":{
+        "thread":thread,"runs":[],"runtimeRequests":[],"turnItems":[],"messages":[]
+    }});
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(snapshot),
+    )])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,"threads":[thread],"projects":[{"id":project,"workspaceRoot":root}]
+        }}));
+    let target = crate::InboxTarget { root, provider };
+    let pending = std::collections::BTreeSet::new();
+    for expected in [Some(&1), None] {
+        let (step, calls) =
+            T3::count_pass_calls(Box::pin(host.prepare_inbox(&target, &pending))).await;
+        assert!(
+            matches!(step, Ok(crate::InboxStep::Ready { forms, commands }) if forms.is_empty() && commands.is_empty())
+        );
+        assert_eq!(calls.get("orchestration.subscribeThread"), expected);
+        assert!(!calls.contains_key("orchestration.subscribeShell"));
+        if expected.is_none() {
+            assert!(calls.is_empty());
+        }
+    }
+    assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn setup_status_uses_one_client_and_a_shared_project_observation() {
+    let root = "/fixture/inbox";
+    let id = crate::INBOX_THREAD;
+    let project = crate::inbox::PROJECT;
+    let provider = crate::NUCLEUS_RUST_PROVIDER;
+    let config = setup_config(Some(setup_instance(RUST_LAUNCHER)), true);
+    let (host, native) = server(vec![
+        ("server.getConfig", config),
+        (
+            "orchestration.subscribeShell",
+            Response::ShellSnapshot(json!({
+                "kind":"snapshot","snapshot":{"threads": [], "projects":[{
+                    "id":project, "workspaceRoot":root, "faviconPath":"fixture.svg",
+                }]}
+            })),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(json!({
+                "kind":"snapshot","snapshotSequence":1,"projection":{"thread":{
+                    "id":id,"projectId":project,"providerInstanceId":provider,
+                    "modelSelection":{"instanceId":provider,"model":"nucleus"},
+                    "pinnedAt":"2026-11-24T16:00:00Z",
+                }}
+            })),
+        ),
+    ])
+    .await;
+    assert_eq!(
+        host.provider_registration(RUST_LAUNCHER).await.unwrap(),
+        crate::ProviderRegistration::Ready,
+    );
+    let target = crate::InboxTarget { root, provider };
+    assert_eq!(
+        host.inbox_status_with_favicon(&target).await.unwrap(),
+        (crate::InboxStatus::Pinned, Some("fixture.svg".into())),
+    );
+    assert_eq!(host.host_calls()["auth.websocketTicket"], 1);
+    assert_eq!(host.host_calls()["orchestration.subscribeShell"], 1);
+    assert_eq!(native.await.unwrap().len(), 3);
 }
 
 #[tokio::test]
