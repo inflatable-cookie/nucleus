@@ -371,6 +371,7 @@ export async function listenForRustChanges(
   board?: {
     settingsChanged: () => void;
     themeChanged?: () => void;
+    catalogChanged?: () => void;
     connection: (state: "live" | "retrying" | "expired") => void;
   },
 ) {
@@ -401,6 +402,8 @@ export async function listenForRustChanges(
               board?.settingsChanged();
             if (frame.event === "theme" || frame.event === "refresh")
               board?.themeChanged?.();
+            if (frame.event === "catalog")
+              board?.catalogChanged?.();
           }
         }
       } finally {

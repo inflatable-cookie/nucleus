@@ -24,8 +24,8 @@ export interface EngineFeatures {
   projectDefaultLimit: boolean;
   /** Bound runs and per-project slot usage in the queue menu. */
   slotUsage: boolean;
-  /** Profiles: per-role enablement, scopes, notes, modes and host catalogue reads. */
-  profileCatalog: boolean;
+  /** The coordinator dispatch role, as a Profiles usage view. */
+  coordinatorRole: boolean;
   /** Projects: agent registration, planner picking, merge and removal flows. */
   projectAgents: boolean;
   /** Hosts: the multi-host catalogue, default host and host removal. */
@@ -45,7 +45,7 @@ export const TYPESCRIPT_ENGINE_FEATURES: EngineFeatures = {
   advancedLimits: true,
   projectDefaultLimit: true,
   slotUsage: true,
-  profileCatalog: true,
+  coordinatorRole: true,
   projectAgents: true,
   hostCatalog: true,
   planningCeremony: true,
@@ -55,7 +55,7 @@ export const TYPESCRIPT_ENGINE_FEATURES: EngineFeatures = {
 /** Spec 070's retired machinery. Each entry names the ruling that retires it. */
 export const RUST_ENGINE_FEATURES: EngineFeatures = {
   engine: "rust",
-  // Ruling 11: reads and edits never call the host; the scheduler owns catalogue reads.
+  // Ruling 11: Profiles owns the action that reloads the held catalog.
   catalogRefresh: false,
   // Ruling 16: one health endpoint replaces the service-state notices.
   serviceNotices: false,
@@ -70,9 +70,8 @@ export const RUST_ENGINE_FEATURES: EngineFeatures = {
   projectDefaultLimit: true,
   // Ruling 11: the board reads no run custody beyond each task's own summary.
   slotUsage: false,
-  // Rulings 5 and 9: the profile matrix carries over; host-specific modes,
-  // per-role enablement and scopes do not.
-  profileCatalog: false,
+  // Ruling 1: worker and reviewer are the only dispatch roles.
+  coordinatorRole: false,
   // Ruling 8: planners resolve live and are never typed in; no agent
   // registration, merge or removal flows.
   projectAgents: false,

@@ -19,6 +19,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import {
+  EngineFeaturesContext,
+  RUST_ENGINE_FEATURES,
+} from "../client/engine-features";
+import {
   type Project,
   type ProjectSettings,
   type ProjectSettingsRow,
@@ -1307,6 +1311,27 @@ test("nucleus#969 Move into: disabled with the blocker while loading, blocked or
   } finally {
     done(ui2);
   }
+});
+
+test("the Rust board can move a project's first repository on its own", async () => {
+  const { MoveRepositoryConfirm } = await import("../client/project-editor/management");
+  const primary = repo("acme/tools");
+  const source = row("tools", "Tools", [primary, repo("acme/kit")]).project;
+  let moves = 0;
+  const ui = mount(h(EngineFeaturesContext.Provider, {
+    value: RUST_ENGINE_FEATURES,
+    children: h(MoveRepositoryConfirm, {
+      c: dark, repo: primary, source, target: "Site",
+      check: async () => ({ blockers: [], carried: [] }),
+      onMoveRepository: () => { moves += 1; },
+      onMoveProject: () => assert.fail("only the selected repository moves"),
+      onCancel: () => {},
+    }),
+  }));
+  assert.equal(ui.query("Move all of Tools into Site"), undefined);
+  ui.press("Move acme/tools into Site");
+  assert.equal(moves, 1);
+  done(ui);
 });
 
 test("nucleus#969 Add repository: a repository of another project is offered with its project and moved in one server step", async () => {

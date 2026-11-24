@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "../engine-features";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import {
@@ -55,6 +56,7 @@ export function RepositoryFields({
   saves: ProjectSaves;
   setRepository: ProjectEditActions["setRepository"];
 }) {
+  const features = useEngineFeatures();
   const r = roles(c);
   const id = identityOf(repo);
   const key = (field: string) => `repo:${id}:${field}`;
@@ -201,6 +203,20 @@ export function RepositoryFields({
     );
   };
   const hasMerge = Boolean(mergeCommand.trim());
+  // Rust engine (Spec 070 ruling 8): the repository keeps its base branch, the
+  // GitHub checks a merge waits for, and the hung-tool limit. QA (ruling 12),
+  // host choice (ruling 5) and merge commands (ruling 13) are retired.
+  if (features.engine === "rust")
+    return (
+      <RustRepositoryFields
+        c={c}
+        label={label}
+        settings={settings}
+        disabled={disabled}
+        save={(field, value, delay) => patch(field, value, {}, delay)}
+        flush={saves.flush}
+      />
+    );
 
   return (
     <View style={{ gap: space.sm }}>
@@ -324,6 +340,76 @@ export function RepositoryFields({
           </View>
         </View>
       </Pair>
+    </View>
+  );
+}
+
+function RustRepositoryFields({
+  c,
+  label,
+  settings,
+  disabled,
+  save,
+  flush,
+}: {
+  c: Colors;
+  label: string;
+  settings: RepositorySettings | null;
+  disabled: boolean;
+  save: (field: string, value: Omit<RepositorySetInput, "repository">, delay: number) => void;
+  flush: () => void;
+}) {
+  const [checks, setChecks] = useState((settings?.requiredChecks ?? []).join(", "));
+  const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? 30);
+  return (
+    <View style={{ gap: space.sm }}>
+      <Pair>
+        <View style={{ gap: space.xxs }}>
+          <FieldCaption c={c} text="Base branch" />
+          <Text
+            accessibilityLabel={`Base branch for ${label}`}
+            style={{ color: c.foreground, fontSize: type.body.fontSize }}
+          >
+            {settings?.base ?? "Unresolved"}
+          </Text>
+        </View>
+        <Field
+          c={c}
+          label="Checks"
+          a11yLabel={`Required GitHub checks for ${label}`}
+          placeholder="ci, lint"
+          value={checks}
+          disabled={disabled}
+          onChange={(next) => {
+            setChecks(next);
+            save(
+              "requiredChecks",
+              { requiredChecks: [...new Set(next.split(",").map((name) => name.trim()).filter(Boolean))] },
+              600,
+            );
+          }}
+          onBlur={flush}
+        />
+      </Pair>
+      <View style={{ gap: space.xxs }}>
+        <FieldCaption c={c} text="Hung tool limit" />
+        <View style={{ flexDirection: "row" }}>
+          <NumberStepper
+            c={c}
+            a11yLabel={`Hung tool limit for ${label}`}
+            unit="min"
+            value={hung}
+            min={1}
+            max={240}
+            disabled={disabled}
+            onChange={(next) => {
+              setHung(next);
+              save("toolQuietLimitMinutes", { toolQuietLimitMinutes: next }, 600);
+            }}
+            onCommit={flush}
+          />
+        </View>
+      </View>
     </View>
   );
 }

@@ -153,6 +153,8 @@ impl Board {
         let board = Router::new()
             .route("/api/engine/session", get(session))
             .route("/api/engine/theme", get(theme))
+            .route("/api/engine/profiles/catalog", get(profile_catalog))
+            .route("/api/engine/profiles/usage", get(profile_usage))
             .route("/api/engine/tasks", get(super::list).post(super::admit))
             .route("/api/engine/tasks/{id}", get(super::detail))
             .route("/api/engine/tasks/{id}/next", get(super::next))
@@ -222,6 +224,19 @@ async fn session(Extension(authority): Extension<Authority>) -> Json<Value> {
 async fn theme(State(api): State<Api>) -> Json<Value> {
     let theme = api.service.theme.borrow().clone();
     Json(json!({"theme": theme}))
+}
+
+async fn profile_catalog(State(api): State<Api>) -> Json<Value> {
+    Json(api.service.host.board_catalog())
+}
+
+async fn profile_usage(State(api): State<Api>) -> Result<Json<Value>, ApiError> {
+    let state = api.service.state.lock().await;
+    let usage = state
+        .store
+        .profile_usage()
+        .map_err(crate::ServiceError::from)?;
+    Ok(Json(json!(usage)))
 }
 
 async fn headers(request: Request, next: Next) -> Response {
@@ -400,9 +415,13 @@ async fn events(
         changes.changed().await.ok()?;
         Some((Ok(Event::default().event("theme").data("{}")), changes))
     });
+    let catalog = stream::unfold(api.service.host.catalog_changes(), |mut changes| async {
+        changes.changed().await.ok()?;
+        Some((Ok(Event::default().event("catalog").data("{}")), changes))
+    });
     let changes = stream::select(
         invalidation_events(api.service, None, session.scope),
-        stream::select(settings, theme),
+        stream::select(settings, stream::select(theme, catalog)),
     )
     .take_until(async move {
         let mut revoked = session.revoked;

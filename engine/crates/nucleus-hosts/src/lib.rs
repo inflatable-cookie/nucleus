@@ -427,6 +427,18 @@ impl T3 {
         })
     }
 
+    /// Read the board-safe projection of the cached provider catalog.
+    #[must_use]
+    pub fn board_catalog(&self) -> Value {
+        self.rpc.board_catalog()
+    }
+
+    /// Subscribe to changes in the cached provider catalog.
+    #[must_use]
+    pub fn catalog_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.rpc.catalog_changes()
+    }
+
     /// Verify that the selected project is active at the expected local root.
     /// This configuration read is independent of cycle observations.
     ///

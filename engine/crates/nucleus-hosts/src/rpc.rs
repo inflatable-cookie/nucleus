@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, Semaphore, mpsc},
+    sync::{Mutex, Semaphore, mpsc, watch},
     time,
 };
 use tokio_tungstenite::{
@@ -73,6 +73,7 @@ pub(crate) struct Rpc {
     thread_reads: Semaphore,
     catalog: SyncMutex<CatalogRevision>,
     catalog_refresh: Mutex<()>,
+    catalog_changes: watch::Sender<()>,
 }
 
 struct Retry {
@@ -258,6 +259,7 @@ impl Rpc {
             thread_reads: Semaphore::new(THREAD_READ_CONCURRENCY),
             catalog: SyncMutex::new(CatalogRevision::default()),
             catalog_refresh: Mutex::new(()),
+            catalog_changes: watch::channel(()).0,
         })
     }
 
@@ -279,8 +281,8 @@ impl Rpc {
         let _refresh = self.catalog_refresh.lock().await;
         let epoch = {
             let state = self.catalog.lock().expect("provider catalog");
-            if let Some(catalog) = &state.catalog {
-                return Ok(Arc::clone(catalog));
+            if let Some(catalog) = state.current() {
+                return Ok(catalog);
             }
             state.epoch
         };
@@ -288,17 +290,26 @@ impl Rpc {
         else {
             return Err(HostError::Protocol);
         };
-        let catalog = Arc::new(ProfileCatalog::parse(config)?);
+        let catalog = ProfileCatalog::parse(config)?;
         let mut state = self.catalog.lock().expect("provider catalog");
-        if state.epoch != epoch {
-            return state.catalog.clone().ok_or(HostError::Uncertain);
+        if state.epoch == epoch && state.replace(Some(catalog)) {
+            self.catalog_changes.send_replace(());
         }
-        state.catalog = Some(Arc::clone(&catalog));
-        Ok(catalog)
+        state.current().ok_or(HostError::Uncertain)
     }
 
     pub(crate) fn invalidate_catalog(&self) {
-        self.catalog.lock().expect("provider catalog").invalidate();
+        if self.catalog.lock().expect("provider catalog").invalidate() {
+            self.catalog_changes.send_replace(());
+        }
+    }
+
+    pub(crate) fn board_catalog(&self) -> Value {
+        self.catalog.lock().expect("provider catalog").board_view()
+    }
+
+    pub(crate) fn catalog_changes(&self) -> watch::Receiver<()> {
+        self.catalog_changes.subscribe()
     }
 
     pub(crate) async fn call(
@@ -686,7 +697,9 @@ impl Rpc {
                             .await?;
                         let mut changed = false;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
-                            self.catalog.lock().expect("provider catalog").apply(item);
+                            if self.catalog.lock().expect("provider catalog").apply(item) {
+                                self.catalog_changes.send_replace(());
+                            }
                             changed |= tracker.apply(item);
                         }
                         if changed {

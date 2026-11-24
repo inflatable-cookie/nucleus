@@ -7,7 +7,7 @@ import {
   type ProviderTranslation,
   type ThinkingLevel,
 } from "../../shared/profile-vocabulary";
-import { optionDescriptor, type config } from "./contracts";
+import { optionDescriptor, type config } from "./config";
 import { t3codeVocabulary } from "./vocabulary";
 
 /**

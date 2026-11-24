@@ -73,6 +73,13 @@ Later decisions carry their own attribution.
 
    Tom, 2026-11-24, confirmed that one project can contain several repositories. It keeps its stable TypeScript key, display name, plan and lanes. Settings can move a repository in one save and its verified planners follow the repository binding.
 
+   **Profiles.** The shared editor reads and saves the paired engine's stored
+   profiles. Provider and model use the engine's held T3 config catalog. Refresh
+   reloads that cache through the paired API. If T3 is unavailable, the editor
+   reports it and keeps the last usable choices for the lifetime of the service.
+   The usage strips read recorded assignments across both roles or for one role,
+   using up to the last 50 assignments in the selected view.
+
    **Limits (Tom, 2026-11-24).** Dispatch owns the global limit, per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. A run needs room under both ceilings, counting the project's member repositories together. A first worker checkout also needs room under twice the effective project limit. Review entry and existing work continue through their own gates. The Rust Limits editor shows usage, global slots, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure. The TypeScript editor remains available during drain.
 
    Fresh installs start at 32 global slots and 5 per project, matching the TypeScript defaults. `limits.import` reads the five capacity and retention meta keys from a fenced TypeScript copy. Applying it under the stopped profile lock removes old Projects slot fields and publishes the imported limits in Dispatch once. Projects without an imported override, including the Barge pilot, inherit the per-project default. Later edits survive replay.

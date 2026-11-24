@@ -1,25 +1,23 @@
 import type { z } from "zod";
 import * as api from "../../shared/contracts";
 import { DEFAULT_HOST_KIND } from "../../shared/host-kind";
-import type { NucleusProfile } from "../../shared/profiles";
 import type { RpcContract } from "../../shared/rpc";
 import { capacityBounds } from "../../shared/schema/settings/capacity";
 import {
   createRustApi,
   dispatchSnapshot,
   hostsView,
-  profilesSnapshot,
   projectsView,
   storageView,
   type RustAllSettings,
   type RustApi,
   type RustDispatch,
   type RustDispatchMode,
-  type RustNamedProfile,
   type RustProject,
   type RustProjects,
   type RustRepository,
 } from "./rust-api";
+import { boardProfile, boardProfileUsage, createRustProfiles } from "./rust-profiles";
 import { createRustPlanning } from "./rust-planning";
 import { generatedProjectBadge } from "../../shared/t3/project-badge";
 
@@ -130,60 +128,6 @@ export function boardRepositorySettings(
   };
 }
 
-/** A Rust profile as the board's stored profile and its dispatch settings. */
-export function boardProfile(profile: RustNamedProfile): {
-  profile: NucleusProfile;
-  pool: api.PoolEntry;
-  view: api.Profile;
-} {
-  const { selection } = profile;
-  const group = profile.group ?? selection.provider;
-  // Omitted roles allow both active roles; the coordinator role is retired (ruling 1).
-  const roles = (profile.roles ?? ["worker", "reviewer"]).filter(
-    (role): role is "worker" | "reviewer" => role !== "coordinator",
-  );
-  const scopes = (profile.scopes ?? []).filter(
-    (scope): scope is "general" | "mechanical" | "complex" =>
-      scope === "general" || scope === "mechanical" || scope === "complex",
-  );
-  return {
-    profile: {
-      id: selection.id,
-      name: profile.name,
-      provider: selection.provider,
-      model: selection.model,
-      ...(profile.modeId ? { modeId: profile.modeId } : {}),
-      ...(selection.effort ? { thinkingOptionId: selection.effort } : {}),
-      ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
-      notes: profile.notes ?? "",
-    },
-    pool: {
-      profileId: selection.id,
-      enabled: profile.enabled ?? true,
-      group,
-      roles: roles.length ? roles : ["worker", "reviewer"],
-      capability: selection.capability,
-      weight: selection.weight,
-      scopes: scopes.length ? scopes : ["general"],
-    },
-    view: {
-      id: selection.id,
-      name: profile.name,
-      provider: selection.provider,
-      model: selection.model,
-      ...(profile.modeId ? { modeId: profile.modeId } : {}),
-      ...(selection.effort ? { thinkingOptionId: selection.effort } : {}),
-      ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
-      notes: profile.notes ?? "",
-      // The engine checks each launch against the scheduler's catalogue read;
-      // Settings never reads the host (ruling 11).
-      available: true,
-      problem: "",
-      supportedThinking: selection.effort ? [selection.effort] : [],
-    },
-  };
-}
-
 function usageView(dispatch: RustDispatch, now = Date.now()) {
   const expired =
     dispatch.usageUntilMs !== null && dispatch.usageUntilMs <= now;
@@ -223,6 +167,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   let revision = 0;
   let keys = projectKeys([]);
   const planning = createRustPlanning(rust, () => keys);
+  const profilesAdapter = createRustProfiles(rust);
 
   async function settings(): Promise<RustAllSettings> {
     const all = await rust.settings();
@@ -235,20 +180,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     return rust.saveDomain(
       dispatchSnapshot,
       "dispatch",
-      current.revision,
-      edit(current.value),
-    );
-  }
-
-  async function editProfiles(
-    edit: (
-      value: z.infer<typeof profilesSnapshot>["value"],
-    ) => z.infer<typeof profilesSnapshot>["value"],
-  ) {
-    const current = await rust.domain(profilesSnapshot, "profiles");
-    return rust.saveDomain(
-      profilesSnapshot,
-      "profiles",
       current.revision,
       edit(current.value),
     );
@@ -277,9 +208,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   }
 
   async function snapshot(): Promise<api.UiBoard> {
-    const [all, tasks] = await Promise.all([
+    const [all, tasks, profileUsage] = await Promise.all([
       settings(),
       rust.board.list(AbortSignal.timeout(30_000)),
+      rust.profileUsage(),
     ]);
     const dispatch = all.dispatch.value;
     const backups = await rust.domain(storageView, "storage").catch(() => null);
@@ -333,14 +265,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         reason: "Paused in Settings",
         retryAt: null,
       })),
-      assignments: {},
-      recentAssignments: {},
-      recentAssignmentSample: 0,
-      recentAssignmentRoles: {
-        worker: { counts: {}, sample: 0 },
-        reviewer: { counts: {}, sample: 0 },
-        coordinator: { counts: {}, sample: 0 },
-      },
+      ...boardProfileUsage(profileUsage),
       queuedCounts: [],
       lanes: await planning.laneViews(rows),
       projects: rows
@@ -481,91 +406,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       });
       return { ok: true };
     },
-    "profile.list": async () => {
-      const current = await rust.domain(profilesSnapshot, "profiles");
-      return {
-        profiles: current.value.profiles.map((entry) => boardProfile(entry).profile),
-      };
-    },
-    "profile.update": async (input: {
-      id: string;
-      name?: string;
-      model?: string;
-      thinkingOptionId?: string | null;
-    }) => {
-      const saved = await editProfiles((value) => ({
-        ...value,
-        profiles: value.profiles.map((entry) =>
-          entry.selection.id === input.id
-            ? {
-                ...entry,
-                name: input.name ?? entry.name,
-                selection: {
-                  ...entry.selection,
-                  model: input.model ?? entry.selection.model,
-                  effort:
-                    input.thinkingOptionId === undefined
-                      ? entry.selection.effort
-                      : ((input.thinkingOptionId as RustNamedProfile["selection"]["effort"]) ??
-                        null),
-                },
-              }
-            : entry,
-        ),
-      }));
-      const entry = saved.value.profiles.find(
-        (profile) => profile.selection.id === input.id,
-      );
-      if (!entry) throw new Error("The engine did not keep that profile.");
-      return { profile: boardProfile(entry).profile };
-    },
-    "profile.remove": async (input: { id: string }) => {
-      let removed = false;
-      await editProfiles((value) => ({
-        ...value,
-        profiles: value.profiles.filter((entry) => {
-          const keep = entry.selection.id !== input.id;
-          removed ||= !keep;
-          return keep;
-        }),
-      }));
-      return { removed };
-    },
-    "queue.profile": async (input: api.PoolEntry) => {
-      const saved = await editProfiles((value) => ({
-        ...value,
-        profiles: value.profiles.map((entry) =>
-          entry.selection.id === input.profileId
-            ? {
-                ...entry,
-                group: input.group,
-                enabled: input.enabled,
-                selection: {
-                  ...entry.selection,
-                  capability: input.capability ?? entry.selection.capability,
-                  weight: input.weight,
-                },
-              }
-            : entry,
-        ),
-      }));
-      const entry = saved.value.profiles.find(
-        (profile) => profile.selection.id === input.profileId,
-      );
-      return { ok: true, entry: entry ? boardProfile(entry).pool : undefined };
-    },
-    "queue.availability": async (
-      input: { group: string; unavailable?: boolean } | { action: "remove"; group: string },
-    ) => {
-      const pause = !("action" in input) && input.unavailable !== false;
-      await editProfiles((value) => {
-        const groups = new Set(value.pausedGroups ?? []);
-        if (pause) groups.add(input.group);
-        else groups.delete(input.group);
-        return { ...value, pausedGroups: [...groups].sort() };
-      });
-      return { ok: true };
-    },
+    ...profilesAdapter.handlers,
     repositories: async () => {
       const all = await settings();
       return Object.values(all.projects.settings.value.projects).flatMap(
@@ -585,6 +426,14 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         if (!existing)
           throw new Error(
             "Projects register when a planner first dispatches (Spec 070 ruling 23).",
+          );
+        const known = new Set(existing.repositories.map((repo) => repo.origin));
+        if (
+          input.repositories.length !== known.size ||
+          input.repositories.some((repo) => !repo.origin || !known.has(repo.origin))
+        )
+          throw new Error(
+            "Repositories register on a planner's first dispatch. Move one here from another project instead.",
           );
         return {
           projects: {
@@ -616,7 +465,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       repository: string;
       toolQuietLimitMinutes?: number | null;
       requiredChecks?: string[];
-      base?: string;
     }) => {
       let updated: RustRepository | undefined;
       await editProjects((value) => ({
@@ -634,7 +482,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
                     ? { hungToolMinutes: input.toolQuietLimitMinutes }
                     : {}),
                   ...(input.requiredChecks ? { requiredChecks: input.requiredChecks } : {}),
-                  ...(input.base ? { base: input.base } : {}),
                 };
                 return updated;
               }),
@@ -644,6 +491,31 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       }));
       if (!updated) throw new Error(`${input.repository} is not registered.`);
       return boardRepositorySettings(updated);
+    },
+    "project.merge-check": async () => ({ blockers: [], carried: [] }),
+    // The shared Add repository flow moves one registered repository.
+    "project.merge": async (input: {
+      source: string;
+      target: string;
+      repository?: string;
+    }) => {
+      if (!input.repository) throw new RustUnsupported("Moving a whole project");
+      const current = await rust.domain(projectsView, "projects");
+      keys = projectKeys(Object.keys(current.settings.value.projects));
+      const sourceId = keys.id(input.source);
+      const targetId = keys.id(input.target);
+      const source = current.settings.value.projects[sourceId];
+      if (!source) throw new Error(`Project ${input.source} is not registered.`);
+      const repository = source.repositories.find(
+        (repo) => repo.origin === input.repository || repo.path === input.repository,
+      );
+      if (!repository) throw new Error(`${input.repository} is not in ${source.name}.`);
+      const saved = await rust.reassign(current.settings.revision, repository.origin, targetId);
+      const after = saved.settings.value.projects;
+      const target = after[targetId] && boardProject(keys.key(targetId), after[targetId]);
+      if (!target) throw new Error("The engine did not keep the destination project.");
+      const remaining = after[sourceId] && boardProject(keys.key(sourceId), after[sourceId]);
+      return { project: target, source: remaining ?? null, tombstone: null };
     },
     "project.reassign": async (input: { origin: string; project: string }) => {
       const current = await rust.domain(projectsView, "projects");

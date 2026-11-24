@@ -116,6 +116,10 @@ export function WebApp({
       {
         settingsChanged: () => invalidateBoard({ queryKey: ["nucleus"] }),
         themeChanged: () => setThemeRevision((value) => value + 1),
+        catalogChanged: () => {
+          invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
+          invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
+        },
         connection: (state) => {
           setLive(state === "live");
           setLiveError(

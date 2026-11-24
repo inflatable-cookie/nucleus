@@ -99,21 +99,23 @@ export function ProfilesPanel({
   ) => Promise<unknown>;
 }) {
   const queryClient = useQueryClient();
-  // Rust engine (Spec 070 rulings 5, 9 and 11): no host catalogue reads from Settings.
-  const { profileCatalog } = useEngineFeatures();
+  const { coordinatorRole, engine } = useEngineFeatures();
+  const pairedCatalog = engine === "rust";
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
   // The form's choices: every registered host's catalog in canonical values (task 1158).
   const fetchProfiles = useRpc(api.listNucleusProfiles),
     fetchCatalog = useRpc(api.readProfileVocabulary);
   const createProfile = useRpc(api.createNucleusProfile),
     removeProfile = useRpc(api.removeNucleusProfile);
-  const directories = [
-    ...new Set(
-      repositories
-        .map((row) => row.repository.path)
-        .filter((path) => path.length > 0),
-    ),
-  ];
+  const directories = pairedCatalog
+    ? []
+    : [
+        ...new Set(
+          repositories
+            .map((row) => row.repository.path)
+            .filter((path) => path.length > 0),
+        ),
+      ];
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({});
   const [editor, setEditor] = useState<string | "new" | null>(null);
   // nucleus#1502: which recent-assignment view the usage strips show.
@@ -123,6 +125,7 @@ export function ProfilesPanel({
   const [actionStatus, setActionStatus] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [refreshStatus, setRefreshStatus] = useState("");
   const editorKey = editor === "new" ? "new" : (editor ?? "");
   const directory =
     lastUsed[editorKey] && directories.includes(lastUsed[editorKey]!)
@@ -137,14 +140,12 @@ export function ProfilesPanel({
     queryKey: ["nucleus", "profiles", "compatibility"],
     queryFn: () => fetchCompatibility({}),
     staleTime: 15_000,
-    enabled: profileCatalog,
   });
   const compatibility = compatibilityQuery.data;
   const catalogQuery = useQuery({
     queryKey: ["nucleus", "profile-vocabulary", directory ?? ""],
     queryFn: () => fetchCatalog(directory ? { cwd: directory } : {}),
     staleTime: 30_000,
-    enabled: profileCatalog,
   });
   const catalogsQuery = useQuery({
     queryKey: ["nucleus", "profile-vocabularies", directories.join("|")],
@@ -155,7 +156,7 @@ export function ProfilesPanel({
           catalog: await fetchCatalog({ cwd }),
         })),
       ),
-    enabled: profileCatalog && editor !== null && directories.length > 1,
+    enabled: editor !== null && directories.length > 1,
     staleTime: 30_000,
   });
   const catalog = catalogQuery.data;
@@ -217,15 +218,10 @@ export function ProfilesPanel({
   }, [created, profilesQuery.data]);
   const panelBusy = busy || Boolean(removing);
   const visibleProfileIds = live.map((profile) => profile.id);
-  /**
-   * Refresh reads the host live for every directory the page reads and replaces
-   * Nucleus's stored catalog (nucleus#970). The stored lists stay usable while it
-   * runs; a directory whose read fails keeps its stored catalog, and the page
-   * shows the first reason once.
-   */
   async function refreshCatalog() {
     setRefreshing(true);
     setRefreshError("");
+    setRefreshStatus("");
     try {
       const cwds: (string | null)[] = directories.length ? directories : [null];
       const reads = await Promise.allSettled(
@@ -244,6 +240,14 @@ export function ProfilesPanel({
           );
       const failed = reads.find((read) => read.status === "rejected");
       if (failed) setRefreshError(failureText(failed.reason));
+      else if (pairedCatalog)
+        setRefreshStatus("Providers and models refreshed.");
+      if (pairedCatalog) {
+        await queryClient.invalidateQueries({
+          queryKey: ["nucleus", "profiles", "compatibility"],
+        });
+        return;
+      }
       await queryClient.invalidateQueries({
         queryKey: ["nucleus", "profile-vocabularies"],
       });
@@ -252,6 +256,18 @@ export function ProfilesPanel({
     }
   }
   const age = catalogAge(catalogQuery.data?.readAt);
+  const status = catalogQuery.data?.cacheStatus;
+  useEffect(() => {
+    if (status === "current") setRefreshError("");
+  }, [status]);
+  const catalogNotice =
+    status === "pending"
+      ? "Waiting for T3 to publish providers and models."
+      : status === "stale"
+        ? age
+          ? "Showing the last catalog from T3."
+          : "T3’s provider catalog is temporarily unavailable."
+        : refreshStatus;
   const refreshText = refreshing
     ? "Refreshing providers and models…"
     : age
@@ -333,7 +349,18 @@ export function ProfilesPanel({
             fontSize: typeScale.metadata.fontSize,
           }}
         >
-          Refresh failed: {refreshError}. The stored providers and models stay.
+          Refresh failed: {refreshError}.
+          {pairedCatalog
+            ? age && " Showing the last catalog."
+            : " The stored providers and models stay."}
+        </Text>
+      )}
+      {!refreshError && !refreshing && catalogNotice && (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+        >
+          {catalogNotice}
         </Text>
       )}
       {catalogQuery.error && (
@@ -366,7 +393,7 @@ export function ProfilesPanel({
         status={quietSaveStatus(actionStatus) || null}
         description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm, for all roles or for one role at a time; a full strip means that profile is busiest in the list for the chosen view. Each view covers up to its last 50 recorded assignments."
         action={
-          profileCatalog ? <View style={{ ...row, flexWrap: "nowrap" }}>
+          <View style={{ ...row, flexWrap: "nowrap" }}>
             <ActionButton
               c={c}
               action="refresh"
@@ -382,7 +409,7 @@ export function ProfilesPanel({
               disabled={panelBusy || editor === "new"}
               onPress={() => setEditor("new")}
             />
-          </View> : undefined
+          </View>
         }
       >
         {state && (
@@ -392,7 +419,7 @@ export function ProfilesPanel({
               label="Usage view"
               // Rust engine (Spec 070 ruling 1): the coordinator role is retired.
               tabs={
-                profileCatalog
+                coordinatorRole
                   ? USAGE_ROLE_TABS
                   : USAGE_ROLE_TABS.filter((tab) => tab.id !== "coordinator")
               }

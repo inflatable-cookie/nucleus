@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -529,7 +528,6 @@ export function ProfileEditor({
           catalog,
         )
       : null;
-  const readOnlyIdentity = !useEngineFeatures().profileCatalog;
   const providerOptions = [
     ...providers.map((candidate) => ({
       value: candidate.key,
@@ -537,12 +535,7 @@ export function ProfileEditor({
     })),
     ...(draft.provider &&
     !providers.some((candidate) => candidate.key === draft.provider)
-      ? [
-          {
-            value: draft.provider,
-            label: readOnlyIdentity ? draft.provider : `${draft.provider} · unavailable`,
-          },
-        ]
+      ? [{ value: draft.provider, label: `${draft.provider} · unavailable` }]
       : []),
   ];
   const modelOptions = [
@@ -831,22 +824,6 @@ export function ProfileEditor({
         })),
       ]
     : [];
-  // Rust engine (Spec 070 rulings 5 and 9): provider, model and thinking come
-  // from the stored profile and read only here; the matrix fields stay editable.
-  if (readOnlyIdentity && draft.thinkingOptionId)
-    options.push({
-      key: "thinking",
-      node: (
-        <DropdownSelect
-          label="Thinking"
-          value={draft.thinkingOptionId}
-          options={[{ value: draft.thinkingOptionId, label: draft.thinkingOptionId }]}
-          onChange={() => {}}
-          c={c}
-          disabled
-        />
-      ),
-    });
   const optionRows = Array.from(
     { length: Math.ceil(options.length / 2) },
     (_, i) => options.slice(i * 2, i * 2 + 2),
@@ -914,7 +891,7 @@ export function ProfileEditor({
             onPress={onClose}
           />
         )}
-        {initial && onDuplicate && !readOnlyIdentity && (
+        {initial && onDuplicate && (
           <ActionButton
             c={c}
             action="duplicate"
@@ -964,7 +941,7 @@ export function ProfileEditor({
             options={providerOptions}
             onChange={chooseProvider}
             c={c}
-            disabled={busy || readOnlyIdentity}
+            disabled={busy}
             placeholder="Choose a provider"
             emptyText={
               catalog
@@ -980,7 +957,7 @@ export function ProfileEditor({
             options={modelOptions}
             onChange={chooseModel}
             c={c}
-            disabled={busy || !draft.provider || readOnlyIdentity}
+            disabled={busy || !draft.provider}
             placeholder="Choose a model"
             emptyText={
               provider
