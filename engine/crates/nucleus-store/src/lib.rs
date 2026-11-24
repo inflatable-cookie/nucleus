@@ -824,8 +824,6 @@ impl Store {
 
     /// Find same-version native sends whose outcome a delivery fence could still protect.
     /// An empty list inside Some represents a typed uncertain send with no usable command.
-    /// Remove legacy NULL deliveryPending and unlinked refusals first in the reduction pass,
-    /// after a live store inventory confirms that no current tasks carry those fences.
     ///
     /// # Errors
     /// Returns an error if the task's delivery history is unreadable.
@@ -835,48 +833,52 @@ impl Store {
         version: i64,
         runtime: &str,
     ) -> Result<Option<Vec<String>>, StoreError> {
-        let explicit: Option<bool> = self
-            .connection
-            .prepare_cached(
-                "SELECT MAX(COALESCE(json_extract(detail, '$.deliveryPending'), 0)) FROM events
-             WHERE task_id = ?1 AND kind = 'host_observation_blocked' AND json_valid(detail)
-               AND json_extract(detail, '$.version') = ?2
-               AND instr(json_extract(detail, '$.session'), ?3 || '/') = 1",
-            )?
-            .query_row(params![id, version, runtime], |row| row.get(0))?;
-        let Some(explicit) = explicit else {
-            return Ok(None);
-        };
-        let mut intents = self.connection.prepare_cached(
-            "SELECT DISTINCT json_extract(intent.detail, '$.command'), EXISTS (
-                 SELECT 1 FROM events AS proof
-                 WHERE proof.task_id = intent.task_id
-                   AND proof.kind IN ('native_turn_observed', 'native_turn_not_sent')
-                   AND json_valid(proof.detail) AND json_extract(proof.detail, '$.version') = ?2
-                   AND json_extract(proof.detail, '$.command') = json_extract(intent.detail, '$.command')
-                   AND ( (proof.kind = 'native_turn_observed' AND json_extract(proof.detail, '$.session') = ?3)
-                      OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence AND
-                          (json_extract(proof.detail, '$.attempt') = intent.sequence OR
-                           (json_type(proof.detail, '$.attempt') IS NULL AND
-                            json_extract(proof.detail, '$.session') = json_extract(intent.detail, '$.session')))))
-             ) FROM events AS intent
-             WHERE intent.task_id = ?1 AND intent.kind IN ('native_turn_intent', 'native_turn_replay', 'acp_row_refresh_intent')
-               AND json_valid(intent.detail) AND json_extract(intent.detail, '$.version') = ?2
-               AND (json_extract(intent.detail, '$.session') = ?3
-                    OR instr(json_extract(intent.detail, '$.session'), ?3 || '/') = 1)
-               AND json_type(intent.detail, '$.command') = 'text'",
+        let mut query = self.connection.prepare_cached(
+            "WITH blocked AS (
+                 SELECT MAX(COALESCE(json_extract(detail, '$.deliveryPending'), 0)) AS explicit
+                 FROM events
+                 WHERE task_id = ?1 AND kind = 'host_observation_blocked' AND json_valid(detail)
+                   AND json_extract(detail, '$.version') = ?2
+                   AND instr(json_extract(detail, '$.session'), ?3 || '/') = 1
+             ), attempts AS (
+                 SELECT DISTINCT json_extract(intent.detail, '$.command') AS command, EXISTS (
+                     SELECT 1 FROM events AS proof
+                     WHERE proof.task_id = intent.task_id
+                       AND proof.kind IN ('native_turn_observed', 'native_turn_not_sent')
+                       AND json_valid(proof.detail) AND json_extract(proof.detail, '$.version') = ?2
+                       AND json_extract(proof.detail, '$.command') = json_extract(intent.detail, '$.command')
+                       AND ((proof.kind = 'native_turn_observed' AND json_extract(proof.detail, '$.session') = ?3)
+                         OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
+                           AND (json_extract(proof.detail, '$.attempt') = intent.sequence
+                             OR (json_type(proof.detail, '$.attempt') IS NULL
+                               AND json_extract(proof.detail, '$.session') = json_extract(intent.detail, '$.session')))))
+                 ) AS observed FROM events AS intent
+                 WHERE intent.task_id = ?1 AND intent.kind IN ('native_turn_intent', 'native_turn_replay', 'acp_row_refresh_intent')
+                   AND EXISTS (SELECT 1 FROM blocked WHERE explicit IS NOT NULL)
+                   AND json_valid(intent.detail) AND json_extract(intent.detail, '$.version') = ?2
+                   AND (json_extract(intent.detail, '$.session') = ?3
+                     OR instr(json_extract(intent.detail, '$.session'), ?3 || '/') = 1)
+                   AND json_type(intent.detail, '$.command') = 'text'
+             )
+             SELECT explicit, command, COALESCE(observed, 0)
+             FROM blocked LEFT JOIN attempts ON TRUE WHERE explicit IS NOT NULL",
         )?;
-        let claims = intents
-            .query_map(params![id, version, runtime], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let has_claim = !claims.is_empty();
-        let pending: Vec<_> = claims
-            .into_iter()
-            .filter_map(|(command, observed)| (!observed).then_some(command))
-            .collect();
-        Ok((!pending.is_empty() || (explicit && !has_claim)).then_some(pending))
+        let mut pending = Vec::new();
+        let mut without_command = false;
+        for row in query.query_map(params![id, version, runtime], |row| {
+            Ok((
+                row.get::<_, bool>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
+        })? {
+            match row? {
+                (_, Some(command), false) => pending.push(command),
+                (explicit, None, _) => without_command = explicit,
+                (_, Some(_), true) => {}
+            }
+        }
+        Ok((without_command || !pending.is_empty()).then_some(pending))
     }
 
     /// Read all subscription groups with a deadline in the future.

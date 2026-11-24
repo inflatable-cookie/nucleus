@@ -634,7 +634,7 @@ async fn an_unconfirmed_hold_gets_readback_only_until_its_exact_message_is_obser
             ("host_observation_blocked", format!("{runtime}/engine")),
         ] {
             let mut audit = event(kind);
-            audit.detail = serde_json::json!({"version":version,"session":scope,"command":command})
+            audit.detail = serde_json::json!({"version":version,"session":scope,"command":command,"deliveryPending":true})
                 .to_string();
             state
                 .store

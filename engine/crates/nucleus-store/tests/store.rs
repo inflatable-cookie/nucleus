@@ -131,6 +131,8 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         "later_send",
         "new_ambiguity",
         "legacy_without_claim",
+        "legacy_unresolved",
+        "legacy_refused",
         "no_attempt",
         "refused",
     ] {
@@ -139,24 +141,38 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         let mut append = |kind, detail: serde_json::Value| {
             let mut entry = event(kind);
             entry.detail = detail.to_string();
-            store.claim_task_effect(id, &entry, false).unwrap();
+            store.claim_task_effect(id, &entry, false).unwrap().unwrap()
         };
-        if matches!(id, "completed" | "ambiguous" | "refused") {
+        let attempt = matches!(
+            id,
+            "completed" | "ambiguous" | "refused" | "legacy_unresolved" | "legacy_refused"
+        )
+        .then(|| {
             append(
                 "native_turn_intent",
                 serde_json::json!({
                     "version":version, "session":"runtime", "command":"thread-hold-1",
                 }),
-            );
-        }
-        if !matches!(id, "legacy_without_claim" | "no_attempt") {
+            )
+        });
+        if !matches!(
+            id,
+            "legacy_without_claim" | "legacy_unresolved" | "legacy_refused" | "no_attempt"
+        ) {
             append(
                 "native_turn_not_sent",
                 serde_json::json!({
                     "version":version,
+                    "attempt": if id == "refused" { attempt } else { None },
                     "session": if id == "refused" { "runtime" } else { "preflight" },
                     "command": if matches!(id, "ambiguous" | "refused") { "thread-hold-1" } else { "thread-hold-2" },
                 }),
+            );
+        }
+        if id == "legacy_refused" {
+            append(
+                "native_turn_not_sent",
+                serde_json::json!({"version":version,"session":"runtime","command":"thread-hold-1"}),
             );
         }
         if id == "later_send" {
@@ -169,11 +185,11 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         }
         let mut blocked =
             serde_json::json!({"version":version,"session":"runtime/previous-engine"});
-        if id == "new_ambiguity" {
-            blocked["deliveryPending"] = serde_json::json!(true);
+        if !id.starts_with("legacy_") {
+            blocked["deliveryPending"] = serde_json::json!(id == "new_ambiguity");
         }
         append("host_observation_blocked", blocked);
-        if matches!(id, "ambiguous" | "no_attempt" | "new_ambiguity") {
+        if id == "new_ambiguity" {
             append(
                 "host_observation_blocked",
                 serde_json::json!({
@@ -202,7 +218,7 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         assert_eq!(
             store.task_delivery_fence(id, version, "runtime").unwrap(),
             match id {
-                "ambiguous" => Some(vec!["thread-hold-1".into()]),
+                "ambiguous" | "legacy_unresolved" => Some(vec!["thread-hold-1".into()]),
                 "later_send" => Some(vec!["thread-hold-3".into()]),
                 "new_ambiguity" => Some(vec![]),
                 _ => None,
