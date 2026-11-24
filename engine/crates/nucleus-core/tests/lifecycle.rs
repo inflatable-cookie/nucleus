@@ -185,6 +185,24 @@ fn approved_head_merges_and_only_a_published_clean_checkout_is_removed() {
         decide(&task, &open('a', CheckState::Ready)),
         Action::Merge { head: sha('a') }
     );
+    let blocked = open('a', CheckState::Blocked);
+    assert_eq!(
+        task.reconcile(&blocked),
+        Action::Ask(Question::Repair(Repair::MergeBlocked))
+    );
+    for unchanged in [blocked, open('a', CheckState::Unknown), observation()] {
+        assert_eq!(
+            task.reconcile(&unchanged),
+            Action::Wait(WaitReason::Question)
+        );
+    }
+    let pending = open('a', CheckState::Pending);
+    assert_eq!(task.reconcile(&pending), Action::Advance(Phase::Merging));
+    assert_eq!(task.question(), None);
+    assert_eq!(
+        decide(&task, &pending),
+        Action::Wait(WaitReason::ChecksPending)
+    );
 
     let clean = merged('a', Workspace::Clean(sha('a')));
     assert_eq!(task.reconcile(&clean), Action::Advance(Phase::Closing));
@@ -207,9 +225,18 @@ fn approved_head_merges_and_only_a_published_clean_checkout_is_removed() {
         Action::Wait(WaitReason::WorkspaceUnknown)
     );
     assert_eq!(
-        decide(&task, &open('a', CheckState::Ready)),
+        task.reconcile(&open('a', CheckState::Ready)),
         Action::Ask(Question::Repair(Repair::MergeUnconfirmed))
     );
+    assert_eq!(
+        task.reconcile(&observation()),
+        Action::Wait(WaitReason::Question)
+    );
+    assert_eq!(
+        task.reconcile(&merged('a', Workspace::Clean(sha('a')))),
+        Action::Advance(Phase::Closing)
+    );
+    assert_eq!(task.question(), None);
     for workspace in [Workspace::Dirty, Workspace::Clean(sha('b'))] {
         let retained = merged('a', workspace);
         assert_eq!(
@@ -398,6 +425,19 @@ fn changes_continue_the_worker_and_require_a_new_head() {
         task.reconcile(&ended),
         Action::Ask(Question::Repair(Repair::RevisionHasSameHead))
     );
+    assert_eq!(
+        task.reconcile(&open('a', CheckState::Ready)),
+        Action::Wait(WaitReason::Question)
+    );
+    assert_eq!(
+        task.reconcile(&observation()),
+        Action::Wait(WaitReason::Question)
+    );
+    assert_eq!(
+        task.reconcile(&open('b', CheckState::Ready)),
+        Action::Advance(Phase::Working)
+    );
+    assert_eq!(task.question(), None);
 }
 
 #[test]
@@ -742,9 +782,16 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         ..open.clone()
     };
     assert_eq!(
-        decide(&task, &closed),
+        task.reconcile(&closed),
         Action::Ask(Question::Repair(Repair::PullRequestUnavailable))
     );
+    assert_eq!(task.reconcile(&closed), Action::Wait(WaitReason::Question));
+    assert_eq!(
+        task.reconcile(&observation()),
+        Action::Wait(WaitReason::Question)
+    );
+    assert_eq!(task.reconcile(&open), Action::Advance(Phase::Reviewing));
+    assert_eq!(task.question(), None);
     let bearer = start(&mut task, &open, Role::Reviewer, "reviewer", "review-1");
     let report = Report::Review {
         head: sha('b'),

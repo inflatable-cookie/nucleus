@@ -166,8 +166,7 @@ enum Signal {
     Wait(WaitReason),
     Stopped(Phase),
     ReservationDiscarded(Phase),
-    HeadChanged(Phase),
-    WorkspaceRepaired,
+    Refresh(Phase),
     Admitted,
     Start(Role, Launch),
     Failed(Role),
@@ -193,15 +192,13 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
         {
             Action::Revoke
         }
-        Signal::Stopped(phase)
-        | Signal::HeadChanged(phase)
-        | Signal::ReservationDiscarded(phase) => Action::Advance(phase),
+        Signal::Stopped(phase) | Signal::Refresh(phase) | Signal::ReservationDiscarded(phase) => {
+            Action::Advance(phase)
+        }
         Signal::Admitted | Signal::ReviewerReported(Review::Changes) => {
             Action::Advance(Phase::Working)
         }
-        Signal::WorkerReported | Signal::NeedsReview | Signal::WorkspaceRepaired => {
-            Action::Advance(Phase::Reviewing)
-        }
+        Signal::WorkerReported | Signal::NeedsReview => Action::Advance(Phase::Reviewing),
         Signal::ReviewerReported(Review::Approve) => Action::Advance(Phase::Merging),
         Signal::MergeConfirmed => Action::Advance(Phase::Closing),
         Signal::Start(role, via) => Action::Launch { role, via },
@@ -227,11 +224,8 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     if task.phase.is_terminal() {
         return Signal::Finished;
     }
-    if observation.supersedes_question(task) {
-        return Signal::HeadChanged(task.phase);
-    }
-    if observation.repairs_workspace(task) {
-        return Signal::WorkspaceRepaired;
+    if observation.supersedes_question(task) || observation.resolves_repair(task) {
+        return Signal::Refresh(task.phase);
     }
     if task.hold.is_some() {
         return Signal::Wait(WaitReason::Hold);
@@ -303,7 +297,7 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
             .pr()
             .is_some_and(|pr| Some(pr) != task.pr.as_ref())
     {
-        return Signal::HeadChanged(task.phase);
+        return Signal::Refresh(task.phase);
     }
     match report {
         None => Signal::Failed(role),
@@ -378,7 +372,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
         Phase::Working => match (&task.pr, &observation.forge, &observation.workspace) {
             (Some(_), Observed::Unknown, _) => Signal::Wait(WaitReason::ForgeUnknown),
             (old, Observed::Known(Forge::Open { pr, .. }), _) if old.as_ref() != Some(pr) => {
-                Signal::HeadChanged(Phase::Working)
+                Signal::Refresh(Phase::Working)
             }
             (_, _, Observed::Unknown) => Signal::Wait(WaitReason::WorkspaceUnknown),
             (_, _, Observed::Known(_)) => launch(task, observation, Role::Worker),
@@ -386,7 +380,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
         Phase::Reviewing => match (&observation.forge, &observation.workspace) {
             (Observed::Unknown, _) => Signal::Wait(WaitReason::ForgeUnknown),
             (Observed::Known(Forge::Open { pr, .. }), _) if Some(pr) != task.pr.as_ref() => {
-                Signal::HeadChanged(Phase::Reviewing)
+                Signal::Refresh(Phase::Reviewing)
             }
             (
                 Observed::Known(Forge::Open { .. }),
@@ -472,15 +466,42 @@ impl Observation {
         matches!((&task.question, self.pr()), (Some(question), Some(pr)) if question.outdated_at(&pr.head))
     }
 
-    pub(crate) fn repairs_workspace(&self, task: &Task) -> bool {
-        task.phase == Phase::Reviewing
-            && task.run.is_none()
-            && matches!((&task.question, &self.forge, &self.workspace),
-                (Some(question), Observed::Known(Forge::Open { pr, .. }), Observed::Known(Workspace::Clean(head)))
-                    if question.question == Question::Repair(Repair::WorkspaceHeadMismatch)
-                        && question.head.as_ref() == Some(head)
-                        && &pr.head == head
-                        && task.pr.as_ref() == Some(pr))
+    // Re-evaluate the condition that asked the question. Missing evidence
+    // cannot resolve it, and resolving it does not authorize any native effect.
+    pub(crate) fn resolves_repair(&self, task: &Task) -> bool {
+        let (Some(question), Observed::Known(forge)) = (&task.question, &self.forge) else {
+            return false;
+        };
+        let Question::Repair(repair) = question.question else {
+            return false;
+        };
+        if task.run.is_some() {
+            return false;
+        }
+        match repair {
+            Repair::PullRequestUnavailable => {
+                matches!(forge, Forge::Open { .. } | Forge::Merged { .. })
+            }
+            Repair::WorkspaceHeadMismatch => match forge {
+                Forge::Open { pr, .. } => match &self.workspace {
+                    Observed::Known(Workspace::Clean(head)) => *head == pr.head,
+                    Observed::Known(Workspace::Absent) => true,
+                    Observed::Known(Workspace::Dirty) | Observed::Unknown => false,
+                },
+                _ => true,
+            },
+            Repair::RevisionHasSameHead => {
+                forge.pr().is_some_and(|pr| question.outdated_at(&pr.head))
+            }
+            Repair::MergeBlocked => !matches!(
+                forge,
+                Forge::Open {
+                    checks: CheckState::Blocked | CheckState::Unknown,
+                    ..
+                }
+            ),
+            Repair::MergeUnconfirmed => matches!(forge, Forge::Merged { .. }),
+        }
     }
 
     pub(crate) fn current(&self, expected: &str) -> Option<RunState> {
