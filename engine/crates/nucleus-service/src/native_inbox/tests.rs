@@ -39,7 +39,7 @@ async fn an_inbox_ui_attempt_is_claimed_once_and_the_reply_is_consumed() {
     assert!(service.take_inbox_replies(&[0; 32]).is_err());
     assert_eq!(
         service.take_inbox_replies(&inbox.credential).unwrap(),
-        ["The local board is unavailable."]
+        ["The local board is unavailable. Please type ui again to retry."]
     );
     service
         .serve_inbox_commands(inbox, &messages)
@@ -51,6 +51,192 @@ async fn an_inbox_ui_attempt_is_claimed_once_and_the_reply_is_consumed() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt() {
+    let (home, mut service) = fixture(GitHub::new("unused").unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
+    let root = service.native_inbox.as_ref().unwrap().root.clone();
+    let board_url = format!("http://{}/", service.callback);
+    let message = Arc::new(AtomicUsize::new(0));
+    let trace = Arc::new(Mutex::new(PreviewTrace::default()));
+    let response = {
+        let message = Arc::clone(&message);
+        let trace = Arc::clone(&trace);
+        let board_url = board_url.clone();
+        move |request: &Value| {
+            preview_response(request, &trace, &board_url).unwrap_or_else(|| {
+                let mut reply = native_response(request, &AtomicUsize::new(7), &root);
+                let index = message.load(Ordering::Relaxed);
+                if request["tag"] == "orchestration.subscribeThread" && index != 0 {
+                    reply["values"][0]["projection"]["messages"] = json!([{
+                        "threadId":INBOX_THREAD,"id":format!("fixture-ui-{index}"),"runId":"turn",
+                        "role":"user","createdBy":"user","creationSource":"web","text":"ui"
+                    }]);
+                }
+                reply
+            })
+        }
+    };
+    let (host, server) = native_fixture(response).await;
+    service.host = host;
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "<!doctype html>").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let service = Arc::new(service);
+    let _board = crate::web::router_with_board(Arc::clone(&service), [], &assets).unwrap();
+    let inbox = service.native_inbox.as_ref().unwrap();
+    let target = InboxTarget {
+        root: &inbox.root,
+        provider: PROVIDER,
+    };
+    let reconcile = || service.reconcile_inbox(inbox, &target);
+
+    reconcile().await.unwrap();
+    assert!(trace.lock().unwrap().calls.is_empty());
+    synchronize_preview_session(&service).await;
+    reconcile().await.unwrap();
+    reconcile().await.unwrap();
+    assert_eq!(trace.lock().unwrap().links.len(), 1);
+    assert!(
+        service
+            .take_inbox_replies(&inbox.credential)
+            .unwrap()
+            .is_empty()
+    );
+
+    message.store(1, Ordering::Relaxed);
+    reconcile().await.unwrap();
+    reconcile().await.unwrap();
+    assert_eq!(trace.lock().unwrap().links.len(), 2);
+    assert!(
+        service.take_inbox_replies(&inbox.credential).unwrap()
+            == [format!(
+                "Could not open the board. Please type ui again to retry.\nBoard at {board_url}"
+            )],
+        "the reply must contain only the plain board address and retry instruction"
+    );
+
+    inbox.host_disconnected();
+    synchronize_preview_session(&service).await;
+    reconcile().await.unwrap();
+    reconcile().await.unwrap();
+    assert_eq!(trace.lock().unwrap().links.len(), 3);
+    assert!(
+        service
+            .take_inbox_replies(&inbox.credential)
+            .unwrap()
+            .is_empty()
+    );
+
+    inbox.host_disconnected();
+    synchronize_preview_session(&service).await;
+    message.store(2, Ordering::Relaxed);
+    reconcile().await.unwrap();
+    reconcile().await.unwrap();
+    let trace = trace.lock().unwrap();
+    assert_eq!(trace.links.len(), 4);
+    assert_eq!(
+        trace.calls,
+        ["list", "close-success", "close-failed", "open"].repeat(4)
+    );
+    assert_eq!(
+        service.take_inbox_replies(&inbox.credential).unwrap(),
+        [format!("Board at {board_url}")]
+    );
+    server.abort();
+}
+
+async fn synchronize_preview_session(service: &Service) {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(4);
+    let watch = service
+        .host
+        .watch_threads(&sender, None, Some(INBOX_THREAD));
+    let hint = tokio::select! {
+        result = watch => panic!("unexpected watch result {result:?}"),
+        result = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv()) => {
+            result.expect("shell synchronization deadline").expect("Inbox synchronization hint")
+        }
+    };
+    assert!(hint.inbox_synchronized());
+    service.wake_from_host(hint).await;
+}
+
+#[derive(Default)]
+struct PreviewTrace {
+    calls: Vec<&'static str>,
+    links: BTreeSet<String>,
+}
+
+fn preview_response(
+    request: &Value,
+    trace: &Mutex<PreviewTrace>,
+    board_url: &str,
+) -> Option<Value> {
+    let payload = &request["payload"];
+    let tab = |thread, id, status| {
+        json!({
+            "threadId":thread,"tabId":id,"navStatus":status,"updatedAt":"2026-11-24T00:00:00Z"
+        })
+    };
+    let mut trace = trace.lock().unwrap();
+    match request["tag"].as_str()? {
+        "preview.list" => {
+            assert_eq!(*payload, json!({"threadId":INBOX_THREAD}));
+            trace.calls.push("list");
+            Some(success(
+                request,
+                &json!({"serverEpoch":"fixture","revision":1,"sessions":[
+                    tab(INBOX_THREAD, "old-success", json!({"_tag":"Success","url":format!("{board_url}settings"),"title":"Board"})),
+                    tab(INBOX_THREAD, "old-failed", json!({"_tag":"LoadFailed","url":board_url,"title":"Board","code":-1,"description":"failed"})),
+                    tab(INBOX_THREAD, "unrelated", json!({"_tag":"Loading","url":"https://example.test/","title":""})),
+                    tab(INBOX_THREAD, "idle", json!({"_tag":"Idle"})),
+                    tab(LEGACY, "other-thread", json!({"_tag":"Success","url":board_url,"title":"Board"})),
+                ]}),
+            ))
+        }
+        "preview.close" => {
+            let event = match payload["tabId"].as_str() {
+                Some("old-success") => "close-success",
+                Some("old-failed") => "close-failed",
+                _ => panic!("preview closed an unrelated tab"),
+            };
+            assert_eq!(
+                *payload,
+                json!({"threadId":INBOX_THREAD,"tabId":payload["tabId"]})
+            );
+            trace.calls.push(event);
+            Some(success(request, &Value::Null))
+        }
+        "preview.open" => {
+            assert_eq!(payload["threadId"], INBOX_THREAD);
+            assert_eq!(payload["runtime"], "server");
+            assert_eq!(payload["reveal"], true);
+            let url = payload["url"].as_str().expect("one-use link");
+            let token = url
+                .strip_prefix(board_url)
+                .and_then(|path| path.strip_prefix("#token="));
+            assert!(token.is_some_and(|token| token.len() == 64));
+            trace.calls.push("open");
+            assert!(trace.links.insert(url.to_owned()), "the link must be fresh");
+            if trace.links.len() == 2 {
+                return Some(json!({"_tag":"Exit","requestId":request["id"],"exit":{
+                    "_tag":"Failure","cause":[{"_tag":"Fail","error":{"message":format!("could not open {url}")}}]
+                }}));
+            }
+            Some(success(
+                request,
+                &tab(
+                    INBOX_THREAD,
+                    "new",
+                    json!({"_tag":"Loading","url":url,"title":""}),
+                ),
+            ))
+        }
+        _ => None,
+    }
 }
 
 #[tokio::test]

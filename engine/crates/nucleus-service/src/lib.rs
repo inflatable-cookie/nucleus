@@ -636,7 +636,7 @@ impl Service {
                 }
             }
             if let Some(inbox) = inbox {
-                inbox.unobserved();
+                inbox.host_disconnected();
             }
             {
                 let mut state = self.state.lock().await;
@@ -665,6 +665,9 @@ impl Service {
         if let Some(inbox) = &self.native_inbox
             && hint.thread == nucleus_hosts::INBOX_THREAD
         {
+            if hint.inbox_synchronized() {
+                inbox.host_synchronized();
+            }
             inbox.wake();
         }
         let mut state = self.state.lock().await;
