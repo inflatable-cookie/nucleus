@@ -73,11 +73,11 @@ pub(super) fn active_pause(
         .optional()
 }
 
-fn sql_millis(millis: u64) -> rusqlite::Result<i64> {
+pub(super) fn sql_millis(millis: u64) -> rusqlite::Result<i64> {
     i64::try_from(millis).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
 }
 
-fn read_millis(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
+pub(super) fn read_millis(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
     let millis = row.get::<_, i64>(column)?;
     u64::try_from(millis).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, millis))
 }

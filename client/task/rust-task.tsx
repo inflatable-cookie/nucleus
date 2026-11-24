@@ -17,7 +17,8 @@ import {
 } from "../controls";
 import { space } from "../design";
 import { errorText } from "../error-text";
-import { DetailField, TaskDetailTabs, type TaskDetailTab } from "./parts";
+import { wallTimeBudgetBar } from "../../shared/task-detail-summary";
+import { BudgetBars, DetailField, TaskDetailTabs, type TaskDetailTab } from "./parts";
 import {
   postRustCommand,
   rustPhaseLabels,
@@ -73,6 +74,7 @@ export function RustTaskDialog({
       ? next.data
       : undefined;
   const visibleQuestion = commands ? commands.question : detail?.question;
+  const allowance = commands?.allowance ?? detail?.allowance;
   const submit = async (command: RustCommand) => {
     if (saving.current)
       throw new Error("A task change is already in progress.");
@@ -175,6 +177,14 @@ export function RustTaskDialog({
                 )}
                 {detail.run && <RunActivity run={detail.run} c={c} />}
               </DetailSection>
+              {allowance && (
+                <DetailSection c={c} title="Allowance">
+                  <BudgetBars
+                    bars={[wallTimeBudgetBar({ used: allowance.usedMs, limit: allowance.limitMs })]}
+                    c={c}
+                  />
+                </DetailSection>
+              )}
               {visibleQuestion && (
                 <QuestionSection
                   key={JSON.stringify(visibleQuestion)}
@@ -468,11 +478,13 @@ function QuestionSection({
   const choices = "work" in question ? question.work.options : [];
   let command: RustCommand;
   if ("retry" in question) command = { answer: "retry" };
+  else if ("allowance" in question) command = { answer: "extend" };
   else if ("accept" in question)
     command = {
       answer: { accept: { head: question.accept.head, reason: answer.trim() } },
     };
   else command = { answer: { work: choices.length ? answer : answer.trim() } };
+  const needsText = !("retry" in question || "allowance" in question);
   return (
     <DetailSection c={c} title="Question">
       <Text selectable style={{ color: c.foreground }}>
@@ -494,7 +506,7 @@ function QuestionSection({
               onChange={setAnswer}
             />
           ) : (
-            !("retry" in question) && (
+            needsText && (
               <Field
                 c={c}
                 label={"accept" in question ? "Reason" : "Guidance"}
@@ -508,8 +520,8 @@ function QuestionSection({
           <Button
             c={c}
             small
-            text="Answer"
-            disabled={busy || (!("retry" in question) && !answer.trim())}
+            text={"allowance" in question ? "Extend allowance" : "Answer"}
+            disabled={busy || (needsText && !answer.trim())}
             onPress={() => onAnswer(command)}
           />
         </>

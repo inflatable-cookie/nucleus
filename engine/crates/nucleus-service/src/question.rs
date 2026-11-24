@@ -437,6 +437,13 @@ fn notice_text(reference: &str, question: &Question) -> String {
         Question::Accept { head } => format!(
             "The PR was merged externally. Decide whether to accept closeout at commit {head}."
         ),
+        Question::Allowance { used_ms, limit_ms } => {
+            format!(
+                "The task has used {} of {} allowance minutes. Extend its allowance under approve-by-default policy with `nucleus answer {reference} extend`.",
+                used_ms / 60_000,
+                limit_ms / 60_000
+            )
+        }
         Question::Repair(repair) => {
             format!("The task needs a decision about the PR or checkout ({repair:?}).")
         }

@@ -28,6 +28,59 @@ import { launchThinkingLevel } from "../../shared/profile-vocabulary";
 import { hostKindOf } from "../../shared/host-kind";
 import { HOST_VOCABULARIES } from "../../hosts/vocabularies";
 
+import type { BudgetBar } from "../../shared/task-detail-summary";
+
+export function BudgetBars({ bars, c }: { bars: readonly BudgetBar[]; c: Colors }) {
+  return (
+    <View style={{ gap: space.xs }}>
+      {bars.map((bar) => (
+        <View key={bar.key} style={{ gap: space.xxs }}>
+          <View
+            style={{
+              ...row,
+              flexWrap: "nowrap",
+              justifyContent: "space-between",
+              gap: space.sm,
+            }}
+          >
+            <Text
+              style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+            >
+              {bar.label}
+            </Text>
+            <Text
+              accessibilityLabel={`${bar.label} budget ${bar.text}`}
+              style={{
+                color: bar.ratio >= 1 ? c.statusWarning : c.foregroundMuted,
+                fontSize: typeScale.metadata.fontSize,
+              }}
+            >
+              {bar.text}
+            </Text>
+          </View>
+          <View
+            style={{
+              height: 5,
+              borderRadius: radius.control,
+              backgroundColor: c.surface2,
+              overflow: "hidden",
+            }}
+          >
+            <View
+              style={{
+                width: `${Math.round(bar.ratio * 100)}%`,
+                height: 5,
+                borderRadius: radius.control,
+                backgroundColor: bar.ratio >= 1 ? c.statusWarning : c.accent,
+              }}
+            />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /**
  * Task 538 (papercut 90104e7f): one collapsed group in the task detail. The
  * rest of the dialog is one press away and nothing is deleted.

@@ -774,7 +774,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_saved_dispatch_domain_discards_the_retired_load_key() {
+    fn a_saved_dispatch_domain_discards_retired_controls() {
         let temporary = tempfile::tempdir().expect("fixture home");
         let home = temporary.path().canonicalize().expect("canonical home");
         let config = home.join("config");
@@ -786,7 +786,7 @@ mod tests {
                 "usage": "normal",
                 "slots": 3,
                 "maxLoad": 18.0,
-                "hostConcurrency": 1,
+                "hostConcurrency": 8,
                 "allowanceMinutes": 30,
             }
         });
@@ -798,13 +798,10 @@ mod tests {
             .expect("decode legacy settings");
         assert!(saved.configured);
         assert_eq!(saved.value.global_slots, 3);
-        assert_eq!(saved.value.allowance_minutes, Some(30));
-        assert!(
-            serde_json::to_value(saved.value)
-                .expect("current settings")
-                .get("maxLoad")
-                .is_none()
-        );
+        let saved = serde_json::to_value(saved.value).expect("current settings");
+        assert!(saved.get("maxLoad").is_none());
+        assert!(saved.get("allowanceMinutes").is_none());
+        assert!(saved.get("hostConcurrency").is_none());
     }
 
     #[test]

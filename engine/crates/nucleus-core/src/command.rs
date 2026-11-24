@@ -37,6 +37,7 @@ pub enum Command {
 pub enum Answer {
     Work(String),
     Retry,
+    Extend,
     Accept { head: Head, reason: String },
 }
 
@@ -743,6 +744,8 @@ impl Task {
                     self.brief.text
                 ))?;
             }
+            (Question::Allowance { .. }, Answer::Extend)
+                if matches!(authority, Authority::Planner { .. }) => {}
             (Question::Retry { .. }, Answer::Retry) => {
                 check_question_head()?;
                 self.attempts = 0;

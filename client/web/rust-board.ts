@@ -42,6 +42,7 @@ const question = z.union([
   }),
   z.object({ retry: z.object({ role }) }),
   z.object({ accept: z.object({ head }) }),
+  z.object({ allowance: z.object({ used_ms: revision, limit_ms: revision }) }),
   z.object({ repair }),
 ]);
 const current = z.object({
@@ -80,7 +81,13 @@ const reportArtifact = z.object({
   version: revision,
   digest: z.string(),
 });
+const allowance = z.object({
+  usedMs: revision,
+  limitMs: revision,
+  exhausted: z.boolean(),
+});
 const detail = summary.extend({
+  allowance: allowance.optional(),
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
@@ -110,6 +117,7 @@ const detail = summary.extend({
 });
 const readiness = z.enum(["ready", "pending", "unavailable"]);
 const next = current.extend({
+  allowance: allowance.optional(),
   commands: z.array(
     z.union([
       z.object({ name: z.literal("move"), phase, preflight: readiness }),
@@ -167,6 +175,7 @@ export type RustCommand =
       answer:
         | { work: string }
         | "retry"
+        | "extend"
         | { accept: { head: string; reason: string } };
     }
   | { amend: string }
@@ -484,6 +493,7 @@ export function rustQuestionText(question: RustQuestion): string {
   if ("retry" in question)
     return `The ${question.retry.role} could not finish. Try again?`;
   if ("accept" in question) return "Accept the external merge?";
+  if ("allowance" in question) return "The task needs more allowance before its next run.";
   return repairPrompts[question.repair];
 }
 

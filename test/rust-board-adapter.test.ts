@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as api from "../shared/contracts";
 import { createRustApi } from "../client/web/rust-api";
 import { createRustAdapter, projectKeys, RustUnsupported } from "../client/web/rust-adapter";
-import { rustAllowance, rustProjectArchive, rustSetAllowance } from "../client/rust-contracts";
+import { rustProjectArchive } from "../client/rust-contracts";
 
 /**
  * The Rust engine's board adapter (Spec 070 ruling 4): the shared screens'
@@ -15,8 +15,8 @@ import { rustAllowance, rustProjectArchive, rustSetAllowance } from "../client/r
 function engine() {
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 2,
-    projectSlotOverrides: { Orbit_Main: 3 }, hostConcurrency: 1,
-    allowanceMinutes: 600, providerLimitCooldownSeconds: 300, mode: "running",
+    projectSlotOverrides: { Orbit_Main: 3 },
+    providerLimitCooldownSeconds: 300, mode: "running",
   };
   let profiles: Record<string, unknown> = {
     profiles: [{
@@ -143,11 +143,9 @@ test("retired machinery is refused by name instead of guessed", async () => {
   );
 });
 
-test("the allowance and archive controls write the Dispatch and Projects domains", async () => {
+test("the archive control writes the Projects domain", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
-  assert.deepEqual(await adapter.rpc(rustAllowance, {}), { minutes: 600 });
-  assert.deepEqual(await adapter.rpc(rustSetAllowance, { minutes: null }), { minutes: null });
   await adapter.rpc(api.uiSnapshot, {});
   await adapter.rpc(rustProjectArchive, { project: "p-orbit-main", archived: true });
   const projects = fake.writes.find((write) => write.domain === "projects")!.body.value as {

@@ -431,6 +431,7 @@ fn parse_command(text: &str) -> Option<Command> {
         "hold" if !rest.is_empty() => Some(Command::Hold(rest.into())),
         "amend" if !rest.is_empty() => Some(Command::Amend(rest.into())),
         "answer" if rest == "retry" => Some(Command::Answer(Answer::Retry)),
+        "answer" if rest == "extend" => Some(Command::Answer(Answer::Extend)),
         "answer" => {
             let (kind, body) = rest.split_once(char::is_whitespace)?;
             let body = body.trim();

@@ -325,6 +325,11 @@ fn question_text(question: &Question, operator_inbox: bool) -> String {
         Question::Accept { .. } => {
             "An external merge needs acceptance. Use `answer accept <head> <reason>`.".into()
         }
+        Question::Allowance { used_ms, limit_ms } => format!(
+            "The planner can extend the task allowance. Used {} of {} minutes.",
+            used_ms / 60_000,
+            limit_ms / 60_000
+        ),
         Question::Repair(reason) => {
             let problem = match reason {
                 Repair::PullRequestUnavailable => "The pull request could not be confirmed.",

@@ -21,8 +21,8 @@ import {
   type CheckTick,
   type LatestReport,
 } from "../../shared/task-detail-summary";
-import type { TaskBudgetView } from "../../shared/task-budget";
-import { radius, space, type as typeScale } from "../design";
+import { space, type as typeScale } from "../design";
+import { BudgetBars } from "./parts";
 
 /**
  * The task detail's first read, in one owner: the current wait or stop and who
@@ -32,57 +32,6 @@ import { radius, space, type as typeScale } from "../design";
  * `shared/task-detail-summary.ts`; this module only lays them out.
  */
 
-/** Spec 058's budget as two bars: tokens and wall time against their limits. */
-function BudgetBars({ budget, c }: { budget: TaskBudgetView; c: Colors }) {
-  return (
-    <View style={{ gap: space.xs }}>
-      {budgetBars(budget).map((bar) => (
-        <View key={bar.key} style={{ gap: space.xxs }}>
-          <View
-            style={{
-              ...row,
-              flexWrap: "nowrap",
-              justifyContent: "space-between",
-              gap: space.sm,
-            }}
-          >
-            <Text
-              style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-            >
-              {bar.label}
-            </Text>
-            <Text
-              accessibilityLabel={`${bar.label} budget ${bar.text}`}
-              style={{
-                color: bar.ratio >= 1 ? c.statusWarning : c.foregroundMuted,
-                fontSize: typeScale.metadata.fontSize,
-              }}
-            >
-              {bar.text}
-            </Text>
-          </View>
-          <View
-            style={{
-              height: 5,
-              borderRadius: radius.control,
-              backgroundColor: c.surface2,
-              overflow: "hidden",
-            }}
-          >
-            <View
-              style={{
-                width: `${Math.round(bar.ratio * 100)}%`,
-                height: 5,
-                borderRadius: radius.control,
-                backgroundColor: bar.ratio >= 1 ? c.statusWarning : c.accent,
-              }}
-            />
-          </View>
-        </View>
-      ))}
-    </View>
-  );
-}
 /** The latest check results as short ticks: a pass, a failure, or still pending. */
 const tickMark: Record<CheckTick["state"], string> = {
   pass: "✓",
@@ -336,7 +285,7 @@ export function TaskSummaryBlock({
         </Text>
       ))}
       {task.budget && budgetNeedsAttention(task.budget) && (
-        <BudgetBars budget={task.budget} c={c} />
+        <BudgetBars bars={budgetBars(task.budget)} c={c} />
       )}
       {(progress.round || progress.verdict) && (
         <View style={{ gap: space.xxs / 2 }}>

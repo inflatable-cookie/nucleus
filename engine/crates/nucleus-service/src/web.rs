@@ -575,6 +575,7 @@ async fn detail(
             .store
             .critical_review_fallbacks(&id)
             .map_err(ServiceError::from)?,
+        allowance: state.allowance_view(task).map_err(ServiceError::from)?,
         run,
     }))
 }
@@ -637,6 +638,7 @@ async fn next(
             .store
             .critical_review_fallbacks(&id)
             .map_err(ServiceError::from)?,
+        allowance: state.allowance_view(task).map_err(ServiceError::from)?,
         dependency_status: summary.dependency_status,
         dependency_edits,
         commands,
@@ -666,6 +668,7 @@ fn command_options(
         let answer = match question {
             Question::Work { .. } | Question::Repair(_) => Answer::Work(String::new()),
             Question::Retry { .. } => Answer::Retry,
+            Question::Allowance { .. } => Answer::Extend,
             Question::Accept { head } => Answer::Accept {
                 head: head.clone(),
                 reason: String::new(),
@@ -988,6 +991,7 @@ struct Detail {
     report: Option<ReportView>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
+    allowance: nucleus_store::AllowanceView,
     run: Option<RunView>,
 }
 
@@ -1027,6 +1031,7 @@ struct NextView {
     critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
     dependency_status: DependencyStatus,
     dependency_edits: DependencyEdits,
+    allowance: nucleus_store::AllowanceView,
     commands: Vec<CommandView>,
 }
 
@@ -1135,6 +1140,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::Store(
                         nucleus_store::StoreError::StaleTask
                         | nucleus_store::StoreError::DependencyCycle
+                        | nucleus_store::StoreError::AllowanceNotExhausted
                         | nucleus_store::StoreError::NumbersNeedSeed
                         | nucleus_store::StoreError::PlanningConflict,
                     ) => StatusCode::CONFLICT,

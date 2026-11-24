@@ -16,6 +16,10 @@ existing task, use the public reference from the board, for example
 Use `nucleus --help` and the command's `--help` for its exact inputs.
 Never answer Inbox requests or operator decisions. They belong to Tom.
 
+When a task spends its allowance after the automatic extension, its planner
+uses `nucleus answer 'repo#42' extend`. Approve by default, including beyond
+twice the original allowance. This is a planner question.
+
 For work still draining on the TypeScript engine, follow the run's supplied
 command and ticket. The installed shim sends bound TS calls to
 `nucleus-legacy`, which also exposes the legacy commands described below.

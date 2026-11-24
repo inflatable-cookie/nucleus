@@ -33,6 +33,13 @@ fn run_scratch(task: &Task, instance: &str) -> PathBuf {
     Path::new(&task.identity().id).join(instance)
 }
 
+enum SendAttempt {
+    Deferred,
+    Prerequisite,
+    Allowance,
+    Sent(Box<(TaskRow, SendOutcome, bool)>),
+}
+
 pub(super) enum DispatchTarget<'a> {
     Run {
         frozen: &'a Binding,
@@ -478,6 +485,9 @@ impl Service {
             LaunchSelection::Profile(selected) => Some(selected),
             LaunchSelection::Paused => return Ok(Action::Wait(WaitReason::Capacity)),
         };
+        if let Some(wait) = self.gate_allowance(row).await? {
+            return Ok(wait);
+        }
         let selection = selection.as_deref();
         let via = selection.map_or(via, |selected| selected.intent.via().clone());
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
@@ -735,18 +745,16 @@ impl Service {
         {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
-        let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
-            if task
-                .run()
-                .is_some_and(|run| run.last_send_at_ms().is_none())
-                && self.dependencies_blocked(row).await?
-            {
-                return Ok(Action::Wait(WaitReason::Prerequisite));
+        let (sent, result, _) = match self.send(row, checkout, host).await? {
+            SendAttempt::Sent(sent) => *sent,
+            SendAttempt::Allowance => return Ok(Action::Wait(WaitReason::Question)),
+            SendAttempt::Prerequisite => return Ok(Action::Wait(WaitReason::Prerequisite)),
+            SendAttempt::Deferred => {
+                return Ok(self
+                    .pause_prepared(row, &observation)
+                    .await?
+                    .unwrap_or(Action::Wait(WaitReason::HostUnknown)));
             }
-            return Ok(self
-                .pause_prepared(row, &observation)
-                .await?
-                .unwrap_or(Action::Wait(WaitReason::HostUnknown)));
         };
         if result == SendOutcome::Rejected {
             observation.host = Observed::Known(current(&sent.task, RunState::Rejected)?);
@@ -761,7 +769,7 @@ impl Service {
         row: &TaskRow,
         checkout: &Checkout<'_>,
         host: &impl TaskHost,
-    ) -> Result<Option<(TaskRow, SendOutcome, bool)>, ServiceError> {
+    ) -> Result<SendAttempt, ServiceError> {
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
         let authorization = host.authorize_send(run).await.inspect_err(|error| {
@@ -777,7 +785,7 @@ impl Service {
             .is_some_and(|run| run.last_send_at_ms().is_none())
             && self.dependencies_blocked(row).await?
         {
-            return Ok(None);
+            return Ok(SendAttempt::Prerequisite);
         }
         let target = DispatchTarget::Run {
             frozen: authorization.binding(),
@@ -785,12 +793,17 @@ impl Service {
             launch: true,
         };
         let Some(permit) = self.dispatch_gate(task, target).await? else {
-            return Ok(None);
+            return Ok(SendAttempt::Deferred);
         };
+        if !task.run().is_some_and(nucleus_core::Run::revoked)
+            && self.gate_allowance(row).await?.is_some()
+        {
+            return Ok(SendAttempt::Allowance);
+        }
         if let Some(unarchive) = authorization.unarchive() {
             host.write_control(unarchive).await?;
             self.recheck_effect(row, WaitReason::HostUnknown).await;
-            return Ok(None);
+            return Ok(SendAttempt::Deferred);
         }
         let archive = permit.superseded;
         self.storage.database().verify()?;
@@ -800,10 +813,10 @@ impl Service {
             if run.last_send_at_ms().is_none()
                 && state.store.dependency_blocked(&task.identity().id)?
             {
-                return Ok(None);
+                return Ok(SendAttempt::Prerequisite);
             }
             if !run.revoked() && state.prepared_pause(run)?.is_some() {
-                return Ok(None);
+                return Ok(SendAttempt::Deferred);
             }
             let mut task = task.clone();
             let dispatch = authorization.record(&mut task)?;
@@ -831,7 +844,7 @@ impl Service {
                 .save(&sent, updated, &event("review_rejected_awaiting_archive"))
                 .await?;
         }
-        Ok(Some((sent, result, archive)))
+        Ok(SendAttempt::Sent(Box::new((sent, result, archive))))
     }
 
     async fn planner_notice_route(
@@ -1017,9 +1030,10 @@ impl Service {
                 if !self.launch_capacity(task.identity(), true).await? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
-                let Some((sent, outcome, archive)) = self.send(row, checkout, host).await? else {
+                let SendAttempt::Sent(sent) = self.send(row, checkout, host).await? else {
                     return Ok(stopping);
                 };
+                let (sent, outcome, archive) = *sent;
                 let run = sent.task.run().ok_or(ServiceError::Input)?;
                 let observed = if outcome == SendOutcome::Rejected && !archive {
                     StopProgress::Settled(current(&sent.task, RunState::Rejected)?)
