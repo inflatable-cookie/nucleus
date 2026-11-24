@@ -450,6 +450,20 @@ controller. Paired browsers receive only the capability flag and talk to
 same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
 
+For a one-repository cutover, the TypeScript service reads an owner-only
+`rust-engine-pilot.json` beside its own settings at startup. Set `repository` to
+the canonical GitHub slug, `endpoint` to the Rust loopback HTTP origin,
+`boardKeyFile` and `inboxKeyFile` to the absolute paths to their separate
+owner-only keys, and `inboxEngine` to the engine's Inbox namespace. The Rust
+service needs the same Inbox key file and namespace.
+
+After the service rolls, fresh TypeScript admissions for that repository direct
+the planner to `nucleus-engine admit <id> <reference>` with the brief on stdin.
+Already accepted TypeScript operations and existing tasks keep their original
+engine. The same board shows both engines' task rows. If the Rust service is
+unavailable, its board section can retry while the TypeScript board stays usable.
+An invalid pilot file is logged, and the TypeScript service starts with the pilot off.
+
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
 that profile, a project file for the authorized fixture, and the local T3

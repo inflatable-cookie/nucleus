@@ -10,6 +10,7 @@ import { hostHome, hostHomeOverride } from "./host-environment.mjs";
 import { QueueService } from "./transport/server";
 import { pidAlive } from "./transport/identity";
 import { standbyForPid, clearStandbyReady } from "./install/standby";
+import { rustPilotServiceOptions } from "./web/rust-pilot";
 
 export async function runStandaloneService(
   argv: string[] = process.argv.slice(2),
@@ -23,6 +24,8 @@ export async function runStandaloneService(
   const dataDirOverride = argv
     .find((value) => value.startsWith("--data-dir="))
     ?.slice("--data-dir=".length);
+  const serviceDataDir = dataDirOverride ?? dataHome(env);
+  const pilotOptions = rustPilotServiceOptions(serviceDataDir);
   // An installed launcher cwd can be a version folder that retention later
   // removes; a removed cwd breaks every child process this long-lived
   // service spawns. Settle on the stable data home at start, best-effort
@@ -30,14 +33,17 @@ export async function runStandaloneService(
   // `--import tsx` resolves.
   if (compiledIdentity) {
     try {
-      process.chdir(dataDirOverride ?? dataHome(env));
+      process.chdir(serviceDataDir);
     } catch {
       /* the service start creates what it needs */
     }
   }
   const resolvedHostHome = hostHome(env);
   const ownerOptions = {
-    dataDir: dataDirOverride ?? dataHome(env),
+    dataDir: serviceDataDir,
+    ...(pilotOptions.rustPilot
+      ? { rustEngineRepository: pilotOptions.rustPilot.repository }
+      : {}),
     ...(hostHomeOverride(env) ||
     argv.some((value) => value.startsWith("--data-dir="))
       ? { hostHome: resolvedHostHome }
@@ -49,7 +55,7 @@ export async function runStandaloneService(
   const standbyFor = standbyForPid(env);
   // Keep the marker path in step with the service's own data directory so an
   // abandoned standby (SIGTERM before the old pid exits) never leaves it behind.
-  const standbyDataDir = dataDirOverride ?? dataHome(env);
+  const standbyDataDir = serviceDataDir;
   if (standbyFor !== undefined)
     process.on("exit", () => clearStandbyReady(standbyDataDir, process.pid));
   // A dead executor can't recover in place, and every request would refuse until someone
@@ -57,6 +63,7 @@ export async function runStandaloneService(
   let started = false;
   const service = new QueueService({
     owner: ownerOptions,
+    ...pilotOptions,
     idleTimeoutMs: 300_000,
     ...(standbyFor ? { standbyFor } : {}),
     onExecutorDeath: () => {
