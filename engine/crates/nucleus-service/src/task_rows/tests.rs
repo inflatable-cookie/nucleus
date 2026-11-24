@@ -594,6 +594,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
     sent.unwrap();
+    service
+        .schedule_result(&row, &Ok(Action::Nothing), Priority::Effect)
+        .await
+        .unwrap();
     assert!(!calls.contains_key("orchestration.subscribeThread"));
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
@@ -629,6 +633,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
     sent.unwrap();
+    service
+        .schedule_result(&row, &Ok(Action::Nothing), Priority::Effect)
+        .await
+        .unwrap();
     assert!(!calls.contains_key("orchestration.subscribeThread"));
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
