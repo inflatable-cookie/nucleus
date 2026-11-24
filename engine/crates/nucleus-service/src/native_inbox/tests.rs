@@ -159,11 +159,21 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
             preview_response(request, &trace, &board_url).unwrap_or_else(|| {
                 let mut reply = native_response(request, &AtomicUsize::new(7), &root);
                 let index = message.load(Ordering::Relaxed);
-                if request["tag"] == "orchestration.subscribeThread" && index != 0 {
-                    reply["values"][0]["projection"]["messages"] = json!([{
-                        "threadId":INBOX_THREAD,"id":format!("fixture-ui-{index}"),"runId":"turn",
-                        "role":"user","createdBy":"user","creationSource":"web","text":"ui"
-                    }]);
+                let data = &mut reply["values"][0];
+                match request["tag"].as_str() {
+                    Some("orchestration.subscribeThread") => {
+                        data["projection"]["runs"] = json!([{"id":ui_run(index),"status":"running"}]);
+                        if index != 0 {
+                            data["projection"]["messages"] = json!([{
+                                "threadId":INBOX_THREAD,"id":format!("fixture-ui-{index}"),"runId":ui_run(index),
+                                "role":"user","createdBy":"user","creationSource":"web","text":"ui"
+                            }]);
+                        }
+                    }
+                    Some("orchestration.subscribeShell") => {
+                        data["snapshot"]["threads"][1]["activeRunId"] = json!(ui_run(index));
+                    }
+                    _ => {}
                 }
                 reply
             })
@@ -185,7 +195,10 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     let reconcile = || service.reconcile_inbox(inbox, &target);
     let take_replies = || {
         service
-            .take_inbox_replies(&inbox.credential, Some("turn"))
+            .take_inbox_replies(
+                &inbox.credential,
+                Some(&ui_run(message.load(Ordering::Relaxed))),
+            )
             .unwrap()
     };
 
@@ -205,6 +218,9 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     assert!(take_replies().is_empty());
 
     message.store(1, Ordering::Relaxed);
+    reconcile().await.unwrap();
+    assert_eq!(trace.lock().unwrap().links.len(), 1);
+    show_ui_run(&service, 1);
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 2);
@@ -247,6 +263,7 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     inbox.host_stream_ended(Err(HostError::Unavailable));
     synchronize_preview_session(&service).await;
     message.store(2, Ordering::Relaxed);
+    show_ui_run(&service, 2);
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     let trace = trace.lock().unwrap();
@@ -259,6 +276,18 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     );
     assert_eq!(take_replies(), [format!("Board at {board_url}")]);
     server.abort();
+}
+
+fn ui_run(index: usize) -> String {
+    format!("fixture-ui-run-{index}")
+}
+
+fn show_ui_run(service: &Service, index: usize) {
+    let mut thread = fixture_inbox_thread(7);
+    thread["activeRunId"] = json!(ui_run(index));
+    service.host.fixture_held_shell(&json!({
+        "kind":"thread.updated", "sequence":7 + index, "thread":thread
+    }));
 }
 
 async fn synchronize_preview_session(service: &Service) {
@@ -698,20 +727,13 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
             }]}});
         }
         "orchestration.subscribeThread" if payload["threadId"] == INBOX_THREAD => {
-            let pinned = matches!(step, 4 | 7).then_some("2026-11-24T00:00:00Z");
-            let archived = (step == 6).then_some("2026-11-24T01:00:00Z");
             let runs = if step == 4 {
                 json!([])
             } else {
                 json!([{"id":"turn","status":"running"}])
             };
-            let mut thread = json!({"id":INBOX_THREAD,"projectId":PROJECT,"providerInstanceId":PROVIDER,
-                "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},"archivedAt":archived});
-            if let Some(at) = pinned {
-                thread["pinnedAt"] = json!(at);
-            }
             json!({"kind":"snapshot","snapshotSequence":step,"projection":{
-                "thread":thread,
+                "thread":fixture_inbox_thread(step),
                 "runs":runs,
                 "runtimeRequests":[],"turnItems":[]
             }})
@@ -723,10 +745,14 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
             if step > 1 {
                 projects.push(json!({"id":PROJECT,"workspaceRoot":root}));
             }
-            json!({"kind":"snapshot","snapshot":{"projects":projects,"threads":[{
+            let mut threads = vec![json!({
                 "id":LEGACY,"projectId":"legacy-project","providerInstanceId":"nucleus",
                 "pinnedAt":"2026-11-24T00:00:00Z"
-            },{"id":INBOX_THREAD,"activeRunId":"turn","pinnedAt":"2026-11-24T00:00:00Z"}]}})
+            })];
+            if matches!(step, 3..=5 | 7) {
+                threads.push(fixture_inbox_thread(step));
+            }
+            json!({"kind":"snapshot","snapshot":{"snapshotSequence":step,"projects":projects,"threads":threads}})
         }
         "server.getConfig" if step == 2 => {
             return success(
@@ -774,6 +800,16 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
         _ => panic!("unexpected fixture request {req}"),
     };
     json!({"_tag":"Chunk","requestId":req["id"],"values":[snapshot,{"kind":"synchronized"}]})
+}
+
+fn fixture_inbox_thread(step: usize) -> Value {
+    json!({
+        "id":INBOX_THREAD,"projectId":PROJECT,"providerInstanceId":PROVIDER,
+        "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
+        "archivedAt":(step == 6).then_some("2026-11-24T01:00:00Z"),
+        "pinnedAt":matches!(step, 4 | 7).then_some("2026-11-24T00:00:00Z"),
+        "activeRunId":(step == 7).then_some("turn"),
+    })
 }
 
 fn success(request: &Value, value: &Value) -> Value {
