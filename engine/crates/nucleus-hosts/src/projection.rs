@@ -483,7 +483,13 @@ impl Projection {
             return Ok(RetainedThread::Busy);
         }
         if !self.has_idle_coverage() {
-            return Err(HostError::Uncertain);
+            return Err(HostError::RetainedIdleCoverage {
+                revision: self.sequence,
+                providers: self.provider_threads.is_some(),
+                turn_items: self.turn_items.is_some(),
+                shell_background: !(self.windowed || self.compact_turn_items)
+                    || self.shell_background_work.is_some(),
+            });
         }
         Ok(RetainedThread::Idle)
     }

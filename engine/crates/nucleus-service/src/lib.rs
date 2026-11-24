@@ -988,6 +988,23 @@ impl Service {
         previous: Priority,
     ) -> Result<bool, ServiceError> {
         let id = &row.task.identity().id;
+        if let Err(ServiceError::Host(error)) = result {
+            let checkpoint = match error {
+                HostError::ProcessCoverage(nucleus_hosts::ProcessEvidenceFailure::Cwd { pid }) => {
+                    Some(("cwd_followup", Some(*pid)))
+                }
+                HostError::HeldThreadMissing { .. } => Some(("retained_thread_read", None)),
+                HostError::RetainedIdleCoverage { .. } => Some(("retained_idle_coverage", None)),
+                _ => None,
+            };
+            if let Some((checkpoint, pid)) = checkpoint {
+                let mut audit = event("host_observation_incomplete");
+                audit.detail = serde_json::json!({"version":row.version, "stage":checkpoint,
+                    "pid":pid, "reason":error.to_string()})
+                .to_string();
+                state.store.claim_task_effect(id, &audit, false)?;
+            }
+        }
         let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
             || (wait == Some(WaitReason::HostUnknown)
                 && match row.task.run() {
@@ -1604,8 +1621,10 @@ fn process_check_detail(
         (ProcessEvidenceFailure::Scope, true) => {
             "Couldn’t verify the checkout and scratch paths. Open the task thread to check."
         }
-        (ProcessEvidenceFailure::Incomplete, false) => "Checking whether the checkout is idle.",
-        (ProcessEvidenceFailure::Incomplete, true) => {
+        (ProcessEvidenceFailure::Incomplete | ProcessEvidenceFailure::Cwd { .. }, false) => {
+            "Checking whether the checkout is idle."
+        }
+        (ProcessEvidenceFailure::Incomplete | ProcessEvidenceFailure::Cwd { .. }, true) => {
             "Couldn’t verify that the checkout is idle. Open the task thread to check."
         }
     }

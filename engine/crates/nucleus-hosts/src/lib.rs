@@ -98,6 +98,19 @@ pub enum HostError {
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
     #[error(
+        "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
+    )]
+    HeldThreadMissing { revision: Option<u64> },
+    #[error(
+        "the retained thread at revision {revision} lacks idle proof (provider roster {providers}, turn items {turn_items}, shell background coverage {shell_background})"
+    )]
+    RetainedIdleCoverage {
+        revision: u64,
+        providers: bool,
+        turn_items: bool,
+        shell_background: bool,
+    },
+    #[error(
         "parent message preflight failed: {predicate} (prepared revision {prepared}, observed revision {observed:?})"
     )]
     ParentPreflight {
@@ -680,8 +693,10 @@ impl T3Pass<'_> {
         match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
-            Activity::Unknown => Err(HostError::ProcessCoverage(
-                ProcessEvidenceFailure::Incomplete,
+            Activity::Unknown(pid) => Err(HostError::ProcessCoverage(
+                pid.map_or(ProcessEvidenceFailure::Incomplete, |pid| {
+                    ProcessEvidenceFailure::Cwd { pid }
+                }),
             )),
         }
     }

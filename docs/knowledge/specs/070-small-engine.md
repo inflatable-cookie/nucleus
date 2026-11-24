@@ -299,6 +299,10 @@ Later decisions carry their own attribution.
     next eligible pass, even at the same task version. Ambiguous delivery keeps
     its readback deadline and may block if it stays unresolved. A completed
     hold uses its own native outcome across subsequent retries and restarts.
+    Retained reads record a missing bounded projection separately from missing
+    idle coverage. Before a missing working directory leaves local custody
+    unknown, the existing targeted cwd check removes exited PIDs and reports
+    the census stage and one still-unverified PID.
     Title, settle and snooze changes preserve matching custody evidence.
     Delivery still checks current binding, requests, children, background
     work and row visibility, including ownership of any snooze it clears.
