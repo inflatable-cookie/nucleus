@@ -39,7 +39,10 @@ enum ParentClaim {
 }
 
 pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
-    let run = row.task.run()?;
+    let run = row
+        .task
+        .run()
+        .filter(|run| run.report_reminder_for().is_none())?;
     Some(
         run.last_send_at_ms()
             .unwrap_or(run.launch().started_at)

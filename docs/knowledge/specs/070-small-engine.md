@@ -392,7 +392,8 @@ Later decisions carry their own attribution.
     retained role or local process is still active. A reviewer still needs the
     exact clean head. Checkout removal and revoked runs still check writer
     custody. An exact terminal role with no pending native background work
-    releases the parent. Local process custody is checked at checkout removal.
+    releases the parent. A prepared report reminder does not extend that hold.
+    Local process custody is checked at checkout removal.
 
     The planner also ruled that a task row snoozes only when the held shell
     shows its retained and sent role children quiet. An unsent reservation adds no
