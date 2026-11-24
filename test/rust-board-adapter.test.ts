@@ -16,7 +16,7 @@ import {
   projectKeys,
   RustUnsupported,
 } from "../client/web/rust-adapter";
-import { rustProjectArchive } from "../client/rust-contracts";
+import { rustProfileUsage, rustProjectArchive } from "../client/rust-contracts";
 import { profileUsage } from "../client/settings-profile-helpers";
 import { nightlyProviders } from "./support/pool-shapes";
 import type {
@@ -163,7 +163,9 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.deepEqual(board.projects[0]!.repositories.map((repo) => repo.origin), ["example/orbit", "example/orbit-docs"]);
   assert.deepEqual(board.projectLimitOverrides, { "p-orbit-main": 3, lantern: 1 });
   assert.deepEqual(board.pool.map((entry) => [entry.profileId, entry.group, entry.roles]), [["w", "team", ["worker", "reviewer"]]]);
-  assert.equal(board.backup.newestSnapshotAt, "2026-11-24T08:00:00Z");
+  assert.deepEqual(fake.reads, ["GET /settings", "GET /session"]);
+  const storage = await adapter.rpc(api.workStorage, {});
+  assert.equal(storage.backups?.newestAt, "2026-11-24T08:00:00Z");
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
 });
 
@@ -406,8 +408,7 @@ test("Refresh takes the newest held revision and retains usable choices on failu
 test("the shared usage strips project recorded zero and active role windows", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
-  const zero = await adapter.rpc(api.uiSnapshot, {});
-  assert.ok(!("unchanged" in zero));
+  const zero = await adapter.rpc(rustProfileUsage, {});
   assert.deepEqual(profileUsage(zero, "w", ["w"]), {
     count: 0,
     max: 0,
@@ -420,8 +421,7 @@ test("the shared usage strips project recorded zero and active role windows", as
     totals: { w: 12 },
     groupTotals: { team: 16 },
   });
-  const active = await adapter.rpc(api.uiSnapshot, {});
-  assert.ok(!("unchanged" in active));
+  const active = await adapter.rpc(rustProfileUsage, {});
   assert.deepEqual(profileUsage(active, "w", ["w"]), {
     count: 3,
     max: 3,
@@ -466,8 +466,10 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
       canEditSettings,
       planningProjects: canEditSettings ? null : ["Orbit_Main"],
     });
-    const state = await adapter.rpc(api.uiSnapshot, {});
-    assert.ok(!("unchanged" in state));
+    const board = await adapter.rpc(api.uiSnapshot, {});
+    assert.ok(!("unchanged" in board));
+    const usage = await adapter.rpc(rustProfileUsage, {});
+    const state = { ...board, ...usage, availability: [...board.availability, ...usage.availability] };
     assert.equal(state.canEditSettings, canEditSettings);
     assert.deepEqual(state.pool.map(({ enabled }) => enabled), [true, false]);
     assert.deepEqual(state.availability.map(({ group, unavailable }) => [group, unavailable]),

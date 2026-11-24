@@ -276,7 +276,9 @@ async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
         .observe_activity(&row, Some(activity.clone()))
         .await
         .expect("observe");
-    assert_eq!(changes.try_recv().expect("invalidate").version, row.version);
+    let change = changes.try_recv().expect("invalidate");
+    assert_eq!(change.version, row.version);
+    assert!(change.detail_only);
     service
         .observe_activity(&row, Some(activity.clone()))
         .await
@@ -285,6 +287,19 @@ async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
         changes.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+    let running = Ok(Action::Wait(nucleus_core::WaitReason::Running));
+    for _ in 0..3 {
+        service
+            .schedule_result(&row, &running, crate::schedule::Priority::Refresh)
+            .await
+            .unwrap();
+    }
+    let state_change = changes.try_recv().expect("first wait changes the card");
+    assert!(!state_change.detail_only);
+    assert!(
+        changes.try_recv().is_err(),
+        "repeating a pass with the same facts is quiet"
+    );
     let path = "/v1/tasks/worker";
     let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     assert_eq!(
@@ -296,7 +311,9 @@ async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
         .observe_activity(&row, None)
         .await
         .expect("unavailable activity");
-    assert_eq!(changes.try_recv().expect("invalidate").version, row.version);
+    let change = changes.try_recv().expect("invalidate");
+    assert_eq!(change.version, row.version);
+    assert!(change.detail_only);
     let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     assert!(view["run"]["activity"].is_null());
 
@@ -1582,11 +1599,20 @@ async fn operators_can_pause_a_known_subscription_until_its_reset() {
             .status(),
         StatusCode::FORBIDDEN
     );
+    let mut changes = service.profile_usage_changes.subscribe();
     let saved = put_settings(&api, path, &BOARD_KEY, &pause).await;
     assert_eq!(saved.status(), StatusCode::OK);
     assert_eq!(
         json_body(saved).await,
         json!({"group":"shared","untilMs":deadline})
+    );
+    assert!(changes.has_changed().unwrap());
+    changes.mark_unchanged();
+    let repeated = put_settings(&api, path, &BOARD_KEY, &pause).await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert!(
+        !changes.has_changed().unwrap(),
+        "an identical stored pause is quiet"
     );
     let state = service.state.lock().await;
     assert_eq!(
@@ -2422,7 +2448,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let saved =
         json_body(browser_request(api, Method::PUT, lane, cookie, Some(&document)).await).await;
     assert_eq!(saved["version"], 1);
-    assert_event(events, &["event: settings"]).await;
+    assert_event(events, &["event: planning"]).await;
     assert_eq!(
         browser_request(api, Method::PUT, lane, cookie, Some(&document))
             .await
@@ -2433,7 +2459,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let saved =
         json_body(browser_request(api, Method::PUT, plan, cookie, Some(&update)).await).await;
     assert_eq!(saved["version"], 1);
-    assert_event(events, &["event: settings"]).await;
+    assert_event(events, &["event: planning"]).await;
     let updated = json_body(browser_request(api, Method::GET, plan, cookie, None).await).await;
     assert_eq!(updated["lanes"][0]["key"], "board");
     assert_eq!(updated["documents"][0]["document"], "## Steps");
@@ -2470,7 +2496,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     .await;
     assert_eq!(added.status(), StatusCode::CREATED);
     assert_eq!(json_body(added).await["kind"], "papercut");
-    assert_event(events, &["event: settings"]).await;
+    assert_event(events, &["event: planning"]).await;
     // The theme is a cache read; a fixture without a host config stream has none yet.
     let theme =
         json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await).await;

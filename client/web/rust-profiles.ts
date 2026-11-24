@@ -174,7 +174,7 @@ export function createRustProfiles(rust: RustApi) {
     "profile.compatibility": async () => {
       const [cached, current] = await Promise.all([
         rust.catalog(),
-        rust.domain(profilesSnapshot, "profiles"),
+        rust.storedProfiles(),
       ]);
       const instances = cachedInstances(cached);
       const label = t3codeVocabulary.label;
@@ -221,7 +221,7 @@ export function createRustProfiles(rust: RustApi) {
       };
     },
     "profile.list": async () => {
-      const current = await rust.domain(profilesSnapshot, "profiles");
+      const current = await rust.storedProfiles();
       return {
         profiles: current.value.profiles.map(
           (entry) => boardProfile(entry).profile,

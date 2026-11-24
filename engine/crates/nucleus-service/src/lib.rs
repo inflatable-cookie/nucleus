@@ -190,7 +190,10 @@ pub struct Service {
     changes: broadcast::Sender<TaskChange>,
     project_changes: watch::Sender<()>,
     settings_changes: watch::Sender<()>,
+    storage_changes: watch::Sender<()>,
     decision_changes: watch::Sender<()>,
+    profile_usage_changes: watch::Sender<()>,
+    planning_changes: watch::Sender<()>,
     /// The environment's board theme inputs, cached from the host's config stream.
     theme: watch::Sender<Option<serde_json::Value>>,
     wake: Notify,
@@ -270,6 +273,8 @@ enum Preflight {
 pub struct TaskChange {
     pub task_id: String,
     pub version: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub detail_only: bool,
 }
 
 pub struct PassOutcome {
@@ -410,7 +415,10 @@ impl Service {
             changes,
             project_changes: watch::Sender::new(()),
             settings_changes: watch::channel(()).0,
+            storage_changes: watch::channel(()).0,
             decision_changes: watch::channel(()).0,
+            profile_usage_changes: watch::channel(()).0,
+            planning_changes: watch::channel(()).0,
             theme: watch::channel(None).0,
             wake: Notify::new(),
             planner_wake: Notify::new(),
@@ -924,7 +932,7 @@ impl Service {
         }
         state.schedule.reset_host_backoff(id);
         if state.observe_task_allowance(&current.task, wait)? {
-            self.publish(id, current.version);
+            self.publish_detail(id, current.version);
         }
         let now = Instant::now();
         let (delay, priority) = schedule::retry(wait);
@@ -1414,6 +1422,9 @@ impl Service {
             state_changed,
         )?;
         state.apply_task_wait(task, wait, state_changed);
+        if subscription_group.is_some() {
+            self.profile_usage_changes.send_replace(());
+        }
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1477,7 +1488,7 @@ impl Service {
             Observed::Unknown => state.observed_forge.remove(id),
         };
         if prior.as_ref() != state.observed_forge.get(id) {
-            self.publish(id, row.version);
+            self.publish_detail(id, row.version);
         }
         Ok(())
     }
@@ -1529,7 +1540,7 @@ impl Service {
                     state.activity.remove(id);
                 }
             }
-            self.publish(id, row.version);
+            self.publish_detail(id, row.version);
         }
         Ok(())
     }
@@ -1542,9 +1553,18 @@ impl Service {
     }
 
     fn publish(&self, id: &str, version: i64) {
+        self.publish_change(id, version, false);
+    }
+
+    fn publish_detail(&self, id: &str, version: i64) {
+        self.publish_change(id, version, true);
+    }
+
+    fn publish_change(&self, id: &str, version: i64, detail_only: bool) {
         let _ = self.changes.send(TaskChange {
             task_id: id.into(),
             version,
+            detail_only,
         });
     }
 }

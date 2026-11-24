@@ -51,7 +51,7 @@ import {
 } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
-import { groupRustTasks, useRustTasks, type RustInvalidation } from "./web/rust-board";
+import { groupRustTasks, rustProjectActivity, useRustTasks, type RustInvalidation } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
@@ -182,6 +182,12 @@ export function MainSurface({
   }, [rustTasks.data, state?.projects, scope.projects]);
   const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
   const features = useEngineFeatures();
+  const projectActivity = useMemo(
+    () => features.engine === "rust" && state && rustTasks.data
+      ? rustProjectActivity(state.projects, rustTasks.data)
+      : state?.projectActivity ?? [],
+    [features.engine, state?.projects, state?.projectActivity, rustTasks.data],
+  );
   // On the Rust engine every task is a Rust task. The project selector counts
   // each project's open tasks through its hidden-count input, keyed by checkout.
   const selectorCounts = useMemo(() => {
@@ -481,7 +487,7 @@ export function MainSurface({
       tasks={state?.tasks ?? []}
       leads={boardLeads}
       queuedCounts={selectorCounts}
-      projectActivity={state?.projectActivity ?? []}
+      projectActivity={projectActivity}
       value={scope.projects}
       // The picker commits the selection it reports, and an empty pick
       // (Clear, or Shift-clearing the last project) restores all projects.
@@ -564,7 +570,7 @@ export function MainSurface({
                 onOpenLane={selectPlanningLane}
                 lanes={lanes}
                 projects={state?.projects ?? []}
-                projectActivity={state?.projectActivity ?? []}
+                projectActivity={projectActivity}
                 selection={scope.projects}
                 plans={planQuery.data ?? []}
                 plansError={planMessage(planQuery.error)}

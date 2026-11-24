@@ -245,10 +245,24 @@ impl Service {
             || DispatchSettings::default().provider_limit_cooldown_seconds,
             |settings| settings.provider_limit_cooldown_seconds,
         );
-        state
-            .store
-            .record_provider_pause(group, limit_deadline(limit, cooldown), now_ms())?;
+        self.record_subscription_pause(&state, group, limit_deadline(limit, cooldown), now_ms())?;
         Ok(())
+    }
+
+    pub(super) fn record_subscription_pause(
+        &self,
+        state: &State,
+        group: &str,
+        deadline: u64,
+        now: u64,
+    ) -> Result<Option<u64>, ServiceError> {
+        let current = state.store.provider_pause(group, now)?;
+        if deadline <= now || current.is_some_and(|until| until >= deadline) {
+            return Ok(current);
+        }
+        state.store.record_provider_pause(group, deadline, now)?;
+        self.profile_usage_changes.send_replace(());
+        Ok(Some(deadline))
     }
 
     pub(super) async fn pause_prepared(

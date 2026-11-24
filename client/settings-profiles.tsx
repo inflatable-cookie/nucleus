@@ -1,5 +1,6 @@
 import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useState } from "react";
+import { useTick } from "./use-tick";
 import { ScrollView, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRpc } from "./shell";
@@ -81,6 +82,8 @@ export function ProfilesPanel({
   inset,
   state,
   stateError,
+  usageReady = true,
+  usageError,
   repositories,
   busy,
   savePool,
@@ -92,6 +95,8 @@ export function ProfilesPanel({
   inset: number;
   state: UiQueueState | null;
   stateError?: unknown;
+  usageReady?: boolean;
+  usageError?: unknown;
   repositories: RepositorySettings[];
   busy: boolean;
   savePool: (entry: PoolEntry) => Promise<void>;
@@ -104,6 +109,9 @@ export function ProfilesPanel({
   const { coordinatorRole, engine } = useEngineFeatures();
   const pairedCatalog = engine === "rust";
   const canEdit = !pairedCatalog || state?.canEditSettings === true;
+  // A recorded reset time can pass while the engine is otherwise quiet.
+  useTick(pairedCatalog && state?.availability.some(({ retryAt }) =>
+    retryAt !== null && Date.parse(retryAt) > Date.now()) ? 30_000 : null);
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
   // The form's choices: every registered host's catalog in canonical values (task 1158).
   const fetchProfiles = useRpc(api.listNucleusProfiles),
@@ -415,7 +423,7 @@ export function ProfilesPanel({
           </View>
         }
       >
-        {state && (
+        {state && usageReady && (
           <View style={{ gap: space.xs }}>
             <TabRow
               c={c}
@@ -468,6 +476,7 @@ export function ProfilesPanel({
             key={item.id}
             visibleProfileIds={visibleProfileIds}
             usageRole={usageRole}
+            usageReady={usageReady}
             c={c}
             profile={item.stored ?? item.board!}
             board={item.board}
@@ -523,15 +532,15 @@ export function ProfilesPanel({
           endsInRow={Boolean(state && groups.length)}
           description="Profiles that share a provider subscription form one group. An unavailable group leaves selection until its retry time or a reset."
         >
-          {!state && (
+          {(!state || !usageReady) && (
             <Text style={muted(c)}>
-              {stateError ? "Could not read subscriptions." : "Reading subscriptions…"}
+              {stateError || usageError ? "Could not read subscriptions." : "Reading subscriptions…"}
             </Text>
           )}
-          {state && !groups.length && (
+          {state && usageReady && !groups.length && (
             <Text style={muted(c)}>None yet. Add a profile first.</Text>
           )}
-          {state &&
+          {state && usageReady &&
             groups.map((group) => (
               <Availability
                 key={`${group}-${JSON.stringify(state.availability.find((a) => a.group === group))}`}

@@ -1,3 +1,4 @@
+import { RUST_PROFILE_USAGE_KEY, rustProfileUsage } from "./rust-contracts";
 import { useEngineFeatures } from "./engine-features";
 import { errorText, errorText as failureText } from "./error-text";
 import { activeGroupLimit } from "../shared/pool";
@@ -61,6 +62,7 @@ import { ProjectsSection } from "./projects-settings";
 export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const c = theme.colors;
   const features = useEngineFeatures();
+  const rust = features.engine === "rust";
   const [width, setWidth] = useState(0);
   // The layout follows the measured width of the Settings screen itself, never the
   // host's compact flag (task 923). The tabs are the same at every width
@@ -97,6 +99,22 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     cancellationReceipt = useRpc(api.bulkDispositionDetail);
   const queryClient = useQueryClient();
   const [settingsTab, setSettingsTab] = useSettingsSection("capacity");
+  const fetchProfileUsage = useRpc(rustProfileUsage);
+  const profileUsageQuery = useQuery({
+    queryKey: RUST_PROFILE_USAGE_KEY,
+    queryFn: () => fetchProfileUsage({}),
+    enabled: rust && settingsTab === "profiles",
+  });
+  const profileUsage = profileUsageQuery.data;
+  const profileState = state && profileUsage ? {
+    ...state,
+    ...profileUsage,
+    availability: [
+      ...state.availability,
+      ...profileUsage.availability.filter(({ group }) =>
+        !state.availability.some((entry) => entry.group === group)),
+    ],
+  } : state;
   const repositoriesQuery = useQuery({
     queryKey: ["nucleus", "repositories"],
     queryFn: () => fetchRepositories({}),
@@ -135,12 +153,11 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     enabled: settingsTab === "backups",
     refetchInterval: 60_000,
   });
-  // Settings → Storage (nucleus#1526): the resolved work-volume placement, read
-  // only while its page is open. A save answers with the placement it wrote.
+  // Rust Settings also uses this read for the backup health notice above its tabs.
   const storageQuery = useQuery({
     queryKey: ["nucleus", "work-storage"],
     queryFn: () => fetchWorkStorage({}),
-    enabled: settingsTab === "storage",
+    enabled: rust || settingsTab === "storage",
   });
   // Settings-only capacity writes need the values in force and the record of
   // applied changes. It is a separate read because the board projection keeps its
@@ -158,19 +175,21 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryKey: ["nucleus", "hosts"],
     queryFn: () => fetchHosts({}),
     enabled: settingsTab === "hosts",
-    refetchInterval: 15_000,
+    refetchInterval: rust ? false : 15_000,
   });
   const listedNewest = backupsQuery.data?.snapshots
     .filter((entry) => entry.verified)
     .sort((a, b) => b.at.localeCompare(a.at))[0];
+  const rustBackups = storageQuery.data?.backups;
   const newestBackupAt =
-    state?.backup?.newestSnapshotAt ?? listedNewest?.at ?? null;
+    rustBackups?.newestAt ?? state?.backup?.newestSnapshotAt ?? listedNewest?.at ?? null;
   const backupAgeMs = newestBackupAt
     ? Date.now() - Date.parse(newestBackupAt)
     : Infinity;
   const backupStale = backupAgeMs > BACKUP_STALE_AFTER_MS;
-  const backupError =
-    state?.backup?.localError ?? backupsQuery.data?.localError ?? null;
+  const backupError = rust
+    ? (rustBackups?.issues ?? 0) > 0 ? "Some backups could not be verified." : null
+    : state?.backup?.localError ?? backupsQuery.data?.localError ?? null;
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<{
@@ -350,8 +369,10 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               c={c}
               compact={compact}
               inset={inset}
-              state={state ?? null}
+              state={profileState ?? null}
               stateError={stateQuery.error}
+              usageReady={!rust || Boolean(profileUsage)}
+              usageError={profileUsageQuery.error}
               repositories={
                 Array.isArray(repositoriesQuery.data)
                   ? repositoriesQuery.data

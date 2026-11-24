@@ -42,16 +42,10 @@ pub(super) async fn pause_group(
     {
         return Err(ApiError::Invalid);
     }
-    state
-        .store
-        .record_provider_pause(&group, pause.until_ms, now)
-        .map_err(ServiceError::from)?;
-    let until_ms = state
-        .store
-        .provider_pause(&group, now)
-        .map_err(ServiceError::from)?;
+    let until_ms = api
+        .service
+        .record_subscription_pause(&state, &group, pause.until_ms, now)?;
     api.service.wake_settings_capacity(&mut state);
-    api.service.settings_changes.send_replace(());
     Ok(Json(json!({"group":group, "untilMs":until_ms})))
 }
 
@@ -491,8 +485,12 @@ pub(super) async fn put(
                 Ok(storage_view(&service, &saved))
             }
         };
-        if result.is_ok() && !matches!(domain, Domain::Projects) {
-            service.settings_changes.send_replace(());
+        if result.is_ok() {
+            match domain {
+                Domain::Projects => {} // Registry publication already signals resync.
+                Domain::Storage => service.storage_changes.send_replace(()),
+                _ => service.settings_changes.send_replace(()),
+            }
         }
         result
     })

@@ -1,3 +1,4 @@
+import type { Project } from "../../shared/contracts";
 import {
   useInfiniteQuery,
   useQuery,
@@ -212,7 +213,11 @@ const applied = z.union([
   summary,
   z.object({ status: z.literal("pending"), version: revision }),
 ]);
-const change = z.object({ taskId: z.string(), version: revision });
+const change = z.object({
+  taskId: z.string(),
+  version: revision,
+  detailOnly: z.boolean().optional(),
+});
 type BoardRequest = Omit<RequestInit, "headers"> & {
   headers?: Record<string, string>;
 };
@@ -315,6 +320,26 @@ const pushQuery = {
   refetchOnReconnect: false,
 };
 
+const executing = new Set([
+  "starting", "running", "permission", "input", "idle_without_terminal_run",
+  "assignment_too_large", "retained_thread_busy",
+]);
+
+export function rustProjectActivity(
+  projects: readonly Project[],
+  tasks: readonly RustTask[],
+) {
+  const now = new Date().toISOString();
+  return projects.map(({ key, repositories }) => {
+    const origins = new Set(repositories.map((repo) => repo.origin?.toLowerCase()));
+    const items = tasks
+      .filter((task) => origins.has(task.identity.repository.toLowerCase()) &&
+        task.wait !== null && executing.has(task.wait))
+      .map((task) => ({ id: task.identity.id, at: now, executing: true }));
+    return { key, items, lastAt: items.length ? now : null };
+  });
+}
+
 export function useRustTasks(enabled: boolean) {
   return useQuery({
     ...pushQuery,
@@ -350,7 +375,7 @@ export function useRustDetail(id: string, showHistory: boolean) {
 }
 
 export const postRustCommand = transport.command;
-export type RustInvalidation = (id?: string) => void;
+export type RustInvalidation = (id?: string, detailOnly?: boolean) => void;
 
 /** Activity and readiness notices can share the stored task revision. */
 export function rustInvalidationFromFrame(
@@ -362,7 +387,7 @@ export function rustInvalidationFromFrame(
   } else if (frame.event === "invalidate" && frame.data !== null) {
     try {
       const parsed = change.safeParse(JSON.parse(frame.data));
-      if (parsed.success) invalidate(parsed.data.taskId);
+      if (parsed.success) invalidate(parsed.data.taskId, parsed.data.detailOnly);
     } catch {
       // Ignore malformed events. A subsequent refresh or invalidation recovers the view.
     }
@@ -371,11 +396,13 @@ export function rustInvalidationFromFrame(
 
 export function createRustInvalidator(client: QueryClient): RustInvalidation {
   const invalidate = createPushInvalidator(client);
-  return (id) =>
+  return (id, detailOnly) =>
     invalidate({
       queryKey: root,
       predicate: ({ queryKey }) =>
-        id === undefined || queryKey[1] === "list" || queryKey[2] === id,
+        id === undefined ||
+        (queryKey[1] === "list" && !detailOnly) ||
+        (queryKey[2] === id && (!detailOnly || queryKey[3] !== "history")),
     });
 }
 
@@ -408,7 +435,11 @@ export async function listenForRustChanges(
   invalidate: RustInvalidation,
   signal: AbortSignal,
   board?: {
+    resync: () => void;
     settingsChanged: () => void;
+    storageChanged: () => void;
+    planningChanged: () => void;
+    profileUsageChanged: () => void;
     decisionsChanged?: () => void;
     themeChanged?: () => void;
     catalogChanged?: () => void;
@@ -437,9 +468,12 @@ export async function listenForRustChanges(
           );
           pending = read.rest;
           for (const frame of read.frames) {
-            rustInvalidationFromFrame(frame, invalidate);
-            if (frame.event === "settings" || frame.event === "refresh")
-              board?.settingsChanged();
+            if (frame.event === "refresh" && board) board.resync();
+            else rustInvalidationFromFrame(frame, invalidate);
+            if (frame.event === "settings") board?.settingsChanged();
+            if (frame.event === "storage") board?.storageChanged();
+            if (frame.event === "planning") board?.planningChanged();
+            if (frame.event === "profile-usage") board?.profileUsageChanged();
             if (frame.event === "decisions") board?.decisionsChanged?.();
             if (frame.event === "theme" || frame.event === "refresh")
               board?.themeChanged?.();

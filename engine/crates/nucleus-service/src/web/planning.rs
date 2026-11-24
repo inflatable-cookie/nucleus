@@ -209,7 +209,7 @@ async fn set_plan(
         .store
         .set_plan(&project, input, stamp(&caller))
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -243,7 +243,7 @@ async fn put_lane(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -264,7 +264,7 @@ async fn lane_status(
         .store
         .set_lane_status(&project, &key, input, stamp(&caller))
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -311,7 +311,7 @@ async fn add_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok((StatusCode::CREATED, Json(item)))
 }
 
@@ -332,7 +332,7 @@ async fn edit_item(
         .store
         .edit_item(&project, &id, input, stamp(&caller))
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -365,7 +365,7 @@ async fn park_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -392,7 +392,7 @@ async fn drop_item(
         .store
         .set_item_state(&project, &id, ItemState::Dropped { reason }, stamp(&caller))
         .map_err(ServiceError::from)?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     Ok(Json(saved))
 }
 
@@ -417,7 +417,7 @@ async fn promote(
         .service
         .promote_planning_item(project.as_deref(), &id, complexity, &caller, &scope)
         .await?;
-    api.service.settings_changes.send_replace(());
+    api.service.planning_changes.send_replace(());
     let status = if created {
         StatusCode::CREATED
     } else {

@@ -1,3 +1,4 @@
+import { RUST_PROFILE_USAGE_KEY } from "../rust-contracts";
 import { BoardLiveContext } from "../board-live";
 import { markBoardReconnect } from "../board-state";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -59,6 +60,7 @@ export function WebApp({
     themeRevision,
   );
   const [live, setLive] = useState(false);
+  const [ready, setReady] = useState(!rust);
   // The live channel's last failure. A stream that drops reconnects below, and
   // the reader says why in the meantime instead of failing silently.
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -74,6 +76,7 @@ export function WebApp({
     () => new QueryClient(rust ? {
       defaultOptions: {
         queries: {
+          staleTime: Infinity,
           refetchOnWindowFocus: false,
           refetchOnReconnect: false,
           retry: (attempt, error) =>
@@ -121,26 +124,48 @@ export function WebApp({
     if (!adapter) return;
     const controller = new AbortController();
     const invalidateBoard = createPushInvalidator(query);
+    let initialRead = sessionEpoch === 0;
+    const startReads = () => {
+      if (!initialRead) return false;
+      initialRead = false;
+      setReady(true);
+      return true;
+    };
     const refreshBoard = () => {
       if (!controller.signal.aborted)
         invalidateBoard({ queryKey: ["nucleus"] });
     };
     void listenForRustChanges(
-      (id) => {
-        invalidateRust(id);
-        if (id !== undefined) {
-          invalidateBoard({ queryKey: ["nucleus", "state"] });
-        }
-      },
+      invalidateRust,
       controller.signal,
       {
-        settingsChanged: () => {
+        resync: () => {
+          // The initial marker starts the first reads after the subscription is open.
+          if (startReads()) return;
+          invalidateRust();
           void adapter.refreshSession().then((changed) => {
             if (controller.signal.aborted) return;
             if (changed) setSessionEpoch((value) => value + 1);
             else refreshBoard();
           }).catch(refreshBoard);
         },
+        settingsChanged: () => {
+          invalidateBoard({
+            queryKey: ["nucleus"],
+            predicate: ({ queryKey: [, area] }) =>
+              ["state", "profiles", "repositories", "project-settings", "capacity-state", "hosts"]
+                .some((key) => key === area),
+          });
+        },
+        storageChanged: () => invalidateBoard({ queryKey: ["nucleus", "work-storage"] }),
+        planningChanged: () => {
+          invalidateBoard({
+            queryKey: ["nucleus"],
+            predicate: ({ queryKey: [, area] }) =>
+              ["plans", "leads", "lane-document", "lead", "papercut"].some((key) => key === area),
+          });
+        },
+        profileUsageChanged: () => invalidateBoard({ queryKey: RUST_PROFILE_USAGE_KEY }),
         decisionsChanged: () => invalidateBoard({ queryKey: ["nucleus", "decisions"] }),
         themeChanged: () => setThemeRevision((value) => value + 1),
         catalogChanged: () => {
@@ -148,6 +173,7 @@ export function WebApp({
           invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
         },
         connection: (state) => {
+          if (state !== "live") startReads();
           setLive(state === "live");
           setLiveError(
             state === "expired"
@@ -160,7 +186,7 @@ export function WebApp({
       },
     );
     return () => controller.abort();
-  }, [adapter, query, invalidateRust]);
+  }, [adapter, query, invalidateRust, sessionEpoch]);
   useEffect(() => {
     if (rust) return;
     const web = transport as ReturnType<typeof createWebTransport>;
@@ -248,7 +274,9 @@ export function WebApp({
                 </p>
               )}
               <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-                {settings ? (
+                {!ready ? (
+                  <p role="status">Connecting to the Nucleus engine…</p>
+                ) : settings ? (
                   <StandaloneSettingsScreen
                     theme={theme}
                     layout={{ compact: false }}
