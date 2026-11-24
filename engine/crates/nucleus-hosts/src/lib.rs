@@ -461,7 +461,7 @@ impl T3 {
     ) -> Result<(), HostError> {
         let result = self
             .rpc
-            .watch_threads(hints, inbox_thread, self.runtime_descriptor.as_deref())
+            .watch_threads(hints, inbox_thread)
             .await
             .inspect_err(|error| {
                 self.rpc

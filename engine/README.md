@@ -557,25 +557,20 @@ to prepare a launch, observe a run and stop it. A host's parenting adapter
 ensures the session is open and creates or continues the role's child there.
 T3 runs `nucleus acp` in the session thread. It holds or re-enters that thread,
 reads its live run and root node, and sends `delegated_task.request` with the
-bound launch identity. The adapter reuses each role's retained child and settles
-its completion delivery with `delegated_task.completion-delivery.dispose`.
+bound launch identity. The adapter reuses each role's retained child.
 The command ID names the native child and its first message. Continue sends a
 new message to the retained child. [T3 delegated task command](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L9952-L10170)
 The exact child projection binds the run to the task through its native
 `lineage`. It must identify the task thread as both the parent and the root
 of a subagent, and the child still needs the matching project, branch and
-checkout. Closeout can also prove a child from the exact parent's app-owned
-roster when the child has no lineage. Conflicting lineage refuses either proof.
-Verify reattach after closeout and checkout removal in the parenting fixtures. ACP and T3
-parenting follow the milestone 1 proof and precede the first real project.
-Reaching Done schedules archival through the same native write gate after any
-revoked run settles. Confirm the children are archived or gone, then take a
-fresh, complete parent read that proves its turn and background work have ended.
-Busy or unknown reads schedule a recheck. Confirm that the parent is archived
-or gone before appending the archive receipt. The restart scan skips the task
-when the receipt follows its latest transition into Done. Reopening and
-finishing the task schedules a new archive pass. Archival never settles a task
-thread.
+checkout. Verify reattach after closeout and checkout removal in the parenting
+fixtures. ACP and T3 parenting follow the milestone 1 proof and precede the
+first real project.
+
+After checkout removal and any revoked run settles, Done tasks archive their
+known, idle threads from the synchronized shell. A listed active thread waits.
+Housekeeping is complete when all its known threads are archived, deleted
+or absent. A later listed thread is eligible again.
 
 Pass the registered T3 ACP provider for the Rust `nucleus acp` agent to
 `serve --acp-provider`. A legacy serve file supplies it as `acpProvider`.

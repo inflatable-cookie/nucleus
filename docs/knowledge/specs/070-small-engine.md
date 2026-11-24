@@ -108,7 +108,7 @@ Later decisions carry their own attribution.
      - One held shell per host answers project, lifecycle, identity, title and visibility questions. No one-shot shell reads.
      - Thread reads are bounded and decide from T3's coverage fields. A full thread history is never requested.
      - Monitoring reuses a thread's last observation while its shell marker holds. Exact reads happen only for a due effect, an ambiguous reply or an ordered safety fence, and one read is shared across the steps of that effect.
-     - Finished tasks get no reads on ordinary ticks. Proven archive or absence results are stored and never re-read. Only the archived-thread prune reads archived threads.
+     - Done thread housekeeping uses the synchronized shell. It makes no thread reads on ordinary ticks.
      - Presentation writes (titles, snoozes, refreshes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
      - One host budget covers every background worker. Safety probes and operator actions come before presentation. One failure deadline applies to every call and reconnect.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
@@ -124,21 +124,10 @@ Later decisions carry their own attribution.
    the exact frozen command ID, so an idle parent hold or continuation can
    reconcile an ambiguous send under that ID. Delegated launch absence still
    requires an exact terminal parent run and an authoritative child absence.
-   Closeout uses the held shell's lifecycle and lineage with the stored owned
-   roster and closures. A conflicting shell row invalidates stored proof.
-   An unresolved live child can receive its own bounded custody check.
-   The shared task view names the child closure or parent evidence still
-   needed. A removed checkout proves local retirement. Family closeout
-   records its own confirmation after every retained thread is accounted for.
-   An exact native archive acceptance is stored in the same custody journal,
-   bound to its thread and predecessor. A synchronized shell from the same
-   verified T3 runtime can corroborate omission once it reaches that sequence.
-   When no runtime descriptor is configured, only the continuously held stream can
-   corroborate omission. A reopened row or a T3 runtime replacement invalidates
-   unfinished closure proof. The board and `next` name the thread to unarchive
-   if a replacement leaves that thread unlisted. A completed family receipt
-   survives either service restarting. An interrupted send without a receipt
-   still needs positive closure evidence.
+   Done thread housekeeping follows ruling 34 after checkout removal. The
+   synchronized shell supplies the known task, reviewer and worker rows and
+   rechecks the target before dispatch. Closure follows when all three are
+   archived, deleted or absent from the shell.
 
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning
