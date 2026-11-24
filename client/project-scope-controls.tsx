@@ -41,10 +41,12 @@ import {
   space,
   radius,
   roles,
+  toneSurface,
   touchSlop,
   touchTarget,
   type as typeScale,
   overlay,
+  wash,
 } from "./design";
 import { useFocusVisible } from "./focus-modality";
 
@@ -135,6 +137,7 @@ function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
  * removal dialog, which the board renders outside the picker. An absent action is left out of the menu. */
 export type ProjectSelectorActions = {
   rename?: (project: Project, name: string) => Promise<unknown>;
+  archive?: (project: Project) => Promise<unknown>;
   remove?: (project: Project) => void;
 };
 
@@ -322,7 +325,9 @@ function PanelAction({
         minHeight: tall ? touchTarget : control.compact.height + space.xxs,
         paddingHorizontal: space.xxs,
         borderRadius: radius.control,
-        backgroundColor: hover && !disabled ? c.surface2 : "transparent",
+        backgroundColor: (hover || focus.visible) && !disabled
+          ? toneSurface(c.foreground, c.surface1, wash.hover)
+          : "transparent",
         opacity: disabled ? 0.45 : 1,
         ...noOutline(),
       }}
@@ -351,7 +356,7 @@ function PanelAction({
  * the project search with Clear project selection beside Settings, so the rows get
  * the rest of the height.
  * Each row's disclosure chevron (nucleus#1430, #1432) opens a panel attached to the
- * row with Rename and Remove from Nucleus, inside the picker so no
+ * row with Rename and the engine's project actions, inside the picker so no
  * nested popover takes an outside press; Rename edits the name in its own slot. Project
  * settings live in Settings → Projects, which its settings icon opens (lane `nucleus-ui`,
  * task 946 build task 4). */
@@ -444,6 +449,9 @@ export function ProjectSelector({
   );
   const byKey = new Map(projects.map((project) => [project.key, project]));
   const fine = finePointer();
+  const hoverFill = toneSurface(c.foreground, c.surface1, wash.hover);
+  const selectedFill = toneSurface(c.foreground, c.surface1, wash.selected);
+  const frameLine = toneSurface(c.foreground, c.surface1, wash.hairline);
   // One action at a time. Each one resolves into a closed menu; a rejection stays on the row.
   const run = (action: Promise<unknown>) => {
     setPending(true);
@@ -497,14 +505,9 @@ export function ProjectSelector({
         {actionError}
       </Text>
     ) : null;
-    const frame = {
-      backgroundColor: roles(c).hover,
-      padding: space.xxs,
-      gap: space.xxs / 2,
-    };
     const tall = compact || !fine;
     return (
-      <View accessibilityLabel={`Actions for ${name}`} style={frame}>
+      <View accessibilityLabel={`Actions for ${name}`} style={{ padding: space.xxs, gap: space.xxs / 2 }}>
         {projectActions!.rename && (
           <PanelAction
             c={c}
@@ -519,35 +522,43 @@ export function ProjectSelector({
             }}
           />
         )}
+        {projectActions!.rename && (projectActions!.archive || projectActions!.remove) && (
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            style={{
+              height: control.border,
+              backgroundColor: frameLine,
+              marginVertical: space.xxs / 2,
+              marginHorizontal: space.xs,
+            }}
+          />
+        )}
+        {projectActions!.archive && (
+          <PanelAction
+            c={c}
+            tall={tall}
+            icon="Archive"
+            text="Archive"
+            label={`Archive ${name}`}
+            disabled={pending}
+            onPress={() => run(projectActions!.archive!(full))}
+          />
+        )}
         {projectActions!.remove && (
-          <>
-            {projectActions!.rename && (
-              <View
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-                style={{
-                  height: control.border,
-                  backgroundColor: c.border,
-                  marginVertical: space.xxs / 2,
-                  marginHorizontal: space.xs,
-                }}
-              />
-            )}
-            {/* Remove opens the shared removal dialog, which checks blockers and asks for confirmation. */}
-            <PanelAction
-              c={c}
-              tall={tall}
-              danger
-              icon={ACTION_ICONS.remove}
-              text="Remove from Nucleus"
-              label={`Remove ${name} from Nucleus`}
-              disabled={pending}
-              onPress={() => {
-                setOpen(false);
-                projectActions!.remove!(full);
-              }}
-            />
-          </>
+          <PanelAction
+            c={c}
+            tall={tall}
+            danger
+            icon={ACTION_ICONS.remove}
+            text="Remove from Nucleus"
+            label={`Remove ${name} from Nucleus`}
+            disabled={pending}
+            onPress={() => {
+              setOpen(false);
+              projectActions!.remove!(full);
+            }}
+          />
         )}
         {failure}
       </View>
@@ -754,14 +765,14 @@ export function ProjectSelector({
                   ),
               };
               return (
-                // Row and panel share one frame: the open panel reads as part of its row, not a tray below it.
+                // Row and panel share one frame.
                 <View
                   style={{
                     borderRadius: radius.control,
                     backgroundColor: project.checked
-                      ? roles(c).selected
-                      : hovered === project.key || focused === project.key
-                        ? roles(c).hover
+                      ? selectedFill
+                      : mine || hovered === project.key || focused === project.key
+                        ? hoverFill
                         : "transparent",
                     overflow: "hidden",
                   }}
@@ -929,7 +940,7 @@ export function ProjectSelector({
             style={{
               width: 420,
               borderWidth: 1,
-              borderColor: roles(c).hairline,
+              borderColor: frameLine,
               borderRadius: radius.panel,
               backgroundColor: c.surface1,
               shadowColor: overlay.shadow,
@@ -973,7 +984,7 @@ export function ProjectSelector({
                 alignSelf: "center",
                 borderRadius: radius.panel,
                 borderWidth: 1,
-                borderColor: roles(c).hairline,
+                borderColor: frameLine,
                 backgroundColor: c.surface1,
               }}
             >

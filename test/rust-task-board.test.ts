@@ -712,6 +712,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let usageCount = 49;
   let resetAt: number | undefined;
   let decisionOpen = true;
+  let projectArchived = false;
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
   const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
@@ -753,7 +754,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }, "profiles-1"),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
-      settings: snap({ projects: { fixture: { name: "Fixture project", archived: false, repositories: [
+      settings: snap({ projects: { fixture: { name: "Fixture project", archived: projectArchived, repositories: [
         { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
         { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
           hostProject: "fixture-bound", hostProjectTitle: boundTitle },
@@ -806,6 +807,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         settings: { defaultTheme: "t3-code", defaultAppearance: "dark" },
         theme: { id: "t3-code", appearance: "dark", colors: {
           text: "#f5f5f5", textMuted: "#a3a3a3", secondaryLabel: "#818181", sidebar: "#000000",
+          surfaceRaised: "#111111", sidebarRowHover: "#111111", sidebarRowSelected: "#111111",
         } },
       },
     });
@@ -860,6 +862,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         writes.push({ path, body });
         if (domain === "dispatch") dispatch = body.value;
         if (domain === "profiles") pausedGroups = body.value.pausedGroups;
+        if (domain === "projects") projectArchived = body.value.projects.fixture.archived;
         stream?.enqueue(new TextEncoder().encode("event: settings\ndata: {}\n\n"));
       }
       return Response.json(views[domain]());
@@ -1184,6 +1187,77 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.deepEqual(routes.map((route, i) => count(route) - beforeReconnect[i]!), [0, 1, 1, 1]);
   assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on reconnect");
 
+  await click("Back to board");
+  await click("Projects, All projects");
+  const projectRow = () => selector("Project selector")?.querySelector<HTMLElement>(
+    '[role="checkbox"][aria-label^="Project Fixture project,"]',
+  );
+  await eventually(() => Boolean(projectRow()), "the picker shows the active project");
+  const picker = selector("Project selector")!.parentElement!;
+  const project = projectRow()!;
+  const frame = project.parentElement!.parentElement!;
+  const popoverFill = style(picker).backgroundColor;
+  assert.equal(popoverFill, "rgb(17, 17, 17)");
+  assert.equal(style(picker).borderTopColor, "rgba(245, 245, 245, 0.08)");
+  const pointer = (element: Element, kind: "pointerenter" | "pointerleave") =>
+    element.dispatchEvent(new dom.window.PointerEvent(kind, { pointerType: "mouse" }));
+  pointer(project, "pointerenter");
+  const hover = "rgba(245, 245, 245, 0.06)";
+  await eventually(() => style(frame).backgroundColor === hover, "hover uses the popover tint");
+  pointer(project, "pointerleave");
+  project.focus();
+  await eventually(() => style(frame).backgroundColor === hover, "focus uses the popover tint");
+  project.blur();
+  project.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }));
+  const selected = "rgba(245, 245, 245, 0.1)";
+  await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
+  await click("Clear project selection");
+  await click("Project actions for Fixture project");
+  const actions = selector("Actions for Fixture project")!;
+  const archive = selector("Archive Fixture project")!;
+  assert.ok(archive && frame.contains(actions));
+  assert.equal(style(frame).backgroundColor, hover, "open row and panel share a single tinted frame");
+  assert.equal(style(actions).backgroundColor, "rgba(0, 0, 0, 0)");
+  assert.equal(style(archive).backgroundColor, "rgba(0, 0, 0, 0)");
+  assert.equal(selector("Remove Fixture project from Nucleus"), null);
+  pointer(archive, "pointerenter");
+  await eventually(() => style(archive).backgroundColor === hover, "action hover adds a tint to the open panel");
+  const grey = (color: string) => Number(color.match(/[\d.]+/)?.[0]);
+  const blend = (color: string, background: number) => {
+    const channels = color.match(/[\d.]+/g)!.map(Number);
+    return channels[0]! * channels[3]! + background * (1 - channels[3]!);
+  };
+  const base = grey(popoverFill);
+  const hoverGrey = blend(style(frame).backgroundColor, base);
+  const selectedGrey = blend(selected, base);
+  const actionGrey = blend(style(archive).backgroundColor, hoverGrey);
+  assert.ok(base < hoverGrey && hoverGrey < selectedGrey && selectedGrey < actionGrey);
+  const luminance = (channel: number) => ((channel / 255 + 0.055) / 1.055) ** 2.4;
+  const actionText = grey(style(archive.lastElementChild!).color);
+  assert.ok((luminance(actionText) + 0.05) / (luminance(actionGrey) + 0.05) >= 4.5,
+    "action text stays readable over the strongest tint");
+
+  const archiveWrites = () => writes.filter(({ path }) => path === "/api/engine/settings/projects");
+  await click("Archive Fixture project");
+  await eventually(() => projectArchived && !projectRow() && Boolean(selector("Leads, 0")),
+    "archive removes the project from the picker and refreshes the menu counts");
+  assert.equal(archiveWrites().length, 1);
+  assert.ok(selector("Project selector"), "archive leaves the picker open");
+  await click("Project settings");
+  assert.equal(dom.window.location.pathname, "/settings");
+  await click("Restore Fixture project");
+  await eventually(() => !projectArchived && Boolean(selector("Archive Fixture project")),
+    "Settings restores the project using the same domain write");
+  assert.equal(archiveWrites().length, 2);
+  await click("Back to board");
+  await eventually(() => Boolean(selector("Leads, 3")), "restored project is counted on the board");
+  await click("Projects, All projects");
+  await eventually(() => Boolean(projectRow()), "the restored project is in the picker");
+  await click("Project settings");
+  await click("Profiles");
+  await eventually(() => Boolean(selector("Disable Fixture worker")), "operator controls are visible before the session changes");
+  const afterProjectSettings = planningReads().length;
+
   operator = false;
   emit("refresh");
   await eventually(() => !selector("Disable Fixture worker"), "a new planner session clears operator controls");
@@ -1191,6 +1265,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("Fixture worker: On")), "the scoped planner sees the stored profile");
   assert.equal(selector("Fixture worker: On")?.getAttribute("aria-disabled"), "true");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
-  assert.equal(planningReads().length, beforeSettings);
+  assert.equal(planningReads().length, afterProjectSettings);
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

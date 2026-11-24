@@ -4,6 +4,21 @@ import * as api from "../shared/contracts";
 import type { Project, ProjectUpsertInput } from "../shared/contracts";
 import type { ProjectManagementApi } from "./project-management-view";
 import type { ProjectSelectorActions } from "./project-scope-controls";
+import { rustProjectArchive } from "./rust-contracts";
+
+/** Archive and Restore change the project membership of all three board collections. */
+export function useArchiveProject() {
+  const queryClient = useQueryClient();
+  const archiveRpc = useRpc(rustProjectArchive);
+  return async (project: string, archived: boolean) => {
+    await archiveRpc({ project, archived });
+    await queryClient.invalidateQueries({
+      queryKey: ["nucleus"],
+      predicate: ({ queryKey: [, area] }) =>
+        area === "leads" || area === "decisions" || area === "plans",
+    });
+  };
+}
 
 /*
  * The board project selector's row actions (nucleus#1430). Each one calls the RPC
@@ -14,9 +29,13 @@ import type { ProjectSelectorActions } from "./project-scope-controls";
  * board renders outside the picker so its preview, blockers and confirmation stay as
  * they are in Settings.
  */
-export function useProjectSelectorActions(refreshBoard: () => Promise<unknown>) {
+export function useProjectSelectorActions(
+  refreshBoard: () => Promise<unknown>,
+  canArchive: boolean,
+) {
   const queryClient = useQueryClient();
   const upsertRpc = useRpc(api.projectUpsert);
+  const archiveProject = useArchiveProject();
   const previewRpc = useRpc(api.projectManagementPreview),
     removeRpc = useRpc(api.projectManage),
     cancelRpc = useRpc(api.bulkDisposition),
@@ -39,6 +58,7 @@ export function useProjectSelectorActions(refreshBoard: () => Promise<unknown>) 
   }
 
   const actions: ProjectSelectorActions = {
+    archive: canArchive ? (project) => run(() => archiveProject(project.key, true)) : undefined,
     // Settings' rule: the name changes, the key, repositories and primary stay. Upsert takes no version.
     rename: (project: Project, name: string) => {
       const input: ProjectUpsertInput = {

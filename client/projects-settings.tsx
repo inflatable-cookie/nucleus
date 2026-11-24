@@ -1,5 +1,5 @@
 import { useEngineFeatures } from "./engine-features";
-import { rustProjectArchive } from "./rust-contracts";
+import { useArchiveProject } from "./project-selector-actions";
 import { errorText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -230,7 +230,7 @@ function ArchiveButton({
   name: string;
   changed: () => unknown;
 }) {
-  const archiveProject = useRpc(rustProjectArchive);
+  const archiveProject = useArchiveProject();
   const [busy, setBusy] = useState(false);
   const verb = entry.archived ? "Restore" : "Archive";
   return (
@@ -242,7 +242,7 @@ function ArchiveButton({
       disabled={busy}
       onPress={() => {
         setBusy(true);
-        void archiveProject({ project: entry.project.key, archived: !entry.archived })
+        void archiveProject(entry.project.key, !entry.archived)
           .then(changed)
           .finally(() => setBusy(false));
       }}
