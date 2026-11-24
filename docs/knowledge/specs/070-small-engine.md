@@ -96,7 +96,7 @@ Later decisions carry their own attribution.
    - its verified planners, shown from their live bindings;
    - an archived toggle;
    - removal. Tom, 2026-11-24, after the port had left only the archived toggle: "Yeah, let's get removal back in, as per your spec". The planner's proposal he accepted:
-     - The board's project selector offers Archive and Remove.
+     - The board's project selector offers Archive and Remove. Project names use regular-weight card title text, with full foreground on hovered, focused, checked or open rows (Tom, 2026-11-24).
      - Archive hides the project from the selector and refreshes the board's planning counts.
        Restore in Settings → Projects reverses it. Both actions write the same archived flag.
      - Remove ports the TypeScript removal dialog. It previews blockers, refuses while tasks are open or offers to cancel them, then deletes the project and its planning records.

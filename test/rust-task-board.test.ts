@@ -1196,6 +1196,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const picker = selector("Project selector")!.parentElement!;
   const project = projectRow()!;
   const frame = project.parentElement!.parentElement!;
+  const name = [...project.querySelectorAll("*")].find(
+    node => node.childElementCount === 0 && node.textContent === "Fixture project",
+  );
+  assert.ok(name);
+  const activeName = "rgb(245, 245, 245)";
+  assert.equal(style(name).color, "rgba(245, 245, 245, 0.75)");
+  assert.equal(style(name).fontWeight, "400");
   const popoverFill = style(picker).backgroundColor;
   assert.equal(popoverFill, "rgb(17, 17, 17)");
   assert.equal(style(picker).borderTopColor, "rgba(245, 245, 245, 0.08)");
@@ -1204,19 +1211,23 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   pointer(project, "pointerenter");
   const hover = "rgba(245, 245, 245, 0.06)";
   await eventually(() => style(frame).backgroundColor === hover, "hover uses the popover tint");
+  assert.equal(style(name).color, activeName);
   pointer(project, "pointerleave");
   project.focus();
   await eventually(() => style(frame).backgroundColor === hover, "focus uses the popover tint");
+  assert.equal(style(name).color, activeName);
   project.blur();
   project.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }));
   const selected = "rgba(245, 245, 245, 0.1)";
   await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
+  assert.equal(style(name).color, activeName);
   await click("Clear project selection");
   await click("Project actions for Fixture project");
   const actions = selector("Actions for Fixture project")!;
   const archive = selector("Archive Fixture project")!;
   assert.ok(archive && frame.contains(actions));
   assert.equal(style(frame).backgroundColor, hover, "open row and panel share a single tinted frame");
+  assert.equal(style(name).color, activeName);
   assert.equal(style(actions).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(style(archive).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(selector("Remove Fixture project from Nucleus"), null);
