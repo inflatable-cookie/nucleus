@@ -1317,8 +1317,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
   assert.equal(planningReads().length, afterProjectSettings);
 
+  const plannerStream = stream;
   operator = true;
   emit("refresh");
+  await eventually(() => stream !== plannerStream, "the operator session resubscribed");
+  await click("Profiles");
   await eventually(() => Boolean(selector("Disable Fixture worker")), "the operator session is restored");
   await click("Back to board");
   await click("Projects, All projects");
@@ -1335,7 +1338,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => projectRemoved && !selector("Remove Fixture project dialog"),
     "the board parsed the durable removal receipt and closed the dialog");
   assert.equal(writes.filter(({ path }) => path.endsWith("/removal")).length, 1);
-  await click("Projects, All projects");
-  await eventually(() => !projectRow(), "the removed project is absent from the selector");
+  if (!selector("Project selector")) await click("Projects, All projects");
+  await eventually(() => text().includes("No projects yet."), "the removed project is absent from the refreshed selector");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });
