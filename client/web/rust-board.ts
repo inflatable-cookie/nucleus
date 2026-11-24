@@ -2,6 +2,7 @@ import {
   useInfiniteQuery,
   useQuery,
   type QueryClient,
+  type QueryFilters,
 } from "@tanstack/react-query";
 import { z } from "zod";
 import { readLiveFrames, type LiveFrame } from "./live-channel";
@@ -48,6 +49,7 @@ const current = z.object({
   question: question.nullable(),
 });
 const summary = current.extend({
+  title: z.string().optional(),
   identity: z.object({
     id: z.string(),
     reference: z.string(),
@@ -127,6 +129,9 @@ const applied = z.union([
   z.object({ status: z.literal("pending"), version: revision }),
 ]);
 const change = z.object({ taskId: z.string(), version: revision });
+type BoardRequest = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
+};
 
 export type RustPhase = z.infer<typeof phase>;
 export type RustQuestion = z.infer<typeof question>;
@@ -154,10 +159,10 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
   async function read<T>(
     schema: z.ZodType<T>,
     path: string,
-    options?: RequestInit,
+    options?: BoardRequest,
   ): Promise<T> {
-    const response = await fetcher(api + path, options);
-    const body: unknown = await response.json();
+    const response = await requestRustBoard(path, options, fetcher);
+    const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
       const refusal = z
         .object({
@@ -168,7 +173,7 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
       throw new Error(
         typeof error === "string"
           ? error
-          : (error?.message ?? `Task request failed (${response.status})`),
+          : (error?.message ?? `Engine request failed (${response.status})`),
       );
     }
     const result = schema.safeParse(body);
@@ -178,6 +183,7 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    read,
     list: (signal: AbortSignal) => read(summaries, "/tasks", { signal }),
     detail: (id: string, signal: AbortSignal) =>
       read(detail, taskPath(id), { signal }),
@@ -194,8 +200,20 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(command),
       }),
-    events: (signal: AbortSignal) => fetcher(api + "/events", { signal }),
+    events: (signal: AbortSignal) =>
+      requestRustBoard("/events", { signal }, fetcher),
   };
+}
+
+export function requestRustBoard(
+  path: string,
+  options?: BoardRequest,
+  fetcher: typeof fetch = fetch,
+) {
+  return fetcher(api + path, {
+    ...options,
+    headers: { ...options?.headers, "x-nucleus-board": "1" },
+  });
 }
 
 const transport = createRustBoardTransport();
@@ -261,13 +279,19 @@ export function rustInvalidationFromFrame(
 }
 
 export function createRustInvalidator(client: QueryClient): RustInvalidation {
-  const waiting = new Set<string>();
-  return (id) => {
-    const queries = client.getQueryCache().findAll({
+  const invalidate = createPushInvalidator(client);
+  return (id) =>
+    invalidate({
       queryKey: root,
       predicate: ({ queryKey }) =>
         id === undefined || queryKey[1] === "list" || queryKey[2] === id,
     });
+}
+
+export function createPushInvalidator(client: QueryClient) {
+  const waiting = new Set<string>();
+  return (filters: QueryFilters) => {
+    const queries = client.getQueryCache().findAll(filters);
     for (const query of queries) {
       if (waiting.has(query.queryHash)) continue;
       const refresh = () => {
@@ -292,13 +316,21 @@ export function createRustInvalidator(client: QueryClient): RustInvalidation {
 export async function listenForRustChanges(
   invalidate: RustInvalidation,
   signal: AbortSignal,
+  board?: {
+    settingsChanged: () => void;
+    connection: (state: "live" | "retrying" | "expired") => void;
+  },
 ) {
   while (!signal.aborted) {
     try {
       const response = await transport.events(signal);
-      if (response.status === 401) return;
+      if (response.status === 401) {
+        board?.connection("expired");
+        return;
+      }
       if (!response.ok || !response.body)
         throw new Error("Task activity stream unavailable");
+      board?.connection("live");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let pending = "";
@@ -310,8 +342,11 @@ export async function listenForRustChanges(
             pending + decoder.decode(value, { stream: true }),
           );
           pending = read.rest;
-          for (const frame of read.frames)
+          for (const frame of read.frames) {
             rustInvalidationFromFrame(frame, invalidate);
+            if (frame.event === "settings" || frame.event === "refresh")
+              board?.settingsChanged();
+          }
         }
       } finally {
         reader.releaseLock();
@@ -320,6 +355,7 @@ export async function listenForRustChanges(
       // The engine emits refresh on every reconnect, including after a restart.
     }
     if (signal.aborted) return;
+    board?.connection("retrying");
     await new Promise<void>((resolve) => {
       const resume = () => {
         clearTimeout(timer);

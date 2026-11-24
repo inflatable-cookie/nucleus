@@ -33,8 +33,10 @@ use crate::{
     presentation::{HistoryEvent, RunView},
 };
 
+mod board;
 mod planning;
 mod settings;
+pub use board::router_with_board;
 pub(crate) use settings::{CachedHost, RuntimeSettings};
 
 #[cfg(test)]
@@ -73,6 +75,14 @@ struct ControllerDigest([u8; 32]);
 /// Bind the engine's JSON API and its revision stream. Task commands and
 /// callbacks use separate credentials. Serve on the configured loopback address.
 pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controller>) -> Router {
+    routes(service, controllers, None)
+}
+
+fn routes(
+    service: Arc<Service>,
+    controllers: impl IntoIterator<Item = Controller>,
+    board: Option<board::Board>,
+) -> Router {
     let api = Api {
         service,
         controllers: controllers.into_iter().collect(),
@@ -97,9 +107,13 @@ pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Contr
         .route("/v1/tasks/{id}/commands", post(command))
         .route("/v1/tasks/{id}/events", get(task_events))
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
-    controller
+    let mut routes = controller
         .merge(tasks)
-        .route("/v1/runs/{task}/{instance}/report", post(report))
+        .route("/v1/runs/{task}/{instance}/report", post(report));
+    if let Some(board) = board {
+        routes = routes.merge(board.routes(&api));
+    }
+    routes
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(
             api.clone(),
@@ -442,7 +456,14 @@ fn invalidations(
     service: Arc<Service>,
     scope: Option<(String, Option<SessionCredential>)>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    Sse::new(stream::unfold(
+    Sse::new(invalidation_events(service, scope)).keep_alive(KeepAlive::default())
+}
+
+fn invalidation_events(
+    service: Arc<Service>,
+    scope: Option<(String, Option<SessionCredential>)>,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    stream::unfold(
         (service.changes(), service, scope, true),
         |(mut receiver, service, scope, first)| async move {
             let event = if first {
@@ -475,14 +496,14 @@ fn invalidations(
             }
             Some((Ok(event), (receiver, service, scope, false)))
         },
-    ))
-    .keep_alive(KeepAlive::default())
+    )
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Summary {
     identity: Identity,
+    title: String,
     version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
@@ -511,6 +532,7 @@ impl Summary {
     fn new(task: &Task, version: i64, wait: Option<WaitReason>) -> Self {
         Self {
             identity: task.identity().clone(),
+            title: crate::titles::brief(task),
             version,
             phase: task.phase(),
             next_check_at: None,
@@ -578,6 +600,7 @@ enum ApiError {
     Address,
     Invalid,
     SettingsOperator,
+    BoardUnavailable,
     Service(ServiceError),
 }
 
@@ -606,6 +629,7 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "settings writes require an operator".into(),
             ),
+            Self::BoardUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "board unavailable".into()),
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing

@@ -2,6 +2,7 @@ import { copyNodeRuntime } from './copy-node-runtime.mjs';
 import { checkPackageBbPlugin } from './check-publication.mjs';
 import { findBbCli } from '../shared/bb-cli.mjs';
 import { buildBoard } from './bb/build-board.mjs';
+import { buildEngineBoard, buildWeb } from './build-web.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -28,17 +29,7 @@ function installedCommands(text) {
     .replace(/node bin\/nucleus-(submit|reparent|review-entry)\.mjs/g, 'nucleus helper $1');
 }
 
-export async function buildWeb(out) {
-  await mkdir(out, { recursive: true });
-  await build({ absWorkingDir: root, entryPoints: ['client/web/index.tsx'], outfile: join(out, 'app.js'), bundle: true, platform: 'browser', format: 'esm', alias: { 'react-native': 'react-native-web' }, plugins: [{ name: 'web-shell', setup(api) {
-    api.onResolve({ filter: /^\./ }, args => {
-      const target = resolve(args.resolveDir, args.path);
-      if (args.importer.startsWith(join(root, 'client') + '/') && (target === join(root, 'client/shell') || target === join(root, 'client/shell/index'))) return { path: join(root, 'client/web/shell.tsx') };
-      return null;
-    });
-  } }] });
-  await writeFile(join(out, 'index.html'), '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nucleus</title><style>html,body,#root{height:100%;margin:0}</style></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>');
-}
+export { buildWeb };
 
 /**
  * Build this repository's BB plugin with BB's own build command and copy the result
@@ -345,6 +336,7 @@ export async function buildRuntime(destination) {
   await writeFile(join(out, 'index.server.ts'), "export { default } from './server/index.server.mjs';\n");
   await build({ absWorkingDir: root, entryPoints: ['index.client.tsx'], outfile: join(out, 'client/index.client.js'), bundle: true, platform: 'neutral', format: 'esm', external: ['react', 'react/*', 'react-native', 'react-native/*', 'zod', 'zod/*', '@tanstack/react-query', '@tanstack/react-query/*', '@getpaseo/plugin', '@getpaseo/plugin/*'] });
   await buildWeb(join(out, 'web/dist'));
+  await buildEngineBoard(join(out, 'web/engine'));
   await writeFile(join(out, 'index.client.tsx'), "export { default } from './client/index.client.js';\n");
   await mkdir(join(out, 'runtime'));
   const nodeLibraries = copyNodeRuntime(join(out, 'runtime', 'node'));

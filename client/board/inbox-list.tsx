@@ -864,7 +864,7 @@ export function InboxList({
 
 const rustPageSize = 25;
 
-function RustListRows({ c, rust, view }: {
+export function RustListRows({ c, rust, view }: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
   view: InboxListProps["view"];
@@ -876,10 +876,10 @@ function RustListRows({ c, rust, view }: {
     {tasks.slice(0, limit).map((task) => {
       const reference = rustTaskLabel(task);
       const question = view === "needs" ? task.question : null;
-      const title = question ? rustQuestionText(question) : reference;
+      const title = question ? rustQuestionText(question) : task.title || reference;
       const wait = rustWaitText(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
-        title={title} label={question ? `${reference}, ${title}` : title} meta={question ? reference : null}
+        title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={rust.projectName(task)} />}
         status={wait || view === "history" ? {
           tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",

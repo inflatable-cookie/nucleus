@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
-use nucleus_service::{Controller, Project, ReportTicket, Service, router};
+use nucleus_service::{Controller, Project, ReportTicket, Service, router, router_with_board};
 use nucleus_store::{Hosts, SettingsFile};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
@@ -76,6 +76,9 @@ enum Action {
         /// Give the fixture origin thread its own planner credential.
         #[arg(long)]
         fixture_origin_thread: Option<String>,
+        /// Directory containing the built standalone board.
+        #[arg(long)]
+        board_assets: Option<PathBuf>,
     },
     #[command(flatten)]
     Planning(planning::Action),
@@ -109,6 +112,8 @@ enum Action {
     },
     /// Read the isolated engine settings.
     Settings,
+    /// Print a one-use link to the local board.
+    Ui,
     /// Move to a phase subject to the engine's hard gates.
     Move {
         id: String,
@@ -179,6 +184,7 @@ async fn main() -> Result<()> {
             actor,
             planner,
             fixture_origin_thread,
+            board_assets,
         } => {
             let authority = if planner {
                 Authority::Planner { actor }
@@ -192,6 +198,7 @@ async fn main() -> Result<()> {
                 t3.as_deref(),
                 authority,
                 fixture_origin_thread,
+                board_assets.as_deref(),
             )
             .await
         }
@@ -243,6 +250,7 @@ async fn serve(
     host: Option<&str>,
     authority: Authority,
     fixture_origin_thread: Option<String>,
+    board_assets: Option<&Path>,
 ) -> Result<()> {
     loopback(endpoint)?;
     let actor = match &authority {
@@ -295,7 +303,10 @@ async fn serve(
         )?
         .with_inbox_from_env()?,
     );
-    let api = router(Arc::clone(&service), controllers);
+    let api = match board_assets {
+        Some(path) => router_with_board(Arc::clone(&service), controllers, path)?,
+        None => router(Arc::clone(&service), controllers),
+    };
     let watch = Arc::clone(&service);
     let watcher = tokio::spawn(async move {
         watch.watch_host().await;
@@ -367,6 +378,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     use Action as A;
     loopback(endpoint)?;
     let key = control_key(CONTROL_KEY)?;
+    let board_link = matches!(action, A::Ui);
     let (method, path, body) = match action {
         A::Planning(action) => action.request()?,
         A::Admit { id, reference } => (
@@ -392,6 +404,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
             None,
         ),
         A::Settings => (Method::GET, "/v1/settings".into(), None),
+        A::Ui => (Method::POST, "/v1/board/link".into(), None),
         A::Move { id, phase } => command_path(&id, Command::Move(phase))?,
         A::Answer { id, answer } => command_path(&id, Command::Answer(answer.into()))?,
         A::Cancel { id } => command_path(&id, Command::Cancel)?,
@@ -402,6 +415,9 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     };
     let response = request(endpoint, method, &path, &key, body).await?;
     let status = response.status();
+    if board_link && status == reqwest::StatusCode::NOT_FOUND {
+        return Err("the engine is running without board assets".into());
+    }
     let result: Value = response.json().await?;
     if !status.is_success() {
         return Err(result["error"]
@@ -410,7 +426,11 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
             .to_owned()
             .into());
     }
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    if board_link {
+        println!("{}", result["url"].as_str().ok_or("invalid board link")?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
     Ok(())
 }
 

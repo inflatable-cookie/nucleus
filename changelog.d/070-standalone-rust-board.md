@@ -1,0 +1,1 @@
+The Rust engine can serve its board and Settings on loopback while the TypeScript service is offline. The board shows live task totals, and Settings can edit dispatch, profiles, projects, T3, and storage through the Rust service.

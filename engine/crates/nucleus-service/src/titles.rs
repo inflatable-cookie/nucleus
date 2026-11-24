@@ -83,7 +83,7 @@ fn task_title(task: &Task, wait: Option<WaitReason>) -> String {
     ))
 }
 
-fn brief(task: &Task) -> String {
+pub(super) fn brief(task: &Task) -> String {
     let text = task
         .brief()
         .declared_title()

@@ -23,7 +23,7 @@ pub(crate) struct RuntimeSettings {
     pub host: CachedHost,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CachedHost {
     Unknown,
@@ -239,7 +239,7 @@ pub(super) async fn put(
     let service = api.service;
     // Finish publishing the local read model even if the HTTP client disconnects.
     let saved = task::spawn(async move {
-        match domain {
+        let result = match domain {
             Domain::Profiles => {
                 let value = decode::<Profiles>(value)?;
                 save_profiles(&service, revision, value).await
@@ -265,7 +265,11 @@ pub(super) async fn put(
                     replace::<EngineSettings>(&service.settings, revision, value).await?;
                 Ok(storage_view(&service, &saved))
             }
+        };
+        if result.is_ok() {
+            service.settings_changes.send_replace(());
         }
+        result
     })
     .await
     .map_err(|_| ServiceError::Input)??;
@@ -294,10 +298,12 @@ pub(super) async fn reassign(
     let service = api.service;
     Ok(Json(
         task::spawn(async move {
-            save_projects(&service, revision, move |projects| {
+            let saved = save_projects(&service, revision, move |projects| {
                 move_repository(projects, &origin, &to_project)
             })
-            .await
+            .await?;
+            service.settings_changes.send_replace(());
+            Ok::<_, ApiError>(saved)
         })
         .await
         .map_err(|_| ServiceError::Input)??,

@@ -212,13 +212,14 @@ impl Service {
         if state.planner_authority_epoch != epoch || bound_planner(&row.task) != Some(&thread) {
             return Err(HostError::Uncertain.into());
         }
-        state.settings.host = match &result {
+        let host = match &result {
             Ok(_) => crate::web::CachedHost::Reachable,
             Err(HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout) => {
                 crate::web::CachedHost::Unavailable
             }
             Err(_) => crate::web::CachedHost::Unknown,
         };
+        self.set_cached_host(&mut state, host);
         let identity = result?.filter(|identity| {
             identity.project_id == self.project.host_project
                 && !identity.is_child()
@@ -233,6 +234,7 @@ impl Service {
                 checked_at: Instant::now(),
             },
         );
+        self.settings_changes.send_replace(());
         self.publish(id, row.version);
         Ok(())
     }

@@ -196,6 +196,16 @@ effigy test --plan  # the test shape
 changing state transitions or external effects. Release builds and rolling to
 a live checkout follow the [release contract](docs/knowledge/contracts/release.md).
 
+## Delete at TS retirement
+
+- Remove the old Settings screen in `client/settings-screen.tsx`, its legacy
+  panels, and its registrations in the Paseo and BB clients. The Rust board's
+  Settings uses the shared controls.
+- Remove the TypeScript web Settings RPC wiring in `client/web/app.tsx`,
+  `client/web/transport.ts`, `service/web/web-board.ts` and
+  `shared/web-surface.ts`. The Rust board pairs with Axum and edits settings
+  through the engine API.
+
 ## License
 
 Nucleus's source has no open-source license yet; all rights rest with the

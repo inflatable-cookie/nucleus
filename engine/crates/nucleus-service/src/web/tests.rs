@@ -1836,3 +1836,221 @@ async fn archive_roster_fixture(
     }).await;
     (host, parent_id, archived, native)
 }
+
+#[tokio::test]
+async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_service() {
+    let (home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).expect("assets directory");
+    std::fs::write(assets.join("index.html"), "<script src='/app.js'></script>")
+        .expect("board HTML");
+    std::fs::write(assets.join("app.js"), "document.title = 'Fixture Board';")
+        .expect("board script");
+    let api = router_with_board(
+        Arc::new(service),
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
+            },
+            planner_controller(PLANNER_KEY, "planner"),
+        ],
+        &assets,
+    )
+    .expect("board router");
+    assert_board_assets(&api).await;
+
+    let tasks = "/api/engine/tasks";
+    let dispatch = "/api/engine/settings/dispatch";
+    assert_eq!(
+        get_as(&api, tasks, &BOARD_KEY).await.status(),
+        StatusCode::UNAUTHORIZED,
+        "the browser route requires a paired session"
+    );
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let planner = pair_board(&api, &PLANNER_KEY).await;
+    let view = json_body(
+        browser_request(
+            &api,
+            Method::GET,
+            "/api/engine/session",
+            Some(&planner),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(view["canEditSettings"], false);
+
+    assert_browser_origin(&api, &operator).await;
+
+    let response = browser_request(
+        &api,
+        Method::GET,
+        "/api/engine/events",
+        Some(&operator),
+        None,
+    )
+    .await;
+    let mut events = response.into_body().into_data_stream();
+    assert_event(&mut events, &["event: refresh"]).await;
+    let starting =
+        json_body(browser_request(&api, Method::GET, dispatch, Some(&operator), None).await).await;
+    let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
+    update["value"]["slots"] = json!(3);
+    assert_eq!(
+        browser_request(&api, Method::PUT, dispatch, Some(&planner), Some(&update))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let saved = json_body(
+        browser_request(&api, Method::PUT, dispatch, Some(&operator), Some(&update)).await,
+    )
+    .await;
+    assert_eq!(saved["value"]["slots"], 3);
+    assert_event(&mut events, &["event: settings"]).await;
+    let admission = json!({"id":"board-task","reference":"D1","brief":"# Standalone task"});
+    let response =
+        browser_request(&api, Method::POST, tasks, Some(&operator), Some(&admission)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_event(&mut events, &["event: invalidate", "board-task"]).await;
+    let listed =
+        json_body(browser_request(&api, Method::GET, tasks, Some(&operator), None).await).await;
+    assert_eq!(listed[0]["phase"], "queued");
+    assert_eq!(listed[0]["title"], "Standalone task");
+    let hold = json!({"hold":"Wait for the fixture"});
+    let response = browser_request(
+        &api,
+        Method::POST,
+        "/api/engine/tasks/board-task/commands",
+        Some(&operator),
+        Some(&hold),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_event(&mut events, &["event: invalidate", "board-task"]).await;
+    assert_eq!(
+        json_body(get_as(&api, "/v1/tasks/board-task", &BOARD_KEY).await).await["wait"],
+        "hold"
+    );
+}
+
+async fn assert_board_assets(api: &Router) {
+    for path in ["/", "/settings", "/app.js"] {
+        let response = browser_request(api, Method::GET, path, None, None).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        let bytes = to_bytes(response.into_body(), 1024).await.expect("asset");
+        let expected = if path == "/app.js" {
+            "Fixture Board"
+        } else {
+            "/app.js"
+        };
+        assert!(
+            std::str::from_utf8(&bytes)
+                .expect("utf8 asset")
+                .contains(expected)
+        );
+    }
+}
+
+async fn assert_browser_origin(api: &Router, session: &str) {
+    let response = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/engine/tasks")
+                .header(HOST, LOCAL_HOST)
+                .header(ORIGIN, "http://127.0.0.1:10")
+                .header("x-nucleus-board", "1")
+                .header("cookie", session)
+                .body(Body::empty())
+                .expect("cross-origin request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/engine/tasks")
+                .header(HOST, LOCAL_HOST)
+                .header("cookie", session)
+                .body(Body::empty())
+                .expect("simple request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn pair_board(api: &Router, key: &[u8; 32]) -> String {
+    let link = json_body(post_as(api, "/v1/board/link", key, &json!({})).await).await;
+    let token = link["url"]
+        .as_str()
+        .expect("pairing link")
+        .strip_prefix("http://127.0.0.1:9/#token=")
+        .expect("token in fragment");
+    assert_ne!(token, hex::encode(key));
+    let pair = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/engine/pair")
+            .header(HOST, LOCAL_HOST)
+            .header(ORIGIN, "http://127.0.0.1:9")
+            .header("x-nucleus-board", "1")
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("pair request")
+    };
+    let response = api.clone().oneshot(pair()).await.expect("pair response");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .expect("session cookie");
+    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
+    let session = cookie.split(';').next().expect("cookie value").to_owned();
+    assert_eq!(
+        api.clone()
+            .oneshot(pair())
+            .await
+            .expect("link replay response")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    session
+}
+
+async fn browser_request(
+    api: &Router,
+    method: Method,
+    path: &str,
+    cookie: Option<&str>,
+    body: Option<&Value>,
+) -> Response {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(HOST, LOCAL_HOST)
+        .header(ORIGIN, "http://127.0.0.1:9")
+        .header("x-nucleus-board", "1");
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    let request = if let Some(body) = body {
+        request
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+    } else {
+        request.body(Body::empty())
+    }
+    .expect("browser request");
+    api.clone()
+        .oneshot(request)
+        .await
+        .expect("browser response")
+}

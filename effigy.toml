@@ -88,6 +88,7 @@ check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "ch
 "check:plugin-types" = "tsc -p hosts/bb/plugin/tsconfig.json"
 "check:publication" = "npm run publication:check"
 "engine:fmt" = "cargo fmt --manifest-path engine/Cargo.toml --all -- --check"
+"engine:board-build" = "node scripts/build-web.mjs {args}"
 "engine:check" = "bash engine/cargo-in-scratch check --manifest-path engine/Cargo.toml {args}"
 "engine:clippy" = "bash engine/cargo-in-scratch clippy --manifest-path engine/Cargo.toml --all-targets --all-features {args} -- -D warnings"
 "engine:nextest" = "bash engine/cargo-in-scratch nextest run --manifest-path engine/Cargo.toml {args}"
