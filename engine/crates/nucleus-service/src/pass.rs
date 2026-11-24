@@ -974,6 +974,10 @@ impl Service {
         Ok(action)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep admission, intent and send in order"
+    )]
     async fn send(
         &self,
         row: &TaskRow,
@@ -982,6 +986,7 @@ impl Service {
     ) -> Result<SendAttempt, ServiceError> {
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
+        let _fence = self.effect(row).await?;
         let authorization = host.authorize_send(run).await.inspect_err(|error| {
             eprintln!(
                 "{}: before sending T3 {}: {error}",
@@ -989,7 +994,6 @@ impl Service {
                 launch_diagnostic(run)
             );
         })?;
-        let _fence = self.effect(row).await?;
         if task
             .run()
             .is_some_and(|run| run.last_send_at_ms().is_none())
@@ -1026,6 +1030,18 @@ impl Service {
             }
             return Ok(SendAttempt::Deferred);
         }
+        let parent = authorization.parent_row().zip(self.acp_provider());
+        if let Some((parent, provider)) = parent
+            && let Err(error) = self
+                .wake_task_parent(row, authorization.binding(), provider, parent)
+                .await
+        {
+            if let ServiceError::ParentNotSent { reason, .. } = &error {
+                self.record_parent_refusal(row, &run.launch().instance, "role-wake", None, reason)
+                    .await?;
+            }
+            return Err(error);
+        }
         let archive = permit.superseded;
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
@@ -1051,6 +1067,12 @@ impl Service {
                 dispatch,
             )
         };
+        if let Some((_, provider)) = parent
+            && run.last_send_at_ms().is_none()
+            && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
+        {
+            eprintln!("{}: {error}", task.identity().id);
+        }
         let result = match host.send(dispatch).await {
             Err(error @ HostError::Deferred { .. }) => {
                 let mut audit = event("host_send_not_sent");

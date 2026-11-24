@@ -525,6 +525,9 @@ impl Rpc {
             && (!row["archivedAt"].is_null() || !row["deletedAt"].is_null())
         {
             self.traffic.record("threadReads.archivedOrDeleted");
+            if matches!(policy, ThreadRead::Terminal) {
+                self.traffic.record("threadReads.terminalArchivedOrDeleted");
+            }
         }
         if let Some(marker) = marker
             && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()

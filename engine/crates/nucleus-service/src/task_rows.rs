@@ -303,29 +303,41 @@ impl Service {
 
     /// Wake an exact task parent before an already authorized native message.
     /// The caller holds the task and project fences. Readback gates delivery.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep ownership, both visibility writes and readback in order"
-    )]
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,
         write: &ParentWrite,
     ) -> Result<(), ServiceError> {
-        let Some((initial, provider)) = write.delivery_row() else {
-            return Ok(());
-        };
-        let binding = write.binding();
+        if let Some((initial, provider)) = write.delivery_row() {
+            self.wake_task_parent(row, write.binding(), provider, initial)
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep ownership, both visibility writes and readback in order"
+    )]
+    pub(super) async fn wake_task_parent(
+        &self,
+        row: &TaskRow,
+        binding: &nucleus_hosts::Binding,
+        provider: &str,
+        mut observed: RowObservation,
+    ) -> Result<(), ServiceError> {
         let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
         let id = &row.task.identity().id;
-        let mut observed = initial;
         // Settling and snoozing are distinct in T3. Clear each one explicitly.
         for _ in 0..2 {
-            let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
             let visibility = observed.visibility;
             let shown = visibility
                 .snoozed_until_ms
                 .filter(|&until| until > now_ms());
+            if !visibility.settled && shown.is_none() {
+                return Ok(());
+            }
+            let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
             let owned = receipt.filter(|receipt| receipt.owns(shown));
             if let Some(until) = shown
                 && owned.is_none()

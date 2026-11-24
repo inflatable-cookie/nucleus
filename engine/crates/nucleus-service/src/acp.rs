@@ -220,7 +220,7 @@ impl Service {
         }
     }
 
-    async fn record_parent_refusal(
+    pub(super) async fn record_parent_refusal(
         &self,
         row: &TaskRow,
         command: &str,

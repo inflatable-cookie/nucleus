@@ -1055,6 +1055,32 @@ async fn archival_finds_displaced_children_and_reads_back_both_threads() {
 }
 
 #[tokio::test]
+async fn archived_reads_are_attributed_to_the_terminal_policy() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let archived = snapshot(&binding, "child", "completed", true);
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(archived.clone()),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(archived),
+        ),
+    ])
+    .await;
+    for policy in [crate::ThreadRead::Terminal, crate::ThreadRead::Exact] {
+        host.rpc.thread(THREAD, policy).await.unwrap();
+    }
+    let calls = host.host_calls();
+    assert_eq!(calls["threadReads.archivedOrDeleted"], 2);
+    assert_eq!(calls["threadReads.terminalArchivedOrDeleted"], 1);
+    assert_eq!(calls["threadReads.terminal"], 1);
+    assert_eq!(native.await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

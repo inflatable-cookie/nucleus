@@ -181,6 +181,7 @@ pub struct ReplayAuthorization {
     revoked: bool,
     archived: bool,
     wake: Option<ControlDispatch>,
+    parent_row: Option<RowObservation>,
 }
 
 /// Frozen native write whose send marker must be committed before dispatch.
@@ -193,6 +194,11 @@ impl ReplayAuthorization {
     #[must_use]
     pub const fn binding(&self) -> &Binding {
         &self.wire.binding
+    }
+
+    #[must_use]
+    pub const fn parent_row(&self) -> Option<RowObservation> {
+        self.parent_row
     }
 
     #[must_use]
@@ -814,7 +820,7 @@ impl TaskHost for T3Pass<'_> {
         if wire.assignment_too_large() {
             return Err(HostError::AssignmentLimit);
         }
-        if let Some(parent) = &wire.parent {
+        let parent_row = if let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
@@ -825,7 +831,14 @@ impl TaskHost for T3Pass<'_> {
             {
                 return Err(HostError::Uncertain);
             }
-        }
+            if !run.revoked() && wire.method == Method::Continue {
+                projection.row_observation()?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let (thread, state) = self.host.delivery(run, &wire, ThreadRead::Exact).await?;
         if wire.method == Method::Continue
             && run.launch().profile().is_some()
@@ -879,6 +892,7 @@ impl TaskHost for T3Pass<'_> {
             wake,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
+            parent_row,
         })
     }
 
