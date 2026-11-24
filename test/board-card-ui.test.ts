@@ -1292,7 +1292,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
     ui.indexOf("export const BoardCard"),
     ui.indexOf("\n});\n", ui.indexOf("export const BoardCard")),
   );
-  assert.match(shared, /numberOfLines=\{2\}[\s\S]{0,200}\{title\}/);
+  assert.match(shared, /<Text\b[^>]*numberOfLines=\{2\}[^>]*>\s*\{title\}\s*<\/Text>/);
   assert.match(card, /taskNumberLabel\(task, false\)/);
   assert.doesNotMatch(card, /repoChip|phaseChip|laneChips|profile\?\.name/);
   // The board call site passes only what the card still uses.

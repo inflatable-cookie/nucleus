@@ -177,7 +177,7 @@ for (const [name, c] of [
   ["dark", dark],
   ["light", light],
 ] as const) {
-  test(`a ${name} row keeps the title the only bold line`, async () => {
+  test(`a ${name} row keeps the unselected title regular and muted`, async () => {
     await load();
     const ui = mount(
       h(cards.BoardCardVariantContext.Provider, {
@@ -202,11 +202,11 @@ for (const [name, c] of [
         (node) => node.children.join("") === "An inbox row",
       );
       assert.ok(title, "line 2 is the title");
-      assert.equal(title.props.style.fontWeight, "600");
+      assert.equal(title.props.style.fontWeight, "400");
       assert.equal(
         title.props.style.color,
-        (c as { foreground: string }).foreground,
-        "the title stays the bold white line",
+        (c as { foregroundMuted: string }).foregroundMuted,
+        "the unselected title uses the muted foreground",
       );
       const state = texts.find((node) => node.children.join("") === "Open");
       assert.ok(state, "line 3 names the state");

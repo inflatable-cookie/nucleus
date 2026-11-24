@@ -649,13 +649,18 @@ cards, task dialog, Inbox list, planning screens and Settings sections. One
 client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
 board contracts from the paired API, so there is no second set of screens.
 
-A Rust card shows the task number, project badge and title. The engine's
-effective state and transition age sit together at the top right, with a
-one-line cause below the title when available. Tom clarified on 2026-11-24
-that the bottom of the card shows only coloured lifecycle bars. The strip
-uses the same steps and colours as task detail, with five bars for code tasks
-and four for report-only tasks. Its accessible name summarizes the steps.
-Task detail shows the labels, recorded durations and review round.
+A Rust card uses the TypeScript three-line layout (Tom, 2026-11-24). The first
+line shows the task number and project badge, with the transition age alone
+at the right when recorded. The second line uses regular title weight. The
+title uses the sidebar's muted foreground until selection, when it uses the
+primary foreground. The third line shows a dot, the engine's
+effective state and an optional one-line cause.
+
+Thin lifecycle bars sit below the body, aligned with its text. The strip uses
+the same steps and colours as task detail, with five bars for code tasks and
+four for report-only tasks. Each segment shows its step and recorded progress
+on hover. The strip's accessible name summarizes the steps, and task detail
+shows the labels, recorded durations and review round.
 
 List, detail, `next` and native task titles share the label. A blocking hold
 supplies the label. A hold that lets the
