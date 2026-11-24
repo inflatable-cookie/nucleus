@@ -30,7 +30,7 @@ use std::{
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
-    OperatorDecline, Phase, Report, Task, WaitReason,
+    OperatorDecline, Phase, PullRequest, Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -247,7 +247,7 @@ impl Service {
         brief: String,
         caller: &Authority,
     ) -> Result<Task, ServiceError> {
-        let task = self.brief_task(id, reference, brief, caller)?;
+        let task = self.admission_task(id, reference, brief, None, caller)?;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         if state.settings.fixture_slots(&self.project).is_none() {
@@ -258,11 +258,12 @@ impl Service {
         Ok(task)
     }
 
-    fn brief_task(
+    fn admission_task(
         &self,
         id: String,
         reference: String,
         brief: String,
+        review: Option<PullRequest>,
         caller: &Authority,
     ) -> Result<Task, ServiceError> {
         let identity = Identity {
@@ -270,7 +271,11 @@ impl Service {
             reference,
             repository: self.project.repository.clone(),
             base: self.project.base.clone(),
-            entry: Entry::Brief,
+            entry: if review.is_some() {
+                Entry::ReviewEntry
+            } else {
+                Entry::Brief
+            },
             origin_thread: match caller {
                 Authority::Planner { actor } => Some(actor.clone()),
                 Authority::Operator { .. } => None,
@@ -280,7 +285,12 @@ impl Service {
         if identity.reference.trim().is_empty() || brief.trim().is_empty() {
             return Err(ServiceError::Input);
         }
-        Ok(Task::new(identity, brief, None))
+        if let Some(pr) = &review {
+            Branches::for_review_entry(&identity.repository, &identity.base)?
+                .target(&pr.url)
+                .map_err(|_| ServiceError::Input)?;
+        }
+        Ok(Task::new(identity, brief, review))
     }
 
     /// Wait for a due task and process one bounded batch.

@@ -108,7 +108,7 @@ pub struct Branches {
     owner: String,
     repository: String,
     base: String,
-    head: String,
+    head: Option<String>,
     required_checks: Vec<String>,
 }
 
@@ -118,6 +118,21 @@ impl Branches {
     /// # Errors
     /// Returns an error for an invalid repository or empty branch names.
     pub fn new(repository: &str, base: &str, head: &str) -> Result<Self, ForgeError> {
+        if head.is_empty() {
+            return Err(ForgeError::Identity);
+        }
+        Self::scoped(repository, base, Some(head.into()))
+    }
+
+    /// Bind an existing PR by number within the repository and base. Its source
+    /// branch was created outside the engine.
+    /// # Errors
+    /// Returns an error for an invalid repository or empty base branch.
+    pub fn for_review_entry(repository: &str, base: &str) -> Result<Self, ForgeError> {
+        Self::scoped(repository, base, None)
+    }
+
+    fn scoped(repository: &str, base: &str, head: Option<String>) -> Result<Self, ForgeError> {
         let (owner, name) = repository.split_once('/').ok_or(ForgeError::Identity)?;
         let component = |value: &str| {
             !value.is_empty()
@@ -127,14 +142,14 @@ impl Branches {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
         };
-        if !component(owner) || !component(name) || base.is_empty() || head.is_empty() {
+        if !component(owner) || !component(name) || base.is_empty() {
             return Err(ForgeError::Identity);
         }
         Ok(Self {
             owner: owner.into(),
             repository: name.into(),
             base: base.into(),
-            head: head.into(),
+            head,
             required_checks: Vec::new(),
         })
     }
@@ -190,6 +205,11 @@ pub struct PullTarget {
 }
 
 impl PullTarget {
+    #[must_use]
+    pub const fn number(&self) -> i32 {
+        self.number
+    }
+
     /// Bind this target to the current project check requirements.
     #[must_use]
     pub fn with_required_checks(mut self, checks: Vec<String>) -> Self {
@@ -205,15 +225,20 @@ impl PullTarget {
     }
 
     fn verify(&self, pull: &Pull) -> Result<(), ForgeError> {
+        let matches_repository = |reference: &wire::GitRef| {
+            reference
+                .repo
+                .as_ref()
+                .is_some_and(|repo| self.branches.matches_repository(&repo.full_name))
+        };
         if pull.number != self.number
             || self.branches.target(&pull.html_url)? != *self
-            || pull.head.branch != self.branches.head
-            || ![&pull.base, &pull.head].into_iter().all(|git_ref| {
-                git_ref
-                    .repo
-                    .as_ref()
-                    .is_some_and(|repo| self.branches.matches_repository(&repo.full_name))
-            })
+            || !matches_repository(&pull.base)
+            || self
+                .branches
+                .head
+                .as_ref()
+                .is_some_and(|head| *head != pull.head.branch || !matches_repository(&pull.head))
         {
             return Err(ForgeError::Identity);
         }
@@ -291,7 +316,8 @@ impl GitHub {
             self.origin, branches.owner, branches.repository
         ))
         .map_err(|_| ForgeError::Incomplete)?;
-        let head = format!("{}:{}", branches.owner, branches.head);
+        let head = branches.head.as_ref().ok_or(ForgeError::Identity)?;
+        let head = format!("{}:{head}", branches.owner);
         url.query_pairs_mut().extend_pairs([
             ("state", "open"),
             ("head", &head),

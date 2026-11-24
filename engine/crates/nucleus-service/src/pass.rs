@@ -158,10 +158,11 @@ impl Service {
             && observation.workspace == Observed::Known(Workspace::Absent)
             && let Observed::Known(Forge::Open { pr, .. }) = &observation.forge
             && task.pull_request() == Some(pr)
+            && let Some(target) = &target
         {
             let _fence = self.effect(row).await?;
             self.project.verify(&self.git)?;
-            observation.workspace = seen(checkout.allocate(&pr.head));
+            observation.workspace = seen(checkout.allocate_review(&pr.head, target.number()));
         }
         let (host_state, host_error) = match run_host {
             Some(read) => read,
@@ -237,17 +238,29 @@ impl Service {
             .await
             .settings
             .fixture_checks(&self.project);
-        let branches = Branches::new(
-            &self.project.repository,
-            &self.project.base,
-            checkout.branch(),
-        )?;
-        let reported = task.run().and_then(|run| match run.report() {
-            Some(Report::Work(pr)) if !run.revoked() => Some(pr),
-            _ => None,
-        });
+        let review_entry = task.identity().entry == nucleus_core::Entry::ReviewEntry;
+        let (branches, reported) = if review_entry {
+            (
+                Branches::for_review_entry(&self.project.repository, &self.project.base)?,
+                None,
+            )
+        } else {
+            let reported = task.run().and_then(|run| match run.report() {
+                Some(Report::Work(pr)) if !run.revoked() => Some(pr),
+                _ => None,
+            });
+            (
+                Branches::new(
+                    &self.project.repository,
+                    &self.project.base,
+                    checkout.branch(),
+                )?,
+                reported,
+            )
+        };
         let target = match reported.or_else(|| task.pull_request()) {
             Some(pr) => Some(branches.target(&pr.url)?),
+            None if review_entry => return Err(ForgeError::Identity),
             None if task.phase() == Phase::Queued => None,
             None => capture_forge(self, self.forge.find_open(&branches).await)?,
         };

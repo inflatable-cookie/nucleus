@@ -186,6 +186,32 @@ impl Checkout<'_> {
         self.observe()
     }
 
+    /// Recover an absent review checkout at an observed PR head. Fetch the
+    /// pull ref if its object is not already present locally.
+    /// # Errors
+    /// Returns an error if the pull ref or exact head is unavailable.
+    pub fn allocate_review(&self, head: &Head, pull: i32) -> Result<Workspace, WorkError> {
+        self.worktrees.root.verify()?;
+        let commit = format!("{}^{{commit}}", head.as_str());
+        if self
+            .git(&self.repository, &["cat-file", "-e", &commit])
+            .is_err()
+        {
+            let reference = format!("refs/pull/{pull}/head");
+            self.git(
+                &self.repository,
+                &[
+                    "fetch",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "origin",
+                    &reference,
+                ],
+            )?;
+        }
+        self.allocate(head)
+    }
+
     /// Remove an idle checkout only if it is still clean at the published head.
     /// The caller establishes that its turn and tools have stopped.
     ///
