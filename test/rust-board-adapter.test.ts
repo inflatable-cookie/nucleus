@@ -505,7 +505,7 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
   assert.deepEqual(fake.planningReads(), []);
 });
 
-test("Rust board reads collections on demand across rerenders and event refreshes", async (t) => {
+test("Rust board loads scoped collections on entry and shares them across views", async (t) => {
   const fake = engine();
   fake.setSession({ id: "planner-session", canEditSettings: false, planningProjects: ["Orbit_Main"] });
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
@@ -528,7 +528,7 @@ test("Rust board reads collections on demand across rerenders and event refreshe
   function Records({ view }: { view: "needs" | "planning" | "leads" | "queue" }) {
     const { state, stateQuery } = useBoardState();
     const records = useRecordQueries({
-      state, stateQuery, view, tab: view === "planning" ? view : "queue", scopeOpen: false,
+      state, stateQuery, tab: view === "planning" ? view : "queue", scopeOpen: false,
     });
     const inbox = useInboxBoard({
       state, selection: [], boardLeads: records.boardLeads, leadLinks: records.leadLinks,
@@ -549,38 +549,30 @@ test("Rust board reads collections on demand across rerenders and event refreshe
         value: RUST_ENGINE_FEATURES, children: h(Records, { view }),
       }),
     }) });
-  const ui = mount(render("needs"));
+  const ui = mount(render("queue"));
   t.after(() => { ui.update(h(React.Fragment)); client.clear(); });
   const wait = (pattern: RegExp) => waitFor(
     () => pattern.test(ui.text()), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, pattern.source,
   );
-  await wait(/p-orbit-main.*"needs":1.*Which path should we take/);
-  assert.deepEqual(fake.planningReads(), ["GET /planning/Orbit_Main/decisions"]);
-  ui.update(render("needs"));
+  await wait(/p-orbit-main.*"needs":1.*Which path should we take.*"leads":1,"lanes":\["Delivery"\]/);
+  const scopedReads = [
+    "GET /planning/Orbit_Main/decisions", "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
+  ];
+  assert.deepEqual(fake.planningReads().sort(), scopedReads);
+  ui.update(render("planning"));
+  ui.update(render("leads"));
   await client.refetchQueries({ queryKey: ["nucleus", "state"] });
-  assert.equal(fake.planningReads().length, 1, "board revisions do not cascade to the list");
+  assert.deepEqual(fake.planningReads().sort(), scopedReads, "view changes and board revisions reuse the collections");
 
   ui.update(render("queue"));
   const push = createPushInvalidator(client);
-  push({ queryKey: ["nucleus"] });
-  await wait(/p-orbit-main/);
-  assert.equal(fake.planningReads().length, 1, "queue does not refresh hidden collections");
-  ui.update(render("planning"));
-  await wait(/"leads":1,"lanes":\["Delivery"\]/);
-  assert.deepEqual(fake.planningReads().slice(1).sort(), [
-    "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
-  ]);
-  ui.update(render("leads"));
-  assert.equal(fake.planningReads().length, 3, "Leads reuses the current items");
-
-  ui.update(render("needs"));
-  await waitFor(() => fake.planningReads().length === 4, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "stale decisions refresh");
+  push({ queryKey: ["nucleus", "decisions"] });
+  await waitFor(() => fake.planningReads().length === 4, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "decisions refresh outside Needs you");
+  assert.deepEqual(fake.planningReads().slice(3), ["GET /planning/Orbit_Main/decisions"]);
   assert.equal(await adapter.refreshSession(), false);
   push({ queryKey: ["nucleus"] });
-  await waitFor(() => fake.planningReads().length === 5, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "reconnect refresh");
-  assert.deepEqual(fake.planningReads().slice(3), [
-    "GET /planning/Orbit_Main/decisions", "GET /planning/Orbit_Main/decisions",
-  ]);
+  await waitFor(() => fake.planningReads().length === 7, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "reconnect refresh");
+  assert.deepEqual(fake.planningReads().slice(4).sort(), scopedReads);
 });
 
 test("a project refusal settles lists until the paired session changes", async () => {

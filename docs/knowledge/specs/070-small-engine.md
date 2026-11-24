@@ -97,7 +97,8 @@ Later decisions carry their own attribution.
    - an archived toggle;
    - removal. Tom, 2026-11-24, after the port had left only the archived toggle: "Yeah, let's get removal back in, as per your spec". The planner's proposal he accepted:
      - The board's project selector offers Archive and Remove.
-     - Archive hides the project. Settings reverses it.
+     - Archive hides the project from the selector and refreshes the board's planning counts.
+       Restore in Settings → Projects reverses it. Both actions write the same archived flag.
      - Remove ports the TypeScript removal dialog. It previews blockers, refuses while tasks are open or offers to cancel them, then deletes the project and its planning records.
      - Finished task history stays readable by repository, but nothing new routes to the removed project.
 
@@ -731,8 +732,9 @@ such as a blocking hold or a finished phase, keeps its recorded entry time.
 
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. The session response
-reports the engine's current project scope. The board reads planning collections
-only on views that use them, refreshes them from engine events, and stops
+reports the engine's current project scope. On entry, the board reads scoped
+plans, items and decisions from the store to populate the menu counts. It caches
+the collections across views, refreshes them from engine events, and stops
 requesting a denied project until the session or its scope changes. Settings
 needs no planning reads. Lane edits from the board and from an authenticated
 report worker both signal a planning change. Decision changes refresh Needs you

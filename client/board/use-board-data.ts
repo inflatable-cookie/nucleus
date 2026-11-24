@@ -16,7 +16,6 @@ import {
 import { lanePlaces } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
 import { useEngineFeatures } from "../engine-features";
-import type { BoardView } from "./inbox-menu";
 import { domainRevision, useBoardState } from "../board-state";
 import { useRetainedRead } from "../retained-read";
 import { readDecisions, clearDecisionRead } from "../decision-read";
@@ -50,7 +49,7 @@ export function useTaskDetail(selected: string | null) {
 }
 
 /**
- * Rust reads each planning collection on the views that use it and refreshes it
+ * The paired board reads its menu counts on entry and refreshes the collections
  * on engine events. The TypeScript pipeline keeps its shared revisioned reads.
  */
 export function useRecordQueries({
@@ -58,13 +57,11 @@ export function useRecordQueries({
   state,
   tab,
   scopeOpen,
-  view,
 }: {
   stateQuery: BoardStateQuery;
   state: UiQueueState | undefined;
   tab: BoardTab;
   scopeOpen: boolean;
-  view: BoardView;
 }) {
   const rust = useEngineFeatures().engine === "rust";
   const fetchLeadBoard = useRpc(api.leadBoard);
@@ -83,9 +80,7 @@ export function useRecordQueries({
   const leadsFetch = useQuery({
     queryKey: ["nucleus", "leads", leadsRevision],
     queryFn: () => fetchLeadBoard({}),
-    enabled: rust
-      ? view === "planning" || view === "leads" || view === "papercuts"
-      : scopeOpen || tab === "planning" || tab === "queue",
+    enabled: rust || scopeOpen || tab === "planning" || tab === "queue",
     staleTime,
     placeholderData: keepPreviousData,
   });
@@ -99,7 +94,6 @@ export function useRecordQueries({
     queryFn: () => rust
       ? fetchDecisions({ status: "open" })
       : readDecisions(decisionsRevision, () => fetchDecisions({ status: "open" })),
-    enabled: !rust || view === "needs",
     staleTime,
     placeholderData: keepPreviousData,
   });
@@ -107,9 +101,8 @@ export function useRecordQueries({
   const planFetch = useQuery({
     queryKey: ["nucleus", "plans", plansRevision],
     queryFn: () => fetchPlans({}),
-    enabled: rust
-      ? view === "planning"
-      : (tab === "planning" || tab === "queue") && Boolean(state?.projects.length),
+    enabled:
+      rust || ((tab === "planning" || tab === "queue") && Boolean(state?.projects.length)),
     staleTime,
     placeholderData: keepPreviousData,
   });

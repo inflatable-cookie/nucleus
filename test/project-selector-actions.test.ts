@@ -220,6 +220,7 @@ test("1430 rendered: Remove from Nucleus hands the project to the shared dialog 
   const ui = mount(h(ProjectSelector, picker.props));
   ui.press(/^Projects, /);
   ui.press("Project actions for consumer-b-v2");
+  assert.equal(ui.query("Archive consumer-b-v2"), undefined);
   ui.press("Remove consumer-b-v2 from Nucleus");
   assert.deepEqual(menu.calls, [["remove", consumer]]);
   assert.equal(

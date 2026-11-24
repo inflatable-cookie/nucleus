@@ -741,16 +741,18 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Project actions in the selector** (nucleus#1430, refined by nucleus#1432). Each
   project row has a disclosure chevron, separate from the row's selection, that opens
   a compact panel attached to the row inside the picker, so no nested popover takes an
-  outside press. One row's panel is open at a time. Rename edits
+  outside press. One row's panel is open at a time and shares its row's background.
+  Hover, keyboard focus and selection tints use the picker surface. Rename edits
   the name in its own slot: the row's label becomes a focused input seeded with the
   name, with compact Save and Cancel and the count kept in place. Enter saves and
   Escape cancels, neither selecting the row nor closing the picker; a validation
   problem or refused save shows under the input and keeps the draft for a retry, and
   Cancel restores the label. Rename changes the display name only, under Settings'
   rule (1 to 200 characters once trimmed), and keeps the key, repositories and
-  selection even when the new name re-sorts the row. Remove from Nucleus sits below
+  selection even when the new name re-sorts the row. In TypeScript, Remove from Nucleus sits below
   a divider; it leaves the picker and opens the shared removal dialog, with its
-  open-work blockers and confirmation, and never removes in one click. Every save goes
+  open-work blockers and confirmation, and never removes in one click. Rust project
+  actions follow [Spec 070 ruling 8](070-small-engine.md#rulings). Every save goes
   through the project's version and then refreshes the board and Settings' project
   list. The chevron shows on hover or keyboard focus with a hover pointer, and stays
   visible on touch and in the compact picker. Escape, or back in the compact picker,

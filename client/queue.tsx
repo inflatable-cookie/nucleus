@@ -204,12 +204,15 @@ export function MainSurface({
     return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
   }, [features.engine, rustTasks.data, state?.projects, state?.queuedCounts]);
   // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
-  const projectSelector = useProjectSelectorActions(() => stateQuery.refetch());
+  const projectSelector = useProjectSelectorActions(
+    () => stateQuery.refetch(),
+    features.engine === "rust" && state?.canEditSettings === true,
+  );
   const [removingProject, setRemovingProject] = useState<api.Project | null>(
     null,
   );
   const { detailQuery, nextQuery } = useTaskDetail(selected);
-  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen, view });
+  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
   const {
     leadsQuery,
     decisionsQuery,
@@ -497,7 +500,6 @@ export function MainSurface({
       }
       projectActions={{
         ...projectSelector.actions,
-        // Rust engine (ruling 8): an archived toggle in Settings replaces removal.
         ...(features.projectAgents ? { remove: setRemovingProject } : {}),
       }}
       onOpenChange={setScopeOpen}
