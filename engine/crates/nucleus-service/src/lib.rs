@@ -897,7 +897,7 @@ impl Service {
         let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
-            && !state.store.archive_confirmed(id)?;
+            && !matches!(result, Ok(Action::Nothing));
         if !archive_due
             && !active(&current.task)
             && !state.forge_requested.contains(id)
@@ -922,7 +922,7 @@ impl Service {
         if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
             return Ok(());
         }
-        if wait == Some(WaitReason::HostUnknown) {
+        if wait == Some(WaitReason::HostUnknown) && !archive_due {
             return self.schedule_host_observation(&mut state, row, result);
         }
         state.schedule.reset_host_backoff(id);
@@ -967,7 +967,7 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let detail = match result {
-            Err(ServiceError::ArchiveEvidence(cause)) => Some(WaitDetail::Archive(cause.clone())),
+            Err(error) if archive_due => Some(WaitDetail::Archive(error.to_string())),
             _ => None,
         };
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
