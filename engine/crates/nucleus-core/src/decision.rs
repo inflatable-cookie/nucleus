@@ -171,6 +171,7 @@ enum Signal {
     Start(Role, Launch),
     Failed(Role),
     WorkerReported,
+    ReportSettled(Phase),
     ReviewerReported(Review),
     NeedsReview,
     MergeConfirmed,
@@ -198,11 +199,13 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
         Signal::Admitted | Signal::ReviewerReported(Review::Changes) => {
             Action::Advance(Phase::Working)
         }
+        Signal::ReportSettled(phase) => Action::Advance(phase),
         Signal::WorkerReported | Signal::NeedsReview => Action::Advance(Phase::Reviewing),
         Signal::ReviewerReported(Review::Approve) => Action::Advance(Phase::Merging),
         Signal::MergeConfirmed => Action::Advance(Phase::Closing),
         Signal::Start(role, via) => Action::Launch { role, via },
         Signal::Failed(role) if task.attempts < 2 => Action::Relaunch(role),
+        Signal::Failed(_) if task.report_task().is_some() => Action::Advance(Phase::Blocked),
         Signal::Failed(role) => Action::Ask(Question::Retry { role }),
         Signal::ReadyToMerge(head) => Action::Merge { head },
         Signal::ReadyToClose(commit, workspace) => Action::Close { commit, workspace },
@@ -261,6 +264,16 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             Some(RunState::Gone | RunState::Rejected) => settled(task, observation, role, None),
         };
     }
+    if task.report_task().is_some() {
+        return match task.phase {
+            Phase::Queued => Signal::Admitted,
+            Phase::Working if observation.workspace == Observed::Unknown => {
+                Signal::Wait(WaitReason::WorkspaceUnknown)
+            }
+            Phase::Working => launch(task, observation, Role::Worker),
+            _ => Signal::Finished,
+        };
+    }
     unbound(task, observation)
 }
 
@@ -283,6 +296,14 @@ fn prepared(observation: &Observation, role: Role, review_head: Option<&Head>) -
 }
 
 fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&Report>) -> Signal {
+    if task.report_task().is_some() {
+        return match report {
+            Some(Report::ReportReady(_)) => Signal::ReportSettled(Phase::ReportReady),
+            Some(Report::Blocked(_)) => Signal::ReportSettled(Phase::Blocked),
+            Some(Report::Error(_)) => Signal::ReportSettled(Phase::Error),
+            _ => Signal::Failed(role),
+        };
+    }
     if matches!(observation.forge, Observed::Unknown)
         && (role == Role::Reviewer || task.pr.is_some() || matches!(report, Some(Report::Work(_))))
     {
@@ -300,7 +321,9 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
         return Signal::Refresh(task.phase);
     }
     match report {
-        None => Signal::Failed(role),
+        None | Some(Report::ReportReady(_) | Report::Blocked(_) | Report::Error(_)) => {
+            Signal::Failed(role)
+        }
         Some(Report::Question { prompt, options }) => Signal::Question(Question::Work {
             prompt: prompt.clone(),
             options: options.clone(),
@@ -428,7 +451,9 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
             Observed::Unknown => Signal::Wait(WaitReason::ForgeUnknown),
             Observed::Known(_) => Signal::Question(Question::Repair(Repair::MergeUnconfirmed)),
         },
-        Phase::Done | Phase::Cancelled => Signal::Finished,
+        Phase::ReportReady | Phase::Blocked | Phase::Error | Phase::Done | Phase::Cancelled => {
+            Signal::Finished
+        }
     }
 }
 

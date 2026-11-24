@@ -19,6 +19,9 @@ const role = z.enum(["worker", "reviewer"]);
 const phase = z.enum([
   "queued",
   "working",
+  "report_ready",
+  "blocked",
+  "error",
   "reviewing",
   "merging",
   "closing",
@@ -72,10 +75,24 @@ const verdict = z.union([
     accepted: z.object({ head, acceptance: z.object({ reason: z.string() }) }),
   }),
 ]);
+const reportArtifact = z.object({
+  key: z.string(),
+  version: revision,
+  digest: z.string(),
+});
 const detail = summary.extend({
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
+  report: z.object({
+    lane: z.string(),
+    planningBase: head,
+    failure: z.string().nullable(),
+    delivery: z.object({
+      artifact: reportArtifact,
+      summary: z.string(),
+    }).nullable(),
+  }).optional(),
   run: z
     .object({
       role,
@@ -97,7 +114,7 @@ const next = current.extend({
     z.union([
       z.object({ name: z.literal("move"), phase, preflight: readiness }),
       z.object({
-        name: z.enum(["answer", "cancel", "amend", "hold", "release"]),
+        name: z.enum(["answer", "cancel", "amend", "hold", "release", "complete", "move_work"]),
         preflight: readiness,
       }),
     ]),
@@ -144,6 +161,8 @@ export type RustVerdict = z.infer<typeof verdict>;
 export type RustHistoryPage = z.infer<typeof history>;
 export type RustCommand =
   | { move: RustPhase }
+  | { move_work: { instruction: string } }
+  | { complete: { version: number; artifact: z.infer<typeof reportArtifact>; reason: string } }
   | {
       answer:
         | { work: string }
@@ -376,6 +395,9 @@ export async function listenForRustChanges(
 export const rustColumns = {
   queued: "queue",
   working: "working",
+  report_ready: "review",
+  blocked: "needs",
+  error: "needs",
   reviewing: "review",
   merging: "merging",
   closing: "closing",
@@ -401,7 +423,7 @@ export function groupRustTasks(
   for (const task of tasks) {
     const column = rustColumns[task.phase];
     columns[column].push(task);
-    if (column !== "history" && task.question) columns.needs.push(task);
+    if (column !== "history" && column !== "needs" && task.question) columns.needs.push(task);
   }
   return columns;
 }
@@ -409,6 +431,9 @@ export function groupRustTasks(
 export const rustPhaseLabels: Record<RustPhase, string> = {
   queued: "Queued",
   working: "Working",
+  report_ready: "Report ready",
+  blocked: "Blocked",
+  error: "Error",
   reviewing: "Reviewing",
   merging: "Merging",
   closing: "Closing",

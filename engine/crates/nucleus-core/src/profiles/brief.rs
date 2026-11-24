@@ -12,6 +12,47 @@ pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
     pub critical: bool,
     profile_requests: Requests,
+    #[serde(default, deserialize_with = "optional_bool")]
+    pub report_only: Option<bool>,
+    #[serde(default, deserialize_with = "optional_text")]
+    pub report_lane: Option<String>,
+    lane: Option<LaneSelection>,
+    #[serde(default, deserialize_with = "optional_lane_keys")]
+    lanes: Option<Vec<String>>,
+    interactive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum LaneSelection {
+    Key(#[serde(deserialize_with = "text_scalar")] String),
+    Keys(#[serde(deserialize_with = "lane_keys")] Vec<String>),
+}
+
+fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    text_scalar(deserializer).map(Some)
+}
+
+fn optional_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    match yaml_serde::Value::deserialize(deserializer)? {
+        yaml_serde::Value::Bool(value) => Ok(Some(value)),
+        _ => Err(de::Error::custom("expected a Boolean reportOnly value")),
+    }
+}
+
+fn lane_keys<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    struct Key(#[serde(deserialize_with = "text_scalar")] String);
+    Ok(Vec::<Key>::deserialize(deserializer)?
+        .into_iter()
+        .map(|key| key.0)
+        .collect())
+}
+
+fn optional_lane_keys<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    lane_keys(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -46,6 +87,7 @@ pub enum BriefPolicyError {
     UnclosedFrontmatter,
     InvalidFrontmatter(yaml_serde::Error),
     UnjustifiedRequest(Role),
+    ReportPolicy(&'static str),
 }
 
 impl fmt::Display for BriefPolicyError {
@@ -55,6 +97,7 @@ impl fmt::Display for BriefPolicyError {
                 f.write_str("brief frontmatter is missing its closing delimiter")
             }
             Self::InvalidFrontmatter(error) => write!(f, "invalid routing frontmatter: {error}"),
+            Self::ReportPolicy(message) => f.write_str(message),
             Self::UnjustifiedRequest(role) => write!(
                 f,
                 "{role:?} profile request needs a profile ID and a reason of 1 to 4000 characters"
@@ -85,7 +128,41 @@ impl BriefPolicy {
             yaml_serde::from_str(front).map_err(BriefPolicyError::InvalidFrontmatter)?;
         let mut policy = parsed.and_then(|front| front.queue).unwrap_or_default();
         policy.normalize_requests()?;
+        if policy.report_lane.is_some() && policy.report_only != Some(true) {
+            return Err(BriefPolicyError::ReportPolicy(
+                "queue.reportLane requires queue.reportOnly: true",
+            ));
+        }
+        if policy.report_only == Some(true) {
+            if policy.interactive {
+                return Err(BriefPolicyError::ReportPolicy(
+                    "queue.reportOnly cannot be combined with queue.interactive",
+                ));
+            }
+            if policy.lane.is_some() && policy.lanes.is_some() {
+                return Err(BriefPolicyError::ReportPolicy(
+                    "provide queue.lane or queue.lanes, not both",
+                ));
+            }
+            if let Some(lane) = &policy.report_lane
+                && !policy.lanes().contains(lane)
+            {
+                return Err(BriefPolicyError::ReportPolicy(
+                    "queue.reportLane must also be attached through queue.lane or queue.lanes",
+                ));
+            }
+        }
         Ok(policy)
+    }
+
+    /// Return the lane keys declared in held queue frontmatter.
+    #[must_use]
+    pub fn lanes(&self) -> &[String] {
+        self.lanes.as_deref().unwrap_or_else(|| match &self.lane {
+            Some(LaneSelection::Key(key)) => std::slice::from_ref(key),
+            Some(LaneSelection::Keys(keys)) => keys,
+            None => &[],
+        })
     }
 
     #[must_use]

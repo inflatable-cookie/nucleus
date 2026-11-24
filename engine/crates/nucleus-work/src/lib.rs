@@ -191,6 +191,43 @@ impl Checkout<'_> {
         self.observe()
     }
 
+    /// Check that the registered integration checkout has no tracked changes.
+    ///
+    /// # Errors
+    /// Returns an error if Git cannot inspect the checkout.
+    pub fn integration_clean(&self) -> Result<bool, WorkError> {
+        Ok(self
+            .git(
+                &self.repository,
+                &["status", "--porcelain", "--untracked-files=no"],
+            )?
+            .is_empty())
+    }
+
+    /// Prove ancestry using the registered Git object store.
+    ///
+    /// # Errors
+    /// Returns an error if either commit or its history is unreadable.
+    pub fn contains(&self, ancestor: &Head, tip: &Head) -> Result<bool, WorkError> {
+        let common = self.git(
+            &self.repository,
+            &["merge-base", ancestor.as_str(), tip.as_str()],
+        )?;
+        Ok(common.trim() == ancestor.as_str())
+    }
+
+    /// Verify that the pinned commit can be checked out locally.
+    ///
+    /// # Errors
+    /// Returns an error if the commit is missing or cannot be read.
+    pub fn require_commit(&self, head: &Head) -> Result<(), WorkError> {
+        self.git(
+            &self.repository,
+            &["cat-file", "-e", &format!("{head}^{{commit}}")],
+        )?;
+        Ok(())
+    }
+
     /// Recover an absent review checkout at an observed PR head. Fetch the
     /// pull ref if its object is not already present locally.
     /// # Errors

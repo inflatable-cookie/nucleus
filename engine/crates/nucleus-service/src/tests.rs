@@ -13,7 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use nucleus_core::{
-    CallbackCredential, CheckState, Forge, Head, Host, LaunchInputs, Observation, Observed,
+    CallbackCredential, CheckState, Entry, Forge, Head, Host, LaunchInputs, Observation, Observed,
     PullRequest, Run, Workspace,
 };
 use nucleus_hosts::{

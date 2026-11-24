@@ -33,6 +33,9 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
             "Changes"
         }
         Phase::Working => "Working",
+        Phase::ReportReady => "Report ready",
+        Phase::Blocked => "Blocked",
+        Phase::Error => "Error",
         Phase::Reviewing => "Reviewing",
         Phase::Merging => "Merging",
         Phase::Closing => "Closing",

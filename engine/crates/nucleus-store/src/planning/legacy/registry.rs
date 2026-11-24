@@ -156,9 +156,11 @@ fn apply(source: &Connection, settings: &SettingsFile) -> Result<ProjectImportRe
         &storage.database().path().join(DATABASE_FILE),
         OpenFlags::empty(),
     )?;
+    let schema = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    Store::prepare_schema(&schema, false)?;
+    schema.commit()?;
     connection.pragma_update(None, "foreign_keys", true)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    Store::prepare_schema(&tx, false)?;
     let journal: Option<Option<String>> = tx
         .query_row(
             "SELECT pending FROM legacy_project_import WHERE singleton = 1",

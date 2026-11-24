@@ -10,6 +10,9 @@ use crate::profiles::{BoundProfile, Profile};
 pub enum Phase {
     Queued,
     Working,
+    ReportReady,
+    Blocked,
+    Error,
     Reviewing,
     Merging,
     Closing,
@@ -27,7 +30,14 @@ impl Phase {
         match self {
             Self::Working => Some(Role::Worker),
             Self::Reviewing => Some(Role::Reviewer),
-            Self::Queued | Self::Merging | Self::Closing | Self::Done | Self::Cancelled => None,
+            Self::Queued
+            | Self::ReportReady
+            | Self::Blocked
+            | Self::Error
+            | Self::Merging
+            | Self::Closing
+            | Self::Done
+            | Self::Cancelled => None,
         }
     }
 }
@@ -318,6 +328,9 @@ pub enum HoldBy {
 #[serde(rename_all = "snake_case")]
 pub enum Report {
     Work(PullRequest),
+    ReportReady(ReportDelivery),
+    Blocked(ReportFailure),
+    Error(ReportFailure),
     Review {
         head: Head,
         decision: Review,
@@ -327,6 +340,85 @@ pub enum Report {
         prompt: String,
         options: Vec<String>,
     },
+}
+
+/// An exact version and digest of a durable lane document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportArtifact {
+    pub key: String,
+    pub version: u64,
+    pub digest: String,
+}
+
+/// The worker's completed qualification record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportDelivery {
+    pub artifact: ReportArtifact,
+    #[serde(default)]
+    pub headline: Option<String>,
+    pub summary: String,
+    #[serde(default)]
+    pub head: Option<Head>,
+}
+
+/// A report-only turn that could not deliver its qualification record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportFailure {
+    pub summary: String,
+    #[serde(default)]
+    pub headline: Option<String>,
+    #[serde(default)]
+    pub head: Option<Head>,
+}
+
+impl Report {
+    pub(crate) fn source_head(&self) -> Option<&Head> {
+        match self {
+            Self::ReportReady(delivery) => delivery.head.as_ref(),
+            Self::Blocked(failure) | Self::Error(failure) => failure.head.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+/// The accepted report and its exact owner decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportAcceptance {
+    pub version: i64,
+    pub artifact: ReportArtifact,
+    pub owner: Acceptance,
+}
+
+/// Durable task-scoped report routing and delivery custody.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportTask {
+    pub project: String,
+    pub lane: String,
+    pub planning_base: Head,
+    #[serde(default)]
+    pub instruction: Option<String>,
+    #[serde(default)]
+    pub delivery: Option<ReportDelivery>,
+    #[serde(default)]
+    pub failure: Option<String>,
+    #[serde(default)]
+    pub notice_attempted: bool,
+    #[serde(default)]
+    pub acceptance: Option<ReportAcceptance>,
+    #[serde(default)]
+    pub reported_heads: Vec<Head>,
+    #[serde(default)]
+    pub(crate) receipts: Vec<ReportReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReportReceipt {
+    pub(crate) instance: String,
+    pub(crate) credential: CredentialDigest,
+    pub(crate) report: Report,
 }
 
 /// Only the digest of the bearer is stored. Its debug form is safe for diagnostics.
@@ -509,6 +601,8 @@ pub struct Task {
     pub(crate) attempts: u8,
     pub(crate) question: Option<OpenQuestion>,
     pub(crate) hold: Option<Hold>,
+    #[serde(rename = "report_task", skip_serializing_if = "Option::is_none")]
+    pub(crate) report_state: Option<ReportTask>,
 }
 
 #[derive(Deserialize)]
@@ -523,6 +617,8 @@ struct StoredTask {
     attempts: u8,
     question: Option<OpenQuestion>,
     hold: Option<Hold>,
+    #[serde(rename = "report_task")]
+    report_state: Option<ReportTask>,
 }
 
 impl TryFrom<StoredTask> for Task {
@@ -532,6 +628,24 @@ impl TryFrom<StoredTask> for Task {
         if matches!(&stored.verdict, Some(Verdict::Accepted { acceptance, .. }) if !acceptance.authority.can_accept(stored.identity.entry))
         {
             return Err("stored acceptance is not authorized for this task entry");
+        }
+        if (matches!(
+            stored.phase,
+            Phase::ReportReady | Phase::Blocked | Phase::Error
+        ) && stored.report_state.is_none())
+            || stored.report_state.as_ref().is_some_and(|report| {
+                stored.identity.entry != Entry::Brief
+                    || stored.pr.is_some()
+                    || stored.verdict.is_some()
+                    || matches!(
+                        stored.phase,
+                        Phase::Reviewing | Phase::Merging | Phase::Closing
+                    )
+                    || (stored.phase == Phase::ReportReady && report.delivery.is_none())
+                    || (stored.phase == Phase::Done && report.acceptance.is_none())
+            })
+        {
+            return Err("stored report-only delivery does not match its task");
         }
         if stored.attempts > 3 {
             return Err("stored attempt count exceeds the retry limit");
@@ -571,6 +685,7 @@ impl TryFrom<StoredTask> for Task {
             attempts: stored.attempts,
             question: stored.question,
             hold: stored.hold,
+            report_state: stored.report_state,
         })
     }
 }
@@ -593,6 +708,47 @@ impl Task {
             attempts: 0,
             question: None,
             hold: None,
+            report_state: None,
+        }
+    }
+
+    /// Admit a report-only task with one proved lane and an immutable planning base.
+    #[must_use]
+    pub fn new_report_only(
+        identity: Identity,
+        brief: String,
+        project: String,
+        lane: String,
+        planning_base: Head,
+    ) -> Self {
+        let mut task = Self::new(identity, brief, None);
+        task.report_state = Some(ReportTask {
+            project,
+            lane,
+            planning_base,
+            instruction: None,
+            delivery: None,
+            failure: None,
+            notice_attempted: false,
+            acceptance: None,
+            reported_heads: Vec::new(),
+            receipts: Vec::new(),
+        });
+        task
+    }
+
+    /// Read the report-only delivery state, if the task opted in at admission.
+    #[must_use]
+    pub const fn report_task(&self) -> Option<&ReportTask> {
+        self.report_state.as_ref()
+    }
+
+    /// Fence the initial planner notification before attempting native delivery.
+    pub fn mark_report_notice_attempted(&mut self) {
+        if self.phase == Phase::ReportReady
+            && let Some(report) = &mut self.report_state
+        {
+            report.notice_attempted = true;
         }
     }
 

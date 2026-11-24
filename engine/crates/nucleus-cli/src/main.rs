@@ -164,6 +164,22 @@ enum Action {
         id: String,
         #[arg(value_parser = parse_phase)]
         phase: Phase,
+        #[arg(long)]
+        instruction: Option<String>,
+    },
+    /// Accept the exact delivered report.
+    Complete {
+        id: String,
+        #[arg(long)]
+        version: i64,
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        artifact_version: u64,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        reason: String,
     },
     /// Answer the current question.
     Answer {
@@ -274,6 +290,7 @@ async fn main() -> Result<()> {
             .await
         }
         Action::Report { ticket } => report(&ticket).await,
+        Action::Planning(action) if action.uses_ticket() => action.run_ticket().await,
         Action::ImportItems {
             source,
             repositories,
@@ -473,6 +490,31 @@ fn legacy_number_seed(repository: Option<&str>) -> Result<Option<TaskNumberSeed>
 }
 
 async fn report(path: &Path) -> Result<()> {
+    let report: Report = from_reader(io::stdin().lock())?;
+    let response = run_ticket_request(
+        path,
+        Method::POST,
+        "report",
+        Some(serde_json::to_value(report)?),
+    )
+    .await?;
+    if !response.status().is_success() {
+        let failure: Value = response.json().await?;
+        return Err(failure["error"]
+            .as_str()
+            .unwrap_or("run report was refused")
+            .to_owned()
+            .into());
+    }
+    Ok(())
+}
+
+async fn run_ticket_request(
+    path: &Path,
+    method: Method,
+    suffix: &str,
+    body: Option<Value>,
+) -> Result<Response> {
     let file = private_file(path)?.ok_or("report ticket is missing")?;
     let ticket: ReportTicket = from_reader(file).map_err(|_| "invalid report ticket")?;
     let endpoint = ticket
@@ -483,19 +525,8 @@ async fn report(path: &Path) -> Result<()> {
     loopback(endpoint).map_err(|_| "invalid report ticket")?;
     let task = segment(&ticket.task).map_err(|_| "invalid report ticket")?;
     let instance = segment(&ticket.instance).map_err(|_| "invalid report ticket")?;
-    let report: Report = from_reader(io::stdin().lock())?;
-    let path = format!("/v1/runs/{task}/{instance}/report");
-    let response = request(
-        endpoint,
-        Method::POST,
-        &path,
-        &ticket.credential,
-        Some(serde_json::to_value(report)?),
-        None,
-    )
-    .await?;
-    let _ = response.error_for_status()?;
-    Ok(())
+    let path = format!("/v1/runs/{task}/{instance}/{suffix}");
+    request(endpoint, method, &path, &ticket.credential, body, None).await
 }
 
 fn private_file(path: &Path) -> Result<Option<File>> {
@@ -564,7 +595,36 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Settings => (Method::GET, "/v1/settings".into(), None),
         A::Ui { revoke: false } => (Method::POST, "/v1/board/link".into(), None),
         A::Ui { revoke: true } => (Method::POST, "/v1/board/revoke".into(), None),
-        A::Move { id, phase } => command_path(&id, Command::Move(phase))?,
+        A::Move {
+            id,
+            phase: Phase::Working,
+            instruction: Some(instruction),
+        } => command_path(&id, Command::MoveWork { instruction })?,
+        A::Move {
+            id,
+            phase,
+            instruction: None,
+        } => command_path(&id, Command::Move(phase))?,
+        A::Move { .. } => return Err("--instruction requires move to work".into()),
+        A::Complete {
+            id,
+            version,
+            lane,
+            artifact_version,
+            digest,
+            reason,
+        } => command_path(
+            &id,
+            Command::Complete {
+                version,
+                artifact: nucleus_core::ReportArtifact {
+                    key: lane,
+                    version: artifact_version,
+                    digest,
+                },
+                reason,
+            },
+        )?,
         A::Answer { id, answer } => command_path(&id, Command::Answer(answer.into()))?,
         A::Cancel { id } => command_path(&id, Command::Cancel)?,
         A::Amend { id } => command_path(&id, Command::Amend(stdin_text()?))?,
@@ -651,6 +711,9 @@ async fn request(
 }
 
 fn parse_phase(value: &str) -> std::result::Result<Phase, String> {
+    if value == "work" {
+        return Ok(Phase::Working);
+    }
     serde_json::from_value(Value::String(value.into())).map_err(|_| "expected a task phase".into())
 }
 

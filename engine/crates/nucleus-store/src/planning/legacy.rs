@@ -143,9 +143,11 @@ pub fn apply_items(
     let _lock = storage.lock_profile()?;
     let database = storage.database().path().join(DATABASE_FILE);
     let mut connection = Store::connect_database(&database, OpenFlags::empty())?;
+    let schema = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    Store::prepare_schema(&schema, false)?;
+    schema.commit()?;
     connection.pragma_update(None, "foreign_keys", true)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    Store::prepare_schema(&tx, false)?;
     Store::check_legacy_project_import(&tx)?;
     let mut report = copy_items(&source, &tx, &mapping)?;
     report.profiles = profiles::apply(&source, settings)?;

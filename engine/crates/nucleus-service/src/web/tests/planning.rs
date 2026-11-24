@@ -2,7 +2,7 @@ use super::*;
 
 const PROJECT: &str = "/v1/planning/local-fixture";
 
-async fn put_as(api: &Router, path: &str, key: &[u8; 32], body: &Value) -> Response {
+pub(super) async fn put_as(api: &Router, path: &str, key: &[u8; 32], body: &Value) -> Response {
     api.clone()
         .oneshot(
             Request::put(path)

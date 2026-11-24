@@ -1,5 +1,7 @@
+use nucleus_core::ReportArtifact;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +36,18 @@ pub struct Lane {
     pub document: LaneDocument,
     #[serde(flatten)]
     pub disposition: LaneDisposition,
+}
+
+impl Lane {
+    /// Identify the exact Markdown this lane version carries.
+    #[must_use]
+    pub fn artifact(&self) -> ReportArtifact {
+        ReportArtifact {
+            key: self.key.clone(),
+            version: self.version,
+            digest: format!("{:x}", Sha256::digest(self.document.document.as_bytes())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,14 +1,16 @@
-use nucleus_core::{Authority, PullRequest, profiles::BriefPolicy};
+use nucleus_core::{Authority, Entry, Head, Identity, PullRequest, Task, profiles::BriefPolicy};
+use nucleus_forge::Branches;
 use nucleus_store::{
     StoreError, TaskRow,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, ItemSource, ItemState, MAX_TEXT_BYTES,
-        WriteAt,
+        WriteAt, valid_key,
     },
 };
 use serde::Deserialize;
 use tokio::sync::MutexGuard;
 
+use crate::enrollment::PlanningRepository;
 use crate::{ControllerScope, Service, ServiceError, State, event, now_ms, schedule::Priority};
 
 #[derive(Deserialize)]
@@ -19,6 +21,8 @@ pub(crate) struct TaskAdmission {
     pub repository: Option<String>,
     pub brief: String,
     pub review: Option<PullRequest>,
+    #[serde(rename = "planningCommit")]
+    pub planning_commit: Option<Head>,
 }
 
 impl Service {
@@ -49,8 +53,9 @@ impl Service {
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<TaskRow, ServiceError> {
-        check_brief(&input.brief)?;
+        let policy = check_brief(&input.brief)?;
         self.storage.database().verify()?;
+        let _projects = self.project_writes.read().await;
         let mut state = self.state.lock().await;
         let route =
             self.planning_repository(&mut state, scope, project, input.repository.as_deref())?;
@@ -59,7 +64,34 @@ impl Service {
             None => new_id("t")?,
         };
         let reference = input.reference.unwrap_or_else(|| id.clone());
-        let task = Self::admission_task(id, reference, input.brief, input.review, caller, route)?;
+        let identity = admission_identity(id, reference, input.review.as_ref(), caller, &route)?;
+        let task = if let Some(lane) = delivery_lane(&policy, &[])? {
+            if input.review.is_some() {
+                return Err(ServiceError::ReportInput(
+                    "a report-only task cannot enter through a pull request".into(),
+                ));
+            }
+            require_report_lanes(&state, &route, &policy, &[], &lane)?;
+            drop(state);
+            let head = self
+                .capture_report_base(&identity, input.planning_commit.as_ref())
+                .await?;
+            state = self.state.lock().await;
+            if self.planning_repository(&mut state, scope, project, input.repository.as_deref())?
+                != route
+            {
+                return Err(ServiceError::Project);
+            }
+            require_report_lanes(&state, &route, &policy, &[], &lane)?;
+            Task::new_report_only(identity, input.brief, route.project_id, lane, head)
+        } else {
+            if input.planning_commit.is_some() {
+                return Err(ServiceError::ReportInput(
+                    "planningCommit is supported for report-only tasks".into(),
+                ));
+            }
+            Task::new(identity, input.brief, input.review)
+        };
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
         let number = state.store.create(&task, &admitted)?;
@@ -79,6 +111,7 @@ impl Service {
         scope: &ControllerScope,
     ) -> Result<(bool, TaskRow), ServiceError> {
         self.storage.database().verify()?;
+        let _projects = self.project_writes.read().await;
         let mut state = self.state.lock().await;
         let route = self.planning_repository(&mut state, scope, project, None)?;
         let item = state
@@ -97,10 +130,27 @@ impl Service {
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
             return Err(StoreError::PlanningConflict.into());
         }
-        let brief = item.content.body;
-        check_brief(&brief)?;
+        let brief = &item.content.body;
+        let policy = check_brief(brief)?;
         let task_id = new_id("t")?;
-        let task = Self::admission_task(task_id.clone(), task_id, brief, None, caller, route)?;
+        let identity = admission_identity(task_id.clone(), task_id, None, caller, &route)?;
+        let attached = &item.content.lanes;
+        let task = if let Some(lane) = delivery_lane(&policy, attached)? {
+            require_report_lanes(&state, &route, &policy, attached, &lane)?;
+            drop(state);
+            let head = self.capture_report_base(&identity, None).await?;
+            state = self.state.lock().await;
+            if self.planning_repository(&mut state, scope, project, None)? != route {
+                return Err(ServiceError::Project);
+            }
+            if state.store.item(&route.project_id, id)?.as_ref() != Some(&item) {
+                return Err(StoreError::PlanningConflict.into());
+            }
+            require_report_lanes(&state, &route, &policy, attached, &lane)?;
+            Task::new_report_only(identity, brief.clone(), route.project_id, lane, head)
+        } else {
+            Task::new(identity, brief.clone(), None)
+        };
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
         let (_, number) = state
@@ -221,10 +271,101 @@ pub(crate) fn new_id(prefix: &str) -> Result<String, ServiceError> {
     Ok(format!("{prefix}-{}", hex::encode(bytes)))
 }
 
-fn check_brief(brief: &str) -> Result<(), ServiceError> {
-    if brief.len() > MAX_TEXT_BYTES {
+fn check_brief(brief: &str) -> Result<BriefPolicy, ServiceError> {
+    if brief.trim().is_empty() || brief.len() > MAX_TEXT_BYTES {
         return Err(ServiceError::Input);
     }
-    BriefPolicy::parse(brief).map_err(|_| ServiceError::Input)?;
+    let policy =
+        BriefPolicy::parse(brief).map_err(|error| ServiceError::ReportInput(error.to_string()))?;
+    if policy.report_only == Some(true)
+        && !brief
+            .lines()
+            .skip(1)
+            .skip_while(|line| *line != "---")
+            .skip(1)
+            .any(|line| !line.trim().is_empty())
+    {
+        return Err(ServiceError::ReportInput(
+            "report-only brief body is empty".into(),
+        ));
+    }
+    Ok(policy)
+}
+
+fn admission_identity(
+    id: String,
+    reference: String,
+    review: Option<&PullRequest>,
+    caller: &Authority,
+    route: &PlanningRepository,
+) -> Result<Identity, ServiceError> {
+    crate::project::check_task_id(&id)?;
+    if reference.trim().is_empty() {
+        return Err(ServiceError::Input);
+    }
+    if let Some(pr) = review {
+        Branches::for_review_entry(&route.repository, &route.base)?
+            .target(&pr.url)
+            .map_err(|_| ServiceError::Input)?;
+    }
+    Ok(Identity {
+        id,
+        reference,
+        repository: route.repository.clone(),
+        base: route.base.clone(),
+        entry: if review.is_some() {
+            Entry::ReviewEntry
+        } else {
+            Entry::Brief
+        },
+        origin_thread: match caller {
+            Authority::Planner { actor } => Some(actor.clone()),
+            Authority::Operator { .. } => None,
+        },
+    })
+}
+
+fn delivery_lane(
+    policy: &BriefPolicy,
+    attached: &[String],
+) -> Result<Option<String>, ServiceError> {
+    if policy.report_only != Some(true) {
+        return Ok(None);
+    }
+    if let Some(lane) = &policy.report_lane {
+        return Ok(Some(lane.clone()));
+    }
+    let lanes: std::collections::BTreeSet<_> = policy.lanes().iter().chain(attached).collect();
+    if lanes.is_empty() {
+        return Err(ServiceError::ReportInput(
+            "queue.reportOnly requires an attached lane".into(),
+        ));
+    }
+    if lanes.len() > 1 {
+        return Err(ServiceError::ReportInput("multiple lanes are attached; choose one with queue.reportLane and include it in queue.lanes".into()));
+    }
+    Ok(lanes.first().map(|lane| (*lane).clone()))
+}
+
+fn require_report_lanes(
+    state: &State,
+    route: &PlanningRepository,
+    policy: &BriefPolicy,
+    attached: &[String],
+    delivery: &str,
+) -> Result<(), ServiceError> {
+    for lane in policy
+        .lanes()
+        .iter()
+        .chain(attached)
+        .map(String::as_str)
+        .chain([delivery])
+    {
+        if !valid_key(lane) || state.store.lane(&route.project_id, lane)?.is_none() {
+            return Err(ServiceError::ReportInput(format!(
+                "report lane {lane} is not in the task's project"
+            )));
+        }
+    }
     Ok(())
 }

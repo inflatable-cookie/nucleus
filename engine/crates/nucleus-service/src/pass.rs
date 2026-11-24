@@ -51,9 +51,10 @@ pub(super) struct DispatchPermit<'a> {
 
 impl Service {
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
-        let Some(provider) = self.acp_provider() else {
+        let provider = self.acp_provider();
+        if provider.is_none() && row.task.report_task().is_none() {
             return Ok(Action::Nothing);
-        };
+        }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
         let id = &identity.id;
@@ -67,19 +68,28 @@ impl Service {
             .into_iter()
             .filter_map(|role| row.task.threads().get(role))
             .collect();
-        let archive = self
-            .host
-            .prepare_parent_archive(&scope, provider, &retained)
-            .await?;
+        let archive = match provider {
+            Some(provider) => {
+                self.host
+                    .prepare_parent_archive(&scope, provider, &retained)
+                    .await?
+            }
+            None => ArchiveStep::Finished,
+        };
         let _fence = self.effect(row).await?;
+        let uses_report_checkout = row.task.report_task().is_some();
         match archive {
             ArchiveStep::Finished => {
                 let _projects = self.project_writes.read().await;
-                let mut state = self.state.lock().await;
-                let route = self.resolve_project(&state, identity)?;
+                let route = self.project_for(identity).await?;
                 if self.checkout_binding(identity, &route, &checkout)? != scope {
                     return Err(HostError::Binding.into());
                 }
+                if uses_report_checkout {
+                    let head = self.report_archive_head(row, &checkout).await?;
+                    Self::retire_report_checkout(&checkout, head.as_ref())?;
+                }
+                let mut state = self.state.lock().await;
                 self.commit(
                     &mut state,
                     row,
@@ -103,6 +113,9 @@ impl Service {
                 else {
                     return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
                 };
+                if uses_report_checkout {
+                    self.report_archive_head(row, &checkout).await?;
+                }
                 self.host.write_parent(write).await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
@@ -110,6 +123,10 @@ impl Service {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the ordered task pass and its effect gates together"
+    )]
     pub(super) async fn advance(
         &self,
         row: &TaskRow,
@@ -143,9 +160,13 @@ impl Service {
         };
         let worktrees = self.worktrees()?;
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let (forge, target, forge_error) = match self.read_forge(task, &checkout).await {
-            Ok((forge, target)) => (Observed::Known(forge), target, None),
-            Err(error) => (Observed::Unknown, None, Some(error)),
+        let (forge, target, forge_error) = if task.report_task().is_some() {
+            (Observed::Unknown, None, None)
+        } else {
+            match self.read_forge(task, &checkout).await {
+                Ok((forge, target)) => (Observed::Known(forge), target, None),
+                Err(error) => (Observed::Unknown, None, Some(error)),
+            }
         };
         self.observe_commands(row, &forge).await?;
         if !active(task) {
@@ -317,10 +338,14 @@ impl Service {
         let workspace = if let Some((head, pull)) = review {
             seen(checkout.allocate_review(head, pull))
         } else {
-            let start = self
-                .project
-                .as_ref()
-                .map_or(&base_head, |project| &project.start);
+            let start = task.report_task().map_or_else(
+                || {
+                    self.project
+                        .as_ref()
+                        .map_or(&base_head, |project| &project.start)
+                },
+                |report| &report.planning_base,
+            );
             Observed::Known(checkout.allocate(start)?)
         };
         Ok(Some(workspace))
@@ -369,6 +394,8 @@ impl Service {
             {
                 "provider_limit"
             }
+            Action::Advance(Phase::ReportReady) => "report_ready",
+            Action::Advance(Phase::Blocked | Phase::Error) => "report_only_worker_returned",
             Action::Advance(_) => "phase_reconciled",
             Action::Revoke => "run_revoked",
             Action::Relaunch(_) => "run_failed",
@@ -378,6 +405,15 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
+        if updated.phase() == Phase::ReportReady
+            && let Some(delivery) = updated
+                .report_task()
+                .and_then(|report| report.delivery.as_ref())
+        {
+            audit.detail =
+                serde_json::json!({ "artifact": delivery.artifact, "summary": delivery.summary })
+                    .to_string();
+        }
         if row.task.phase() != updated.phase() && updated.phase() == Phase::Closing {
             crate::presentation::note_merge(&mut audit, &observation.forge);
         }
@@ -764,7 +800,7 @@ impl Service {
         }))
     }
 
-    fn checkout_binding(
+    pub(super) fn checkout_binding(
         &self,
         identity: &nucleus_core::Identity,
         route: &ProjectRoute,

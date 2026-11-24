@@ -133,6 +133,12 @@ pub(crate) struct Detail {
     pub operator_inbox: bool,
     pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
+    pub report: Option<Report>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Report {
+    pub delivery: Option<nucleus_core::ReportDelivery>,
 }
 
 #[derive(Deserialize)]

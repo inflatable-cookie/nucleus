@@ -23,6 +23,8 @@ use crate::{
 mod planning;
 #[path = "tests/projects.rs"]
 mod projects;
+#[path = "tests/report_only.rs"]
+mod report_only;
 
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 const BOARD_KEY: [u8; 32] = [2; 32];

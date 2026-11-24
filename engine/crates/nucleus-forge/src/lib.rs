@@ -254,6 +254,17 @@ pub struct GitHub {
     origin: String,
 }
 
+#[derive(Deserialize)]
+struct PublishedBranch {
+    name: String,
+    commit: PublishedCommit,
+}
+
+#[derive(Deserialize)]
+struct PublishedCommit {
+    sha: Head,
+}
+
 impl GitHub {
     /// Configure the GitHub client using a caller-owned bearer.
     ///
@@ -331,6 +342,119 @@ impl GitHub {
             [pull] => Ok(Some(branches.target(&pull.html_url)?)),
             _ => Err(ForgeError::Ambiguous),
         }
+    }
+
+    /// Check for any open PR from the task branch, including drafts and other bases.
+    ///
+    /// # Errors
+    /// Returns an error if the forge cannot verify the lookup.
+    pub async fn has_open_branch_pr(&self, branches: &Branches) -> Result<bool, ForgeError> {
+        let head = branches.head.as_ref().ok_or(ForgeError::Identity)?;
+        // Unlike the REST head filter, headRefName also detects a same-named
+        // branch from a fork, and the query deliberately leaves the base unconstrained.
+        let query = "query($owner:String!,$repo:String!,$head:String!){
+          repository(owner:$owner,name:$repo){
+            pullRequests(headRefName:$head,states:OPEN,first:1){totalCount}
+          }
+        }";
+        let response = self
+            .client
+            .post(format!("{}/graphql", self.origin))
+            .json(&json!({"query": query, "variables": {
+                "owner": branches.owner, "repo": branches.repository, "head": head
+            }}))
+            .send()
+            .await?;
+        let now = SystemTime::now();
+        let deadline =
+            deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
+        let graph: GraphReply = decode(response).await?;
+        if graph.rate_limited() {
+            return Err(ForgeError::Deferred { until: deadline });
+        }
+        graph.has_open_branch_pr()
+    }
+
+    /// Read a branch head through the authenticated canonical repository.
+    ///
+    /// # Errors
+    /// Returns an error if the branch or its advertised head is unavailable.
+    pub async fn branch_head(&self, branches: &Branches, name: &str) -> Result<Head, ForgeError> {
+        let mut url = self.repository_url(branches, "branches")?;
+        url.path_segments_mut()
+            .map_err(|()| ForgeError::Incomplete)?
+            .push(name);
+        let branch: PublishedBranch = decode(self.client.get(url).send().await?).await?;
+        if branch.name != name {
+            return Err(ForgeError::Identity);
+        }
+        Ok(branch.commit.sha)
+    }
+
+    /// Enumerate origin branches to find a published source after the task branch moved.
+    ///
+    /// # Errors
+    /// Returns an error if the complete branch list cannot be read.
+    pub async fn published_branches(
+        &self,
+        branches: &Branches,
+    ) -> Result<Vec<(String, Head)>, ForgeError> {
+        let mut heads = Vec::new();
+        for page in 1..=100 {
+            let mut url = self.repository_url(branches, "branches")?;
+            url.query_pairs_mut()
+                .append_pair("per_page", "100")
+                .append_pair("page", &page.to_string());
+            let batch: Vec<PublishedBranch> = decode(self.client.get(url).send().await?).await?;
+            let last = batch.len() < 100;
+            heads.extend(
+                batch
+                    .into_iter()
+                    .map(|branch| (branch.name, branch.commit.sha)),
+            );
+            if last {
+                return Ok(heads);
+            }
+        }
+        Err(ForgeError::Incomplete)
+    }
+
+    /// Verify ancestry when the remote tip is absent from the local object store.
+    ///
+    /// # Errors
+    /// Returns an error if the forge cannot compare the commits.
+    pub async fn contains(
+        &self,
+        branches: &Branches,
+        ancestor: &Head,
+        tip: &Head,
+    ) -> Result<bool, ForgeError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Relation {
+            Ahead,
+            Behind,
+            Diverged,
+            Identical,
+        }
+        #[derive(Deserialize)]
+        struct Comparison {
+            status: Relation,
+        }
+        let url = self.repository_url(branches, &format!("compare/{ancestor}...{tip}"))?;
+        let comparison: Comparison = decode(self.client.get(url).send().await?).await?;
+        Ok(matches!(
+            comparison.status,
+            Relation::Ahead | Relation::Identical
+        ))
+    }
+
+    fn repository_url(&self, branches: &Branches, path: &str) -> Result<Url, ForgeError> {
+        Url::parse(&format!(
+            "{}/repos/{}/{}/{path}",
+            self.origin, branches.owner, branches.repository
+        ))
+        .map_err(|_| ForgeError::Incomplete)
     }
 
     /// Read PR identity, current head, check state and any merge commit.
