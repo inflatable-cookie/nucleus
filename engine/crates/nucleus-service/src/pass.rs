@@ -14,7 +14,7 @@ use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
     NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, TaskHost, launch_diagnostic,
+    StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -24,7 +24,7 @@ use crate::{
     Service, ServiceError, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
     project::{ProjectRoute, linked_checkout},
-    prompt::{Assignment, LaneContext, Prompt, PromptSize},
+    prompt::{Assignment, LaneContext, Prompt, PromptSize, report_reminder},
     scratch, ticket,
 };
 
@@ -293,6 +293,10 @@ impl Service {
             } => self.send_prepared(row, &checkout, observation, host).await,
             Action::Launch { role, via } => {
                 self.reserve(row, &checkout, observation, role, via, host)
+                    .await
+            }
+            Action::RemindReport => {
+                self.reserve_report_reminder(row, &checkout, &observation)
                     .await
             }
             Action::Merge { head } if let Some(target) = target.as_ref() => {
@@ -671,6 +675,66 @@ impl Service {
         };
         self.persist_reservation(row, &updated, &credential, selection, (via, artifacts))
             .await
+    }
+
+    async fn reserve_report_reminder(
+        &self,
+        row: &TaskRow,
+        checkout: &Checkout<'_>,
+        observation: &Observation,
+    ) -> Result<Action, ServiceError> {
+        let _fence = self.effect(row).await?;
+        let task = &row.task;
+        if !self.dispatch_mode().await.allows_launch(false) {
+            return Ok(Action::Wait(WaitReason::Capacity));
+        }
+        if self.dependencies_blocked(row).await? {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
+        }
+        let prior = task.run().ok_or(ServiceError::Input)?;
+        let instance = task.next_launch_instance()?;
+        let (ticket_path, scratch) = self.launch_paths(checkout, &instance)?;
+        let assignment = report_reminder(task, prior, &self.report_command, &ticket_path);
+        let route = self.project_for(task.identity()).await?;
+        let binding = self.checkout_binding(task.identity(), &route, checkout)?;
+        let mut inputs =
+            T3::prepare_report_reminder(prior, &binding, &instance, now_ms(), &assignment.text)?;
+        inputs.scratch = Some(scratch);
+        let mut seed = [0; 32];
+        getrandom::fill(&mut seed).map_err(|_| ServiceError::Ticket)?;
+        let mut updated = task.clone();
+        let credential = updated.reserve_report_reminder(observation, inputs, &seed)?;
+        let run = updated.run().ok_or(ServiceError::Input)?;
+        let root = self.storage.scratch();
+        self.storage.database().verify()?;
+        write_prompt_artifacts(
+            root,
+            run,
+            task,
+            &PromptArtifacts {
+                lanes: &LaneContext::default(),
+                size: &assignment.size,
+            },
+        )?;
+        ticket::prepare(
+            root,
+            &updated,
+            run,
+            &credential,
+            &format!("http://{}", self.callback),
+        )?;
+        let mut audit = event("run_reserved");
+        audit.detail = serde_json::json!({
+            "reportReminderFor": prior.launch().instance,
+            "instance": instance,
+        })
+        .to_string();
+        if let Err(error) = self.save(row, updated.clone(), &audit).await {
+            ticket::clear(root, run);
+            return Err(error);
+        }
+        ticket::clear(root, prior);
+        Ok(Action::RemindReport)
     }
 
     fn launch_paths(

@@ -513,8 +513,15 @@ Every action is idempotent:
 
 ### Faults
 
-- **A run that's gone, or that ended without reporting**, is relaunched in the same
-  role, and `attempts` goes up.
+- **An exact terminal role run without an authenticated report** gets one
+  report-only continuation on the same thread and pinned provider and model.
+  It asks for the work actually done, with the original review head and a
+  run-bound report credential. The durable reservation reuses its command ID
+  across a lost reply or engine restart. A terminal reminder with no report
+  gives the owner a cause and an action. A missing slice of host history cannot
+  establish that the turn ended.
+- **A run that's gone or a reliably rejected dispatch** is relaunched in the
+  same role, and `attempts` goes up.
 - **Three failed attempts** at the same phase and head end in one question to the
   planner. A report-only task parks as blocked and awaits an owner instruction.
 - **Uncertain T3 observations** have a due check after the host's deferral or

@@ -175,6 +175,8 @@ match (phase, run_state, observation) {
     (_, Bound(_), Permission | Input) => Wait(reason, retry_at),
     (_, Bound(_), Starting | Running | IdleWithoutTerminalRun) => Wait(reason, retry_at),
     (Reviewing, Bound(Reviewer), PreparedInvalidAfterPossibleSend) => Revoke,
+    (_, Bound(_), ExactTerminalWithoutReport) => RemindReport,
+    (_, Bound(_), TerminalReminderWithoutReport) => Ask(owner_question),
     (Working | Reviewing, Bound(role), Failed(Remaining)) => Relaunch(role),
     (Working | Reviewing, Bound(_), Failed(Last)) => Ask(retry_question),
     (Queued, Unbound, Ready) => Advance(Working),
@@ -201,14 +203,14 @@ match (phase, run_state, observation) {
 
 In Rust, the phase, run and adapter observations produce a typed signal for
 the exhaustive decision match. An authenticated report on the current
-assignment lets its disposition advance with the usual forge and head checks.
-For an assignment without a report, a changed head still waits for the old
-turn to end or be stopped before resetting the review. Confirmed non-delivery,
-authoritative disappearance of a previously launched run, and a terminal run
-without a report are failures. Transport and snapshot uncertainty advance no
-counter. On launch or relaunch, continue the retained role's exact thread after
-an idle read. Create only on first launch or after confirmed disappearance.
-Wait for busy or unreadable threads. A changed head or phase resets attempts.
+assignment advances with the usual forge and head checks. A changed head
+still waits for the unreported turn to end or be stopped before resetting
+the review. Confirmed non-delivery and authoritative disappearance of a
+previously launched run count as failures. An exact terminal run without a
+report follows the [report reminder rule](../docs/knowledge/specs/070-small-engine.md#faults).
+Transport and snapshot uncertainty advance no counter. Reuse the retained
+role's exact thread when its binding still matches. Create on first launch,
+a profile change or confirmed disappearance. Wait for an unreadable binding. A changed head or phase resets attempts.
 An explicit `move` also resets them when the phase and head stay the same. A worker
 revision must produce a new PR head before another review. An external merge during a turn is processed
 after the run settles. `Close` finishes only after fresh merged-head evidence and

@@ -818,7 +818,7 @@ async fn paused_passes_leave_twenty_runless_rows_and_native_traffic_unchanged() 
             task.record_send(&instance, 2).unwrap();
             observation.host = Observed::Known(Host::Current {
                 instance,
-                state: nucleus_core::RunState::Ended,
+                state: nucleus_core::RunState::Gone,
             });
             assert_eq!(
                 task.reconcile(&observation),

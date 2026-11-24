@@ -1,0 +1,1 @@
+A role that finishes without an authenticated report gets one reminder in its existing thread to report the work it actually did. If the reminder also ends silently, Nucleus asks the owner what to do next.
