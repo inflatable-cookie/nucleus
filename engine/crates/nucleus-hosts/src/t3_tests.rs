@@ -1677,6 +1677,49 @@ async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_remov
 }
 
 #[tokio::test]
+async fn terminal_role_uses_explicit_background_clearance_from_current_bound_shell() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let mut terminal = snapshot(&binding, &instance, "completed", false);
+    terminal["hasMoreHistory"] = json!(true);
+    terminal["historyCursor"] = json!("earlier-items");
+    let mut row = terminal["projection"]["thread"].clone();
+    row["status"] = json!("completed");
+    // The shell knows a separate T3 completion after the primary role run.
+    row["latestRunId"] = json!("later-completion");
+    row["activeRunId"] = Value::Null;
+    row["pendingRuntimeRequest"] = Value::Null;
+    row["pendingBackgroundTasks"] = json!([]);
+    let probe = "orchestration.subscribeThread";
+    let (host, requests) = server(vec![
+        (probe, Response::Snapshot(terminal.clone())),
+        (probe, Response::Snapshot(terminal)),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    let run = task.run().unwrap();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":15, "projects":[], "threads":[row]
+        }}));
+    assert!(matches!(
+        pass.observe_run(run, 2).await,
+        Err(HostError::RetainedIdleCoverage { .. })
+    ));
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    assert_eq!(
+        pass.observe_run(run, 3).await.unwrap().host,
+        Host::Current {
+            instance,
+            state: RunState::Ended
+        }
+    );
+    assert_eq!(requests.await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn settlement_needs_every_provider_and_background_turn_item() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
