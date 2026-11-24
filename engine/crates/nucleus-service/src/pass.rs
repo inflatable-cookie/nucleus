@@ -174,6 +174,15 @@ impl Service {
         if !active(task) {
             return forge_error.map_or(Ok(Action::Nothing), Err);
         }
+        if task.phase() != Phase::Closing
+            && task.run().is_none()
+            && task.question().is_none()
+            && task.hold().is_none()
+            && !matches!(forge, Observed::Known(Forge::Merged { .. }))
+            && self.dependencies_blocked(row).await?
+        {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
+        }
         let binding = route.binding(&checkout)?;
         let mut observation = Observation {
             host: Observed::Unknown,
@@ -433,6 +442,9 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
+        if self.dependencies_blocked(row).await? {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
+        }
         let task = &row.task;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
@@ -521,6 +533,10 @@ impl Service {
             None
         };
         let lanes = self.prompt_lanes(task, &route).await?;
+        let dependencies = {
+            let state = self.state.lock().await;
+            crate::DependencyStatus::read(&state, row, &crate::ControllerScope::default())?
+        };
         let text = Prompt {
             row,
             role,
@@ -535,6 +551,7 @@ impl Service {
             discovered_skill,
             model: &profile.model,
             lanes: &lanes,
+            dependencies: &dependencies,
             command: &self.report_command,
             ticket: &ticket_path,
         }
@@ -627,7 +644,9 @@ impl Service {
         }
         let saved = {
             let mut state = self.state.lock().await;
-            if selection.map_or(state.settings.profiles.is_none(), |selected| {
+            if state.store.dependency_blocked(&row.task.identity().id)? {
+                Ok(Action::Wait(WaitReason::Prerequisite))
+            } else if selection.map_or(state.settings.profiles.is_none(), |selected| {
                 selected.is_current(&state)
             }) {
                 self.commit(
@@ -659,6 +678,13 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
+        if task
+            .run()
+            .is_some_and(|run| run.last_send_at_ms().is_none())
+            && self.dependencies_blocked(row).await?
+        {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
+        }
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
             observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
@@ -686,6 +712,13 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
+            if task
+                .run()
+                .is_some_and(|run| run.last_send_at_ms().is_none())
+                && self.dependencies_blocked(row).await?
+            {
+                return Ok(Action::Wait(WaitReason::Prerequisite));
+            }
             return Ok(self
                 .pause_prepared(row, &observation)
                 .await?
@@ -710,6 +743,13 @@ impl Service {
             .authorize_send(task.run().ok_or(ServiceError::Input)?)
             .await?;
         let _fence = self.effect(row).await?;
+        if task
+            .run()
+            .is_some_and(|run| run.last_send_at_ms().is_none())
+            && self.dependencies_blocked(row).await?
+        {
+            return Ok(None);
+        }
         let target = DispatchTarget::Run {
             frozen: authorization.binding(),
             checkout,
@@ -728,6 +768,11 @@ impl Service {
         let (mut sent, dispatch) = {
             let mut state = self.state.lock().await;
             let run = task.run().ok_or(ServiceError::Input)?;
+            if run.last_send_at_ms().is_none()
+                && state.store.dependency_blocked(&task.identity().id)?
+            {
+                return Ok(None);
+            }
             if !run.revoked() && state.prepared_pause(run)?.is_some() {
                 return Ok(None);
             }
@@ -999,6 +1044,9 @@ impl Service {
         let route = self.project_for(task.identity()).await?;
         if route.slots.is_none() {
             return Ok(Action::Wait(WaitReason::Capacity));
+        }
+        if self.dependencies_blocked(row).await? {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         let target = target.clone().with_required_checks(route.required_checks);
         let attempt = self

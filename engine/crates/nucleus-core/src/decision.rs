@@ -138,6 +138,7 @@ pub enum WaitReason {
     ForgeUnknown,
     WorkspaceUnknown,
     ChecksPending,
+    Prerequisite,
     Capacity,
 }
 

@@ -196,6 +196,11 @@ impl Service {
             return Err(ServiceError::AcpUnauthorized);
         }
         self.verify_report_artifact(&state, &prior.task, &acceptance.artifact, false)?;
+        if state.store.dependency_blocked(id)? {
+            return Err(ServiceError::DependencyEdit(
+                "this task has unfinished prerequisites",
+            ));
+        }
         Ok(state)
     }
 

@@ -19,6 +19,8 @@ pub struct BriefPolicy {
     lane: Option<LaneSelection>,
     #[serde(default, deserialize_with = "optional_lane_keys")]
     lanes: Option<Vec<String>>,
+    #[serde(deserialize_with = "lane_keys")]
+    pub depends_on: Vec<String>,
     interactive: bool,
 }
 

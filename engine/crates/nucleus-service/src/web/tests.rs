@@ -19,6 +19,8 @@ use crate::{
     tests::{REPOSITORY, fixture, forge_pull, reservation, serve_forge},
 };
 
+#[path = "tests/dependencies.rs"]
+mod dependencies;
 #[path = "tests/planning.rs"]
 mod planning;
 #[path = "tests/projects.rs"]

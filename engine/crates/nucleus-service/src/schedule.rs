@@ -76,7 +76,9 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::Question,
         ) => (T3_RETRY_DELAY, Priority::Decision),
         Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),
-        Some(WaitReason::Capacity) => (Duration::from_mins(1), Priority::Refresh),
+        Some(WaitReason::Capacity | WaitReason::Prerequisite) => {
+            (Duration::from_mins(1), Priority::Refresh)
+        }
         Some(WaitReason::ChecksPending) => (Duration::from_secs(15), Priority::Decision),
         _ => (Duration::from_secs(3), Priority::Decision),
     }

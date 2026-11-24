@@ -4,7 +4,7 @@ use nucleus_core::{
 };
 use nucleus_forge::Branches;
 use nucleus_store::{
-    StoreError, TaskRow,
+    StoreError, TaskAdmissionFacts, TaskRow,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, ItemKind, ItemSource,
         ItemState, MAX_TEXT_BYTES, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
@@ -102,9 +102,13 @@ impl Service {
         let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
-        let number = state
-            .store
-            .create_with_permission(&task, &admitted, permission)?;
+        let prerequisites =
+            self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
+        let facts = TaskAdmissionFacts {
+            prerequisites: &prerequisites,
+            usage_permission: permission,
+        };
+        let number = state.store.create_with_facts(&task, &admitted, facts)?;
         if requested_permission {
             self.inbox_changed();
         }
@@ -173,13 +177,19 @@ impl Service {
         let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
-        let (_, number) = state.store.promote_item_with_permission(
+        let prerequisites =
+            self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
+        let facts = TaskAdmissionFacts {
+            prerequisites: &prerequisites,
+            usage_permission: permission,
+        };
+        let (_, number) = state.store.promote_item_with_facts(
             &source,
             &item.content.body,
             &task,
             &admitted,
             stamp(caller),
-            permission,
+            facts,
         )?;
         if requested_permission {
             self.inbox_changed();

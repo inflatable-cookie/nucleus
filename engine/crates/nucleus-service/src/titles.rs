@@ -69,6 +69,7 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
     } else {
         match wait {
             Some(WaitReason::Capacity) => "Waiting for capacity",
+            Some(WaitReason::Prerequisite) => "Waiting for prerequisites",
             Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => {
                 "Waiting on Nucleus"
             }

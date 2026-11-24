@@ -3,6 +3,8 @@ use std::{fmt::Write as _, fs, path::Path};
 use nucleus_core::{Brief, Head, Launch, PullRequest, ReportTask, Review, Role, Verdict};
 use nucleus_store::{TaskRow, planning::Lane};
 
+use crate::DependencyStatus;
+
 const SKILL: &str = include_str!("../../../../skills/nucleus/SKILL.md");
 const REPORTING: &str = "Reporting and contact";
 
@@ -20,6 +22,7 @@ pub(super) struct Prompt<'a> {
     pub(super) discovered_skill: Option<&'a Path>,
     pub(super) model: &'a str,
     pub(super) lanes: &'a [Lane],
+    pub(super) dependencies: &'a DependencyStatus,
     pub(super) command: &'a Path,
     pub(super) ticket: &'a Path,
 }
@@ -103,6 +106,7 @@ impl Prompt<'_> {
                 );
             }
         }
+        self.write_dependencies(&mut text);
         for lane in self.lanes {
             let _ = writeln!(
                 text,
@@ -138,6 +142,27 @@ impl Prompt<'_> {
             let _ = writeln!(text, "{}\n\n{}", shared.trim_end(), role.trim_end());
         }
         text
+    }
+
+    fn write_dependencies(&self, text: &mut String) {
+        let released = self
+            .dependencies
+            .prerequisite_wait
+            .as_ref()
+            .filter(|wait| wait.released_at_ms.is_some());
+        if self.dependencies.dependencies.is_empty() && released.is_none() {
+            return;
+        }
+        let _ = writeln!(text, "\nRecorded prerequisites");
+        for fact in &self.dependencies.dependencies {
+            let _ = writeln!(text, "- {} ({})", fact.reference, fact.task_id);
+        }
+        if let Some(wait) = released {
+            let _ = writeln!(text, "Released prerequisite wait: {}", wait.reason);
+            for fact in &wait.prerequisites {
+                let _ = writeln!(text, "- {} ({})", fact.reference, fact.task_id);
+            }
+        }
     }
 
     fn write_brief(text: &mut String, brief: &Brief) {
@@ -280,6 +305,12 @@ mod tests {
         }
     }
 
+    static EMPTY_DEPENDENCIES: DependencyStatus = DependencyStatus {
+        dependencies: Vec::new(),
+        prerequisite_wait: None,
+        blocking: false,
+    };
+
     fn assignment(row: &TaskRow, role: Role) -> Prompt<'_> {
         Prompt {
             row,
@@ -295,6 +326,7 @@ mod tests {
             discovered_skill: None,
             model: "fixture",
             lanes: &[],
+            dependencies: &EMPTY_DEPENDENCIES,
             command: Path::new("/bin/nucleus engine"),
             ticket: Path::new("/scratch/a quote's ticket"),
         }

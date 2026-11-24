@@ -20,8 +20,8 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{
-    Controller, Project, ReportTicket, Service, router_with_board_and_t3_callers,
-    router_with_t3_callers,
+    Controller, DependencyCommand, Project, ReportTicket, Service,
+    router_with_board_and_t3_callers, router_with_t3_callers,
 };
 use nucleus_store::{
     Hosts, SettingsFile, StoragePlacement, TaskNumberSeed, planning::legacy::read_task_number_seed,
@@ -195,11 +195,56 @@ enum Action {
     Hold { id: String, reason: String },
     /// Release the task hold.
     Release { id: String },
+    /// Replace the prerequisites of a task before dispatch.
+    SetDependencies(DependencyArgs),
+    /// Wait for prerequisites after dispatch. Omit references to clear the wait.
+    SetPrerequisiteWait(PrerequisiteWaitArgs),
     /// Send a run report as JSON from stdin.
     Report {
         #[arg(long)]
         ticket: PathBuf,
     },
+}
+
+#[derive(Args)]
+struct DependencyArgs {
+    id: String,
+    #[arg(long)]
+    version: i64,
+    prerequisites: Vec<String>,
+}
+
+impl DependencyArgs {
+    fn request(self) -> Result<(Method, String, Option<Value>)> {
+        command_path(
+            &self.id,
+            DependencyCommand::SetDependencies {
+                version: self.version,
+                depends_on: self.prerequisites,
+            },
+        )
+    }
+}
+
+#[derive(Args)]
+struct PrerequisiteWaitArgs {
+    #[command(flatten)]
+    task: DependencyArgs,
+    #[arg(long)]
+    reason: String,
+}
+
+impl PrerequisiteWaitArgs {
+    fn request(self) -> Result<(Method, String, Option<Value>)> {
+        command_path(
+            &self.task.id,
+            DependencyCommand::SetPrerequisiteWait {
+                version: self.task.version,
+                waits_for: self.task.prerequisites,
+                reason: self.reason,
+            },
+        )
+    }
 }
 
 #[derive(Subcommand)]
@@ -630,6 +675,8 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Amend { id } => command_path(&id, Command::Amend(stdin_text()?))?,
         A::Hold { id, reason } => command_path(&id, Command::Hold(reason))?,
         A::Release { id } => command_path(&id, Command::Release)?,
+        A::SetDependencies(args) => args.request()?,
+        A::SetPrerequisiteWait(args) => args.request()?,
         _ => return Err("this command does not use the control API".into()),
     };
     let response = request(endpoint, method, &path, &key, body, actor.as_deref()).await?;
@@ -653,7 +700,10 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     Ok(())
 }
 
-fn command_path(id: &str, command: Command) -> Result<(Method, String, Option<Value>)> {
+fn command_path(
+    id: &str,
+    command: impl serde::Serialize,
+) -> Result<(Method, String, Option<Value>)> {
     Ok((
         Method::POST,
         format!("/v1/tasks/{}/commands", task_segment(id)?),
