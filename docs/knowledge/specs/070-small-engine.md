@@ -209,6 +209,16 @@ Later decisions carry their own attribution.
     ruling 27. A native turn failure is recorded against the task version
     and T3 session and waits for either to change before another attempt.
 
+31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
+    legacy TS nucleus now so should we start taking it down? Keep the code
+    around, but stop running the daemon, acp and legacy tests". The TS service
+    and roll owner are stopped, the T3 `nucleus` provider is disabled, and its
+    Inbox thread is archived. Its last database is kept as a read-only backup.
+    The TS code stays in the repository until milestone 4 deletes it. The
+    board's client screens and their tests stay live because the Rust board
+    reuses them. The old engine's test families leave milestone QA
+    and the affected-test selection.
+
 ## The model
 
 ### Stored state per task
