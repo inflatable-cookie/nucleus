@@ -885,19 +885,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
         let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {
             panic!("idle parent should prepare a message");
         };
-        let error = host
-            .verify_parent_write(&mut first)
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("matching shell background coverage missing"),
-            "{error}"
-        );
-        assert!(
-            error.contains("prepared revision 16, observed revision Some(18)"),
-            "{error}"
-        );
+        assert_stale_shell_refusal(&host, &mut first).await;
 
         row["title"] = json!("Updated title");
         host.rpc
@@ -922,17 +910,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
         row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
         host.rpc
             .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
-        let mut refusals = Vec::new();
-        for write in verified {
-            let Err(crate::ParentSendError::NotSent(error)) =
-                host.write_verified_parent(write).await
-            else {
-                panic!("new background work must refuse the write before the wire");
-            };
-            refusals.push(error.to_string());
-        }
-        assert_eq!(refusals[0], refusals[1]);
-        assert!(refusals[0].contains("pendingBackgroundTasks changed"));
+        assert_repeat_custody_refusal(&host, verified).await;
         row["pendingBackgroundTasks"] = json!([]);
         row["updatedAt"] = json!("2026-11-24T17:39:00Z");
         host.rpc
@@ -947,6 +925,35 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
         host.write_parent(last).await.unwrap();
         assert_eq!(native.await.unwrap().len(), 11);
     }
+}
+
+async fn assert_stale_shell_refusal(host: &T3, write: &mut crate::ParentWrite) {
+    let error = host
+        .verify_parent_write(write)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("matching shell background coverage missing"),
+        "{error}"
+    );
+    assert!(
+        error.contains("prepared revision 16, observed revision Some(18)"),
+        "{error}"
+    );
+}
+
+async fn assert_repeat_custody_refusal(host: &T3, verified: Vec<crate::ParentWrite>) {
+    let mut refusals = Vec::new();
+    for write in verified {
+        let Err(crate::ParentSendError::NotSent(error)) = host.write_verified_parent(write).await
+        else {
+            panic!("new background work must refuse the write before the wire");
+        };
+        refusals.push(error.to_string());
+    }
+    assert_eq!(refusals[0], refusals[1]);
+    assert!(refusals[0].contains("pendingBackgroundTasks changed"));
 }
 
 #[test]
