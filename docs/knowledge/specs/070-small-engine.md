@@ -233,10 +233,11 @@ Later decisions carry their own attribution.
     - One local attention projection feeds the board, `task.next` and the scheduler's T3 row reconciliation. A person needed for a question, decision, role input or approval sees the row, as does an active role. Capacity, prerequisites, holds and report-ready tasks wait quietly. A missing or cancelled prerequisite needs an owner edit.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
     - Before a native message brings a task parent or retained child back into use, the scheduler explicitly unsnoozes its own parent occurrence or unsettles the destination and reads the result back. An operator snooze holds delivery. Nucleus never sends a settle command.
-    - A due delivery retries an owned snooze clear with its original
-      command ID while the same horizon is visible. A cleared or replaced
-      horizon retires the claim. A later Nucleus-owned snooze starts a new
-      effect. An operator snooze holds delivery.
+    - A due delivery or visibility check for an actionable row retries an
+      owned snooze clear with its original command ID while the same horizon
+      is visible. A native receipt or an observed clear or replacement
+      retires the claim. A later Nucleus-owned snooze starts a new effect.
+      An operator snooze holds delivery.
     - A retained role can send directly to its own thread. The scheduler uses
       the exact parent read under the task fence to keep the parent visible
       at that send. It records Starting with the first role send intent and
