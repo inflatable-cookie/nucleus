@@ -15,7 +15,7 @@ use axum::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
     },
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use futures_util::{Stream, stream};
 use nucleus_core::{
@@ -194,6 +194,7 @@ fn routes(
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
         .route("/v1/tasks/{id}/acp", post(bind_acp))
+        .route("/v1/tasks/{id}/acp/refresh", post(refresh_acp))
         .route("/v1/tasks/{id}/next", get(next))
         .route("/v1/health", get(settings::health))
         .route("/v1/settings", get(settings::all))
@@ -202,6 +203,10 @@ fn routes(
             get(settings::get).put(settings::put),
         )
         .route("/v1/settings/projects/reassign", post(settings::reassign))
+        .route(
+            "/v1/settings/profiles/pauses/{group}",
+            put(settings::pause_group),
+        )
         .route("/v1/events", get(events))
         .merge(planning::routes())
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize));
@@ -470,6 +475,19 @@ async fn bind_acp(
     ))
 }
 
+async fn refresh_acp(
+    State(api): State<Api>,
+    TaskPath(id): TaskPath,
+    Extension(authority): Extension<Authority>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !matches!(authority, Authority::Operator { .. }) {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(Json(
+        json!({"queued":api.service.queue_acp_refresh(&id).await?}),
+    ))
+}
+
 fn run_api_error(error: ServiceError) -> ApiError {
     match error {
         ServiceError::Missing
@@ -556,6 +574,7 @@ async fn detail(
     TaskPath(id): TaskPath,
     Extension(scope): Extension<ControllerScope>,
     authority: Option<Extension<Authority>>,
+    credential: Option<Extension<SessionCredential>>,
 ) -> Result<Json<Detail>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
@@ -563,10 +582,17 @@ async fn detail(
     let task = &row.task;
     let summary = Summary::read(&row, &state, &scope, authority.as_deref())?;
     let run = RunView::read(&row, state.activity.get(&id), &state.store);
+    let (parent_hold, active_child) = if credential.is_some() {
+        api.service.acp_turn_view(&state, &row)?
+    } else {
+        (None, false)
+    };
     Ok(Json(Detail {
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
+        parent_hold,
+        active_child,
         source: state.store.task_source(&id).map_err(ServiceError::from)?,
         pull_request: task.pull_request().cloned(),
         verdict: task.verdict().cloned(),
@@ -845,9 +871,18 @@ fn invalidation_events(
     project: ControllerScope,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     let projects = service.project_changes.subscribe();
+    let settings = service.settings_changes.subscribe();
     stream::unfold(
-        (service.changes(), projects, service, scope, project, true),
-        |(mut receiver, mut projects, service, scope, project, first)| async move {
+        (
+            service.changes(),
+            projects,
+            settings,
+            service,
+            scope,
+            project,
+            true,
+        ),
+        |(mut receiver, mut projects, mut settings, service, scope, project, first)| async move {
             let event = if first {
                 Event::default().event("refresh").data("{}")
             } else {
@@ -855,6 +890,9 @@ fn invalidation_events(
                     let change = tokio::select! {
                         result = receiver.recv() => result,
                         Ok(()) = projects.changed() => break Event::default().event("refresh").data("{}"),
+                        Ok(()) = settings.changed(), if scope.is_some() => {
+                            break Event::default().event("refresh").data("{}");
+                        }
                     };
                     match change {
                         Ok(change)
@@ -888,7 +926,7 @@ fn invalidation_events(
             }
             Some((
                 Ok(event),
-                (receiver, projects, service, scope, project, false),
+                (receiver, projects, settings, service, scope, project, false),
             ))
         },
     )
@@ -983,6 +1021,10 @@ struct Detail {
     summary: Summary,
     brief: Brief,
     operator_inbox: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_hold: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    active_child: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<nucleus_store::planning::ItemSource>,
     pull_request: Option<PullRequest>,

@@ -1,0 +1,2 @@
+- Native task rows keep a read-only ACP turn during launch preparation and active child work. Waiting and completed rows end normally, and failed turns wait for a change in task state or host session before retrying.
+- Operators can queue an idle row refresh and pause a subscription group until a confirmed reset.

@@ -200,6 +200,7 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
+    acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
@@ -341,6 +342,7 @@ impl Service {
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
@@ -494,6 +496,10 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
+        let id = &row.task.identity().id;
+        if self.state.lock().await.acp_refresh_requests.remove(id) == Some(row.version) {
+            self.refresh_acp_parent(row).await?;
+        }
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
         }

@@ -10,7 +10,6 @@ getrandom = "0.3"
 hex = "0.4"
 longhorn-redact.workspace = true
 nucleus-core = { path = "../nucleus-core" }
-regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1.0", features = ["derive"] }

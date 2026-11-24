@@ -33,7 +33,9 @@ pub use launch::{
 };
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
-pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thread};
+pub use parenting::{
+    ArchiveStep, ParentAttempt, ParentRun, ParentStep, ParentWrite, parent_thread,
+};
 use process::{Activity, Inventory};
 use projection::Projection;
 pub use projection::RunActivity;
@@ -283,6 +285,18 @@ impl T3 {
     #[must_use]
     pub fn endpoint(&self) -> &str {
         self.rpc.endpoint().as_str()
+    }
+
+    /// Identify the local host session without issuing another host request.
+    /// Hosts without a configured descriptor use their endpoint identity.
+    #[must_use]
+    pub fn runtime_identity(&self) -> Option<String> {
+        match self.runtime_descriptor.as_deref() {
+            Some(descriptor) => {
+                ServerRuntime::read(descriptor, self.rpc.endpoint()).map(|server| server.identity())
+            }
+            None => Some(self.endpoint().to_owned()),
+        }
     }
 
     /// Use the connected T3 server's own runtime descriptor for custody checks.

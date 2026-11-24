@@ -9,7 +9,7 @@ use std::{
 };
 
 use nucleus_core::{
-    Command, Identity, Phase, PullRequest, Question, Role, Verdict,
+    Identity, Phase, PullRequest, Question, Role, Verdict,
     acp::{InboxAnswer, InboxSnapshot, SessionBinding, session_id},
 };
 use reqwest::{
@@ -118,7 +118,6 @@ pub(crate) struct ServiceClient {
     endpoint: SocketAddr,
     task: Option<String>,
     auth: HeaderValue,
-    command_auth: Option<HeaderValue>,
 }
 
 #[derive(Deserialize)]
@@ -131,6 +130,9 @@ pub(crate) struct Detail {
     pub question: Option<Question>,
     #[serde(default)]
     pub operator_inbox: bool,
+    pub parent_hold: Option<String>,
+    #[serde(default)]
+    pub active_child: bool,
     pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
@@ -202,20 +204,15 @@ impl ServiceClient {
             .connect_timeout(DEADLINE)
             .build()
             .map_err(|_| Failure::Binding)?;
-        let (task, key, command) = match binding {
-            SessionBinding::Task(task) => (
-                Some(task.task_id.clone()),
-                &task.credential,
-                task.command_credential.as_ref(),
-            ),
-            SessionBinding::Inbox(inbox) => (None, &inbox.inbox_credential, None),
+        let (task, key) = match binding {
+            SessionBinding::Task(task) => (Some(task.task_id.clone()), &task.credential),
+            SessionBinding::Inbox(inbox) => (None, &inbox.inbox_credential),
         };
         Ok(Self {
             http,
             endpoint: binding.endpoint(),
             task,
             auth: authorization(key)?,
-            command_auth: command.map(authorization).transpose()?,
         })
     }
 
@@ -272,25 +269,6 @@ impl ServiceClient {
         )
         .await?;
         serde_json::from_slice(&body(response).await?).map_err(|_| Failure::Unavailable)
-    }
-
-    pub(crate) async fn command(&self, command: &Command) -> Result<bool, Failure> {
-        let key = self
-            .command_auth
-            .as_ref()
-            .ok_or_else(|| Failure::Refused("This binding is read-only.".into()))?;
-        let response = self
-            .request(Method::POST, "/commands", key)
-            .timeout(DEADLINE)
-            .json(command)
-            .send()
-            .await
-            .map_err(|_| Failure::Unavailable)?;
-        if response.status() == StatusCode::SERVICE_UNAVAILABLE {
-            return Err(rejection(response).await);
-        }
-        let response = accepted(Ok(response)).await?;
-        Ok(response.status() != StatusCode::ACCEPTED)
     }
 
     pub(crate) async fn inbox(&self) -> Result<InboxSnapshot, Failure> {

@@ -12,8 +12,8 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentRun,
-    ParentStep, SendOutcome, StopProgress, TaskHost, launch_diagnostic,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentAttempt,
+    ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -581,20 +581,63 @@ impl Service {
         if !self.launch_capacity(identity, false).await? {
             return Ok(ControlFlow::Break(WaitReason::Capacity));
         }
-        // Parent creation can retry its stable command ID. The title
-        // receipt publishes the numbered label on its own command.
+        let session = self.host.runtime_identity().ok_or(HostError::Uncertain)?;
+        let (prior_turn, released_at) = {
+            let state = self.state.lock().await;
+            if state
+                .store
+                .task_turn_command(&identity.id, "native_turn_failed", row.version, &session)?
+                .is_some()
+            {
+                return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+            }
+            (
+                state.store.task_turn_command(
+                    &identity.id,
+                    "native_turn_intent",
+                    row.version,
+                    &session,
+                )?,
+                state
+                    .waits
+                    .get(&identity.id)
+                    .map(|(reason, _)| *reason)
+                    .filter(|reason| {
+                        !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
+                    }),
+            )
+        };
         match self
             .host
             .prepare_parent(
                 binding,
                 provider,
                 &identity.reference,
+                prior_turn.as_deref().map(|command| ParentAttempt {
+                    command,
+                    released: released_at.is_some(),
+                }),
                 host.profile_catalog(),
             )
             .await?
         {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
-            ParentStep::Wait => Ok(ControlFlow::Break(WaitReason::Starting)),
+            ParentStep::Wait => Ok(ControlFlow::Break(
+                released_at.unwrap_or(WaitReason::Starting),
+            )),
+            ParentStep::Failed => {
+                if let Some(command) = prior_turn
+                    && self
+                        .record_native_turn(row, "native_turn_failed", &session, &command)
+                        .await?
+                {
+                    eprintln!(
+                        "{}: T3 parent turn failed ({command}); waiting for a task or session change",
+                        identity.id
+                    );
+                }
+                Ok(ControlFlow::Break(WaitReason::HostUnknown))
+            }
             ParentStep::Write(write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
@@ -611,6 +654,18 @@ impl Service {
                 };
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
+                if write.starts_turn()
+                    && !self
+                        .record_native_turn(
+                            row,
+                            "native_turn_intent",
+                            &session,
+                            write.command_id().ok_or(ServiceError::Input)?,
+                        )
+                        .await?
+                {
+                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+                }
                 self.host.write_parent(write).await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))

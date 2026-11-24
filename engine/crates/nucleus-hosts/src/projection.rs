@@ -262,7 +262,7 @@ impl Projection {
             })
     }
 
-    pub(crate) fn live_parent_run(&self) -> Option<(&str, &str)> {
+    pub(crate) fn live_parent_run(&self, message_id: &str) -> Option<(&str, &str)> {
         if self.archived() || self.thread.deleted_at.is_some() {
             return None;
         }
@@ -271,7 +271,7 @@ impl Projection {
             .iter()
             .filter(|run| matches!(run.status, Status::Running | Status::Waiting));
         let run = live.next()?;
-        if live.next().is_some() {
+        if live.next().is_some() || run.user_message_id.as_deref() != Some(message_id) {
             return None;
         }
         Some((
@@ -280,6 +280,23 @@ impl Projection {
                 .as_deref()
                 .filter(|node| !node.is_empty())?,
         ))
+    }
+
+    pub(crate) fn turn_failed(&self, message_id: &str) -> bool {
+        self.delivery(message_id).1.is_some_and(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && matches!(
+                    run.status,
+                    Status::Failed | Status::Interrupted | Status::Cancelled | Status::RolledBack
+                )
+        })
+    }
+
+    pub(crate) fn turn_completed(&self, message_id: &str) -> bool {
+        self.delivery(message_id).1.is_some_and(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && matches!(run.status, Status::Completed)
+        })
     }
 
     pub(crate) const fn sequence(&self) -> u64 {
