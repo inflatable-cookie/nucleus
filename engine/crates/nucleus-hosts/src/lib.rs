@@ -984,12 +984,9 @@ impl TaskHost for T3Pass<'_> {
         }
         let worker_continuation =
             run.launch().role == Role::Worker && wire.method == Method::Continue;
-        let replay_authorized = if worker_continuation {
-            wire.pinned && !run.revoked() && run.report().is_none()
-        } else {
-            !awaiting_reply(run, clock_ms()?)
-        };
-        if !replay_authorized {
+        if (worker_continuation && (!wire.pinned || run.revoked() || run.report().is_some()))
+            || (!worker_continuation && awaiting_reply(run, clock_ms()?))
+        {
             return Err(HostError::Uncertain);
         }
         let parent_row = if !worker_continuation && let Some(parent) = &wire.parent {
