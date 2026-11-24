@@ -66,6 +66,8 @@ pub enum ServiceError {
     PlannerEnrollmentPending,
     #[error("{0}")]
     PlannerEnrollmentRefused(&'static str),
+    #[error("{0}")]
+    PlannerEnrollmentUnavailable(&'static str),
     #[error("task was not found")]
     Missing,
     #[error("task input is invalid")]

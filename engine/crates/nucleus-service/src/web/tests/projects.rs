@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use nucleus_core::{Observation, Workspace};
 use nucleus_hosts::HostError;
@@ -19,6 +19,7 @@ struct Registry {
     service: Arc<Service>,
     api: Router,
     reads: Arc<AtomicUsize>,
+    read_started: Arc<tokio::sync::Notify>,
     moved: Arc<AtomicBool>,
     archived: Arc<AtomicBool>,
     native: tokio::task::JoinHandle<()>,
@@ -32,6 +33,11 @@ impl Drop for Registry {
 
 impl Registry {
     async fn enroll(&self, actor: &str) {
+        self.start_contact(actor).await;
+        self.service.complete_enrollment(actor).await;
+    }
+
+    async fn start_contact(&self, actor: &str) {
         assert_eq!(
             submit(&self.api, actor, actor, None).await.status(),
             StatusCode::SERVICE_UNAVAILABLE
@@ -43,7 +49,6 @@ impl Registry {
             .expect("one queued proof");
         assert_eq!(requested, actor);
         assert!(self.service.take_enrollment().await.is_none());
-        self.service.complete_enrollment(actor).await;
     }
 
     async fn task(&self, actor: &str, id: &str) -> Task {
@@ -67,6 +72,8 @@ async fn registry() -> Registry {
 
     let reads = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&reads);
+    let read_started = Arc::new(tokio::sync::Notify::new());
+    let signal = Arc::clone(&read_started);
     let moved = Arc::new(AtomicBool::new(false));
     let moved_root = Arc::clone(&moved);
     let missing = alpha_path.with_file_name("missing");
@@ -81,6 +88,7 @@ async fn registry() -> Registry {
         observed.fetch_add(1, Ordering::Relaxed);
         let snapshot = match request["tag"].as_str() {
             Some("orchestration.subscribeThread") => {
+                signal.notify_one();
                 let id = request["payload"]["threadId"].as_str().expect("exact ID");
                 let project = match id {
                     "beta-planner" => "beta-native",
@@ -140,6 +148,7 @@ async fn registry() -> Registry {
         service,
         api,
         reads,
+        read_started,
         moved,
         archived,
         native,
@@ -302,15 +311,68 @@ async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_re
 }
 
 #[tokio::test]
+async fn first_contact_uses_stable_identity_even_while_the_caller_is_active() {
+    let registry = registry().await;
+    for (actor, closes) in [("active-planner", false), ("closed-during-proof", true)] {
+        registry.start_contact(actor).await;
+        // Hold the commit until a shell update has arrived during the exact read.
+        let write = registry.service.project_writes.write().await;
+        let service = Arc::clone(&registry.service);
+        let check = tokio::spawn(async move { service.complete_enrollment(actor).await });
+        tokio::time::timeout(Duration::from_secs(5), registry.read_started.notified())
+            .await
+            .expect("exact caller proof started");
+        if closes {
+            let hint = nucleus_hosts::ThreadHint::fixture(&json!({
+                "kind": "thread.removed", "threadId": actor,
+            }))
+            .expect("closure");
+            registry.service.wake_from_host(hint).await;
+        }
+        let hint = nucleus_hosts::ThreadHint::fixture(&json!({
+            "kind": "thread.updated",
+            "thread": {
+                "id": actor, "projectId": "alpha-native",
+                "status": "running", "activeRunId": "still-running",
+            },
+        }))
+        .expect("ordinary activity");
+        registry.service.wake_from_host(hint).await;
+        drop(write);
+        check.await.expect("finished proof");
+
+        let response = submit(&registry.api, actor, actor, None).await;
+        if closes {
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert_eq!(
+                json_body(response).await["error"],
+                "The T3 planner thread is archived or gone."
+            );
+            assert!(registry.service.task(actor).await.is_err());
+        } else {
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+    }
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
 async fn first_contact_refuses_child_closed_task_session_and_missing_checkout() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
-    for actor in ["child", "closed", "task-session", "missing-root"] {
+    for (actor, reason) in [
+        ("child", "Submit from a top-level T3 planner thread."),
+        ("closed", "The T3 planner thread is archived or gone."),
+        ("task-session", "Submit from a top-level T3 planner thread."),
+        (
+            "missing-root",
+            "The checkout registered in T3 is missing or is not a canonical directory.",
+        ),
+    ] {
         registry.enroll(actor).await;
-        assert_eq!(
-            submit(&registry.api, actor, actor, None).await.status(),
-            StatusCode::FORBIDDEN
-        );
+        let response = submit(&registry.api, actor, actor, None).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(json_body(response).await["error"], reason);
     }
     let settings = json_body(get_as(&registry.api, PROJECTS, &BOARD_KEY).await).await;
     assert_eq!(

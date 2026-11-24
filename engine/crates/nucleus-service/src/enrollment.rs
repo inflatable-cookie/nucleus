@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use nucleus_hosts::{PlannerIdentity, ThreadHint};
+use nucleus_hosts::{HostError, PlannerIdentity, ThreadHint};
 use nucleus_store::{
     ProjectSettings, Projects, RepositorySettings, StorageError, ThreadProvenance,
 };
@@ -17,11 +17,26 @@ pub(super) struct Enrollments(BTreeMap<String, Contact>);
 
 enum Contact {
     Requested,
-    Checking,
+    Checking(Option<Box<ThreadHint>>),
     Refused {
         until: Instant,
-        reason: Option<&'static str>,
+        failure: EnrollmentFailure,
     },
+}
+
+#[derive(Clone, Copy)]
+enum EnrollmentFailure {
+    Refused(&'static str),
+    Unavailable(&'static str),
+}
+
+impl From<EnrollmentFailure> for ServiceError {
+    fn from(failure: EnrollmentFailure) -> Self {
+        match failure {
+            EnrollmentFailure::Refused(reason) => Self::PlannerEnrollmentRefused(reason),
+            EnrollmentFailure::Unavailable(reason) => Self::PlannerEnrollmentUnavailable(reason),
+        }
+    }
 }
 
 pub(super) struct EnrolledPlanner {
@@ -43,20 +58,23 @@ impl State {
             .is_some_and(|planner| hint.is_identity_change(Some(&planner.identity)));
         if changed {
             self.enrolled_planners.remove(&hint.thread);
-        }
-        if changed
-            || (self.enrollments.0.get(&hint.thread).is_some_and(|contact| {
-                matches!(contact, Contact::Checking) && hint.is_identity_change(None)
-            }))
-        {
             self.planner_authority_epoch += 1;
         }
-        if hint.closed() && self.settings.planner_route(&hint.thread).is_some() {
+        if let Some(Contact::Checking(observed)) = self.enrollments.0.get_mut(&hint.thread) {
+            // Compare the shell identity to the exact read before publishing.
+            // Keep a closure even if a later update arrives during this attempt.
+            if hint.is_identity_change(None) && !observed.as_ref().is_some_and(|hint| hint.closed())
+            {
+                *observed = Some(Box::new(hint.clone()));
+            }
+        } else if hint.closed() && self.settings.planner_route(&hint.thread).is_some() {
             self.enrollments.0.insert(
                 hint.thread.clone(),
                 Contact::Refused {
                     until: Instant::now() + RETRY_DELAY,
-                    reason: Some("The T3 planner thread is archived or gone."),
+                    failure: EnrollmentFailure::Refused(
+                        "The T3 planner thread is archived or gone.",
+                    ),
                 },
             );
         }
@@ -132,20 +150,30 @@ impl Service {
     pub(super) fn request_enrollment(&self, state: &mut State, actor: &str) -> ServiceError {
         let contacts = &mut state.enrollments.0;
         let now = Instant::now();
-        contacts.retain(
-            |_, contact| !matches!(contact, Contact::Refused { until, .. } if now >= *until),
-        );
         match contacts.get(actor) {
-            Some(Contact::Refused {
-                reason: Some(reason),
-                ..
-            }) => ServiceError::PlannerEnrollmentRefused(reason),
-            None if contacts.len() < MAX_PENDING => {
-                contacts.insert(actor.into(), Contact::Requested);
-                self.enrollment_wake.notify_one();
+            Some(&Contact::Refused { until, failure }) => {
+                if now >= until {
+                    contacts.insert(actor.into(), Contact::Requested);
+                    self.enrollment_wake.notify_one();
+                }
+                failure.into()
+            }
+            Some(Contact::Requested | Contact::Checking(_)) => {
                 ServiceError::PlannerEnrollmentPending
             }
-            Some(Contact::Requested | Contact::Checking | Contact::Refused { .. }) | None => {
+            None => {
+                if contacts.len() >= MAX_PENDING {
+                    contacts.retain(
+                        |_, contact| !matches!(contact, Contact::Refused { until, .. } if now >= *until),
+                    );
+                }
+                if contacts.len() >= MAX_PENDING {
+                    return ServiceError::PlannerEnrollmentUnavailable(
+                        "The T3 enrollment queue is full. Retry shortly.",
+                    );
+                }
+                contacts.insert(actor.into(), Contact::Requested);
+                self.enrollment_wake.notify_one();
                 ServiceError::PlannerEnrollmentPending
             }
         }
@@ -167,37 +195,52 @@ impl Service {
             .0
             .iter_mut()
             .find(|(_, contact)| matches!(contact, Contact::Requested))?;
-        *contact = Contact::Checking;
+        *contact = Contact::Checking(None);
         Some(actor.clone())
     }
 
     pub(super) async fn complete_enrollment(&self, actor: &str) {
         let result = self.verify_enrollment(actor).await;
         let mut state = self.state.lock().await;
-        let reason = match result {
+        let failure = match result {
             Ok(()) => {
+                eprintln!("T3 planner enrollment for {actor:?}: verified and bound.");
                 state.enrollments.0.remove(actor);
                 return;
             }
-            Err(ServiceError::PlannerEnrollmentPending) => None,
-            Err(ServiceError::PlannerEnrollmentRefused(reason)) => Some(reason),
-            Err(ServiceError::Settings(StorageError::InvalidSettings(_))) => Some(
-                "The GitHub repository is already bound to a different checkout or T3 project.",
+            Err(ServiceError::PlannerEnrollmentRefused(reason)) => {
+                EnrollmentFailure::Refused(reason)
+            }
+            Err(ServiceError::PlannerEnrollmentUnavailable(reason)) => {
+                EnrollmentFailure::Unavailable(reason)
+            }
+            Err(ServiceError::Settings(StorageError::InvalidSettings(_))) => {
+                EnrollmentFailure::Refused(
+                    "The GitHub repository is already bound to a different checkout or T3 project.",
+                )
+            }
+            Err(_) => EnrollmentFailure::Unavailable(
+                "Nucleus could not save the Projects binding. Retry shortly.",
             ),
-            Err(_) => Some("Nucleus could not save the Projects binding. Retry shortly."),
         };
+        eprintln!(
+            "T3 planner enrollment for {actor:?}: {}",
+            ServiceError::from(failure)
+        );
         state.enrollments.0.insert(
             actor.into(),
             Contact::Refused {
                 until: Instant::now() + RETRY_DELAY,
-                reason,
+                failure,
             },
         );
     }
 
     async fn verify_enrollment(&self, actor: &str) -> Result<(), ServiceError> {
         if !self.host.projects_synchronized() {
-            return Err(ServiceError::PlannerEnrollmentPending);
+            return Err(ServiceError::PlannerEnrollmentUnavailable(
+                "The T3 project snapshot has not synchronized. Retry shortly.",
+            ));
         }
         let epoch = self.state.lock().await.planner_authority_epoch;
         let planner = self
@@ -205,30 +248,40 @@ impl Service {
             .planner_identity(actor)
             .await
             .map_err(|_| {
-                ServiceError::PlannerEnrollmentRefused(
+                ServiceError::PlannerEnrollmentUnavailable(
                     "T3 could not prove the exact calling thread. Retry shortly.",
                 )
             })?
-            .filter(|planner| {
-                !planner.is_child()
-                    && planner.provider_instance_id.as_deref() != self.acp_provider()
-            })
             .ok_or(ServiceError::PlannerEnrollmentRefused(
-                "Submit from an active, top-level T3 planner thread.",
+                "The T3 planner thread is archived or gone.",
             ))?;
-        let registered = self.host.cached_project(&planner.project_id).map_err(|_| {
-            ServiceError::PlannerEnrollmentRefused(
-                "T3 did not report an active project and exact checkout root.",
-            )
-        })?;
+        if planner.is_child() || planner.provider_instance_id.as_deref() == self.acp_provider() {
+            return Err(ServiceError::PlannerEnrollmentRefused(
+                "Submit from a top-level T3 planner thread.",
+            ));
+        }
+        let registered = self
+            .host
+            .cached_project(&planner.project_id)
+            .map_err(|error| {
+                if matches!(error, HostError::Binding) {
+                    ServiceError::PlannerEnrollmentRefused(
+                        "T3 did not report an active project and exact checkout root.",
+                    )
+                } else {
+                    ServiceError::PlannerEnrollmentUnavailable(
+                        "The T3 project snapshot is unavailable. Retry shortly.",
+                    )
+                }
+            })?;
         let checkout = PathBuf::from(registered.root);
         let git = self.git.clone();
         let mut repository =
             tokio::task::spawn_blocking(move || discover_repository(checkout, &git))
                 .await
                 .map_err(|_| {
-                    ServiceError::PlannerEnrollmentRefused(
-                        "Nucleus could not inspect the registered Git checkout.",
+                    ServiceError::PlannerEnrollmentUnavailable(
+                        "Nucleus could not inspect the registered Git checkout. Retry shortly.",
                     )
                 })??;
         repository.host_project = Some(planner.project_id.clone());
@@ -246,13 +299,27 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let _projects = self.project_writes.write().await;
         let mut state = self.state.lock().await;
+        if let Some(Contact::Checking(Some(hint))) = state.enrollments.0.get(&planner.id) {
+            if hint.closed() {
+                return Err(ServiceError::PlannerEnrollmentRefused(
+                    "The T3 planner thread is archived or gone.",
+                ));
+            }
+            if hint.is_identity_change(Some(&planner)) {
+                return Err(ServiceError::PlannerEnrollmentUnavailable(
+                    "The T3 planner identity changed during verification. Retry shortly.",
+                ));
+            }
+        }
         if state.planner_authority_epoch != epoch
             || !self
                 .host
                 .cached_project(&planner.project_id)
                 .is_ok_and(|project| std::path::Path::new(&project.root) == repository.path)
         {
-            return Err(ServiceError::PlannerEnrollmentPending);
+            return Err(ServiceError::PlannerEnrollmentUnavailable(
+                "The T3 project or planner proof changed during verification. Retry shortly.",
+            ));
         }
         if state
             .store
@@ -274,7 +341,7 @@ impl Service {
         })
         .await
         .map_err(|_| {
-            ServiceError::PlannerEnrollmentRefused(
+            ServiceError::PlannerEnrollmentUnavailable(
                 "Nucleus could not save the Projects binding. Retry shortly.",
             )
         })??;

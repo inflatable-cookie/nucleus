@@ -726,6 +726,10 @@ project root from the synchronized T3 shell, then checks both GitHub remotes
 and the local default branch via
 `refs/remotes/origin/HEAD`. It saves the Projects route and planner binding
 together. The retry derives its repository and base from that binding.
+The service logs the result of each check. While a check runs, a shell event
+can revoke its proof if the caller's identity changes or the thread closes.
+Run activity alone leaves the proof intact. If verification fails, the next
+request returns the reason, such as a missing checkout or a remote mismatch.
 Further admissions, task commands and settings reads use local state. Each
 verified planner has its own project binding. A closed thread loses its cached
 authority. Task notices address the original planner and fall back to a live
