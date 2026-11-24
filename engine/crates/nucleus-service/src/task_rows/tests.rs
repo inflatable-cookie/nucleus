@@ -123,6 +123,32 @@ impl Fixture {
         }
     }
 
+    async fn seed_prerequisite(&self, pending: &Task) {
+        let dependency = Task::new(
+            nucleus_core::Identity {
+                id: "prerequisite".into(),
+                reference: "prerequisite".into(),
+                ..pending.identity().clone()
+            },
+            "Synthetic prerequisite".into(),
+            None,
+        );
+        let mut state = self.service.state.lock().await;
+        state.store.create(&dependency, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                pending,
+                &event("fixture"),
+                TaskAdmissionFacts {
+                    prerequisites: &["prerequisite".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        self.service.desire_title(&state, pending, None);
+    }
+
     async fn sync(&self) {
         {
             let row = self.native.lock().unwrap();
@@ -291,35 +317,11 @@ async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
 #[tokio::test]
 async fn native_rows_follow_dependency_wait_run_and_question() {
     let pending = pending_task();
-    let dependency = Task::new(
-        nucleus_core::Identity {
-            id: "prerequisite".into(),
-            reference: "prerequisite".into(),
-            ..pending.identity().clone()
-        },
-        "Synthetic prerequisite".into(),
-        None,
-    );
     let fixture = Fixture::new(&pending).await;
     let service = &fixture.service;
     let (mut worker, credential, mut observation) =
         reservation(ID, Entry::Brief, &service.fixture().start);
-    {
-        let mut state = service.state.lock().await;
-        state.store.create(&dependency, &event("fixture")).unwrap();
-        state
-            .store
-            .create_with_facts(
-                &pending,
-                &event("fixture"),
-                TaskAdmissionFacts {
-                    prerequisites: &["prerequisite".into()],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        service.desire_title(&state, &pending, None);
-    }
+    fixture.seed_prerequisite(&pending).await;
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
