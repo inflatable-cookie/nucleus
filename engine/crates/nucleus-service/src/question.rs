@@ -89,6 +89,11 @@ impl Service {
             (_, Some(OperatorDecline::Notified)) => return Ok(wait),
             _ => {}
         }
+        Box::pin(self.notify_planner(row)).await
+    }
+
+    async fn notify_planner(&self, row: &TaskRow) -> Result<Action, ServiceError> {
+        let wait = Action::Wait(WaitReason::Question);
         let bound = if let Some(delivery) = row.task.question_delivery() {
             match self.host.notice_state(delivery).await? {
                 NoticeState::Started => {
