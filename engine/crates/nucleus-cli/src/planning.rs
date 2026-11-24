@@ -214,7 +214,9 @@ impl Action {
             _ => return Err("use an authenticated report ticket".into()),
         };
         let suffix = format!("lanes/{}/{}", segment(&project)?, segment(&key)?);
-        let response = super::run_ticket_request(&ticket, method, &suffix, body).await?;
+        let response = super::run_ticket_request(&ticket, method, &suffix, body)?
+            .send()
+            .await?;
         let status = response.status();
         let result: Value = response.json().await?;
         if !status.is_success() {
