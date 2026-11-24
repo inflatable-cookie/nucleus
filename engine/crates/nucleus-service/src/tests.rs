@@ -84,10 +84,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
         worker: profile.clone(),
         reviewer: profile,
         acp_provider: None,
-        launch_budget: LaunchBudget {
-            slots: 1,
-            max_load: f64::MAX,
-        },
+        launch_budget: LaunchBudget { slots: 1 },
         agents: Vec::new(),
     };
     let host = T3::new("http://127.0.0.1:9", "unused-fixture-key")

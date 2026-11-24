@@ -57,19 +57,16 @@ pub struct DispatchSettings {
     pub usage: UsageLevel,
     pub usage_until_ms: Option<u64>,
     pub slots: u32,
-    pub max_load: f64,
     pub host_concurrency: u32,
     pub allowance_minutes: Option<u32>,
 }
 
 impl Default for DispatchSettings {
     fn default() -> Self {
-        let cores = std::thread::available_parallelism().map_or(8, std::num::NonZeroUsize::get);
         Self {
             usage: UsageLevel::Normal,
             usage_until_ms: None,
             slots: 1,
-            max_load: f64::from(u32::try_from(cores).unwrap_or(u32::MAX)),
             host_concurrency: 1,
             allowance_minutes: None,
         }
@@ -90,16 +87,13 @@ impl SettingsValue for DispatchSettings {
     const ID: &'static str = "nucleus.engine.dispatch";
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
+    const RETIRED_KEYS: &'static [&'static str] = &["maxLoad", "max_load"];
 
     fn validate(&self) -> Result<(), DomainIssue> {
         check(
-            self.slots > 0
-                && self.max_load.is_finite()
-                && self.max_load > 0.0
-                && self.host_concurrency == 1
-                && self.allowance_minutes != Some(0),
+            self.slots > 0 && self.host_concurrency == 1 && self.allowance_minutes != Some(0),
             "dispatch",
-            "use positive slots, load and allowance. The host lane has one call slot",
+            "use positive slots and allowance. The host lane has one call slot",
         )?;
         check(
             self.usage_until_ms.is_none()

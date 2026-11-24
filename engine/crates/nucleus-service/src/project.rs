@@ -9,7 +9,7 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
 use nucleus_hosts::{HostError, RoleProfile};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::ServiceError;
 
@@ -40,7 +40,7 @@ pub struct Project {
     /// The local T3 ACP provider running the Rust session agent.
     #[serde(default)]
     pub acp_provider: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "read_launch_budget")]
     pub launch_budget: LaunchBudget,
     #[serde(default)]
     pub agents: Vec<RegisteredAgent>,
@@ -64,17 +64,23 @@ pub enum RegisteredRole {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LaunchBudget {
     pub slots: u32,
-    pub max_load: f64,
 }
 
 impl Default for LaunchBudget {
     fn default() -> Self {
-        let cores = std::thread::available_parallelism().map_or(8, std::num::NonZeroUsize::get);
-        Self {
-            slots: 1,
-            max_load: f64::from(u32::try_from(cores).unwrap_or(u32::MAX)),
-        }
+        Self { slots: 1 }
     }
+}
+
+fn read_launch_budget<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<LaunchBudget, D::Error> {
+    let mut value = serde_json::Value::deserialize(deserializer)?;
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove("maxLoad");
+        fields.remove("max_load");
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 impl Project {
@@ -85,8 +91,6 @@ impl Project {
         };
         if !allowed
             || self.launch_budget.slots == 0
-            || !self.launch_budget.max_load.is_finite()
-            || self.launch_budget.max_load <= 0.0
             || self.host_project.trim().is_empty()
             || self
                 .acp_provider
@@ -234,8 +238,13 @@ mod tests {
             .as_object_mut()
             .expect("project object")
             .remove("mode");
+        legacy["launchBudget"]["maxLoad"] = json!(18);
         let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
         assert_eq!(project.mode, ProjectMode::Fixture);
+        assert_eq!(
+            serde_json::to_value(&project.launch_budget).expect("current budget"),
+            json!({"slots": 1})
+        );
         project
             .verify(&service.git)
             .expect("old fixture is still accepted");

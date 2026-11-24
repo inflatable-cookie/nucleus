@@ -397,6 +397,11 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     for task in [&worker, &reviewer] {
         seed_task(&service, task).await;
     }
+    service
+        .state
+        .lock()
+        .await
+        .set_wait("worker", Some(nucleus_core::WaitReason::HostUnknown));
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
@@ -450,6 +455,11 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
         &["event: invalidate", r#"{"taskId":"worker","version":2}"#],
     )
     .await;
+    let observed = service.task("worker").await.expect("accepted work report");
+    assert_eq!(observed.task.attempts(), worker.attempts());
+    let run = observed.task.run().expect("same run");
+    assert_eq!(&run.launch().instance, worker_id);
+    assert!(run.report().is_some());
     assert_eq!(
         post_json(&api, &worker_path, worker_key.as_bytes(), &work).await,
         StatusCode::NO_CONTENT

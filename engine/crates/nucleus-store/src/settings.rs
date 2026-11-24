@@ -492,6 +492,8 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     const ID: &'static str;
     const FILE: &'static str;
     const CLASS: StorageClass;
+    /// Obsolete keys accepted only when reading previously stored documents.
+    const RETIRED_KEYS: &'static [&'static str] = &[];
 
     /// Check stored or submitted settings without consulting an adapter.
     ///
@@ -553,7 +555,12 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         S::default()
     }
 
-    fn decode(&self, value: Value) -> Result<S, DomainIssue> {
+    fn decode(&self, mut value: Value) -> Result<S, DomainIssue> {
+        if let Some(fields) = value.as_object_mut() {
+            for key in S::RETIRED_KEYS {
+                fields.remove(*key);
+            }
+        }
         serde_json::from_value(value)
             .map_err(|_| DomainIssue::new("decode", "invalid settings document"))
     }
@@ -583,6 +590,40 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_dispatch_domain_discards_the_retired_load_key() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let home = temporary.path().canonicalize().expect("canonical home");
+        let config = home.join("config");
+        std::fs::create_dir(&config).expect("config directory");
+        let document = serde_json::json!({
+            "domain": DispatchSettings::ID,
+            "schemaVersion": 1,
+            "value": {
+                "usage": "normal",
+                "slots": 3,
+                "maxLoad": 18.0,
+                "hostConcurrency": 1,
+                "allowanceMinutes": 30,
+            }
+        });
+        std::fs::write(config.join(DispatchSettings::FILE), document.to_string())
+            .expect("old dispatch settings");
+        let file = SettingsFile::open(&home).expect("settings");
+        let saved = file
+            .read::<DispatchSettings>()
+            .expect("decode legacy settings");
+        assert!(saved.configured);
+        assert_eq!(saved.value.slots, 3);
+        assert_eq!(saved.value.allowance_minutes, Some(30));
+        assert!(
+            serde_json::to_value(saved.value)
+                .expect("current settings")
+                .get("maxLoad")
+                .is_none()
+        );
+    }
 
     #[test]
     fn a_missing_pinned_volume_never_creates_startup_roots() {

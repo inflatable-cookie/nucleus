@@ -85,7 +85,7 @@ impl T3 {
             let Some(observed) = self.thread(binding, thread).await? else {
                 continue;
             };
-            if !observed.belongs_to_parent(&parent) {
+            if !observed.belongs_to_parent(&parent, child.is_some()) {
                 return Err(HostError::Binding);
             }
             match observed.retained()? {
