@@ -455,39 +455,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
                 Signal::Question(Question::Repair(Repair::PullRequestUnavailable))
             }
         },
-        Phase::Merging => match &observation.forge {
-            Observed::Known(Forge::Open { pr, .. }) if !task.approves(&pr.head) => {
-                Signal::NeedsReview
-            }
-            Observed::Unknown
-            | Observed::Known(Forge::Open {
-                checks: CheckState::Unknown,
-                ..
-            }) => Signal::Wait(WaitReason::ForgeUnknown),
-            Observed::Known(Forge::Open {
-                checks: CheckState::Pending,
-                ..
-            }) => Signal::Wait(WaitReason::ChecksPending),
-            Observed::Known(Forge::Open {
-                checks: CheckState::Unreported,
-                ..
-            }) => Signal::Wait(WaitReason::ChecksUnreported),
-            Observed::Known(Forge::Open {
-                pr,
-                checks: CheckState::Ready,
-            }) => Signal::ReadyToMerge(pr.head.clone()),
-            Observed::Known(Forge::Open { .. })
-                if observation.recoverable_merge(task).is_some() =>
-            {
-                Signal::Refresh(Phase::Working)
-            }
-            Observed::Known(Forge::Open { .. }) => {
-                Signal::Question(Question::Repair(Repair::MergeBlocked))
-            }
-            Observed::Known(_) => {
-                Signal::Question(Question::Repair(Repair::PullRequestUnavailable))
-            }
-        },
+        Phase::Merging => merge_signal(task, observation),
         Phase::Closing => match &observation.forge {
             Observed::Unknown => Signal::Wait(WaitReason::ForgeUnknown),
             Observed::Known(_) => Signal::Question(Question::Repair(Repair::MergeUnconfirmed)),
@@ -495,6 +463,36 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
         Phase::ReportReady | Phase::Blocked | Phase::Error | Phase::Done | Phase::Cancelled => {
             Signal::Finished
         }
+    }
+}
+
+fn merge_signal(task: &Task, observation: &Observation) -> Signal {
+    match &observation.forge {
+        Observed::Known(Forge::Open { pr, .. }) if !task.approves(&pr.head) => Signal::NeedsReview,
+        Observed::Unknown
+        | Observed::Known(Forge::Open {
+            checks: CheckState::Unknown,
+            ..
+        }) => Signal::Wait(WaitReason::ForgeUnknown),
+        Observed::Known(Forge::Open {
+            checks: CheckState::Pending,
+            ..
+        }) => Signal::Wait(WaitReason::ChecksPending),
+        Observed::Known(Forge::Open {
+            checks: CheckState::Unreported,
+            ..
+        }) => Signal::Wait(WaitReason::ChecksUnreported),
+        Observed::Known(Forge::Open {
+            pr,
+            checks: CheckState::Ready,
+        }) => Signal::ReadyToMerge(pr.head.clone()),
+        Observed::Known(Forge::Open { .. }) if observation.recoverable_merge(task).is_some() => {
+            Signal::Refresh(Phase::Working)
+        }
+        Observed::Known(Forge::Open { .. }) => {
+            Signal::Question(Question::Repair(Repair::MergeBlocked))
+        }
+        Observed::Known(_) => Signal::Question(Question::Repair(Repair::PullRequestUnavailable)),
     }
 }
 

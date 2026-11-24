@@ -189,23 +189,9 @@ fn select_launch(
         })
     });
     let retained = task.threads().profile(role);
-    let bound_worker = role == Role::Worker
-        && task.work_instruction().is_some()
-        && task.threads().get(Role::Worker).is_some();
-    let (profile, reason, climbed) = if bound_worker {
-        let retained = retained.ok_or(ProfileLaunchError::OpaqueAuthor)?;
-        if !eligible.clone().any(|candidate| {
-            candidate.profile.id == retained.id
-                && candidate.profile.provider == retained.provider
-                && candidate.profile.model == retained.model
-                && candidate.usable(retained.effort)
-        }) {
-            return Err(ProfileLaunchError::RequiredProfileUnavailable {
-                role,
-                id: retained.id.clone(),
-            });
-        }
-        (retained.clone(), None, false)
+    let (profile, reason, climbed) = if let Some(retained) = instructed_worker(task, role, policy)?
+    {
+        (retained, None, false)
     } else if let Some(candidate) = requested {
         let mut profile = candidate.profile.clone();
         let reason = request.map(|request| {
@@ -274,6 +260,35 @@ fn select_launch(
         request_reason: reason,
         critical_fallback_worker,
     }))
+}
+
+fn instructed_worker(
+    task: &Task,
+    role: Role,
+    policy: &LaunchPolicy<'_>,
+) -> Result<Option<Profile>, ProfileLaunchError> {
+    if role != Role::Worker
+        || task.work_instruction().is_none()
+        || task.threads().get(Role::Worker).is_none()
+    {
+        return Ok(None);
+    }
+    let retained = task
+        .threads()
+        .profile(role)
+        .ok_or(ProfileLaunchError::OpaqueAuthor)?;
+    if !policy.candidates.iter().any(|candidate| {
+        candidate.profile.id == retained.id
+            && candidate.profile.provider == retained.provider
+            && candidate.profile.model == retained.model
+            && candidate.usable(retained.effort)
+    }) {
+        return Err(ProfileLaunchError::RequiredProfileUnavailable {
+            role,
+            id: retained.id.clone(),
+        });
+    }
+    Ok(Some(retained.clone()))
 }
 
 fn consumed_review(task: &Task, role: Role, climbed: bool) -> Option<u64> {
