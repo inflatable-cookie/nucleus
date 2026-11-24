@@ -60,6 +60,10 @@ export const repositorySettingsSchema = z.object({
   note: z.string().max(4000).default(""),
   updatedAt: z.string(),
   revision: z.number().int().nonnegative().default(0),
+  /** Rust engine (Spec 070 ruling 8): the GitHub checks a merge waits for, by name. */
+  requiredChecks: z.array(z.string().trim().min(1).max(200)).max(64).optional(),
+  /** Rust engine: the base branch tasks start from and merge into. */
+  base: z.string().trim().min(1).max(255).optional(),
 }).strict();
 
 export type RepositorySettings = z.infer<typeof repositorySettingsSchema>;

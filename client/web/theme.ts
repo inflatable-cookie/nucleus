@@ -51,7 +51,20 @@ export const engineBoardTheme: BoardTheme = {
   },
 };
 
-export function useWebTheme(): {
+/** The TypeScript service's board theme read. */
+async function readServiceTheme(
+  signal: AbortSignal,
+): Promise<BoardThemeSnapshot | null> {
+  const response = await fetch("/api/theme", { signal });
+  if (!response.ok) return null;
+  return responseSchema.safeParse(await response.json()).data?.theme ?? null;
+}
+
+export function useWebTheme(
+  read: (signal: AbortSignal) => Promise<BoardThemeSnapshot | null> = readServiceTheme,
+  /** Changes when the host reports a theme change, so the snapshot is read again. */
+  revision = 0,
+): {
   appearance: BoardAppearance;
   theme: BoardTheme;
 } {
@@ -73,16 +86,14 @@ export function useWebTheme(): {
 
   useEffect(() => {
     const controller = new AbortController();
-    async function load() {
-      const response = await fetch("/api/theme", { signal: controller.signal });
-      if (!response.ok) return;
-      const parsed = responseSchema.safeParse(await response.json());
-      if (parsed.success && !controller.signal.aborted)
-        setSnapshot(parsed.data.theme);
-    }
-    void load().catch(() => {});
+    void read(controller.signal).then(
+      (theme) => {
+        if (!controller.signal.aborted) setSnapshot(theme);
+      },
+      () => {},
+    );
     return () => controller.abort();
-  }, []);
+  }, [read, revision]);
 
   return useMemo(() => {
     const preferred =

@@ -92,6 +92,8 @@ export const projectSettingsRowSchema = z
     /** Task 1110: the project's named agents with live state; the board shows the same list `project.agents` returns. */
     agents: z.array(projectAgentViewSchema).optional(),
     problems: z.array(projectSettingsProblemSchema),
+    /** Rust engine (Spec 070 ruling 8): an archived project takes no new work. */
+    archived: z.boolean().optional(),
   })
   .strict();
 

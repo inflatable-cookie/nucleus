@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext } from "react";
 import * as icons from "lucide-react";
 import type { BoardIconProps, BoardRpc, BoardWorkspace } from "../shell/types";
-import type { createWebTransport } from "./transport";
+import type { BoardTransport } from "./transport";
 
-export const WebContext = createContext<{ transport: ReturnType<typeof createWebTransport>; settings: boolean } | null>(null);
+export const WebContext = createContext<{ transport: BoardTransport; settings: boolean } | null>(null);
 
 export const useRpc: BoardRpc = contract => {
   const context = useContext(WebContext);
