@@ -277,7 +277,7 @@ fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
 }
 
 fn wait_text(detail: &Detail) -> Option<&str> {
-    if let Some(cause) = detail.wait_detail.as_deref() {
+    if let Some(cause) = detail.wait_cause.as_deref() {
         return Some(cause);
     }
     Some(match detail.wait.as_deref()? {
