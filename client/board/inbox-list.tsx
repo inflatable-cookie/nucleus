@@ -21,15 +21,15 @@ import {
 import {
   inboxCounts,
   inboxSections,
-  leadsCards,
-  parkedCards,
+  triageCards,
+  triageStates,
+  type TriageFilter,
   type InboxView,
 } from "../../shared/inbox-board";
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
 import {
-  Disclosure,
   DropdownSelect,
   muted,
   row,
@@ -231,7 +231,7 @@ export function useInboxBoard({
       ),
     },
   };
-  const scopeLeads = leadsCards(columns).flatMap((card) =>
+  const scopeLeads = triageCards(columns, "leads", "All").flatMap((card) =>
     card.kind === "lead" ? [card.value] : [],
   );
   // The tag filter lists only tags on leads in the current scope, with counts;
@@ -381,18 +381,20 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const legacyView = view === "merging" || view === "history" ? null : view;
-  const sections = legacyView ? inboxSections(board, legacyView) : [];
-  // Nucleus#1543: parked leads and papercuts sit under one collapsed row at the end of their list.
-  const parked =
-    view === "leads" || view === "papercuts" ? parkedCards(board, view) : [];
-  const [parkedOpen, setParkedOpen] = useState(false);
+  const [triageFilters, setTriageFilters] = useState<Record<"leads" | "papercuts", TriageFilter>>({
+    leads: "All", papercuts: "All",
+  });
+  const triageView = view === "leads" || view === "papercuts" ? view : null;
+  const sections = legacyView
+    ? inboxSections(board, legacyView, triageView ? triageFilters[triageView] : undefined)
+    : [];
   const listMeasurements = useRef<{
     view: typeof view;
     viewportHeight: number;
     contentHeight: number | null;
   }>({ view, viewportHeight: 0, contentHeight: null });
   const loadedPage = useRef({ view, count: triagePageSize });
-  const isTriageList = view === "leads" || view === "papercuts";
+  const isTriageList = triageView !== null;
   const shown = view === "papercuts" ? papercutShown : triageShown;
   const setShown = view === "papercuts" ? setPapercutShown : setTriageShown;
   const totalInList = sections.reduce(
@@ -672,7 +674,7 @@ export function InboxList({
     for (const item of queuedHidden) placeHeld(item.repoPath);
     return rows;
   };
-  const viewCount = (legacyView ? counts[legacyView] : 0) + (rust?.tasks?.length ?? 0);
+  const viewCount = isTriageList ? totalInList : (legacyView ? counts[legacyView] : 0) + (rust?.tasks?.length ?? 0);
   const title = viewTitles[view];
   const total =
     sections.reduce((sum, section) => sum + section.cards.length, 0) +
@@ -733,6 +735,24 @@ export function InboxList({
             >
               {countText}
             </Text>
+            {triageView && (
+              <DropdownSelect
+                compact
+                c={c}
+                label={triageView === "leads" ? "Filter leads by state" : "Filter papercuts by state"}
+                value={triageFilters[triageView]}
+                options={triageStates.map((state) => ({ value: state, label: state }))}
+                onChange={(value) => {
+                  const filter = triageStates.find((state) => state === value);
+                  if (!filter) return;
+                  setTriageFilters((current) => ({ ...current, [triageView]: filter }));
+                  setShown(triagePageSize);
+                  loadedPage.current = { view, count: triagePageSize };
+                  listMeasurements.current.contentHeight = null;
+                }}
+                minWidth={80}
+              />
+            )}
             {view === "leads" && (
               <DropdownSelect
                 compact
@@ -807,18 +827,6 @@ export function InboxList({
               );
             })
           )}
-          {parked.length > 0 && (
-            <View style={{ gap: space.xxs }}>
-              <Disclosure
-                c={c}
-                label={`Parked (${parked.length})`}
-                accessibilityLabel={`Parked, ${parked.length} ${view === "papercuts" ? "papercut" : "lead"}${parked.length === 1 ? "" : "s"}`}
-                expanded={parkedOpen}
-                onToggle={() => setParkedOpen(!parkedOpen)}
-              />
-              {parkedOpen && parked.map(renderCard)}
-            </View>
-          )}
           {queuedPending && (
             <Text
               style={{ ...muted(c), textAlign: "center", padding: space.md }}
@@ -845,7 +853,7 @@ export function InboxList({
           )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length && parked.length === 0)) && (
+        {((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length)) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."
@@ -854,7 +862,7 @@ export function InboxList({
                 ? "Loading…"
                 : view === "leads" &&
                     triageTag &&
-                    leadsCards(board).length === 0
+                    triageCards(board, "leads", "All").length === 0
                   ? "No records carry this tag."
                   : "Nothing here."}
           </Text>

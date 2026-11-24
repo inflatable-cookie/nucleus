@@ -26,42 +26,27 @@ export type InboxView = (typeof inboxViews)[number]["id"];
 
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
 
-/**
- * Leads: the Triage column's leads on the to-do list. A papercut-tagged lead is a papercut, never a
- * lead here, and a parked lead is off the list until it is unparked (Nucleus#1543).
- */
-export function leadsCards(board: PipelineBoard): PipelineCard[] {
-  return board.cards.Triage.filter(
-    (card) =>
-      card.kind === "lead" &&
-      triageKind(card.value) === "lead" &&
-      !card.value.parked,
-  );
-}
+export const triageStates = ["All", "Open", "Parked"] as const;
+export type TriageFilter = (typeof triageStates)[number];
 
-/** Papercuts: the Triage column's papercut-tagged leads on the to-do list, their own list (Tom, 2026-11-21). */
-export function papercutCards(board: PipelineBoard): PipelineCard[] {
-  return board.cards.Triage.filter(
-    (card) =>
-      card.kind === "lead" &&
-      triageKind(card.value) === "papercut" &&
-      !card.value.parked,
-  );
-}
-
-/** Nucleus#1543: the parked leads or papercuts of one list, shown under Parked at its end. */
-export function parkedCards(
+/** The original Triage order, narrowed to one record kind and parked state. */
+export function triageCards(
   board: PipelineBoard,
   view: "leads" | "papercuts",
+  filter: TriageFilter,
 ): PipelineCard[] {
   const kind = view === "leads" ? "lead" : "papercut";
   return board.cards.Triage.filter(
     (card) =>
       card.kind === "lead" &&
       triageKind(card.value) === kind &&
-      Boolean(card.value.parked),
+      (filter === "All" || Boolean(card.value.parked) === (filter === "Parked")),
   );
 }
+
+/** Menu counts and open work ignore parked records. */
+export const leadsCards = (board: PipelineBoard) => triageCards(board, "leads", "Open");
+export const papercutCards = (board: PipelineBoard) => triageCards(board, "papercuts", "Open");
 
 /**
  * When a Needs you card began to need the operator: a decision's ask, a drained
@@ -92,6 +77,7 @@ export function needsCards(board: PipelineBoard): PipelineCard[] {
 export function inboxSections(
   board: PipelineBoard,
   view: InboxView,
+  triageFilter: TriageFilter = "All",
 ): InboxSection[] {
   const column = (
     id: string,
@@ -102,10 +88,10 @@ export function inboxSections(
     case "needs":
       return [{ id: "needs", label: "Needs you", cards: needsCards(board) }];
     case "leads":
-      return [{ id: "leads", label: "Leads", cards: leadsCards(board) }];
+      return [{ id: "leads", label: "Leads", cards: triageCards(board, view, triageFilter) }];
     case "papercuts":
       return [
-        { id: "papercuts", label: "Papercuts", cards: papercutCards(board) },
+        { id: "papercuts", label: "Papercuts", cards: triageCards(board, view, triageFilter) },
       ];
     case "queue":
       return [column("queued", "Queued", "Queued")];

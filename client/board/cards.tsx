@@ -302,6 +302,7 @@ export const BoardCard = React.memo(function BoardCard({
   label,
   onPress,
   selected,
+  parked = false,
   c,
   board = true,
   kind,
@@ -322,6 +323,7 @@ export const BoardCard = React.memo(function BoardCard({
   label: string;
   onPress: () => void;
   selected: boolean;
+  parked?: boolean;
   c: Colors;
   board?: boolean;
   /** The kind tile; the list's own loading and retry rows have none. */
@@ -435,6 +437,7 @@ export const BoardCard = React.memo(function BoardCard({
         flexDirection: "row",
         alignItems: "flex-start",
         gap: space.sm,
+        ...(parked ? { filter: "grayscale(1)", opacity: 0.75 } : {}),
       }}
     >
       {kind ? <KindTile kind={kind} c={c} /> : null}
