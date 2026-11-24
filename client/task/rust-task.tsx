@@ -553,7 +553,10 @@ function Participants({ lifecycle, c }: { lifecycle: RustLifecycle; c: Colors })
         {(["worker", "reviewer"] as const).map((role) => {
           const participant = lifecycle[role];
           if (!participant) return null;
-          const profile = [participant.provider, participant.model]
+          const profile = [
+            participant.providerInstance ?? participant.provider,
+            participant.model,
+          ]
             .filter(Boolean)
             .join(" / ");
           return (

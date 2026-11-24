@@ -227,6 +227,19 @@ impl ProfileCatalog {
             .then_some(path)
     }
 
+    pub(crate) fn provider_family(&self, instance: &str) -> Option<Provider> {
+        let driver = self
+            .0
+            .iter()
+            .find(|entry| entry["instanceId"] == instance)?
+            .get("driver")?
+            .as_str()?;
+        if driver == "claudeAgent" {
+            return Some(Provider::Claude);
+        }
+        serde_json::from_value(Value::String(driver.into())).ok()
+    }
+
     pub(super) fn supports_parent(&self, instance: &str) -> bool {
         let profile = RoleProfile {
             instance_id: instance.into(),

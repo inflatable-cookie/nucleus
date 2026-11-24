@@ -145,9 +145,13 @@ Later decisions carry their own attribution.
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
    the exact frozen command ID, so a parent hold pinned to the ACP provider and
    model can queue while busy and reconcile an ambiguous send under that ID.
-   Older parent holds and unpinned continuations still require an idle thread.
-   Delegated launch absence still
-   requires an exact terminal parent run and an authoritative child absence.
+   Older parent holds still require an idle thread. Delegated launch absence
+   still requires an exact terminal parent run and an authoritative child absence.
+   New retained worker continuations pin provider and model and can enter the
+   native queue without an idle or presentation check. A reservation proven
+   unsent is replanned with a pin and a fresh command ID. For an older
+   reservation that may have been sent, the engine waits for matching native
+   evidence and uses the actual run's provider and model when it observes it.
    Done thread housekeeping follows ruling 34 after checkout removal. The
    synchronized shell supplies the known task, reviewer and worker rows and
    rechecks the target before dispatch. Closure follows when all three are

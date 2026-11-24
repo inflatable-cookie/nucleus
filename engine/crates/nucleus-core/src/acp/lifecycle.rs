@@ -23,6 +23,8 @@ pub struct Lifecycle {
 pub struct Participant {
     pub thread: String,
     pub provider: Option<Provider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_instance: Option<String>,
     pub model: Option<String>,
 }
 
@@ -109,6 +111,12 @@ pub enum Milestone {
         #[serde(skip_serializing_if = "Option::is_none")]
         round: Option<u64>,
     },
+    RunRouting {
+        instance: String,
+        provider_instance: String,
+        provider: Option<Provider>,
+        model: String,
+    },
     RunReported {
         instance: String,
         sent_at_ms: u64,
@@ -183,6 +191,8 @@ pub struct RoleCard {
     pub purpose: String,
     pub thread_url: Option<String>,
     pub provider: Option<Provider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_instance: Option<String>,
     pub model: Option<String>,
     /// The provider and model come from the exact native run, when recorded.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
