@@ -174,6 +174,8 @@ Later decisions carry their own attribution.
     - Commands come only from operator messages typed in the T3 UI. Installed T3 records those as `createdBy: user`, `creationSource: web` with no sender, while agent sends through MCP or the `t3` CLI are stamped `agent`/`mcp`.
     - A mutation is confirmed by typing `yes` as the next message (planner decision, 2026-11-24). One command can be pending; it expires after two minutes and any other message cancels it. Typed `accept` and `decline` answers are recorded as attested. Native form answers keep the ruling 26 trust level and are recorded as unattested.
 
+28. **TypeScript features retired at cutover.** Tom, 2026-11-24, from the source inventory triage: retire author-side proofs and the proof executor (proof files, receipts, the GO release gate); worker and reviewer checkpoints ("Context limits shouldn't be a problem? Context gets compacted and it just continues?"); and interactive tasks. Task dependencies are ported. Retired with earlier rulings: merge check command and timeout, and the optional required reviewer (ruling 13); repository rekey, bulk dispose, reparent, detach, outcome search and removal, review-entry reconcile, receipt acceptance and task registration (rulings 1, 2 and 15); planner handover (ruling 23); and TS-only runtime settings. Everything else in the inventory is ported from the TypeScript source, which is the reference for migrated behaviour.
+
 ## The model
 
 ### Stored state per task
