@@ -215,6 +215,9 @@ Every action is idempotent:
   planner.
 - **Timeouts, deferrals, unreadable state and uncertain launches** are not faults.
   The engine waits and looks again on the next pass.
+- An open repair question is rechecked against the next fresh observation. If
+  that observation shows the condition has cleared, retire the question and
+  decide again through the same gates. Unknown evidence keeps the question open.
 - A prepared review can send only with a fresh clean checkout at the open PR's
   exact head. A reservation that no longer fits proceeds to reconciliation
   without charging a failed attempt. A failed attempt counts only when the
@@ -285,6 +288,12 @@ Reuse, to be confirmed by the build when it reads their contracts:
   through Effigy.
 
 ## Validation
+
+Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes as issues come up? We need to stop this version from descending into madness like the TS version did."
+
+Every fix states its general rule and what it replaces. An independent review
+checks for special cases, duplicate paths and dead code before the milestone 3
+cutover. Keep the engine below 30,000 source lines through milestone 4.
 
 Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
 Cargo builds" rule for the `engine/` workspace only:

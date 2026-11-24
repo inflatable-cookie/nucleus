@@ -113,7 +113,7 @@ impl Task {
     }
 
     fn advance(&mut self, phase: Phase, observation: &Observation) {
-        if observation.repairs_workspace(self) {
+        if observation.resolves_repair(self) {
             self.question = None;
         }
         let run = self.settle_run(observation);

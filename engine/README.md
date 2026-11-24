@@ -495,6 +495,17 @@ to submit and answer as the bound fixture planner.
 | Inbox layout and shared question controls | The Inbox shows the task's one question and lets the assigned planner submit `answer`. | Ladder rungs, escalations and recovery ownership. One question goes to the assigned planner. |
 | Settings shell and Storage form controls | Settings and Storage read the Rust domains. `client/web` transport and live channel adapt at the data boundary. | Legacy per-task tuning and recovery settings. Planning records and legacy features keep their current route while the old engine drains. |
 
+### Delete at TS retirement
+
+Milestone 4 removes the remaining TypeScript transition paths:
+
+- The per-repository pilot manifest compatibility and the TypeScript admission
+  selector. The global no-new-work switch covers the drain.
+- The Python startup helper once `nucleus ensure` owns startup.
+- The TypeScript Inbox bridge and board proxy.
+- The TypeScript Settings screens and their RPC wiring. The Rust-backed
+  Settings screens become the only Settings surface.
+
 ## Settings migration
 
 Keep the Settings tabs, shared controls and save feedback. Use one noun per
