@@ -2277,6 +2277,7 @@ mod tests {
                     assert_eq!(payload["type"], "message.dispatch");
                     assert_eq!(payload["threadId"], "thread:worker");
                     assert_eq!(payload["commandId"], instance);
+                    assert_eq!(payload["modelSelection"], native_selection);
                     assert!(payload["text"].as_str().unwrap().contains("resolve the conflicts"));
                     native_accepted.lock().unwrap().push(payload["messageId"].clone());
                     return serde_json::Value::Null;
@@ -2318,6 +2319,7 @@ mod tests {
         let launch = retained.task.run().unwrap().launch();
         let wire: serde_json::Value = serde_json::from_str(&launch.input).unwrap();
         assert_eq!(wire["selection"], selection);
+        assert_eq!(wire["payload"]["modelSelection"], selection);
         assert!(
             advance(&service).await.is_err(),
             "the accepted send loses its reply"
