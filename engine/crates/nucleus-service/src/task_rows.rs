@@ -303,6 +303,10 @@ impl Service {
 
     /// Wake an exact task parent before an already authorized native message.
     /// The caller holds the task and project fences. Readback gates delivery.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep ownership, both visibility writes and readback in order"
+    )]
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,

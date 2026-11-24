@@ -1058,9 +1058,8 @@ impl Summary {
             lifecycle: crate::presentation::task_lifecycle(
                 task,
                 &state.store,
-                &state_label,
+                wait_detail.unwrap_or(&state_label),
                 wait,
-                wait_detail,
                 created_at_ms,
             )?,
             state_label,

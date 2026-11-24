@@ -123,7 +123,6 @@ pub(crate) fn read(
     store: &Store,
     state_label: &str,
     wait: Option<WaitReason>,
-    wait_detail: Option<&str>,
     admitted_at_ms: Option<u64>,
 ) -> Result<Lifecycle, StoreError> {
     let audit = Audit::read(store, task)?;
@@ -191,9 +190,7 @@ pub(crate) fn read(
                 .filter(|_| key == StepKey::Review)
                 .map(|round| format!("Round {round}"));
             let note = if state == StepState::Current {
-                wait_detail
-                    .map(str::to_owned)
-                    .or_else(|| current_note(task, key, state_label))
+                current_note(task, key, state_label)
             } else {
                 None
             };
