@@ -22,8 +22,8 @@ const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_TICKET: usize = 64 * 1024;
 const MAX_MESSAGES: usize = 10_000;
 
-// The WebSocket server requires its one-use ticket in the URL. Tungstenite
-// traces raw upgrade requests, so do not compile those log statements in.
+// The upgrade URL carries a one-use ticket and preview frames can carry board
+// pairing links. Keep Tungstenite's raw request and frame traces compiled out.
 const _: () = assert!(log::STATIC_MAX_LEVEL as usize <= log::LevelFilter::Debug as usize);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -60,9 +60,16 @@ pub struct ThreadHint {
     closed: bool,
     running: bool,
     identity: Option<crate::PlannerIdentity>,
+    inbox_synchronized: bool,
 }
 
 impl ThreadHint {
+    /// The first shell synchronization of a new Inbox host connection.
+    #[must_use]
+    pub const fn inbox_synchronized(&self) -> bool {
+        self.inbox_synchronized
+    }
+
     #[cfg(feature = "loopback-fixture")]
     #[doc(hidden)]
     #[must_use]
@@ -103,6 +110,7 @@ impl ThreadHint {
                     running: thread["status"] == "running"
                         && thread["activeRunId"].as_str().is_some(),
                     identity: serde_json::from_value(thread.clone()).ok(),
+                    inbox_synchronized: false,
                     change: Some(json!([
                         item["location"],
                         thread["status"],
@@ -124,6 +132,7 @@ impl ThreadHint {
                 closed: true,
                 running: false,
                 identity: None,
+                inbox_synchronized: false,
             }),
             _ => None,
         }
@@ -267,7 +276,7 @@ impl Rpc {
         &self,
         hints: &mpsc::Sender<ThreadHint>,
         titles: Option<(&crate::title_shell::TitleShell, &str)>,
-        inbox_thread: Option<&str>,
+        mut inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let socket = time::timeout(DEADLINE, self.connect())
             .await
@@ -290,7 +299,7 @@ impl Rpc {
                             .await?;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
                             if item["kind"] == "synchronized"
-                                && let Some(thread) = inbox_thread
+                                && let Some(thread) = inbox_thread.take()
                             {
                                 hints
                                     .try_send(ThreadHint {
@@ -299,6 +308,7 @@ impl Rpc {
                                         closed: false,
                                         running: false,
                                         identity: None,
+                                        inbox_synchronized: true,
                                     })
                                     .map_err(|_| HostError::Uncertain)?;
                             }

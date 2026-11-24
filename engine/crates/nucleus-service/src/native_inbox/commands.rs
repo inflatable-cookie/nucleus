@@ -1,13 +1,14 @@
-use std::{process::Stdio, time::Duration};
+use std::{sync::atomic::Ordering, time::Duration};
 
 use nucleus_hosts::InboxOperatorMessage;
-use tokio::{process::Command, time::timeout};
+use tokio::time::timeout;
 
 use crate::{Service, ServiceError, now_ms};
 
 use super::NativeInbox;
 
 const REPLY_CAPACITY: usize = 64;
+const PREVIEW_DEADLINE: Duration = Duration::from_secs(20);
 
 impl Service {
     pub(super) async fn serve_inbox_commands(
@@ -28,16 +29,12 @@ impl Service {
             {
                 continue;
             }
-            let reply = self.open_inbox_board().await;
-            if let Ok(mut replies) = inbox.replies.lock() {
-                if replies.len() == REPLY_CAPACITY {
-                    replies.pop_front();
-                }
-                replies.push_back(reply);
-            } else {
-                continue;
-            }
-            inbox.observed.send_modify(|_| {});
+            // A typed request can also satisfy this connection's automatic attempt.
+            inbox.preview_pending.store(false, Ordering::Relaxed);
+            self.show_inbox_board(inbox, true).await;
+        }
+        if self.board.get().is_some() && inbox.preview_pending.swap(false, Ordering::Relaxed) {
+            self.show_inbox_board(inbox, false).await;
         }
         Ok(())
     }
@@ -58,37 +55,35 @@ impl Service {
             .collect())
     }
 
-    async fn open_inbox_board(&self) -> String {
-        let Some(board) = self.board.get() else {
-            return "The local board is unavailable.".into();
-        };
-        let Some(link) = board.inbox_link(self.callback) else {
-            return "Could not issue a one-use board link.".into();
-        };
+    async fn show_inbox_board(&self, inbox: &NativeInbox, typed: bool) {
         let board_url = format!("http://{}/", self.callback);
-        let opener = if cfg!(target_os = "macos") {
-            "/usr/bin/open"
+        let reply = if let Some(board) = self.board.get() {
+            let opened = timeout(
+                PREVIEW_DEADLINE,
+                self.host
+                    .preview_inbox_board(&board_url, || board.inbox_link(self.callback)),
+            )
+            .await;
+            if opened.is_ok_and(|result| result.is_ok()) {
+                if !typed {
+                    return;
+                }
+                format!("Board at {board_url}")
+            } else {
+                format!(
+                    "Could not open the board. Please type ui again to retry.\nBoard at {board_url}"
+                )
+            }
         } else {
-            "xdg-open"
+            "The local board is unavailable. Please type ui again to retry.".into()
         };
-        let mut command = Command::new(opener);
-        let scratch = self.storage.scratch().path();
-        command
-            .arg(link)
-            .env("TMPDIR", scratch)
-            .env("TMP", scratch)
-            .env("TEMP", scratch)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        if timeout(Duration::from_secs(5), command.status())
-            .await
-            .is_ok_and(|result| result.is_ok_and(|status| status.success()))
-        {
-            format!("Board at {board_url}")
-        } else {
-            format!("Could not open the browser. Board at {board_url}")
+        if let Ok(mut replies) = inbox.replies.lock() {
+            if replies.len() == REPLY_CAPACITY {
+                replies.pop_front();
+            }
+            replies.push_back(reply);
+            drop(replies);
+            inbox.observed.send_modify(|_| {});
         }
     }
 }

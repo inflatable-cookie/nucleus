@@ -43,9 +43,67 @@ impl From<EnrollmentFailure> for ServiceError {
 pub(super) struct EnrolledPlanner {
     pub(super) identity: PlannerIdentity,
     pub(super) verified_at: Instant,
+    binding: PlannerBinding,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PlannerBinding {
+    project: String,
+    native_project: String,
+    checkout: PathBuf,
+    repository: String,
+    base: String,
+}
+
+impl PlannerBinding {
+    fn matches(&self, project: &str, repo: &RepositorySettings) -> bool {
+        self.project == project
+            && repo.host_project.as_deref() == Some(&self.native_project)
+            && self.checkout == repo.path
+            && self.repository == repo.origin
+            && self.base == repo.base
+    }
 }
 
 impl State {
+    fn planner_binding(&self, actor: &str) -> Option<PlannerBinding> {
+        let (project, repo) = self.settings.planner_route(actor)?;
+        Some(PlannerBinding {
+            project: project.into(),
+            native_project: repo.host_project.clone()?,
+            checkout: repo.path.clone(),
+            repository: repo.origin.clone(),
+            base: repo.base.clone(),
+        })
+    }
+
+    pub(super) fn planner_candidates_for(&self, project: &str) -> Vec<String> {
+        let Some(project) = self
+            .settings
+            .projects
+            .as_ref()
+            .and_then(|s| s.projects.get(project))
+            .filter(|project| !project.archived)
+        else {
+            return Vec::new();
+        };
+        let mut candidates: Vec<_> = project
+            .repositories
+            .iter()
+            .rev()
+            .flat_map(|repo| repo.planner_threads.iter().rev())
+            .cloned()
+            .collect();
+        candidates.sort_by_key(|actor| {
+            std::cmp::Reverse(
+                self.enrolled_planners
+                    .get(actor)
+                    .map(|proof| proof.verified_at),
+            )
+        });
+        candidates
+    }
+
     pub(crate) fn live_planner_project(&self, actor: &str) -> Option<&str> {
         self.live_planner_route(actor).map(|(id, _)| id)
     }
@@ -53,7 +111,9 @@ impl State {
     pub(super) fn live_planner_route(&self, actor: &str) -> Option<(&str, &RepositorySettings)> {
         let proof = self.enrolled_planners.get(actor)?;
         let (id, repository) = self.settings.planner_route(actor)?;
-        (repository.host_project.as_deref() == Some(&proof.identity.project_id))
+        proof
+            .binding
+            .matches(id, repository)
             .then_some((id, repository))
     }
 
@@ -254,7 +314,8 @@ impl Service {
     }
 
     pub(super) async fn complete_enrollment(&self, actor: &str) {
-        let result = self.verify_enrollment(actor).await;
+        let binding = self.state.lock().await.planner_binding(actor);
+        let result = self.verify_enrollment(actor, binding.as_ref()).await;
         let mut state = self.state.lock().await;
         let failure = match result {
             Ok(()) => {
@@ -290,26 +351,86 @@ impl Service {
         );
     }
 
-    async fn verify_enrollment(&self, actor: &str) -> Result<(), ServiceError> {
+    /// A persisted route is a candidate until checked against the exact thread and checkout.
+    pub(super) async fn check_registered_planner(&self, actor: &str) -> Result<bool, ServiceError> {
+        let binding = {
+            let mut state = self.state.lock().await;
+            let Some(binding) = state.planner_binding(actor) else {
+                return Ok(false);
+            };
+            if matches!(
+                state.enrollments.0.get(actor),
+                Some(Contact::Requested | Contact::Checking(_))
+            ) {
+                return Err(HostError::Uncertain.into());
+            }
+            state
+                .enrollments
+                .0
+                .insert(actor.into(), Contact::Checking(None));
+            binding
+        };
+        let result = self.verify_enrollment(actor, Some(&binding)).await;
+        let mut state = self.state.lock().await;
+        state.enrollments.0.remove(actor);
+        if result.is_ok() {
+            return Ok(state.live_planner_project(actor) == Some(binding.project.as_str()));
+        }
+        if state.enrolled_planners.remove(actor).is_some() {
+            self.planner_routes_changed(&mut state);
+        }
+        if state.planner_binding(actor).is_none() {
+            return Ok(false);
+        }
+        Err(match result {
+            Err(ServiceError::Settings(error)) => error.into(),
+            Err(ServiceError::Host(error)) => error.into(),
+            _ => HostError::Uncertain.into(),
+        })
+    }
+
+    async fn verify_enrollment(
+        &self,
+        actor: &str,
+        binding: Option<&PlannerBinding>,
+    ) -> Result<(), ServiceError> {
         if !self.host.projects_synchronized() {
             return Err(ServiceError::PlannerEnrollmentUnavailable(
                 "The T3 project snapshot has not synchronized. Retry shortly.",
             ));
         }
         let epoch = self.state.lock().await.planner_authority_epoch;
-        let planner = self
-            .host
-            .planner_identity(actor)
-            .await
-            .map_err(|_| {
-                ServiceError::PlannerEnrollmentUnavailable(
-                    "T3 could not prove the exact calling thread. Retry shortly.",
-                )
-            })?
-            .ok_or(ServiceError::PlannerEnrollmentRefused(
-                "The T3 planner thread is archived or gone.",
-            ))?;
-        if planner.is_child() || planner.provider_instance_id.as_deref() == self.acp_provider() {
+        let planner = self.host.planner_identity(actor).await.map_err(|error| {
+            if binding.is_some() {
+                return ServiceError::Host(error);
+            }
+            ServiceError::PlannerEnrollmentUnavailable(
+                "T3 could not prove the exact calling thread. Retry shortly.",
+            )
+        })?;
+        let refused = match planner.as_ref() {
+            None => Some("The T3 planner thread is archived or gone."),
+            Some(planner) if planner.is_child() => {
+                Some("Submit from a top-level T3 planner thread.")
+            }
+            Some(planner)
+                if binding.is_some_and(|binding| binding.native_project != planner.project_id) =>
+            {
+                Some("The T3 planner thread changed projects.")
+            }
+            Some(_) => None,
+        };
+        if let Some(reason) = refused {
+            if let Some(binding) = binding {
+                self.revoke_planner(epoch, actor, binding).await?;
+            }
+            return Err(ServiceError::PlannerEnrollmentRefused(reason));
+        }
+        let planner = planner.ok_or(ServiceError::Input)?;
+        if self
+            .acp_provider()
+            .is_some_and(|provider| planner.provider_instance_id.as_deref() == Some(provider))
+        {
             return Err(ServiceError::PlannerEnrollmentRefused(
                 "Submit from a top-level T3 planner thread.",
             ));
@@ -342,7 +463,8 @@ impl Service {
         repository.host_project_title = registered.title.filter(|title| {
             !title.trim().is_empty() && title.len() <= 240 && !title.chars().any(char::is_control)
         });
-        self.save_enrollment(epoch, planner, repository).await
+        self.save_enrollment(epoch, planner, repository, binding)
+            .await
     }
 
     async fn save_enrollment(
@@ -350,6 +472,7 @@ impl Service {
         epoch: u64,
         planner: PlannerIdentity,
         repository: RepositorySettings,
+        binding: Option<&PlannerBinding>,
     ) -> Result<(), ServiceError> {
         let _projects = self.project_writes.write().await;
         let mut state = self.state.lock().await;
@@ -385,6 +508,33 @@ impl Service {
                 "A task role cannot enroll as a project planner.",
             ));
         }
+        if let Some(binding) = binding {
+            if state.planner_binding(&planner.id).as_ref() != Some(binding)
+                || binding.checkout != repository.path
+                || !binding.repository.eq_ignore_ascii_case(&repository.origin)
+                || binding.base != repository.base
+            {
+                return Err(ServiceError::PlannerEnrollmentUnavailable(
+                    "The registered T3 checkout changed or is unavailable. Retry shortly.",
+                ));
+            }
+            if state
+                .enrolled_planners
+                .get(&planner.id)
+                .is_none_or(|proof| proof.binding != *binding || proof.identity != planner)
+            {
+                state.enrolled_planners.insert(
+                    planner.id.clone(),
+                    EnrolledPlanner {
+                        identity: planner,
+                        verified_at: Instant::now(),
+                        binding: binding.clone(),
+                    },
+                );
+                self.planner_routes_changed(&mut state);
+            }
+            return Ok(());
+        }
         let file = self.settings.clone();
         let actor = planner.id.clone();
         let (snapshot, changed) = tokio::task::spawn_blocking(move || {
@@ -400,19 +550,70 @@ impl Service {
             )
         })??;
         state.settings.projects = Some(snapshot.value);
+        let binding = state
+            .planner_binding(&planner.id)
+            .ok_or(ServiceError::Project)?;
         state.enrolled_planners.insert(
             planner.id.clone(),
             EnrolledPlanner {
                 identity: planner,
                 verified_at: Instant::now(),
+                binding,
             },
         );
         if changed {
             self.project_settings_changed(&mut state);
         } else {
-            self.project_changes.send_replace(());
-            self.settings_changes.send_replace(());
+            self.planner_routes_changed(&mut state);
         }
+        Ok(())
+    }
+
+    async fn revoke_planner(
+        &self,
+        epoch: u64,
+        actor: &str,
+        binding: &PlannerBinding,
+    ) -> Result<(), ServiceError> {
+        let _projects = self.project_writes.write().await;
+        let mut state = self.state.lock().await;
+        if state.planner_authority_epoch != epoch
+            || state.planner_binding(actor).as_ref() != Some(binding)
+            || matches!(
+                state.enrollments.0.get(actor),
+                Some(Contact::Checking(Some(_)))
+            )
+        {
+            return Err(HostError::Uncertain.into());
+        }
+        let file = self.settings.clone();
+        let binding = binding.clone();
+        let actor = actor.to_owned();
+        let remove = actor.clone();
+        let (snapshot, _) = tokio::task::spawn_blocking(move || {
+            let revision = file.read::<Projects>()?.revision;
+            file.edit(&revision, |projects: &mut Projects| {
+                if let Some(repo) =
+                    projects
+                        .projects
+                        .get_mut(&binding.project)
+                        .and_then(|project| {
+                            project
+                                .repositories
+                                .iter_mut()
+                                .find(|repo| binding.matches(&binding.project, repo))
+                        })
+                {
+                    repo.planner_threads.retain(|thread| thread != &remove);
+                }
+                Ok(())
+            })
+        })
+        .await
+        .map_err(|_| HostError::Uncertain)??;
+        state.settings.projects = Some(snapshot.value);
+        state.enrolled_planners.remove(&actor);
+        self.project_settings_changed(&mut state);
         Ok(())
     }
 }

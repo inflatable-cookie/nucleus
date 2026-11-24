@@ -87,6 +87,7 @@ Later decisions carry their own attribution.
    - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
    - Host calls are serialized per host. The Rust Dispatch domain ignores an old Concurrent host calls value on read. An unavailable host backs off to a due time.
    - Views update by push (task and version invalidations), never by polling. Nothing a viewer does causes a host call.
+   - Tom, 2026-11-24, after T3 began deferring the engine's requests: "Nucleus needs to be light on calling T3 - I did ask for that more than once". Following TypeScript's `T3Reads` (one held shell subscription, thread snapshots reused while their change marker holds, exact reads only for threads a command just wrote to) and `reconcileTaskRow` (write a title or snooze only when it differs), a pass with nothing changed makes no thread reads and no writes. Each pass records its host call counts. A host deferral is honoured as a due time for the whole host, never retried sooner.
 12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
@@ -155,9 +156,13 @@ Later decisions carry their own attribution.
     - Rust CLI task commands and task API paths accept `repo#N` wherever they took only an internal task ID. The engine uses its assigned numbers and the authenticated controller's scope. Bare `#N` requires a project with exactly one repository. When a slug matches multiple visible tasks, use `owner/repo#N`. Internal IDs remain valid.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
+    - One local attention projection feeds the board, `task.next` and the scheduler's T3 row reconciliation. A person needed for a question, decision, role input or approval sees the row, as does an active role. Capacity, prerequisites, holds and report-ready tasks wait quietly. A missing or cancelled prerequisite needs an owner edit.
+    - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
+    - Before a native message brings a task parent or retained child back into use, the scheduler explicitly unsnoozes its own parent occurrence or unsettles the destination and reads the result back. An operator snooze holds delivery. Nucleus never sends a settle command.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
-    - Several verified planners can bind to the same project through any of its repositories. Archive or identity changes revoke that caller's cached authority. Task commands accept any live planner binding for the project. Notices address the task's original planner and fall back to the most recently verified live planner in the project after T3 confirms that the origin is gone.
+    - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
+    - Task commands accept any live planner binding for the project. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
     - Projects settings edit slots and lanes and show the live planners. Dispatch uses the verified repository route automatically.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
@@ -339,9 +344,15 @@ while the merge is still fenced by the wait. A prerequisite satisfies the gate
 when it reaches `done`. A cancelled or missing prerequisite needs an owner edit.
 The final prerequisite's phase change wakes its dependents. Release records an
 informational planner notice and returns the task to ordinary scheduling, where
-the existing run, question, hold and exact-head rules still apply. The scheduler
-records the native notice attempt before sending it so an unknown delivery
-cannot trigger a resend.
+the existing run, question, hold and exact-head rules still apply.
+
+Report-ready, work-question, operator-decline and prerequisite-release notices
+stay pending while a planner route is unavailable. A binding change wakes the
+waiting notice, and the next due pass can also retry routing. The scheduler
+unsettles a settled planner and reads it again before recording a concrete send
+intent. An uncertain send keeps its exact attempt. Legacy report notices marked
+attempted, including `report_ready_planner_unavailable`, stay closed because a
+planner may already have delivered them manually.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
 `dependencyEdits` from local state. The `next` command list includes

@@ -659,6 +659,7 @@ async fn next(
         version: row.version,
         phase: summary.phase,
         wait: summary.wait,
+        attention: summary.attention,
         next_check_at: summary.next_check_at,
         question: summary.question,
         critical_review_fallbacks: state
@@ -955,6 +956,7 @@ struct Summary {
     version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
+    attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
     question: Option<Question>,
     hold: Option<Hold>,
@@ -986,6 +988,7 @@ impl Summary {
             reference: row.reference().into_owned(),
             version: row.version,
             phase: task.phase(),
+            attention: state.task_attention(row)?,
             next_check_at: None,
             wait: if task.run().is_some_and(nucleus_core::Run::revoked) {
                 Some(WaitReason::Stopping)
@@ -1068,6 +1071,7 @@ struct NextView {
     version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
+    attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
     question: Option<Question>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

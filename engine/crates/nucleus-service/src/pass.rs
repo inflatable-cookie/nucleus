@@ -12,8 +12,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentAttempt,
-    ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost, launch_diagnostic,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeAuthorization,
+    NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost,
+    launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -46,11 +47,11 @@ pub(super) enum DispatchTarget<'a> {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
-    Title {
+    Presentation {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
-    Planner(&'a NoticeTarget),
+    Planner(&'a NoticeAuthorization),
 }
 
 pub(super) struct DispatchPermit<'a> {
@@ -287,6 +288,7 @@ impl Service {
                 (Observed::Unknown, None, Some(error))
             }
         };
+        self.observe_role_state(row, &state).await?;
         self.observe_activity(row, activity).await?;
         Ok((state, error))
     }
@@ -647,19 +649,13 @@ impl Service {
                 released_at.unwrap_or(WaitReason::Starting),
             )),
             ParentStep::Failed => {
-                if let Some(command) = prior_turn
-                    && self
-                        .record_native_turn(row, "native_turn_failed", &session, &command)
-                        .await?
-                {
-                    eprintln!(
-                        "{}: T3 parent turn failed ({command}); waiting for a task or session change",
-                        identity.id
-                    );
+                if let Some(command) = prior_turn {
+                    self.record_failed_parent_turn(row, &session, &command)
+                        .await?;
                 }
                 Ok(ControlFlow::Break(WaitReason::HostUnknown))
             }
-            ParentStep::Write(write) => {
+            ParentStep::Write(mut write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         task,
@@ -673,6 +669,9 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
+                if !self.wake_parent_delivery(row, provider, &mut write).await? {
+                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+                }
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
                 if write.starts_turn()
@@ -891,6 +890,17 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
+        if let Some(wake) = authorization.unsettle() {
+            let command = wake.command_id().ok_or(ServiceError::Input)?;
+            if self
+                .claim_row_unsettle(&task.identity().id, command)
+                .await?
+            {
+                host.write_control(wake).await?;
+                self.recheck_effect(row, WaitReason::HostUnknown).await;
+            }
+            return Ok(SendAttempt::Deferred);
+        }
         let archive = permit.superseded;
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
@@ -933,25 +943,26 @@ impl Service {
         Ok(SendAttempt::Sent(Box::new((sent, result, archive))))
     }
 
-    async fn planner_notice_route(
+    async fn planner_notice_root(
         &self,
         route: &ProjectRoute,
-        target: &nucleus_hosts::NoticeTarget,
-    ) -> bool {
+        target: &NoticeTarget,
+    ) -> Option<PathBuf> {
         if self.project.is_some() {
-            return target.project_id == route.host_project;
+            return (target.project_id == route.host_project).then(|| route.checkout.clone());
         }
         let state = self.state.lock().await;
         state
             .live_planner_route(&target.thread)
-            .is_some_and(|(id, repo)| {
-                Some(id) == route.project_id.as_deref()
+            .filter(|(id, repo)| {
+                Some(*id) == route.project_id.as_deref()
                     && repo.host_project.as_deref() == Some(target.project_id.as_str())
                     && self
                         .host
                         .cached_project(&target.project_id)
                         .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
             })
+            .map(|(_, repo)| repo.path.clone())
     }
 
     pub(super) async fn dispatch_gate(
@@ -967,12 +978,9 @@ impl Service {
                 frozen, checkout, ..
             }
             | DispatchTarget::Archive { frozen, checkout }
-            | DispatchTarget::Title { frozen, checkout }
+            | DispatchTarget::Presentation { frozen, checkout }
                 if **frozen != self.checkout_binding(identity, &route, checkout)? =>
             {
-                return Err(HostError::Binding.into());
-            }
-            DispatchTarget::Planner(target) if !self.planner_notice_route(&route, target).await => {
                 return Err(HostError::Binding.into());
             }
             _ => {}
@@ -983,16 +991,16 @@ impl Service {
                 DispatchTarget::Run { launch, .. } => task
                     .run()
                     .is_none_or(|run| *launch && run.last_send_at_ms().is_none()),
-                DispatchTarget::Archive { .. } | DispatchTarget::Title { .. } => false,
+                DispatchTarget::Archive { .. } | DispatchTarget::Presentation { .. } => false,
             }
         {
             return Ok(None);
         }
-        if !matches!(target, DispatchTarget::Title { .. }) {
+        if !matches!(target, DispatchTarget::Presentation { .. }) {
             self.check_project_route(identity, &route).await?;
         }
         let result = match target {
-            DispatchTarget::Title { checkout, .. } => {
+            DispatchTarget::Presentation { checkout, .. } => {
                 // Exact native destination and project came from the synchronized
                 // shell. Keep the usual local identity and ownership fence.
                 self.verify_route(identity, &route).await?;
@@ -1033,10 +1041,23 @@ impl Service {
                     (checkout.observe()? != Workspace::Absent).then_some(false)
                 }
             }
-            DispatchTarget::Planner(target) => {
-                self.host.check_notice_target(target).await?;
+            DispatchTarget::Planner(authorization) => {
+                let target = authorization.target();
+                let root = self
+                    .planner_notice_root(&route, target)
+                    .await
+                    .ok_or(HostError::Binding)?;
+                if target.project_id != route.host_project {
+                    self.host
+                        .check_project(
+                            &target.project_id,
+                            root.to_str().ok_or(ServiceError::Project)?,
+                        )
+                        .await?;
+                }
+                self.host.check_notice_target(authorization).await?;
                 if let Some(path) = &target.worktree_path
-                    && !linked_checkout(&route.checkout, Path::new(path), &self.git)?
+                    && !linked_checkout(&root, Path::new(path), &self.git)?
                 {
                     return Err(HostError::Binding.into());
                 }

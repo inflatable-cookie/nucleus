@@ -8,6 +8,7 @@ mod numbers;
 pub mod planning;
 mod settings;
 mod settings_domains;
+mod task_rows;
 mod tells;
 mod titles;
 mod usage;
@@ -34,6 +35,7 @@ pub use settings_domains::{
     DispatchMode, DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings,
     Projects, RepositorySettings, T3Settings,
 };
+pub use task_rows::{RowSnooze, SnoozeOutcome};
 pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
@@ -268,6 +270,7 @@ impl Store {
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
+        tx.execute(task_rows::SCHEMA, [])?;
         tx.execute(inbox::COMMAND_RECEIPTS, [])?;
         tx.execute_batch(allowance::SCHEMA)?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
@@ -485,6 +488,20 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Read existing active rows that predate their native presentation binding.
+    ///
+    /// # Errors
+    /// Returns an error if the task rows cannot be read.
+    pub fn tasks_without_titles(&self) -> Result<Vec<TaskRow>, StoreError> {
+        let mut query = self.connection.prepare_cached(&format!(
+            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks
+             WHERE phase NOT IN ('done','cancelled')
+             AND NOT EXISTS (SELECT 1 FROM task_titles WHERE task_id = tasks.id)"
+        ))?;
+        let rows = query.query_map([], decode_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     fn tasks(&self, statement: &str) -> Result<Vec<Task>, StoreError> {
         let mut query = self.connection.prepare_cached(statement)?;
         let rows = query.query_map([], decode_task)?;
@@ -687,6 +704,9 @@ impl Store {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;
+        if task.phase().is_terminal() {
+            task_rows::forget(&tx, &task.identity().id)?;
+        }
         if let Some(prerequisites) = prerequisites {
             dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
         }

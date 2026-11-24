@@ -2,6 +2,7 @@
 
 mod acp;
 mod allowance;
+mod attention;
 mod dependencies;
 mod enrollment;
 mod inbox;
@@ -17,6 +18,7 @@ mod question;
 mod report_only;
 mod schedule;
 mod scratch;
+mod task_rows;
 mod tell;
 #[cfg(test)]
 mod tests;
@@ -201,6 +203,7 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
+    role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
@@ -213,6 +216,7 @@ struct State {
     planner_check: Option<String>,
     enrollments: enrollment::Enrollments,
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
+    planner_notice_waiters: BTreeSet<String>,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
 }
 
@@ -344,6 +348,7 @@ impl Service {
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
                 group_waits: BTreeMap::new(),
@@ -356,6 +361,7 @@ impl Service {
                 planner_check: None,
                 enrollments: enrollment::Enrollments::default(),
                 enrolled_planners: BTreeMap::new(),
+                planner_notice_waiters: BTreeSet::new(),
                 thread_tasks: BTreeMap::new(),
             }),
             project_writes: RwLock::new(()),
@@ -499,7 +505,12 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
         let id = &row.task.identity().id;
-        if self.state.lock().await.acp_refresh_requests.remove(id) == Some(row.version) {
+        let refresh = {
+            let mut state = self.state.lock().await;
+            state.planner_notice_waiters.remove(id);
+            state.acp_refresh_requests.remove(id) == Some(row.version)
+        };
+        if refresh {
             self.refresh_acp_parent(row).await?;
         }
         if self.reconcile_prerequisites(row).await? {
@@ -507,7 +518,9 @@ impl Service {
         }
         // A planner's availability must not hold the dependent after release.
         // Any unsent notice remains due through the store's scheduler scan.
-        let _ = self.notify_prerequisite_release(row).await;
+        if self.notify_prerequisite_release(row).await.unwrap_or(true) {
+            self.recheck_effect(row, WaitReason::Question).await;
+        }
         let task = &row.task;
         if !matches!(
             task.phase(),
@@ -623,7 +636,7 @@ impl Service {
                 }
             }
             if let Some(inbox) = inbox {
-                inbox.unobserved();
+                inbox.host_disconnected();
             }
             {
                 let mut state = self.state.lock().await;
@@ -634,8 +647,7 @@ impl Service {
                 state.invalidate_planner_authority();
                 if !state.enrolled_planners.is_empty() {
                     state.enrolled_planners.clear();
-                    self.project_changes.send_replace(());
-                    self.settings_changes.send_replace(());
+                    self.planner_routes_changed(&mut state);
                 }
                 for seen in state
                     .thread_tasks
@@ -653,6 +665,9 @@ impl Service {
         if let Some(inbox) = &self.native_inbox
             && hint.thread == nucleus_hosts::INBOX_THREAD
         {
+            if hint.inbox_synchronized() {
+                inbox.host_synchronized();
+            }
             inbox.wake();
         }
         let mut state = self.state.lock().await;
@@ -660,8 +675,7 @@ impl Service {
         let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
         if state.invalidate_enrolled_planner(&hint) {
-            self.project_changes.send_replace(());
-            self.settings_changes.send_replace(());
+            self.planner_routes_changed(&mut state);
         }
         if authorities != state.planner_authority.len() {
             self.settings_changes.send_replace(());
@@ -793,9 +807,19 @@ impl Service {
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
-        if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
-            state.set_wait(id, None);
+        if !archive_due
+            && !active(&current.task)
+            && !state.forge_requested.contains(id)
+            && state.acp_refresh_requests.get(id) != Some(&current.version)
+        {
+            if state.set_wait(id, None).is_some() {
+                self.title_wake.notify_one();
+                self.publish(id, current.version);
+            }
             state.schedule.reset_host_backoff(id);
+            if state.store.pending_prerequisite_notice(id)?.is_none() {
+                state.planner_notice_waiters.remove(id);
+            }
             return Ok(());
         }
         if current.version != row.version {
@@ -845,7 +869,7 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
-        if (prior == Some(WaitReason::Running)) != (wait == Some(WaitReason::Running)) {
+        if prior != wait {
             self.title_wake.notify_one();
         }
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
@@ -1185,8 +1209,14 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
         }
-        if state.set_wait(id, None) == Some(WaitReason::Running) {
-            self.title_wake.notify_one();
+        state.set_wait(id, None);
+        if task
+            .run()
+            .is_none_or(|run| run.revoked() || run.report().is_some())
+            || task.run().map(|run| &run.launch().instance)
+                != prior.task.run().map(|run| &run.launch().instance)
+        {
+            state.role_observations.remove(id);
         }
         self.desire_title(state, task, prior.reference().as_ref(), None);
         state.schedule.reset_host_backoff(id);
@@ -1283,6 +1313,7 @@ impl Service {
 
     fn wake_task(&self, state: &mut State, id: &str, version: i64, priority: Priority) {
         state.schedule.wake(id, Instant::now(), priority);
+        self.title_wake.notify_one();
         self.wake.notify_one();
         self.publish(id, version);
     }

@@ -6,7 +6,10 @@ use std::{
     collections::{BTreeSet, VecDeque},
     env,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use nucleus_core::{
@@ -40,6 +43,7 @@ pub(super) struct NativeInbox {
     observed: watch::Sender<Observation>,
     reconcile: Notify,
     replies: Mutex<VecDeque<String>>,
+    preview_pending: AtomicBool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -85,6 +89,7 @@ impl NativeInbox {
             observed: watch::channel(Observation::Unknown).0,
             reconcile: Notify::new(),
             replies: Mutex::new(VecDeque::new()),
+            preview_pending: AtomicBool::new(false),
         })
     }
 
@@ -94,6 +99,15 @@ impl NativeInbox {
 
     pub(super) fn wake(&self) {
         self.reconcile.notify_one();
+    }
+
+    pub(super) fn host_synchronized(&self) {
+        self.preview_pending.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn host_disconnected(&self) {
+        self.preview_pending.store(false, Ordering::Relaxed);
+        self.unobserved();
     }
 
     pub(super) fn changes(&self) -> watch::Receiver<Observation> {
@@ -277,6 +291,7 @@ impl Service {
                 // exact pin proof before dispatch, while the Inbox is still idle.
                 inbox.set_observation(Observation::Pinned(BTreeSet::new()));
                 self.host.write_inbox(write).await?;
+                self.serve_inbox_commands(inbox, &[]).await?;
             }
         }
         Ok(())

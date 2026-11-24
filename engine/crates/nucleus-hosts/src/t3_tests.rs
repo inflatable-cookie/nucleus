@@ -1049,7 +1049,7 @@ async fn superseded_review_replay_archives_after_exact_stop() {
 }
 
 #[tokio::test]
-async fn next_review_resumes_the_same_thread_after_archival() {
+async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, mut observation, previous) = reserve(binding.clone());
@@ -1070,11 +1070,18 @@ async fn next_review_resumes_the_same_thread_after_archival() {
 
     let archived = snapshot(&binding, &previous, "interrupted", true);
     let restored = snapshot(&binding, &previous, "interrupted", false);
+    let mut operator_snoozed = restored.clone();
+    operator_snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-06-01T12:00:00.000Z");
+    let mut settled = restored.clone();
+    settled["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
     let (client, server) = server(vec![
         (probe, Response::Snapshot(archived.clone())),
         (probe, Response::Snapshot(archived)),
+        (command, Response::Success),
+        (probe, Response::Snapshot(operator_snoozed)),
+        (probe, Response::Snapshot(settled)),
         (command, Response::Success),
         (probe, Response::Snapshot(restored)),
         (command, Response::Success),
@@ -1105,13 +1112,37 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     let _ = task
         .reserve_launch(&observation, inputs, &[4; 32])
         .expect("reserve continuation");
+    let permit = pass
+        .authorize_send(task.run().expect("run"))
+        .await
+        .expect("archived child");
+    pass.write_control(permit.unarchive().expect("unarchive"))
+        .await
+        .expect("unarchived");
+    assert!(
+        matches!(
+            pass.authorize_send(task.run().expect("run")).await,
+            Err(HostError::Uncertain)
+        ),
+        "a continuation must wait for the operator's snooze"
+    );
+    let permit = pass
+        .authorize_send(task.run().expect("run"))
+        .await
+        .expect("settled child");
+    let wake = permit.unsettle().expect("explicit wake");
+    assert!(matches!(permit.record(&mut task), Err(HostError::Binding)));
+    pass.write_control(wake).await.expect("unsettled");
     assert_eq!(
         send(&pass, &mut task).await.expect("send continuation"),
         SendOutcome::Sent
     );
     let sent = server.await.expect("scripted host");
     let unarchive: Value = serde_json::from_str(sent[2].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[4].payload.get()).expect("continuation payload");
+    let wake: Value = serde_json::from_str(sent[5].payload.get()).expect("unsettle payload");
+    let message: Value = serde_json::from_str(sent[7].payload.get()).expect("continuation payload");
+    assert_eq!(wake["type"], "thread.unsettle");
+    assert_eq!(wake["reason"], "user");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})

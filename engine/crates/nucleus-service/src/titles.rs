@@ -189,8 +189,27 @@ impl Service {
         let Some(provider) = self.acp_provider() else {
             return;
         };
+        {
+            let state = self.state.lock().await;
+            match state.store.tasks_without_titles() {
+                Ok(rows) => {
+                    for row in rows
+                        .into_iter()
+                        .filter(|row| self.task_scope(row.task.identity()).is_ok())
+                    {
+                        let wait = state
+                            .waits
+                            .get(&row.task.identity().id)
+                            .map(|(reason, _)| *reason);
+                        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
+                    }
+                }
+                Err(error) => eprintln!("{error}"),
+            }
+        }
         loop {
-            let next = self.title_work(provider, &self.host.title_threads()).await;
+            let threads = self.host.title_threads();
+            let next = self.title_work(provider, &threads).await;
             let wait = match next {
                 Ok(Some(receipt)) => {
                     let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
@@ -210,6 +229,14 @@ impl Service {
                     Some(Duration::from_secs(5))
                 }
             };
+            let row_wait = match self.reconcile_task_rows(provider, &threads).await {
+                Ok(wait) => wait,
+                Err(error) => {
+                    eprintln!("{error}");
+                    Some(Duration::from_secs(15))
+                }
+            };
+            let wait = wait.into_iter().chain(row_wait).min();
             tokio::select! {
                 () = self.title_wake.notified() => {}
                 () = self.host.title_shell_changed() => {}
@@ -345,7 +372,7 @@ impl Service {
         else {
             return Ok(false);
         };
-        let destination = DispatchTarget::Title {
+        let destination = DispatchTarget::Presentation {
             frozen: target.binding().ok_or(ServiceError::AcpBinding)?,
             checkout: &checkout,
         };
@@ -580,7 +607,7 @@ mod tests {
     async fn title_write_uses_the_existing_shell_without_an_exact_read() {
         let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
         let task = task();
-        let subject = Task::new(
+        let mut subject = Task::new(
             Identity {
                 repository: service.fixture().repository.clone(),
                 ..task.identity().clone()
@@ -588,6 +615,7 @@ mod tests {
             task.brief().text.clone(),
             None,
         );
+        assert!(subject.ask_allowance(1, 1));
         let id = &subject.identity().id;
         let worktrees = service.worktrees().expect("fixture worktrees");
         let checkout = worktrees

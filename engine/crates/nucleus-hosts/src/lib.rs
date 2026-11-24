@@ -12,6 +12,7 @@ mod rpc;
 mod runtime;
 #[cfg(test)]
 mod t3_tests;
+mod task_row;
 mod theme;
 mod title_shell;
 
@@ -53,6 +54,7 @@ pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
+pub use task_row::{RowChange, RowObservation, RowVisibility};
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
 
@@ -121,6 +123,11 @@ impl ControlDispatch {
     pub const fn binding(&self) -> &Binding {
         &self.binding
     }
+
+    #[must_use]
+    pub fn command_id(&self) -> Option<&str> {
+        self.payload["commandId"].as_str()
+    }
 }
 
 /// A single exact send, scoped to the run and timestamp that authorized it.
@@ -132,6 +139,7 @@ pub struct ReplayAuthorization {
     prior_send: Option<u64>,
     revoked: bool,
     archived: bool,
+    wake: Option<ControlDispatch>,
 }
 
 /// Frozen native write whose send marker must be committed before dispatch.
@@ -156,6 +164,12 @@ impl ReplayAuthorization {
         })
     }
 
+    /// An existing child must be visibly awake before its next message can be sent.
+    #[must_use]
+    pub fn unsettle(&self) -> Option<ControlDispatch> {
+        self.wake.clone()
+    }
+
     /// Apply the marker to the exact task used to prepare the authorization.
     /// Persist the resulting task before using the authorization on the wire.
     ///
@@ -164,6 +178,7 @@ impl ReplayAuthorization {
     pub fn record(self, task: &mut nucleus_core::Task) -> Result<RunDispatch, HostError> {
         let run = task.run().ok_or(HostError::Binding)?;
         if self.archived
+            || self.wake.is_some()
             || run.launch().instance != self.instance
             || run.launch().input != self.input
             || run.revoked() != self.revoked
@@ -423,11 +438,20 @@ impl T3 {
     }
 
     async fn thread(&self, binding: &Binding, id: &str) -> Result<Option<Projection>, HostError> {
+        self.thread_snapshot(binding, id, false).await
+    }
+
+    async fn thread_snapshot(
+        &self,
+        binding: &Binding,
+        id: &str,
+        bounded: bool,
+    ) -> Result<Option<Projection>, HostError> {
         let reply = self
             .rpc
             .call(
                 "orchestration.subscribeThread",
-                json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": false}),
+                json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": bounded}),
                 Read::Thread,
             )
             .await?;
@@ -690,6 +714,29 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::WorkspaceBusy);
         }
+        let wake = if wire.method == Method::Continue
+            && let Some(projection) = &thread
+            && let Some(row) = projection.row_observation()?
+        {
+            let now = clock_ms()?;
+            let visibility = row.visibility;
+            if visibility.snoozed_until_ms.is_some_and(|until| until > now) {
+                // Only the task parent has a snooze we could own.
+                return Err(HostError::Uncertain);
+            }
+            visibility.settled.then(|| {
+                let occurrence = visibility.settled_at_ms.unwrap_or_default();
+                ControlDispatch {
+                    binding: wire.binding.clone(),
+                    payload: json!({
+                        "type":"thread.unsettle", "commandId":format!("{}-unsettle-{occurrence}", run.launch().instance),
+                        "threadId":run.launch().thread, "reason":"user",
+                    }),
+                }
+            })
+        } else {
+            None
+        };
         Ok(ReplayAuthorization {
             instance: run.launch().instance.clone(),
             thread: run.launch().thread.clone(),
@@ -697,6 +744,7 @@ impl TaskHost for T3Pass<'_> {
             archived: wire.method == Method::Continue
                 && thread.is_some_and(|thread| thread.archived()),
             wire,
+            wake,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
         })

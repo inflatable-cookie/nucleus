@@ -1,0 +1,1 @@
+- Waiting Rust tasks quiet their T3 rows and return to view when a role runs or a person needs to act. Operator snoozes remain in effect.

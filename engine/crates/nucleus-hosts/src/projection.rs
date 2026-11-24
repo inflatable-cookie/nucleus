@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{Binding, HostError, ProviderLimit};
+use crate::{Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +52,8 @@ struct Thread {
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
     model_selection: Option<Value>,
+    #[serde(flatten)]
+    visibility: ThreadVisibility,
 }
 
 #[derive(Deserialize)]
@@ -401,6 +403,16 @@ impl Projection {
             });
         }
         Ok(run.status.run_state())
+    }
+
+    pub(crate) fn row_observation(&self) -> Result<Option<RowObservation>, HostError> {
+        if self.archived() || self.thread.deleted_at.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(RowObservation {
+            sequence: self.sequence(),
+            visibility: self.thread.visibility.read()?,
+        }))
     }
 
     pub(crate) const fn archived(&self) -> bool {

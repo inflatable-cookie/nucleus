@@ -133,10 +133,13 @@ impl Service {
         }
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
-        let from = state
-            .live_planner_project(actor)
-            .ok_or(ServiceError::TellPlannerRequired)?
-            .to_owned();
+        let from = match state.live_planner_project(actor) {
+            Some(project) => project.to_owned(),
+            None if state.settings.planner_route(actor).is_some() => {
+                return Err(self.request_enrollment(&mut state, actor));
+            }
+            None => return Err(ServiceError::TellPlannerRequired),
+        };
         let key = format!(
             "{:x}",
             Sha256::digest(
@@ -245,6 +248,16 @@ impl Service {
     }
 
     async fn send_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
+        let candidates = self
+            .state
+            .lock()
+            .await
+            .planner_candidates_for(&row.to_project);
+        for actor in candidates.into_iter().filter(|actor| actor != &row.sender) {
+            if self.check_registered_planner(&actor).await? {
+                break;
+            }
+        }
         let route = {
             let state = self.state.lock().await;
             tell_planner(&state, &row.to_project, &row.sender)
@@ -269,6 +282,7 @@ impl Service {
         let EnrolledPlanner {
             identity,
             verified_at,
+            ..
         } = planner;
         let mut attempt = T3::prepare_notice(identity.id.clone(), new_id("tell-notice")?, &text)?;
         let observed = self.host.observe_notice(&attempt).await?;
@@ -285,8 +299,7 @@ impl Service {
                 .is_some_and(|proof| proof.verified_at == verified_at)
             {
                 state.enrolled_planners.remove(&identity.id);
-                self.project_changes.send_replace(());
-                self.settings_changes.send_replace(());
+                self.planner_routes_changed(&mut state);
             }
             drop(state);
             return self.save_tell(rows, TellDispatch::Defer).await;

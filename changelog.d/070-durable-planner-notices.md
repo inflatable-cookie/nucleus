@@ -1,0 +1,1 @@
+- The Rust engine rechecks existing planner bindings after restart and delivers pending report, question, and prerequisite notices when a verified planner is available.

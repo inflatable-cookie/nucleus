@@ -1,17 +1,18 @@
 use std::{cmp::Reverse, path::Path};
 
-use nucleus_core::{Action, OperatorDecline, Question, Task, WaitReason};
+use nucleus_core::{Action, OperatorDecline, Question, QuestionDelivery, Task, WaitReason};
 use nucleus_hosts::{
-    HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerIdentity, PlannerThread,
-    T3, ThreadHint,
+    HostError, NoticeAuthorization, NoticeHost, NoticeSend, NoticeState, NoticeWrite,
+    PlannerIdentity, PlannerThread, T3, ThreadHint,
 };
 use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
 
-use crate::pass::DispatchTarget;
+use crate::pass::{DispatchPermit, DispatchTarget};
 use crate::{
     RegisteredRole, Service, ServiceError, State, event,
     project::{ProjectRoute, linked_checkout},
+    schedule::Priority,
 };
 
 pub(super) struct PlannerAuthority {
@@ -92,6 +93,63 @@ impl State {
 }
 
 impl Service {
+    pub(super) fn planner_routes_changed(&self, state: &mut State) {
+        let now = Instant::now();
+        for id in &state.planner_notice_waiters {
+            state.schedule.wake(id, now, Priority::Wake);
+        }
+        self.wake.notify_one();
+        self.tell_wake.notify_one();
+        self.project_changes.send_replace(());
+        self.settings_changes.send_replace(());
+    }
+
+    pub(super) async fn planner_notice_target(
+        &self,
+        task: &Task,
+    ) -> Result<Option<String>, ServiceError> {
+        self.state
+            .lock()
+            .await
+            .planner_notice_waiters
+            .insert(task.identity().id.clone());
+        self.responsible_planner(task).await
+    }
+
+    /// A settled destination needs a separate write and a fresh read before any send intent.
+    pub(super) async fn prepare_planner_notice(
+        &self,
+        row: &TaskRow,
+        attempt: &QuestionDelivery,
+    ) -> Result<Option<(NoticeAuthorization, DispatchPermit<'_>)>, ServiceError> {
+        let Some(authorization) = self.host.authorize_notice(attempt).await? else {
+            return Ok(None);
+        };
+        let target = DispatchTarget::Planner(&authorization);
+        let Some(permit) = self.dispatch_gate(&row.task, target).await? else {
+            return Ok(None);
+        };
+        if self.project.is_none()
+            && !self
+                .state
+                .lock()
+                .await
+                .enrolled_planners
+                .get(&attempt.thread)
+                .is_some_and(|proof| authorization.matches_planner(&proof.identity))
+        {
+            return Ok(None);
+        }
+        if authorization.needs_unsettle() {
+            self.host
+                .deliver_notice(NoticeWrite::Prepare(&authorization))
+                .await?;
+            self.recheck_effect(row, WaitReason::Question).await;
+            return Ok(None);
+        }
+        Ok(Some((authorization, permit)))
+    }
+
     pub(super) async fn notify_question(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
         let route = self.project_for(row.task.identity()).await?;
@@ -119,16 +177,16 @@ impl Service {
                     }
                     return Ok(wait);
                 }
-                NoticeState::Gone | NoticeState::Undelivered => None,
-                NoticeState::Absent | NoticeState::Queued => {
-                    let authorized = if self.project.is_some() {
-                        true
-                    } else {
-                        let state = self.state.lock().await;
-                        let route = self.resolve_project(&state, row.task.identity())?;
-                        state.live_planner_project(&delivery.thread) == route.project_id.as_deref()
-                    };
-                    authorized.then_some(delivery)
+                NoticeState::Undelivered => None,
+                // Neither absence nor a vanished thread disproves a recorded send.
+                NoticeState::Absent | NoticeState::Gone => return Ok(wait),
+                NoticeState::Queued => {
+                    if self.project.is_none()
+                        && !self.check_registered_planner(&delivery.thread).await?
+                    {
+                        return Ok(wait);
+                    }
+                    Some(delivery)
                 }
             }
         } else {
@@ -137,7 +195,7 @@ impl Service {
         let mut attempt = if let Some(delivery) = bound {
             delivery.clone()
         } else {
-            let Some(thread) = self.responsible_planner(&row.task).await? else {
+            let Some(thread) = self.planner_notice_target(&row.task).await? else {
                 return Ok(wait);
             };
             let question = row.task.question().ok_or(ServiceError::Input)?;
@@ -153,18 +211,13 @@ impl Service {
             T3::prepare_notice(thread, command, &text)?
         };
         let _fence = self.effect(row).await?;
-        let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
+        let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
+        else {
             return Ok(wait);
         };
-        let target = DispatchTarget::Planner(authorization.target());
-        let Some(_permit) = self.dispatch_gate(&row.task, target).await? else {
-            return Ok(wait);
-        };
-        if authorization.needs_unsettle() {
-            self.host
-                .deliver_notice(NoticeWrite::Prepare(&authorization))
-                .await?;
-            self.recheck_effect(row, WaitReason::Question).await;
+        if bound.is_some() {
+            // The fresh permit may follow a snapshot change. The existing message
+            // can be woken, but this pass cannot dispatch it again.
             return Ok(wait);
         }
         let dispatch = authorization.record(&mut attempt)?;
@@ -299,47 +352,25 @@ impl Service {
         route: &ProjectRoute,
     ) -> Result<Option<String>, ServiceError> {
         let origin = task.identity().origin_thread.as_deref();
-        let candidates = {
-            let state = self.state.lock().await;
-            let eligible = |proof: &&crate::enrollment::EnrolledPlanner| {
-                state.live_planner_project(&proof.identity.id) == route.project_id.as_deref()
-            };
-            let original = origin
-                .and_then(|id| state.enrolled_planners.get(id))
-                .filter(eligible);
-            let fallback = state
-                .enrolled_planners
-                .values()
-                .filter(eligible)
-                .filter(|proof| Some(proof.identity.id.as_str()) != origin)
-                .max_by_key(|proof| (proof.verified_at, proof.identity.id.as_str()));
-            [original, fallback]
-                .map(|proof| proof.map(|proof| (proof.identity.clone(), proof.verified_at)))
+        let Some(project) = route.project_id.as_deref() else {
+            return Ok(None);
         };
-        for (identity, verified_at) in candidates.into_iter().flatten() {
-            let actor = identity.id;
-            if self
-                .host
-                .planner_identity(&actor)
-                .await?
-                .as_ref()
-                .is_some_and(|current| {
-                    current.project_id == identity.project_id
-                        && !current.is_child()
-                        && current.provider_instance_id.as_deref() != self.acp_provider()
-                })
+        let mut candidates = {
+            let state = self.state.lock().await;
+            state.planner_candidates_for(project)
+        };
+        if let Some(index) = candidates
+            .iter()
+            .position(|candidate| Some(candidate.as_str()) == origin)
+        {
+            let original = candidates.remove(index);
+            candidates.insert(0, original);
+        }
+        for actor in candidates {
+            if self.check_registered_planner(&actor).await?
+                && self.state.lock().await.live_planner_project(&actor) == Some(project)
             {
                 return Ok(Some(actor));
-            }
-            let mut state = self.state.lock().await;
-            if state
-                .enrolled_planners
-                .get(&actor)
-                .is_some_and(|proof| proof.verified_at == verified_at)
-            {
-                state.enrolled_planners.remove(&actor);
-                self.project_changes.send_replace(());
-                self.settings_changes.send_replace(());
             }
         }
         Ok(None)

@@ -817,10 +817,10 @@ The Rust Inbox records native form answers as
 `operator via T3 Inbox (unattested)`. T3 currently returns the same response
 for a desktop submission and an MCP submission.
 
-Type `ui` in the pinned Rust Inbox to open the board in the default browser.
-The scheduler uses the exact T3 message record to check that it came directly
-from the operator's UI. It records the attempt before issuing a one-use link,
-then replies through ACP with the plain board URL.
+The board opens in the pinned T3 Inbox thread's browser panel once per host
+connection. Type `ui` in the Inbox to open it again. The scheduler verifies
+the message came directly from the operator's UI and records the attempt before
+issuing a one-use link. The ACP reply uses the plain board URL.
 
 ### Agent notes
 
