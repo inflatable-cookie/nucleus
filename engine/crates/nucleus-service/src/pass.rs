@@ -770,7 +770,6 @@ impl Service {
             !task.phase().is_terminal()
                 && task.hold().is_none()
                 && task.operator_decline().is_none()
-                && self.host.parent_reentry_due(child)
         }) else {
             return Ok(());
         };
