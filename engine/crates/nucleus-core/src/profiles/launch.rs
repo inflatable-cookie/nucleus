@@ -41,6 +41,7 @@ pub struct ProfileLaunch {
     pub(crate) pr: Option<PullRequest>,
     pub(crate) findings: Option<String>,
     pub(crate) request_reason: Option<String>,
+    critical_fallback_worker: Option<String>,
 }
 
 impl ProfileLaunch {
@@ -90,6 +91,12 @@ impl ProfileLaunch {
     #[must_use]
     pub fn request_reason(&self) -> Option<&str> {
         self.request_reason.as_deref()
+    }
+
+    /// The worker profile for which this new independent reviewer fell short.
+    #[must_use]
+    pub fn critical_fallback_worker(&self) -> Option<&str> {
+        self.critical_fallback_worker.as_deref()
     }
 }
 
@@ -221,6 +228,15 @@ fn select_launch(
         }
         _ => Launch::Create,
     };
+    let critical_fallback_worker =
+        if role == Role::Reviewer && brief.critical && via == Launch::Create && reason.is_none() {
+            task.threads()
+                .profile(Role::Worker)
+                .filter(|worker| profile.capability < worker.capability)
+                .map(|worker| worker.id.clone())
+        } else {
+            None
+        };
     let pr = task.pull_request().cloned();
     let changes = applied_changes(task, observation);
     let consumed_review = if role == Role::Worker {
@@ -250,6 +266,7 @@ fn select_launch(
         pr,
         findings: changes.map(str::to_owned),
         request_reason: reason,
+        critical_fallback_worker,
     }))
 }
 

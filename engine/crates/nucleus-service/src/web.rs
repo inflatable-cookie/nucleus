@@ -553,6 +553,10 @@ async fn detail(
         pull_request: task.pull_request().cloned(),
         verdict: task.verdict().cloned(),
         report: task.report_task().map(ReportView::from),
+        critical_review_fallbacks: state
+            .store
+            .critical_review_fallbacks(&id)
+            .map_err(ServiceError::from)?,
         run,
     }))
 }
@@ -574,6 +578,10 @@ async fn next(
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
+        critical_review_fallbacks: state
+            .store
+            .critical_review_fallbacks(&id)
+            .map_err(ServiceError::from)?,
         commands: command_options(
             task,
             &authority,
@@ -887,6 +895,8 @@ struct Detail {
     verdict: Option<Verdict>,
     #[serde(skip_serializing_if = "Option::is_none")]
     report: Option<ReportView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
     run: Option<RunView>,
 }
 
@@ -922,6 +932,8 @@ struct NextView {
     wait: Option<WaitReason>,
     next_check_at: Option<u64>,
     question: Option<Question>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
     commands: Vec<CommandView>,
 }
 

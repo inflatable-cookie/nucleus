@@ -638,23 +638,20 @@ fn critical_review_prefers_the_actual_workers_bracket_and_falls_back() {
             "---\nqueue: {{complexity: very_high, critical: {critical}}}\n---\nInvestigate."
         ));
         finish_worker(&mut task, &worker);
+        let available = pick(&task, &open('a'), UsageLevel::High, &pool);
+        assert_eq!(available.profile(), selected);
+        assert_eq!(available.critical_fallback_worker(), None);
+        let fallback_pool = [
+            candidate(&worker),
+            candidate(&shares_model),
+            candidate(&light),
+            candidate(&frontier),
+        ];
+        let fallback = pick(&task, &open('a'), ExtraHigh, &fallback_pool);
+        assert_eq!(fallback.profile(), &light);
         assert_eq!(
-            pick(&task, &open('a'), UsageLevel::High, &pool).profile(),
-            selected
-        );
-        assert_eq!(
-            pick(
-                &task,
-                &open('a'),
-                ExtraHigh,
-                &pool[..2]
-                    .iter()
-                    .copied()
-                    .chain([candidate(&light), candidate(&frontier)])
-                    .collect::<Vec<_>>()
-            )
-            .profile(),
-            &light
+            fallback.critical_fallback_worker(),
+            critical.then_some(worker.id.as_str())
         );
     }
 }
@@ -679,6 +676,7 @@ fn a_critical_fallback_reviewer_continues_until_the_ordinary_bracket_changes() {
     let pool = [candidate(&fallback), candidate(&peer)];
     let same = pick(&task, &obs, UsageLevel::High, &pool);
     assert_eq!(same.profile(), &fallback);
+    assert_eq!(same.critical_fallback_worker(), None);
     assert_eq!(
         same.via(),
         &Launch::Continue {

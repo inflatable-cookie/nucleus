@@ -103,6 +103,17 @@ pub struct Event {
     pub content: EventDraft,
 }
 
+/// A committed fresh reviewer reservation that used the ordinary fallback.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CriticalReviewFallback {
+    pub at_ms: u64,
+    pub run_instance: String,
+    pub worker_profile_id: String,
+    pub reviewer_profile_id: String,
+    pub reason: String,
+}
+
 /// A task's execution snapshot plus its public number. Equality fences the
 /// execution snapshot, so backfill cannot invalidate a callback or launch.
 #[derive(Debug, Clone)]
@@ -643,6 +654,26 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Read the fallback receipts written with fresh reviewer reservations.
+    ///
+    /// # Errors
+    /// Returns an error if a stored receipt cannot be read.
+    pub fn critical_review_fallbacks(
+        &self,
+        id: &str,
+    ) -> Result<Vec<CriticalReviewFallback>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT detail -> '$.criticalReviewFallback' FROM events
+             WHERE task_id = ?1 AND kind = 'run_reserved'
+               AND json_type(CASE WHEN json_valid(detail) THEN detail END, '$.criticalReviewFallback') = 'object'
+             ORDER BY sequence",
+        )?;
+        let receipts = query.query_map([id], |row| {
+            serde_json::from_str(&row.get::<_, String>(0)?).map_err(|error| decode_error(0, error))
+        })?;
+        Ok(receipts.collect::<Result<_, _>>()?)
     }
 
     /// Count applied reviewer verdicts for the display's review round.

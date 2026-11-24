@@ -14,7 +14,7 @@ use nucleus_hosts::{
     ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::{DispatchMode, TaskRow};
+use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
 use tokio::sync::RwLockReadGuard;
 
@@ -612,6 +612,19 @@ impl Service {
             credential,
             &format!("http://{}", self.callback),
         )?;
+        let mut audit = event("run_reserved");
+        if let Some(selected) = selection
+            && let Some(worker) = selected.intent.critical_fallback_worker()
+        {
+            let receipt = CriticalReviewFallback {
+                at_ms: run.launch().started_at,
+                run_instance: run.launch().instance.clone(),
+                worker_profile_id: worker.into(),
+                reviewer_profile_id: selected.intent.profile().id.clone(),
+                reason: "No available independent reviewer with a known capability at least as high as the worker. Ordinary reviewer selection used.".into(),
+            };
+            audit.detail = serde_json::json!({ "criticalReviewFallback": receipt }).to_string();
+        }
         let saved = {
             let mut state = self.state.lock().await;
             if selection.map_or(state.settings.profiles.is_none(), |selected| {
@@ -621,7 +634,7 @@ impl Service {
                     &mut state,
                     row,
                     updated,
-                    &event("run_reserved"),
+                    &audit,
                     selection.map(|selected| selected.group.as_str()),
                 )
                 .map(|_| Action::Launch {
@@ -1090,6 +1103,21 @@ impl Service {
         };
         let mut audit = event(record);
         crate::presentation::note_merge(&mut audit, &observed.forge);
+        let fallbacks = self
+            .state
+            .lock()
+            .await
+            .store
+            .critical_review_fallbacks(&task.identity().id)?;
+        if !fallbacks.is_empty() {
+            let mut detail: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&audit.detail).map_err(nucleus_store::StoreError::from)?;
+            detail.insert(
+                "criticalReviewFallbacks".into(),
+                serde_json::json!(fallbacks),
+            );
+            audit.detail = serde_json::Value::Object(detail).to_string();
+        }
         self.save(row, updated, &audit).await?;
         Ok(action)
     }
