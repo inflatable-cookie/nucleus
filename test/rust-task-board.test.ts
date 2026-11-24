@@ -544,6 +544,7 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
   });
   t.after(() => dom.window.close());
   const bodies: unknown[] = [];
+  const planWrites: unknown[] = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
   let slots = 2;
@@ -598,6 +599,53 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
         },
       });
     }
+    if (path === "/api/engine/settings/projects") {
+      return Response.json({
+        settings: {
+          revision: "projects-1",
+          configured: true,
+          value: {
+            projects: {
+              fixture: {
+                name: "Fixture project",
+                slots: 2,
+                archived: false,
+                repositories: [],
+              },
+            },
+          },
+        },
+        resolvedPlanners: { fixture: "fixture-planner" },
+        verifiedPlanners: { fixture: ["fixture-planner", "second-planner"] },
+      });
+    }
+    if (path === "/api/engine/planning/fixture/plan") {
+      if (init?.method === "PUT")
+        planWrites.push(JSON.parse(String(init.body)));
+      const lanes = [
+        {
+          key: "board",
+          horizon: planWrites.length ? "later" : "now",
+          doneWhen: "Board works",
+          statusNote: "In progress",
+        },
+      ];
+      if (init?.method === "PUT") return Response.json({ version: 3, lanes });
+      return Response.json({
+        version: 2,
+        lanes,
+        documents: [
+          {
+            key: "board",
+            version: 1,
+            title: "Board lane",
+            aim: "Serve the board",
+            document: "## Assets",
+            status: "open",
+          },
+        ],
+      });
+    }
     assert.fail("Unexpected standalone route " + path);
   };
   Object.assign(dom.window, {
@@ -646,6 +694,28 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
       allowanceMinutes: null,
       providerLimitCooldownSeconds: 300,
     },
+  });
+  await click("Projects");
+  await click("Fixture project");
+  await eventually(
+    () => text().includes("fixture-planner, second-planner"),
+    "the verified planners are displayed",
+  );
+  await click("Lanes");
+  await click("Board lane");
+  await click("Horizon, Now");
+  await click("Horizon: Later");
+  await eventually(() => planWrites.length === 1, "the horizon autosaves");
+  assert.deepEqual(planWrites[0], {
+    version: 2,
+    lanes: [
+      {
+        key: "board",
+        horizon: "later",
+        doneWhen: "Board works",
+        statusNote: "In progress",
+      },
+    ],
   });
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

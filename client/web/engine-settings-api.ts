@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { z } from "zod";
 import { errorText } from "../error-text";
 import { createRustBoardTransport } from "./rust-board";
@@ -69,6 +69,7 @@ const repository = z.object({
   requiredChecks: z.array(z.string()),
   hungToolMinutes: integer,
   hostProject: z.string().optional(),
+  hostProjectTitle: z.string().optional(),
 });
 const project = z.object({
   name: z.string(),
@@ -101,6 +102,7 @@ export const dispatchView = snapshot(dispatch).transform((settings) => ({
 export const projectsView = z.object({
   settings: snapshot(projects),
   resolvedPlanners: z.record(z.string(), z.string().nullable()),
+  verifiedPlanners: z.record(z.string(), z.array(z.string())).optional(),
 });
 export const hostsView = z.object({
   settings: snapshot(hosts),
@@ -161,21 +163,22 @@ export function useEditor<R extends View>(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
-  const tail = useRef(Promise.resolve());
-  const [status, setStatus] = useState("");
-  const write = (operation: (settings: R["settings"]) => Promise<R>) => {
-    setStatus("");
-    const attempt = tail.current.then(async () => {
-      const current = client.getQueryData<R>(key);
-      if (!current) return false;
-      try {
-        const saved = await operation(current.settings);
+  const { status, write } = useSettingsWriter<R>(key);
+  return {
+    query,
+    status,
+    save: (edit: SettingsEdit<R["settings"]["value"]>) =>
+      write(async (current) => {
+        const { revision, value } = current.settings;
+        const saved = await putSettings(schema, path, {
+          revision,
+          value: edit(value),
+        });
         await client.cancelQueries({ queryKey: key, exact: true });
-        // PUT storage omits its backup listing. Keep the last listing while the
-        // settings invalidation refreshes it from the read endpoint.
+        // PUT storage omits its backup listing. Keep it until the next read.
         client.setQueryData<R>(key, (latest) =>
           latest &&
-          ![current.settings.revision, saved.settings.revision].includes(
+          ![revision, saved.settings.revision].includes(
             latest.settings.revision,
           )
             ? latest
@@ -183,6 +186,21 @@ export function useEditor<R extends View>(
         );
         if (domain === "storage")
           void client.invalidateQueries({ queryKey: key, exact: true });
+      }),
+  };
+}
+
+export function useSettingsWriter<R>(key: QueryKey) {
+  const client = useQueryClient();
+  const tail = useRef(Promise.resolve());
+  const [status, setStatus] = useState("");
+  const write = (operation: (current: R) => Promise<void>) => {
+    setStatus("");
+    const attempt = tail.current.then(async () => {
+      const current = client.getQueryData<R>(key);
+      if (!current) return false;
+      try {
+        await operation(current);
         setStatus("Saved");
         return true;
       } catch (error) {
@@ -194,19 +212,17 @@ export function useEditor<R extends View>(
     tail.current = attempt.then(() => {});
     return attempt;
   };
-  return {
-    query,
-    status,
-    save: (edit: SettingsEdit<R["settings"]["value"]>) =>
-      write((settings) => {
-        const value = edit(settings.value);
-        const body = JSON.stringify({ revision: settings.revision, value });
-        const options = {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body,
-        };
-        return api.read(schema, path, options);
-      }),
-  };
+  return { status, write };
+}
+
+export function putSettings<R>(
+  schema: z.ZodType<R>,
+  path: string,
+  value: unknown,
+) {
+  return api.read(schema, path, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(value),
+  });
 }

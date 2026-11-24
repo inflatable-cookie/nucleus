@@ -88,6 +88,10 @@ impl Board {
             .route("/api/engine/tasks/{id}/commands", post(super::command))
             .route("/api/engine/events", get(events))
             .route("/api/engine/settings", get(settings::all))
+            .nest(
+                "/api/engine/planning/{project}",
+                super::planning::lane_routes(),
+            )
             .route(
                 "/api/engine/settings/{domain}",
                 get(settings::get).put(settings::put),

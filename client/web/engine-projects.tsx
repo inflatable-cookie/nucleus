@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { Section, muted, type Colors } from "../controls";
 import { space } from "../design";
+import { EngineLanes } from "./engine-lanes";
 import {
   projectsView,
   useEditor,
@@ -65,8 +66,12 @@ export function EngineProjects({
             />
             <SettingValue
               c={c}
-              label="Planner"
-              value={view.resolvedPlanners[id] ?? "Unresolved"}
+              label="Planners"
+              value={
+                (view.verifiedPlanners?.[id]?.join(", ") ??
+                  view.resolvedPlanners[id]) ||
+                "Unresolved"
+              }
             />
             <EditToggle
               c={c}
@@ -77,6 +82,7 @@ export function EngineProjects({
                 update(id, (current) => ({ ...current, archived }))
               }
             />
+            <EngineLanes c={c} project={id} disabled={disabled} />
             <Section c={c} title="Repositories" last>
               {project.repositories.map((repo) => (
                 <RepositorySettings
