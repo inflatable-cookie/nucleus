@@ -54,6 +54,21 @@ impl Store {
         )? != 0)
     }
 
+    /// Locate a task from the native destination already registered for its title.
+    ///
+    /// # Errors
+    /// Returns an error if the title binding cannot be read.
+    pub fn task_with_title_thread(&self, thread: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT task_id FROM task_titles WHERE thread = ?1",
+                [thread],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// Read outstanding presentation work for one observed native thread.
     /// # Errors
     /// Returns an error if the receipt cannot be read.

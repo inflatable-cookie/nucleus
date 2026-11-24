@@ -47,7 +47,7 @@ pub(super) enum DispatchTarget<'a> {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
-    Title {
+    Presentation {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
@@ -288,6 +288,7 @@ impl Service {
                 (Observed::Unknown, None, Some(error))
             }
         };
+        self.observe_role_state(row, &state).await?;
         self.observe_activity(row, activity).await?;
         Ok((state, error))
     }
@@ -648,19 +649,13 @@ impl Service {
                 released_at.unwrap_or(WaitReason::Starting),
             )),
             ParentStep::Failed => {
-                if let Some(command) = prior_turn
-                    && self
-                        .record_native_turn(row, "native_turn_failed", &session, &command)
-                        .await?
-                {
-                    eprintln!(
-                        "{}: T3 parent turn failed ({command}); waiting for a task or session change",
-                        identity.id
-                    );
+                if let Some(command) = prior_turn {
+                    self.record_failed_parent_turn(row, &session, &command)
+                        .await?;
                 }
                 Ok(ControlFlow::Break(WaitReason::HostUnknown))
             }
-            ParentStep::Write(write) => {
+            ParentStep::Write(mut write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         task,
@@ -674,6 +669,9 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
+                if !self.wake_parent_delivery(row, provider, &mut write).await? {
+                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+                }
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
                 if write.starts_turn()
@@ -892,6 +890,17 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
+        if let Some(wake) = authorization.unsettle() {
+            let command = wake.command_id().ok_or(ServiceError::Input)?;
+            if self
+                .claim_row_unsettle(&task.identity().id, command)
+                .await?
+            {
+                host.write_control(wake).await?;
+                self.recheck_effect(row, WaitReason::HostUnknown).await;
+            }
+            return Ok(SendAttempt::Deferred);
+        }
         let archive = permit.superseded;
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
@@ -969,7 +978,7 @@ impl Service {
                 frozen, checkout, ..
             }
             | DispatchTarget::Archive { frozen, checkout }
-            | DispatchTarget::Title { frozen, checkout }
+            | DispatchTarget::Presentation { frozen, checkout }
                 if **frozen != self.checkout_binding(identity, &route, checkout)? =>
             {
                 return Err(HostError::Binding.into());
@@ -982,16 +991,16 @@ impl Service {
                 DispatchTarget::Run { launch, .. } => task
                     .run()
                     .is_none_or(|run| *launch && run.last_send_at_ms().is_none()),
-                DispatchTarget::Archive { .. } | DispatchTarget::Title { .. } => false,
+                DispatchTarget::Archive { .. } | DispatchTarget::Presentation { .. } => false,
             }
         {
             return Ok(None);
         }
-        if !matches!(target, DispatchTarget::Title { .. }) {
+        if !matches!(target, DispatchTarget::Presentation { .. }) {
             self.check_project_route(identity, &route).await?;
         }
         let result = match target {
-            DispatchTarget::Title { checkout, .. } => {
+            DispatchTarget::Presentation { checkout, .. } => {
                 // Exact native destination and project came from the synchronized
                 // shell. Keep the usual local identity and ownership fence.
                 self.verify_route(identity, &route).await?;

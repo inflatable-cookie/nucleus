@@ -74,6 +74,7 @@ const task = (
   phase,
   version: 7,
   wait: null,
+  attention: "waiting",
   nextCheckAt: null,
   question: null,
   hold: null,
@@ -99,10 +100,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     number: 81,
     reference: "board-fixture#81",
   };
-  const blocked = {
+  const blocked: RustTask = {
     ...task("blocked", "queued", "Blocked task"),
     question: { retry: { role: "worker" } } satisfies RustTask["question"],
     wait: "question",
+    attention: "attention",
   };
   const rows = [
     running,
@@ -189,6 +191,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       ) {
         row.question = null;
         row.wait = null;
+        row.attention = "waiting";
         row.version++;
       }
       if (
@@ -210,6 +213,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         wait: row.wait,
         question: row.question,
         nextCheckAt: row.nextCheckAt,
+        attention: row.attention,
         allowance: { usedMs: 180_000, limitMs: 3_600_000, exhausted: false },
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
@@ -217,6 +221,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
           { name: "cancel", preflight: "ready" },
           { name: "amend", preflight: "ready" },
           { name: "hold", preflight: "ready" },
+          { name: "set_dependencies", preflight: "unavailable" },
+          { name: "set_prerequisite_wait", preflight: "unavailable" },
           ...(row.question ? [{ name: "answer", preflight: "ready" }] : []),
         ],
       });

@@ -1,0 +1,387 @@
+//! Reconcile native visibility independently of dispatch and API reads.
+
+use std::{path::Path, time::Duration};
+
+use nucleus_hosts::{ParentWrite, RowChange, RowObservation, RowVisibility, SendOutcome};
+use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
+
+use crate::{
+    Service, ServiceError, State, attention::TaskAttention, event, now_ms, pass::DispatchTarget,
+};
+
+const HORIZON_MS: u64 = 48 * 60 * 60 * 1_000;
+const RENEW_BEFORE_MS: u64 = HORIZON_MS / 2;
+const RECHECK_MS: u64 = 15_000;
+
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    Idle(Option<u64>),
+    Forget,
+    Record(RowSnooze),
+    Write(RowChange, RowSnooze),
+}
+
+fn plan_row(
+    attention: TaskAttention,
+    visibility: RowVisibility,
+    receipt: Option<RowSnooze>,
+    now: u64,
+) -> Plan {
+    if visibility.settled {
+        return Plan::Idle(None);
+    }
+    let shown = visibility.snoozed_until_ms;
+    let owned = receipt.as_ref().filter(|receipt| receipt.owns(shown));
+    if let Some(receipt) = owned
+        && receipt.outcome == SnoozeOutcome::Unknown
+        && shown == Some(receipt.until_ms)
+    {
+        return Plan::Record(RowSnooze {
+            outcome: SnoozeOutcome::Observed,
+            previous_until_ms: None,
+            ..receipt.clone()
+        });
+    }
+    if attention != TaskAttention::Waiting {
+        let Some(mut receipt) = receipt else {
+            return Plan::Idle(None);
+        };
+        if receipt.owns(shown)
+            && let Some(until) = shown
+        {
+            if receipt.clear_attempted_for == shown {
+                return Plan::Idle(None);
+            }
+            receipt.clear_attempted_for = Some(until);
+            return Plan::Write(RowChange::Unsnooze, receipt);
+        }
+        if receipt.outcome == SnoozeOutcome::Unknown && receipt.until_ms > now {
+            if receipt.ended {
+                return Plan::Idle(Some(receipt.until_ms));
+            }
+            receipt.ended = true;
+            return Plan::Record(receipt);
+        }
+        return Plan::Forget;
+    }
+    let snoozed = shown.filter(|&until| until > now);
+    if let Some(until) = snoozed
+        && owned.is_none()
+    {
+        return Plan::Idle(Some(until));
+    }
+    if let Some(prior) = &receipt {
+        if prior.outcome == SnoozeOutcome::Refused && !prior.ended {
+            return Plan::Idle(None);
+        }
+        if prior.outcome == SnoozeOutcome::Unknown && (!prior.ended || prior.until_ms > now) {
+            return Plan::Idle(prior.ended.then_some(prior.until_ms));
+        }
+        if let Some(until) = snoozed
+            && prior.clear_attempted_for == Some(until)
+        {
+            return Plan::Idle(Some(until));
+        }
+        if let Some(until) = snoozed
+            && until.saturating_sub(now) >= RENEW_BEFORE_MS
+        {
+            return Plan::Idle(Some(until - RENEW_BEFORE_MS + 1));
+        }
+    }
+    let until = now + HORIZON_MS;
+    let episode = receipt
+        .as_ref()
+        .filter(|prior| !prior.ended)
+        .map_or(now, |prior| prior.episode);
+    Plan::Write(
+        RowChange::SnoozeUntil(until),
+        RowSnooze {
+            episode,
+            until_ms: until,
+            previous_until_ms: owned.and(snoozed),
+            outcome: SnoozeOutcome::Unknown,
+            clear_attempted_for: None,
+            ended: false,
+        },
+    )
+}
+
+impl Service {
+    pub(super) async fn reconcile_task_rows(
+        &self,
+        provider: &str,
+        threads: &[String],
+    ) -> Result<Option<Duration>, ServiceError> {
+        let now = now_ms();
+        let mut jobs = Vec::new();
+        let mut next = None;
+        {
+            let state = self.state.lock().await;
+            for thread in threads {
+                let Some(hint) = self.host.row_visibility_hint(thread) else {
+                    continue;
+                };
+                let Some(id) = state.store.task_with_title_thread(thread)? else {
+                    continue;
+                };
+                let row = self.lookup(&state, &id)?;
+                let Some(attention) = row_attention_for_effect(&state, &row)? else {
+                    continue;
+                };
+                let receipt = state.store.row_snooze(&id, thread)?;
+                match plan_row(attention, hint, receipt, now) {
+                    Plan::Idle(deadline) => next = earliest(next, deadline),
+                    _ => jobs.push((row, thread)),
+                }
+            }
+        }
+        for (row, thread) in jobs {
+            if let Err(error) = Box::pin(self.reconcile_task_row(&row, provider, thread)).await {
+                eprintln!("{thread}: {error}");
+            }
+            next = earliest(next, Some(now + RECHECK_MS));
+        }
+        Ok(next.map(|deadline| Duration::from_millis(deadline.saturating_sub(now_ms()))))
+    }
+
+    async fn reconcile_task_row(
+        &self,
+        row: &TaskRow,
+        provider: &str,
+        thread: &str,
+    ) -> Result<(), ServiceError> {
+        let task = &row.task;
+        let identity = task.identity();
+        let id = &identity.id;
+        let fence = self.task_fence(id).await;
+        let Ok(_fence) = fence.try_lock_owned() else {
+            return Ok(());
+        };
+        if self.task(id).await? != *row {
+            return Ok(());
+        }
+        let route = self.project_for(identity).await?;
+        let work = self.worktrees()?;
+        let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
+        let binding = route.binding(&checkout)?;
+        let Some(target) = route
+            .checkout
+            .to_str()
+            .and_then(|root| self.host.title_target(&binding, provider, root))
+            .filter(|target| target.thread() == thread)
+        else {
+            return Ok(());
+        };
+        let destination = DispatchTarget::Presentation {
+            frozen: &binding,
+            checkout: &checkout,
+        };
+        let Some(_permit) = self.dispatch_gate(task, destination).await? else {
+            return Ok(());
+        };
+        let Some(observed) = self.host.observe_task_row(&binding, provider).await? else {
+            return Ok(());
+        };
+        let (change, mut receipt) = {
+            let state = self.state.lock().await;
+            let Some(attention) = row_attention_for_effect(&state, row)? else {
+                return Ok(());
+            };
+            let receipt = state.store.row_snooze(id, thread)?;
+            match plan_row(attention, observed.visibility, receipt, now_ms()) {
+                Plan::Idle(_) => return Ok(()),
+                Plan::Forget => return Ok(state.store.forget_row_snooze(id)?),
+                Plan::Record(receipt) => {
+                    return Ok(state.store.save_row_snooze(id, thread, &receipt)?);
+                }
+                Plan::Write(change, receipt) => {
+                    state.store.save_row_snooze(id, thread, &receipt)?;
+                    (change, receipt)
+                }
+            }
+        };
+        let command = snooze_command(id, thread, change, &receipt);
+        let result = self
+            .host
+            .write_row_visibility(&binding, &command, change, Some(&target))
+            .await;
+        if matches!(result, Ok(SendOutcome::Rejected))
+            && matches!(change, RowChange::SnoozeUntil(_))
+        {
+            receipt.outcome = SnoozeOutcome::Refused;
+            self.state
+                .lock()
+                .await
+                .store
+                .save_row_snooze(id, thread, &receipt)?;
+        }
+        let fresh = self.host.observe_task_row(&binding, provider).await?;
+        self.record_row_readback(id, thread, receipt, fresh).await?;
+        result.map(|_| ()).map_err(ServiceError::from)
+    }
+
+    async fn record_row_readback(
+        &self,
+        id: &str,
+        thread: &str,
+        mut receipt: RowSnooze,
+        observed: Option<RowObservation>,
+    ) -> Result<(), ServiceError> {
+        let Some(observed) = observed else {
+            return Ok(());
+        };
+        let shown = observed.visibility.snoozed_until_ms;
+        let state = self.state.lock().await;
+        if let Some(cleared) = receipt.clear_attempted_for
+            && shown != Some(cleared)
+            && receipt.outcome != SnoozeOutcome::Unknown
+        {
+            state.store.forget_row_snooze(id)?;
+        } else if receipt.outcome == SnoozeOutcome::Unknown && shown == Some(receipt.until_ms) {
+            receipt.outcome = SnoozeOutcome::Observed;
+            receipt.previous_until_ms = None;
+            state.store.save_row_snooze(id, thread, &receipt)?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn claim_row_unsettle(
+        &self,
+        id: &str,
+        command: &str,
+    ) -> Result<bool, ServiceError> {
+        let mut intent = event("native_row_unsettle");
+        intent.detail = command.into();
+        Ok(self
+            .state
+            .lock()
+            .await
+            .store
+            .claim_task_effect(id, &intent)?)
+    }
+
+    /// Wake an exact task parent before an already authorized native message.
+    /// The caller holds the task and project fences. Readback gates delivery.
+    pub(super) async fn wake_parent_delivery(
+        &self,
+        row: &TaskRow,
+        provider: &str,
+        write: &mut ParentWrite,
+    ) -> Result<bool, ServiceError> {
+        let Some(initial) = write.delivery_row() else {
+            return Ok(true);
+        };
+        let binding = write.binding();
+        let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
+        let id = &row.task.identity().id;
+        let mut observed = initial;
+        // Settling and snoozing are distinct in T3. Clear each one explicitly.
+        for _ in 0..2 {
+            let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
+            let visibility = observed.visibility;
+            let shown = visibility
+                .snoozed_until_ms
+                .filter(|&until| until > now_ms());
+            let owned = receipt.filter(|receipt| receipt.owns(shown));
+            if shown.is_some() && owned.is_none() {
+                return Ok(false);
+            }
+            let change = if visibility.settled {
+                RowChange::Unsettle
+            } else if shown.is_some() {
+                RowChange::Unsnooze
+            } else {
+                write.after_row_wake(observed);
+                return Ok(true);
+            };
+            let Some(fresh) = self.host.observe_task_row(binding, provider).await? else {
+                return Ok(false);
+            };
+            if fresh.visibility != visibility {
+                return Ok(false);
+            }
+            let (command, cleared) = if matches!(change, RowChange::Unsettle) {
+                let occurrence = visibility
+                    .settled_at_ms
+                    .map_or_else(|| format!("version-{}", row.version), |at| at.to_string());
+                let command = format!("task-{id}-{thread}-unsettle-{occurrence}");
+                if !self.claim_row_unsettle(id, &command).await? {
+                    return Ok(false);
+                }
+                (command, None)
+            } else {
+                let Some(mut receipt) =
+                    owned.filter(|receipt| receipt.clear_attempted_for != shown)
+                else {
+                    return Ok(false);
+                };
+                receipt.clear_attempted_for = shown;
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .save_row_snooze(id, &thread, &receipt)?;
+                (snooze_command(id, &thread, change, &receipt), Some(receipt))
+            };
+            let _result = self
+                .host
+                .write_row_visibility(binding, &command, change, None)
+                .await;
+            let fresh = self.host.observe_task_row(binding, provider).await?;
+            if let Some(receipt) = cleared {
+                self.record_row_readback(id, &thread, receipt, fresh)
+                    .await?;
+            }
+            let Some(fresh) = fresh else {
+                return Ok(false);
+            };
+            if fresh.visibility == visibility {
+                return Ok(false);
+            }
+            observed = fresh;
+        }
+        if observed.visibility.settled
+            || observed
+                .visibility
+                .snoozed_until_ms
+                .is_some_and(|until| until > now_ms())
+        {
+            return Ok(false);
+        }
+        write.after_row_wake(observed);
+        Ok(true)
+    }
+}
+
+fn row_attention_for_effect(
+    state: &State,
+    row: &TaskRow,
+) -> Result<Option<TaskAttention>, ServiceError> {
+    let attention = state.task_attention(row)?;
+    // After a cold start a recorded send alone gives no evidence that a child is quiet.
+    let awaiting_child_read = attention == TaskAttention::Waiting
+        && row.task.run().is_some_and(|run| {
+            !run.revoked() && run.report().is_none() && run.last_send_at_ms().is_some()
+        })
+        && state.role_observation(&row.task).is_none();
+    Ok((attention != TaskAttention::Finished && !awaiting_child_read).then_some(attention))
+}
+
+fn earliest(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    left.into_iter().chain(right).min()
+}
+
+fn snooze_command(id: &str, thread: &str, change: RowChange, receipt: &RowSnooze) -> String {
+    let (action, until) = if matches!(change, RowChange::Unsnooze) {
+        (
+            "unsnooze",
+            receipt.clear_attempted_for.unwrap_or(receipt.until_ms),
+        )
+    } else {
+        ("snooze", receipt.until_ms)
+    };
+    format!("task-{id}-{thread}-{action}-{}-{until}", receipt.episode)
+}
+
+#[cfg(test)]
+mod tests;

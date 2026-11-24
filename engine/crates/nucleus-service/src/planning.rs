@@ -31,6 +31,16 @@ pub(crate) struct TaskAdmission {
     pub planning_commit: Option<Head>,
 }
 
+impl State {
+    pub(super) fn has_open_usage_decision(&self, task: &Task) -> Result<bool, ServiceError> {
+        Ok(usage(self) == UsageLevel::Low
+            && self
+                .store
+                .usage_permission(&task.identity().id)?
+                .is_some_and(|decision| !decision.withdrawn && decision.answer.is_none()))
+    }
+}
+
 impl Service {
     pub(crate) async fn planning_state_in_scope(
         &self,

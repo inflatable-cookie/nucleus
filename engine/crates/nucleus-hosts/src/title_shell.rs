@@ -15,6 +15,7 @@ use crate::{
     inbox::{self, INBOX_THREAD, InboxTarget},
     parent_thread,
     rpc::{Read, Reply},
+    task_row::{RowVisibility, ThreadVisibility},
 };
 
 #[derive(Default)]
@@ -49,6 +50,8 @@ struct TitleThread {
     branch: Option<String>,
     title: Option<String>,
     pinned_at: Option<String>,
+    #[serde(flatten)]
+    visibility: ThreadVisibility,
     parent_thread_id: Option<String>,
     lineage: Option<Lineage>,
     archived_at: Option<String>,
@@ -68,6 +71,7 @@ pub struct TitleTarget {
     thread: String,
     provider: String,
     root: String,
+    visibility: ThreadVisibility,
 }
 
 impl TitleTarget {
@@ -84,6 +88,13 @@ impl TitleTarget {
     #[must_use]
     pub fn thread(&self) -> &str {
         &self.thread
+    }
+
+    pub(crate) fn matches_current_visibility(&self, host: &T3) -> bool {
+        self.binding.as_ref().is_some_and(|binding| {
+            host.title_target(binding, &self.provider, &self.root)
+                .is_some_and(|current| current.visibility == self.visibility)
+        })
     }
 }
 
@@ -240,6 +251,7 @@ impl TitleShell {
             thread,
             provider: provider.into(),
             root: root.into(),
+            visibility: parent.visibility.clone(),
         })
     }
 
@@ -270,6 +282,7 @@ impl TitleShell {
             thread: thread.id.clone(),
             provider: target.provider.into(),
             root: target.root.into(),
+            visibility: thread.visibility.clone(),
         })
     }
 }
@@ -303,6 +316,18 @@ impl T3 {
 
     pub async fn title_shell_changed(&self) {
         self.titles.changed.notified().await;
+    }
+
+    /// Local visibility hints for the presentation scheduler. Mutations use an exact thread read.
+    #[must_use]
+    pub fn row_visibility_hint(&self, thread: &str) -> Option<RowVisibility> {
+        let lock = self.titles.view.read().ok()?;
+        let shell = lock.as_ref()?;
+        let parent = shell.threads.get(thread)?;
+        if parent.archived_at.is_some() || parent.deleted_at.is_some() {
+            return None;
+        }
+        parent.visibility.read().ok()
     }
 
     /// Prepare a title write with positive local shell proof of its destination.
