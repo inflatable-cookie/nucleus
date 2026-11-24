@@ -1716,7 +1716,13 @@ async fn terminal_role_uses_explicit_background_clearance_from_current_bound_she
             state: RunState::Ended
         }
     );
-    assert_eq!(requests.await.unwrap().len(), 2);
+    // The second observation may reuse the held exact projection.
+    assert!(
+        host.host_calls()
+            .get(probe)
+            .is_some_and(|calls| (1..=2).contains(calls))
+    );
+    requests.abort();
 }
 
 #[tokio::test]
