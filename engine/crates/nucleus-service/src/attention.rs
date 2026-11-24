@@ -16,17 +16,16 @@ pub(super) enum TaskAttention {
 }
 
 pub(super) fn waiting_for_person(task: &Task, wait: Option<WaitReason>) -> bool {
-    (task.operator_decline().is_none()
-        && (task.question().is_some() || task.operator_question().is_some()))
-        || matches!(
-            wait,
-            Some(
-                WaitReason::Question
-                    | WaitReason::Permission
-                    | WaitReason::Input
-                    | WaitReason::UsagePermission
-            )
-        )
+    (task.operator_decline().is_none() && task.question().is_some())
+        || wait == Some(WaitReason::Question)
+        || waiting_for_operator_input(wait)
+}
+
+fn waiting_for_operator_input(wait: Option<WaitReason>) -> bool {
+    matches!(
+        wait,
+        Some(WaitReason::Permission | WaitReason::Input | WaitReason::UsagePermission)
+    )
 }
 
 impl State {
@@ -38,7 +37,8 @@ impl State {
         let id = &task.identity().id;
         let wait = self.wait_reason(id);
         if self.has_open_usage_decision(task)?
-            || waiting_for_person(task, wait)
+            || (task.operator_question().is_some() && task.operator_decline().is_none())
+            || waiting_for_operator_input(wait)
             || wait == Some(WaitReason::HostObservationBlocked)
         {
             return Ok(TaskAttention::Attention);
@@ -66,7 +66,8 @@ impl State {
                 TaskAttention::Waiting
             });
         }
-        if task.hold().is_some() || task.operator_decline().is_some() {
+        if task.hold().is_some() || task.question().is_some() || wait == Some(WaitReason::Question)
+        {
             return Ok(TaskAttention::Waiting);
         }
         Ok(match task.phase() {

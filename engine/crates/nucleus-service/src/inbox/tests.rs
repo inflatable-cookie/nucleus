@@ -175,6 +175,14 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
     }).await;
     service.host = host;
     let (row, forge) = seed(&service, "declined").await;
+    {
+        let mut state = service.state.lock().await;
+        state.set_wait("declined", Some(WaitReason::Question));
+        assert_eq!(
+            state.task_attention(&row).unwrap(),
+            crate::attention::TaskAttention::Attention
+        );
+    }
     service.observe_commands(&row, &forge).await.unwrap();
     service.notify_question(&row).await.unwrap();
     let declined = service.task("declined").await.unwrap();
@@ -182,6 +190,14 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
         declined.task.operator_decline(),
         Some(OperatorDecline::NoticePending)
     );
+    {
+        let mut state = service.state.lock().await;
+        state.set_wait("declined", Some(WaitReason::Question));
+        assert_eq!(
+            state.task_attention(&declined).unwrap(),
+            crate::attention::TaskAttention::Waiting
+        );
+    }
     service.clear_stale_inbox(&declined).await.unwrap();
     service.notify_question(&declined).await.unwrap();
     let sent = service.task("declined").await.unwrap();
