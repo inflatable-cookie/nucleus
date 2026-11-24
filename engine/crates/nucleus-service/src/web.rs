@@ -57,7 +57,7 @@ pub struct Controller {
     pub authority: Authority,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub(crate) struct ControllerScope(Option<String>);
 
 impl ControllerScope {
@@ -841,6 +841,7 @@ enum ApiError {
     Invalid,
     SettingsOperator,
     BoardUnavailable,
+    BoardOperator,
     Service(ServiceError),
 }
 
@@ -870,6 +871,10 @@ impl IntoResponse for ApiError {
                 "settings writes require an operator".into(),
             ),
             Self::BoardUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "board unavailable".into()),
+            Self::BoardOperator => (
+                StatusCode::FORBIDDEN,
+                "revoking board sessions requires an operator".into(),
+            ),
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing

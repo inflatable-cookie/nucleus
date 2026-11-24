@@ -137,7 +137,11 @@ enum Action {
     /// Read the isolated engine settings.
     Settings,
     /// Print a one-use link to the local board.
-    Ui,
+    Ui {
+        /// Revoke all paired browsers and pending board links.
+        #[arg(long)]
+        revoke: bool,
+    },
     /// Move to a phase subject to the engine's hard gates.
     Move {
         id: String,
@@ -467,7 +471,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     use Action as A;
     loopback(endpoint)?;
     let (key, actor) = control_caller()?;
-    let board_link = matches!(action, A::Ui);
+    let board_link = matches!(action, A::Ui { revoke: false });
     let (method, path, body) = match action {
         A::Planning(action) => action.request()?,
         A::Admit {
@@ -499,7 +503,8 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
             None,
         ),
         A::Settings => (Method::GET, "/v1/settings".into(), None),
-        A::Ui => (Method::POST, "/v1/board/link".into(), None),
+        A::Ui { revoke: false } => (Method::POST, "/v1/board/link".into(), None),
+        A::Ui { revoke: true } => (Method::POST, "/v1/board/revoke".into(), None),
         A::Move { id, phase } => command_path(&id, Command::Move(phase))?,
         A::Answer { id, answer } => command_path(&id, Command::Answer(answer.into()))?,
         A::Cancel { id } => command_path(&id, Command::Cancel)?,

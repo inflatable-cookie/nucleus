@@ -1,3 +1,5 @@
+mod sessions;
+
 use std::{
     collections::HashMap,
     convert::Infallible,
@@ -25,18 +27,21 @@ use axum::{
 use futures_util::{Stream, StreamExt, stream};
 use nucleus_core::Authority;
 use serde_json::{Value, json};
-use tokio::time::{Instant, sleep_until};
+use tokio::{
+    sync::watch,
+    time::{Instant, sleep_until},
+};
 
 use super::{
     Api, ApiError, Controller, ControllerScope, authorize, credential, invalidation_events, routes,
     settings,
 };
-use crate::Service;
+use crate::{Service, now_ms};
+use sessions::{IDLE, SessionStore};
 
 const COOKIE_NAME: &str = "nucleus_engine_board";
 const COOKIE_SCOPE: &str = "/api/engine";
 const LINK_TTL: Duration = Duration::from_mins(2);
-const SESSION_TTL: Duration = Duration::from_hours(8);
 const MAX_GRANTS: usize = 64;
 const PAGE_POLICY: HeaderValue = HeaderValue::from_static(
     "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -67,7 +72,11 @@ pub fn router_with_board_and_t3_callers(
     let board = Board {
         html: fs::read(assets.join("index.html"))?.into(),
         app: fs::read(assets.join("app.js"))?.into(),
-        grants: Arc::default(),
+        grants: Arc::new(Mutex::new(Grants {
+            links: HashMap::new(),
+            sessions: SessionStore::open(service.storage.database().clone(), now_ms())?,
+        })),
+        revocations: watch::channel(()).0,
     };
     Ok(routes(service, controllers, Some(board), t3_caller_key))
 }
@@ -77,12 +86,12 @@ pub(super) struct Board {
     html: Bytes,
     app: Bytes,
     grants: Arc<Mutex<Grants>>,
+    revocations: watch::Sender<()>,
 }
 
-#[derive(Default)]
 struct Grants {
     links: HashMap<[u8; 32], Grant>,
-    sessions: HashMap<[u8; 32], Grant>,
+    sessions: SessionStore,
 }
 
 #[derive(Clone)]
@@ -90,6 +99,13 @@ struct Grant {
     authority: Authority,
     scope: ControllerScope,
     expires: Instant,
+}
+
+#[derive(Clone)]
+struct BrowserSession {
+    scope: ControllerScope,
+    expires: Instant,
+    revoked: watch::Receiver<()>,
 }
 
 impl Board {
@@ -120,6 +136,10 @@ impl Board {
             .route(
                 "/v1/board/link",
                 post(issue).route_layer(middleware::from_fn_with_state(api.clone(), authorize)),
+            )
+            .route(
+                "/v1/board/revoke",
+                post(revoke).route_layer(middleware::from_fn_with_state(api.clone(), authorize)),
             )
             .route("/", get(page))
             .route("/settings", get(page))
@@ -214,31 +234,51 @@ async fn pair(
         .grants
         .lock()
         .map_err(|_| ApiError::BoardUnavailable)?;
-    grants.sessions.retain(|_, grant| grant.expires > now);
-    if grants.sessions.len() >= MAX_GRANTS {
-        return Err(ApiError::BoardUnavailable);
-    }
     let grant = grants
         .links
         .remove(&link)
         .filter(|grant| grant.expires > now)
         .ok_or(ApiError::Unauthorized)?;
-    grants.sessions.insert(
-        session,
-        Grant {
-            authority: grant.authority,
-            scope: grant.scope,
-            expires: now + SESSION_TTL,
-        },
-    );
+    grants
+        .sessions
+        .insert(&session, grant.authority, grant.scope, now_ms(), MAX_GRANTS)
+        .map_err(|_| ApiError::BoardUnavailable)?;
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(SET_COOKIE, session_cookie(&session)?)],
+    ))
+}
+
+fn session_cookie(session: &[u8; 32]) -> Result<HeaderValue, ApiError> {
     let mut cookie = HeaderValue::from_str(&format!(
         "{COOKIE_NAME}={}; Path={COOKIE_SCOPE}; Max-Age={}; HttpOnly; SameSite=Strict",
         hex::encode(session),
-        SESSION_TTL.as_secs()
+        IDLE.as_secs()
     ))
     .map_err(|_| ApiError::BoardUnavailable)?;
     cookie.set_sensitive(true);
-    Ok((StatusCode::NO_CONTENT, [(SET_COOKIE, cookie)]))
+    Ok(cookie)
+}
+
+async fn revoke(
+    Extension(board): Extension<Board>,
+    Extension(authority): Extension<Authority>,
+) -> Result<Json<Value>, ApiError> {
+    if !matches!(authority, Authority::Operator { .. }) {
+        return Err(ApiError::BoardOperator);
+    }
+    let mut grants = board
+        .grants
+        .lock()
+        .map_err(|_| ApiError::BoardUnavailable)?;
+    let revoked = grants
+        .sessions
+        .revoke(now_ms())
+        .map_err(|_| ApiError::BoardUnavailable)?;
+    let links = grants.links.len();
+    grants.links.clear();
+    board.revocations.send_replace(());
+    Ok(Json(json!({"revoked": revoked + links})))
 }
 
 async fn authorize_browser(
@@ -260,19 +300,36 @@ async fn authorize_browser(
         .ok_or(ApiError::Unauthorized)?;
     let mut key = [0; 32];
     hex::decode_to_slice(cookie, &mut key).map_err(|_| ApiError::Unauthorized)?;
-    let grant = board
-        .grants
-        .lock()
-        .map_err(|_| ApiError::BoardUnavailable)?
-        .sessions
-        .get(&key)
-        .filter(|grant| grant.expires > Instant::now())
-        .cloned()
-        .ok_or(ApiError::Unauthorized)?;
-    request.extensions_mut().insert(grant.authority.clone());
-    request.extensions_mut().insert(grant.scope.clone());
-    request.extensions_mut().insert(grant);
-    Ok(next.run(request).await)
+    let now = now_ms();
+    let (session, refresh, revoked) = {
+        let mut grants = board
+            .grants
+            .lock()
+            .map_err(|_| ApiError::BoardUnavailable)?;
+        let (session, refresh) = grants
+            .sessions
+            .authenticate(&key, now)
+            .map_err(|_| ApiError::BoardUnavailable)?
+            .ok_or(ApiError::Unauthorized)?;
+        (session, refresh, board.revocations.subscribe())
+    };
+    request.extensions_mut().insert(session.authority);
+    request.extensions_mut().insert(session.scope.clone());
+    request.extensions_mut().insert(BrowserSession {
+        scope: session.scope,
+        expires: Instant::now()
+            + IDLE.min(Duration::from_millis(
+                session.expires_at.saturating_sub(now),
+            )),
+        revoked,
+    });
+    let mut response = next.run(request).await;
+    if refresh {
+        response
+            .headers_mut()
+            .insert(SET_COOKIE, session_cookie(&key)?);
+    }
+    Ok(response)
 }
 
 fn browser_request(headers: &HeaderMap) -> Result<(), ApiError> {
@@ -295,7 +352,7 @@ fn random_key() -> Result<[u8; 32], ApiError> {
 
 async fn events(
     State(api): State<Api>,
-    Extension(grant): Extension<Grant>,
+    Extension(session): Extension<BrowserSession>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let settings = stream::unfold(
         api.service.settings_changes.subscribe(),
@@ -305,9 +362,15 @@ async fn events(
         },
     );
     let changes = stream::select(
-        invalidation_events(api.service, None, grant.scope),
+        invalidation_events(api.service, None, session.scope),
         settings,
     )
-    .take_until(sleep_until(grant.expires));
+    .take_until(async move {
+        let mut revoked = session.revoked;
+        tokio::select! {
+            _ = revoked.changed() => {},
+            () = sleep_until(session.expires) => {},
+        }
+    });
     Sse::new(changes).keep_alive(KeepAlive::default())
 }

@@ -536,6 +536,13 @@ controller. Paired browsers receive only the capability flag and talk to
 same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
 
+On the standalone Rust board, `nucleus-engine ui` pairs a new browser once.
+A paired browser can reopen the plain loopback URL after a service restart.
+Sessions expire after 30 idle days and renew at most once per day. The private
+`web-sessions.json` beside the engine database holds token digests and expiry
+times. An operator can revoke all browser sessions and pending links with
+`nucleus-engine ui --revoke`.
+
 The TypeScript service reads an owner-only `rust-engine-pilot.json` beside its
 own settings at startup. Set `"drain": true` to send all new work to Rust.
 The single-repository pilot accepts its existing `repository` setting until
