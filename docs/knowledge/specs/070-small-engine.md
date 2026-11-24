@@ -542,8 +542,8 @@ records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads
 use local task state and the recorded entry time. Older rows start showing an
 age after a recorded transition. The first scheduler observation after restart
-establishes the current wait without dating it. Finished tasks keep their
-recorded entry time.
+establishes a volatile wait without dating it. A label fixed by committed facts,
+such as a blocking hold or a finished phase, keeps its recorded entry time.
 
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. Screens leave out

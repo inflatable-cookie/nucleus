@@ -2211,6 +2211,33 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     assert_eq!(&changed["createdAtMs"], created);
 }
 
+#[tokio::test]
+async fn operator_hold_keeps_its_state_entry_across_restart() {
+    let forge = || GitHub::new("unused-fixture-forge").unwrap();
+    let (_home, service) = fixture(forge());
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    seed_planner_task(&service, "held", "fixture-planner").await;
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    service
+        .command("held", &operator, Command::Hold("Wait for approval".into()))
+        .await
+        .unwrap();
+    let api = settings_api(&Arc::new(service));
+    let path = "/v1/tasks/held";
+    let before = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(before["stateLabel"], "Waiting on Tom");
+    assert!(before["stateSinceMs"].is_u64());
+    drop(api);
+
+    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let after = json_body(get_as(&settings_api(&reopened), path, &BOARD_KEY).await).await;
+    assert_eq!(after["stateLabel"], before["stateLabel"]);
+    assert_eq!(after["stateSinceMs"], before["stateSinceMs"]);
+}
+
 async fn observe_task_wait(service: &Service, wait: WaitReason) {
     let row = service.task("age").await.unwrap();
     service

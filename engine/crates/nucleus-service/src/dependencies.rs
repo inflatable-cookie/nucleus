@@ -260,12 +260,13 @@ impl Service {
         identity: &nucleus_core::Identity,
         inputs: &[String],
         scope: &ControllerScope,
-    ) -> Result<Vec<String>, ServiceError> {
+    ) -> Result<(Vec<String>, bool), ServiceError> {
         if inputs.len() > MAX_PREREQUISITES {
             return Err(ServiceError::DependencyInput(
                 "at most 100 prerequisites are allowed".into(),
             ));
         }
+        let mut blocked = false;
         let mut ids = Vec::with_capacity(inputs.len());
         for named in inputs {
             if named.is_empty() || named.chars().count() > MAX_REFERENCE_LENGTH {
@@ -295,6 +296,7 @@ impl Service {
             let prerequisite = state.store.row(&id)?.ok_or_else(missing)?;
             self.task_scope(prerequisite.task.identity())?;
             scope.task(state, prerequisite.task.identity())?;
+            blocked |= prerequisite.task.phase() != Phase::Done;
             ids.push(id);
         }
         ids.sort_unstable();
@@ -303,7 +305,7 @@ impl Service {
                 "duplicate prerequisite task IDs".into(),
             ));
         }
-        Ok(ids)
+        Ok((ids, blocked))
     }
 
     pub(super) fn amended_dependencies(
@@ -333,7 +335,8 @@ impl Service {
                 .dependencies(&prior.identity().id)?
                 .before_dispatch,
         )?;
-        let ids = self.resolve_dependencies(state, prior.identity(), &after.depends_on, scope)?;
+        let (ids, _) =
+            self.resolve_dependencies(state, prior.identity(), &after.depends_on, scope)?;
         Ok(Some(ids))
     }
 
@@ -423,7 +426,7 @@ impl Service {
             &prior.before_dispatch
         };
         require_visible_dependencies(&state, scope, current_ids)?;
-        let ids = self.resolve_dependencies(&state, task.identity(), named, scope)?;
+        let (ids, _) = self.resolve_dependencies(&state, task.identity(), named, scope)?;
         let (kind, edit) = match reason {
             None if ids == prior.before_dispatch => return Ok(row),
             None => ("dependencies_changed", DependencyEdit::BeforeDispatch(&ids)),
@@ -452,7 +455,6 @@ impl Service {
         row.version = state.edit_board_dependency(task, |store, clock| {
             store.edit_dependencies(id, version, edit, &audit, clock)
         })?;
-        state.set_wait(id, None);
         self.desire_title(&state, task, row.number);
         self.wake_task(&mut state, id, row.version, Priority::Wake);
         Ok(row)

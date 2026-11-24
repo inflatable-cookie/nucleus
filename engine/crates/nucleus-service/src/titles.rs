@@ -27,7 +27,22 @@ fn task_title(task: &Task, number: Option<i64>, label: &str) -> String {
 
 // The compact taskTitleStateLabel rule serves both native titles and the board.
 pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String {
-    let phase = match task.phase() {
+    if let Some(label) = task_label_from_facts(task) {
+        return label;
+    }
+    if let Some(label) = wait_label(wait) {
+        return label.into();
+    }
+    let phase = phase_label(task);
+    if task.hold().is_some() {
+        format!("{phase}*")
+    } else {
+        phase.into()
+    }
+}
+
+fn phase_label(task: &Task) -> &'static str {
+    match task.phase() {
         Phase::Queued => "Queued",
         Phase::Working
             if matches!(
@@ -49,27 +64,25 @@ pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String 
         Phase::Closing => "Closing",
         Phase::Done => "Done",
         Phase::Cancelled => "Cancelled",
-    };
+    }
+}
+
+// These committed facts determine the label regardless of the scheduler wait.
+pub(super) fn task_label_from_facts(task: &Task) -> Option<String> {
     let has_live_run = task.run().is_some_and(|run| {
         !run.revoked() && run.last_send_at_ms().is_some() && run.report().is_none()
     });
-    if task.phase().is_terminal() {
-        phase.into()
-    } else if task.run().is_some_and(nucleus_core::Run::revoked) {
-        "Stopping".into()
-    } else if let Some(hold) = task.hold().filter(|_| !has_live_run) {
-        held_label(task.phase(), hold)
-    } else if task.operator_decline().is_some() {
-        "Declined by Tom".into()
-    } else if task.operator_question().is_some() {
-        "Waiting on Tom".into()
-    } else if let Some(label) = wait_label(task, wait) {
-        label.into()
-    } else if task.hold().is_some() {
-        format!("{phase}*")
-    } else {
-        phase.into()
-    }
+    Some(match task.phase() {
+        Phase::Done | Phase::Cancelled => phase_label(task).into(),
+        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "Stopping".into(),
+        _ if let Some(hold) = task.hold().filter(|_| !has_live_run) => {
+            held_label(task.phase(), hold)
+        }
+        _ if task.operator_decline().is_some() => "Declined by Tom".into(),
+        _ if task.operator_question().is_some() => "Waiting on Tom".into(),
+        _ if task.question().is_some() => "Waiting for the planner".into(),
+        _ => return None,
+    })
 }
 
 fn held_label(phase: Phase, hold: &Hold) -> String {
@@ -87,11 +100,9 @@ fn held_label(phase: Phase, hold: &Hold) -> String {
     .into()
 }
 
-fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
+fn wait_label(wait: Option<WaitReason>) -> Option<&'static str> {
     Some(match wait {
-        _ if task.question().is_some() || wait == Some(WaitReason::Question) => {
-            "Waiting for the planner"
-        }
+        Some(WaitReason::Question) => "Waiting for the planner",
         Some(WaitReason::Capacity) => "Waiting for capacity",
         Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
         Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
@@ -193,8 +204,8 @@ impl Service {
             return;
         }
         let id = &task.identity().id;
-        let label = match state.board_wait(task) {
-            Ok(wait) => task_state_label(task, wait.reason),
+        let label = match state.effective_wait(task) {
+            Ok(wait) => task_state_label(task, wait),
             Err(error) => {
                 eprintln!("{id}: {error}");
                 return;
@@ -320,7 +331,7 @@ impl Service {
         let running = state
             .waits
             .values()
-            .filter(|(wait, _)| *wait == WaitReason::Running)
+            .filter(|wait| wait.reason == Some(WaitReason::Running))
             .count();
         let mode = state
             .settings

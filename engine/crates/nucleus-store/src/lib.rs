@@ -175,7 +175,6 @@ pub struct TaskAdmissionFacts<'a> {
     pub prerequisites: &'a [String],
     pub usage_permission: Option<planning::UsagePermission<'a>>,
     pub affected_tests: bool,
-    pub record_board_entry: bool,
 }
 
 pub struct Store {
@@ -665,7 +664,12 @@ impl Store {
     ///
     /// # Errors
     /// Returns an error if the journal cannot be updated.
-    pub fn claim_task_effect(&mut self, id: &str, event: &EventDraft) -> Result<bool, StoreError> {
+    pub fn claim_task_effect(
+        &mut self,
+        id: &str,
+        event: &EventDraft,
+        entered: bool,
+    ) -> Result<bool, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -676,6 +680,9 @@ impl Store {
         )?;
         if !recorded {
             append(&tx, id, event)?;
+            if entered {
+                board_state::record(&tx, id, event.at)?;
+            }
         }
         tx.commit()?;
         Ok(!recorded)
@@ -967,9 +974,7 @@ fn admit(
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
-    if facts.record_board_entry {
-        board_state::record(tx, &identity.id, event.at)?;
-    }
+    board_state::record(tx, &identity.id, event.at)?;
     allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {
         dependencies::initial_edges(tx, &identity.id, facts.prerequisites)?;

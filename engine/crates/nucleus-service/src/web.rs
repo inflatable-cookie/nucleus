@@ -982,13 +982,20 @@ impl Summary {
         let id = &task.identity().id;
         let dependency_status = DependencyStatus::read(state, row, scope)?;
         let dependency_edits = DependencyEdits::read(state, task, authority, &dependency_status);
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = state.wait_reason(id);
         let wait = if dependency_status.blocking && task.run().is_none() {
             Some(WaitReason::Prerequisite)
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
         };
-        let (state_label, state_since_ms, created_at_ms) = state.board_state(task)?;
+        let (since, created_at_ms) = state.store.board_times(id)?;
+        let fixed = crate::titles::task_label_from_facts(task);
+        let state_since_ms =
+            since.filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
+        let state_label = match fixed {
+            Some(label) => label,
+            None => crate::titles::task_state_label(task, state.effective_wait(task)?),
+        };
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),

@@ -257,7 +257,7 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &intent)?)
+            .claim_task_effect(id, &intent, false)?)
     }
 
     /// Wake an exact task parent before an already authorized native message.
