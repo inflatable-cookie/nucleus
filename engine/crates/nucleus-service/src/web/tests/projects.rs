@@ -61,10 +61,14 @@ impl Registry {
 }
 
 async fn registry() -> Registry {
+    registry_with_beta_repo(BETA_REPO).await
+}
+
+async fn registry_with_beta_repo(beta_repo: &str) -> Registry {
     let (home, legacy) = fixture(GitHub::new("fixture").expect("client"));
     let alpha_path = legacy.fixture().checkout.clone();
     let beta_path = alpha_path.with_file_name("second");
-    create_repository(&beta_path, "trunk", BETA_REPO);
+    create_repository(&beta_path, "trunk", beta_repo);
     set_default(&alpha_path, "main");
     set_default(&beta_path, "trunk");
     let settings = legacy.settings.clone();
@@ -308,6 +312,105 @@ async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_re
         2,
         "one exact scheduler read per first contact"
     );
+}
+
+#[tokio::test]
+async fn public_task_references_follow_the_authenticated_project_scope() {
+    let registry = registry_with_beta_repo("example/nucleus-fixture").await;
+    let api = &registry.api;
+    let alpha = "alpha-planner";
+    let beta = "beta-planner";
+    registry.enroll(alpha).await;
+    registry.enroll(beta).await;
+    registry.task(alpha, "first").await;
+    registry.task(beta, "second").await;
+
+    let read = |path| caller_request(api, Method::GET, path, alpha, Value::Null);
+    let detail = json_body(read("/v1/tasks/first").await).await;
+    assert_eq!(detail["identity"]["id"], "first");
+    for path in ["/v1/tasks/nucleus-fixture%23001", "/v1/tasks/%231"] {
+        assert_eq!(json_body(read(path).await).await, detail);
+    }
+    for (by_id, by_reference) in [
+        ("/v1/tasks/first/next", "/v1/tasks/nucleus-fixture%231/next"),
+        (
+            "/v1/tasks/first/history",
+            "/v1/tasks/nucleus-fixture%231/history",
+        ),
+    ] {
+        assert_eq!(
+            json_body(read(by_reference).await).await,
+            json_body(read(by_id).await).await
+        );
+    }
+    for path in [
+        "/v1/tasks/nucleus-fixture%2399",
+        "/v1/tasks/example%2Fnucleus-fixture%231",
+    ] {
+        let response = read(path).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            json_body(response).await["error"],
+            "task reference was not found"
+        );
+    }
+    let ambiguous = get_as(api, "/v1/tasks/nucleus-fixture%231", &BOARD_KEY).await;
+    assert_eq!(ambiguous.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(ambiguous).await["error"]
+            .as_str()
+            .expect("error")
+            .contains("ambiguous")
+    );
+    let qualified = "/v1/tasks/inflatable-cookie%2Fnucleus-fixture%231";
+    assert_eq!(
+        json_body(get_as(api, qualified, &BOARD_KEY).await).await,
+        detail
+    );
+    assert_eq!(
+        caller_request(
+            api,
+            Method::POST,
+            "/v1/tasks/%231/commands",
+            alpha,
+            json!({"hold": "Settle the fixture first."}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let first = registry.service.task("first").await.expect("first task");
+    let second = registry.service.task("second").await.expect("second task");
+    assert!(first.task.hold().is_some());
+    assert!(second.task.hold().is_none());
+
+    {
+        let mut state = registry.service.state.lock().await;
+        let alpha = state
+            .live_planner_project(alpha)
+            .expect("Alpha project")
+            .to_owned();
+        let beta = state
+            .live_planner_project(beta)
+            .expect("Beta project")
+            .to_owned();
+        let projects = &mut state.settings.projects.as_mut().expect("projects").projects;
+        let beta = projects.remove(&beta).expect("Beta settings");
+        projects
+            .get_mut(&alpha)
+            .expect("Alpha settings")
+            .repositories
+            .extend(beta.repositories);
+    }
+    let response = read("/v1/tasks/%231").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(response).await["error"]
+            .as_str()
+            .expect("error")
+            .contains("exactly one repository")
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
 }
 
 #[tokio::test]

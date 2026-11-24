@@ -46,7 +46,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
             },
         }],
     );
-    let path = "/v1/tasks/task-one/acp";
+    let path = "/v1/tasks/nucleus-fixture%231/acp";
     let mint = json_body(post_as(&api, path, &PLANNER_KEY, &json!({})).await).await;
     assert!(mint["credential"].is_null());
     let file = std::path::Path::new(mint["bindingPath"].as_str().expect("binding path"));
@@ -59,7 +59,12 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     assert_eq!(binding.task_id, "task-one");
     let key = &binding.credential;
     let writer = binding.command_credential.as_ref().expect("command key");
-    for path in ["/v1/tasks/task-two", "/v1/events", "/v1/settings"] {
+    for path in [
+        "/v1/tasks/task-two",
+        "/v1/tasks/nucleus-fixture%232",
+        "/v1/events",
+        "/v1/settings",
+    ] {
         assert_eq!(
             get_as(&api, path, key).await.status(),
             StatusCode::UNAUTHORIZED
@@ -88,7 +93,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         StatusCode::UNAUTHORIZED,
         "a read key cannot write"
     );
-    let response = get_as(&api, "/v1/tasks/task-one/events", key).await;
+    let response = get_as(&api, "/v1/tasks/%231/events", key).await;
     let mut events = response.into_body().into_data_stream();
     assert_event(&mut events, &["event: refresh"]).await;
     assert_eq!(
@@ -104,7 +109,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     assert_eq!(
         post_json(
             &api,
-            "/v1/tasks/task-one/commands",
+            "/v1/tasks/nucleus-fixture%231/commands",
             writer,
             &json!("cancel")
         )
