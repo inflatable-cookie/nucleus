@@ -144,6 +144,10 @@ Later decisions carry their own attribution.
     - The scheduler excludes the run's subscription group until the provider reset or, when the provider gives no usable reset, the configured cooldown from the failure time. The deadline survives an engine restart and expires automatically.
     - Profiles settings can also pause a group until an operator edits the setting. Both pauses apply across roles and projects. An otherwise eligible task waits for Capacity until its earliest eligible reset or a settings change.
     - A run that ends on a confirmed limit without a report releases its slot without charging a failed attempt or opening a question. Existing send receipts and verified replay rules still apply.
+26. **Inbox answers carry the TypeScript trust level.** Tom chose this on 2026-11-24 after the planner found that T3 records no author on a native form answer: a person's click and an agent's `t3_pending_request` reply are identical, in the TypeScript Inbox as well.
+    - The Rust Inbox accepts operator answers from its pinned session's native forms, the same trust the TypeScript Inbox has today. The recorded actor says the answer came through the T3 Inbox; it never claims the answer was attested.
+    - Agent instructions forbid answering Inbox requests or operator decisions.
+    - Request for T3: server-attested provenance on a request response (UI versus MCP or relay, bound to host, thread, request and choice). When a host provides it, the engine requires the UI source for operator-only decisions.
 
 ## The model
 
