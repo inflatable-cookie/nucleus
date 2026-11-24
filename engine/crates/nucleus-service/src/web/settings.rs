@@ -119,10 +119,27 @@ impl RuntimeSettings {
             .map_or(binding.host_project.as_str(), |(id, _, _)| id)
     }
 
-    pub(crate) fn knows_planning_project(&self, binding: Option<&Project>, project: &str) -> bool {
+    pub(crate) fn resolve_planning_project<'a>(
+        &'a self,
+        binding: Option<&'a Project>,
+        selector: &str,
+    ) -> Option<&'a str> {
         match &self.projects {
-            Some(registry) => registry.projects.contains_key(project),
-            None => binding.is_some_and(|binding| binding.host_project == project),
+            Some(registry) => {
+                if let Some((id, _)) = registry.projects.get_key_value(selector) {
+                    return Some(id);
+                }
+                let selector = selector.to_lowercase();
+                let mut matches = registry
+                    .projects
+                    .iter()
+                    .filter(|(_, project)| project.name.to_lowercase() == selector);
+                let (id, _) = matches.next()?;
+                matches.next().is_none().then_some(id.as_str())
+            }
+            None => binding
+                .filter(|binding| binding.host_project == selector)
+                .map(|binding| binding.host_project.as_str()),
         }
     }
 

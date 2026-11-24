@@ -10,7 +10,7 @@ use nucleus_store::planning::{
     legacy::{self, ImportMode},
     valid_key,
 };
-use reqwest::Method;
+use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
 use super::{Result, read_with_limit};
@@ -19,79 +19,96 @@ use super::{Result, read_with_limit};
 pub(super) enum Action {
     /// Read the project's plan and lane documents.
     #[command(name = "plan.get")]
-    PlanGet { project: String },
+    PlanGet { project: Option<String> },
     /// Replace the ordered plan. Read a JSON array of lane entries from stdin.
-    #[command(name = "plan.set")]
-    PlanSet { project: String, version: u64 },
+    #[command(
+        name = "plan.set",
+        override_usage = "nucleus plan.set [OPTIONS] [PROJECT] <VERSION>"
+    )]
+    PlanSet {
+        #[arg(required = true, num_args = 1..=2, hide = true)]
+        args: Vec<String>,
+    },
     /// Create or edit a lane. Read its Markdown from stdin. Use version 0 to create.
-    #[command(name = "lane.put")]
+    #[command(
+        name = "lane.put",
+        override_usage = "nucleus lane.put [OPTIONS] [PROJECT] <KEY> <VERSION> <TITLE> <AIM>"
+    )]
     LanePut {
-        project: String,
-        key: String,
-        version: u64,
-        title: String,
-        aim: String,
+        #[arg(required = true, num_args = 1..=5, hide = true)]
+        args: Vec<String>,
     },
     /// Set a lane's status. A closed lane requires a note.
-    #[command(name = "lane.status")]
+    #[command(
+        name = "lane.status",
+        override_usage = "nucleus lane.status [OPTIONS] [PROJECT] <KEY> <STATUS>"
+    )]
     LaneStatus {
-        project: String,
-        key: String,
-        #[arg(value_parser = ["open", "done", "dropped"])]
-        status: String,
+        #[arg(required = true, num_args = 1..=3, hide = true)]
+        args: Vec<String>,
         #[arg(long)]
         note: Option<String>,
     },
     /// List leads and papercuts with their current states.
     #[command(name = "item.list")]
-    ItemList { project: String },
+    ItemList { project: Option<String> },
     /// Add a lead or papercut. Read the Markdown body from stdin.
-    #[command(name = "item.add")]
+    #[command(
+        name = "item.add",
+        override_usage = "nucleus item.add [OPTIONS] [PROJECT] <KIND> <TITLE>"
+    )]
     ItemAdd {
-        project: String,
-        #[arg(value_parser = ["lead", "papercut"])]
-        kind: String,
-        title: String,
+        #[arg(required = true, num_args = 1..=3, hide = true)]
+        args: Vec<String>,
         #[arg(long = "lane")]
         lanes: Vec<String>,
     },
     /// Replace an item's title, body and lanes. Read the Markdown body from stdin.
-    #[command(name = "item.edit")]
+    #[command(
+        name = "item.edit",
+        override_usage = "nucleus item.edit [OPTIONS] [PROJECT] <ID> <TITLE>"
+    )]
     ItemEdit {
-        project: String,
-        id: String,
-        title: String,
+        #[arg(required = true, num_args = 1..=3, hide = true)]
+        args: Vec<String>,
         #[arg(long = "lane")]
         lanes: Vec<String>,
     },
     /// Park a lead or papercut with a reason.
-    #[command(name = "item.park")]
+    #[command(
+        name = "item.park",
+        override_usage = "nucleus item.park [OPTIONS] [PROJECT] <ID> <REASON>"
+    )]
     ItemPark {
-        project: String,
-        id: String,
-        reason: String,
+        #[arg(required = true, num_args = 1..=3, hide = true)]
+        args: Vec<String>,
         #[arg(long)]
         revisit_at: Option<String>,
     },
     /// Drop a lead or papercut.
-    #[command(name = "item.drop")]
+    #[command(
+        name = "item.drop",
+        override_usage = "nucleus item.drop [OPTIONS] [PROJECT] <ID>"
+    )]
     ItemDrop {
-        project: String,
-        id: String,
+        #[arg(required = true, num_args = 1..=2, hide = true)]
+        args: Vec<String>,
         #[arg(long)]
         reason: Option<String>,
     },
     /// Admit a task from an item's current body.
-    #[command(name = "item.promote")]
+    #[command(
+        name = "item.promote",
+        override_usage = "nucleus item.promote [OPTIONS] [PROJECT] <ID>"
+    )]
     ItemPromote {
-        /// Item ID, or project ID when followed by an item ID.
-        project_or_id: String,
-        id: Option<String>,
+        #[arg(required = true, num_args = 1..=2, hide = true)]
+        args: Vec<String>,
     },
     /// Admit a task directly. Read the brief from stdin.
     #[command(name = "task.add")]
     TaskAdd {
-        /// Explicit project ID for operator calls.
+        /// Project key or display name. Defaults to the caller's T3 project.
         project: Option<String>,
         #[arg(long)]
         repository: Option<String>,
@@ -106,15 +123,18 @@ pub(super) enum Action {
     /// List operator decisions.
     #[command(name = "decision.list")]
     DecisionList {
-        project: String,
+        project: Option<String>,
         #[arg(long)]
         pending: bool,
     },
     /// Ask the operator a question. Pass each option as --option id=label.
-    #[command(name = "decision.add")]
+    #[command(
+        name = "decision.add",
+        override_usage = "nucleus decision.add [OPTIONS] [PROJECT] <QUESTION>"
+    )]
     DecisionAdd {
-        project: String,
-        question: String,
+        #[arg(required = true, num_args = 1..=2, hide = true)]
+        args: Vec<String>,
         #[arg(long = "option", required = true, value_parser = decision_option)]
         options: Vec<DecisionOption>,
     },
@@ -138,7 +158,9 @@ impl Action {
         use Action as A;
         let (method, project, path, body) = match self {
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
-            A::PlanSet { project, version } => {
+            A::PlanSet { args } => {
+                let (project, [version]) = project_and_args(args)?;
+                let version = version.parse::<u64>()?;
                 let lanes: Vec<PlanLane> = serde_json::from_str(&stdin_text()?)?;
                 (
                     Method::PUT,
@@ -147,81 +169,74 @@ impl Action {
                     Some(json!({ "version": version, "lanes": lanes })),
                 )
             }
-            A::LanePut {
-                project,
-                key,
-                version,
-                title,
-                aim,
-            } => (
-                Method::PUT,
-                project,
-                format!("lanes/{}", segment(&key)?),
-                Some(
-                    json!({ "version": version, "title": title, "aim": aim, "document": stdin_text()? }),
-                ),
-            ),
-            A::LaneStatus {
-                project,
-                key,
-                status,
-                note,
-            } => (
-                Method::POST,
-                project,
-                format!("lanes/{}/status", segment(&key)?),
-                Some(json!({ "status": status, "note": note })),
-            ),
+            A::LanePut { args } => {
+                let (project, [key, version, title, aim]) = project_and_args(args)?;
+                let version = version.parse::<u64>()?;
+                (
+                    Method::PUT,
+                    project,
+                    format!("lanes/{}", segment(&key)?),
+                    Some(json!({
+                        "version": version, "title": title, "aim": aim, "document": stdin_text()?,
+                    })),
+                )
+            }
+            A::LaneStatus { args, note } => {
+                let (project, [key, status]) = project_and_args(args)?;
+                if !matches!(status.as_str(), "open" | "done" | "dropped") {
+                    return Err("lane status must be open, done or dropped".into());
+                }
+                (
+                    Method::POST,
+                    project,
+                    format!("lanes/{}/status", segment(&key)?),
+                    Some(json!({ "status": status, "note": note })),
+                )
+            }
             A::ItemList { project } => (Method::GET, project, "items".into(), None),
-            A::ItemAdd {
-                project,
-                kind,
-                title,
-                lanes,
-            } => (
-                Method::POST,
-                project,
-                "items".into(),
-                Some(
-                    json!({ "kind": kind, "title": title, "body": stdin_text()?, "lanes": lanes }),
-                ),
-            ),
-            A::ItemEdit {
-                project,
-                id,
-                title,
-                lanes,
-            } => (
-                Method::PUT,
-                project,
-                format!("items/{}", segment(&id)?),
-                Some(json!({ "title": title, "body": stdin_text()?, "lanes": lanes })),
-            ),
-            A::ItemPark {
-                project,
-                id,
-                reason,
-                revisit_at,
-            } => (
-                Method::POST,
-                project,
-                format!("items/{}/park", segment(&id)?),
-                Some(json!({ "reason": reason, "revisitAt": revisit_at })),
-            ),
-            A::ItemDrop {
-                project,
-                id,
-                reason,
-            } => (
-                Method::POST,
-                project,
-                format!("items/{}/drop", segment(&id)?),
-                Some(json!({ "reason": reason })),
-            ),
-            A::ItemPromote { project_or_id, id } => {
-                let (project, id) = id.map_or((String::new(), project_or_id.clone()), |id| {
-                    (project_or_id, id)
-                });
+            A::ItemAdd { args, lanes } => {
+                let (project, [kind, title]) = project_and_args(args)?;
+                if !matches!(kind.as_str(), "lead" | "papercut") {
+                    return Err("item kind must be lead or papercut".into());
+                }
+                (
+                    Method::POST,
+                    project,
+                    "items".into(),
+                    Some(
+                        json!({ "kind": kind, "title": title, "body": stdin_text()?, "lanes": lanes }),
+                    ),
+                )
+            }
+            A::ItemEdit { args, lanes } => {
+                let (project, [id, title]) = project_and_args(args)?;
+                (
+                    Method::PUT,
+                    project,
+                    format!("items/{}", segment(&id)?),
+                    Some(json!({ "title": title, "body": stdin_text()?, "lanes": lanes })),
+                )
+            }
+            A::ItemPark { args, revisit_at } => {
+                let (project, [id, reason]) = project_and_args(args)?;
+                (
+                    Method::POST,
+                    project,
+                    format!("items/{}/park", segment(&id)?),
+                    Some(json!({ "reason": reason, "revisitAt": revisit_at })),
+                )
+            }
+            A::ItemDrop { args, reason } => {
+                let (project, [id]) = project_and_args(args)?;
+                (
+                    Method::POST,
+                    project,
+                    format!("items/{}/drop", segment(&id)?),
+                    Some(json!({ "reason": reason })),
+                )
+            }
+            A::ItemPromote { args } => {
+                let (project, [id]) = project_and_args(args)?;
                 (
                     Method::POST,
                     project,
@@ -237,7 +252,7 @@ impl Action {
                 review,
             } => (
                 Method::POST,
-                project.unwrap_or_default(),
+                project,
                 "tasks".into(),
                 Some(json!({
                     "id": id, "reference": reference, "repository": repository, "brief": stdin_text()?,
@@ -253,16 +268,15 @@ impl Action {
                 format!("decisions?pending={pending}"),
                 None,
             ),
-            A::DecisionAdd {
-                project,
-                question,
-                options,
-            } => (
-                Method::POST,
-                project,
-                "decisions".into(),
-                Some(json!({ "question": question, "options": options })),
-            ),
+            A::DecisionAdd { args, options } => {
+                let (project, [question]) = project_and_args(args)?;
+                (
+                    Method::POST,
+                    project,
+                    "decisions".into(),
+                    Some(json!({ "question": question, "options": options })),
+                )
+            }
             A::DecisionAnswer {
                 project,
                 id,
@@ -270,18 +284,37 @@ impl Action {
                 note,
             } => (
                 Method::POST,
-                project,
+                Some(project),
                 format!("decisions/{}/answer", segment(&id)?),
                 Some(json!({ "optionId": option_id, "note": note })),
             ),
         };
-        let path = if project.is_empty() {
-            format!("/v1/planning/{path}")
-        } else {
-            format!("/v1/planning/{}/{path}", segment(&project)?)
-        };
-        Ok((method, path, body))
+        Ok((method, planning_path(project.as_deref(), &path)?, body))
     }
+}
+
+fn project_and_args<const N: usize>(
+    mut args: Vec<String>,
+) -> Result<(Option<String>, [String; N])> {
+    // The previous form has exactly one extra argument, always at the front.
+    let project = (args.len() == N + 1).then(|| args.remove(0));
+    let args = args
+        .try_into()
+        .map_err(|_| "invalid number of planning arguments")?;
+    Ok((project, args))
+}
+
+fn planning_path(project: Option<&str>, path: &str) -> Result<String> {
+    let Some(project) = project else {
+        return Ok(format!("/v1/planning-current/{path}"));
+    };
+    if valid_key(project) {
+        return Ok(format!("/v1/planning/{project}/{path}"));
+    }
+    let mut url = Url::parse(&format!("http://localhost/v1/planning-current/{path}"))?;
+    url.query_pairs_mut().append_pair("project", project);
+    let query = url.query().ok_or("missing project selector")?;
+    Ok(format!("{}?{query}", url.path()))
 }
 
 fn stdin_text() -> Result<String> {
@@ -381,7 +414,64 @@ mod tests {
 
     use clap::{Parser, error::ErrorKind};
 
+    use super::Action as Planning;
     use crate::{Action, Cli};
+
+    #[test]
+    fn planning_cli_routes_implicit_and_explicit_projects() {
+        for (args, expected) in [
+            (&["plan.get"][..], "/v1/planning-current/plan"),
+            (&["item.list", "product"], "/v1/planning/product/items"),
+            (
+                &["decision.list", "--pending", "Exact T3 Alpha"],
+                "/v1/planning-current/decisions?pending=true&project=Exact+T3+Alpha",
+            ),
+            (
+                &["item.park", "item-id", "--revisit-at", "2026-12-01", "Wait"],
+                "/v1/planning-current/items/item-id/park",
+            ),
+            (
+                &["item.park", "product", "item-id", "Wait"],
+                "/v1/planning/product/items/item-id/park",
+            ),
+            (
+                &["item.promote", "item-id"],
+                "/v1/planning-current/items/item-id/promote",
+            ),
+        ] {
+            let parsed = Cli::try_parse_from(["nucleus"].into_iter().chain(args.iter().copied()))
+                .expect("planning command");
+            let Action::Planning(action) = parsed.action else {
+                panic!("expected a planning command");
+            };
+            let (_, path, _) = action.request().expect("planning request");
+            assert_eq!(path, expected);
+        }
+    }
+
+    #[test]
+    fn planning_item_add_distinguishes_project_from_kind_by_arity() {
+        for (positionals, expected) in [
+            (&["papercut", "Fix it"][..], None),
+            (&["lead", "papercut", "Fix it"], Some("lead")),
+        ] {
+            let parsed = Cli::try_parse_from(
+                ["nucleus", "item.add"]
+                    .into_iter()
+                    .chain(positionals.iter().copied())
+                    .chain(["--lane", "interface"]),
+            )
+            .expect("item.add");
+            let Action::Planning(Planning::ItemAdd { args, lanes }) = parsed.action else {
+                panic!("expected item.add");
+            };
+            let (project, [kind, title]) = super::project_and_args(args).expect("item arguments");
+            assert_eq!(project.as_deref(), expected);
+            assert_eq!(kind, "papercut");
+            assert_eq!(title, "Fix it");
+            assert_eq!(lanes, ["interface"]);
+        }
+    }
 
     #[test]
     fn legacy_planning_apply_requires_a_profile_and_conflicts_with_keep() {

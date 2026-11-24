@@ -3,7 +3,7 @@ use nucleus_store::{
     StoreError, TaskRow,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, ItemSource, ItemState, MAX_TEXT_BYTES,
-        WriteAt, valid_key,
+        WriteAt,
     },
 };
 use serde::Deserialize;
@@ -22,30 +22,24 @@ pub(crate) struct TaskAdmission {
 }
 
 impl Service {
-    pub(crate) async fn planning_state(
-        &self,
-        project: &str,
-    ) -> Result<MutexGuard<'_, State>, ServiceError> {
-        self.storage.database().verify()?;
-        let state = self.state.lock().await;
-        if !valid_key(project)
-            || !state
-                .settings
-                .knows_planning_project(self.project.as_ref(), project)
-        {
-            return Err(ServiceError::Project);
-        }
-        Ok(state)
-    }
-
     pub(crate) async fn planning_state_in_scope(
         &self,
-        project: &str,
+        selector: Option<&str>,
         scope: &ControllerScope,
-    ) -> Result<MutexGuard<'_, State>, ServiceError> {
-        let state = self.planning_state(project).await?;
-        scope.require(&state, project)?;
-        Ok(state)
+    ) -> Result<(MutexGuard<'_, State>, String), ServiceError> {
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let project = if let Some(actor) = scope.actor() {
+            self.planning_planner_project(&mut state, actor, selector)?
+        } else {
+            let selector = selector.ok_or(ServiceError::Project)?;
+            state
+                .settings
+                .resolve_planning_project(self.project.as_ref(), selector)
+                .ok_or(ServiceError::Project)?
+                .to_owned()
+        };
+        Ok((state, project))
     }
 
     pub(crate) async fn add_planned_task(
@@ -132,11 +126,10 @@ impl Service {
         project: &str,
         pending: bool,
     ) -> Result<Vec<Decision>, ServiceError> {
-        Ok(self
-            .planning_state(project)
-            .await?
-            .store
-            .decisions(project, pending)?)
+        let (state, project) = self
+            .planning_state_in_scope(Some(project), &ControllerScope::default())
+            .await?;
+        Ok(state.store.decisions(&project, pending)?)
     }
 
     /// Record an operator question attributed to the caller's binding.
@@ -149,21 +142,21 @@ impl Service {
         input: DecisionInput,
         caller: &Authority,
     ) -> Result<Decision, ServiceError> {
-        self.add_decision_in_scope(project, input, caller, &ControllerScope::default())
+        self.add_decision_in_scope(Some(project), input, caller, &ControllerScope::default())
             .await
     }
 
     pub(crate) async fn add_decision_in_scope(
         &self,
-        project: &str,
+        project: Option<&str>,
         input: DecisionInput,
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<Decision, ServiceError> {
-        let mut state = self.planning_state_in_scope(project, scope).await?;
+        let (mut state, project) = self.planning_state_in_scope(project, scope).await?;
         let decision = state
             .store
-            .add_decision(project, new_id("d")?, input, stamp(caller))?;
+            .add_decision(&project, new_id("d")?, input, stamp(caller))?;
         self.inbox_changed();
         Ok(decision)
     }
@@ -180,8 +173,10 @@ impl Service {
         input: DecisionAnswerInput,
         caller: &Authority,
     ) -> Result<Decision, ServiceError> {
-        let mut state = self.planning_state(project).await?;
-        self.record_decision_answer(&mut state, project, id, input, caller)
+        let (mut state, project) = self
+            .planning_state_in_scope(Some(project), &ControllerScope::default())
+            .await?;
+        self.record_decision_answer(&mut state, &project, id, input, caller)
     }
 
     pub(super) fn record_decision_answer(
