@@ -264,6 +264,9 @@ ran every worker and reviewer on Heavyweight or Frontier.
   capable permitted profile. A critical task prefers a reviewer at least as
   capable as the worker when one is permitted, and falls back the same way
   (kept by Tom, 2026-11-19).
+- **Critical fallback in the Rust engine.** A fresh automatic reviewer
+  reservation below the worker's bracket records both profiles and the reason.
+  Task details, next actions and closeout expose the receipt.
 - **Nothing waits for profile approval.** An explicit request applies on the
   role's next run. The Low submission gate still holds work that needs
   admission approval.
