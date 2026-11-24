@@ -1894,17 +1894,15 @@ impl Service {
             return;
         }
         let roles = task_rows::visibility_roles(task);
-        let thread = task
-            .run()
-            .map(|run| run.launch().thread.as_str())
-            .or_else(|| {
-                let role = match task.phase() {
-                    Phase::Working => nucleus_core::Role::Worker,
-                    Phase::Reviewing => nucleus_core::Role::Reviewer,
-                    _ => return None,
-                };
-                task.threads().get(role)
-            });
+        let current_role = task.run().map(|run| run.launch().thread.as_str());
+        let thread = current_role.or_else(|| {
+            let role = match task.phase() {
+                Phase::Working => nucleus_core::Role::Worker,
+                Phase::Reviewing => nucleus_core::Role::Reviewer,
+                _ => return None,
+            };
+            task.threads().get(role)
+        });
         let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
         if self.acp_provider().is_some() {
             let checkout =
@@ -1922,7 +1920,7 @@ impl Service {
             .chain(threads.iter().map(String::as_str))
         {
             let tracked = tracked.entry(thread.to_owned()).or_default();
-            tracked.role = roles.contains(&thread);
+            tracked.role = current_role == Some(thread.as_str()) || roles.contains(&thread);
             tracked.due = threads.iter().any(|due| due == thread);
         }
     }

@@ -523,7 +523,11 @@ pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
     [Role::Worker, Role::Reviewer]
         .into_iter()
         .filter_map(|role| task.threads().get(role))
-        .chain(task.run().map(|run| run.launch().thread.as_str()))
+        .chain(
+            task.run()
+                .filter(|run| run.last_send_at_ms().is_some())
+                .map(|run| run.launch().thread.as_str()),
+        )
         .collect()
 }
 

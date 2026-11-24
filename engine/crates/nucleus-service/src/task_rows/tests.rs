@@ -615,6 +615,15 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
     fixture.child(worker, true);
     assert!(fixture.sync().await.is_empty());
     fixture.child(worker, false);
+    fixture.publish_shell();
+    let mut sent = task.clone();
+    sent.record_send(&run.instance, 3).unwrap();
+    assert_eq!(
+        service
+            .host
+            .row_children(&fixture.thread, &visibility_roles(&sent)),
+        RowChildren::Unknown
+    );
     let first = fixture.sync().await;
     assert_eq!(first.get("orchestration.dispatchCommand"), Some(&1));
     assert!(fixture.sync().await.is_empty());

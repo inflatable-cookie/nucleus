@@ -224,8 +224,11 @@ impl ThreadSnapshots {
             .iter()
             .copied()
             .chain(self.children(parent))
-            .filter_map(|id| self.rows.get(id))
-            .map(|row| row_activity(row))
+            .map(|id| {
+                self.rows
+                    .get(id)
+                    .map_or(RowChildren::Unknown, |row| row_activity(row))
+            })
             .max()
             .unwrap_or(RowChildren::Quiet)
     }
