@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::{
     Binding, HostError, ProfileCatalog, RowObservation, T3, clock_ms, message_id,
     rpc::{Read, Reply},
+    thread_snapshots::ThreadRead,
 };
 
 /// Evidence for the exact active turn and root node that can parent a child.
@@ -128,7 +129,9 @@ impl T3 {
         retained: &[&str],
     ) -> Result<ArchiveStep, HostError> {
         let parent = parent_thread(Path::new(&binding.worktree_path));
-        let snapshot = self.thread(binding, &parent).await?;
+        let snapshot = self
+            .read_thread(binding, &parent, ThreadRead::Terminal)
+            .await?;
         let mut children: BTreeMap<_, _> = retained.iter().map(|thread| (*thread, None)).collect();
         let mut sequence = None;
         if let Some(snapshot) = &snapshot
@@ -136,18 +139,23 @@ impl T3 {
         {
             snapshot.require_parent_provider(provider)?;
             sequence = Some(snapshot.sequence());
-            for child in snapshot
-                .subagents()?
-                .iter()
-                .filter(|child| child.origin == "app_owned")
-            {
-                if let Some(thread) = child.child_thread_id.as_deref() {
-                    children.insert(thread, Some(child));
+            if !snapshot.archived_in_shell() {
+                for child in snapshot
+                    .subagents()?
+                    .iter()
+                    .filter(|child| child.origin == "app_owned")
+                {
+                    if let Some(thread) = child.child_thread_id.as_deref() {
+                        children.insert(thread, Some(child));
+                    }
                 }
             }
         }
         for (thread, child) in children {
-            let Some(observed) = self.thread(binding, thread).await? else {
+            let Some(observed) = self
+                .read_thread(binding, thread, ThreadRead::Terminal)
+                .await?
+            else {
                 continue;
             };
             if !observed.belongs_to_parent(&parent, child.is_some()) {
@@ -185,7 +193,10 @@ impl T3 {
             }
         }
 
-        let Some(fresh) = self.thread(binding, &parent).await? else {
+        let Some(fresh) = self
+            .read_thread(binding, &parent, ThreadRead::Terminal)
+            .await?
+        else {
             return Ok(ArchiveStep::Finished);
         };
         match fresh.retained()? {
@@ -236,7 +247,9 @@ impl T3 {
                     node: node.into(),
                 }));
             }
-            if let Some(attempt) = prior_turn.as_ref() {
+            if let Some(attempt) = prior_turn.as_ref()
+                && !(attempt.released && projection.archived_in_shell())
+            {
                 let message = message_id(attempt.command);
                 let completed = projection.turn_completed(&message);
                 if projection.turn_failed(&message) || (completed && !attempt.released) {

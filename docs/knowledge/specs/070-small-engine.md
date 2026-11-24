@@ -97,6 +97,13 @@ Later decisions carry their own attribution.
      - One host budget covers every background worker. Safety probes and operator actions come before presentation. One failure deadline applies to every call and reconnect.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
      - Each pass records its host calls by method, timeouts, and reads of terminal or archived threads.
+
+   A history window leaves the run, request, provider and delegation rosters
+   intact. Custody checks use those rosters and the held shell's background-work
+   summary for the same settled thread revision. Workspace custody also needs a
+   quiet local process census. A missing delivery key in a history window
+   cannot authorize a retry. Delegated launch absence requires an exact
+   terminal parent run followed by an authoritative absence reply for the child.
 12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"

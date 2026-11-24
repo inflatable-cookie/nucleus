@@ -44,7 +44,7 @@ use nucleus_core::{
     OperatorDecline, Phase, Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
-use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
+use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
     DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
     TaskRow,
@@ -201,6 +201,7 @@ struct State {
     settings: web::RuntimeSettings,
     registry_mode: bool,
     schedule: Schedule,
+    last_pass_calls: HostCalls,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
@@ -326,6 +327,12 @@ impl Service {
         let store = Store::open(&storage)?;
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         let registry_mode = project.is_none();
+        if project
+            .as_ref()
+            .is_none_or(|project| project.mode != ProjectMode::Fixture)
+        {
+            host.use_held_shell();
+        }
         let (changes, _) = broadcast::channel(64);
         Ok(Self {
             storage,
@@ -346,6 +353,7 @@ impl Service {
                 settings: runtime_settings,
                 registry_mode,
                 schedule: Schedule::new(),
+                last_pass_calls: HostCalls::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
@@ -458,6 +466,15 @@ impl Service {
         host: &nucleus_hosts::T3Pass<'_>,
     ) -> Result<Vec<PassOutcome>, ServiceError> {
         let _cycle = self.pass_lock.lock().await;
+        let (result, calls) = T3::count_pass_calls(self.run_batch(host)).await;
+        self.state.lock().await.last_pass_calls = calls;
+        result
+    }
+
+    async fn run_batch(
+        &self,
+        host: &nucleus_hosts::T3Pass<'_>,
+    ) -> Result<Vec<PassOutcome>, ServiceError> {
         self.storage.database().verify()?;
         let mut first = Some(self.wait_due_task().await?);
         let mut results = Vec::with_capacity(PASS_BATCH);
@@ -465,6 +482,7 @@ impl Service {
         for _ in 0..PASS_BATCH {
             let next = match first.take() {
                 Some(first) => Some(first),
+                None if self.host.request_retry_at().is_some() => None,
                 None => self
                     .state
                     .lock()
@@ -599,6 +617,7 @@ impl Service {
     /// every decision, and the due queue stays live across stream failures.
     pub async fn watch_host(&self) {
         let _subscription = self.watch_lock.lock().await;
+        self.host.use_held_shell();
         tokio::join!(
             self.watch_thread_hints(),
             Box::pin(self.watch_planner_authority()),
@@ -614,6 +633,7 @@ impl Service {
     /// use the cached value only; a dropped stream reconnects after the host delay.
     async fn watch_theme(&self) {
         loop {
+            self.host.wait_for_requests().await;
             let _ = self.host.watch_theme(&self.theme).await;
             tokio::time::sleep(T3_RETRY_DELAY).await;
         }
@@ -621,6 +641,7 @@ impl Service {
 
     async fn watch_thread_hints(&self) {
         loop {
+            self.host.wait_for_requests().await;
             let (sender, mut hints) = mpsc::channel(128);
             let inbox = self.native_inbox.as_ref();
             let watch = self.host.watch_threads(
@@ -629,10 +650,19 @@ impl Service {
                 inbox.map(|_| nucleus_hosts::INBOX_THREAD),
             );
             tokio::pin!(watch);
+            let mut inbox_hint = None;
             loop {
                 tokio::select! {
                     _ = &mut watch => break,
-                    Some(hint) = hints.recv() => self.wake_from_host(hint).await,
+                    Some(hint) = hints.recv() => {
+                        if hint.thread == nucleus_hosts::INBOX_THREAD {
+                            if inbox_hint.as_ref() == Some(&hint) {
+                                continue;
+                            }
+                            inbox_hint = Some(hint.clone());
+                        }
+                        self.wake_from_host(hint).await;
+                    },
                 }
             }
             if let Some(inbox) = inbox {
@@ -756,6 +786,7 @@ impl Service {
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
+            self.host.wait_for_requests().await;
             let next;
             {
                 let mut state = self.state.lock().await;

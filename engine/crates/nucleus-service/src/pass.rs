@@ -253,16 +253,32 @@ impl Service {
                 observation.workspace = workspace;
             }
         }
-        let (host_state, host_error) = match run_host {
-            Some(read) => read,
-            None => match read_retained(host, task, &binding).await {
-                Ok(state) => (state, None),
-                Err(error) => (Observed::Unknown, Some(error)),
-            },
-        };
+        let (host_state, mut host_error) = run_host.unwrap_or((Observed::Unknown, None));
         observation.host = host_state;
-
-        match decide(task, &observation) {
+        let mut action = decide(task, &observation);
+        if task.run().is_none()
+            && matches!(
+                action,
+                Action::Launch { .. } | Action::Wait(WaitReason::HostUnknown)
+            )
+        {
+            if !self
+                .dispatch_mode()
+                .await
+                .allows_launch(task.first_launch())
+            {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
+            // A runless task needs retained-thread custody only when it can launch.
+            if action == Action::Wait(WaitReason::HostUnknown) {
+                match read_retained(host, task, &binding).await {
+                    Ok(state) => observation.host = state,
+                    Err(error) => host_error = Some(error),
+                }
+                action = decide(task, &observation);
+            }
+        }
+        match action {
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
                 Err(ServiceError::Host(error))
             }

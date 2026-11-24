@@ -6,7 +6,7 @@ use std::{
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{RetainedThread, RunState};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility};
@@ -37,6 +37,10 @@ pub(crate) struct Projection {
     windowed: bool,
     #[serde(skip)]
     sequence: u64,
+    #[serde(skip)]
+    shell_closed: Option<RetainedThread>,
+    #[serde(skip)]
+    shell_background_work: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -48,6 +52,7 @@ struct Thread {
     branch: Option<String>,
     archived_at: Option<String>,
     deleted_at: Option<String>,
+    updated_at: Option<String>,
     parent_thread_id: Option<String>,
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
@@ -184,6 +189,50 @@ impl Status {
 }
 
 impl Projection {
+    pub(crate) fn closed(
+        row: &Value,
+        sequence: Option<u64>,
+        binding: &Binding,
+        id: &str,
+    ) -> Result<Self, HostError> {
+        let state = if !row["deletedAt"].is_null() {
+            RetainedThread::Gone
+        } else if !row["activeRunId"].is_null()
+            || !row["pendingRuntimeRequest"].is_null()
+            || row["pendingBackgroundTasks"]
+                .as_array()
+                .is_some_and(|tasks| !tasks.is_empty())
+            || matches!(
+                row["status"].as_str(),
+                Some("running" | "waiting" | "starting" | "queued" | "preparing")
+            )
+        {
+            RetainedThread::Busy
+        } else {
+            RetainedThread::Idle
+        };
+        let runs = match (row["latestRunId"].as_str(), row["status"].as_str()) {
+            (
+                Some(run),
+                Some(
+                    status @ ("completed" | "interrupted" | "failed" | "cancelled" | "rolled_back"),
+                ),
+            ) if state == RetainedThread::Idle => json!([{"id":run,"status":status}]),
+            _ => json!([]),
+        };
+        let mut projection = Self::parse(
+            json!({
+                "snapshotSequence": sequence.unwrap_or_default(),
+                "projection": {"thread": row, "runs": runs, "messages": [], "runtimeRequests": []}
+            }),
+            binding,
+            id,
+        )?;
+        projection.shell_closed = Some(state);
+        projection.windowed = true;
+        Ok(projection)
+    }
+
     pub(crate) fn parse(value: Value, binding: &Binding, id: &str) -> Result<Self, HostError> {
         let Snapshot {
             mut projection,
@@ -329,20 +378,51 @@ impl Projection {
     }
 
     pub(crate) fn subagents(&self) -> Result<&[Subagent], HostError> {
-        if self.windowed {
-            return Err(HostError::Uncertain);
-        }
+        // The history bounds apply to timeline items, not the delegation roster.
         self.subagents.as_deref().ok_or(HostError::Uncertain)
     }
 
+    pub(crate) fn use_shell_background(&mut self, row: &Value) {
+        // T3 derives this summary from the full projection for a settled run.
+        // The row must describe this same revision. Provider rosters for
+        // older sessions still come from the bounded projection itself.
+        if self.windowed
+            && self
+                .thread
+                .updated_at
+                .as_deref()
+                .is_some_and(|updated| row["updatedAt"] == updated)
+            && matches!(
+                row["status"].as_str(),
+                Some("completed" | "failed" | "interrupted" | "cancelled")
+            )
+            && row["latestRunId"]
+                .as_str()
+                .is_some_and(|id| self.terminal_run(id))
+        {
+            self.shell_background_work = row["pendingBackgroundTasks"]
+                .as_array()
+                .map(|tasks| !tasks.is_empty());
+        }
+    }
+
     pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {
+        if let Some(state) = self.shell_closed {
+            return Ok(state);
+        }
         if self.thread.deleted_at.is_some() {
             return Ok(RetainedThread::Gone);
         }
-        if self.thread_active() || self.background_work() {
+        if self.thread_active()
+            || self.background_work()
+            || self.shell_background_work == Some(true)
+        {
             return Ok(RetainedThread::Busy);
         }
-        if self.windowed || self.provider_threads.is_none() || self.turn_items.is_none() {
+        if self.provider_threads.is_none()
+            || (self.windowed && self.shell_background_work.is_none())
+            || self.turn_items.is_none()
+        {
             return Err(HostError::Uncertain);
         }
         Ok(RetainedThread::Idle)
@@ -374,7 +454,10 @@ impl Projection {
     }
 
     pub(crate) fn run(&self, message_id: &str) -> Result<RunState, HostError> {
-        if self.thread.deleted_at.is_some() {
+        if self.shell_closed == Some(RetainedThread::Busy) {
+            return Err(HostError::Uncertain);
+        }
+        if self.shell_closed.is_some() || self.thread.deleted_at.is_some() {
             return Ok(RunState::Gone);
         }
         let (message, run) = self.delivery(message_id);
@@ -385,7 +468,7 @@ impl Projection {
             if message.is_some() {
                 return Ok(RunState::Starting);
             }
-            if self.retained()? != RetainedThread::Idle {
+            if self.windowed || self.retained()? != RetainedThread::Idle {
                 return Err(HostError::Uncertain);
             }
             return Ok(RunState::ReadyToSend);
@@ -417,6 +500,10 @@ impl Projection {
 
     pub(crate) const fn archived(&self) -> bool {
         self.thread.archived_at.is_some()
+    }
+
+    pub(crate) fn archived_in_shell(&self) -> bool {
+        self.archived() && self.shell_closed == Some(RetainedThread::Idle)
     }
 
     pub(crate) fn activity(&self, message_id: &str) -> Option<RunActivity> {

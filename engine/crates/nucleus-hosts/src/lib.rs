@@ -15,7 +15,9 @@ mod runtime;
 mod t3_tests;
 mod task_row;
 mod theme;
+mod thread_snapshots;
 mod title_shell;
+mod traffic;
 
 use std::{
     future::Future,
@@ -53,12 +55,14 @@ pub use questions::{
     NoticeTarget, NoticeWrite, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
-use rpc::{Read, Reply, Rpc};
+use rpc::{Read, Reply, Rpc, ThreadReply};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{RowChange, RowObservation, RowVisibility};
+use thread_snapshots::ThreadRead;
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
+pub use traffic::HostCalls;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
 pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
@@ -292,6 +296,32 @@ struct PassEvidence {
 }
 
 impl T3 {
+    /// Start serving shell reads from the service's sole live subscription.
+    pub fn use_held_shell(&self) {
+        self.rpc.use_held_shell();
+    }
+
+    /// The next time a transport request may be attempted.
+    #[must_use]
+    pub fn request_retry_at(&self) -> Option<tokio::time::Instant> {
+        self.rpc.retry_at()
+    }
+
+    #[must_use]
+    pub fn host_calls(&self) -> HostCalls {
+        self.rpc.traffic.totals()
+    }
+
+    pub async fn wait_for_requests(&self) {
+        while let Some(until) = self.request_retry_at() {
+            tokio::time::sleep_until(until).await;
+        }
+    }
+
+    pub async fn count_pass_calls<T>(work: impl Future<Output = T>) -> (T, HostCalls) {
+        traffic::measure(work).await
+    }
+
     /// Construct a client for a local version-2 T3 RPC endpoint.
     ///
     /// # Errors
@@ -368,11 +398,16 @@ impl T3 {
             .rpc
             .watch_threads(
                 hints,
-                title_provider.map(|provider| (&self.titles, provider)),
+                Some((&self.titles, title_provider.unwrap_or_default())),
                 inbox_thread,
             )
-            .await;
+            .await
+            .inspect_err(|error| {
+                self.rpc
+                    .record_timeout("orchestration.subscribeShell", None, *error);
+            });
         self.titles.replace(None);
+        self.rpc.clear_shell();
         result
     }
 
@@ -384,7 +419,10 @@ impl T3 {
         &self,
         theme: &tokio::sync::watch::Sender<Option<Value>>,
     ) -> Result<(), HostError> {
-        self.rpc.watch_theme(theme).await
+        self.rpc.watch_theme(theme).await.inspect_err(|error| {
+            self.rpc
+                .record_timeout("subscribeServerConfig", None, *error);
+        })
     }
 
     async fn read_catalog(&self) -> Result<ProfileCatalog, HostError> {
@@ -415,11 +453,10 @@ impl T3 {
     /// # Errors
     /// Returns an error when the project or snapshot cannot be verified.
     pub async fn registered_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
-        let Reply::Value(snapshot) = self.rpc.call(
-            "orchestration.subscribeShell",
-            json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true}),
-            Read::Shell,
-        ).await? else { return Err(HostError::Protocol) };
+        if self.projects_synchronized() {
+            return self.cached_project(id);
+        }
+        let snapshot = self.rpc.shell(json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true})).await?;
         let projects = snapshot
             .pointer("/snapshot/projects")
             .and_then(Value::as_array)
@@ -442,27 +479,33 @@ impl T3 {
     }
 
     async fn thread(&self, binding: &Binding, id: &str) -> Result<Option<Projection>, HostError> {
-        self.thread_snapshot(binding, id, false).await
+        self.read_thread(binding, id, ThreadRead::Exact).await
     }
 
-    async fn thread_snapshot(
+    async fn read_thread(
         &self,
         binding: &Binding,
         id: &str,
-        bounded: bool,
+        policy: ThreadRead,
     ) -> Result<Option<Projection>, HostError> {
-        let reply = self
-            .rpc
-            .call(
-                "orchestration.subscribeThread",
-                json!({"threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": bounded}),
-                Read::Thread,
-            )
-            .await?;
+        let reply = self.rpc.thread(id, policy).await?;
         match reply {
-            Reply::Value(value) => Projection::parse(value, binding, id).map(Some),
-            Reply::Failure(cause) if projection::missing_thread(&cause, id) => Ok(None),
-            Reply::Failure(cause) => {
+            ThreadReply::Closed { row, sequence } => {
+                Projection::closed(&row, sequence, binding, id).map(Some)
+            }
+            ThreadReply::Snapshot(Reply::Value(value)) => {
+                let mut projection = Projection::parse(value, binding, id)?;
+                if let Some(row) = self.rpc.thread_row(id) {
+                    projection.use_shell_background(&row);
+                }
+                Ok(Some(projection))
+            }
+            ThreadReply::Snapshot(Reply::Failure(cause))
+                if projection::missing_thread(&cause, id) =>
+            {
+                Ok(None)
+            }
+            ThreadReply::Snapshot(Reply::Failure(cause)) => {
                 eprintln!(
                     "{id}: T3 orchestration.subscribeThread: {:?}",
                     self.rpc.failure_detail(&cause)
@@ -476,15 +519,33 @@ impl T3 {
         &self,
         run: &Run,
         wire: &Wire,
+        policy: ThreadRead,
     ) -> Result<(Option<Projection>, RunState), HostError> {
         let launch = run.launch();
-        let thread = self.thread(&wire.binding, &launch.thread).await?;
+        let thread = self
+            .read_thread(&wire.binding, &launch.thread, policy)
+            .await?;
         if let (Some(thread), Some(parent)) = (&thread, &wire.parent)
             && !thread.belongs_to_parent(parent, false)
         {
             return Err(HostError::Binding);
         }
         let state = match &thread {
+            Some(thread)
+                if thread.archived_in_shell()
+                    && wire.method == Method::Continue
+                    && run.last_send_at_ms().is_none()
+                    && !run.revoked() =>
+            {
+                // This only permits unarchiving. A send still needs a live exact read.
+                RunState::ReadyToSend
+            }
+            Some(thread)
+                if thread.archived_in_shell() && run.report().is_some() && !run.revoked() =>
+            {
+                // An archive alone cannot identify the outcome of the reported run.
+                return Err(HostError::Uncertain);
+            }
             Some(thread) => thread.run(&wire.message_id(&launch.instance))?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
@@ -624,7 +685,10 @@ impl TaskHost for T3Pass<'_> {
         .inputs(request.instance, thread, request.started_at)
     }
     async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
-        let projection = self.host.thread(binding, thread).await?;
+        let projection = self
+            .host
+            .read_thread(binding, thread, ThreadRead::Observation)
+            .await?;
         let state = if self.quiet(binding, thread, projection.as_ref()).await? {
             projection
                 .as_ref()
@@ -646,7 +710,10 @@ impl TaskHost for T3Pass<'_> {
         if run.last_send_at_ms().is_none() && wire.assignment_too_large() {
             return Ok(assignment_rejected(run));
         }
-        let (thread, state) = self.host.delivery(run, &wire).await?;
+        let (thread, state) = self
+            .host
+            .delivery(run, &wire, ThreadRead::Observation)
+            .await?;
         if thread.is_none() && self.closed_delegation(run, &wire).await? {
             return Ok(RunObservation {
                 host: current(run, RunState::ParentEnded),
@@ -714,7 +781,7 @@ impl TaskHost for T3Pass<'_> {
                 return Err(HostError::Uncertain);
             }
         }
-        let (thread, state) = self.host.delivery(run, &wire).await?;
+        let (thread, state) = self.host.delivery(run, &wire, ThreadRead::Exact).await?;
         if wire.method == Method::Continue
             && run.launch().profile().is_some()
             && !wire.selection.as_ref().is_some_and(|selection| {
@@ -823,7 +890,7 @@ impl TaskHost for T3Pass<'_> {
         if run.rejected_awaiting_archive() {
             return self.observe_rejected_archive(run, &wire).await;
         }
-        let (thread, state) = self.host.delivery(run, &wire).await?;
+        let (thread, state) = self.host.delivery(run, &wire, ThreadRead::Exact).await?;
         if let Some((command, target)) = thread
             .as_ref()
             .and_then(|thread| thread.stop_command(&wire.message_id(&launch.instance)))
@@ -873,7 +940,7 @@ impl T3Pass<'_> {
             return Ok(false);
         }
         // Observe the exact child again after proving its parent can no longer launch it.
-        let (child, state) = self.host.delivery(run, wire).await?;
+        let (child, state) = self.host.delivery(run, wire, ThreadRead::Exact).await?;
         Ok(child.is_none()
             && state == RunState::ReadyToSend
             && self
