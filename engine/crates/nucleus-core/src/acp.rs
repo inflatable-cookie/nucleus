@@ -75,6 +75,8 @@ pub struct InboxSnapshot {
     pub pending: Vec<InboxForm>,
     #[serde(default)]
     pub replies_ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_run: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

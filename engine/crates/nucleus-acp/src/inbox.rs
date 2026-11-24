@@ -127,7 +127,9 @@ async fn refresh_cards(
 ) -> Result<bool, Failure> {
     let snapshot = client.inbox().await?;
     if snapshot.replies_ready {
-        let replies = client.take_inbox_replies().await?;
+        let replies = client
+            .take_inbox_replies(snapshot.reply_run.as_deref())
+            .await?;
         if !replies.is_empty() {
             *wait_for_ui = None;
         }

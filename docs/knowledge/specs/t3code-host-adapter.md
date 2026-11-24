@@ -1266,11 +1266,13 @@ Provider installation uses a separate credential. The Inbox's board session
 uses operator scope. A planner's CLI board session retains its planner scope.
 
 The Rust scheduler claims each exact operator `ui` message ID before opening,
-then queues one terminal result for ACP to consume once. A later message ID can
-open again. Automatic opens on startup or reconnect can log a failure and never
-enqueue an ACP reply. The list, same-origin closes and fresh server open share
-a 20-second budget. Failure reports name the failed stage and a fixed native
-error kind. A scope refusal reports `preview.open: missing preview:operate scope`.
+then queues one terminal result for that message's native run. ACP consumes
+results only for the active run confirmed by the Inbox projection and held
+shell. A stopped run's result cannot follow the next message. A later message ID
+can open again. Automatic opens on startup or reconnect can log a failure and
+never enqueue an ACP reply. The list, same-origin closes and fresh server open
+share a 20-second budget. Failure reports name the failed stage and a fixed
+native error kind. A scope refusal reports `preview.open: missing preview:operate scope`.
 
 The following TypeScript adapter behavior documents the earlier implementation.
 Its installer issues and rotates its own scoped runtime bearer.

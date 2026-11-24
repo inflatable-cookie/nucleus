@@ -27,10 +27,12 @@ pub(super) fn routes() -> Router<Api> {
 async fn take_replies(
     State(api): State<Api>,
     headers: HeaderMap,
+    input: Option<Json<String>>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    Ok(Json(
-        api.service.take_inbox_replies(&credential(&headers)?)?,
-    ))
+    Ok(Json(api.service.take_inbox_replies(
+        &credential(&headers)?,
+        input.as_ref().map(|Json(run)| run.as_str()),
+    )?))
 }
 
 async fn snapshot(
