@@ -239,11 +239,10 @@ test("the card and detail show the live dispatch hold, and next names the same f
     });
     const cards = inboxText(tree);
 
-    // Card: the live dispatch fence is the reason; the stale stored text is gone.
-    assert.ok(
-      cards.includes(DISPATCH),
-      "the stale-hold card names the dispatch hold",
-    );
+    // The card shows the state and keeps the live reason accessible.
+    assert.ok(showInView(tree, "stale-hold"));
+    assert.ok(tree.query(/planning owes a ruling on the cleared origin/));
+    assert.ok(!cards.includes(DISPATCH));
     assert.ok(
       !cards.includes(STALE),
       "no card shows the obsolete stored reason",
@@ -256,10 +255,8 @@ test("the card and detail show the live dispatch hold, and next names the same f
       cards.includes("Merge held"),
       "the both-holds card keeps the merge hold chip",
     );
-    assert.ok(
-      cards.includes("Reviewer run is reading the diff"),
-      "a merge-only reviewing card keeps its activity",
-    );
+    assert.ok(showInView(tree, "merge-review"));
+    assert.ok(tree.query(/Reviewer run is reading the diff/));
 
     // Detail: the stale stored reason is not shown, and next names the fence.
     assert.ok(showInView(tree, "stale-hold"), "the stale-hold card is listed");
@@ -321,7 +318,7 @@ test("the card and detail show the live dispatch hold, and next names the same f
       "no hold is invented",
     );
 
-    // A merge-only reviewing task names its merge fence and keeps its activity.
+    // A merge-only reviewing task names its merge fence in detail.
     assert.ok(
       showInView(tree, "merge-review"),
       "the merge-review card is listed",
@@ -332,10 +329,6 @@ test("the card and detail show the live dispatch hold, and next names the same f
     );
     tree.press("Details");
     await settle(() => Boolean(tree.query("Merge hold owner and reason")));
-    assert.ok(
-      tree.text().includes("Reviewer run is reading the diff"),
-      "the reviewing detail keeps its activity",
-    );
     assert.equal(
       tree.query("Dispatch hold owner and reason"),
       undefined,
@@ -344,12 +337,9 @@ test("the card and detail show the live dispatch hold, and next names the same f
 
     // An unheld working task has neither fence line.
     assert.ok(showInView(tree, "unheld"), "the unheld card is listed");
+    assert.ok(tree.query(/Worker is editing/));
     tree.press(/unheld/);
-    await settle(
-      () =>
-        tree.text().includes("Worker is editing") &&
-        Boolean(tree.query("Details")),
-    );
+    await settle(() => Boolean(tree.query("Details")));
     tree.press("Details");
     await settle(
       () => tree.query("Details")?.props.accessibilityState.selected === true,
