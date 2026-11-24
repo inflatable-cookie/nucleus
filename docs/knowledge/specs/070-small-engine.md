@@ -257,6 +257,19 @@ Later decisions carry their own attribution.
     reaches a durable safe point, releases the profile lock and listener, and
     exits. Normal startup reconciliation checks existing tasks.
 
+    Tom, 2026-11-24, confirmed the [Spec 069 restart rule](069-scheduler.md#2-host-health-is-the-connections).
+    A roll leaves live workers and reviewers running in T3. An uncertain
+    in-flight send is the only live-role condition that defers a roll. After
+    restart the engine re-reads the recorded role's native evidence before
+    deciding what to do with the assignment.
+
+    `nucleus report` retries transport failures before an HTTP response for
+    up to 60 seconds. It sends the same body and credential to the same run
+    endpoint on every attempt. An HTTP refusal ends the request. An existing
+    assignment pinned to an older binary keeps that binary's single attempt.
+    If it hits the restart window, the role can retry the same report when
+    the endpoint returns, while the run still accepts it.
+
     T3 requires an active parent turn to launch a delegated child. Tom kept
     the scheduler's read-only hold during launch preparation. The held turn
     follows the task through preparation, reservation and send, and stays

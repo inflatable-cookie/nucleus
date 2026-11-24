@@ -26,18 +26,22 @@ use nucleus_service::{
 use nucleus_store::{
     Hosts, SettingsFile, StoragePlacement, TaskNumberSeed, planning::legacy::read_task_number_seed,
 };
-use reqwest::{Client, Method, Response, header};
+use reqwest::{Client, Method, RequestBuilder, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
     process::geteuid,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    time::{self, Instant},
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_INPUT: u64 = 64 * 1024;
+const REPORT_RETRY_DELAY: Duration = Duration::from_millis(500);
 const CONTROL_KEY: &str = "NUCLEUS_ENGINE_CONTROL_KEY";
 const FIXTURE_ORIGIN_KEY: &str = "NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY";
 const T3_CALLER_KEY: &str = "NUCLEUS_ENGINE_T3_CALLER_KEY";
@@ -538,30 +542,55 @@ fn legacy_number_seed(repository: Option<&str>) -> Result<Option<TaskNumberSeed>
 
 async fn report(path: &Path) -> Result<()> {
     let report: Report = from_reader(io::stdin().lock())?;
-    let response = run_ticket_request(
+    let (client, request) = run_ticket_request(
         path,
         Method::POST,
         "report",
         Some(serde_json::to_value(report)?),
-    )
-    .await?;
-    if !response.status().is_success() {
-        let failure: Value = response.json().await?;
-        return Err(failure["error"]
-            .as_str()
-            .unwrap_or("run report was refused")
-            .to_owned()
+    )?
+    .build_split();
+    let request = request?;
+    let deadline = Instant::now() + Duration::from_mins(1);
+    let response = time::timeout_at(deadline, async {
+        loop {
+            // The service accepts exact replay for the same authenticated report.
+            let attempt = request.try_clone().ok_or("report body is not replayable")?;
+            match client.execute(attempt).await {
+                Err(error) if error.is_request() => time::sleep(REPORT_RETRY_DELAY).await,
+                result => return result.map_err(Box::<dyn Error>::from),
+            }
+        }
+    })
+    .await
+    .map_err(
+        |_| "run report endpoint did not answer within 60 seconds; retry the same report JSON",
+    )??;
+
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    if let Ok(Ok(failure)) = time::timeout_at(deadline, response.json::<Value>()).await
+        && let Some(detail) = failure["error"].as_str()
+    {
+        let bearer = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .ok_or("missing report authorization")?
+            .to_str()?;
+        return Err(detail
+            .replace(bearer.trim_start_matches("Bearer "), "[redacted]")
             .into());
     }
-    Ok(())
+    Err(format!("run report was refused ({status})").into())
 }
 
-async fn run_ticket_request(
+fn run_ticket_request(
     path: &Path,
     method: Method,
     suffix: &str,
     body: Option<Value>,
-) -> Result<Response> {
+) -> Result<RequestBuilder> {
     let file = private_file(path)?.ok_or("report ticket is missing")?;
     let ticket: ReportTicket = from_reader(file).map_err(|_| "invalid report ticket")?;
     let endpoint = ticket
@@ -573,7 +602,7 @@ async fn run_ticket_request(
     let task = segment(&ticket.task).map_err(|_| "invalid report ticket")?;
     let instance = segment(&ticket.instance).map_err(|_| "invalid report ticket")?;
     let path = format!("/v1/runs/{task}/{instance}/{suffix}");
-    request(endpoint, method, &path, &ticket.credential, body, None).await
+    request(endpoint, method, &path, &ticket.credential, body, None)
 }
 
 fn private_file(path: &Path) -> Result<Option<File>> {
@@ -681,7 +710,9 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::SetPrerequisiteWait(args) => args.request()?,
         _ => return Err("this command does not use the control API".into()),
     };
-    let response = request(endpoint, method, &path, &key, body, actor.as_deref()).await?;
+    let response = request(endpoint, method, &path, &key, body, actor.as_deref())?
+        .send()
+        .await?;
     print_control_response(response, board_link).await
 }
 
@@ -735,14 +766,14 @@ fn control_caller() -> Result<([u8; 32], Option<String>)> {
     Ok((control_key(T3_CALLER_KEY)?, Some(actor.trim().into())))
 }
 
-async fn request(
+fn request(
     endpoint: SocketAddr,
     method: Method,
     path: &str,
     key: &[u8; 32],
     body: Option<Value>,
     t3_actor: Option<&str>,
-) -> Result<Response> {
+) -> Result<RequestBuilder> {
     let client = Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -763,7 +794,7 @@ async fn request(
         Some(body) => request.json(&body),
         None => request,
     };
-    Ok(request.send().await?)
+    Ok(request)
 }
 
 fn parse_phase(value: &str) -> std::result::Result<Phase, String> {

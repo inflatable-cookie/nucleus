@@ -1,13 +1,133 @@
-use std::{fs, io::Write, os::unix::fs::PermissionsExt, process::Command, time::Duration};
+use std::{
+    fs,
+    io::Write,
+    net::SocketAddr,
+    os::unix::fs::PermissionsExt,
+    path::Path as FilePath,
+    process::{Command, Stdio},
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::Path,
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
-    routing::get,
+    routing::{get, post},
 };
 use serde_json::json;
-use tokio::net::TcpListener;
+use tokio::{io::AsyncWriteExt, net::TcpListener, process::Child, time::timeout};
+
+const REPORT: &str = r#"{"question":{"prompt":"Which option?","options":["A","B"]}}"#;
+const REPORT_KEY: [u8; 32] = [7; 32];
+const REPORT_PATH: &str = "/v1/runs/fixture/worker-1/report";
+
+fn report_ticket(endpoint: SocketAddr) -> tempfile::NamedTempFile {
+    let mut ticket = tempfile::NamedTempFile::new().expect("owner-only ticket");
+    serde_json::to_writer(
+        &mut ticket,
+        &nucleus_service::ReportTicket {
+            endpoint: format!("http://{endpoint}"),
+            task: "fixture".into(),
+            instance: "worker-1".into(),
+            credential: REPORT_KEY,
+        },
+    )
+    .expect("write report ticket");
+    ticket
+}
+
+async fn start_report(ticket: &FilePath) -> Child {
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_nucleus"))
+        .args(["report", "--ticket"])
+        .arg(ticket)
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start report CLI");
+    child
+        .stdin
+        .take()
+        .expect("report stdin")
+        .write_all(REPORT.as_bytes())
+        .await
+        .expect("write and close report stdin");
+    child
+}
+
+#[tokio::test]
+async fn report_waits_for_the_ticket_endpoint() {
+    let reservation = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let endpoint = reservation.local_addr().expect("local address");
+    drop(reservation);
+    let ticket = report_ticket(endpoint);
+    let mut child = start_report(ticket.path()).await;
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    assert!(child.try_wait().expect("CLI status").is_none());
+
+    let listener = TcpListener::bind(endpoint)
+        .await
+        .expect("return to same port");
+    let app = Router::new().route(
+        REPORT_PATH,
+        post(|headers: HeaderMap, body: Bytes| async move {
+            assert_eq!(
+                headers[AUTHORIZATION],
+                format!("Bearer {}", hex::encode(REPORT_KEY))
+            );
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).expect("report JSON"),
+                serde_json::from_str::<serde_json::Value>(REPORT).expect("expected report JSON")
+            );
+            StatusCode::NO_CONTENT
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let output = timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .expect("report completed after endpoint returned")
+        .expect("CLI output");
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn report_refusal_is_final_and_redacts_the_bearer() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let ticket = report_ticket(listener.local_addr().expect("local address"));
+    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let app = Router::new().route(
+        REPORT_PATH,
+        post(move || {
+            let requests = requests.clone();
+            async move {
+                requests.send(()).expect("observe report request");
+                (StatusCode::CONFLICT, Json(json!({"error": format!("conflicting report for {}", hex::encode(REPORT_KEY))})))
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let output = timeout(
+        Duration::from_secs(5),
+        start_report(ticket.path()).await.wait_with_output(),
+    )
+    .await
+    .expect("refusal completed without waiting to retry")
+    .expect("CLI output");
+    server.abort();
+    assert!(!output.status.success());
+    assert!(received.try_recv().is_ok(), "no report arrived");
+    assert!(received.try_recv().is_err(), "refusal was retried");
+    let error = String::from_utf8(output.stderr).expect("CLI error");
+    assert!(error.contains("conflicting report for [redacted]"));
+    assert!(!error.contains(&hex::encode(REPORT_KEY)));
+}
 
 #[tokio::test]
 async fn controller_key_comes_from_the_selected_environment_variable() {
@@ -60,8 +180,8 @@ async fn controller_key_comes_from_the_selected_environment_variable() {
     server.abort();
 }
 
-#[test]
-fn report_ticket_parse_failure_does_not_print_the_credential() {
+#[tokio::test]
+async fn report_ticket_parse_failure_does_not_print_the_credential() {
     let marker = "synthetic-credential-appearing-in-a-wrong-json-type";
     let mut file = tempfile::NamedTempFile::new().expect("owner-only ticket");
     let ticket = json!({
@@ -72,10 +192,10 @@ fn report_ticket_parse_failure_does_not_print_the_credential() {
     });
     file.write_all(ticket.to_string().as_bytes())
         .expect("malformed ticket");
-    let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
-        .args(["report", "--ticket"])
-        .arg(file.path())
-        .output()
+    let output = start_report(file.path())
+        .await
+        .wait_with_output()
+        .await
         .expect("CLI output");
     assert!(!output.status.success());
     let error = String::from_utf8(output.stderr).expect("CLI error");
