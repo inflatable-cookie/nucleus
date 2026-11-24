@@ -1,5 +1,6 @@
 //! The Rust engine's independent `SQLite` database.
 
+mod inbox;
 mod settings;
 mod settings_domains;
 mod usage;
@@ -14,6 +15,7 @@ use rusqlite::{
 };
 use serde_json::{Value, json};
 
+pub use inbox::InboxBinding;
 pub use settings::{
     Backups, EngineSettings, EngineStorage, RetentionSettings, SettingsFile, SettingsSnapshot,
     SettingsValue, StorageError, VerifiedBackup,
@@ -25,7 +27,7 @@ pub use settings_domains::{
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
@@ -127,11 +129,12 @@ impl Store {
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.execute(ACP_SESSIONS, [])?;
                 tx.execute_batch(usage::SCHEMA)?;
+                tx.execute(inbox::SCHEMA, [])?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1..=4) => {
+            (APPLICATION_ID, 1..=5) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -142,7 +145,10 @@ impl Store {
                 if version < 4 {
                     tx.execute(ACP_SESSIONS, [])?;
                 }
-                tx.execute_batch(usage::SCHEMA)?;
+                if version < 5 {
+                    tx.execute_batch(usage::SCHEMA)?;
+                }
+                tx.execute(inbox::SCHEMA, [])?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -177,19 +183,14 @@ impl Store {
     /// # Errors
     /// Returns an error if the database cannot read the page.
     pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
-        let prefix =
-            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)";
-        let statement = if after.is_some() {
-            format!("{prefix} AND id > ?2 ORDER BY id LIMIT ?1")
-        } else {
-            format!("{prefix} ORDER BY id LIMIT ?1")
-        };
-        let mut query = self.connection.prepare_cached(&statement)?;
-        let decode = |row: &Row<'_>| row.get(0);
-        let ids = match after {
-            Some(id) => query.query_map(params![limit, id], decode)?,
-            None => query.query_map(params![limit], decode)?,
-        };
+        let mut query = self.connection.prepare_cached(
+            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
+             AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
+             AND id > ?2
+             UNION SELECT task_id FROM inbox_bindings WHERE task_id > ?2
+             ORDER BY id LIMIT ?1",
+        )?;
+        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| row.get(0))?;
         Ok(ids.collect::<Result<_, _>>()?)
     }
 

@@ -114,7 +114,8 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - Every path the engine writes is configurable in the Storage domain. That covers the database, Longhorn config and its backups, worktrees, scratch (including ACP session scratch and run tickets), logs, and temp files for every process the engine spawns (`TMPDIR`, `TMP` and `TEMP` point at scratch).
     - By default everything uses the platform's standard internal locations (application support, caches and logs on macOS; the XDG directories on Linux), with no external drive needed.
     - An external volume is an opt-in Storage setting. When it's set, every root must resolve onto that pinned volume. If the volume is absent or a root resolves off it, the engine refuses to start rather than falling back to the internal drive. A Barge worktree pool, when enabled, follows the same rule.
-    - Tom's machine opts in: home `/Volumes/Stash/nucleus-engine`, worktrees `/Volumes/Stash/worktrees/nucleus-engine`, scratch `/Volumes/Stash/scratch/nucleus-engine`, and install build output under `/Volumes/Stash/builds`. That configuration is in place before the first real project goes live.
+    - Tom's machine opts in. On the selected volume, use `nucleus-engine` for home, `worktrees/nucleus-engine` for worktrees, `scratch/nucleus-engine` for scratch, and `builds` for install output. Set those paths before the first real project goes live.
+    - The rule covers the engine's own roots. A project's registered checkout and its Git common directory belong to the project and stay where the operator keeps them, as with the TypeScript engine's Stash worktrees today. Git's small per-worktree metadata and the task's commit objects land in that common directory. The bulk (worktree files, build output, dependencies, scratch, logs and the database) stays on the configured roots. The engine never makes its own clone of a project to satisfy this (planner decision, 2026-11-24).
 
 ## The model
 
@@ -130,7 +131,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. Step-up requires an applied changes verdict at the current head with a review launch sequence newer than the climb recorded on the worker binding. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
-| `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
+| `question` | At most one open question, with its options and the head it was asked at. The planner answers work questions. The operator answers review-entry acceptance in the pinned Inbox. A decline parks the task and notifies its planner once. Observing a new head clears the question. |
 | `hold` | An optional operator or planner hold, with its reason. |
 
 Anything else is observed, never stored as a record that something must clear.

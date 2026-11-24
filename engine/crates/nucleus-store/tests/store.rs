@@ -234,7 +234,7 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
+        "DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
          DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
@@ -537,6 +537,39 @@ fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
     assert_eq!(storage.work().path(), root.path().join("work"));
     assert!(!storage.database().path().exists());
     assert!(!storage.scratch().path().exists());
+}
+
+#[test]
+fn pinned_work_and_scratch_roots_cannot_resolve_to_another_volume() {
+    let fixture = tempfile::tempdir().expect("fixture");
+    let home = fixture.path().canonicalize().expect("canonical home");
+    let file = SettingsFile::open(&home).expect("settings");
+    let config = EngineSettings {
+        enabled: true,
+        work_volume: Some(PinnedVolume::detect(&home).expect("fixture volume")),
+        ..EngineSettings::default()
+    };
+    for settings in [
+        EngineSettings {
+            work_root: Some("/dev/nucleus-outside".into()),
+            ..config.clone()
+        },
+        EngineSettings {
+            scratch_root: Some("/dev/nucleus-outside".into()),
+            ..config
+        },
+    ] {
+        assert!(matches!(
+            file.save(&settings),
+            Err(StorageError::OutsideVolume)
+        ));
+    }
+    assert!(
+        std::fs::read_dir(home)
+            .expect("untouched home")
+            .next()
+            .is_none()
+    );
 }
 
 #[test]

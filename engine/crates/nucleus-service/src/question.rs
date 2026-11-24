@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::BTreeSet, path::Path, time::Duration};
 
-use nucleus_core::{Action, Question, Task, WaitReason};
+use nucleus_core::{Action, OperatorDecline, Question, Task, WaitReason};
 use nucleus_hosts::{
     HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerThread, T3, T3_RETRY_DELAY,
 };
@@ -84,9 +84,27 @@ impl Service {
         {
             return Ok(wait);
         }
+        match (row.task.operator_question(), row.task.operator_decline()) {
+            (Some(_), None) => return Box::pin(self.operator_decision(row)).await,
+            (_, Some(OperatorDecline::Notified)) => return Ok(wait),
+            _ => {}
+        }
+        Box::pin(self.notify_planner(row)).await
+    }
+
+    async fn notify_planner(&self, row: &TaskRow) -> Result<Action, ServiceError> {
+        let wait = Action::Wait(WaitReason::Question);
         let bound = if let Some(delivery) = row.task.question_delivery() {
             match self.host.notice_state(delivery).await? {
-                NoticeState::Started => return Ok(wait),
+                NoticeState::Started => {
+                    let mut updated = row.task.clone();
+                    if updated.notify_operator_decline() {
+                        let _fence = self.effect(row).await?;
+                        self.save(row, updated, &event("operator_decline_notified"))
+                            .await?;
+                    }
+                    return Ok(wait);
+                }
                 NoticeState::Gone | NoticeState::Undelivered => None,
                 NoticeState::Absent | NoticeState::Queued => Some(delivery),
             }
@@ -101,7 +119,15 @@ impl Service {
             };
             let question = row.task.question().ok_or(ServiceError::Input)?;
             let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
-            T3::prepare_notice(thread, command, &notice_text(&row.task, question))?
+            let text = if row.task.operator_decline().is_some() {
+                format!(
+                    "The operator declined to accept the external merge for {}. Move or cancel the task.",
+                    row.task.identity().reference
+                )
+            } else {
+                notice_text(&row.task, question)
+            };
+            T3::prepare_notice(thread, command, &text)?
         };
         let _fence = self.effect(row).await?;
         let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
@@ -283,8 +309,9 @@ impl Service {
             && let Some(worktree) = worktree
         {
             let project = self.project.checkout.clone();
+            let git = self.git.clone();
             return Ok(tokio::task::spawn_blocking(move || {
-                linked_checkout(&project, Path::new(&worktree))
+                linked_checkout(&project, Path::new(&worktree), &git)
             })
             .await
             .map_err(|_| HostError::Uncertain)??);

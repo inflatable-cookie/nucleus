@@ -21,6 +21,7 @@ export class MainChannel {
   prepare(staged: StagedBuild, target: MainTarget): Promise<void>;
   activated(target: MainTarget): Promise<void>;
 }
+export function liveRollOwnerRoot(dataDir?: string): Promise<string | null>;
 export function configureChannel(channel: string, repository?: string, scratch?: string): Promise<unknown>;
 export function requestRollback(): Promise<unknown>;
 export function pruneVersions(versions: string, keep: Set<string>): Promise<void>;

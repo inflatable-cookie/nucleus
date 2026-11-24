@@ -1,4 +1,5 @@
 import { dataHome } from "../shared/data-home.mjs";
+import { compiledIdentity } from "../shared/runtime.mjs";
 /**
  * Standalone service entry. Owns the runtime for its whole lifetime and
  * drains to a durable safe point on SIGTERM/SIGINT before exiting. It must
@@ -22,6 +23,18 @@ export async function runStandaloneService(
   const dataDirOverride = argv
     .find((value) => value.startsWith("--data-dir="))
     ?.slice("--data-dir=".length);
+  // An installed launcher cwd can be a version folder that retention later
+  // removes; a removed cwd breaks every child process this long-lived
+  // service spawns. Settle on the stable data home at start, best-effort
+  // (nucleus#1566). A checkout is never pruned and must stay the cwd so
+  // `--import tsx` resolves.
+  if (compiledIdentity) {
+    try {
+      process.chdir(dataDirOverride ?? dataHome(env));
+    } catch {
+      /* the service start creates what it needs */
+    }
+  }
   const resolvedHostHome = hostHome(env);
   const ownerOptions = {
     dataDir: dataDirOverride ?? dataHome(env),

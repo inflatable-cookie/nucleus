@@ -70,9 +70,17 @@ function withHome<T>(home: string, body: () => T): T {
 }
 
 function fakeSpawn(pid = 4343) {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const spawnProcess = (command: string, args: string[]) => {
-    calls.push({ command, args });
+  const calls: Array<{
+    command: string;
+    args: string[];
+    options?: { cwd?: string };
+  }> = [];
+  const spawnProcess = (
+    command: string,
+    args: string[],
+    options?: { cwd?: string },
+  ) => {
+    calls.push({ command, args, options });
     return {
       pid,
       unref() {},
@@ -108,6 +116,9 @@ test("a cold start spawns one owner, and concurrent starters share its launch cl
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.args.includes(`--data-dir=${dataDir}`));
   assert.ok(calls[0]!.args.some((arg) => arg.endsWith("queue-roll-owner.mjs")));
+  // A checkout root is never pruned and stays the cwd so `--import tsx`
+  // resolves (nucleus#1566).
+  assert.equal(calls[0]!.options?.cwd, root);
   assert.equal(
     JSON.parse(readFileSync(join(dataDir, ROLL_OWNER_LAUNCH_FILE), "utf8")).pid,
     4343,
@@ -130,6 +141,25 @@ test("a cold start spawns one owner, and concurrent starters share its launch cl
     { status: "running", pid: 4343 },
   );
   assert.equal(calls.length, 1);
+});
+
+test("an installed root spawns the owner on the stable data home", () => {
+  const { home, dataDir, root } = fixtureEnvironment("owner-installed-", true);
+  mkdirSync(join(root, "bin"), { recursive: true });
+  writeFileSync(join(root, "bin", "queue-roll-owner.mjs"), "");
+  writeFileSync(
+    join(root, "manifest.json"),
+    JSON.stringify({ format: "nucleus-package-v1", files: {} }),
+  );
+  const { calls, spawnProcess } = fakeSpawn(4343);
+  const launch = withHome(home, () =>
+    ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }),
+  );
+  assert.deepEqual(launch, { status: "started", pid: 4343 });
+  assert.equal(calls.length, 1);
+  // A version folder is pruned by retention, so an installed owner never
+  // keeps it as its working directory (nucleus#1566).
+  assert.equal(calls[0]!.options?.cwd, dataDir);
 });
 
 test("a stale launch claim from a dead starter is reclaimed", () => {
