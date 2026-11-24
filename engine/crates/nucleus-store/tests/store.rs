@@ -378,6 +378,31 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     );
 }
 
+#[test]
+fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("fixture store");
+    let first = task("first", "fixture#first");
+    assert_eq!(store.create(&first, &event("admitted")).expect("admit"), 1);
+    drop(store);
+
+    let db = Connection::open(storage.database().path().join("engine.sqlite"))
+        .expect("fixture connection");
+    db.execute_batch(
+        "ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
+         PRAGMA user_version = 9;",
+    )
+    .expect("restore version nine schema with the allocator in place");
+    drop(db);
+
+    let mut store = Store::open(&storage).expect("migrate version nine");
+    assert_eq!(row(&store, "first").number, Some(1));
+    assert_eq!(store.history("first", None, 1).expect("history").len(), 1);
+    let second = task("second", "fixture#second");
+    assert_eq!(store.create(&second, &event("admitted")).expect("admit"), 2);
+}
+
 fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Task) {
     let initial = task(id, id);
     let mut identity = initial.identity().clone();
