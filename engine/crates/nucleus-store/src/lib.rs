@@ -218,7 +218,9 @@ impl Store {
                 if version < 8 {
                     tx.execute_batch(planning::SCHEMA)?;
                 }
-                tx.execute_batch(numbers::SCHEMA)?;
+                if version < 9 {
+                    tx.execute_batch(numbers::SCHEMA)?;
+                }
                 Self::migrate_report_tasks(tx)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
