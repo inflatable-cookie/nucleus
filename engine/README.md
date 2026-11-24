@@ -213,6 +213,11 @@ also check the open PR and clean checkout after native authorization.
   RPC on the WebSocket contract so authority checks can skip the transcript.
 - Request for T3: project or thread filters for the shell subscription, so a
   service can receive only events for the projects it runs.
+- Request for T3: server-attested answer provenance that distinguishes a
+  direct human UI submission from MCP or a relay. Bind it to the host, thread,
+  request, decision version and selected choice. When T3 supplies that
+  evidence, Nucleus will require a direct UI submission for operator-only
+  decisions.
 - A pass shares one bounded cwd census across checkout checks. The Mac adapter
   cross-checks cwd-only `lsof` against the local T3 user's PIDs, then checks open
   files recursively under the checkout and engine scratch. It holds both
@@ -619,6 +624,10 @@ version before offering it locally. Once an Inbox form is answered, the shared
 decision record holds the answer and the scheduler verifies the task and merge
 head before applying it. A fresh answer is required when the question's task
 version changes.
+
+The Rust Inbox records native form answers as
+`operator via T3 Inbox (unattested)`. T3 currently returns the same response
+for a desktop submission and an MCP submission.
 
 ### Agent notes
 
