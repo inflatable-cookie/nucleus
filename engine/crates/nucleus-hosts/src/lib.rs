@@ -1044,7 +1044,11 @@ impl TaskHost for T3Pass<'_> {
         if state != RunState::ReadyToSend {
             return Err(HostError::Uncertain);
         }
+        let fresh_review = !run.revoked()
+            && run.launch().role == Role::Reviewer
+            && wire.method != Method::Continue;
         if !worker_continuation
+            && !fresh_review
             && !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
                 .await?

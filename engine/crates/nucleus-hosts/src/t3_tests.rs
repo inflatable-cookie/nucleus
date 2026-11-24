@@ -1300,6 +1300,35 @@ async fn unrelated_shared_scratch_process_does_not_block_a_worker_send() {
     assert_eq!(server.await.expect("scripted host").len(), 2);
 }
 
+#[tokio::test]
+async fn a_fresh_reviewer_can_start_while_the_checkout_has_a_writer() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, _, _) = reserve(binding.clone());
+    let (client, server) = server(vec![
+        ("orchestration.subscribeThread", absent()),
+        ("orchestration.subscribeThread", absent()),
+        ("orchestration.launchThread", Response::Success),
+    ])
+    .await;
+    let mut pass = quiet_pass(&client);
+    pass.evidence = std::sync::Arc::new(crate::PassEvidence {
+        processes: tokio::sync::OnceCell::new_with(Some(Ok(crate::Inventory::cwd_fixture(
+            Path::new(&binding.worktree_path),
+        )))),
+        ..crate::PassEvidence::default()
+    });
+    assert!(matches!(
+        pass.observe_retained(&binding, THREAD).await.unwrap(),
+        Host::Retained {
+            state: RetainedThread::Busy,
+            ..
+        }
+    ));
+    assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
+    assert_eq!(server.await.unwrap().len(), 3);
+}
+
 async fn stop(
     pass: &impl TaskHost,
     run: &nucleus_core::Run,

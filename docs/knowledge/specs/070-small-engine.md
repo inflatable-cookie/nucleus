@@ -376,7 +376,9 @@ Later decisions carry their own attribution.
     assignment for reconciliation. Nucleus applies the report with the ordinary
     head and forge checks, even while the role thread has activity or missing
     background coverage. A stale report about an earlier PR head carries no
-    authority at the current head. Checkout removal still checks writer custody.
+    authority at the current head. A fresh reviewer can claim an exact clean
+    head while the reporting worker is still active. Checkout removal still
+    checks writer custody.
 
     The planner also ruled that a task row snoozes only when the held shell
     shows all its recorded role children quiet. A live turn, pending request or
