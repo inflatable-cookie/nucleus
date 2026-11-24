@@ -115,6 +115,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - By default everything uses the platform's standard internal locations (application support, caches and logs on macOS; the XDG directories on Linux), with no external drive needed.
     - An external volume is an opt-in Storage setting. When it's set, every root must resolve onto that pinned volume. If the volume is absent or a root resolves off it, the engine refuses to start rather than falling back to the internal drive. A Barge worktree pool, when enabled, follows the same rule.
     - Tom's machine opts in: home `/Volumes/Stash/nucleus-engine`, worktrees `/Volumes/Stash/worktrees/nucleus-engine`, scratch `/Volumes/Stash/scratch/nucleus-engine`, and install build output under `/Volumes/Stash/builds`. That configuration is in place before the first real project goes live.
+    - The rule covers the engine's own roots. A project's registered checkout and its Git common directory belong to the project and stay where the operator keeps them, as with the TypeScript engine's Stash worktrees today. Git's small per-worktree metadata and the task's commit objects land in that common directory. The bulk (worktree files, build output, dependencies, scratch, logs and the database) stays on the configured roots. The engine never makes its own clone of a project to satisfy this (planner decision, 2026-11-24).
 
 ## The model
 
