@@ -344,8 +344,10 @@ records the native notice attempt before sending it so an unknown delivery
 cannot trigger a resend.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
-`dependencyEdits` from local state. The scheduler uses the same recorded edges
-for first dispatch and open waits. Native assignments carry the recorded
+`dependencyEdits` from local state. The `next` command list includes
+`set_dependencies` and `set_prerequisite_wait` with caller-specific readiness,
+including when a command is unavailable. The scheduler uses the same recorded
+edges for first dispatch and open waits. Native assignments carry the recorded
 prerequisite references and any released wait as context.
 
 

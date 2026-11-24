@@ -79,6 +79,58 @@ const task = (
   hold: null,
 });
 
+test("Rust task detail reads an open work question with dependency command availability", async () => {
+  const id = "fixture";
+  const path = `/api/engine/tasks/${id}`;
+  const question = {
+    work: {
+      prompt: "Which approach should the worker use?",
+      options: ["Recommended:|Keep the current approach", "Try a new approach"],
+    },
+  };
+  const current = { ...task(id, "working"), wait: "question", question };
+  const commands = [
+    { name: "move", phase: "working", preflight: "ready" },
+    { name: "answer", preflight: "ready" },
+    { name: "set_dependencies", preflight: "unavailable" },
+    { name: "set_prerequisite_wait", preflight: "ready" },
+  ];
+  const history = [
+    {
+      sequence: 3,
+      content: { at: 1_700_000_000_000 },
+      presentation: [
+        { kind: "run_ended", instance: "finished" },
+        { kind: "question", question },
+      ],
+    },
+  ];
+  const responses = new Map<string, unknown>([
+    [
+      path,
+      {
+        ...current,
+        brief: { text: "Fixture brief", version: 1 },
+        pullRequest: null,
+        verdict: null,
+        run: null,
+      },
+    ],
+    [path + "/next", { ...current, commands }],
+    [path + "/history?limit=30", history],
+  ]);
+  const transport = createRustBoardTransport(async (url) => {
+    assert.ok(typeof url === "string" && responses.has(url));
+    return Response.json(responses.get(url));
+  });
+  const { signal } = new AbortController();
+  assert.deepEqual((await transport.detail(id, signal)).question, question);
+  assert.deepEqual(await transport.history(id, undefined, signal), history);
+  const next = await transport.next(id, signal);
+  assert.deepEqual(next.question, question);
+  assert.deepEqual(next.commands, commands);
+});
+
 async function eventually(
   check: () => boolean,
   message: string,

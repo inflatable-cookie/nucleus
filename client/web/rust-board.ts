@@ -122,7 +122,17 @@ const next = current.extend({
     z.union([
       z.object({ name: z.literal("move"), phase, preflight: readiness }),
       z.object({
-        name: z.enum(["answer", "cancel", "amend", "hold", "release", "complete", "move_work"]),
+        name: z.enum([
+          "answer",
+          "cancel",
+          "amend",
+          "hold",
+          "release",
+          "complete",
+          "move_work",
+          "set_dependencies",
+          "set_prerequisite_wait",
+        ]),
         preflight: readiness,
       }),
     ]),
