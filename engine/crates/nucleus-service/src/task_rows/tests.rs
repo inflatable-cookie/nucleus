@@ -276,15 +276,10 @@ impl Fixture {
             assert!(error.to_string().contains("operator snooze is active"));
         }
         let history = self.service.history(ID, None, 100).await.unwrap();
-        let [receipt] = history
-            .iter()
-            .filter(|event| event.content.kind == "native_turn_not_sent")
-            .collect::<Vec<_>>()[..]
-        else {
-            panic!("one refusal receipt for the same visibility observation");
-        };
-        let detail: Value = serde_json::from_str(&receipt.content.detail).unwrap();
-        assert_eq!(detail["version"], row.version);
+        assert!(history.iter().all(|event| !matches!(
+            event.content.kind.as_str(),
+            "native_turn_intent" | "acp_row_refresh_intent" | "native_turn_not_sent"
+        )));
     }
 }
 
@@ -505,18 +500,26 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
     };
     assert_eq!(retry.command_id(), Some(command.as_str()));
     service
-        .deliver_parent(
-            &row,
-            retry,
-            &service.turn_failure_scope(&runtime),
-            Some("native_turn_replay"),
-        )
+        .deliver_parent(&row, retry, &runtime, Some("native_turn_intent"))
         .await
         .unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch"]);
     assert_eq!(
         fixture.native.lock().unwrap().commands[0]["commandId"],
         command
+    );
+    let history = service.history(ID, None, 100).await.unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event.content.kind == "native_turn_intent")
+            .count(),
+        1
+    );
+    assert!(
+        history
+            .iter()
+            .all(|event| event.content.kind != "native_turn_replay")
     );
 }
 

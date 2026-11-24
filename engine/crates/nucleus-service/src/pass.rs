@@ -924,11 +924,12 @@ impl Service {
         self.ensure_parent_reader(&row.task.identity().id, checkout.path())
             .await?;
         let command = write.command_id().ok_or(ServiceError::Input)?;
-        let (scope, kind) = if prior_turn == Some(command) {
-            (self.turn_failure_scope(session), "native_turn_replay")
-        } else {
-            (session.to_owned(), "native_turn_intent")
-        };
+        let (scope, kind) =
+            if prior_turn == Some(command) && !nucleus_hosts::is_pinned_parent_hold(command) {
+                (self.turn_failure_scope(session), "native_turn_replay")
+            } else {
+                (session.to_owned(), "native_turn_intent")
+            };
         let intent = write.starts_turn().then_some(kind);
         let command = command.to_owned();
         match self.deliver_parent(row, write, &scope, intent).await {

@@ -33,6 +33,11 @@ pub(super) struct WriteAccess {
     pub controller: [u8; 32],
 }
 
+enum ParentClaim {
+    Fresh(i64),
+    Replay,
+}
+
 pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
     let run = row.task.run()?;
     Some(
@@ -223,7 +228,7 @@ impl Service {
         session: &str,
         command: &str,
         prompt: &str,
-    ) -> Result<Option<i64>, ServiceError> {
+    ) -> Result<Option<ParentClaim>, ServiceError> {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
         let retry_of =
@@ -232,11 +237,8 @@ impl Service {
                 .task_turn_attempt(id, kind, row.version, session, command)?
             {
                 Some((sequence, true)) => Some(sequence),
-                Some((sequence, false))
-                    if kind == "native_turn_replay"
-                        && nucleus_hosts::is_pinned_parent_hold(command) =>
-                {
-                    return Ok(Some(sequence));
+                Some((_, false)) if nucleus_hosts::is_pinned_parent_hold(command) => {
+                    return Ok(Some(ParentClaim::Replay));
                 }
                 Some((_, false)) => return Ok(None),
                 None => None,
@@ -256,7 +258,7 @@ impl Service {
             state.apply_observed_wait(&row.task, wait, entered);
             self.publish(id, row.version);
         }
-        Ok(attempt)
+        Ok(attempt.map(ParentClaim::Fresh))
     }
 
     pub(super) async fn deliver_parent(
@@ -275,16 +277,8 @@ impl Service {
         } else {
             None
         };
-        if let Err(error) = self.wake_parent_delivery(row, &write).await {
-            if let ServiceError::ParentNotSent { reason, .. } = &error {
-                self.record_parent_refusal(row, &command, "preflight", None, reason)
-                    .await?;
-            }
-            return Err(error);
-        }
+        self.wake_parent_delivery(row, &write).await?;
         if let Err(cause) = self.host.verify_parent_write(&mut write).await {
-            self.record_parent_refusal(row, &command, "preflight", None, &cause.to_string())
-                .await?;
             return Err(if message {
                 self.parent_not_sent(cause)
             } else {
@@ -302,13 +296,14 @@ impl Service {
                 write.set_prompt(prompt);
             }
             let prompt = write.prompt().ok_or(ServiceError::Input)?;
-            let Some(attempt) = self
+            match self
                 .claim_parent_intent(row, kind, session, &command, prompt)
                 .await?
-            else {
-                return Ok(false);
-            };
-            Some(attempt)
+            {
+                Some(ParentClaim::Fresh(sequence)) => Some(sequence),
+                Some(ParentClaim::Replay) => None,
+                None => return Ok(false),
+            }
         } else {
             None
         };
@@ -329,8 +324,16 @@ impl Service {
                 Err(ServiceError::OperatorSnoozed { thread, until })
             }
             Err(nucleus_hosts::ParentSendError::NotSent(error)) => {
-                self.record_parent_refusal(row, &command, session, attempt, &error.to_string())
+                if let Some(sequence) = attempt {
+                    self.record_parent_refusal(
+                        row,
+                        &command,
+                        session,
+                        Some(sequence),
+                        &error.to_string(),
+                    )
                     .await?;
+                }
                 Err(if message {
                     self.parent_not_sent(error)
                 } else {
