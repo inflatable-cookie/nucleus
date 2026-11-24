@@ -303,7 +303,13 @@ async fn next(
         wait: summary.wait,
         next_check_at: summary.next_check_at,
         question: summary.question,
-        commands: command_options(task, &authority, &state.command_observation(&row), &state),
+        commands: command_options(
+            task,
+            &authority,
+            &state.command_observation(&row),
+            &state,
+            api.service.inbox.is_some(),
+        ),
     }))
 }
 
@@ -312,6 +318,7 @@ fn command_options(
     authority: &Authority,
     observation: &Observation,
     state: &EngineState,
+    bridged: bool,
 ) -> Vec<CommandView> {
     let mut commands = vec![
         ("cancel", Command::Cancel),
@@ -322,7 +329,10 @@ fn command_options(
             ("hold", Command::Hold(String::new()))
         },
     ];
-    if let Some(question) = task.question() {
+    if let Some(question) = task.question()
+        && task.operator_decline().is_none()
+        && !(bridged && task.operator_question().is_some())
+    {
         let answer = match question {
             Question::Work { .. } | Question::Repair(_) => Answer::Work(String::new()),
             Question::Retry { .. } => Answer::Retry,
@@ -485,7 +495,7 @@ impl Summary {
             version,
             state.waits.get(id).map(|(reason, _)| *reason),
         );
-        if view.wait.is_some() {
+        if view.wait.is_some() && task.operator_decline().is_none() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
                 now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
@@ -504,6 +514,8 @@ impl Summary {
                 Some(WaitReason::Stopping)
             } else if task.hold().is_some() {
                 Some(WaitReason::Hold)
+            } else if task.operator_decline().is_some() {
+                Some(WaitReason::OperatorDeclined)
             } else if task.question().is_some() {
                 Some(WaitReason::Question)
             } else {
@@ -598,9 +610,9 @@ impl IntoResponse for ApiError {
                         | nucleus_store::StorageError::Layout
                         | nucleus_store::StorageError::ConfinedDirectory(_),
                     ) => StatusCode::BAD_REQUEST,
-                    ServiceError::QuestionPlanner | ServiceError::PlannerAuthorityRefused => {
-                        StatusCode::FORBIDDEN
-                    }
+                    ServiceError::QuestionPlanner
+                    | ServiceError::PlannerAuthorityRefused
+                    | ServiceError::AnswerInInbox => StatusCode::FORBIDDEN,
                     ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)

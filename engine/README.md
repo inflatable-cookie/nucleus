@@ -532,3 +532,17 @@ in `acpProvider`. Real dispatch waits for configured profiles.
 The native write gate verifies both origin remotes against the configured
 repository and confirms that the exact T3 project is active at the pinned
 checkout. Role threads use the task's ACP parent in project mode.
+
+## Pinned Inbox during transition
+
+The scheduler creates or reads operator acceptance questions in the existing
+TypeScript Inbox. The decision names the engine, task and row version. Rust
+applies an authenticated acceptance to the exact merged head. A decline sends
+one planner notice and leaves the task waiting for a move or cancellation.
+Bridge outages leave the question pending and use shared backoff.
+
+Set `NUCLEUS_RUST_INBOX_ENGINE` and `NUCLEUS_RUST_INBOX_KEY_FILE` in both services.
+Use a stable engine name and an absolute path to a separate owner-only file
+containing a 32-byte key encoded as lowercase hex. Set `NUCLEUS_RUST_INBOX_URL`
+in Rust to the TypeScript board's `http://127.0.0.1:<port>` origin. The key works
+only on the bridge route. Answer operator questions in the pinned Inbox.

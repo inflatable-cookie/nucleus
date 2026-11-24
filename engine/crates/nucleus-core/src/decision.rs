@@ -119,6 +119,7 @@ pub enum CloseWorkspace {
 pub enum WaitReason {
     Hold,
     Question,
+    OperatorDeclined,
     HostUnknown,
     Starting,
     Running,

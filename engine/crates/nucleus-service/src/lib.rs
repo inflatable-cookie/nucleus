@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod acp;
+mod inbox;
 mod pass;
 mod presentation;
 mod profiles;
@@ -26,8 +27,8 @@ use std::{
 
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
-    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed, Phase,
-    Report, Task, WaitReason,
+    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
+    OperatorDecline, Phase, Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -72,6 +73,12 @@ pub enum ServiceError {
     Profile(#[from] nucleus_core::profiles::ProfileLaunchError),
     #[error("project dispatch requires a configured Profiles domain")]
     ProfileConfiguration,
+    #[error("the Rust Inbox bridge needs a loopback endpoint, engine ID and owner-only key file")]
+    InboxConfiguration,
+    #[error("the Rust Inbox is unavailable")]
+    InboxUnavailable { until: Instant },
+    #[error("answer this operator question in the pinned Inbox")]
+    AnswerInInbox,
     #[error("authentication failed")]
     AcpUnauthorized,
     #[error("local I/O failed")]
@@ -96,6 +103,7 @@ pub struct Service {
     project: Project,
     host: T3,
     forge: GitHub,
+    inbox: Option<inbox::Inbox>,
     callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
@@ -188,6 +196,7 @@ impl Service {
             project,
             host,
             forge,
+            inbox: None,
             callback,
             report_command,
             state: Mutex::new(State {
@@ -298,6 +307,12 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
+        if let Err(error) = self.clear_stale_inbox(row).await
+            && row.task.operator_question().is_some()
+            && row.task.operator_decline().is_none()
+        {
+            return Err(error);
+        }
         if row.task.phase() == Phase::Done
             && row.task.run().is_none()
             && self.project.acp_provider.is_some()
@@ -457,6 +472,7 @@ impl Service {
             Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
             Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
+            Err(ServiceError::InboxUnavailable { .. }) => Some(WaitReason::Question),
             Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
                 Some(WaitReason::Capacity)
             }
@@ -481,7 +497,10 @@ impl Service {
         let now = Instant::now();
         let (delay, priority) = schedule::retry(wait);
         let due = match result {
-            Err(ServiceError::Host(HostError::Deferred { until })) => *until,
+            Err(
+                ServiceError::Host(HostError::Deferred { until })
+                | ServiceError::InboxUnavailable { until },
+            ) => *until,
             _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
             _ => now + delay,
         };
@@ -576,6 +595,12 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
+        if self.inbox.is_some()
+            && prior.task.operator_question().is_some()
+            && matches!(&command, Command::Answer(_))
+        {
+            return Err(ServiceError::AnswerInInbox);
+        }
         if let Some(session) = session {
             if acp::writer_controller(&state, id, &session.credential) != Some(session.controller) {
                 return Err(ServiceError::AcpUnauthorized);
@@ -953,7 +978,8 @@ fn active(task: &Task) -> bool {
     !matches!(
         task.phase(),
         nucleus_core::Phase::Done | nucleus_core::Phase::Cancelled
-    ) || task.run().is_some()
+    ) && task.operator_decline() != Some(OperatorDecline::Notified)
+        || task.run().is_some()
 }
 
 impl State {

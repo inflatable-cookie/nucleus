@@ -1242,10 +1242,16 @@ export class StorePlanning {
   }
 
   decision(id: string): Decision {
+    const decision = this.findDecision(id);
+    if (!decision) throw new Error("Decision not found");
+    return decision;
+  }
+
+  findDecision(id: string): Decision | undefined {
     const row = this.core.db
       .prepare("SELECT data FROM decisions WHERE id=?")
       .get(id);
-    if (!row) throw new Error("Decision not found");
+    if (!row) return undefined;
     // Stored rows predate the view limit or bypassed it; reads stay lenient and
     // the decision view clips the question, so one over-long record never
     // breaks a whole read. Writes keep the strict schema.

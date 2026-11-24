@@ -100,6 +100,7 @@ impl Task {
                     head: self.pr.as_ref().map(|pr| pr.head.clone()),
                     question: question.clone(),
                     delivery: None,
+                    operator_decline: None,
                 });
             }
             Action::Launch { .. }
@@ -454,6 +455,9 @@ impl Task {
             .question
             .as_ref()
             .ok_or(CommandError::AnswerDoesNotMatch)?;
+        if question.operator_decline.is_some() {
+            return Err(CommandError::AnswerDoesNotMatch);
+        }
         let check_question_head = || -> Result<(), CommandError> {
             if let Some(head) = &question.head {
                 forge_at_head(observation, Some(head))?;

@@ -234,7 +234,7 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
+        "DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
          DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
