@@ -446,7 +446,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
 }
 
 #[tokio::test]
-async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() {
+async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_block() {
     for question in [false, true] {
         let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
@@ -471,12 +471,13 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
         };
         task.record_report(&instance, credential.as_bytes(), report)
             .unwrap();
-        let row = {
+        {
             let mut state = service.state.lock().await;
             let version = state.store.create(&task, &event("fixture")).unwrap();
             let mut blocked = event("host_observation_blocked");
             blocked.detail = serde_json::json!({
-                "version": version, "deliveryPending": true,
+                "version": version, "deliveryPending": false,
+                "reason": "Retained thread lacks idle coverage",
                 "session": format!("{}/previous-engine", service.host.runtime_identity().unwrap()),
             })
             .to_string();
@@ -484,44 +485,18 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
                 .store
                 .claim_task_effect("worker", &blocked, false)
                 .unwrap();
-            service.track(&mut state, &task);
-            service.lookup(&state, "worker").unwrap()
-        };
-        let unknown = Due(AtomicUsize::new(0), None);
-        let result = Box::pin(service.advance_due_task(&row, &unknown)).await;
-        assert!(matches!(
-            result,
-            Err(ServiceError::Host(HostError::Uncertain))
-        ));
-        service
-            .schedule_result(&row, &result, Priority::Effect)
-            .await
-            .unwrap();
-        {
-            let mut state = service.state.lock().await;
-            assert_eq!(state.wait_reason("worker"), Some(WaitReason::HostUnknown));
-            let due = state.schedule.due("worker").expect("one decisive recheck");
-            assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
-            assert!(state.schedule.recover_host_observation("worker", due, None));
         }
-        service
-            .schedule_result(&row, &result, Priority::Effect)
-            .await
-            .unwrap();
-        assert!(service.state.lock().await.schedule.due("worker").is_none());
-        let hint = nucleus_hosts::ThreadHint::fixture(&serde_json::json!({
-            "kind":"thread.updated","thread":{
-                "id":"thread:worker","status":"completed","latestRunId":"native-worker-turn",
-            }
-        }))
-        .unwrap();
-        service.wake_from_host(hint).await;
-        assert!(service.state.lock().await.schedule.due("worker").is_some());
-        let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
-        let result = Box::pin(service.advance_due_task(&row, &ended))
-            .await
-            .unwrap();
+        let initial = service.task("worker").await.unwrap();
+        let outcomes = service.pass().await.unwrap();
+        let [outcome] = outcomes.try_into().ok().expect("one scheduled task");
+        let result = outcome.result.unwrap();
         let next = service.task("worker").await.unwrap();
+        assert_eq!(next.version, initial.version + 1);
+        assert!(service.state.lock().await.last_pass_calls.is_empty());
+        assert_eq!(
+            next.task.threads().get(nucleus_core::Role::Worker),
+            Some("thread:worker")
+        );
         if question {
             assert!(matches!(
                 result,
@@ -536,10 +511,6 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             assert_eq!(next.task.phase(), Phase::Reviewing);
         }
         assert!(next.task.run().is_none());
-        assert_eq!(
-            unknown.0.load(Ordering::Relaxed) + ended.0.load(Ordering::Relaxed),
-            0
-        );
         server.abort();
     }
 }

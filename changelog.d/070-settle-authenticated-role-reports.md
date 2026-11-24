@@ -1,0 +1,1 @@
+An authenticated report on the current assignment now advances the task without waiting for the role thread to go quiet. Nucleus still verifies the review head and checks for writers before removing a checkout.

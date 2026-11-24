@@ -144,15 +144,9 @@ impl Task {
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
         }
+        let report = run.and_then(|run| run.report);
         if let Some(state) = &mut self.report_state {
-            if let Some(report) = run
-                .filter(|run| {
-                    observation
-                        .current(&run.launch.instance)
-                        .is_some_and(RunState::ended)
-                })
-                .and_then(|run| run.report)
-            {
+            if let Some(report) = report {
                 match report {
                     Report::ReportReady(delivery) => state.delivery = Some(delivery),
                     Report::Blocked(failure) | Report::Error(failure) => {
@@ -184,13 +178,7 @@ impl Task {
             decision,
             summary,
             ..
-        }) = run
-            .filter(|run| {
-                observation
-                    .current(&run.launch.instance)
-                    .is_some_and(RunState::ended)
-            })
-            .and_then(|run| run.report)
+        }) = report
         {
             if self.pr.as_ref().is_some_and(|pr| pr.head == head) {
                 self.threads.applied_review_sequence = Some(self.threads.launch_sequence);
@@ -215,9 +203,10 @@ impl Task {
         {
             state.reported_heads.push(head.clone());
         }
-        if observation
-            .current(&run.launch.instance)
-            .is_some_and(RunState::ended)
+        if (!run.revoked && run.report.is_some())
+            || observation
+                .current(&run.launch.instance)
+                .is_some_and(RunState::ended)
         {
             self.threads.bind(&run.launch);
         }

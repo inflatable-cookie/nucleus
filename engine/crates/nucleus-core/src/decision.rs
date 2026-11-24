@@ -259,17 +259,16 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     }
     if let Some(run) = task.run() {
         let role = run.launch.role;
+        if let Some(report) = run.report() {
+            return settled(task, observation, role, Some(report));
+        }
         if role == Role::Reviewer
             && run.last_send_at_ms().is_none()
-            && run.report().is_none()
             && observation.workspace == Observed::Known(Workspace::Absent)
         {
             return Signal::ReservationDiscarded(Phase::Reviewing);
         }
         return match observation.current(&run.launch.instance) {
-            Some(RunState::ReadyToSend | RunState::Rejected) if run.report().is_some() => {
-                Signal::Wait(WaitReason::HostUnknown)
-            }
             Some(RunState::ReadyToSend) => {
                 prepared(observation, role, run.launch.review_head.as_ref())
             }
@@ -280,19 +279,13 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
-            Some(RunState::UsageLimited | RunState::ParentEnded | RunState::AssignmentRejected)
-                if run.report.is_none() =>
-            {
+            Some(RunState::UsageLimited | RunState::ParentEnded | RunState::AssignmentRejected) => {
                 Signal::Stopped(task.phase)
             }
-            None | Some(RunState::ParentEnded | RunState::AssignmentRejected) => {
-                Signal::Wait(WaitReason::HostUnknown)
+            None => Signal::Wait(WaitReason::HostUnknown),
+            Some(RunState::Ended | RunState::Gone | RunState::Rejected) => {
+                settled(task, observation, role, None)
             }
-            Some(RunState::Ended | RunState::UsageLimited) => {
-                settled(task, observation, role, run.report.as_ref())
-            }
-            Some(RunState::Gone) => settled(task, observation, role, run.report.as_ref()),
-            Some(RunState::Rejected) => settled(task, observation, role, None),
         };
     }
     if task.report_task().is_some() {

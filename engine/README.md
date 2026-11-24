@@ -200,9 +200,10 @@ match (phase, run_state, observation) {
 ```
 
 In Rust, the phase, run and adapter observations produce a typed signal for
-the exhaustive decision match. A successful callback
-waits for a terminal turn before advancing. A changed head also waits for the
-old turn to end or be stopped before resetting the review. Confirmed non-delivery,
+the exhaustive decision match. An authenticated report on the current
+assignment lets its disposition advance with the usual forge and head checks.
+For an assignment without a report, a changed head still waits for the old
+turn to end or be stopped before resetting the review. Confirmed non-delivery,
 authoritative disappearance of a previously launched run, and a terminal run
 without a report are failures. Transport and snapshot uncertainty advance no
 counter. On launch or relaunch, continue the retained role's exact thread after
