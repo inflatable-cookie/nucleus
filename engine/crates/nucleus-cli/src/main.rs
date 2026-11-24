@@ -14,7 +14,7 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{Controller, Project, ReportTicket, Service, router};
-use nucleus_store::{EngineSettings, Hosts, PinnedVolume, SettingsFile};
+use nucleus_store::{Hosts, SettingsFile};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -42,21 +42,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
-    /// Set the engine's opt-in flag and pinned storage roots.
+    /// Enable the engine and optionally set its storage roots or pin a volume.
     Configure {
         #[arg(long)]
-        home: PathBuf,
+        home: Option<PathBuf>,
         #[arg(long)]
         enable: bool,
+        #[arg(long)]
+        volume: Option<PathBuf>,
         #[arg(long)]
         work_root: Option<PathBuf>,
         #[arg(long)]
         scratch_root: Option<PathBuf>,
+        #[arg(long)]
+        log_root: Option<PathBuf>,
     },
     /// Serve one isolated engine profile.
     Serve {
         #[arg(long)]
-        home: PathBuf,
+        home: Option<PathBuf>,
         #[arg(long)]
         project: PathBuf,
         /// Override the saved T3 connection for this serve process.
@@ -140,9 +144,18 @@ async fn main() -> Result<()> {
         Action::Configure {
             home,
             enable,
+            volume,
             work_root,
             scratch_root,
-        } => configure(&home, enable, work_root, scratch_root),
+            log_root,
+        } => configure(
+            home.as_deref(),
+            enable,
+            volume.as_deref(),
+            work_root,
+            scratch_root,
+            log_root,
+        ),
         Action::Serve {
             home,
             project,
@@ -158,7 +171,7 @@ async fn main() -> Result<()> {
             };
             serve(
                 endpoint,
-                &home,
+                home.as_deref(),
                 &project,
                 t3.as_deref(),
                 authority,
@@ -172,26 +185,39 @@ async fn main() -> Result<()> {
 }
 
 fn configure(
-    home: &Path,
+    home: Option<&Path>,
     enabled: bool,
+    volume: Option<&Path>,
     work_root: Option<PathBuf>,
     scratch_root: Option<PathBuf>,
+    log_root: Option<PathBuf>,
 ) -> Result<()> {
-    let home = home.canonicalize()?;
-    let settings = SettingsFile::open(&home)?;
-    settings.save(&EngineSettings {
-        enabled,
-        work_volume: Some(PinnedVolume::detect(&home)?),
-        work_root,
-        scratch_root,
-        retention: settings.load()?.retention,
-    })?;
+    let settings = open_settings(home)?;
+    let mut config = settings.load()?;
+    config.enabled = enabled;
+    if work_root.is_some() {
+        config.work_root = work_root;
+    }
+    if scratch_root.is_some() {
+        config.scratch_root = scratch_root;
+    }
+    if log_root.is_some() {
+        config.log_root = log_root;
+    }
+    if let Some(volume) = volume {
+        config.work_volume = Some(settings.identify_volume(volume, &config)?);
+    }
+    settings.save(&config)?;
     Ok(())
+}
+
+fn open_settings(home: Option<&Path>) -> Result<SettingsFile> {
+    Ok(home.map_or_else(SettingsFile::open_default, SettingsFile::open)?)
 }
 
 async fn serve(
     endpoint: SocketAddr,
-    home: &Path,
+    home: Option<&Path>,
     project: &Path,
     host: Option<&str>,
     authority: Authority,
@@ -204,7 +230,7 @@ async fn serve(
     if actor.trim().is_empty() {
         return Err("supply the controller identity".into());
     }
-    let settings = SettingsFile::open(&home.canonicalize()?)?;
+    let settings = open_settings(home)?;
     let project: Project = from_reader(File::open(project)?)?;
     let saved_host = if host.is_none() {
         settings.read::<Hosts>()?.value.t3

@@ -14,9 +14,9 @@ use longhorn_config::{
 };
 use longhorn_core::{DomainId, SchemaVersion};
 use longhorn_storage_layout::{
-    PlatformDirectoryFacts, ResolvedStorageLayout, RootKind, StorageIdentity,
-    StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
-    resolve_storage_layout,
+    PlatformDirectoryFact, PlatformDirectoryFacts, ResolvedStorageLayout, RootKind,
+    StorageIdentity, StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
+    native_platform_directory_facts, resolve_storage_layout,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -31,7 +31,7 @@ const MUTATION: MutationOptions =
 pub enum StorageError {
     #[error("the engine is disabled")]
     Disabled,
-    #[error("select a pinned work volume before enabling engine storage")]
+    #[error("the pinned work volume is not mounted")]
     MissingVolume,
     #[error("the pinned, writable work volume is unavailable")]
     VolumeUnavailable,
@@ -60,6 +60,7 @@ pub struct EngineSettings {
     pub work_volume: Option<PinnedVolume>,
     pub work_root: Option<PathBuf>,
     pub scratch_root: Option<PathBuf>,
+    pub log_root: Option<PathBuf>,
     pub retention: RetentionSettings,
 }
 
@@ -105,7 +106,7 @@ pub struct VerifiedBackup {
 
 #[derive(Clone)]
 pub struct SettingsFile {
-    home: PathBuf,
+    layout: ResolvedStorageLayout,
     store: Arc<ConfigStore>,
 }
 
@@ -119,8 +120,36 @@ impl SettingsFile {
         if !home.is_absolute() || home.canonicalize()? != home || !home.is_dir() {
             return Err(StorageError::Layout);
         }
-        let layout = layout(home, None)?;
-        let coordination = CoordinationAuthority::new(home).map_err(|_| StorageError::Layout)?;
+        Self::with_layout(portable_layout(home)?, home)
+    }
+
+    /// Open the platform-native engine profile using Longhorn's directory facts.
+    ///
+    /// # Errors
+    /// Returns an error for missing platform facts or inaccessible directories.
+    pub fn open_default() -> Result<Self, StorageError> {
+        Self::open_native(native_platform_directory_facts().map_err(|_| StorageError::Layout)?)
+    }
+
+    fn open_native(facts: PlatformDirectoryFacts) -> Result<Self, StorageError> {
+        let runtime = facts
+            .get(PlatformDirectoryFact::Cache)
+            .ok_or(StorageError::Layout)?
+            .join(APP_ID)
+            .join("runtime");
+        let layout = resolve_storage_layout(
+            &StorageLayoutRequest::new(identity()?, facts)
+                .with_profile(StorageProfile::PlatformNativeV1)
+                .with_overrides(StorageLayoutOverrides::new().with(RootKind::Runtime, runtime)),
+        )
+        .map_err(|_| StorageError::Layout)?;
+        let coordination = layout.storage_roots().state().to_path_buf();
+        StorageDirectory::native(coordination.clone())?.ensure()?;
+        Self::with_layout(layout, &coordination)
+    }
+
+    fn with_layout(layout: ResolvedStorageLayout, base: &Path) -> Result<Self, StorageError> {
+        let coordination = CoordinationAuthority::new(base).map_err(|_| StorageError::Layout)?;
         let mut store = ConfigStore::new(layout.storage_roots().clone(), coordination);
         register::<EngineSettings>(&mut store)?;
         register::<Profiles>(&mut store)?;
@@ -128,7 +157,7 @@ impl SettingsFile {
         register::<Projects>(&mut store)?;
         register::<Hosts>(&mut store)?;
         Ok(Self {
-            home: home.into(),
+            layout,
             store: Arc::new(store),
         })
     }
@@ -161,17 +190,14 @@ impl SettingsFile {
         revision: &str,
         edit: impl FnOnce(&mut S) -> Result<(), StorageError>,
     ) -> Result<(SettingsSnapshot<S>, bool), StorageError> {
-        let roots = layout(&self.home, None)?;
         let root = match S::CLASS {
-            StorageClass::UserConfig => roots.storage_roots().config(),
-            StorageClass::MachineState => roots.storage_roots().state(),
+            StorageClass::UserConfig => self.layout.storage_roots().config(),
+            StorageClass::MachineState => self.layout.storage_roots().state(),
             _ => return Err(StorageError::Layout),
         };
-        let volume = self
-            .load()?
-            .work_volume
-            .ok_or(StorageError::MissingVolume)?;
-        let directory = volume.dir(root.to_path_buf())?;
+        let config = self.load()?;
+        let scratch = scratch_path(&self.layout, &config);
+        let directory = storage_dir(config.work_volume.as_ref(), root.to_path_buf(), &scratch)?;
         let outcome = self
             .store
             .mutate_checked(&SettingsDomain::<S>::new()?, MUTATION, |current| {
@@ -211,20 +237,29 @@ impl SettingsFile {
         Ok(self.read()?.value)
     }
 
+    /// Resolve a new volume pin, with filesystem probe temp confined to scratch.
+    /// # Errors
+    /// Returns an error if the selected volume cannot be identified.
+    pub fn identify_volume(
+        &self,
+        path: &Path,
+        settings: &EngineSettings,
+    ) -> Result<PinnedVolume, StorageError> {
+        PinnedVolume::detect_using(path, Some(&scratch_path(&self.layout, settings)))
+    }
+
     /// Publish the startup configuration after checking the pinned volume.
     ///
     /// # Errors
     /// Returns an error if placement cannot be verified or settings cannot be saved.
     pub fn save(&self, settings: &EngineSettings) -> Result<(), StorageError> {
         settings.verify_for_save(self)?;
-        let roots = layout(&self.home, None)?;
-        let volume = settings
-            .work_volume
-            .as_ref()
-            .ok_or(StorageError::MissingVolume)?;
-        volume
-            .dir(roots.storage_roots().state().to_path_buf())?
-            .ensure()?;
+        storage_dir(
+            settings.work_volume.as_ref(),
+            self.layout.storage_roots().state().to_path_buf(),
+            &scratch_path(&self.layout, settings),
+        )?
+        .ensure()?;
         self.store.mutate(
             &SettingsDomain::new()?,
             MUTATION,
@@ -245,7 +280,7 @@ impl SettingsFile {
         if !settings.enabled {
             return Err(StorageError::Disabled);
         }
-        EngineStorage::resolve(&self.home, &settings)
+        EngineStorage::resolve(&self.layout, &settings)
     }
 }
 
@@ -287,31 +322,73 @@ pub struct EngineStorage {
     work: StorageDirectory,
     scratch: StorageDirectory,
     backup: StorageDirectory,
-    mount: OwnedFd,
+    log: StorageDirectory,
+    mount: Option<OwnedFd>,
 }
 
 impl EngineStorage {
-    fn resolve(home: &Path, settings: &EngineSettings) -> Result<Self, StorageError> {
-        let volume = settings
-            .work_volume
-            .as_ref()
-            .ok_or(StorageError::MissingVolume)?;
-        let mount = volume.open_mount()?;
-        volume.dir(home.to_path_buf())?.verify_from_mount(&mount)?;
-        let resolved = layout(home, settings.work_root.as_deref())?;
+    fn resolve(
+        resolved: &ResolvedStorageLayout,
+        settings: &EngineSettings,
+    ) -> Result<Self, StorageError> {
+        let volume = settings.work_volume.as_ref();
         let roots = resolved.storage_roots();
-        let work = roots.workspace().ok_or(StorageError::Layout)?;
-        let scratch = settings
-            .scratch_root
+        let work = settings
+            .work_root
             .clone()
-            .unwrap_or_else(|| roots.runtime().join("scratch"));
-        Ok(Self {
-            database: volume.dir(resolved.durable_database_dir())?,
-            work: volume.dir(work.to_path_buf())?,
-            scratch: volume.dir(scratch)?,
-            backup: volume.dir(roots.backup().to_path_buf())?,
+            .or_else(|| roots.workspace().map(Path::to_path_buf))
+            .unwrap_or_else(|| roots.state().join("work"));
+        let scratch = scratch_path(resolved, settings);
+        let directory = |path| storage_dir(volume, path, &scratch);
+        let scratch_dir = directory(scratch.clone())?;
+        let mount = volume
+            .map(|volume| volume.open_mount(Some(&scratch)))
+            .transpose()?;
+        let log = settings
+            .log_root
+            .clone()
+            .unwrap_or_else(|| roots.log().to_path_buf());
+        let storage = Self {
+            database: directory(resolved.durable_database_dir())?,
+            work: directory(work)?,
+            scratch: scratch_dir,
+            backup: directory(roots.backup().to_path_buf())?,
+            log: directory(log)?,
             mount,
-        })
+        };
+        for root in [
+            roots.config(),
+            roots.data(),
+            roots.state(),
+            roots.cache(),
+            roots.runtime(),
+        ] {
+            storage.verify_optional(&directory(root.to_path_buf())?)?;
+        }
+        for path in [
+            &storage.database,
+            &storage.work,
+            &storage.scratch,
+            &storage.backup,
+            &storage.log,
+        ] {
+            storage.verify_optional(path)?;
+        }
+        Ok(storage)
+    }
+
+    fn verify(&self, directory: &StorageDirectory) -> Result<(), StorageError> {
+        match &self.mount {
+            Some(mount) => directory.verify_from_mount(mount),
+            None => directory.verify(),
+        }
+    }
+
+    fn verify_optional(&self, directory: &StorageDirectory) -> Result<(), StorageError> {
+        match self.verify(directory) {
+            Ok(()) | Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     #[must_use]
@@ -334,6 +411,11 @@ impl EngineStorage {
         &self.backup
     }
 
+    #[must_use]
+    pub const fn log(&self) -> &StorageDirectory {
+        &self.log
+    }
+
     /// List Longhorn-verified config archives in the active pinned backup root.
     ///
     /// # Errors
@@ -345,7 +427,7 @@ impl EngineStorage {
             issues: 0,
             verified: Vec::new(),
         };
-        match self.backup.verify_from_mount(&self.mount) {
+        match self.verify(&self.backup) {
             Ok(()) => {}
             Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => return Ok(response),
             Err(error) => return Err(error),
@@ -370,18 +452,38 @@ impl EngineStorage {
     }
 }
 
-fn layout(home: &Path, work_root: Option<&Path>) -> Result<ResolvedStorageLayout, StorageError> {
+fn identity() -> Result<StorageIdentity, StorageError> {
+    StorageIdentity::new(APP_ID).map_err(|_| StorageError::Layout)
+}
+
+fn storage_dir(
+    volume: Option<&PinnedVolume>,
+    path: PathBuf,
+    scratch: &Path,
+) -> Result<StorageDirectory, StorageError> {
+    match volume {
+        Some(volume) => volume.dir(path, scratch),
+        None => StorageDirectory::native(path),
+    }
+}
+
+fn scratch_path(layout: &ResolvedStorageLayout, settings: &EngineSettings) -> PathBuf {
+    settings
+        .scratch_root
+        .clone()
+        .unwrap_or_else(|| layout.storage_roots().runtime().join("scratch"))
+}
+
+fn portable_layout(home: &Path) -> Result<ResolvedStorageLayout, StorageError> {
     let platform = if cfg!(target_os = "macos") {
         TargetPlatform::MacOs
     } else {
         TargetPlatform::Linux
     };
-    let identity = StorageIdentity::new(APP_ID).map_err(|_| StorageError::Layout)?;
-    let work = work_root.map_or_else(|| home.join("work"), Path::to_path_buf);
-    let request = StorageLayoutRequest::new(identity, PlatformDirectoryFacts::new(platform))
+    let request = StorageLayoutRequest::new(identity()?, PlatformDirectoryFacts::new(platform))
         .with_profile(StorageProfile::PortableV1)
         .with_portable_root(home)
-        .with_overrides(StorageLayoutOverrides::new().with(RootKind::Workspace, work));
+        .with_overrides(StorageLayoutOverrides::new().with(RootKind::Workspace, home.join("work")));
     resolve_storage_layout(&request).map_err(|_| StorageError::Layout)
 }
 
@@ -414,11 +516,6 @@ impl SettingsValue for EngineSettings {
     fn validate(&self) -> Result<(), DomainIssue> {
         use crate::settings_domains::check;
         check(
-            !self.enabled || self.work_volume.is_some(),
-            "volume",
-            "the enabled engine needs a pinned work volume",
-        )?;
-        check(
             self.retention.keep_newest > 0 && self.retention.max_age_days != Some(0),
             "retention",
             "use a positive backup count and age",
@@ -426,14 +523,7 @@ impl SettingsValue for EngineSettings {
     }
 
     fn verify_for_save(&self, file: &SettingsFile) -> Result<(), StorageError> {
-        let paths = EngineStorage::resolve(&file.home, self)?;
-        for path in [&paths.database, &paths.work, &paths.scratch, &paths.backup] {
-            match path.verify_from_mount(&paths.mount) {
-                Ok(()) | Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(())
+        EngineStorage::resolve(&file.layout, self).map(|_| ())
     }
 }
 
@@ -487,5 +577,57 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         _: Value,
     ) -> Result<Option<MigrationStep>, DomainIssue> {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_pinned_volume_never_creates_startup_roots() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let mount = temporary.path().join("unmounted");
+        let home = mount.join("engine-home");
+        let settings = EngineSettings {
+            enabled: true,
+            work_volume: Some(PinnedVolume {
+                mount: mount.clone(),
+                volume_id: "absent".into(),
+            }),
+            ..EngineSettings::default()
+        };
+        assert!(matches!(
+            EngineStorage::resolve(&portable_layout(&home).expect("layout"), &settings),
+            Err(StorageError::MissingVolume)
+        ));
+        assert!(!mount.exists());
+    }
+
+    #[test]
+    fn native_profile_can_open_without_a_volume_or_runtime_environment() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let root = temporary.path().canonicalize().expect("canonical home");
+        for platform in [TargetPlatform::MacOs, TargetPlatform::Linux] {
+            let facts = PlatformDirectoryFacts::new(platform)
+                .with(PlatformDirectoryFact::Config, root.join("config"))
+                .with(PlatformDirectoryFact::Data, root.join("data"))
+                .with(PlatformDirectoryFact::State, root.join("state"))
+                .with(PlatformDirectoryFact::Cache, root.join("cache"))
+                .with(PlatformDirectoryFact::Log, root.join("log"));
+            let settings = SettingsFile::open_native(facts).expect("platform roots");
+            settings
+                .save(&EngineSettings {
+                    enabled: true,
+                    ..EngineSettings::default()
+                })
+                .expect("enable without a pin");
+            let storage = settings.storage().expect("no volume is required");
+            assert!(storage.scratch().path().starts_with(root.join("cache")));
+            assert!(storage.work().path().starts_with(root.join("state")));
+            assert!(storage.log().path().starts_with(root.join("log")));
+            assert!(storage.database().path().starts_with(root.join("data")));
+            crate::Store::open(&storage).expect("open native database");
+        }
     }
 }

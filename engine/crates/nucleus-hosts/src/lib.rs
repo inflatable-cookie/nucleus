@@ -396,7 +396,8 @@ impl T3Pass<'_> {
                     .runtime_descriptor
                     .as_deref()
                     .and_then(|path| ServerRuntime::read(path, self.host.rpc.endpoint()));
-                Inventory::capture(server).await
+                let scratch = self.scratch.ok_or(HostError::Configuration)?;
+                Inventory::capture(server, scratch).await
             })
             .await
             .as_ref()

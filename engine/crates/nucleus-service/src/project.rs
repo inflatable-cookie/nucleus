@@ -78,7 +78,7 @@ impl Default for LaunchBudget {
 }
 
 impl Project {
-    pub(crate) fn verify(&self) -> Result<(), ServiceError> {
+    pub(crate) fn verify(&self, policy: &LocalGit) -> Result<(), ServiceError> {
         let allowed = match self.mode {
             ProjectMode::Fixture => self.repository == FIXTURE_REPOSITORY,
             ProjectMode::Project => self.acp_provider.is_some(),
@@ -99,7 +99,7 @@ impl Project {
             return Err(ServiceError::Project);
         }
         Branches::new(&self.repository, &self.base, "ns-binding")?;
-        let git = Git::new(&GIT_POLICY, Redactor::new([], RedactionRules::common()));
+        let git = Git::new(policy, Redactor::new([], RedactionRules::common()));
         let identity = git
             .worktree_identity(&self.checkout)
             .map_err(|_| ServiceError::Project)?;
@@ -156,7 +156,11 @@ fn matches_origin(repository: &str, url: &str) -> bool {
         .is_some_and(|origin| origin.eq_ignore_ascii_case(repository))
 }
 
-pub(super) fn linked_checkout(project: &Path, path: &Path) -> Result<bool, HostError> {
+pub(super) fn linked_checkout(
+    project: &Path,
+    path: &Path,
+    policy: &LocalGit,
+) -> Result<bool, HostError> {
     if !path.is_absolute() {
         return Ok(false);
     }
@@ -168,7 +172,7 @@ pub(super) fn linked_checkout(project: &Path, path: &Path) -> Result<bool, HostE
     if root != path {
         return Ok(false);
     }
-    let git = Git::new(&GIT_POLICY, Redactor::new([], RedactionRules::common()));
+    let git = Git::new(policy, Redactor::new([], RedactionRules::common()));
     let checkout = git
         .worktree_identity(&root)
         .map_err(|_| HostError::Uncertain)?;
@@ -180,9 +184,8 @@ pub(super) fn linked_checkout(project: &Path, path: &Path) -> Result<bool, HostE
         && checkout.same_repository(&repository))
 }
 
-pub(crate) static GIT_POLICY: LocalGit = LocalGit;
-
-pub(crate) struct LocalGit;
+#[derive(Clone)]
+pub(crate) struct LocalGit(pub(crate) PathBuf);
 
 impl GitPolicy for LocalGit {
     fn isolate(&self, command: &mut Command) {
@@ -192,7 +195,8 @@ impl GitPolicy for LocalGit {
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null");
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .envs(["TMPDIR", "TMP", "TEMP"].map(|name| (name, &self.0)));
     }
 
     fn credential(&self, _remote: &str) -> Result<Option<GitCredential>, GitFailure> {
@@ -232,7 +236,9 @@ mod tests {
             .remove("mode");
         let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
         assert_eq!(project.mode, ProjectMode::Fixture);
-        project.verify().expect("old fixture is still accepted");
+        project
+            .verify(&service.git)
+            .expect("old fixture is still accepted");
 
         project.repository = "example/greeter".into();
         git(
@@ -244,12 +250,20 @@ mod tests {
                 "ssh://git@github.com/example/greeter.git",
             ],
         );
-        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        assert!(matches!(
+            project.verify(&service.git),
+            Err(ServiceError::Project)
+        ));
 
         project.mode = ProjectMode::Project;
-        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        assert!(matches!(
+            project.verify(&service.git),
+            Err(ServiceError::Project)
+        ));
         project.acp_provider = Some("fixture-acp".into());
-        project.verify().expect("explicit repository mode");
+        project
+            .verify(&service.git)
+            .expect("explicit repository mode");
 
         git(
             &project.checkout,
@@ -261,7 +275,10 @@ mod tests {
                 "git@github.com:example/other.git",
             ],
         );
-        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        assert!(matches!(
+            project.verify(&service.git),
+            Err(ServiceError::Project)
+        ));
         git(
             &project.checkout,
             &[
@@ -273,7 +290,7 @@ mod tests {
             ],
         );
         project
-            .verify()
+            .verify(&service.git)
             .expect("both GitHub remotes identify the bound repository");
         git(
             &project.checkout,
@@ -284,7 +301,10 @@ mod tests {
                 "https://github.com/example/other.git",
             ],
         );
-        assert!(matches!(project.verify(), Err(ServiceError::Project)));
+        assert!(matches!(
+            project.verify(&service.git),
+            Err(ServiceError::Project)
+        ));
     }
 
     #[tokio::test]

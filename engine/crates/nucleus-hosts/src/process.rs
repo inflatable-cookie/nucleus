@@ -73,7 +73,10 @@ impl Inventory {
         }
     }
 
-    pub(crate) async fn capture(server: Option<ServerRuntime>) -> Result<Self, HostError> {
+    pub(crate) async fn capture(
+        server: Option<ServerRuntime>,
+        scratch: &Path,
+    ) -> Result<Self, HostError> {
         let user = geteuid().as_raw();
         let (listing, _) = capture(
             "/usr/sbin/lsof",
@@ -87,16 +90,18 @@ impl Inventory {
                 "-P",
                 "-F0pfn",
             ],
+            Some(scratch),
         )
         .await?;
         // The later inventory includes any new PID lsof did not see. A zombie
         // has already released its cwd and cannot access the checkout.
-        let (processes, probe_pid) = capture("/bin/ps", &["-axo", "pid=,ppid=,uid=,stat="]).await?;
+        let (processes, probe_pid) =
+            capture("/bin/ps", &["-axo", "pid=,ppid=,uid=,stat="], Some(scratch)).await?;
         let mut inventory = Self::from_listings(&listing, &processes, user, probe_pid)?;
-        inventory.complete_missing().await;
+        inventory.complete_missing(scratch).await;
         if let Some(server) = server
             && inventory.processes.contains_key(&server.pid)
-            && server.still_current().await
+            && server.still_current(scratch).await
         {
             let candidates = inventory
                 .processes
@@ -111,12 +116,12 @@ impl Inventory {
                         .then_some((pid, process.parent))
                 })
                 .collect();
-            inventory.runtime = Some((server.pid, read_candidates(candidates).await));
+            inventory.runtime = Some((server.pid, read_candidates(candidates, scratch).await));
         }
         Ok(inventory)
     }
 
-    async fn complete_missing(&mut self) {
+    async fn complete_missing(&mut self, scratch: &Path) {
         // Processes begun during lsof's walk need their own read. This is one
         // bounded follow-up for the captured census, independent of task count.
         let missing = self
@@ -130,6 +135,7 @@ impl Inventory {
             && let Ok(listing) = read_listing(
                 "/usr/sbin/lsof",
                 &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
+                Some(scratch),
             )
             .await
             && let Some(paths) = listing.cwd_followup()
@@ -369,7 +375,7 @@ async fn scoped_activity(checkout: &Path, scratch: &Path) -> ScopedResult {
     for witness in &witnesses {
         args.extend([OsStr::new("+D"), witness.path.as_os_str()]);
     }
-    let listing = read_listing("/usr/sbin/lsof", &args).await?;
+    let listing = read_listing("/usr/sbin/lsof", &args, Some(scratch)).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
     Ok(scoped_listing(&listing, &witnesses))
@@ -458,8 +464,12 @@ impl Listing {
     }
 }
 
-pub(crate) async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u32), HostError> {
-    let listing = read_listing(command, args).await?;
+pub(crate) async fn capture(
+    command: &str,
+    args: &[&str],
+    scratch: Option<&Path>,
+) -> Result<(Vec<u8>, u32), HostError> {
+    let listing = read_listing(command, args, scratch).await?;
     if listing.exit == Some(0) && !listing.output.is_empty() {
         Ok((listing.output, listing.pid))
     } else {
@@ -467,8 +477,16 @@ pub(crate) async fn capture(command: &str, args: &[&str]) -> Result<(Vec<u8>, u3
     }
 }
 
-async fn read_listing(command: &str, args: &[impl AsRef<OsStr>]) -> Result<Listing, HostError> {
-    let mut child = Command::new(command)
+async fn read_listing(
+    command: &str,
+    args: &[impl AsRef<OsStr>],
+    scratch: Option<&Path>,
+) -> Result<Listing, HostError> {
+    let mut process = Command::new(command);
+    if let Some(scratch) = scratch {
+        process.envs(["TMPDIR", "TMP", "TEMP"].map(|name| (name, scratch)));
+    }
+    let mut child = process
         .args(args)
         .env("LC_ALL", "C")
         .env("TZ", "UTC")
@@ -539,9 +557,26 @@ mod tests {
     #[tokio::test]
     async fn exit_one_with_no_output_is_incomplete() {
         assert!(matches!(
-            capture("/usr/bin/false", &[]).await,
+            capture("/usr/bin/false", &[], None).await,
             Err(HostError::Uncertain)
         ));
+    }
+
+    #[tokio::test]
+    async fn an_engine_child_gets_all_three_temp_variables() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let (output, _) = capture(
+            "/bin/sh",
+            &["-c", r#"printf '%s\n' "$TMPDIR" "$TMP" "$TEMP""#],
+            Some(scratch.path()),
+        )
+        .await
+        .expect("probe");
+        let paths = std::str::from_utf8(&output).expect("printed environment");
+        assert_eq!(
+            paths.lines().collect::<Vec<_>>(),
+            vec![scratch.path().to_str().expect("scratch path"); 3]
+        );
     }
 
     #[test]
@@ -674,6 +709,7 @@ mod tests {
         let (listing, _) = capture(
             "/usr/sbin/lsof",
             &["-p", &pid.to_string(), "-n", "-P", "-F0pfn"],
+            Some(&checkout),
         )
         .await
         .expect("fixture lsof listing");

@@ -99,6 +99,7 @@ pub enum ServiceError {
 
 pub struct Service {
     storage: EngineStorage,
+    git: project::LocalGit,
     settings: SettingsFile,
     project: Project,
     host: T3,
@@ -168,8 +169,11 @@ impl Service {
         callback: SocketAddr,
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
-        project.verify()?;
         let storage = settings.storage()?;
+        storage.scratch().ensure()?;
+        storage.log().ensure()?;
+        let git = project::LocalGit(storage.scratch().path().into());
+        project.verify(&git)?;
         let runtime_settings = web::RuntimeSettings::open(settings)?;
         if !callback.ip().is_loopback()
             || callback.port() == 0
@@ -192,6 +196,7 @@ impl Service {
         let (changes, _) = broadcast::channel(64);
         Ok(Self {
             storage,
+            git,
             settings: settings.clone(),
             project,
             host,
@@ -424,6 +429,7 @@ impl Service {
         command
             .args(["-n", "vm.loadavg"])
             .env_clear()
+            .envs(["TMPDIR", "TMP", "TEMP"].map(|name| (name, self.storage.scratch().path())))
             .kill_on_drop(true);
         let load = tokio::time::timeout(Duration::from_secs(2), command.output()).await;
         let Ok(Ok(load)) = load else {
@@ -699,7 +705,8 @@ impl Service {
 
     async fn check_project(&self) -> Result<(), ServiceError> {
         let project = self.project.clone();
-        tokio::task::spawn_blocking(move || project.verify())
+        let git = self.git.clone();
+        tokio::task::spawn_blocking(move || project.verify(&git))
             .await
             .map_err(|_| ServiceError::Project)??;
         let root = self
@@ -713,10 +720,10 @@ impl Service {
         Ok(())
     }
 
-    fn worktrees(&self) -> Result<Worktrees<'static>, ServiceError> {
+    fn worktrees(&self) -> Result<Worktrees<'_>, ServiceError> {
         Ok(Worktrees::new(
             &self.storage,
-            &project::GIT_POLICY,
+            &self.git,
             Redactor::new([], RedactionRules::common()),
         )?)
     }

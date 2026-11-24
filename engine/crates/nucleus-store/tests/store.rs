@@ -540,6 +540,39 @@ fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
 }
 
 #[test]
+fn pinned_work_and_scratch_roots_cannot_resolve_to_another_volume() {
+    let fixture = tempfile::tempdir().expect("fixture");
+    let home = fixture.path().canonicalize().expect("canonical home");
+    let file = SettingsFile::open(&home).expect("settings");
+    let config = EngineSettings {
+        enabled: true,
+        work_volume: Some(PinnedVolume::detect(&home).expect("fixture volume")),
+        ..EngineSettings::default()
+    };
+    for settings in [
+        EngineSettings {
+            work_root: Some("/dev/nucleus-outside".into()),
+            ..config.clone()
+        },
+        EngineSettings {
+            scratch_root: Some("/dev/nucleus-outside".into()),
+            ..config
+        },
+    ] {
+        assert!(matches!(
+            file.save(&settings),
+            Err(StorageError::OutsideVolume)
+        ));
+    }
+    assert!(
+        std::fs::read_dir(home)
+            .expect("untouched home")
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
 fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
     use nucleus_store::Profiles;
 
