@@ -5,7 +5,8 @@ use axum::{
     http::Request,
 };
 use nucleus_core::{
-    Action, Authority, Command, Entry, Host, Observed, Report, RunState, Task, WaitReason,
+    Action, Authority, CheckState, Command, Entry, Forge, Host, Observed, Phase, Question, Repair,
+    Report, Review, RunState, Task, WaitReason,
 };
 use nucleus_forge::GitHub;
 use nucleus_hosts::Binding;
@@ -214,6 +215,37 @@ impl Fixture {
             .unwrap()
     }
 
+    // The browser task list uses this same handler and groups cards by attention.
+    async fn board_task(&self) -> Value {
+        let key = [2; 32];
+        let api = router(
+            Arc::clone(&self.service),
+            [Controller {
+                credential: key,
+                authority: Authority::Operator {
+                    actor: "fixture".into(),
+                },
+            }],
+        );
+        let response = api
+            .oneshot(
+                Request::get("/v1/tasks")
+                    .header("host", "127.0.0.1:9")
+                    .header("authorization", format!("Bearer {}", hex::encode(key)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let cards: Vec<Value> = serde_json::from_slice(&body).unwrap();
+        cards
+            .into_iter()
+            .find(|card| card["identity"]["id"] == ID)
+            .expect("fixture task appears in the board list")
+    }
+
     fn commands(&self) -> Vec<String> {
         self.native
             .lock()
@@ -329,41 +361,12 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
         service.desire_title(&state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
-    let key = [2; 32];
-    let api = router(
-        Arc::clone(service),
-        [Controller {
-            credential: key,
-            authority: Authority::Operator {
-                actor: "fixture".into(),
-            },
-        }],
-    );
-    // The browser task list uses this same handler and groups cards by attention.
-    let board_task = async || {
-        let response = api
-            .clone()
-            .oneshot(
-                Request::get("/v1/tasks")
-                    .header("host", "127.0.0.1:9")
-                    .header("authorization", format!("Bearer {}", hex::encode(key)))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(response.status().is_success());
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        let [card]: [Value; 1] = serde_json::from_slice(&body).unwrap();
-        card
-    };
-
     let unknown = Ok(Action::Wait(WaitReason::HostUnknown));
     service
         .schedule_result(&row, &unknown, Priority::Effect)
         .await
         .unwrap();
-    let checking = board_task().await;
+    let checking = fixture.board_task().await;
     assert_eq!(checking["attention"], "waiting");
     assert_eq!(checking["wait"], "host_unknown");
     assert_eq!(
@@ -390,7 +393,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
         .schedule_result(&row, &unknown, Priority::Effect)
         .await
         .unwrap();
-    let blocked = board_task().await;
+    let blocked = fixture.board_task().await;
     assert_eq!(blocked["version"], checking["version"]);
     assert_eq!(blocked["attention"], "attention");
     assert_eq!(blocked["wait"], "host_observation_blocked");
@@ -484,12 +487,76 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
         service
             .commit(&mut state, &row, &worker, &event("question_asked"), None)
             .unwrap();
+        state
+            .observe_wait(&worker, Some(WaitReason::Question))
+            .unwrap();
     }
-    assert_eq!(fixture.attention().await, TaskAttention::Attention);
+    let card = fixture.board_task().await;
+    assert_eq!(card["stateLabel"], "Waiting for the planner");
+    assert_eq!(card["attention"], "waiting");
     fixture.sync().await;
-    let commands = fixture.commands();
-    assert_eq!(commands.len(), 4);
-    assert_eq!(&commands[2..], ["thread.snooze", "thread.unsnooze"]);
+    fixture.observed_snooze().await;
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+}
+
+#[tokio::test]
+async fn a_merge_block_waits_for_the_planner_and_snoozes_only_when_quiet() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let head = &service.fixture().start;
+    let (mut task, credential, mut observation) = reservation(ID, Entry::ReviewEntry, head);
+    let run = task.run().unwrap().launch().clone();
+    task.record_send(&run.instance, 1).unwrap();
+    task.record_report(
+        &run.instance,
+        credential.as_bytes(),
+        Report::Review {
+            head: head.clone(),
+            decision: Review::Approve,
+            summary: "Approve the exact head".into(),
+            finding_titles: Vec::new(),
+        },
+    )
+    .unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance: run.instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Merging)
+    );
+    let Observed::Known(Forge::Open { checks, .. }) = &mut observation.forge else {
+        panic!("open fixture PR");
+    };
+    *checks = CheckState::Blocked;
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Ask(Question::Repair(Repair::MergeBlocked))
+    );
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .observe_wait(&task, Some(WaitReason::Question))
+            .unwrap();
+        service.desire_title(&state, &task, None);
+    }
+    let card = fixture.board_task().await;
+    assert_eq!(card["phase"], "merging");
+    assert_eq!(card["attention"], "waiting");
+    assert_eq!(card["stateLabel"], "Waiting for the planner");
+    fixture.child(&run.thread, true);
+    fixture.sync().await;
+    assert!(fixture.commands().is_empty());
+    fixture.child(&run.thread, false);
+    fixture.sync().await;
+    fixture.sync().await;
+    fixture.observed_snooze().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
 }
 
 #[tokio::test]
@@ -515,7 +582,7 @@ async fn an_actionable_row_retries_its_claimed_clear_on_the_visibility_deadline(
     {
         let mut state = service.state.lock().await;
         state
-            .observe_wait(&pending, Some(nucleus_core::WaitReason::Question))
+            .observe_wait(&pending, Some(WaitReason::Permission))
             .unwrap();
     }
     assert_eq!(fixture.attention().await, TaskAttention::Attention);

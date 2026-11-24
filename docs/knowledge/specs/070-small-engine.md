@@ -394,8 +394,9 @@ Later decisions carry their own attribution.
     - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
     - The board's **Needs you** and T3 task rows share one attention rule.
-      An open question, an operator decision, a review requiring acceptance or
-      a typed block with a concrete owner action needs a person. Scheduled
+      Operator decisions, unanswered Inbox forms and typed blocks with a
+      concrete operator action need the operator. Planner questions, including
+      an Inbox decline handed to the planner, wait for the planner. Scheduled
       rechecks, unexpired deadlines, capacity and dependencies are waiting.
       T3 snoozes quiet waiting rows under the rules in ruling 30.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
