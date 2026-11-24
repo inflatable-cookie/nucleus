@@ -176,7 +176,7 @@ pub(super) fn reservation_at(
     (task, credential, observation)
 }
 
-pub(super) fn code_task_at_merge(id: &str, head: &Head) -> (Task, Observation) {
+pub(super) fn reserved_reviewer(id: &str, head: &Head) -> (Task, CallbackCredential, Observation) {
     let (mut task, credential, mut observation) = reservation(id, Entry::Brief, head);
     let pr = PullRequest {
         url: PR.into(),
@@ -213,6 +213,11 @@ pub(super) fn code_task_at_merge(id: &str, head: &Head) -> (Task, Observation) {
             &[4; 32],
         )
         .unwrap();
+    (task, credential, observation)
+}
+
+pub(super) fn code_task_at_merge(id: &str, head: &Head) -> (Task, Observation) {
+    let (mut task, credential, mut observation) = reserved_reviewer(id, head);
     let instance = task.run().expect("reviewer").launch().instance.clone();
     task.record_report(
         &instance,
