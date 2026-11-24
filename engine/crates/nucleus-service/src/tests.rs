@@ -514,7 +514,7 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
         assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
         assert_eq!(
             state.task_attention(&row).unwrap(),
-            crate::attention::TaskAttention::Attention
+            crate::attention::TaskAttention::Waiting
         );
     }
     {

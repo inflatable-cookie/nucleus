@@ -1,13 +1,24 @@
 use std::sync::{Arc, Mutex};
 
-use nucleus_core::{Authority, Command, Entry, Host, Observed, Report, RunState, Task};
+use axum::{
+    body::{Body, to_bytes},
+    http::Request,
+};
+use nucleus_core::{
+    Action, Authority, Command, Entry, Host, Observed, Report, RunState, Task, WaitReason,
+};
 use nucleus_forge::GitHub;
 use nucleus_hosts::Binding;
 use nucleus_store::TaskAdmissionFacts;
 use serde_json::{Value, json};
+use tower::ServiceExt;
 
 use super::*;
-use crate::tests::{REPOSITORY, fixture, native_fixture, reservation};
+use crate::{
+    schedule::Priority,
+    tests::{REPOSITORY, fixture, native_fixture, reservation},
+    web::{Controller, router},
+};
 
 const ID: &str = "row";
 const PROVIDER: &str = "fixture-acp";
@@ -38,7 +49,7 @@ struct NativeRow {
 }
 
 struct Fixture {
-    service: Service,
+    service: Arc<Service>,
     native: Arc<Mutex<NativeRow>>,
     binding: Binding,
     thread: String,
@@ -112,7 +123,7 @@ impl Fixture {
         service.host = host;
         service.fixture_mut().acp_provider = Some(PROVIDER.into());
         Self {
-            service,
+            service: Arc::new(service),
             native,
             binding,
             thread,
@@ -289,6 +300,102 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         self.server.abort();
     }
+}
+
+#[tokio::test]
+async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (mut task, credential, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    let run = task.run().unwrap().launch().clone();
+    task.record_send(&run.instance, 1).unwrap();
+    task.record_report(
+        &run.instance,
+        credential.as_bytes(),
+        Report::Question {
+            prompt: "Which copy?".into(),
+            options: vec!["Short".into(), "Long".into()],
+        },
+    )
+    .unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.desire_title(&state, &task, None);
+        service.lookup(&state, ID).unwrap()
+    };
+    let key = [2; 32];
+    let api = router(
+        Arc::clone(service),
+        [Controller {
+            credential: key,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    // The browser task list uses this same handler and groups cards by attention.
+    let board_task = async || {
+        let response = api
+            .clone()
+            .oneshot(
+                Request::get("/v1/tasks")
+                    .header("host", "127.0.0.1:9")
+                    .header("authorization", format!("Bearer {}", hex::encode(key)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let [card]: [Value; 1] = serde_json::from_slice(&body).unwrap();
+        card
+    };
+
+    let unknown = Ok(Action::Wait(WaitReason::HostUnknown));
+    service
+        .schedule_result(&row, &unknown, Priority::Effect)
+        .await
+        .unwrap();
+    let checking = board_task().await;
+    assert_eq!(checking["attention"], "waiting");
+    assert_eq!(checking["wait"], "host_unknown");
+    assert_eq!(
+        checking["waitDetail"],
+        "Checking that the reporting role has finished."
+    );
+    assert!(checking["nextCheckAt"].as_u64().unwrap() > now_ms());
+
+    fixture.child(&run.thread, true);
+    fixture.sync().await;
+    assert!(fixture.commands().is_empty());
+    fixture.child(&run.thread, false);
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.observed_snooze().await;
+
+    {
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due(ID).unwrap();
+        assert!(state.schedule.recover_host_observation(ID, due, None));
+    }
+    service
+        .schedule_result(&row, &unknown, Priority::Effect)
+        .await
+        .unwrap();
+    let blocked = board_task().await;
+    assert_eq!(blocked["version"], checking["version"]);
+    assert_eq!(blocked["attention"], "attention");
+    assert_eq!(blocked["wait"], "host_observation_blocked");
+    assert_eq!(
+        blocked["waitDetail"],
+        "Couldn’t verify that the reporting role finished. Open its thread to check."
+    );
+    assert!(blocked["nextCheckAt"].is_null());
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
 }
 
 #[tokio::test]
