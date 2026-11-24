@@ -5,11 +5,11 @@ use std::sync::LazyLock;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::RunActivity;
-use nucleus_store::{Event, EventDraft, Store, TaskRow};
+use nucleus_store::{DependencyBoardLabels, Event, EventDraft, Store, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{ServiceError, State, titles};
+use crate::{ServiceError, State, dependencies::checks_prerequisites, titles};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct ActivityAt {
@@ -30,12 +30,18 @@ pub(super) fn board_state(
     task: &Task,
     state: &State,
 ) -> Result<(String, Option<u64>, Option<u64>), ServiceError> {
-    let (record, created) = state.store.board_state(&task.identity().id)?;
-    if let Some(record) = record {
-        return Ok((record.label, u64::try_from(record.since_ms).ok(), created));
-    }
-    // Earlier engine versions did not record state entry.
-    Ok((titles::task_state_label(task, None), None, created))
+    let record = state.store.board_state(&task.identity().id)?;
+    let label = record
+        .label
+        .unwrap_or_else(|| legacy_label(task, record.legacy_host_blocked));
+    Ok((label, record.since_ms, record.created_at_ms))
+}
+
+fn legacy_label(task: &Task, legacy_host_blocked: bool) -> String {
+    titles::task_state_label(
+        task,
+        legacy_host_blocked.then_some(WaitReason::HostObservationBlocked),
+    )
 }
 
 pub(super) fn record_wait_state(
@@ -43,18 +49,42 @@ pub(super) fn record_wait_state(
     task: &Task,
     wait: Option<WaitReason>,
 ) -> Result<bool, ServiceError> {
+    let id = &task.identity().id;
     let label = titles::task_state_label(task, wait);
-    let (current, _, _) = board_state(task, state)?;
-    if label == current {
+    let previous = state.store.board_state(id)?;
+    if previous.label.as_deref() == Some(&label) {
         return Ok(false);
     }
-    let at = i64::try_from(crate::now_ms()).unwrap_or(i64::MAX);
-    Ok(state
-        .store
-        .record_board_state(&task.identity().id, &label, at)?)
+    let changed = previous.label.as_ref().map_or_else(
+        || label != legacy_label(task, previous.legacy_host_blocked),
+        |old| label != *old,
+    );
+    let since = if changed && (previous.label.is_some() || previous.legacy_host_blocked) {
+        Some(crate::now_ms())
+    } else {
+        // The first pass after upgrade may observe a wait already in progress.
+        previous.since_ms.filter(|_| !changed)
+    };
+    state.store.record_board_state(
+        id,
+        &label,
+        since.and_then(|value| i64::try_from(value).ok()),
+    )?;
+    Ok(changed)
 }
 
-pub(super) fn committed_board_state(prior: &Task, task: &Task) -> Option<String> {
+pub(super) fn prerequisite_labels(task: &Task) -> Option<DependencyBoardLabels> {
+    checks_prerequisites(task).then(|| DependencyBoardLabels {
+        ready: titles::task_state_label(task, None),
+        blocked: titles::task_state_label(task, Some(WaitReason::Prerequisite)),
+    })
+}
+
+pub(super) fn committed_board_state(
+    state: &State,
+    prior: &Task,
+    task: &Task,
+) -> Result<Option<String>, ServiceError> {
     fn run_basis(task: &Task) -> Option<(&str, bool, bool)> {
         task.run().map(|run| {
             (
@@ -66,10 +96,19 @@ pub(super) fn committed_board_state(prior: &Task, task: &Task) -> Option<String>
     }
     // A new role or phase invalidates waits observed for the previous work.
     let label = titles::task_state_label(task, None);
-    (label != titles::task_state_label(prior, None)
-        || task.phase() != prior.phase()
-        || run_basis(task) != run_basis(prior))
-    .then_some(label)
+    if label == titles::task_state_label(prior, None)
+        && task.phase() == prior.phase()
+        && run_basis(task) == run_basis(prior)
+    {
+        return Ok(None);
+    }
+    let label =
+        if checks_prerequisites(task) && state.store.dependency_blocked(&task.identity().id)? {
+            titles::task_state_label(task, Some(WaitReason::Prerequisite))
+        } else {
+            label
+        };
+    Ok(Some(label))
 }
 
 #[derive(Serialize)]

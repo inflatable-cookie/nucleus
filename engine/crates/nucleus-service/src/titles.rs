@@ -94,9 +94,10 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         }
         Some(WaitReason::Capacity) => "Waiting for capacity",
         Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
-        Some(WaitReason::HostObservationBlocked) => "Blocked on T3",
+        Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
         Some(WaitReason::UsagePermission) => "Waiting on Tom",
-        Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => "Waiting on Nucleus",
+        Some(WaitReason::HostUnknown) => "Checking task thread",
+        Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
         Some(WaitReason::Permission) => "Waiting for permission",
         Some(WaitReason::Input) => "Waiting for input",
         Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
@@ -484,7 +485,7 @@ mod tests {
                 Some(1),
                 &task_state_label(&task, Some(WaitReason::HostUnknown))
             ),
-            "Waiting on Nucleus: #1 Add a greeting"
+            "Checking task thread: #1 Add a greeting"
         );
         let authority = Authority::Planner {
             actor: "planner".into(),

@@ -544,12 +544,7 @@ impl Service {
             self.recheck_effect(row, WaitReason::Question).await;
         }
         let task = &row.task;
-        if !matches!(
-            task.phase(),
-            Phase::Done | Phase::Cancelled | Phase::Closing
-        ) && task.run().is_none()
-            && task.hold().is_none()
-            && task.question().is_none()
+        if dependencies::checks_prerequisites(task)
             && self.dependencies_blocked(row).await?
             && !self
                 .state
@@ -1265,9 +1260,10 @@ impl Service {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
+        let labels = presentation::prerequisite_labels(task);
         let version = state
             .store
-            .save_brief_with_dependencies(prior, task, &audit, &ids)?;
+            .save_brief_with_dependencies(prior, task, &audit, &ids, labels)?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1282,7 +1278,7 @@ impl Service {
     ) -> Result<i64, ServiceError> {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let allowance = state.allowance_transition(&prior.task, task, &audit.kind);
-        let board_state = presentation::committed_board_state(&prior.task, task);
+        let board_state = presentation::committed_board_state(state, &prior.task, task)?;
         let version = state.store.save_accounted(
             prior,
             task,

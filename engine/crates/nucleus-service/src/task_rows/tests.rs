@@ -205,9 +205,10 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     let row = {
         let mut state = service.state.lock().await;
         let prior = service.lookup(&state, ID).unwrap();
+        let release = event("dependency_released");
         state
             .store
-            .save_brief_with_dependencies(&prior, &pending, &event("dependency_released"), &[])
+            .save_brief_with_dependencies(&prior, &pending, &release, &[], None)
             .unwrap();
         let released = service.lookup(&state, ID).unwrap();
         service

@@ -2114,6 +2114,7 @@ async fn board_state_age_survives_an_amendment_and_engine_restart() {
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).unwrap();
     std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
     let settings = service.settings.clone();
     let project = service.fixture().clone();
     let service = Arc::new(service);
@@ -2154,7 +2155,7 @@ async fn board_state_age_survives_an_amendment_and_engine_restart() {
         .lock()
         .await
         .store
-        .record_board_state("age", &label, since)
+        .record_board_state("age", &label, Some(since))
         .unwrap();
     service
         .schedule_result(

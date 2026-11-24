@@ -485,7 +485,7 @@ export const rustPhaseLabels: Record<RustPhase, string> = {
 export function rustWaitDetail({ wait }: Pick<RustTask, "wait">): string | null {
   switch (wait) {
     case "host_observation_blocked":
-      return "Check the task in T3. Hold and release it to retry.";
+      return "Open the task thread to check.";
     case "operator_declined":
       return "Move or cancel the task.";
     case "assignment_too_large":

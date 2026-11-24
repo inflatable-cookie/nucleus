@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-use crate::{EventDraft, Store, StoreError, append};
+use crate::{EventDraft, Store, StoreError, append, board_state};
 
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS task_prerequisite_waits (
@@ -68,7 +68,7 @@ impl Store {
     /// # Errors
     /// Returns a database error if the gate cannot be read.
     pub fn dependency_blocked(&self, id: &str) -> Result<bool, StoreError> {
-        self.dependency_gate(id, false)
+        dependency_gate(&self.connection, id, false)
     }
 
     /// Whether a blocking dependency needs an owner edit before work can proceed.
@@ -76,29 +76,7 @@ impl Store {
     /// # Errors
     /// Returns a database error if the gate cannot be read.
     pub fn dependency_needs_edit(&self, id: &str) -> Result<bool, StoreError> {
-        self.dependency_gate(id, true)
-    }
-
-    fn dependency_gate(&self, id: &str, needs_edit: bool) -> Result<bool, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT EXISTS (
-                SELECT 1 FROM task_dependencies d
-                LEFT JOIN tasks p ON p.id = d.prerequisite_id
-                JOIN tasks t ON t.id = d.task_id
-                WHERE d.task_id = ?1 AND CASE ?2 WHEN 0 THEN coalesce(p.phase, '') != 'done'
-                                      ELSE p.phase IS NULL OR p.phase = 'cancelled' END
-                AND CASE d.after_dispatch
-                    WHEN 0 THEN json_extract(t.threads, '$.worker') IS NULL
-                            AND json_extract(t.threads, '$.reviewer') IS NULL
-                    ELSE EXISTS (
-                        SELECT 1 FROM task_prerequisite_waits w
-                        WHERE w.task_id = d.task_id AND w.released_at_ms IS NULL
-                    )
-                END
-            )",
-            params![id, needs_edit],
-            |row| row.get(0),
-        )?)
+        dependency_gate(&self.connection, id, true)
     }
 
     /// Find tasks to wake and invalidate after a prerequisite's state changes.
@@ -198,10 +176,12 @@ impl Store {
         version: i64,
         edit: DependencyEdit<'_>,
         event: &EventDraft,
+        labels: Option<DependencyBoardLabels>,
     ) -> Result<i64, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let was_blocked = labels.is_some() && dependency_gate(&tx, id, false)?;
         let changed = tx.execute(
             "UPDATE tasks SET version = version + 1 WHERE id = ?1 AND version = ?2",
             params![id, version],
@@ -255,10 +235,67 @@ impl Store {
                 )?;
             }
         }
+        if let Some(labels) = labels {
+            record_board_gate(&tx, id, &labels, was_blocked, event.at)?;
+        }
         append(&tx, id, event)?;
         tx.commit()?;
         Ok(version + 1)
     }
+}
+
+pub(super) fn dependency_gate(
+    connection: &Connection,
+    id: &str,
+    needs_edit: bool,
+) -> Result<bool, StoreError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS (
+                SELECT 1 FROM task_dependencies d
+                LEFT JOIN tasks p ON p.id = d.prerequisite_id
+                JOIN tasks t ON t.id = d.task_id
+                WHERE d.task_id = ?1 AND CASE ?2 WHEN 0 THEN coalesce(p.phase, '') != 'done'
+                                      ELSE p.phase IS NULL OR p.phase = 'cancelled' END
+                AND CASE d.after_dispatch
+                    WHEN 0 THEN json_extract(t.threads, '$.worker') IS NULL
+                            AND json_extract(t.threads, '$.reviewer') IS NULL
+                    ELSE EXISTS (
+                        SELECT 1 FROM task_prerequisite_waits w
+                        WHERE w.task_id = d.task_id AND w.released_at_ms IS NULL
+                    )
+                END
+            )",
+        params![id, needs_edit],
+        |row| row.get(0),
+    )?)
+}
+
+/// Display labels to use when a task enters or leaves its prerequisite gate.
+pub struct DependencyBoardLabels {
+    pub ready: String,
+    pub blocked: String,
+}
+
+pub(super) fn record_board_gate(
+    connection: &Connection,
+    id: &str,
+    labels: &DependencyBoardLabels,
+    was_blocked: bool,
+    at: i64,
+) -> Result<(), StoreError> {
+    if dependency_gate(connection, id, false)? {
+        if !was_blocked {
+            board_state::record(connection, id, &labels.blocked, Some(at))?;
+        }
+    } else {
+        // Keep other active waits, such as capacity, on an unrelated edit.
+        connection.execute(
+            "UPDATE task_board_state SET label = ?2, since_ms = ?4
+             WHERE task_id = ?1 AND label = ?3",
+            params![id, labels.ready, labels.blocked, at],
+        )?;
+    }
+    Ok(())
 }
 
 fn read(connection: &Connection, id: &str) -> Result<Dependencies, StoreError> {

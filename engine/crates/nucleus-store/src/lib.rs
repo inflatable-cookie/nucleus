@@ -26,7 +26,9 @@ use serde_json::{Value, json};
 
 pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, AllowanceView};
 pub use board_state::BoardState;
-pub use dependencies::{Dependencies, DependencyEdit, PrerequisiteRelease, PrerequisiteWait};
+pub use dependencies::{
+    Dependencies, DependencyBoardLabels, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
+};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
 pub use settings::{
@@ -573,8 +575,16 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         prerequisites: &[String],
+        labels: Option<DependencyBoardLabels>,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None, Some(prerequisites), None)
+        self.save(
+            expected,
+            task,
+            event,
+            None,
+            Some((prerequisites, labels)),
+            None,
+        )
     }
 
     /// Commit a newly frozen profiled launch and charge its subscription group.
@@ -731,7 +741,7 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         group: Option<&str>,
-        prerequisites: Option<&[String]>,
+        prerequisites: Option<(&[String], Option<DependencyBoardLabels>)>,
         accounted: Option<AccountedUpdate<'_>>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
@@ -748,13 +758,18 @@ impl Store {
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
         }
-        if let Some(prerequisites) = prerequisites {
-            dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
+        if let Some((prerequisites, labels)) = prerequisites {
+            let id = &task.identity().id;
+            let was_blocked = labels.is_some() && dependencies::dependency_gate(&tx, id, false)?;
+            dependencies::initial_edges(&tx, id, prerequisites)?;
+            if let Some(labels) = labels {
+                dependencies::record_board_gate(&tx, id, &labels, was_blocked, event.at)?;
+            }
         }
         if let Some(update) = accounted {
             allowance::observe(&tx, task, update.allowance)?;
             if let Some(label) = update.board_state {
-                board_state::record(&tx, &task.identity().id, label, event.at)?;
+                board_state::record(&tx, &task.identity().id, label, Some(event.at))?;
             }
         }
         if task.phase() == Phase::Done {
@@ -955,7 +970,7 @@ fn admit(
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
     if let Some(label) = facts.board_state {
-        board_state::record(tx, &identity.id, label, event.at)?;
+        board_state::record(tx, &identity.id, label, Some(event.at))?;
     }
     allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {
