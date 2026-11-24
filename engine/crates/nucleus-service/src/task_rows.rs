@@ -266,8 +266,7 @@ impl Service {
                     _ => Err(error.into()),
                 }
             }
-            Err(ParentSendError::Unknown(error)) => Err(error.into()),
-            Err(ParentSendError::Rejected) => nucleus_hosts::HostError::Uncertain.into(),
+            Err(error) => Err(nucleus_hosts::HostError::from(error).into()),
             Ok(outcome) => {
                 self.finish_visibility_write(id, thread, change, outcome, receipt)
                     .await?;

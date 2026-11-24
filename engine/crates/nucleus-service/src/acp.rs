@@ -282,7 +282,9 @@ impl Service {
         };
         match self.host.write_verified_parent(write).await {
             Ok(()) => Ok(true),
-            Err(nucleus_hosts::ParentSendError::Rejected) => Err(nucleus_hosts::HostError::ParentHoldRejected.into()),
+            Err(nucleus_hosts::ParentSendError::Rejected) => {
+                Err(nucleus_hosts::HostError::ParentHoldRejected.into())
+            }
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
                 Err(ServiceError::ParentDeliveryUnknown(error))
             }

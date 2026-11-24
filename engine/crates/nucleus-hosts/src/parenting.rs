@@ -49,6 +49,15 @@ pub enum ParentSendError {
     Rejected,
 }
 
+impl From<ParentSendError> for HostError {
+    fn from(error: ParentSendError) -> Self {
+        match error {
+            ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
+            ParentSendError::Rejected => Self::Uncertain,
+        }
+    }
+}
+
 /// Next housekeeping action for the known threads of a Done task.
 pub enum DoneArchive {
     Finished,
@@ -534,10 +543,7 @@ impl T3 {
         self.verify_parent_write(&mut write).await?;
         self.write_verified_parent(write)
             .await
-            .map_err(|error| match error {
-                ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
-                ParentSendError::Rejected => HostError::Uncertain,
-            })
+            .map_err(HostError::from)
     }
 
     /// Verify the destination before the owner records the send intent.

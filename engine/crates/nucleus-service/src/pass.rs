@@ -815,7 +815,8 @@ impl Service {
             Ok(true) => {}
             Ok(false) => return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain)),
             Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
-                self.record_failed_parent_turn(row, session, &command).await?;
+                self.record_failed_parent_turn(row, session, &command)
+                    .await?;
                 return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
             }
             Err(error) => return Err(error),
