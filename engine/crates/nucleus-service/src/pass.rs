@@ -12,8 +12,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentAttempt,
-    ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost, launch_diagnostic,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeAuthorization,
+    NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost,
+    launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -50,7 +51,7 @@ pub(super) enum DispatchTarget<'a> {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
-    Planner(&'a NoticeTarget),
+    Planner(&'a NoticeAuthorization),
 }
 
 pub(super) struct DispatchPermit<'a> {
@@ -933,25 +934,26 @@ impl Service {
         Ok(SendAttempt::Sent(Box::new((sent, result, archive))))
     }
 
-    async fn planner_notice_route(
+    async fn planner_notice_root(
         &self,
         route: &ProjectRoute,
-        target: &nucleus_hosts::NoticeTarget,
-    ) -> bool {
+        target: &NoticeTarget,
+    ) -> Option<PathBuf> {
         if self.project.is_some() {
-            return target.project_id == route.host_project;
+            return (target.project_id == route.host_project).then(|| route.checkout.clone());
         }
         let state = self.state.lock().await;
         state
             .live_planner_route(&target.thread)
-            .is_some_and(|(id, repo)| {
-                Some(id) == route.project_id.as_deref()
+            .filter(|(id, repo)| {
+                Some(*id) == route.project_id.as_deref()
                     && repo.host_project.as_deref() == Some(target.project_id.as_str())
                     && self
                         .host
                         .cached_project(&target.project_id)
                         .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
             })
+            .map(|(_, repo)| repo.path.clone())
     }
 
     pub(super) async fn dispatch_gate(
@@ -970,9 +972,6 @@ impl Service {
             | DispatchTarget::Title { frozen, checkout }
                 if **frozen != self.checkout_binding(identity, &route, checkout)? =>
             {
-                return Err(HostError::Binding.into());
-            }
-            DispatchTarget::Planner(target) if !self.planner_notice_route(&route, target).await => {
                 return Err(HostError::Binding.into());
             }
             _ => {}
@@ -1033,10 +1032,23 @@ impl Service {
                     (checkout.observe()? != Workspace::Absent).then_some(false)
                 }
             }
-            DispatchTarget::Planner(target) => {
-                self.host.check_notice_target(target).await?;
+            DispatchTarget::Planner(authorization) => {
+                let target = authorization.target();
+                let root = self
+                    .planner_notice_root(&route, target)
+                    .await
+                    .ok_or(HostError::Binding)?;
+                if target.project_id != route.host_project {
+                    self.host
+                        .check_project(
+                            &target.project_id,
+                            root.to_str().ok_or(ServiceError::Project)?,
+                        )
+                        .await?;
+                }
+                self.host.check_notice_target(authorization).await?;
                 if let Some(path) = &target.worktree_path
-                    && !linked_checkout(&route.checkout, Path::new(path), &self.git)?
+                    && !linked_checkout(&root, Path::new(path), &self.git)?
                 {
                     return Err(HostError::Binding.into());
                 }

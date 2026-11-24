@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, sync::Mutex as SyncMutex, time::Duration};
 
-use nucleus_core::{Observation, Workspace};
+use nucleus_core::{Head, Observation, Report, ReportArtifact, ReportDelivery, Workspace};
 use nucleus_hosts::HostError;
 
 use super::*;
@@ -22,6 +22,7 @@ struct NoticeFixture {
     started: bool,
     next_reply: NoticeReply,
     settled: bool,
+    uncertain_planner: bool,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -115,16 +116,52 @@ struct Registry {
     moved: Arc<AtomicBool>,
     archived: Arc<AtomicBool>,
     notices: Arc<SyncMutex<NoticeFixture>>,
-    native: tokio::task::JoinHandle<()>,
+    _native: NativeServer,
 }
 
-impl Drop for Registry {
+struct NativeServer(tokio::task::JoinHandle<()>);
+
+impl Drop for NativeServer {
     fn drop(&mut self) {
-        self.native.abort();
+        self.0.abort();
     }
 }
 
 impl Registry {
+    fn reopen(self) -> Self {
+        let Self {
+            service,
+            api,
+            home,
+            reads,
+            read_started,
+            moved,
+            archived,
+            notices,
+            _native: native,
+        } = self;
+        drop(api);
+        let (settings, host) = {
+            let previous = Arc::try_unwrap(service)
+                .ok()
+                .expect("no other service owners");
+            (previous.settings, previous.host)
+        };
+        let service = registry_service(&settings, host);
+        let api = registry_api(&service);
+        Self {
+            home,
+            service,
+            api,
+            reads,
+            read_started,
+            moved,
+            archived,
+            notices,
+            _native: native,
+        }
+    }
+
     async fn enroll(&self, actor: &str) {
         self.start_contact(actor).await;
         self.service.complete_enrollment(actor).await;
@@ -216,6 +253,11 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
             Some("orchestration.subscribeThread") => {
                 signal.notify_one();
                 let id = request["payload"]["threadId"].as_str().expect("exact ID");
+                if id == "alpha-planner" && notices.uncertain_planner {
+                    return json!({"_tag":"Exit", "requestId":request["id"], "exit":{
+                        "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{"_tag":"ReadUnavailable"}}]
+                    }});
+                }
                 notices.thread_snapshot(id, closed.load(Ordering::Relaxed))
             }
             Some("orchestration.subscribeShell") => {
@@ -239,27 +281,8 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     })
     .await;
     host.fixture_project_shell(&snapshot, "fixture-acp");
-    let service = Arc::new(
-        Service::open_projects(
-            &settings,
-            "fixture-acp".into(),
-            host,
-            GitHub::new("fixture").expect("client"),
-            LOCAL_HOST.parse().expect("loopback"),
-            std::env::current_exe().expect("test binary"),
-        )
-        .expect("start registry service"),
-    );
-    let api = router_with_t3_callers(
-        Arc::clone(&service),
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "fixture-operator".into(),
-            },
-        }],
-        Some(T3_KEY),
-    );
+    let service = registry_service(&settings, host);
+    let api = registry_api(&service);
     Registry {
         home,
         service,
@@ -269,8 +292,35 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
         moved,
         archived,
         notices,
-        native,
+        _native: NativeServer(native),
     }
+}
+
+fn registry_service(settings: &nucleus_store::SettingsFile, host: T3) -> Arc<Service> {
+    Arc::new(
+        Service::open_projects(
+            settings,
+            "fixture-acp".into(),
+            host,
+            GitHub::new("fixture").expect("client"),
+            LOCAL_HOST.parse().expect("loopback"),
+            std::env::current_exe().expect("test binary"),
+        )
+        .expect("start registry service"),
+    )
+}
+
+fn registry_api(service: &Arc<Service>) -> Router {
+    router_with_t3_callers(
+        Arc::clone(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture-operator".into(),
+            },
+        }],
+        Some(T3_KEY),
+    )
 }
 
 fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
@@ -883,7 +933,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
             ItemKind::Lead,
             ItemContent {
                 title: "Historic idea".into(),
-                body: "A historic brief.".into(),
+                body: "---\nqueue:\n  complexity: low\n---\nA historic brief.".into(),
                 lanes: vec![],
             },
             WriteAt {
@@ -898,7 +948,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
             Method::POST,
             "/v1/planning/items/historic/promote",
             "alpha-planner",
-            Value::Null,
+            json!({}),
         )
     };
     assert_eq!(promote().await.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -906,8 +956,9 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
     let actor = registry.service.take_enrollment().await.expect("one proof");
     registry.service.complete_enrollment(&actor).await;
     let created = promote().await;
-    assert_eq!(created.status(), StatusCode::CREATED);
+    let status = created.status();
     let task = json_body(created).await;
+    assert_eq!(status, StatusCode::CREATED, "{task}");
     let id = task["identity"]["id"].as_str().expect("task ID");
     let detail =
         json_body(get_as(&registry.api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
@@ -948,6 +999,19 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
             .as_deref(),
         Some("alpha-planner")
     );
+    let attempt = T3::prepare_notice(
+        "alpha-planner".into(),
+        "fixture-notice".into(),
+        "Synthetic notice",
+    )
+    .unwrap();
+    let stale = registry
+        .service
+        .host
+        .authorize_notice(&attempt)
+        .await
+        .unwrap()
+        .unwrap();
     registry.archived.store(true, Ordering::Relaxed);
     let archived = nucleus_hosts::ThreadHint::fixture(&json!({
         "kind": "thread.removed", "threadId": "alpha-planner",
@@ -966,11 +1030,6 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
             .status(),
         StatusCode::OK
     );
-    let stale = nucleus_hosts::NoticeTarget {
-        thread: "alpha-planner".into(),
-        project_id: "alpha-native".into(),
-        worktree_path: None,
-    };
     assert!(matches!(
         registry
             .service
@@ -987,6 +1046,303 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
             .as_deref(),
         Some("next-planner")
     );
+}
+
+async fn seed_ready_report(service: &Service, id: &str, legacy_attempt: bool) {
+    let mut state = service.state.lock().await;
+    let (project, repo) = state
+        .settings
+        .planner_route("alpha-planner")
+        .expect("registered route");
+    let head: Head = git(&repo.path, &["rev-parse", "HEAD"])
+        .parse()
+        .expect("planning head");
+    let mut task = Task::new_report_only(
+        nucleus_core::Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: repo.origin.clone(),
+            base: repo.base.clone(),
+            entry: Entry::Brief,
+            origin_thread: Some("alpha-planner".into()),
+        },
+        "Qualify the fixture".into(),
+        project.into(),
+        "qa".into(),
+        head.clone(),
+    );
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Clean(head.clone())),
+    };
+    task.reconcile(&observation);
+    let credential = task
+        .reserve_launch(
+            &observation,
+            LaunchInputs {
+                scratch: None,
+                thread: "report-worker".into(),
+                started_at: 1,
+                input: "fixture".into(),
+            },
+            &[4; 32],
+        )
+        .expect("worker launch");
+    let instance = task.run().expect("worker").launch().instance.clone();
+    task.record_send(&instance, 2).expect("record worker send");
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::ReportReady(ReportDelivery {
+            artifact: ReportArtifact {
+                key: "qa".into(),
+                version: 3,
+                digest: "a".repeat(64),
+            },
+            headline: None,
+            summary: "Synthetic qualification passed".into(),
+            head: Some(head),
+        }),
+    )
+    .expect("worker report");
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::ReportReady)
+    );
+    let kind = if legacy_attempt {
+        task.mark_report_notice_attempted();
+        "report_ready_planner_unavailable"
+    } else {
+        "report_ready"
+    };
+    state
+        .store
+        .create(&task, &event(kind))
+        .expect("report ready row");
+}
+
+async fn notice_pass(service: &Service) -> Vec<crate::PassOutcome> {
+    tokio::time::timeout(Duration::from_secs(5), service.pass())
+        .await
+        .expect("notice task is due")
+        .expect("scheduler pass")
+}
+
+#[tokio::test]
+async fn report_notice_reverifies_a_persisted_origin_after_reopen_without_a_cli_call() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    seed_ready_report(&registry.service, "report", false).await;
+    seed_ready_report(&registry.service, "already-spent", true).await;
+    let registry = registry.reopen();
+    {
+        let state = registry.service.state.lock().await;
+        assert!(
+            state.enrolled_planners.is_empty(),
+            "disk records confer no authority"
+        );
+        assert!(state.settings.planner_route("alpha-planner").is_some());
+        assert!(state.settings.planner_route("next-planner").is_some());
+    }
+    let outcomes = notice_pass(&registry.service).await;
+    assert_eq!(outcomes.len(), 1, "the legacy spent row stays closed");
+    assert_eq!(outcomes[0].task, "report");
+    assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
+    let fixture = registry.notices.lock().expect("notices");
+    assert_eq!(fixture.sends.len(), 1);
+    assert_eq!(fixture.sends[0]["threadId"], "alpha-planner");
+    assert!(
+        fixture.sends[0]["text"]
+            .as_str()
+            .expect("notice text")
+            .contains("qa v3")
+    );
+}
+
+#[tokio::test]
+async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    seed_ready_report(&registry.service, "report", false).await;
+    registry.archived.store(true, Ordering::Relaxed);
+    let outcomes = notice_pass(&registry.service).await;
+    assert!(matches!(
+        outcomes[0].result,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    let row = registry
+        .service
+        .task("report")
+        .await
+        .expect("pending report");
+    assert!(!row.task.report_task().expect("report").notice_attempted);
+    assert!(registry.notices.lock().expect("notices").sends.is_empty());
+    let registry = registry.reopen();
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .settings
+            .planner_route("alpha-planner")
+            .is_none()
+    );
+    let outcomes = notice_pass(&registry.service).await;
+    assert!(matches!(
+        outcomes[0].result,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    registry.notices.lock().expect("notices").settled = true;
+    registry.enroll("next-planner").await;
+    let outcomes = notice_pass(&registry.service).await;
+    assert!(matches!(
+        outcomes[0].result,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    assert_eq!(
+        registry
+            .service
+            .task("report")
+            .await
+            .expect("unsettled only"),
+        row
+    );
+    {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.controls.len(), 1);
+        assert_eq!(fixture.controls[0]["threadId"], "next-planner");
+        assert!(fixture.sends.is_empty());
+    }
+    {
+        let mut state = registry.service.state.lock().await;
+        assert!(
+            state.schedule.due("report").is_some(),
+            "unsettle schedules a fresh read"
+        );
+        state.schedule.wake(
+            "report",
+            tokio::time::Instant::now(),
+            crate::schedule::Priority::Effect,
+        );
+    }
+    let outcomes = notice_pass(&registry.service).await;
+    assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
+    let sent = registry.service.task("report").await.expect("sent report");
+    assert!(sent.task.report_task().expect("report").notice_attempted);
+    let registry = registry.reopen();
+    assert!(matches!(
+        registry.service.notify_report_ready(&sent).await,
+        Ok(Action::Nothing)
+    ));
+    let fixture = registry.notices.lock().expect("notices");
+    assert_eq!(fixture.controls.len(), 1);
+    assert_eq!(fixture.sends.len(), 1);
+    assert_eq!(fixture.sends[0]["threadId"], "next-planner");
+    assert_eq!(
+        fixture.sends[0]["dispatchMode"]["type"],
+        "queue_after_active"
+    );
+}
+
+#[tokio::test]
+async fn an_uncertain_cold_origin_cannot_route_or_lose_its_persisted_binding() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    seed_ready_report(&registry.service, "report", false).await;
+    let registry = registry.reopen();
+    registry.notices.lock().expect("notices").uncertain_planner = true;
+    let outcomes = notice_pass(&registry.service).await;
+    assert!(matches!(
+        outcomes[0].result,
+        Err(ServiceError::Host(HostError::Uncertain))
+    ));
+    assert!(registry.notices.lock().expect("notices").sends.is_empty());
+    let registry = registry.reopen();
+    let state = registry.service.state.lock().await;
+    assert!(state.settings.planner_route("alpha-planner").is_some());
+    assert!(state.live_planner_project("alpha-planner").is_none());
+}
+
+#[tokio::test]
+async fn a_work_question_remains_unbound_until_its_planner_notice_can_be_sent() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let (mut task, credential, mut observation) = {
+        let state = registry.service.state.lock().await;
+        let (_, repo) = state
+            .settings
+            .planner_route("alpha-planner")
+            .expect("route");
+        let head = git(&repo.path, &["rev-parse", "HEAD"])
+            .parse()
+            .expect("base head");
+        reservation("question", Entry::Brief, &head)
+    };
+    let instance = task.run().expect("worker").launch().instance.clone();
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::Question {
+            prompt: "Which greeting should the worker use?".into(),
+            options: Vec::new(),
+        },
+    )
+    .expect("worker question");
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert!(matches!(task.reconcile(&observation), Action::Ask(_)));
+    seed_task(&registry.service, &task).await;
+    registry.archived.store(true, Ordering::Relaxed);
+    let pending = registry
+        .service
+        .task("question")
+        .await
+        .expect("open question");
+    assert!(matches!(
+        registry.service.notify_question(&pending).await,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    assert_eq!(
+        registry
+            .service
+            .task("question")
+            .await
+            .expect("no send intent"),
+        pending
+    );
+    assert!(registry.notices.lock().expect("notices").sends.is_empty());
+
+    registry.enroll("next-planner").await;
+    assert!(matches!(
+        registry.service.notify_question(&pending).await,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    let sent = registry
+        .service
+        .task("question")
+        .await
+        .expect("bound question");
+    let receipt = sent.task.question_delivery().expect("exact native receipt");
+    assert_eq!(receipt.thread, "next-planner");
+    let registry = registry.reopen();
+    registry.notices.lock().expect("notices").started = true;
+    assert!(matches!(
+        registry.service.notify_question(&sent).await,
+        Ok(Action::Wait(WaitReason::Question))
+    ));
+    let fixture = registry.notices.lock().expect("notices");
+    assert_eq!(fixture.sends.len(), 1);
+    assert_eq!(fixture.sends[0]["commandId"], receipt.command);
 }
 
 #[tokio::test]

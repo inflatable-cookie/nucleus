@@ -213,6 +213,7 @@ struct State {
     planner_check: Option<String>,
     enrollments: enrollment::Enrollments,
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
+    planner_notice_waiters: BTreeSet<String>,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
 }
 
@@ -356,6 +357,7 @@ impl Service {
                 planner_check: None,
                 enrollments: enrollment::Enrollments::default(),
                 enrolled_planners: BTreeMap::new(),
+                planner_notice_waiters: BTreeSet::new(),
                 thread_tasks: BTreeMap::new(),
             }),
             project_writes: RwLock::new(()),
@@ -499,7 +501,12 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
         let id = &row.task.identity().id;
-        if self.state.lock().await.acp_refresh_requests.remove(id) == Some(row.version) {
+        let refresh = {
+            let mut state = self.state.lock().await;
+            state.planner_notice_waiters.remove(id);
+            state.acp_refresh_requests.remove(id) == Some(row.version)
+        };
+        if refresh {
             self.refresh_acp_parent(row).await?;
         }
         if self.reconcile_prerequisites(row).await? {
@@ -507,7 +514,9 @@ impl Service {
         }
         // A planner's availability must not hold the dependent after release.
         // Any unsent notice remains due through the store's scheduler scan.
-        let _ = self.notify_prerequisite_release(row).await;
+        if self.notify_prerequisite_release(row).await.unwrap_or(true) {
+            self.recheck_effect(row, WaitReason::Question).await;
+        }
         let task = &row.task;
         if !matches!(
             task.phase(),
@@ -634,8 +643,7 @@ impl Service {
                 state.invalidate_planner_authority();
                 if !state.enrolled_planners.is_empty() {
                     state.enrolled_planners.clear();
-                    self.project_changes.send_replace(());
-                    self.settings_changes.send_replace(());
+                    self.planner_routes_changed(&mut state);
                 }
                 for seen in state
                     .thread_tasks
@@ -660,8 +668,7 @@ impl Service {
         let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
         if state.invalidate_enrolled_planner(&hint) {
-            self.project_changes.send_replace(());
-            self.settings_changes.send_replace(());
+            self.planner_routes_changed(&mut state);
         }
         if authorities != state.planner_authority.len() {
             self.settings_changes.send_replace(());
@@ -796,6 +803,9 @@ impl Service {
         if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
             state.set_wait(id, None);
             state.schedule.reset_host_backoff(id);
+            if state.store.pending_prerequisite_notice(id)?.is_none() {
+                state.planner_notice_waiters.remove(id);
+            }
             return Ok(());
         }
         if current.version != row.version {
