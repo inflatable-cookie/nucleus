@@ -145,6 +145,9 @@ Later decisions carry their own attribution.
     - The planner ruled on 2026-11-24 that a pre-wire refusal names the failed
       predicate and the relevant compared values. The diagnostic omits secrets
       and message contents.
+    - Task rows and detail name the check and show its due time while scheduled.
+      After an inconclusive delivery check, the owner opens the task thread to
+      verify the outcome. The UI reports a host fault only when there is evidence.
 17. **Settings beyond Projects shrink too.**
     - Hosts lists T3 (and any later ADE adapter) with no Paseo or BB fields.
     - Storage folds in backups, retention and worktree roots.
@@ -261,6 +264,10 @@ Later decisions carry their own attribution.
     Title, settle and snooze changes preserve matching custody evidence.
     Delivery still checks current binding, requests, children, background
     work and row visibility, including ownership of any snooze it clears.
+    On rollout, an old delivery fence with matching preflight refusal evidence
+    reopens at the same version if no later or same-command send might have
+    reached T3. An unresolved delivery fence survives restart for the same
+    task version and T3 runtime.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code

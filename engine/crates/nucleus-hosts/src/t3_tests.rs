@@ -699,7 +699,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         "Synthetic task",
         Some(crate::ParentAttempt {
             command: "fixture-parent-command",
-            released: false,
+            released: true,
         }),
         quiet_pass(&client).profile_catalog(),
     ))
@@ -732,6 +732,58 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
     assert_eq!(wire["payload"]["parentNodeId"], "parent-root");
     assert!(wire["payload"].get("workspaceStrategy").is_none());
     native.await.expect("native trace");
+}
+
+#[tokio::test]
+async fn missing_parent_send_reuses_its_id_after_a_fresh_idle_check() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let command = format!("{thread}-hold-12");
+    let mut compact = parent_snapshot(&binding, "completed", false);
+    compact["hasMoreHistory"] = json!(false);
+    compact["turnItemsOmitLocalVisible"] = json!(true);
+    compact["projection"]["turnItems"] = json!([]);
+    compact["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
+    let mut row = compact["projection"]["thread"].clone();
+    row["latestRunId"] = json!(NATIVE_RUN);
+    row["status"] = json!("completed");
+    row["pendingBackgroundTasks"] = json!([]);
+    let mut fresh = compact.clone();
+    fresh["snapshotSequence"] = json!(18);
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(compact),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(fresh),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{"threads":[row],"projects":[]}}));
+    let crate::ParentStep::Write(write) = Box::pin(host.prepare_parent(
+        &binding,
+        "fixture-acp",
+        "Fixture",
+        Some(crate::ParentAttempt {
+            command: &command,
+            released: false,
+        }),
+        quiet_pass(&host).profile_catalog(),
+    ))
+    .await
+    .unwrap() else {
+        panic!("the unsent intent should become dispatchable");
+    };
+    assert_eq!(write.command_id(), Some(command.as_str()));
+    host.write_parent(write).await.unwrap();
+    let sent = native.await.unwrap();
+    let payload: Value = serde_json::from_str(sent[2].payload.get()).unwrap();
+    assert_eq!(payload["commandId"], command);
 }
 
 #[tokio::test]
@@ -799,6 +851,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
             .fixture_shell(&json!({"kind":"snapshot","snapshot":{
                 "snapshotSequence":16, "threads":[row], "projects":[]
             }}));
+        let pass = quiet_pass(&host);
         let prepare = || {
             Box::pin(host.prepare_parent(
                 &binding,
@@ -808,7 +861,7 @@ async fn bounded_parent_custody_converges_after_visibility_changes() {
                     command,
                     released: false,
                 }),
-                quiet_pass(&host).profile_catalog(),
+                pass.profile_catalog(),
             ))
         };
         let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {

@@ -149,7 +149,7 @@ impl Service {
         })
         .to_string();
         let recorded = state.store.claim_task_effect(id, &intent)?;
-        if recorded && kind == "native_turn_intent" {
+        if recorded && matches!(kind, "native_turn_intent" | "native_turn_replay") {
             state.set_wait(id, Some(WaitReason::Starting));
             self.publish(id, row.version);
         }
@@ -192,7 +192,13 @@ impl Service {
                 return Err(self.parent_not_sent(error));
             }
         }
-        Ok(sent?)
+        sent.map_err(|error| {
+            if starts_turn {
+                ServiceError::ParentDeliveryUnknown(error)
+            } else {
+                error.into()
+            }
+        })
     }
 
     pub(super) async fn verify_native_parent(

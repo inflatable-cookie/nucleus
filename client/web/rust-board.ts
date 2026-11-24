@@ -49,6 +49,7 @@ const current = z.object({
   version: revision,
   phase,
   wait: z.string().nullable(),
+  waitDetail: z.string().nullish(),
   attention: z.enum(["finished", "attention", "active", "waiting"]),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
@@ -479,12 +480,12 @@ export const rustPhaseLabels: Record<RustPhase, string> = {
 const waits: Record<string, string> = {
   hold: "On hold",
   question: "Waiting for the planner",
-  host_unknown: "Waiting for the host",
-  host_observation_blocked: "Check the task in T3. Hold and release it to retry.",
+  host_unknown: "Checking the task thread.",
+  host_observation_blocked: "Couldn’t verify the task thread. Open it to check.",
   operator_declined: "The operator declined. Move or cancel the task.",
   starting: "Starting",
   running: "Running",
-  idle_without_terminal_run: "Waiting for the host",
+  idle_without_terminal_run: "Checking how the turn ended.",
   assignment_too_large: "Assignment exceeds the T3 message limit",
   permission: "Waiting for permission",
   usage_permission: "Low usage requires operator approval",
@@ -499,7 +500,18 @@ const waits: Record<string, string> = {
 export function rustWaitText({
   wait,
   phase,
-}: Pick<RustTask, "wait" | "phase">) {
+  waitDetail,
+  nextCheckAt,
+}: Pick<RustTask, "wait" | "phase" | "waitDetail" | "nextCheckAt">) {
+  if (waitDetail) {
+    if (nextCheckAt === null) return waitDetail;
+    const time = new Date(nextCheckAt).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    return `${waitDetail} Next check at ${time}.`;
+  }
   if (wait === "capacity")
     return phase === "reviewing"
       ? "Waiting for a review slot"

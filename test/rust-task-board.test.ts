@@ -8,6 +8,7 @@ import { JSDOM } from "jsdom";
 import { profilesSnapshot } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
+  rustWaitText,
   type RustCommand,
   type RustTask,
 } from "../client/web/rust-board";
@@ -78,6 +79,18 @@ const task = (
   nextCheckAt: null,
   question: null,
   hold: null,
+});
+
+test("Rust task status names the check and only shows a time while it is scheduled", () => {
+  const row = task("retained", "working");
+  const checking = rustWaitText({
+    ...row, wait: "host_unknown",
+    waitDetail: "Checking whether the message reached the task thread.",
+    nextCheckAt: Date.UTC(2026, 10, 24, 17, 45),
+  });
+  assert.match(checking ?? "", /^Checking whether the message reached the task thread\. Next check at .+\.$/);
+  const blocked = rustWaitText({ ...row, wait: "host_observation_blocked" });
+  assert.equal(blocked, "Couldn’t verify the task thread. Open it to check.");
 });
 
 test("Rust task detail keeps Answer available alongside unknown command names", async (t) => {

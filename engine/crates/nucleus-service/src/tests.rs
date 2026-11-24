@@ -389,7 +389,7 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             .await
             .unwrap()
             .iter()
-            .any(|event| event.kind == "host_observation_blocked")
+            .any(|event| event.content.kind == "host_observation_blocked")
     );
 }
 

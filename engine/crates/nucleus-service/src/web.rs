@@ -956,6 +956,7 @@ struct Summary {
     version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
+    wait_detail: Option<&'static str>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
     question: Option<Question>,
@@ -990,6 +991,9 @@ impl Summary {
             phase: task.phase(),
             attention: state.task_attention(row)?,
             next_check_at: None,
+            wait_detail: state.host_checks.get(id).copied().filter(|_| {
+                !task.phase().is_terminal() && task.hold().is_none() && task.question().is_none()
+            }),
             wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
             {
                 wait
@@ -1011,7 +1015,8 @@ impl Summary {
             dependency_status,
             dependency_edits,
         };
-        if view.wait.is_some() && task.operator_decline().is_none() {
+        if (view.wait.is_some() || view.wait_detail.is_some()) && task.operator_decline().is_none()
+        {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
                 now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))

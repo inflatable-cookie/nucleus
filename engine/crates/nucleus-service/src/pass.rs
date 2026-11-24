@@ -741,13 +741,15 @@ impl Service {
             .await
             .map_err(|error| {
                 if prior_turn.is_some() && !matches!(error, HostError::ParentPreflight { .. }) {
-                    error.into()
+                    ServiceError::ParentDeliveryUnknown(error)
                 } else {
                     self.parent_not_sent(error)
                 }
             })? {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
-            ParentStep::DeliveryUnknown => Ok(ControlFlow::Break(WaitReason::HostUnknown)),
+            ParentStep::DeliveryUnknown => {
+                Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain))
+            }
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
             )),
@@ -756,7 +758,7 @@ impl Service {
                     self.record_failed_parent_turn(row, &session, &command)
                         .await?;
                 }
-                Ok(ControlFlow::Break(WaitReason::HostUnknown))
+                Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
             }
             ParentStep::Write(mut write) => {
                 let Some(_permit) = self
@@ -776,29 +778,22 @@ impl Service {
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
                 self.verify_native_parent(row, &mut write).await?;
-                if !self.claim_preparation_turn(row, &write, &session).await? {
-                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+                let command = write.command_id().ok_or(ServiceError::Input)?;
+                let (scope, kind) = if prior_turn.as_deref() == Some(command) {
+                    (&failed_scope, "native_turn_replay")
+                } else {
+                    (&session, "native_turn_intent")
+                };
+                if write.starts_turn()
+                    && !self.claim_parent_intent(row, kind, scope, command).await?
+                {
+                    return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain));
                 }
-                self.write_claimed_parent(row, &session, write, "native_turn_intent")
-                    .await?;
+                self.write_claimed_parent(row, scope, write, kind).await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))
             }
         }
-    }
-
-    async fn claim_preparation_turn(
-        &self,
-        row: &TaskRow,
-        write: &nucleus_hosts::ParentWrite,
-        session: &str,
-    ) -> Result<bool, ServiceError> {
-        if !write.starts_turn() {
-            return Ok(true);
-        }
-        let command = write.command_id().ok_or(ServiceError::Input)?;
-        self.claim_parent_intent(row, "native_turn_intent", session, command)
-            .await
     }
 
     async fn prompt_context(

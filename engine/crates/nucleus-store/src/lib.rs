@@ -725,6 +725,51 @@ impl Store {
         Ok(latest.map(|(sequence, kind)| (sequence, kind == "native_turn_not_sent")))
     }
 
+    /// Restore a delivery fence for this task version and native runtime.
+    /// Older engines could fence a parent preflight that had already proved
+    /// the message unsent. A later send intent takes precedence over that proof.
+    ///
+    /// # Errors
+    /// Returns an error if the task's delivery history is unreadable.
+    pub fn task_delivery_blocked(
+        &self,
+        id: &str,
+        version: i64,
+        runtime: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.prepare_cached(
+            "SELECT EXISTS(
+               SELECT 1 FROM events AS blocked
+               WHERE blocked.task_id = ?1 AND blocked.kind = 'host_observation_blocked'
+                 AND json_valid(blocked.detail)
+                 AND json_extract(blocked.detail, '$.version') = ?2
+                 AND instr(json_extract(blocked.detail, '$.session'), ?3 || '/') = 1
+                 AND (json_extract(blocked.detail, '$.deliveryPending') = 1
+                   OR (json_extract(blocked.detail, '$.deliveryPending') IS NULL AND NOT EXISTS (
+                     SELECT 1 FROM events AS refusal
+                     WHERE refusal.task_id = blocked.task_id
+                       AND refusal.kind = 'native_turn_not_sent' AND refusal.sequence < blocked.sequence
+                       AND json_valid(refusal.detail)
+                       AND json_extract(refusal.detail, '$.version') = ?2
+                       AND json_extract(refusal.detail, '$.session') = 'preflight'
+                       AND (instr(json_extract(refusal.detail, '$.command'), '-hold-') > 0
+                         OR instr(json_extract(refusal.detail, '$.command'), '-refresh-') > 0)
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events AS sent
+                         WHERE sent.task_id = blocked.task_id AND sent.sequence < blocked.sequence
+                           AND sent.kind IN ('host_send', 'native_turn_intent',
+                             'native_turn_replay', 'acp_row_refresh_intent')
+                           AND (sent.sequence > refusal.sequence OR (
+                             json_valid(sent.detail) AND json_extract(sent.detail, '$.version') = ?2
+                             AND json_extract(sent.detail, '$.command') =
+                                 json_extract(refusal.detail, '$.command')
+                           ))
+                       )
+                   )))
+             )"
+        )?.query_row(params![id, version, runtime], |row| row.get(0))?)
+    }
+
     /// Read all subscription groups with a deadline in the future.
     ///
     /// # Errors

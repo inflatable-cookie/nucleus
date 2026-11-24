@@ -47,7 +47,7 @@ pub struct ParentWrite {
     rpc: &'static str,
     payload: Value,
     idle_at: Option<(String, u64)>,
-    delivery: Option<ParentDelivery>,
+    delivery: Option<Box<ParentDelivery>>,
 }
 
 struct ParentDelivery {
@@ -111,7 +111,12 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        if projection.archived() || projection.retained()? != RetainedThread::Idle {
+        if projection.archived()
+            || matches!(
+                projection.retained(),
+                Ok(RetainedThread::Busy | RetainedThread::Gone)
+            )
+        {
             return Ok(None);
         }
         let sequence = projection.sequence();
@@ -248,11 +253,11 @@ impl T3 {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         if let Some(projection) = self.thread(binding, &thread).await? {
             projection.require_parent_provider(provider)?;
-            if let Some((run, node)) = prior_turn.as_ref().and_then(|attempt| {
-                (!attempt.released)
-                    .then(|| projection.live_parent_run(&message_id(attempt.command)))
-                    .flatten()
-            }) {
+            let mut replay = None;
+            if let Some((run, node)) = prior_turn
+                .as_ref()
+                .and_then(|attempt| projection.live_parent_run(&message_id(attempt.command)))
+            {
                 return Ok(ParentStep::Live(ParentRun {
                     thread,
                     run: run.into(),
@@ -271,15 +276,25 @@ impl T3 {
                     if projection.has_delivery(&message) {
                         return Ok(ParentStep::Wait);
                     }
-                    // A bounded snapshot cannot prove that an older message is absent.
-                    return Ok(ParentStep::DeliveryUnknown);
+                    // The bounded window cannot prove absence. T3 deduplicates
+                    // this exact message command, including a delayed receipt.
+                    if !attempt.command.starts_with(&format!("{thread}-hold-")) {
+                        return Ok(ParentStep::DeliveryUnknown);
+                    }
+                    replay = Some(attempt.command);
                 }
             }
-            if projection.retained()? != RetainedThread::Idle {
+            if matches!(
+                projection.retained(),
+                Ok(RetainedThread::Busy | RetainedThread::Gone)
+            ) {
                 return Ok(ParentStep::Wait);
             }
             let sequence = projection.sequence();
             if projection.archived() {
+                if projection.retained()? != RetainedThread::Idle {
+                    return Ok(ParentStep::Wait);
+                }
                 return Ok(ParentStep::Write(ParentWrite {
                     binding: binding.clone(),
                     rpc: "orchestration.dispatchCommand",
@@ -288,7 +303,7 @@ impl T3 {
                     payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
                 }));
             }
-            let command = format!("{thread}-hold-{sequence}");
+            let command = replay.map_or_else(|| format!("{thread}-hold-{sequence}"), str::to_owned);
             return Ok(ParentStep::Write(ParentWrite {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
@@ -510,7 +525,7 @@ impl T3 {
 fn prepare_delivery(
     projection: &crate::Projection,
     provider: &str,
-) -> Result<Option<ParentDelivery>, HostError> {
+) -> Result<Option<Box<ParentDelivery>>, HostError> {
     let Some(row) = projection.row_observation()? else {
         return Ok(None);
     };
@@ -522,12 +537,12 @@ fn prepare_delivery(
                 prepared: row.sequence,
                 observed: Some(row.sequence),
             })?;
-    Ok(Some(ParentDelivery {
+    Ok(Some(Box::new(ParentDelivery {
         row,
         provider: provider.into(),
         custody,
         shell: None,
-    }))
+    })))
 }
 
 fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {

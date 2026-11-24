@@ -70,10 +70,9 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
         match wait {
             Some(WaitReason::Capacity) => "Waiting for capacity",
             Some(WaitReason::Prerequisite) => "Waiting for prerequisites",
-            Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => {
-                "Waiting on Nucleus"
-            }
-            Some(WaitReason::HostObservationBlocked) => "Blocked on T3",
+            Some(WaitReason::HostUnknown) => "Checking task thread",
+            Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
+            Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
             _ => phase,
         }
         .into()
@@ -451,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             task_title(&task, "fixture#1", Some(WaitReason::HostUnknown)),
-            "Waiting on Nucleus: fixture#1 Add a greeting"
+            "Checking task thread: fixture#1 Add a greeting"
         );
         let authority = Authority::Planner {
             actor: "planner".into(),

@@ -75,6 +75,8 @@ pub enum ServiceError {
         reason: String,
         retry_at: Option<Instant>,
     },
+    #[error("T3 parent message delivery could not be confirmed: {0}")]
+    ParentDeliveryUnknown(HostError),
     #[error("run scratch is already reserved for another run")]
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
@@ -210,6 +212,7 @@ struct State {
     last_pass_calls: HostCalls,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
+    host_checks: BTreeMap<String, &'static str>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
@@ -365,6 +368,7 @@ impl Service {
                 last_pass_calls: HostCalls::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                host_checks: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
@@ -534,6 +538,13 @@ impl Service {
         let id = &row.task.identity().id;
         let refresh = {
             let mut state = self.state.lock().await;
+            if let Some(runtime) = self.host.runtime_identity()
+                && state
+                    .store
+                    .task_delivery_blocked(id, row.version, &runtime)?
+            {
+                return Ok(Action::Wait(WaitReason::HostObservationBlocked));
+            }
             state.planner_notice_waiters.remove(id);
             state.acp_refresh_requests.remove(id) == Some(row.version)
         };
@@ -851,7 +862,7 @@ impl Service {
         let id = &row.task.identity().id;
         let wait = match result {
             Ok(Action::Wait(reason)) => Some(*reason),
-            Err(ServiceError::Host(_) | ServiceError::ParentNotSent { .. }) => {
+            Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
                 Some(WaitReason::HostUnknown)
             }
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
@@ -873,7 +884,8 @@ impl Service {
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
-            if state.set_wait(id, None).is_some() {
+            let check_cleared = state.host_checks.remove(id).is_some();
+            if state.set_wait(id, None).is_some() || check_cleared {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
@@ -897,11 +909,35 @@ impl Service {
                 retry_at.unwrap_or(now).max(now + T3_RETRY_DELAY),
                 previous,
             );
+            state
+                .host_checks
+                .insert(id.clone(), "Checking the task thread before sending.");
+            self.desire_title(
+                &state,
+                &current.task,
+                current.reference().as_ref(),
+                Some(WaitReason::HostUnknown),
+            );
+            self.title_wake.notify_one();
+            self.publish(id, row.version);
             return Ok(());
         }
         if wait == Some(WaitReason::HostUnknown) {
             return self.schedule_host_observation(&mut state, row, result);
         }
+        if wait == Some(WaitReason::HostObservationBlocked) {
+            state.schedule.block_host_observation(id);
+            state
+                .host_checks
+                .entry(id.clone())
+                .or_insert("Couldn’t verify the task thread. Open it to check.");
+            state.set_wait(id, wait);
+            self.desire_title(&state, &current.task, current.reference().as_ref(), wait);
+            self.title_wake.notify_one();
+            self.publish(id, row.version);
+            return Ok(());
+        }
+        let check_cleared = state.host_checks.remove(id).is_some();
         state.schedule.reset_host_backoff(id);
         if state.observe_task_allowance(&current.task, wait)? {
             self.publish(id, current.version);
@@ -944,11 +980,11 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
-        if prior != wait {
+        if prior != wait || check_cleared {
             self.title_wake.notify_one();
         }
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
-        if prior != wait {
+        if prior != wait || check_cleared {
             self.publish(id, current.version);
         }
         Ok(())
@@ -984,17 +1020,33 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
+        let delivery_pending = matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+            || row
+                .task
+                .run()
+                .is_some_and(|run| run.last_send_at_ms().is_some());
+        let cause = match (blocked, delivery_pending, result) {
+            (true, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
+            (true, false, _) => "Couldn’t verify the task thread. Open it to check.",
+            (false, _, Err(ServiceError::Host(HostError::Unavailable))) => {
+                "Couldn’t reach T3. Checking again."
+            }
+            (false, true, _) => "Checking whether the message reached the task thread.",
+            (false, false, _) => "Checking the task thread.",
+        };
+        let check_changed = state.host_checks.insert(id.clone(), cause) != Some(cause);
         let prior = state.set_wait(id, wait);
         if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
             audit.detail = serde_json::json!({"version": row.version,
                 "session": self.host.runtime_identity().map(|session| self.turn_failure_scope(&session)),
-                "reason": result.as_ref().err().map(ToString::to_string)}).to_string();
+                "reason": result.as_ref().err().map(ToString::to_string),
+                "deliveryPending": delivery_pending}).to_string();
             state.store.claim_task_effect(id, &audit)?;
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
         }
-        if state.observe_task_allowance(&row.task, wait)? || prior != wait {
+        if state.observe_task_allowance(&row.task, wait)? || prior != wait || check_changed {
             self.desire_title(state, &row.task, row.reference().as_ref(), wait);
             self.title_wake.notify_one();
             self.publish(id, row.version);
@@ -1333,6 +1385,7 @@ impl Service {
             state.planner_authority.remove(id);
         }
         state.set_wait(id, None);
+        state.host_checks.remove(id);
         if task
             .run()
             .is_none_or(|run| run.revoked() || run.report().is_some())

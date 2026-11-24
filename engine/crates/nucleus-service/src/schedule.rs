@@ -124,6 +124,11 @@ impl Schedule {
         self.tasks.entry(id.into()).or_default();
     }
 
+    pub(crate) fn block_host_observation(&mut self, id: &str) {
+        self.host_retry.insert(id.into(), HostRecovery::Blocked);
+        self.tasks.insert(id.into(), Pending::default());
+    }
+
     pub(crate) fn recover_host_observation(
         &mut self,
         id: &str,

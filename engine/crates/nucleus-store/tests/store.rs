@@ -73,6 +73,72 @@ fn observation() -> Observation {
 }
 
 #[test]
+fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    let mut versions = Vec::new();
+    for id in [
+        "completed",
+        "first",
+        "ambiguous",
+        "later_send",
+        "new_ambiguity",
+    ] {
+        let version = store.create(&task(id, id), &event("admitted")).unwrap();
+        versions.push((id, version));
+        let mut append = |kind, detail: serde_json::Value| {
+            let mut entry = event(kind);
+            entry.detail = detail.to_string();
+            store.claim_task_effect(id, &entry).unwrap();
+        };
+        if matches!(id, "completed" | "ambiguous") {
+            append(
+                "native_turn_intent",
+                serde_json::json!({
+                    "version":version, "session":"runtime", "command":"thread-hold-1",
+                }),
+            );
+        }
+        append(
+            "native_turn_not_sent",
+            serde_json::json!({
+                "version":version, "session":"preflight",
+                "command": if id == "ambiguous" { "thread-hold-1" } else { "thread-hold-2" },
+            }),
+        );
+        if id == "later_send" {
+            append(
+                "native_turn_intent",
+                serde_json::json!({
+                    "version":version, "session":"runtime", "command":"thread-hold-3",
+                }),
+            );
+        }
+        let mut blocked =
+            serde_json::json!({"version":version,"session":"runtime/previous-engine"});
+        if id == "new_ambiguity" {
+            blocked["deliveryPending"] = serde_json::json!(true);
+        }
+        append("host_observation_blocked", blocked);
+    }
+    drop(store);
+    let store = Store::open(&storage).unwrap();
+    for (id, version) in versions {
+        assert_eq!(
+            store.task_delivery_blocked(id, version, "runtime").unwrap(),
+            matches!(id, "ambiguous" | "later_send" | "new_ambiguity"),
+            "{id}",
+        );
+        assert!(
+            !store
+                .task_delivery_blocked(id, version, "replacement")
+                .unwrap()
+        );
+    }
+}
+
+#[test]
 fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_session() {
     let home = tempfile::tempdir().expect("fixture volume");
     let storage = fixture_storage(home.path());
