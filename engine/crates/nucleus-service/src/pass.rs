@@ -458,15 +458,12 @@ impl Service {
         route: &ProjectRoute,
         slots: u32,
     ) -> Result<bool, ServiceError> {
-        let scope = self
-            .host
-            .runtime_identity()
-            .map(|session| self.turn_failure_scope(&session));
-        let candidates = self.state.lock().await.store.project_workspace_candidates(
-            &identity.id,
-            &route.repositories,
-            scope.as_deref(),
-        )?;
+        let candidates = self
+            .state
+            .lock()
+            .await
+            .store
+            .project_workspace_candidates(&identity.id, &route.repositories)?;
         self.storage.work().verify()?;
         let mut in_flight = 0;
         for (task, repository) in candidates {
