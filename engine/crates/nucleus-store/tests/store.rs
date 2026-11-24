@@ -73,7 +73,7 @@ fn observation() -> Observation {
 }
 
 #[test]
-fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
+fn delivery_fences_follow_pending_attempts_across_reopen() {
     let home = tempfile::tempdir().unwrap();
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
@@ -84,6 +84,9 @@ fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
         "ambiguous",
         "later_send",
         "new_ambiguity",
+        "legacy_without_claim",
+        "no_attempt",
+        "refused",
     ] {
         let version = store.create(&task(id, id), &event("admitted")).unwrap();
         versions.push((id, version));
@@ -92,7 +95,7 @@ fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
             entry.detail = detail.to_string();
             store.claim_task_effect(id, &entry, false).unwrap();
         };
-        if matches!(id, "completed" | "ambiguous") {
+        if matches!(id, "completed" | "ambiguous" | "refused") {
             append(
                 "native_turn_intent",
                 serde_json::json!({
@@ -100,13 +103,16 @@ fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
                 }),
             );
         }
-        append(
-            "native_turn_not_sent",
-            serde_json::json!({
-                "version":version, "session":"preflight",
-                "command": if id == "ambiguous" { "thread-hold-1" } else { "thread-hold-2" },
-            }),
-        );
+        if !matches!(id, "legacy_without_claim" | "no_attempt") {
+            append(
+                "native_turn_not_sent",
+                serde_json::json!({
+                    "version":version,
+                    "session": if id == "refused" { "runtime" } else { "preflight" },
+                    "command": if matches!(id, "ambiguous" | "refused") { "thread-hold-1" } else { "thread-hold-2" },
+                }),
+            );
+        }
         if id == "later_send" {
             append(
                 "native_turn_intent",
@@ -121,19 +127,47 @@ fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
             blocked["deliveryPending"] = serde_json::json!(true);
         }
         append("host_observation_blocked", blocked);
+        if matches!(id, "ambiguous" | "no_attempt" | "new_ambiguity") {
+            append(
+                "host_observation_blocked",
+                serde_json::json!({
+                    "version":version, "session":"runtime/previous-engine", "deliveryPending":false,
+                }),
+            );
+        }
+        if id == "completed" {
+            append(
+                "native_turn_observed",
+                serde_json::json!({
+                    "version":version, "session":"runtime", "command":"thread-hold-1",
+                }),
+            );
+            append(
+                "native_turn_replay",
+                serde_json::json!({
+                    "version":version, "session":"runtime", "command":"thread-hold-1",
+                }),
+            );
+        }
     }
     drop(store);
     let store = Store::open(&storage).unwrap();
     for (id, version) in versions {
         assert_eq!(
-            store.task_delivery_blocked(id, version, "runtime").unwrap(),
-            matches!(id, "ambiguous" | "later_send" | "new_ambiguity"),
+            store.task_delivery_fence(id, version, "runtime").unwrap(),
+            match id {
+                "ambiguous" => Some(vec!["thread-hold-1".into()]),
+                "later_send" => Some(vec!["thread-hold-3".into()]),
+                "new_ambiguity" => Some(vec![]),
+                _ => None,
+            },
             "{id}",
         );
         assert!(
-            !store
-                .task_delivery_blocked(id, version, "replacement")
+            store
+                .task_delivery_fence(id, version, "replacement")
                 .unwrap()
+                .is_none()
         );
     }
 }

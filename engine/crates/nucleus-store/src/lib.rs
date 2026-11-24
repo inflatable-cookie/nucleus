@@ -759,50 +759,61 @@ impl Store {
             .optional()?)
     }
 
-    /// Restore a delivery fence for this task version and native runtime.
-    /// Older engines could fence a parent preflight that had already proved
-    /// the message unsent. A later send intent takes precedence over that proof.
-    /// Remove the legacy compatibility branch first in the reduction pass,
-    /// after a store query confirms no current live task still carries one.
+    /// Find same-version native sends whose outcome a delivery fence could still protect.
+    /// An empty list inside Some represents a typed uncertain send with no usable command.
+    /// Remove legacy NULL deliveryPending and unlinked refusals first in the reduction pass,
+    /// after a live store inventory confirms that no current tasks carry those fences.
     ///
     /// # Errors
     /// Returns an error if the task's delivery history is unreadable.
-    pub fn task_delivery_blocked(
+    pub fn task_delivery_fence(
         &self,
         id: &str,
         version: i64,
         runtime: &str,
-    ) -> Result<bool, StoreError> {
-        Ok(self.connection.prepare_cached(
-            "SELECT EXISTS(
-               SELECT 1 FROM events AS blocked
-               WHERE blocked.task_id = ?1 AND blocked.kind = 'host_observation_blocked'
-                 AND json_valid(blocked.detail)
-                 AND json_extract(blocked.detail, '$.version') = ?2
-                 AND instr(json_extract(blocked.detail, '$.session'), ?3 || '/') = 1
-                 AND (json_extract(blocked.detail, '$.deliveryPending') = 1
-                   OR (json_extract(blocked.detail, '$.deliveryPending') IS NULL AND NOT EXISTS (
-                     SELECT 1 FROM events AS refusal
-                     WHERE refusal.task_id = blocked.task_id
-                       AND refusal.kind = 'native_turn_not_sent' AND refusal.sequence < blocked.sequence
-                       AND json_valid(refusal.detail)
-                       AND json_extract(refusal.detail, '$.version') = ?2
-                       AND json_extract(refusal.detail, '$.session') = 'preflight'
-                       AND json_type(refusal.detail, '$.command') = 'text'
-                       AND NOT EXISTS (
-                         SELECT 1 FROM events AS sent
-                         WHERE sent.task_id = blocked.task_id AND sent.sequence < blocked.sequence
-                           AND sent.kind IN ('host_send', 'native_turn_intent',
-                             'native_turn_replay', 'acp_row_refresh_intent')
-                           AND (sent.sequence > refusal.sequence OR (
-                             json_valid(sent.detail) AND json_extract(sent.detail, '$.version') = ?2
-                             AND json_extract(sent.detail, '$.command') =
-                                 json_extract(refusal.detail, '$.command')
-                           ))
-                       )
-                   )))
-             )"
-        )?.query_row(params![id, version, runtime], |row| row.get(0))?)
+    ) -> Result<Option<Vec<String>>, StoreError> {
+        let explicit: Option<bool> = self
+            .connection
+            .prepare_cached(
+                "SELECT MAX(COALESCE(json_extract(detail, '$.deliveryPending'), 0)) FROM events
+             WHERE task_id = ?1 AND kind = 'host_observation_blocked' AND json_valid(detail)
+               AND json_extract(detail, '$.version') = ?2
+               AND instr(json_extract(detail, '$.session'), ?3 || '/') = 1",
+            )?
+            .query_row(params![id, version, runtime], |row| row.get(0))?;
+        let Some(explicit) = explicit else {
+            return Ok(None);
+        };
+        let mut intents = self.connection.prepare_cached(
+            "SELECT DISTINCT json_extract(intent.detail, '$.command'), EXISTS (
+                 SELECT 1 FROM events AS proof
+                 WHERE proof.task_id = intent.task_id
+                   AND proof.kind IN ('native_turn_observed', 'native_turn_not_sent')
+                   AND json_valid(proof.detail) AND json_extract(proof.detail, '$.version') = ?2
+                   AND json_extract(proof.detail, '$.command') = json_extract(intent.detail, '$.command')
+                   AND ( (proof.kind = 'native_turn_observed' AND json_extract(proof.detail, '$.session') = ?3)
+                      OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence AND
+                          (json_extract(proof.detail, '$.attempt') = intent.sequence OR
+                           (json_type(proof.detail, '$.attempt') IS NULL AND
+                            json_extract(proof.detail, '$.session') = json_extract(intent.detail, '$.session')))))
+             ) FROM events AS intent
+             WHERE intent.task_id = ?1 AND intent.kind IN ('native_turn_intent', 'native_turn_replay', 'acp_row_refresh_intent')
+               AND json_valid(intent.detail) AND json_extract(intent.detail, '$.version') = ?2
+               AND (json_extract(intent.detail, '$.session') = ?3
+                    OR instr(json_extract(intent.detail, '$.session'), ?3 || '/') = 1)
+               AND json_type(intent.detail, '$.command') = 'text'",
+        )?;
+        let claims = intents
+            .query_map(params![id, version, runtime], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_claim = !claims.is_empty();
+        let pending: Vec<_> = claims
+            .into_iter()
+            .filter_map(|(command, observed)| (!observed).then_some(command))
+            .collect();
+        Ok((!pending.is_empty() || (explicit && !has_claim)).then_some(pending))
     }
 
     /// Read all subscription groups with a deadline in the future.

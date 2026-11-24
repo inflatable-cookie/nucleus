@@ -507,7 +507,10 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             row.version
         );
         assert_eq!(state.wait_reason("unsent"), Some(WaitReason::HostUnknown));
-        assert!(state.wait_detail("unsent") == Some(crate::WaitDetail::BeforeSend));
+        assert!(matches!(
+            state.wait_detail("unsent"),
+            Some(crate::WaitDetail::BeforeSend(_))
+        ));
         assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
         assert_eq!(
             state.task_attention(&row).unwrap(),
@@ -539,6 +542,118 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             .iter()
             .any(|event| event.content.kind == "host_observation_blocked")
     );
+}
+
+#[tokio::test]
+async fn an_unconfirmed_hold_gets_readback_only_until_its_exact_message_is_observed() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    let identity = task.identity().clone();
+    let task = Task::new(identity.clone(), "Fixture".into(), None);
+    let binding = {
+        let work = service.worktrees().unwrap();
+        let checkout = work
+            .checkout(
+                &service.fixture().checkout,
+                &identity.repository,
+                &identity.id,
+            )
+            .unwrap();
+        service.binding(&checkout).unwrap()
+    };
+    let parent = nucleus_hosts::parent_thread(std::path::Path::new(&binding.worktree_path));
+    let command = format!("{parent}-hold-1");
+    let message = format!("{command}-message");
+    let delivered = Arc::new(AtomicUsize::new(0));
+    let wire = Arc::clone(&delivered);
+    let (host, native) = native_fixture(move |request| {
+        assert_eq!(request["tag"], "orchestration.subscribeThread");
+        assert_eq!(request["payload"]["threadId"], parent);
+        let messages = if wire.load(Ordering::Relaxed) == 0 { serde_json::json!([]) }
+            else { serde_json::json!([{"id":message,"runId":"exact-run"}]) };
+        serde_json::json!({"_tag":"Chunk", "requestId":request["id"], "values":[
+            {"kind":"snapshot","snapshotSequence":1,"projection":{
+                "thread":{"id":parent,"projectId":binding.project_id,
+                    "worktreePath":binding.worktree_path,"branch":binding.branch,
+                    "providerInstanceId":"fixture-acp",
+                    "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}},
+                "runs":[],"messages":messages,"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
+            }},
+            {"kind":"synchronized"}
+        ]})
+    }).await;
+    service.host = host;
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let runtime = service.host.runtime_identity().unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        let version = state.store.create(&task, &event("fixture")).unwrap();
+        for (kind, scope) in [
+            ("native_turn_intent", runtime.clone()),
+            ("host_observation_blocked", format!("{runtime}/engine")),
+        ] {
+            let mut audit = event(kind);
+            audit.detail = serde_json::json!({"version":version,"session":scope,"command":command})
+                .to_string();
+            state
+                .store
+                .claim_task_effect(&identity.id, &audit, false)
+                .unwrap();
+        }
+        service.lookup(&state, &identity.id).unwrap()
+    };
+    assert!(service.parent_delivery_fenced(&row).await.unwrap());
+    delivered.store(1, Ordering::Relaxed);
+    assert!(!service.parent_delivery_fenced(&row).await.unwrap());
+    let calls = service.host.host_calls();
+    assert!(!service.parent_delivery_fenced(&row).await.unwrap());
+    assert_eq!(service.host.host_calls(), calls);
+    assert_eq!(calls["orchestration.subscribeThread"], 2);
+    assert_eq!(
+        service.task(&identity.id).await.unwrap().version,
+        row.version
+    );
+    native.abort();
+}
+
+#[tokio::test]
+async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (reserved, _, _) = reservation("runless", Entry::Brief, &service.fixture().start);
+    let task = Task::new(reserved.identity().clone(), "Fixture".into(), None);
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, "runless").unwrap()
+    };
+    let refusal = Err(service.parent_not_sent("parent proof changed"));
+    let unknown = Err(ServiceError::Host(HostError::Uncertain));
+    let process = Err(ServiceError::Host(HostError::ProcessCoverage(
+        nucleus_hosts::ProcessEvidenceFailure::Incomplete,
+    )));
+    for result in [&refusal, &unknown, &unknown, &process] {
+        service
+            .schedule_result(&row, result, Priority::Decision)
+            .await
+            .unwrap();
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due("runless").expect("still eligible");
+        assert_eq!(
+            state.schedule.take_ready(due, &BTreeSet::new()).unwrap().id,
+            "runless"
+        );
+        assert_eq!(
+            service.lookup(&state, "runless").unwrap().version,
+            row.version
+        );
+    }
+    let state = service.state.lock().await;
+    assert!(matches!(
+        state.wait_detail("runless"),
+        Some(crate::WaitDetail::BeforeSend(
+            "Checking whether the checkout is idle."
+        ))
+    ));
 }
 
 #[tokio::test]
