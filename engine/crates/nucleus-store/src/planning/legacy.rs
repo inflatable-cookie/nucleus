@@ -1,5 +1,6 @@
 //! Offline import from a standalone TypeScript `SQLite` copy.
 
+mod profiles;
 #[cfg(test)]
 mod tests;
 mod versions;
@@ -21,7 +22,7 @@ use super::{
     Item, ItemContent, ItemKind, ItemRecord, ItemState, WriteAt, decode, insert, record_history,
     valid_key,
 };
-use crate::{DATABASE_FILE, EngineStorage, StorageError, Store, StoreError, TaskNumberSeed};
+use crate::{DATABASE_FILE, SettingsFile, StorageError, Store, StoreError, TaskNumberSeed};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
@@ -43,6 +44,8 @@ pub enum ImportError {
     NumberSeedScope,
     #[error("invalid legacy timestamp {0}")]
     Timestamp(String),
+    #[error("duplicate legacy {table} record for profile {id}")]
+    DuplicateProfile { table: &'static str, id: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -70,6 +73,8 @@ pub struct ImportReport {
     pub task_links: usize,
     pub skipped: usize,
     pub database: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<profiles::ProfileImportReport>,
 }
 
 /// Read an immutable TS backup and run the item import in a fresh scratch database.
@@ -104,19 +109,20 @@ pub fn import_items(
     Ok(report)
 }
 
-/// Append planning items to an existing engine profile while holding its service lock.
+/// Append planning items and profiles while holding the stopped engine's service lock.
 ///
 /// # Errors
 /// Returns an error for a running or missing profile, unsafe source, item collision,
-/// unmapped repository, or database failure. The import is transactional.
+/// unmapped repository, or storage failure. Each store publishes atomically.
 pub fn apply_items(
     scratch: &Path,
     source: &Path,
     repositories: &BTreeMap<String, String>,
-    storage: &EngineStorage,
+    settings: &SettingsFile,
 ) -> Result<ImportReport, ImportError> {
     let source = open_copy(&scratch_root(scratch)?, source)?;
     let mapping = repository_projects(repositories)?;
+    let storage = settings.storage()?;
     storage.database().verify()?;
     let _lock = storage.lock_profile()?;
     let database = storage.database().path().join(DATABASE_FILE);
@@ -125,6 +131,7 @@ pub fn apply_items(
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     Store::prepare_schema(&tx, false)?;
     let mut report = copy_items(&source, &tx, &mapping)?;
+    report.profiles = profiles::apply(&source, settings)?;
     tx.commit()?;
     report.database = Some(database);
     Ok(report)

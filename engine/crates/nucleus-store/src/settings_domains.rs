@@ -5,8 +5,12 @@ use std::{
 };
 
 use longhorn_config::{DomainIssue, StorageClass};
-use nucleus_core::profiles::{Profile, UsageLevel};
+use nucleus_core::{
+    Role,
+    profiles::{Profile, UsageLevel},
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::{Host, Url};
 
 use crate::settings::SettingsValue;
@@ -18,6 +22,58 @@ pub struct NamedProfile {
     pub selection: Profile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    #[serde(default = "enabled_by_default", skip_serializing_if = "enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<PoolRole>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub feature_values: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unrated: bool,
+}
+
+const fn enabled_by_default() -> bool {
+    true
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "Serde passes fields by reference"
+)]
+const fn enabled(value: &bool) -> bool {
+    *value
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolRole {
+    Worker,
+    Reviewer,
+    Coordinator,
+}
+
+impl NamedProfile {
+    #[must_use]
+    pub fn eligible_for(&self, role: Role) -> bool {
+        let role = match role {
+            Role::Worker => PoolRole::Worker,
+            Role::Reviewer => PoolRole::Reviewer,
+        };
+        self.enabled
+            && !self.selection.model.is_empty()
+            && self
+                .roles
+                .as_ref()
+                .is_none_or(|roles| roles.contains(&role))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,9 +96,9 @@ impl SettingsValue for Profiles {
                 key(&profile.selection.id)
                     && ids.insert(&profile.selection.id)
                     && text(&profile.name)
-                    && text(&profile.selection.model),
+                    && (profile.selection.model.is_empty() || text(&profile.selection.model)),
                 "profile",
-                "each profile needs a stable ID, name and model",
+                "each profile needs a stable ID and name, and any model must be valid",
             )?;
             check(
                 profile

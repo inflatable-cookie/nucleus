@@ -25,8 +25,8 @@ pub use settings::{
     SettingsValue, StorageError, VerifiedBackup,
 };
 pub use settings_domains::{
-    DispatchSettings, Hosts, NamedProfile, Profiles, ProjectSettings, Projects, RepositorySettings,
-    T3Settings,
+    DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings, Projects,
+    RepositorySettings, T3Settings,
 };
 pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};

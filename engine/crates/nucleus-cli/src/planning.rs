@@ -332,8 +332,8 @@ pub(super) fn import_items(
         }
     }
     let report = if let Some(home) = apply {
-        let storage = super::open_settings(Some(home))?.storage()?;
-        legacy::apply_items(&scratch, source, &mapping, &storage)?
+        let settings = super::open_settings(Some(home))?;
+        legacy::apply_items(&scratch, source, &mapping, &settings)?
     } else {
         let mode = if keep {
             ImportMode::Keep

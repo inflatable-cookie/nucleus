@@ -1,0 +1,1 @@
+`item.import --apply` now brings TypeScript profiles and pool settings into a stopped Rust profile. It preserves enabled state and role eligibility, enriches unchanged seed records and reports conflicts without overwriting edits.

@@ -5,7 +5,7 @@ use std::{
 };
 
 use axum::{Json, Router, routing::get};
-use nucleus_core::{Authority, Phase};
+use nucleus_core::{Authority, Entry, Forge, Identity, Observed, Phase, Workspace};
 use serde_json::{Value, json};
 
 use super::*;
@@ -16,6 +16,80 @@ use crate::{
 
 const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
+
+#[tokio::test]
+async fn new_worker_launches_exclude_disabled_and_other_roles_even_when_requested() {
+    let (forge, forge_server) = serve_forge(Router::new()).await;
+    let (_home, mut service) = fixture(forge);
+    let (host, native_server) = native_fixture_with_traffic(
+        |request| {
+            native_response(
+                request,
+                std::path::Path::new("/fixture"),
+                &mut NativeRuns::default(),
+            )
+        },
+        None,
+    )
+    .await;
+    service.host = host;
+    service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
+        "profiles": [
+            {"name":"Disabled","enabled":false,"selection":{"id":"disabled","provider":"codex","model":"first"}},
+            {"name":"Review","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"first"}},
+            {"name":"Coordinator","roles":["coordinator"],"selection":{"id":"coordinator","provider":"codex","model":"first"}},
+            {"name":"Worker","roles":["worker"],"selection":{"id":"worker","provider":"codex","model":"second"}}
+        ]
+    })).expect("profile settings")));
+    let observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Absent),
+    };
+    let host = service.host.fixture_pass();
+    for request in [None, Some("disabled"), Some("review"), Some("coordinator")] {
+        let brief = request.map_or_else(
+            || "Fixture brief".into(),
+            |id| format!("---\nqueue: {{profileRequests: {{worker: {{profileId: {id}, reason: fixture, required: true}}}}}}\n---\nFixture brief"),
+        );
+        let mut task = Task::new(
+            Identity {
+                id: "fixture".into(),
+                reference: "fixture".into(),
+                repository: REPOSITORY.into(),
+                base: "main".into(),
+                entry: Entry::Brief,
+                origin_thread: None,
+            },
+            brief,
+            None,
+        );
+        assert_eq!(
+            task.reconcile(&observation),
+            Action::Advance(Phase::Working)
+        );
+        match (
+            request,
+            service
+                .select_launch(&task, &observation, Role::Worker, &host)
+                .await,
+        ) {
+            (None, Ok(LaunchSelection::Profile(selected))) => {
+                assert_eq!(selected.intent.profile().id, "worker");
+            }
+            (
+                Some(requested),
+                Err(ServiceError::Profile(ProfileLaunchError::RequiredProfileUnavailable {
+                    id,
+                    ..
+                })),
+            ) => assert_eq!(requested, id),
+            _ => panic!("unexpected eligibility result for {request:?}"),
+        }
+    }
+    native_server.abort();
+    forge_server.abort();
+}
 
 #[test]
 fn an_unusable_reset_uses_the_configured_cooldown_from_failure() {

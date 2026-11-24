@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
+
 use nucleus_core::profiles::{Effort, Profile, Provider};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{HostError, ModelOption, RoleProfile, available};
 
@@ -71,27 +73,39 @@ impl ProfileCatalog {
     }
 
     #[must_use]
-    pub fn offer(&self, profile: &Profile, runtime_mode: &str) -> Option<ProfileOffer> {
+    pub fn offer(
+        &self,
+        profile: &Profile,
+        instance_id: Option<&str>,
+        mode: &str,
+        feature_values: &BTreeMap<String, Value>,
+    ) -> Option<ProfileOffer> {
         let driver = driver(profile.provider);
+        let runtime_mode = match mode {
+            "supervised" => "approval-required",
+            "accept-edits" => "auto-accept-edits",
+            mode => mode,
+        };
         self.0
             .iter()
             .filter_map(|provider| {
                 let instance = provider["instanceId"].as_str()?;
                 if instance.trim().is_empty()
                     || provider["driver"].as_str().unwrap_or(instance) != driver
+                    || instance_id.is_some_and(|required| required != instance)
                 {
                     return None;
                 }
-                let native = RoleProfile {
-                    instance_id: instance.into(),
-                    model: profile.model.clone(),
-                    runtime_mode: runtime_mode.into(),
-                    options: Vec::new(),
-                };
                 let model = provider["models"]
                     .as_array()?
                     .iter()
                     .find(|model| model["slug"] == profile.model)?;
+                let native = RoleProfile {
+                    instance_id: instance.into(),
+                    model: profile.model.clone(),
+                    runtime_mode: runtime_mode.into(),
+                    options: feature_options(profile.provider, model, feature_values)?,
+                };
                 available(provider, &native).then(|| {
                     let efforts = offered_efforts(model);
                     (
@@ -104,6 +118,49 @@ impl ProfileCatalog {
             .min_by_key(|(custom, instance, _)| (*custom, *instance))
             .map(|(_, _, offer)| offer)
     }
+}
+
+// T3's canonical carriers also appear in hosts/t3code/vocabulary.ts.
+fn feature_options(
+    provider: Provider,
+    model: &Value,
+    values: &BTreeMap<String, Value>,
+) -> Option<Vec<ModelOption>> {
+    let mut options = Vec::new();
+    for (key, value) in values {
+        let (id, value) = match (provider, key.as_str(), value.as_str()) {
+            (_, "speed", Some("default"))
+            | (_, "plan-mode" | "ultracode", Some("off"))
+            | (_, "cyber-access", Some("standard")) => continue,
+            (_, "speed" | "plan-mode" | "ultracode" | "cyber-access", _) if value.is_null() => {
+                continue;
+            }
+            (Provider::Codex, "speed", Some("priority")) => ("serviceTier", json!("priority")),
+            (Provider::Claude, "speed", Some("priority")) => ("fastMode", json!(true)),
+            (Provider::Claude, "ultracode", Some("on")) => ("ultracode", json!(true)),
+            _ => return None,
+        };
+        let descriptor = model
+            .pointer("/capabilities/optionDescriptors")?
+            .as_array()?
+            .iter()
+            .find(|descriptor| descriptor["id"] == id)?;
+        let supported = match descriptor["type"].as_str() {
+            Some("boolean") => value.is_boolean(),
+            Some("select") => descriptor["options"]
+                .as_array()
+                .is_some_and(|choices| choices.iter().any(|choice| choice["id"] == value)),
+            _ => false,
+        };
+        if !supported {
+            return None;
+        }
+        options.push(ModelOption {
+            id: id.into(),
+            value,
+        });
+    }
+    Some(options)
 }
 
 const fn driver(provider: Provider) -> &'static str {
@@ -168,9 +225,81 @@ fn offered_efforts(model: &Value) -> Vec<(Effort, ModelOption)> {
                 effort,
                 ModelOption {
                     id: id.into(),
-                    value: value.into(),
+                    value: json!(value),
                 },
             ))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nucleus_core::profiles::{Capability, Weight};
+
+    #[test]
+    fn migrated_options_and_modes_resolve_against_the_exact_native_instance() {
+        let model = json!({
+            "slug":"fixture-model",
+            "capabilities":{"optionDescriptors":[
+                {"id":"fastMode","type":"boolean"},
+                {"id":"ultracode","type":"boolean"},
+                {"id":"effort","type":"select","options":[{"id":"ultrathink"}]}
+            ]}
+        });
+        let catalog = ProfileCatalog::parse(json!({
+            "environment":{"orchestrationProtocolVersion":2},
+            "providers":[
+                {"instanceId":"claudeAgent","enabled":true,"status":"ready","models":[model]},
+                {"instanceId":"claude-secondary","driver":"claudeAgent","enabled":true,
+                 "status":"ready","supportedRuntimeModes":["auto-accept-edits"],"models":[model]}
+            ]
+        }))
+        .expect("T3 catalog");
+        let profile = Profile {
+            id: "imported".into(),
+            capability: Capability::default(),
+            weight: Weight::default(),
+            provider: Provider::Claude,
+            model: "fixture-model".into(),
+            effort: Some(Effort::Ultra),
+        };
+        let mut features = BTreeMap::from([
+            ("speed".into(), json!("priority")),
+            ("ultracode".into(), json!("on")),
+            ("cyber-access".into(), json!("standard")),
+            ("plan-mode".into(), json!("off")),
+        ]);
+        let instance = Some("claude-secondary");
+        let offer = catalog
+            .offer(&profile, instance, "accept-edits", &features)
+            .expect("native offer");
+        let native = offer.resolve(profile.effort).expect("native launch");
+        assert_eq!(native.instance_id, "claude-secondary");
+        assert_eq!(native.runtime_mode, "auto-accept-edits");
+        assert_eq!(
+            json!(native.options),
+            json!([
+                {"id":"fastMode","value":true},
+                {"id":"ultracode","value":true},
+                {"id":"effort","value":"ultrathink"}
+            ])
+        );
+        assert!(
+            catalog
+                .offer(&profile, instance, "supervised", &features)
+                .is_none()
+        );
+        assert!(
+            catalog
+                .offer(&profile, Some("missing"), "accept-edits", &features)
+                .is_none()
+        );
+        features.insert("plan-mode".into(), json!("on"));
+        assert!(
+            catalog
+                .offer(&profile, instance, "accept-edits", &features)
+                .is_none()
+        );
+    }
 }

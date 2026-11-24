@@ -400,10 +400,27 @@ the rebuilt lead history, and retains dispositions and task links. By default
 it rehearses and rolls back. `--keep` saves a new Rust database in scratch
 and prints its path. For cutover, `--apply <PROFILE_HOME>` appends to an existing
 Rust profile while holding the same exclusive lock as the service. Stop the
-profile before applying. The import commits in one transaction. It preserves
-existing tasks and skips items already imported into the same project,
-including their Rust edits and task links. A collision with an existing native
-item rolls the import back. The importer only reads planning item tables.
+profile before applying. Planning items commit in one transaction. Existing
+tasks and previously imported items, including their Rust edits and task
+links, survive. A collision with an existing native item aborts the apply.
+
+`--apply` also joins `meta.profiles` and `meta.pool` by stable profile ID and
+saves Profiles through a revision-checked Longhorn edit. It adds new profiles,
+enriches unchanged seed records and skips exact matches. Edited profiles stay
+as saved and appear in the conflict report alongside their source records.
+Profiles without pool entries start disabled. The report includes source rows
+that have no destination and shows the retained notes, scopes, coordinator
+membership and feature options. Resolve reported conflicts and unmapped rows
+before using the imported pool. Settings publish after planning validation and
+before the SQLite commit. If either publication fails, rerunning the same
+backup reconciles the two stores.
+
+Older Rust Profiles JSON still allows both roles and enables profiles by
+default. Dispatch checks the imported enabled flag and role list for each new
+reservation. Scopes and coordinator membership are available in Settings for
+reference. The T3 adapter translates canonical mode, effort and options against
+the matching provider instance. A profile with an option the adapter or model
+cannot express stays out of dispatch.
 
 ## Out of scope until milestone 3
 

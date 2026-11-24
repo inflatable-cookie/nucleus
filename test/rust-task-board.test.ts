@@ -5,6 +5,7 @@ import { createServer, request, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
+import { profilesView } from "../client/web/engine-settings-api";
 import {
   createRustBoardTransport,
   type RustCommand,
@@ -38,6 +39,31 @@ const legacy = uiBoardSchema.parse({
   prStates: {},
 });
 const repository = "https://github.com/example/board-fixture";
+
+test("Rust board settings retain imported profile fields across edits", () => {
+  const profile = {
+    name: "Fixture",
+    selection: {
+      id: "fixture", provider: "claude", model: "fixture-model",
+      effort: "high", capability: "worker", weight: "fewer",
+    },
+    group: "fixture-group",
+    enabled: false,
+    roles: ["reviewer", "coordinator"],
+    scopes: ["general", "complex"],
+    providerInstanceId: "claude-fixture",
+    modeId: "accept-edits",
+    featureValues: { speed: "priority", legacy: { data: true } },
+    notes: "Fixture notes",
+    unrated: true,
+  };
+  const saved = { profiles: [profile], pausedGroups: ["fixture-group"] };
+  const { settings } = profilesView.parse({
+    revision: "fixture-revision", configured: true, value: saved,
+  });
+  assert.deepEqual(settings.value, saved);
+});
+
 const head = "a".repeat(40);
 const task = (
   id: string,

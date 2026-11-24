@@ -121,7 +121,15 @@ fn select_profile(
     let resets = state.store.active_provider_pauses(now_ms())?;
     let mut offers = Vec::new();
     for profile in &profiles.profiles {
-        let Some(offer) = catalog.offer(&profile.selection, runtime_mode) else {
+        if !profile.eligible_for(role) {
+            continue;
+        }
+        let Some(offer) = catalog.offer(
+            &profile.selection,
+            profile.provider_instance_id.as_deref(),
+            profile.mode_id.as_deref().unwrap_or(runtime_mode),
+            &profile.feature_values,
+        ) else {
             continue;
         };
         let group = profile

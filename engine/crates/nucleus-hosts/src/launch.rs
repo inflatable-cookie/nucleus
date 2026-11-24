@@ -30,7 +30,7 @@ pub struct RoleProfile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelOption {
     pub id: String,
-    pub value: String,
+    pub value: Value,
 }
 
 impl RoleProfile {
