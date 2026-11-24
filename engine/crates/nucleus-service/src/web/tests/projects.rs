@@ -2156,6 +2156,26 @@ async fn project_removal_rechecks_open_work_and_operator_authority() {
         );
     }
 
+    let mut edited = projects.value.clone();
+    edited.projects.get_mut(id).unwrap().name = "Renamed fixture".into();
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            PROJECTS,
+            &BOARD_KEY,
+            &json!({"revision":projects.revision,"value":edited})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_as(&registry.api, &removal, &BOARD_KEY, &confirm)
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+
     registry.task("alpha-planner", "removal-blocker").await;
     let reply = post_as(&registry.api, &removal, &BOARD_KEY, &confirm).await;
     assert_eq!(reply.status(), StatusCode::CONFLICT);
@@ -2200,9 +2220,9 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
         snapshot["phase"] = json!("done");
         state
             .store
-            .save(
+            .save_row(
                 &row,
-                serde_json::from_value(snapshot).unwrap(),
+                &serde_json::from_value(snapshot).unwrap(),
                 &event("fixture_finished"),
             )
             .unwrap();
@@ -2226,10 +2246,6 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     let first = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
     assert_eq!(first.status(), StatusCode::OK);
     let receipt = json_body(first).await;
-    assert_eq!(
-        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
-        receipt
-    );
 
     {
         let state = registry.service.state.lock().await;
@@ -2260,6 +2276,10 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
         StatusCode::OK
     );
     let registry = registry.reopen();
+    assert_eq!(
+        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
+        receipt
+    );
     registry.enroll("alpha-planner").await;
     assert!(
         !registry
