@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::try_join3;
+use futures_util::future::{try_join, try_join3};
 use rustix::{
     fs::{FileType, Mode, OFlags, Stat, fstat, open, stat},
     io::Errno,
@@ -486,7 +486,7 @@ async fn scoped_activity(
         .into_iter()
         .map(OsStr::new)
         .collect();
-    args.extend(mounts.iter().map(|(mount, _)| mount.as_os_str()));
+    args.extend(mounts.values().map(|mount| mount.as_os_str()));
     let listing = read_listing("/usr/sbin/lsof", &args, Some(temporary)).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
@@ -504,13 +504,23 @@ fn identity(metadata: Stat) -> (i128, u64) {
 async fn scoped_mounts(
     witnesses: &[Witness<'_>],
     temporary: &Path,
-) -> Result<HashSet<(PathBuf, i128)>, HostError> {
-    let listed = read_listing("/bin/df", &["-P"], Some(temporary)).await?;
-    select_mounts(&listed, witnesses)
+) -> Result<HashMap<i128, PathBuf>, HostError> {
+    let mut paths = vec![OsStr::new("-P"), OsStr::new("--")];
+    paths.extend(witnesses.iter().map(|witness| witness.path.as_os_str()));
+    let (anchors, listed) = try_join(
+        read_listing("/bin/df", &paths, Some(temporary)),
+        read_listing("/bin/df", &["-P"], Some(temporary)),
+    )
+    .await?;
+    select_mounts(&anchors, &listed, witnesses)
         .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
 }
 
-fn select_mounts(listed: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<(PathBuf, i128)>> {
+fn select_mounts(
+    anchors: &Listing,
+    listed: &Listing,
+    witnesses: &[Witness<'_>],
+) -> Option<HashMap<i128, PathBuf>> {
     let roots = witnesses
         .iter()
         .map(|witness| {
@@ -518,24 +528,32 @@ fn select_mounts(listed: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<
             (identity(stat(witness.path).ok()?) == open).then_some(open)
         })
         .collect::<Option<Vec<_>>>()?;
-    let mut selected = HashSet::new();
+    // lsof can reject two names for the same device. Use the name df
+    // resolves for the witnessed directory, including APFS aliases.
+    let anchors = mount_points(anchors)?;
+    if anchors.len() != roots.len() {
+        return None;
+    }
+    let mut selected = HashMap::new();
+    for (path, &(device, _)) in anchors.into_iter().zip(&roots) {
+        if identity(stat(path).ok()?).0 != device {
+            return None;
+        }
+        selected.entry(device).or_insert_with(|| path.into());
+    }
     for mount in mount_points(listed)? {
         let device = identity(stat(mount).ok()?).0;
-        // APFS also exposes some volumes at a second path. Compare ancestor
-        // identities so a nested mount below either spelling stays in scope.
-        if roots.iter().any(|root| root.0 == device)
-            || mount
-                .ancestors()
-                .skip(1)
-                .any(|path| stat(path).is_ok_and(|metadata| roots.contains(&identity(metadata))))
+        // Comparing ancestor identities also finds a nested mount below
+        // the physical spelling of a logical APFS directory.
+        if mount
+            .ancestors()
+            .skip(1)
+            .any(|path| stat(path).is_ok_and(|metadata| roots.contains(&identity(metadata))))
         {
-            selected.insert((mount.to_path_buf(), device));
+            selected.entry(device).or_insert_with(|| mount.into());
         }
     }
-    roots
-        .iter()
-        .all(|root| selected.iter().any(|(_, device)| *device == root.0))
-        .then_some(selected)
+    Some(selected)
 }
 
 fn mount_points(listed: &Listing) -> Option<Vec<&Path>> {
@@ -804,14 +822,43 @@ mod tests {
             output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nroot 20 1 19 5% /\ndevfs 10 10 0 100% /dev\n".to_vec(),
             pid: 0,
         };
-        let mounts = select_mounts(&listing, &[root]).expect("mount scope");
-        assert!(mounts.iter().any(|(path, _)| path == Path::new("/dev")));
+        let anchor = Listing {
+            exit: Some(0),
+            output: b"Filesystem 512-blocks Used Available Capacity Mounted on
+root 20 1 19 5% /
+"
+            .to_vec(),
+            pid: 0,
+        };
+        let mounts = select_mounts(&anchor, &listing, &[root]).expect("mount scope");
+        assert!(mounts.values().any(|path| path == Path::new("/dev")));
         assert_eq!(mounts.len(), 2);
         let undecodable = Listing {
             output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nsource with spaces 20 1 19 5% /Volume\\040Alias\n".to_vec(),
             ..listing
         };
         assert!(mount_points(&undecodable).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn internal_directory_witness_sees_one_selector_for_apfs_aliases() {
+        let users = Path::new("/Users");
+        let temporary = tempfile::tempdir().expect("scratch");
+        let witness = Witness::open(users).expect("internal directory witness");
+        let mounts = scoped_mounts(&[witness], temporary.path())
+            .await
+            .expect("internal mount");
+        let device = identity(stat(users).expect("directory facts")).0;
+        assert_eq!(
+            mounts.get(&device).map(PathBuf::as_path),
+            Some(Path::new("/System/Volumes/Data"))
+        );
+        let scan = scoped_activity(users, None, temporary.path()).await;
+        assert!(
+            scan.is_ok(),
+            "the real census should verify its internal directory witness"
+        );
     }
 
     #[tokio::test]
