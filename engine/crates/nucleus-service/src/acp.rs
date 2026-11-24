@@ -7,7 +7,7 @@ use std::{
 
 use crate::{ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget};
 use nucleus_core::{
-    Authority, Phase, WaitReason,
+    Authority, Phase, RunState, WaitReason,
     acp::{Binding, InboxBinding, parent_hold_prompt, session_id},
 };
 use nucleus_store::{AcpSession, TaskRow};
@@ -33,6 +33,33 @@ pub(super) struct WriteAccess {
     pub controller: [u8; 32],
 }
 
+fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
+    let task = &row.task;
+    let Some(run) = task.run() else {
+        return false;
+    };
+    if run.last_send_at_ms().is_none() {
+        return !run.revoked();
+    }
+    // Wait reasons describe when the scheduler can make progress. Only a
+    // positive observation of this exact role can show the child has ended.
+    !state
+        .role_observations
+        .get(&task.identity().id)
+        .is_some_and(|(instance, observed)| {
+            instance == &run.launch().instance
+                && matches!(
+                    observed,
+                    RunState::Ended
+                        | RunState::UsageLimited
+                        | RunState::ParentEnded
+                        | RunState::AssignmentRejected
+                        | RunState::Gone
+                        | RunState::Rejected
+                )
+        })
+}
+
 impl Service {
     pub(super) fn acp_turn_view(
         &self,
@@ -41,40 +68,29 @@ impl Service {
     ) -> Result<(Option<String>, bool), ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        if task.phase().is_terminal() || task.question().is_some() {
+        if task.phase().is_terminal() {
             return Ok((None, false));
         }
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
-        let may_launch = state
-            .settings
-            .dispatch
-            .as_ref()
-            .is_none_or(|dispatch| dispatch.mode.allows_launch(task.first_launch()));
-        if let Some(run) = task
-            .run()
-            .filter(|run| !run.revoked() && run.report().is_none())
-        {
-            let active = if run.last_send_at_ms().is_some() {
-                matches!(
-                    wait,
-                    None | Some(
-                        WaitReason::Running
-                            | WaitReason::Starting
-                            | WaitReason::Permission
-                            | WaitReason::Input
-                    )
-                )
-            } else {
-                may_launch && matches!(wait, None | Some(WaitReason::Starting))
-            };
-            return Ok((None, active));
+        if task.run().is_some() {
+            return Ok((None, run_keeps_turn(state, row)));
         }
-        if !may_launch || task.hold().is_some() || wait != Some(WaitReason::Starting) {
+        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        if task.question().is_some()
+            || task.hold().is_some()
+            || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown))
+        {
             return Ok((None, false));
         }
         let Some(session) = self.host.runtime_identity() else {
             return Ok((None, false));
         };
+        if state
+            .store
+            .task_turn_command(id, "native_turn_failed", row.version, &session)?
+            .is_some()
+        {
+            return Ok((None, false));
+        }
         let command =
             state
                 .store

@@ -29,6 +29,7 @@ struct Agent {
 
 struct Session {
     client: Option<ServiceClient>,
+    cwd: PathBuf,
     view: Arc<Mutex<Presentation>>,
     structured: bool,
     turn: Option<Turn>,
@@ -217,6 +218,7 @@ impl Agent {
             session_id.clone(),
             Session {
                 client,
+                cwd,
                 view: Arc::new(Mutex::new(view)),
                 structured,
                 turn: None,
@@ -243,7 +245,7 @@ impl Agent {
             error(&self.output, id, -32602, "The Nucleus session is unknown.");
             return;
         };
-        let Some(client) = session.client.clone() else {
+        let Some(mut client) = session.client.clone() else {
             error(
                 &self.output,
                 id,
@@ -269,17 +271,19 @@ impl Agent {
         let prompt = prompt_text(&params["prompt"]);
         let view = Arc::clone(&session.view);
         let structured = session.structured;
+        let cwd = session.cwd.clone();
         let output = self.output.clone();
         let session_id = session_id.to_owned();
         let request = id.clone();
         let job = tokio::spawn(async move {
             if let Err(failure) = task_prompt(
-                &client,
+                &mut client,
                 &view,
                 &output,
                 &session_id,
                 structured,
                 operator_text(&prompt),
+                &cwd,
             )
             .await
             {
@@ -327,15 +331,19 @@ async fn snapshot(
 }
 
 async fn task_prompt(
-    client: &ServiceClient,
+    client: &mut ServiceClient,
     view: &Mutex<Presentation>,
     output: &Output,
     session: &str,
     structured: bool,
     prompt: &str,
+    cwd: &std::path::Path,
 ) -> Result<(), Failure> {
     // T3 ACP supplies text without authenticated author metadata. Its only
     // special text is a read-only hold bound to a recorded preparation.
+    if matches!(client.renew_task_reader(cwd, session), Ok(false)) {
+        return Ok(());
+    }
     let cursor = view.lock().await.cursor;
     let (detail, history) = snapshot(client, cursor).await?;
     let hold = !detail.phase.is_terminal() && detail.parent_hold.as_deref() == Some(prompt);
@@ -366,11 +374,15 @@ async fn task_prompt(
         }
         .await;
         match result {
-            Err(Failure::Unavailable) => {
+            Err(error @ (Failure::Unavailable | Failure::Unauthorized | Failure::Refused(_))) => {
+                if matches!(error, Failure::Unauthorized)
+                    && matches!(client.renew_task_reader(cwd, session), Ok(false))
+                {
+                    return Ok(());
+                }
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(30);
             }
-            Err(Failure::Unauthorized) => return Ok(()),
             result => return result,
         }
     }

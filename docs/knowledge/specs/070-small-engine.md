@@ -208,9 +208,11 @@ Later decisions carry their own attribution.
 
     T3 requires an active parent turn to launch a delegated child. Tom kept
     the scheduler's read-only hold during launch preparation. The held turn
-    follows the task while the role child is active and ends when the task
-    waits without a child. Terminal and agent prompts render the current
-    view and end normally. Mutating commands require attested input under
+    follows the task through preparation, reservation and send, and stays
+    open while the role child is active. Dispatch mode and uncertain reads
+    leave a live hold intact. It ends when the task is terminal or waits
+    with no active or pending role. Terminal and agent prompts render the
+    current view and end normally. Mutating commands require attested input under
     ruling 27. A native turn failure is recorded against the task version
     and T3 session and waits for either to change before another attempt.
 
