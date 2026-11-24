@@ -15,6 +15,8 @@ use nucleus_store::{
 
 use rusqlite::Connection;
 
+#[path = "store/numbers.rs"]
+mod numbers;
 #[path = "store/planning.rs"]
 mod planning;
 
@@ -348,14 +350,22 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
+        "DROP TABLE task_numbers; DROP TABLE task_number_counters;
+         DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
          DROP TABLE task_titles; DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
          DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
     let store = Store::open(&storage).expect("migrate version two");
-    assert_eq!(row(&store, "1"), TaskRow { task, version: 1 });
+    assert_eq!(
+        row(&store, "1"),
+        TaskRow {
+            task,
+            version: 1,
+            number: None
+        }
+    );
     assert_eq!(store.history("1", None, 1).expect("audit").len(), 1);
     assert_eq!(
         db.query_row(

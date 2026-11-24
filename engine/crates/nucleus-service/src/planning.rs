@@ -1,4 +1,4 @@
-use nucleus_core::{Authority, PullRequest, Task, profiles::BriefPolicy};
+use nucleus_core::{Authority, PullRequest, profiles::BriefPolicy};
 use nucleus_store::{
     StoreError, TaskRow,
     planning::{
@@ -42,7 +42,7 @@ impl Service {
         project: &str,
         input: TaskAdmission,
         caller: &Authority,
-    ) -> Result<Task, ServiceError> {
+    ) -> Result<TaskRow, ServiceError> {
         let mut state = self.planning_state(project).await?;
         self.check_planning_admission(&state, project)?;
         let id = match input.id {
@@ -54,9 +54,13 @@ impl Service {
         let task = self.admission_task(id, reference, input.brief, input.review, caller)?;
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
-        state.store.create(&task, &admitted)?;
+        let number = state.store.create(&task, &admitted)?;
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok(task)
+        Ok(TaskRow {
+            task,
+            version: 1,
+            number: Some(number),
+        })
     }
 
     pub(crate) async fn promote_planning_item(
@@ -89,11 +93,18 @@ impl Service {
         let task = self.admission_task(task_id.clone(), task_id, brief, None, caller)?;
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
-        state
+        let (_, number) = state
             .store
             .promote_item(&source, &task, &admitted, stamp(caller))?;
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok((true, TaskRow { task, version: 1 }))
+        Ok((
+            true,
+            TaskRow {
+                task,
+                version: 1,
+                number: Some(number),
+            },
+        ))
     }
 
     fn check_planning_admission(&self, state: &State, project: &str) -> Result<(), ServiceError> {

@@ -248,7 +248,7 @@ async fn promote(
     } else {
         StatusCode::OK
     };
-    Ok((status, Json(Summary::new(&row.task, row.version, None))))
+    Ok((status, Json(Summary::new(&row, None))))
 }
 
 async fn add_task(
@@ -261,7 +261,7 @@ async fn add_task(
         .service
         .add_planned_task(&project, body(input)?, &caller)
         .await?;
-    Ok((StatusCode::CREATED, Json(Summary::new(&task, 1, None))))
+    Ok((StatusCode::CREATED, Json(Summary::new(&task, None))))
 }
 
 #[derive(Deserialize)]

@@ -67,7 +67,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   const root = await mkdtemp(join(process.env.TMPDIR!, "rust-board-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const key = randomBytes(32).toString("hex");
-  const running = task("running", "working", "Running task");
+  const running = {
+    ...task("running", "working", "old display reference"),
+    number: 81,
+    reference: "board-fixture#81",
+  };
   const blocked = {
     ...task("blocked", "queued", "Blocked task"),
     question: { retry: { role: "worker" } } satisfies RustTask["question"],
@@ -328,7 +332,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "overflow expands in its view",
   );
   await click("Working, 1");
-  await click("Running task");
+  await click("board-fixture#81");
   await eventually(() => text().includes(activity), "initial activity");
   const beforeList = reads("/v1/tasks");
   const beforeDetail = reads("/v1/tasks/running");

@@ -125,6 +125,7 @@ pub(crate) struct ServiceClient {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Detail {
     pub identity: Identity,
+    pub reference: Option<String>,
     pub phase: Phase,
     pub wait: Option<String>,
     pub question: Option<Question>,

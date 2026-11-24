@@ -21,12 +21,20 @@ fn schema_seven_migrates_in_place() {
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
     db.execute_batch(
-        "DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
+        "DROP TABLE task_numbers; DROP TABLE task_number_counters;
+         DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
          PRAGMA user_version = 7;",
     ).expect("restore version seven schema");
     let store = Store::open(&storage).expect("migrate version seven");
-    assert_eq!(row(&store, "1"), TaskRow { task, version: 1 });
+    assert_eq!(
+        row(&store, "1"),
+        TaskRow {
+            task,
+            version: 1,
+            number: None
+        }
+    );
     assert_eq!(store.plan("example").expect("read new plan").version, 0);
 }
 
@@ -80,9 +88,10 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
     );
 
     let admitted = task("3", "fixture#2");
-    let promoted = store
+    let (promoted, number) = store
         .promote_item(&source, &admitted, &event("admitted"), STAMP)
         .expect("promote");
+    assert_eq!(number, 2);
     assert_eq!(
         promoted.state,
         ItemState::Promoted {

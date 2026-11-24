@@ -93,6 +93,8 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
     let first = post_as(&api, &promote, &PLANNER_KEY, &json!({})).await;
     assert_eq!(first.status(), StatusCode::CREATED);
     let admitted = json_body(first).await;
+    assert_eq!(admitted["number"], 1);
+    assert_eq!(admitted["reference"], "nucleus-fixture#1");
     let repeated = post_as(&api, &promote, &PLANNER_KEY, &json!({})).await;
     assert_eq!(repeated.status(), StatusCode::OK);
     assert_eq!(json_body(repeated).await["identity"], admitted["identity"]);
@@ -103,18 +105,39 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
         json!({"projectId":"local-fixture","itemId":id})
     );
     assert_eq!(task["brief"]["text"], brief);
+    assert_eq!(task["reference"], "nucleus-fixture#1");
+    assert_eq!(task["identity"]["reference"], task_id);
     assert_eq!(task["identity"]["origin_thread"], "planner");
 
+    assert_direct_admission_numbers(&api).await;
+}
+
+async fn assert_direct_admission_numbers(api: &Router) {
     let direct = post_as(
-        &api,
+        api,
         &format!("{PROJECT}/tasks"),
         &PLANNER_KEY,
         &json!({"brief":"A plain brief."}),
     )
     .await;
     assert_eq!(direct.status(), StatusCode::CREATED);
-    let tasks = json_body(get_as(&api, "/v1/tasks", &PLANNER_KEY).await).await;
-    assert_eq!(tasks.as_array().expect("task summaries").len(), 2);
+    assert_eq!(json_body(direct).await["number"], 2);
+    let legacy = post_as(
+        api,
+        "/v1/tasks",
+        &PLANNER_KEY,
+        &json!({
+            "id":"legacy-admission","reference":"legacy-alias","brief":"An existing CLI admission."
+        }),
+    )
+    .await;
+    assert_eq!(legacy.status(), StatusCode::CREATED);
+    let legacy = json_body(legacy).await;
+    assert_eq!(legacy["number"], 3);
+    assert_eq!(legacy["reference"], "nucleus-fixture#3");
+    assert_eq!(legacy["identity"]["reference"], "legacy-alias");
+    let tasks = json_body(get_as(api, "/v1/tasks", &PLANNER_KEY).await).await;
+    assert_eq!(tasks.as_array().expect("task summaries").len(), 3);
 }
 
 #[tokio::test]

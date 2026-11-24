@@ -272,7 +272,7 @@ async fn admit(
         .service
         .admit(input.id, input.reference, input.brief, &authority)
         .await?;
-    Ok((StatusCode::CREATED, Json(Summary::new(&task, 1, None))))
+    Ok((StatusCode::CREATED, Json(Summary::new(&task, None))))
 }
 
 async fn list(State(api): State<Api>) -> Result<Json<Vec<Summary>>, ApiError> {
@@ -287,7 +287,7 @@ async fn list(State(api): State<Api>) -> Result<Json<Vec<Summary>>, ApiError> {
         tasks
             .iter()
             .filter(|row| api.service.project.scope(row.task.identity()).is_ok())
-            .map(|row| Summary::read(&row.task, row.version, &state))
+            .map(|row| Summary::read(row, &state))
             .collect(),
     ))
 }
@@ -296,7 +296,7 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
     let task = &row.task;
-    let summary = Summary::read(task, row.version, &state);
+    let summary = Summary::read(&row, &state);
     let run = RunView::read(&row, state.activity.get(&id), &state.store);
     Ok(Json(Detail {
         summary,
@@ -317,7 +317,7 @@ async fn next(
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
     let task = &row.task;
-    let summary = Summary::read(task, row.version, &state);
+    let summary = Summary::read(&row, &state);
     Ok(Json(NextView {
         version: row.version,
         phase: summary.phase,
@@ -407,9 +407,7 @@ async fn command(
         .command_with_session(&id, &authority, command, session.as_deref())
         .await?;
     match outcome {
-        CommandOutcome::Applied(row) => {
-            Ok(Json(Summary::new(&row.task, row.version, None)).into_response())
-        }
+        CommandOutcome::Applied(row) => Ok(Json(Summary::new(&row, None)).into_response()),
         CommandOutcome::Pending { version } => Ok((
             StatusCode::ACCEPTED,
             Json(json!({"status": "pending", "version": version})),
@@ -507,6 +505,8 @@ fn invalidation_events(
 struct Summary {
     identity: Identity,
     title: String,
+    number: Option<i64>,
+    reference: String,
     version: i64,
     phase: Phase,
     wait: Option<WaitReason>,
@@ -516,13 +516,10 @@ struct Summary {
 }
 
 impl Summary {
-    fn read(task: &Task, version: i64, state: &EngineState) -> Self {
+    fn read(row: &nucleus_store::TaskRow, state: &EngineState) -> Self {
+        let task = &row.task;
         let id = &task.identity().id;
-        let mut view = Self::new(
-            task,
-            version,
-            state.waits.get(id).map(|(reason, _)| *reason),
-        );
+        let mut view = Self::new(row, state.waits.get(id).map(|(reason, _)| *reason));
         if view.wait.is_some() && task.operator_decline().is_none() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
@@ -532,11 +529,14 @@ impl Summary {
         view
     }
 
-    fn new(task: &Task, version: i64, wait: Option<WaitReason>) -> Self {
+    fn new(row: &nucleus_store::TaskRow, wait: Option<WaitReason>) -> Self {
+        let task = &row.task;
         Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
-            version,
+            number: row.number,
+            reference: row.reference().into_owned(),
+            version: row.version,
             phase: task.phase(),
             next_check_at: None,
             wait: if task.run().is_some_and(nucleus_core::Run::revoked) {
@@ -660,6 +660,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::EffectInProgress
                     | ServiceError::Store(
                         nucleus_store::StoreError::StaleTask
+                        | nucleus_store::StoreError::NumbersNeedSeed
                         | nucleus_store::StoreError::PlanningConflict,
                     ) => StatusCode::CONFLICT,
                     _ => StatusCode::SERVICE_UNAVAILABLE,
