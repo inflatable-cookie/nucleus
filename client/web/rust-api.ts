@@ -200,6 +200,8 @@ export const item = z.object({
   title: z.string(),
   body: z.string(),
   lanes: z.array(z.string()),
+  /** Imported items name their member repositories within the project, by origin. */
+  repositories: z.array(z.string()).optional(),
   state: z.enum(["open", "parked", "promoted", "dropped"]),
   reason: z.string().nullable().optional(),
   revisitAt: z.string().nullable().optional(),
@@ -273,7 +275,7 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
       board.read(schema, `/settings/${domain}`, json("PUT", { revision, value })),
     reassign: (revision: string, origin: string, toProject: string) =>
       board.read(
-        projectsView.shape.settings,
+        projectsView,
         "/settings/projects/reassign",
         json("POST", { revision, origin, toProject }),
       ),

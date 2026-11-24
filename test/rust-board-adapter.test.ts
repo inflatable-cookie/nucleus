@@ -15,7 +15,7 @@ import { rustProjectArchive } from "../client/rust-contracts";
 function engine() {
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 2,
-    projectSlotOverrides: { Orbit_Main: 3 },
+    projectSlotOverrides: { Orbit_Main: 3, lantern: 1 },
     providerLimitCooldownSeconds: 300, mode: "running",
   };
   let profiles: Record<string, unknown> = {
@@ -29,6 +29,10 @@ function engine() {
   let projects = { projects: {
     Orbit_Main: { name: "Orbit", archived: false, repositories: [
       { origin: "example/orbit", path: "/work/orbit", base: "main", requiredChecks: ["ci"], hungToolMinutes: 30, hostProjectTitle: "Orbit" },
+      { origin: "example/orbit-docs", path: "/work/orbit-docs", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+    ] },
+    lantern: { name: "Lantern", archived: false, repositories: [
+      { origin: "example/lantern", path: "/work/lantern", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     ] },
   } };
   const revisions: Record<string, number> = { dispatch: 1, profiles: 1, projects: 1 };
@@ -51,6 +55,17 @@ function engine() {
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     if (path === "/tasks") return json([]);
+    if (path === "/settings/projects/reassign") {
+      const body = JSON.parse(String(init?.body)) as { revision: string; origin: string; toProject: string };
+      writes.push({ domain: "reassign", body: { revision: body.revision, value: body } });
+      const all: Record<string, { repositories: typeof projects.projects.Orbit_Main.repositories }> = projects.projects;
+      const from = Object.values(all).find((project) => project.repositories.some((repo) => repo.origin === body.origin))!;
+      const repo = from.repositories.find((candidate) => candidate.origin === body.origin)!;
+      from.repositories = from.repositories.filter((candidate) => candidate !== repo);
+      all[body.toProject]!.repositories.push(repo);
+      revisions.projects = (revisions.projects ?? 1) + 1;
+      return json(views.projects!());
+    }
     const domain = /^\/settings\/(\w+)$/.exec(path)?.[1];
     if (domain && init?.method === "PUT") {
       const body = JSON.parse(String(init.body)) as { revision: string; value: never };
@@ -76,8 +91,9 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.equal(board.paused, false);
   assert.equal(board.dispatchHeld, false);
   assert.equal(board.globalLimit, 4);
-  assert.deepEqual(board.projects.map((project) => [project.key, project.name]), [["p-orbit-main", "Orbit"]]);
-  assert.deepEqual(board.projectLimitOverrides, { "p-orbit-main": 3 });
+  assert.deepEqual(board.projects.map((project) => [project.key, project.name]), [["p-orbit-main", "Orbit"], ["lantern", "Lantern"]]);
+  assert.deepEqual(board.projects[0]!.repositories.map((repo) => repo.origin), ["example/orbit", "example/orbit-docs"]);
+  assert.deepEqual(board.projectLimitOverrides, { "p-orbit-main": 3, lantern: 1 });
   assert.deepEqual(board.pool.map((entry) => [entry.profileId, entry.group, entry.roles]), [["w", "team", ["worker", "reviewer"]]]);
   assert.equal(board.backup.newestSnapshotAt, "2026-11-24T08:00:00Z");
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
@@ -153,5 +169,24 @@ test("the archive control writes the Projects domain", async () => {
   };
   assert.equal(projects.projects.Orbit_Main!.archived, true);
   const board = await adapter.rpc(api.uiSnapshot, {});
-  assert.ok(!("unchanged" in board) && board.projects.length === 0, "an archived project leaves the board");
+  assert.ok(!("unchanged" in board) && board.projects.length === 1, "an archived project leaves the board");
+});
+
+test("moving a repository in the shared Projects editor reassigns it in the engine", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  await adapter.rpc(api.uiSnapshot, {});
+  assert.deepEqual(await adapter.rpc(api.projectMergeCheck, { source: "p-orbit-main" }), { blockers: [], carried: [] });
+  const moved = await adapter.rpc(api.projectMerge, {
+    source: "p-orbit-main", target: "lantern", versions: { source: 1, target: 1 },
+    repository: "example/orbit-docs", reason: "Added to Lantern in Settings",
+  });
+  assert.deepEqual(moved.project.repositories.map((repo) => repo.origin), ["example/lantern", "example/orbit-docs"]);
+  assert.deepEqual(moved.source?.repositories.map((repo) => repo.origin), ["example/orbit"]);
+  const reassign = fake.writes.find((write) => write.domain === "reassign")!.body.value as Record<string, string>;
+  assert.deepEqual([reassign.origin, reassign.toProject], ["example/orbit-docs", "lantern"]);
+  await assert.rejects(
+    adapter.rpc(api.projectUpsert, { key: "lantern", name: "Lantern", repositories: [{ origin: "example/new", path: "" }] }),
+    /first dispatch/,
+  );
 });

@@ -28,11 +28,15 @@ const laneStatus = {
   dropped: "abandoned",
 } as const;
 
-function repositories(project: RustProject) {
-  return project.repositories.map((repo) => ({
+function repositories(project: RustProject, members?: readonly string[]) {
+  const all = project.repositories.map((repo) => ({
     origin: repo.origin,
     path: repo.path,
   }));
+  if (!members?.length) return all;
+  const wanted = new Set(members.map((origin) => origin.toLowerCase()));
+  const chosen = all.filter((repo) => wanted.has(repo.origin.toLowerCase()));
+  return chosen.length ? chosen : all;
 }
 
 export function boardLane(
@@ -87,7 +91,7 @@ export function boardItem(
     id: item.id,
     title: item.title,
     preview: item.body.slice(0, PREVIEW),
-    repositories: repositories(project),
+    repositories: repositories(project, item.repositories),
     lanes: item.lanes,
     // The board tells papercuts from leads by tag (Spec 070: one surface, a type).
     tags: item.kind === "papercut" ? ["papercut"] : [],
@@ -164,7 +168,7 @@ const RUST_ONLY = "Not part of the Rust engine (Spec 070 planning model).";
 
 /** A Rust item as the board's lead record. Both kinds keep their names (ruling 12). */
 export function boardLeadRecord(item: RustItem, project: RustProject) {
-  const repos = repositories(project);
+  const repos = repositories(project, item.repositories);
   const base = project.repositories[0]?.base ?? "main";
   return {
     id: item.id,
@@ -217,7 +221,7 @@ function leadDetail(item: RustItem, project: RustProject) {
       park: open ? null : "Only an open item can be parked.",
       unpark: RUST_ONLY,
       promoteTo: RUST_ONLY,
-      promote: repositories(project).map((repo) => ({
+      promote: repositories(project, item.repositories).map((repo) => ({
         origin: repo.origin,
         reason: open ? null : "Only an open item can be promoted.",
       })),
@@ -228,7 +232,7 @@ function leadDetail(item: RustItem, project: RustProject) {
 }
 
 function boardPapercut(item: RustItem, project: RustProject) {
-  const repo = repositories(project)[0]!;
+  const repo = repositories(project, item.repositories)[0]!;
   return {
     id: item.id,
     repository: repo,

@@ -586,6 +586,14 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
           throw new Error(
             "Projects register when a planner first dispatches (Spec 070 ruling 23).",
           );
+        const known = new Set(existing.repositories.map((repo) => repo.origin));
+        if (
+          input.repositories.length !== known.size ||
+          input.repositories.some((repo) => !repo.origin || !known.has(repo.origin))
+        )
+          throw new Error(
+            "Repositories register on a planner's first dispatch. Move one here from another project instead.",
+          );
         return {
           projects: {
             ...value.projects,
@@ -644,6 +652,39 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       }));
       if (!updated) throw new Error(`${input.repository} is not registered.`);
       return boardRepositorySettings(updated);
+    },
+    "project.merge-check": async () => ({ blockers: [], carried: [] }),
+    // The shared editor's move flows reassign repositories (ruling 8): one
+    // repository, or every repository of the source project.
+    "project.merge": async (input: {
+      source: string;
+      target: string;
+      repository?: string;
+    }) => {
+      const sourceId = keys.id(input.source);
+      const targetId = keys.id(input.target);
+      let current = await rust.domain(projectsView, "projects");
+      const source = current.settings.value.projects[sourceId];
+      if (!source) throw new Error(`Project ${input.source} is not registered.`);
+      const origins = source.repositories
+        .filter(
+          (repo) =>
+            !input.repository ||
+            repo.origin === input.repository ||
+            repo.path === input.repository,
+        )
+        .map((repo) => repo.origin);
+      if (!origins.length) throw new Error(`${input.repository} is not in ${source.name}.`);
+      for (const origin of origins) {
+        await rust.reassign(current.settings.revision, origin, targetId);
+        current = await rust.domain(projectsView, "projects");
+      }
+      keys = projectKeys(Object.keys(current.settings.value.projects));
+      const after = current.settings.value.projects;
+      const target = after[targetId] && boardProject(keys.key(targetId), after[targetId]);
+      if (!target) throw new Error("The engine did not keep the destination project.");
+      const remaining = after[sourceId] && boardProject(keys.key(sourceId), after[sourceId]);
+      return { project: target, source: remaining ?? null, tombstone: null };
     },
     "project.reassign": async (input: { origin: string; project: string }) => {
       const current = await rust.domain(projectsView, "projects");
