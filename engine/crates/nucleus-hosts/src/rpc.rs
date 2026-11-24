@@ -90,6 +90,7 @@ pub struct ThreadHint {
     running: bool,
     identity: Option<crate::PlannerIdentity>,
     inbox_synchronized: bool,
+    parent_thread: Option<String>,
 }
 
 impl ThreadHint {
@@ -104,6 +105,12 @@ impl ThreadHint {
     #[must_use]
     pub fn fixture(item: &Value) -> Option<Self> {
         Self::read(item)
+    }
+
+    /// Attached child updates can change whether a task row should be visible.
+    #[must_use]
+    pub fn parent_thread(&self) -> Option<&str> {
+        self.parent_thread.as_deref()
     }
 
     /// A closure can revoke existing planner authority. It cannot grant it.
@@ -126,10 +133,10 @@ impl ThreadHint {
             return prior.is_none_or(|prior| !prior.closed);
         }
         self.change.as_ref().is_some_and(|current| {
-            current[3].is_string()
+            (current[2].is_string() || current[3].is_string())
                 && prior
                     .and_then(|hint| hint.change.as_ref())
-                    .is_none_or(|prior| (1..=6).any(|field| current[field] != prior[field]))
+                    .is_none_or(|prior| (1..=8).any(|field| current[field] != prior[field]))
         })
     }
 
@@ -155,6 +162,10 @@ impl ThreadHint {
                         && thread["activeRunId"].as_str().is_some(),
                     identity: serde_json::from_value(thread.clone()).ok(),
                     inbox_synchronized: false,
+                    parent_thread: (thread["lineage"]["relationshipToParent"] == "subagent")
+                        .then(|| thread["lineage"]["parentThreadId"].as_str())
+                        .flatten()
+                        .map(str::to_owned),
                     change: Some(json!([
                         item["location"],
                         thread["status"],
@@ -178,6 +189,7 @@ impl ThreadHint {
                 running: false,
                 identity: None,
                 inbox_synchronized: false,
+                parent_thread: None,
             }),
             _ => None,
         }
@@ -529,14 +541,35 @@ impl Rpc {
             .background_row(id, sequence)
     }
 
-    pub(crate) fn role_children_quiet(&self, roles: &[&str]) -> bool {
-        roles.is_empty()
-            || self
-                .snapshots
-                .lock()
-                .expect("thread snapshots")
-                .as_ref()
-                .is_some_and(|shell| shell.roles_quiet(roles))
+    pub(crate) fn thread_row_with_revision(
+        &self,
+        id: &str,
+    ) -> (Option<std::sync::Arc<Value>>, Option<u64>) {
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()
+            .map_or((None, None), |shell| (shell.marker(id), shell.revision(id)))
+    }
+
+    pub(crate) fn row_children(
+        &self,
+        parent: &str,
+        roles: &[&str],
+    ) -> crate::task_row::RowChildren {
+        use crate::task_row::RowChildren;
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()
+            .map_or(
+                if roles.is_empty() {
+                    RowChildren::Quiet
+                } else {
+                    RowChildren::Unknown
+                },
+                |shell| shell.row_children(parent, roles),
+            )
     }
 
     #[cfg(any(test, feature = "loopback-fixture"))]
@@ -665,6 +698,7 @@ impl Rpc {
                                         running: false,
                                         identity: None,
                                         inbox_synchronized: true,
+                                        parent_thread: None,
                                     })
                                     .map_err(|_| HostError::Uncertain)?;
                             }

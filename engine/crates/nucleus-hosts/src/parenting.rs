@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    hash::{BuildHasher, RandomState},
+    path::Path,
+    sync::Arc,
+};
 
 use nucleus_core::{
     RetainedThread,
@@ -378,9 +384,14 @@ impl T3 {
             };
             let observed = Some(fresh.sequence());
             if let Some(delivery) = &mut write.delivery {
-                fresh
-                    .require_parent_provider(&delivery.provider)
-                    .map_err(|_| refuse("root ACP provider binding changed", observed))?;
+                let matches = fresh.parent_binding(&delivery.provider);
+                if matches != [true; 3] {
+                    return Err(HostError::ParentBindingMismatch {
+                        prepared: *sequence,
+                        observed: fresh.sequence(),
+                        matches,
+                    });
+                }
                 let custody = fresh
                     .delivery_custody()
                     .map_err(|predicate| refuse(predicate, observed))?;
@@ -442,6 +453,7 @@ impl T3 {
                         error,
                         HostError::Deferred { .. }
                             | HostError::ParentPreflight { .. }
+                            | HostError::ParentShellChanged { .. }
                             | HostError::ParentSnoozed { .. }
                     )
                 {
@@ -466,14 +478,14 @@ impl T3 {
         thread: &str,
         delivery: &ParentDelivery,
     ) -> Result<(), HostError> {
-        let row = self.rpc.thread_row(thread);
+        let (row, observed) = self.rpc.thread_row_with_revision(thread);
         if delivery.shell == row {
             return Ok(());
         }
         let refuse = |predicate| HostError::ParentPreflight {
             predicate,
             prepared: delivery.row.sequence,
-            observed: None,
+            observed,
         };
         let (Some(prior), Some(row)) = (&delivery.shell, row) else {
             return Err(refuse(
@@ -499,7 +511,16 @@ impl T3 {
             "pendingBackgroundTasks",
         ] {
             if prior[field] != row[field] {
-                return Err(refuse(field));
+                let digest = RandomState::new();
+                return Err(HostError::ParentShellChanged {
+                    field,
+                    prepared: delivery.row.sequence,
+                    observed,
+                    before: digest.hash_one(prior[field].to_string()),
+                    after: digest.hash_one(row[field].to_string()),
+                    idle_before: shell_idle(prior),
+                    idle_now: shell_idle(&row),
+                });
             }
         }
         let visibility: ThreadVisibility = serde_json::from_value((*row).clone())
@@ -520,6 +541,18 @@ impl T3 {
         }
         Ok(())
     }
+}
+
+fn shell_idle(row: &Value) -> Option<bool> {
+    Some(
+        row.get("activeRunId")?.is_null()
+            && row.get("pendingRuntimeRequest")?.is_null()
+            && row["pendingBackgroundTasks"].as_array()?.is_empty()
+            && matches!(
+                row["status"].as_str()?,
+                "idle" | "completed" | "failed" | "interrupted" | "cancelled"
+            ),
+    )
 }
 
 fn prepare_delivery(

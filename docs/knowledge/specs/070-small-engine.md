@@ -272,13 +272,15 @@ Later decisions carry their own attribution.
     The planner ruled on 2026-11-24 that a human wait or a typed custody block
     releases the ACP parent. A verified running role or a launch inside its
     delivery deadline holds it, and expiry publishes at the same task version.
-    Authenticated reports prove delivery. The scheduler keeps checking for
-    quiet role custody before applying the report and taking the next decision.
-    It can reacquire the parent when the task becomes eligible again.
+    Authenticated reports prove delivery. A quiet role observation still gates
+    the report's next decision. If the decisive recheck cannot confirm custody,
+    a native run, request or background-work change can wake another check.
+    The scheduler can then reacquire the parent when the task becomes eligible.
 
     The planner also ruled that a task row snoozes only when the held shell
     shows all its recorded role children quiet. A live turn, pending request or
-    background writer keeps the row visible, including after a report.
+    background writer keeps the row visible, including after a report. Positive
+    child activity clears an owned snooze. Operator snoozes keep their horizon.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code

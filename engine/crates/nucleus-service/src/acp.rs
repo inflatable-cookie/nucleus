@@ -211,6 +211,7 @@ impl Service {
                 nucleus_hosts::HostError::Deferred { .. }
                     | nucleus_hosts::HostError::ParentPreflight { .. }
                     | nucleus_hosts::HostError::ParentSnoozed { .. }
+                    | nucleus_hosts::HostError::ParentShellChanged { .. }
                     | nucleus_hosts::HostError::ParentConnection { .. }
             )
         {

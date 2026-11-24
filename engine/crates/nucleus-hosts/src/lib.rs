@@ -58,7 +58,7 @@ pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc, ThreadReply};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
-pub use task_row::{RowChange, RowObservation, RowVisibility};
+pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility};
 use thread_snapshots::ThreadRead;
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
@@ -104,6 +104,26 @@ pub enum HostError {
     },
     #[error("parent row is snoozed until {until} ms (verified revision {revision})")]
     ParentSnoozed { until: u64, revision: u64 },
+    #[error(
+        "parent ACP binding changed (prepared revision {prepared}, observed revision {observed}; root, provider and model matches expected [true, true, true], observed {matches:?})"
+    )]
+    ParentBindingMismatch {
+        prepared: u64,
+        observed: u64,
+        matches: [bool; 3],
+    },
+    #[error(
+        "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, idle before {idle_before:?}, idle now {idle_now:?}; values are fingerprints)"
+    )]
+    ParentShellChanged {
+        field: &'static str,
+        prepared: u64,
+        observed: Option<u64>,
+        before: u64,
+        after: u64,
+        idle_before: Option<bool>,
+        idle_now: Option<bool>,
+    },
     #[error("parent message could not open the transport before send: {cause}")]
     ParentConnection { cause: &'static str },
     #[error("the held shell could not confirm all recorded role children are quiet")]

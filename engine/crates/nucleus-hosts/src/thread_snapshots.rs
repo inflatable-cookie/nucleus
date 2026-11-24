@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use serde_json::{Value, json};
 
-use crate::rpc::Reply;
+use crate::{rpc::Reply, task_row::RowChildren};
 
 const MAX_SNAPSHOTS: usize = 64;
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
@@ -120,20 +120,50 @@ impl ThreadSnapshots {
         self.rows.get(id).cloned()
     }
 
-    pub(crate) fn roles_quiet(&self, roles: &[&str]) -> bool {
-        roles.iter().all(|role| {
-            self.rows.get(*role).is_some_and(|row| {
-                row.get("activeRunId").is_some_and(Value::is_null)
-                    && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
-                    && row["pendingBackgroundTasks"]
-                        .as_array()
-                        .is_some_and(Vec::is_empty)
-                    && matches!(
-                        row["status"].as_str(),
-                        Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
-                    )
-            })
-        })
+    pub(crate) fn revision(&self, id: &str) -> Option<u64> {
+        self.row_revisions
+            .get(id)
+            .copied()
+            .or(self.initial_revision)
+    }
+
+    pub(crate) fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
+        let mut unknown = roles.iter().any(|role| !self.rows.contains_key(*role));
+        let attached = self.rows.values().filter(|row| {
+            row["lineage"]["parentThreadId"] == parent
+                && row["lineage"]["rootThreadId"] == parent
+                && row["lineage"]["relationshipToParent"] == "subagent"
+        });
+        for row in roles
+            .iter()
+            .filter_map(|role| self.rows.get(*role))
+            .chain(attached)
+        {
+            let status = row["status"].as_str();
+            let background = row["pendingBackgroundTasks"].as_array();
+            if row["activeRunId"].is_string()
+                || row["pendingRuntimeRequest"].is_object()
+                || background.is_some_and(|tasks| !tasks.is_empty())
+                || matches!(
+                    status,
+                    Some("pending" | "preparing" | "queued" | "starting" | "running" | "waiting")
+                )
+            {
+                return RowChildren::Active;
+            }
+            unknown |= !row.get("activeRunId").is_some_and(Value::is_null)
+                || !row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
+                || background.is_none()
+                || !matches!(
+                    status,
+                    Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
+                );
+        }
+        if unknown {
+            RowChildren::Unknown
+        } else {
+            RowChildren::Quiet
+        }
     }
 
     pub(crate) fn background_row(&self, id: &str, revision: u64) -> Option<(Arc<Value>, bool)> {

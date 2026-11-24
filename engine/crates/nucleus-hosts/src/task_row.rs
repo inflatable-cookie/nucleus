@@ -58,11 +58,19 @@ pub enum RowChange {
     Unsettle,
 }
 
+/// What the held shell knows about a task row's role children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowChildren {
+    Quiet,
+    Active,
+    Unknown,
+}
+
 impl T3 {
-    /// The held shell positively shows every recorded role child quiet.
+    /// Read activity from the held shell for recorded and attached role children.
     #[must_use]
-    pub fn role_children_quiet(&self, roles: &[&str]) -> bool {
-        self.rpc.role_children_quiet(roles)
+    pub fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
+        self.rpc.row_children(parent, roles)
     }
 
     #[cfg(feature = "loopback-fixture")]
@@ -129,7 +137,7 @@ impl T3 {
             .rpc
             .call_guarded("orchestration.dispatchCommand", payload, Read::One, || {
                 if matches!(change, RowChange::SnoozeUntil(_))
-                    && !self.role_children_quiet(quiet_roles)
+                    && self.row_children(&thread, quiet_roles) != RowChildren::Quiet
                 {
                     return Err(HostError::RowChildBusy);
                 }

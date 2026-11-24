@@ -201,14 +201,28 @@ async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
         }}));
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
-    row["pendingBackgroundTasks"] = json!([]);
-    let delta = json!({"kind":"thread.updated","sequence":2,"thread":row});
-    service.host.fixture_held_shell(&delta);
-    service
-        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&delta).unwrap())
-        .await;
-    fixture.sync().await;
-    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    let retired = json!({"parentThreadId":fixture.thread,"rootThreadId":fixture.thread,
+        "relationshipToParent":"subagent"});
+    for (index, active) in [false, true, false].into_iter().enumerate() {
+        row["pendingBackgroundTasks"] = json!([]);
+        let retired_delta = json!({"kind":"thread.updated","sequence":4+index*2,"thread":{
+            "id":"thread:retired-reviewer", "lineage":retired,"status":"completed","activeRunId":null,
+            "pendingRuntimeRequest":null,
+            "pendingBackgroundTasks":if active { json!([{"taskId":"monitor"}]) } else { json!([]) },
+        }});
+        service.host.fixture_held_shell(
+            &json!({"kind":"thread.updated","sequence":3+index*2,"thread":row}),
+        );
+        service.host.fixture_held_shell(&retired_delta);
+        service
+            .wake_from_host(nucleus_hosts::ThreadHint::fixture(&retired_delta).unwrap())
+            .await;
+        fixture.sync().await;
+    }
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
 }
 
 #[tokio::test]

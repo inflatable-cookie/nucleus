@@ -408,6 +408,7 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             })
             .to_string();
             state.store.claim_task_effect("worker", &blocked).unwrap();
+            service.track(&mut state, &task);
             service.lookup(&state, "worker").unwrap()
         };
         let unknown = Due(AtomicUsize::new(0), None);
@@ -421,11 +422,25 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             .await
             .unwrap();
         {
-            let state = service.state.lock().await;
+            let mut state = service.state.lock().await;
             assert_eq!(state.waits["worker"].0, WaitReason::HostUnknown);
-            assert!(state.schedule.due("worker").is_some());
+            let due = state.schedule.due("worker").expect("one decisive recheck");
             assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+            assert!(state.schedule.recover_host_observation("worker", due, None));
         }
+        service
+            .schedule_result(&row, &result, Priority::Effect)
+            .await
+            .unwrap();
+        assert!(service.state.lock().await.schedule.due("worker").is_none());
+        let hint = nucleus_hosts::ThreadHint::fixture(&serde_json::json!({
+            "kind":"thread.updated","thread":{
+                "id":"thread:worker","status":"completed","latestRunId":"native-worker-turn",
+            }
+        }))
+        .unwrap();
+        service.wake_from_host(hint).await;
+        assert!(service.state.lock().await.schedule.due("worker").is_some());
         let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
         let result = service.advance_due_task(&row, &ended).await.unwrap();
         let next = service.task("worker").await.unwrap();

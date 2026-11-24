@@ -743,6 +743,12 @@ impl Service {
             .row_roles
             .values()
             .any(|roles| roles.contains(&hint.thread))
+            || hint.parent_thread().is_some_and(|parent| {
+                state
+                    .thread_tasks
+                    .values()
+                    .any(|threads| threads.contains_key(parent))
+            })
         {
             self.title_wake.notify_one();
         }
@@ -1022,31 +1028,18 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
         let deferred = match result {
-            Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+            Err(
+                ServiceError::Host(HostError::Deferred { until })
+                | ServiceError::ParentDeliveryUnknown(HostError::Deferred { until }),
+            ) => Some(*until),
             _ => None,
         };
         let now = Instant::now();
-        if row.task.run().is_some_and(|run| run.report().is_some()) {
-            state.schedule.reset_host_backoff(id);
-            state.schedule.wake(
-                id,
-                deferred.unwrap_or(now).max(now + T3_RETRY_DELAY),
-                Priority::Effect,
-            );
-            let wait = Some(WaitReason::HostUnknown);
-            let cause = "Checking that the reporting role has finished.";
-            let changed = state.host_checks.insert(id.clone(), cause) != Some(cause);
-            let prior = state.set_wait(id, wait);
-            if state.observe_task_allowance(&row.task, wait)? || changed || prior != wait {
-                self.desire_title(state, &row.task, row.reference().as_ref(), wait);
-                self.title_wake.notify_one();
-                self.publish(id, row.version);
-            }
-            return Ok(());
-        }
+        let reported = row.task.run().is_some_and(|run| run.report().is_some());
         let reply_due = row
             .task
             .run()
+            .filter(|_| !reported)
             .and_then(nucleus_core::Run::last_send_at_ms)
             .and_then(|sent| {
                 sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
@@ -1062,19 +1055,24 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
-        let delivery_pending = matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-            || row
-                .task
-                .run()
-                .is_some_and(|run| run.last_send_at_ms().is_some());
-        let cause = match (blocked, delivery_pending, result) {
-            (true, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
-            (true, false, _) => "Couldn’t verify the task thread. Open it to check.",
-            (false, _, Err(ServiceError::Host(HostError::Unavailable))) => {
+        let delivery_pending = !reported
+            && (matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                || row
+                    .task
+                    .run()
+                    .is_some_and(|run| run.last_send_at_ms().is_some()));
+        let cause = match (blocked, reported, delivery_pending, result) {
+            (true, true, _, _) => {
+                "Couldn’t verify that the reporting role finished. Open its thread to check."
+            }
+            (false, true, _, _) => "Checking that the reporting role has finished.",
+            (true, _, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
+            (true, _, false, _) => "Couldn’t verify the task thread. Open it to check.",
+            (false, _, _, Err(ServiceError::Host(HostError::Unavailable))) => {
                 "Couldn’t reach T3. Checking again."
             }
-            (false, true, _) => "Checking whether the message reached the task thread.",
-            (false, false, _) => "Checking the task thread.",
+            (false, _, true, _) => "Checking whether the message reached the task thread.",
+            (false, _, false, _) => "Checking the task thread.",
         };
         let check_changed = state.host_checks.insert(id.clone(), cause) != Some(cause);
         let prior = state.set_wait(id, wait);
@@ -1428,9 +1426,7 @@ impl Service {
         }
         state.set_wait(id, None);
         state.host_checks.remove(id);
-        if task
-            .run()
-            .is_none_or(|run| run.revoked() || run.report().is_some())
+        if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
                 != prior.task.run().map(|run| &run.launch().instance)
         {

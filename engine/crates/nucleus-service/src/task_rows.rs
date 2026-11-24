@@ -3,7 +3,9 @@
 use std::{path::Path, time::Duration};
 
 use nucleus_core::{Role, Task};
-use nucleus_hosts::{ParentWrite, RowChange, RowObservation, RowVisibility, SendOutcome};
+use nucleus_hosts::{
+    ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
+};
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
 use crate::{
@@ -130,10 +132,9 @@ impl Service {
                     continue;
                 };
                 let receipt = state.store.row_snooze(&id, thread)?;
-                match plan_row(attention, hint, receipt, now) {
+                let children = self.host.row_children(thread, &visibility_roles(&row.task));
+                match plan_row_with_children(attention, hint, receipt, now, children) {
                     Plan::Idle(deadline) => next = earliest(next, deadline),
-                    Plan::Write(RowChange::SnoozeUntil(_), _)
-                        if !self.host.role_children_quiet(&visibility_roles(&row.task)) => {}
                     _ => jobs.push((row, thread)),
                 }
             }
@@ -192,18 +193,20 @@ impl Service {
                 return Ok(());
             };
             let prior = state.store.row_snooze(id, thread)?;
-            match plan_row(attention, observed.visibility, prior.clone(), now_ms()) {
+            let children = self.host.row_children(thread, &roles);
+            match plan_row_with_children(
+                attention,
+                observed.visibility,
+                prior.clone(),
+                now_ms(),
+                children,
+            ) {
                 Plan::Idle(_) => return Ok(()),
                 Plan::Forget => return Ok(state.store.forget_row_snooze(id)?),
                 Plan::Record(receipt) => {
                     return Ok(state.store.save_row_snooze(id, thread, &receipt)?);
                 }
                 Plan::Write(change, receipt) => {
-                    if matches!(change, RowChange::SnoozeUntil(_))
-                        && !self.host.role_children_quiet(&roles)
-                    {
-                        return Ok(());
-                    }
                     state.store.save_row_snooze(id, thread, &receipt)?;
                     (change, receipt, prior)
                 }
@@ -418,6 +421,26 @@ impl Service {
         }
         write.after_row_wake(observed);
         Ok(())
+    }
+}
+
+fn plan_row_with_children(
+    attention: TaskAttention,
+    visibility: RowVisibility,
+    receipt: Option<RowSnooze>,
+    now: u64,
+    children: RowChildren,
+) -> Plan {
+    let effective = if children == RowChildren::Active {
+        TaskAttention::Active
+    } else {
+        attention
+    };
+    match plan_row(effective, visibility, receipt, now) {
+        Plan::Write(RowChange::SnoozeUntil(_), _) if children != RowChildren::Quiet => {
+            Plan::Idle(None)
+        }
+        plan => plan,
     }
 }
 

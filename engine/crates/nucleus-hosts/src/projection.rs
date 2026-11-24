@@ -273,22 +273,25 @@ impl Projection {
     }
 
     pub(crate) fn require_parent_provider(&self, instance: &str) -> Result<(), HostError> {
-        if self.thread.parent_thread_id.is_some()
-            || self
-                .thread
-                .lineage
-                .as_ref()
-                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
-            || self.thread.provider_instance_id.as_deref() != Some(instance)
-            || !self
-                .thread
-                .model_selection
-                .as_ref()
-                .is_some_and(|model| model["instanceId"] == instance && model["model"] == "nucleus")
-        {
+        if self.parent_binding(instance) != [true; 3] {
             return Err(HostError::Binding);
         }
         Ok(())
+    }
+
+    pub(crate) fn parent_binding(&self, instance: &str) -> [bool; 3] {
+        [
+            self.thread.parent_thread_id.is_none()
+                && self
+                    .thread
+                    .lineage
+                    .as_ref()
+                    .is_none_or(|lineage| lineage.parent_thread_id.is_none()),
+            self.thread.provider_instance_id.as_deref() == Some(instance),
+            self.thread.model_selection.as_ref().is_some_and(|model| {
+                model["instanceId"] == instance && model["model"] == "nucleus"
+            }),
+        ]
     }
 
     pub(crate) fn belongs_to_parent(&self, parent: &str, in_parent_roster: bool) -> bool {
