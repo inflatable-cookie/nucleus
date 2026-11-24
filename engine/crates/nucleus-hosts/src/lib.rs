@@ -524,6 +524,15 @@ impl T3 {
     }
 
     /// Read the board-safe projection of the cached provider catalog.
+    /// Resolve an observed provider instance from the current cached catalog.
+    #[must_use]
+    pub fn cached_provider_family(
+        &self,
+        instance: &str,
+    ) -> Option<nucleus_core::profiles::Provider> {
+        self.rpc.cached_provider_family(instance)
+    }
+
     #[must_use]
     pub fn board_catalog(&self) -> Value {
         self.rpc.board_catalog()

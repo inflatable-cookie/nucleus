@@ -84,6 +84,30 @@ impl State {
 }
 
 impl Service {
+    pub(super) async fn observe_run_routing(
+        &self,
+        row: &TaskRow,
+        run: &nucleus_core::Run,
+        routing: &nucleus_hosts::RunRouting,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        if self.lookup(&state, id)?.version != row.version {
+            return Err(nucleus_store::StoreError::StaleTask.into());
+        }
+        let mut audit = crate::event("run_routing_observed");
+        audit.detail = serde_json::json!({"presentation":[nucleus_core::acp::lifecycle::Milestone::RunRouting {
+            instance: run.launch().instance.clone(),
+            provider_instance: routing.provider.clone(),
+            provider: self.host.cached_provider_family(&routing.provider),
+            model: routing.model.clone(),
+        }]}).to_string();
+        if state.store.claim_task_effect(id, &audit, false)?.is_some() {
+            self.publish(id, row.version);
+        }
+        Ok(())
+    }
+
     pub(super) async fn observe_role_state(
         &self,
         row: &TaskRow,

@@ -30,6 +30,10 @@ impl Audit {
         Ok(audit)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "fold each lifecycle event in journal order"
+    )]
     fn apply(&mut self, event: HistoryEvent, task: &Task) {
         let at = u64::try_from(event.event.content.at).ok();
         let kind = event.event.content.kind.as_str();
@@ -70,6 +74,7 @@ impl Audit {
                         purpose,
                         thread_url: thread.as_deref().and_then(nucleus_hosts::thread_link),
                         provider,
+                        provider_instance: None,
                         model,
                         model_observed,
                         started_at_ms: self.sent_at_ms,
@@ -78,6 +83,23 @@ impl Audit {
                         outcome: None,
                         activity: None,
                     });
+                }
+                Milestone::RunRouting {
+                    instance,
+                    provider_instance,
+                    provider,
+                    model,
+                } => {
+                    if let Some(card) = cards
+                        .iter_mut()
+                        .rev()
+                        .find(|card| card.instance == instance)
+                    {
+                        card.provider = provider;
+                        card.provider_instance = Some(provider_instance);
+                        card.model = Some(model);
+                        card.model_observed = true;
+                    }
                 }
                 Milestone::RunReported {
                     instance,
@@ -216,6 +238,7 @@ impl Audit {
                     purpose: purpose(task, launch.role, review_round),
                     thread_url: None,
                     provider: None,
+                    provider_instance: None,
                     model: None,
                     model_observed: false,
                     started_at_ms: Some(sent),
@@ -376,8 +399,8 @@ pub(crate) fn read(
         admitted_at_ms,
         finished_at_ms: audit.finished_at_ms.filter(|_| phase.is_terminal()),
         review_round,
-        worker: participant(task, Role::Worker),
-        reviewer: participant(task, Role::Reviewer),
+        worker: participant(task, Role::Worker, &audit),
+        reviewer: participant(task, Role::Reviewer, &audit),
         transcript: transcript.map(|request| audit.transcript(task, review_round, request)),
     })
 }
@@ -412,14 +435,37 @@ fn current_note(task: &Task, step: StepKey, state_label: &str) -> Option<String>
     (!is_step_label).then(|| state_label.to_owned())
 }
 
-fn participant(task: &Task, role: Role) -> Option<Participant> {
+fn participant(task: &Task, role: Role, audit: &Audit) -> Option<Participant> {
     let threads = task.threads();
     let profile = threads.profile(role);
     let thread = threads.get(role)?;
+    let url = nucleus_hosts::thread_link(thread);
+    let current = task
+        .run()
+        .filter(|run| run.launch().role == role)
+        .map(|run| run.launch().instance.as_str());
+    let observed = audit
+        .transcript
+        .cards
+        .iter()
+        .rev()
+        .find(|card| {
+            card.role == role
+                && card.thread_url == url
+                && current.is_none_or(|instance| card.instance == instance)
+        })
+        .filter(|card| card.model_observed);
     Some(Participant {
         thread: thread.into(),
-        provider: profile.map(|profile| profile.provider),
-        model: profile.map(|profile| profile.model.clone()),
+        provider: observed.map_or_else(
+            || profile.map(|profile| profile.provider),
+            |card| card.provider,
+        ),
+        provider_instance: observed.and_then(|card| card.provider_instance.clone()),
+        model: observed.map_or_else(
+            || profile.map(|profile| profile.model.clone()),
+            |card| card.model.clone(),
+        ),
     })
 }
 

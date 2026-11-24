@@ -312,6 +312,11 @@ impl Service {
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
         let (state, activity, error) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
+                if run.launch().role == Role::Worker
+                    && let Some(routing) = &seen.routing
+                {
+                    self.observe_run_routing(row, run, routing).await?;
+                }
                 if let Some(limit) = &seen.provider_limit {
                     self.record_provider_limit(row, run, limit).await?;
                 }

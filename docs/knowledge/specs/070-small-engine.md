@@ -148,6 +148,11 @@ Later decisions carry their own attribution.
    Older parent holds and unpinned continuations still require an idle thread.
    Delegated launch absence still
    requires an exact terminal parent run and an authoritative child absence.
+   New retained worker continuations pin provider and model and can enter the
+   native queue without an idle or presentation check. A reservation proven
+   unsent is replanned with a pin and a fresh command ID. For an older
+   reservation that may have been sent, the engine waits for matching native
+   evidence and uses the actual run's provider and model when it observes it.
    Done thread housekeeping follows ruling 34 after checkout removal. The
    synchronized shell supplies the known task, reviewer and worker rows and
    rechecks the target before dispatch. Closure follows when all three are

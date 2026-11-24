@@ -388,6 +388,17 @@ impl Rpc {
         }
     }
 
+    pub(crate) fn cached_provider_family(
+        &self,
+        instance: &str,
+    ) -> Option<nucleus_core::profiles::Provider> {
+        self.catalog
+            .lock()
+            .expect("provider catalog")
+            .current()?
+            .provider_family(instance)
+    }
+
     pub(crate) fn board_catalog(&self) -> Value {
         self.catalog.lock().expect("provider catalog").board_view()
     }

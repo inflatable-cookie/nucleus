@@ -62,6 +62,7 @@ const current = z.object({
 const participant = z.object({
   thread: z.string(),
   provider: z.string().nullable(),
+  providerInstance: z.string().optional(),
   model: z.string().nullable(),
 });
 const lifecycle = z.object({

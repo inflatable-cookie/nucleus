@@ -106,10 +106,14 @@ impl Card {
             Role::Reviewer => "Reviewer",
         };
         let mut title = role.to_owned();
-        if run.provider.is_none() && run.model.is_none() {
+        if run.provider.is_none() && run.provider_instance.is_none() && run.model.is_none() {
             title.push_str(" · Provider and model unknown");
         } else {
-            let provider = run.provider.map_or("Provider unknown", provider_label);
+            let provider = run
+                .provider_instance
+                .as_deref()
+                .or_else(|| run.provider.map(provider_label))
+                .unwrap_or("Provider unknown");
             let model = run.model.as_deref().unwrap_or("model unknown");
             let source = if run.model_observed {
                 "observed"
