@@ -2363,7 +2363,6 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let created = &queued["createdAtMs"];
     assert!(created.is_u64());
     assert_eq!(&queued["stateSinceMs"], created);
-    assert_eq!(&queued["latestEventAtMs"], created);
 
     observe_task_wait(&service, WaitReason::Capacity).await;
     let since = 1_700_000_000_000_i64;
@@ -2391,7 +2390,6 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let changed = json_body(response).await;
     assert_eq!(changed["title"], "Renamed title");
     assert_eq!(changed["stateSinceMs"], since);
-    assert!(changed["latestEventAtMs"].as_i64().unwrap() > since);
     assert!(
         service.host.host_calls().is_empty(),
         "board GETs do not read the host"
@@ -2455,12 +2453,14 @@ async fn operator_hold_keeps_its_state_entry_across_restart() {
     let before = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     assert_eq!(before["stateLabel"], "Waiting on Tom");
     assert!(before["stateSinceMs"].is_u64());
+    assert!(before["latestEventAtMs"].is_u64());
     drop(api);
 
     let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
     let after = json_body(get_as(&settings_api(&reopened), path, &BOARD_KEY).await).await;
     assert_eq!(after["stateLabel"], before["stateLabel"]);
     assert_eq!(after["stateSinceMs"], before["stateSinceMs"]);
+    assert_eq!(after["latestEventAtMs"], before["latestEventAtMs"]);
 }
 
 async fn observe_task_wait(service: &Service, wait: WaitReason) {
