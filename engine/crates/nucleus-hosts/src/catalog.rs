@@ -122,7 +122,7 @@ impl ProfileCatalog {
                     options: feature_options(profile.provider, model, feature_values)?,
                 };
                 available(provider, &native).then(|| {
-                    let efforts = offered_efforts(model);
+                    let efforts = offered_efforts(profile.provider, model);
                     (
                         instance != driver,
                         instance,
@@ -144,6 +144,8 @@ fn feature_options(
     let mut options = Vec::new();
     for (key, value) in values {
         let (id, value) = match (provider, key.as_str(), value.as_str()) {
+            // Canonical defaults leave the provider's settings in effect, even
+            // for models that don't expose the option.
             (_, "speed", Some("default"))
             | (_, "plan-mode" | "ultracode", Some("off"))
             | (_, "cyber-access", Some("standard")) => continue,
@@ -195,46 +197,66 @@ const fn driver(provider: Provider) -> &'static str {
     }
 }
 
-fn offered_efforts(model: &Value) -> Vec<(Effort, ModelOption)> {
+fn offered_efforts(provider: Provider, model: &Value) -> Vec<(Effort, ModelOption)> {
     let Some(descriptors) = model
         .pointer("/capabilities/optionDescriptors")
         .and_then(Value::as_array)
     else {
         return Vec::new();
     };
-    let mut carriers = descriptors.iter().filter(|option| {
-        option["type"] == "select"
-            && (option["role"] == "reasoning"
-                || matches!(
-                    option["id"].as_str(),
-                    Some(
-                        "reasoningEffort"
-                            | "effort"
-                            | "reasoning"
-                            | "variant"
-                            | "reasoning_effort"
-                            | "thinking_level"
-                            | "thinking"
-                    )
-                ))
-    });
-    let Some(carrier) = carriers.next() else {
-        return Vec::new();
+    let selects = descriptors
+        .iter()
+        .filter(|option| option["type"] == "select");
+    let preferred = match provider {
+        Provider::Claude | Provider::Fx => Some("effort"),
+        Provider::Pi => Some("thinking"),
+        _ => None,
     };
+    if let Some(preferred) = preferred
+        && let Some(carrier) = selects.clone().find(|option| option["id"] == preferred)
+    {
+        return carrier_efforts(provider, carrier);
+    }
+
+    // A recognized ID alone does not make a select a thinking control.
+    for option in selects {
+        let marked = option["role"] == "reasoning";
+        if marked
+            || matches!(
+                option["id"].as_str(),
+                Some(
+                    "reasoningEffort"
+                        | "effort"
+                        | "reasoning"
+                        | "variant"
+                        | "reasoning_effort"
+                        | "thinking_level"
+                        | "thinking"
+                )
+            )
+        {
+            let efforts = carrier_efforts(provider, option);
+            if marked || !efforts.is_empty() {
+                return efforts;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn carrier_efforts(provider: Provider, carrier: &Value) -> Vec<(Effort, ModelOption)> {
     let (Some(id), Some(choices)) = (carrier["id"].as_str(), carrier["options"].as_array()) else {
         return Vec::new();
     };
-    if carriers.next().is_some() {
-        return Vec::new();
-    }
     choices
         .iter()
         .filter_map(|choice| {
             let value = choice["id"].as_str()?;
-            let effort = if value == "ultrathink" {
-                Effort::Ultra
-            } else {
-                serde_json::from_value(choice["id"].clone()).ok()?
+            let effort = match (provider, value) {
+                (Provider::Claude, "ultrathink") => Effort::Ultra,
+                (Provider::Claude | Provider::Fx, "off" | "minimal")
+                | (Provider::Claude | Provider::Pi | Provider::Fx, "ultra") => return None,
+                _ => serde_json::from_value(choice["id"].clone()).ok()?,
             };
             Some((
                 effort,
@@ -259,7 +281,8 @@ mod tests {
             "capabilities":{"optionDescriptors":[
                 {"id":"fastMode","type":"boolean"},
                 {"id":"ultracode","type":"boolean"},
-                {"id":"effort","type":"select","options":[{"id":"ultrathink"}]}
+                {"id":"reasoningEffort","type":"select","options":[{"id":"high"}]},
+                {"id":"effort","type":"select","options":[{"id":"ultrathink"},{"id":"minimal"}]}
             ]}
         });
         let catalog = ProfileCatalog::parse(json!({
@@ -289,6 +312,7 @@ mod tests {
         let offer = catalog
             .offer(&profile, instance, "accept-edits", &features)
             .expect("native offer");
+        assert_eq!(offer.efforts().collect::<Vec<_>>(), [Effort::Ultra]);
         let native = offer.resolve(profile.effort).expect("native launch");
         assert_eq!(native.instance_id, "claude-secondary");
         assert_eq!(native.runtime_mode, "auto-accept-edits");
@@ -310,11 +334,42 @@ mod tests {
                 .offer(&profile, Some("missing"), "accept-edits", &features)
                 .is_none()
         );
+        features.insert("speed".into(), json!("default"));
+        features.insert("ultracode".into(), json!("off"));
+        let native = catalog
+            .offer(&profile, instance, "accept-edits", &features)
+            .expect("canonical defaults are supported")
+            .resolve(None)
+            .expect("default launch");
+        assert!(native.options.is_empty());
         features.insert("plan-mode".into(), json!("on"));
         assert!(
             catalog
                 .offer(&profile, instance, "accept-edits", &features)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn generic_thinking_uses_the_first_reasoning_select_with_a_known_level_or_role() {
+        let model = json!({
+            "capabilities":{"optionDescriptors":[
+                {"id":"variant","type":"select","options":[{"id":"plain"}]},
+                {"id":"thought_level","type":"select","role":"reasoning",
+                 "options":[{"id":"high"}]},
+                {"id":"reasoningEffort","type":"select","options":[{"id":"medium"}]}
+            ]}
+        });
+        let efforts = offered_efforts(Provider::Codex, &model);
+        assert_eq!(
+            efforts,
+            [(
+                Effort::High,
+                ModelOption {
+                    id: "thought_level".into(),
+                    value: json!("high"),
+                },
+            )]
         );
     }
 }
