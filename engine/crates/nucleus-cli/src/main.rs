@@ -109,6 +109,15 @@ enum Action {
         #[arg(long, requires = "apply")]
         profiles_only: bool,
     },
+    /// Import project containers and reconcile Planning from a fenced TypeScript copy.
+    #[command(name = "project.import")]
+    ImportProjects {
+        /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
+        source: PathBuf,
+        /// Apply to an explicit, stopped profile. Omit to rehearse in fresh scratch.
+        #[arg(long, value_name = "PROFILE_HOME")]
+        apply: Option<PathBuf>,
+    },
     /// Set up the Nucleus Rust provider in a local T3 environment.
     T3(t3_setup::Args),
     /// Admit a task. Read the brief from stdin.
@@ -263,6 +272,9 @@ async fn main() -> Result<()> {
             apply,
             profiles_only,
         } => planning::import_items(&source, repositories, keep, apply.as_deref(), profiles_only),
+        Action::ImportProjects { source, apply } => {
+            planning::import_projects(&source, apply.as_deref())
+        }
         Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
     }

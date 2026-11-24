@@ -1,0 +1,1 @@
+Restore multi-repository projects in the Rust engine with a shared slot limit and planner access across member repositories. The offline import carries forward project settings, plans, lane documents and existing planning items.

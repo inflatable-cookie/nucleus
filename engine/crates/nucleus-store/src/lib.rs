@@ -69,6 +69,10 @@ pub enum StoreError {
     PlanningInput,
     #[error("planning record conflicts with the current state")]
     PlanningConflict,
+    #[error(
+        "the offline project import is pending; finish project.import before starting the engine"
+    )]
+    ProjectImportPending,
     #[error("seed this repository's task numbers from the fenced legacy snapshot")]
     NumbersNeedSeed,
     #[error("the legacy range overlaps a Rust task number")]
@@ -146,6 +150,7 @@ impl Store {
         let mut connection = Self::connect_database(path, OpenFlags::SQLITE_OPEN_CREATE)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::prepare_schema(&tx, true)?;
+        Self::check_legacy_project_import(&tx)?;
         tx.commit()?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", true)?;
@@ -218,6 +223,7 @@ impl Store {
         }
         // This independent table is additive to every supported task schema.
         tx.execute(usage::PROVIDER_PAUSES, [])?;
+        tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         Ok(())
     }
 
@@ -275,15 +281,14 @@ impl Store {
     pub fn occupied_project_slots(
         &self,
         except: &str,
-        repositories: &[(String, String)],
+        repositories: &[String],
     ) -> Result<u32, StoreError> {
         let repositories = serde_json::to_string(repositories)?;
         Ok(self.connection.query_row(
             "SELECT count(*) FROM tasks
              WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL
              AND EXISTS (SELECT 1 FROM json_each(?2) AS route
-                 WHERE tasks.repository = json_extract(route.value, '$[0]') COLLATE NOCASE
-                   AND tasks.base = json_extract(route.value, '$[1]'))",
+                 WHERE tasks.repository = route.value COLLATE NOCASE)",
             params![except, repositories],
             |row| row.get(0),
         )?)

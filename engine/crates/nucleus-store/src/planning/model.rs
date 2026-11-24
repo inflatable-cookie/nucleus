@@ -63,6 +63,8 @@ pub struct Item {
     pub kind: ItemKind,
     pub author: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repositories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub task_links: Vec<String>,
     #[serde(flatten)]
     pub content: ItemContent,

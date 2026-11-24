@@ -616,6 +616,27 @@ impl Service {
         Ok(Some((sent, result, archive)))
     }
 
+    async fn planner_notice_route(
+        &self,
+        route: &ProjectRoute,
+        target: &nucleus_hosts::NoticeTarget,
+    ) -> bool {
+        if self.project.is_some() {
+            return target.project_id == route.host_project;
+        }
+        let state = self.state.lock().await;
+        state
+            .live_planner_route(&target.thread)
+            .is_some_and(|(id, repo)| {
+                Some(id) == route.project_id.as_deref()
+                    && repo.host_project.as_deref() == Some(target.project_id.as_str())
+                    && self
+                        .host
+                        .cached_project(&target.project_id)
+                        .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
+            })
+    }
+
     pub(super) async fn dispatch_gate(
         &self,
         task: &Task,
@@ -634,14 +655,8 @@ impl Service {
             {
                 return Err(HostError::Binding.into());
             }
-            DispatchTarget::Planner(target) => {
-                let state = self.state.lock().await;
-                if target.project_id != route.host_project
-                    || self.project.is_none()
-                        && state.live_planner_project(&target.thread) != route.project_id.as_deref()
-                {
-                    return Err(HostError::Binding.into());
-                }
+            DispatchTarget::Planner(target) if !self.planner_notice_route(&route, target).await => {
+                return Err(HostError::Binding.into());
             }
             _ => {}
         }
