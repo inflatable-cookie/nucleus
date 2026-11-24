@@ -469,8 +469,8 @@ impl T3 {
                 field,
                 prepared: delivery.row.sequence,
                 observed,
-                before: digest.hash_one(prior[field].to_string()),
-                after: digest.hash_one(row[field].to_string()),
+                before: digest.hash_one(prior.get(field).map(Value::to_string)),
+                after: digest.hash_one(row.get(field).map(Value::to_string)),
                 activity_before: before.activity(),
                 activity_now: after.activity(),
             });

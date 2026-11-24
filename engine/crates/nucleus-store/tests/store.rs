@@ -152,11 +152,19 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
             "version":version,"session":"before-restart","command":"hold-3",
         })
         .to_string();
-        assert!(store.claim_task_effect("fixture", &receipt).expect("claim"));
-        assert!(
-            !store
+        let sequence = store
+            .claim_task_effect("fixture", &receipt)
+            .expect("claim")
+            .expect("new event");
+        assert_eq!(
+            store.history("fixture", None, 1).unwrap()[0].sequence,
+            sequence
+        );
+        assert_eq!(
+            store
                 .claim_task_effect("fixture", &receipt)
-                .expect("duplicate")
+                .expect("duplicate"),
+            None
         );
         version
     };

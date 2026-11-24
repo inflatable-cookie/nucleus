@@ -561,14 +561,9 @@ impl Rpc {
             .lock()
             .expect("thread snapshots")
             .as_ref()
-            .map_or(
-                if roles.is_empty() {
-                    RowChildren::Quiet
-                } else {
-                    RowChildren::Unknown
-                },
-                |shell| shell.row_children(parent, roles),
-            )
+            .map_or(RowChildren::Unknown, |shell| {
+                shell.row_children(parent, roles)
+            })
     }
 
     #[cfg(any(test, feature = "loopback-fixture"))]

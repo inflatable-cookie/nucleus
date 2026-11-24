@@ -638,11 +638,15 @@ impl Store {
         )?)
     }
 
-    /// Record a task effect's exact intent once without changing its task version.
+    /// Record a task effect once and return its journal sequence when newly inserted.
     ///
     /// # Errors
     /// Returns an error if the journal cannot be updated.
-    pub fn claim_task_effect(&mut self, id: &str, event: &EventDraft) -> Result<bool, StoreError> {
+    pub fn claim_task_effect(
+        &mut self,
+        id: &str,
+        event: &EventDraft,
+    ) -> Result<Option<i64>, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -651,11 +655,14 @@ impl Store {
             params![id, event.kind, event.detail],
             |row| row.get(0),
         )?;
-        if !recorded {
+        let sequence = if recorded {
+            None
+        } else {
             append(&tx, id, event)?;
-        }
+            Some(tx.last_insert_rowid())
+        };
         tx.commit()?;
-        Ok(!recorded)
+        Ok(sequence)
     }
 
     /// Read a native turn intent for the current task state and host session.

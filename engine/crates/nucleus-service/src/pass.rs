@@ -673,6 +673,7 @@ impl Service {
             .await
             .store
             .claim_task_effect(id, &audit)?
+            .is_some()
         {
             eprintln!(
                 "{id}: assignment exceeds the T3 message limit: {}",

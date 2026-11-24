@@ -151,6 +151,12 @@ impl Fixture {
             }}));
     }
 
+    fn observe_empty_shell(&self) {
+        self.service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+        }));
+    }
+
     async fn observed_snooze(&self) -> RowSnooze {
         let state = self.service.state.lock().await;
         let receipt = state.store.row_snooze(ID, &self.thread).unwrap().unwrap();
@@ -316,6 +322,9 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     }
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     fixture.sync().await;
+    assert!(fixture.commands().is_empty());
+    fixture.observe_empty_shell();
+    fixture.sync().await;
     assert!(fixture.observed_snooze().await.until_ms > now_ms() + RENEW_BEFORE_MS);
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze"]);
@@ -397,6 +406,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         service.desire_title(&state, &pending, ID, None);
         service.lookup(&state, ID).unwrap()
     };
+    fixture.observe_empty_shell();
     fixture.sync().await;
     let fence = service.effect(&row).await.unwrap();
     let prepare = || {

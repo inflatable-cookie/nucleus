@@ -121,7 +121,7 @@ impl Service {
         .to_string();
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
-        let recorded = state.store.claim_task_effect(id, &intent)?;
+        let recorded = state.store.claim_task_effect(id, &intent)?.is_some();
         if recorded {
             if kind == "native_turn_failed" {
                 state.wake_capacity(tokio::time::Instant::now());
@@ -132,13 +132,13 @@ impl Service {
         Ok(recorded)
     }
 
-    pub(super) async fn claim_parent_intent(
+    async fn claim_parent_intent(
         &self,
         row: &TaskRow,
         kind: &str,
         session: &str,
         command: &str,
-    ) -> Result<bool, ServiceError> {
+    ) -> Result<Option<i64>, ServiceError> {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
         let retry_of =
@@ -147,7 +147,7 @@ impl Service {
                 .task_turn_attempt(id, kind, row.version, session, command)?
             {
                 Some((sequence, true)) => Some(sequence),
-                Some((_, false)) => return Ok(false),
+                Some((_, false)) => return Ok(None),
                 None => None,
             };
         let mut intent = event(kind);
@@ -155,12 +155,12 @@ impl Service {
             "command": command, "version": row.version, "session": session, "retryOf": retry_of,
         })
         .to_string();
-        let recorded = state.store.claim_task_effect(id, &intent)?;
-        if recorded && matches!(kind, "native_turn_intent" | "native_turn_replay") {
+        let attempt = state.store.claim_task_effect(id, &intent)?;
+        if attempt.is_some() && matches!(kind, "native_turn_intent" | "native_turn_replay") {
             state.set_wait(id, Some(WaitReason::Starting));
             self.publish(id, row.version);
         }
-        Ok(recorded)
+        Ok(attempt)
     }
 
     pub(super) async fn deliver_parent(
@@ -188,13 +188,17 @@ impl Service {
                 cause.into()
             });
         }
-        if let Some(kind) = intent_kind
-            && !self
+        let attempt = if let Some(kind) = intent_kind {
+            let Some(attempt) = self
                 .claim_parent_intent(row, kind, session, &command)
                 .await?
-        {
-            return Ok(false);
-        }
+            else {
+                return Ok(false);
+            };
+            Some(attempt)
+        } else {
+            None
+        };
         match self.host.write_verified_parent(write).await {
             Ok(()) => Ok(true),
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
@@ -202,7 +206,7 @@ impl Service {
             }
             Err(nucleus_hosts::ParentSendError::Unknown(error)) => Err(error.into()),
             Err(nucleus_hosts::ParentSendError::NotSent(error)) => {
-                self.record_parent_refusal(row, &command, session, intent_kind, &error.to_string())
+                self.record_parent_refusal(row, &command, session, attempt, &error.to_string())
                     .await?;
                 Err(if message {
                     self.parent_not_sent(error)
@@ -218,26 +222,21 @@ impl Service {
         row: &TaskRow,
         command: &str,
         session: &str,
-        intent_kind: Option<&str>,
+        attempt: Option<i64>,
         reason: &str,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
-        let mut state = self.state.lock().await;
-        let attempt = if let Some(kind) = intent_kind {
-            state
-                .store
-                .task_turn_attempt(id, kind, row.version, session, command)?
-                .map(|(sequence, _)| sequence)
-        } else {
-            None
-        };
         let mut audit = event("native_turn_not_sent");
         audit.detail = serde_json::json!({
             "command": command, "version": row.version, "session": session,
             "attempt": attempt, "reason": reason,
         })
         .to_string();
-        state.store.claim_task_effect(id, &audit)?;
+        self.state
+            .lock()
+            .await
+            .store
+            .claim_task_effect(id, &audit)?;
         Ok(())
     }
 

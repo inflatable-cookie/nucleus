@@ -80,7 +80,7 @@ impl<'a> ShellCustody<'a> {
             "pendingBackgroundTasks",
         ]
         .into_iter()
-        .find(|&field| self.0[field] != other.0[field])
+        .find(|&field| self.0.get(field) != other.0.get(field))
     }
 }
 

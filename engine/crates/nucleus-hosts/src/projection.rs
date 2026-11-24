@@ -429,13 +429,10 @@ impl Projection {
         if self.archived() || self.thread.deleted_at.is_some() {
             return Err("parent is archived or deleted");
         }
-        if self.thread_active() {
-            return Err("parent has an active run or runtime request");
+        if let Some(reason) = self.busy_reason() {
+            return Err(reason);
         }
-        if self.background_work() || self.shell_background_work == Some(true) {
-            return Err("parent has a pending background writer");
-        }
-        if !matches!(self.retained(), Ok(RetainedThread::Idle)) {
+        if !self.has_idle_coverage() {
             return Err(
                 "idle custody is unknown (provider roster, turn items or matching shell background coverage missing)",
             );
@@ -443,21 +440,14 @@ impl Projection {
         let Some(children) = &self.subagents else {
             return Err("delegated child roster is missing");
         };
-        if children.iter().any(|child| {
-            matches!(
-                child.status.as_deref(),
-                Some("pending" | "queued" | "preparing" | "starting" | "running" | "waiting")
-            )
-        }) {
-            return Err("parent has a starting or running child");
-        }
-        if children.iter().any(|child| {
-            !matches!(
-                child.status.as_deref(),
-                Some("idle" | "completed" | "failed" | "cancelled" | "interrupted")
-            )
-        }) {
-            return Err("delegated child status is missing or unknown");
+        for child in children {
+            match child.status.as_deref() {
+                Some("idle" | "completed" | "failed" | "cancelled" | "interrupted") => (),
+                Some("pending" | "queued" | "preparing" | "starting" | "running" | "waiting") => {
+                    return Err("parent has a starting or running child");
+                }
+                _ => return Err("delegated child status is missing or unknown"),
+            }
         }
         Ok(ParentCustody {
             latest_run: self.runs.last().map(|run| (run.id.clone(), run.status)),
@@ -472,19 +462,29 @@ impl Projection {
         if self.thread.deleted_at.is_some() {
             return Ok(RetainedThread::Gone);
         }
-        if self.thread_active()
-            || self.background_work()
-            || self.shell_background_work == Some(true)
-        {
+        if self.busy_reason().is_some() {
             return Ok(RetainedThread::Busy);
         }
-        if self.provider_threads.is_none()
-            || ((self.windowed || self.compact_turn_items) && self.shell_background_work.is_none())
-            || self.turn_items.is_none()
-        {
+        if !self.has_idle_coverage() {
             return Err(HostError::Uncertain);
         }
         Ok(RetainedThread::Idle)
+    }
+
+    fn busy_reason(&self) -> Option<&'static str> {
+        if self.thread_active() {
+            Some("parent has an active run or runtime request")
+        } else if self.background_work() || self.shell_background_work == Some(true) {
+            Some("parent has a pending background writer")
+        } else {
+            None
+        }
+    }
+
+    const fn has_idle_coverage(&self) -> bool {
+        self.provider_threads.is_some()
+            && self.turn_items.is_some()
+            && (!(self.windowed || self.compact_turn_items) || self.shell_background_work.is_some())
     }
 
     // Equivalent presence tests to T3's pending background work derivation.
