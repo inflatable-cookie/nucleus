@@ -60,7 +60,7 @@ fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
 pub(super) enum ParentEffect {
     AlreadyClaimed,
     Sent,
-    Archived(nucleus_hosts::ArchiveReceipt),
+    Archived(Box<nucleus_hosts::ArchiveReceipt>),
 }
 
 impl Service {
@@ -267,7 +267,7 @@ impl Service {
             None
         };
         match self.host.write_verified_parent(write).await {
-            Ok(Some(receipt)) => Ok(ParentEffect::Archived(receipt)),
+            Ok(Some(receipt)) => Ok(ParentEffect::Archived(Box::new(receipt))),
             Ok(None) => Ok(ParentEffect::Sent),
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
                 Err(ServiceError::ParentDeliveryUnknown(error))

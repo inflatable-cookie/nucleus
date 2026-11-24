@@ -175,7 +175,7 @@ impl Inventory {
         inventory.complete_missing(scratch).await;
         if let Some(server) = server
             && inventory.processes.contains_key(&server.pid)
-            && server.still_current(scratch).await
+            && server.still_current(Some(scratch)).await
         {
             let candidates = inventory
                 .processes

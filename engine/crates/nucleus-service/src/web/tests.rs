@@ -1496,11 +1496,11 @@ async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (done, _) = fixture_at_done(&service).await;
     let id = &done.task.identity().id;
-    let cause = "Waiting to confirm the reviewer thread is closed.";
+    let cause = "T3 reconnected during archive and can no longer confirm closure. Unarchive the reviewer thread (fixture-reviewer-thread) in T3 to resume closeout.";
     service
         .schedule_result(
             &done,
-            &Err(ServiceError::ArchiveEvidence(cause)),
+            &Err(ServiceError::ArchiveEvidence(cause.into())),
             crate::schedule::Priority::Effect,
         )
         .await
@@ -1520,6 +1520,8 @@ async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
             .unwrap()["note"],
         cause
     );
+    let next = json_body(get_as(&api, &format!("/v1/tasks/{id}/next"), &BOARD_KEY).await).await;
+    assert_eq!(next["waitDetail"], cause);
 }
 
 fn seed_cancelled_notice(service: &Service, state: &mut EngineState, done: &Task) {

@@ -151,23 +151,27 @@ impl Service {
                 } else {
                     None
                 };
-                if !custody.is_current(&self.host) {
-                    return Err(ServiceError::ArchiveEvidence(
-                        "T3 changed the task or child threads. Checking archive custody again.",
-                    ));
-                }
-                if let Some(head) = head {
-                    Self::retire_report_checkout(&checkout, head.as_ref())?;
-                }
                 let mut state = self.state.lock().await;
-                self.commit(
-                    &mut state,
-                    row,
-                    &row.task,
-                    &event("role_threads_archived"),
-                    None,
-                )?;
-                Ok(Action::Nothing)
+                custody
+                    .finish(&self.host, || {
+                        if let Some(head) = head {
+                            Self::retire_report_checkout(&checkout, head.as_ref())?;
+                        }
+                        self.commit(
+                            &mut state,
+                            row,
+                            &row.task,
+                            &event("role_threads_archived"),
+                            None,
+                        )?;
+                        Ok(Action::Nothing)
+                    })
+                    .unwrap_or_else(|| {
+                        Err(ServiceError::ArchiveEvidence(
+                            "T3 changed the task or child threads. Checking archive custody again."
+                                .into(),
+                        ))
+                    })
             }
             ArchiveStep::Wait(wait) => Err(ServiceError::ArchiveEvidence(wait.note(
                 row.task.threads().get(Role::Worker),
@@ -193,7 +197,7 @@ impl Service {
                     .deliver_parent_effect(row, *write, "archive", None)
                     .await?
                 {
-                    custody.record_archive(receipt)?;
+                    custody.record_archive(*receipt)?;
                     self.record_archive_progress(id, &custody).await?;
                 }
                 self.recheck_effect(row, WaitReason::Stopping).await;

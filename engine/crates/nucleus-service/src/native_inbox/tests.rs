@@ -140,6 +140,10 @@ fn observe_pinned_inbox(inbox: &NativeInbox, run: Option<&str>) {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise one preview across rotation, reconnect and typed requests"
+)]
 async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt() {
     let (home, mut service) = fixture(GitHub::new("unused").unwrap());
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());

@@ -131,10 +131,14 @@ Later decisions carry their own attribution.
    needed. A removed checkout proves local retirement. Family closeout
    records its own confirmation after every retained thread is accounted for.
    An exact native archive acceptance is stored in the same custody journal,
-   bound to its thread and predecessor. A synchronized shell at or beyond that
-   receipt can corroborate omission of the archived row. A reopened row revokes
-   the proof, and an interrupted send without a receipt still needs positive
-   closure evidence.
+   bound to its thread and predecessor. A synchronized shell from the same
+   verified T3 runtime can corroborate omission once it reaches that sequence.
+   When no runtime descriptor is configured, only the continuously held stream can
+   corroborate omission. A reopened row or a T3 runtime replacement invalidates
+   unfinished closure proof. The board and `next` name the thread to unarchive
+   if a replacement leaves that thread unlisted. A completed family receipt
+   survives either service restarting. An interrupted send without a receipt
+   still needs positive closure evidence.
 
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning

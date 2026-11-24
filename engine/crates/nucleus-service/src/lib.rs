@@ -71,7 +71,7 @@ pub use web::{
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("{0}")]
-    ArchiveEvidence(&'static str),
+    ArchiveEvidence(String),
     #[error("T3 parent message was not sent: {reason}")]
     ParentNotSent {
         reason: String,
@@ -216,11 +216,11 @@ struct TaskWait {
     detail: Option<WaitDetail>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 enum WaitDetail {
     BeforeSend(&'static str),
     Observation(&'static str),
-    Archive(&'static str),
+    Archive(String),
 }
 
 struct State {
@@ -968,7 +968,7 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let detail = match result {
-            Err(ServiceError::ArchiveEvidence(cause)) => Some(WaitDetail::Archive(cause)),
+            Err(ServiceError::ArchiveEvidence(cause)) => Some(WaitDetail::Archive(cause.clone())),
             _ => None,
         };
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
@@ -1653,8 +1653,8 @@ impl State {
         self.waits.get(id).and_then(|wait| wait.reason)
     }
 
-    fn wait_detail(&self, id: &str) -> Option<WaitDetail> {
-        self.waits.get(id).and_then(|wait| wait.detail)
+    fn wait_detail(&self, id: &str) -> Option<&WaitDetail> {
+        self.waits.get(id).and_then(|wait| wait.detail.as_ref())
     }
 
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
@@ -1707,10 +1707,13 @@ impl State {
         } else {
             self.apply_observed_wait(task, reason, entered)
         };
-        let detail_changed = self
-            .waits
-            .get_mut(id)
-            .is_some_and(|wait| std::mem::replace(&mut wait.detail, detail) != detail);
+        let detail_changed = self.waits.get_mut(id).is_some_and(|wait| {
+            if wait.detail == detail {
+                return false;
+            }
+            wait.detail = detail;
+            true
+        });
         Ok(changed || detail_changed)
     }
 

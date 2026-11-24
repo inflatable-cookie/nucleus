@@ -92,6 +92,7 @@ impl<'a> ShellCustody<'a> {
 }
 
 pub(crate) struct ThreadSnapshots {
+    pub(crate) archive_scope: Option<String>,
     rows: BTreeMap<String, Arc<Value>>,
     row_revisions: BTreeMap<String, u64>,
     initial_revision: Option<u64>,
@@ -139,6 +140,7 @@ impl ThreadSnapshots {
             .as_u64()
             .or_else(|| shell["snapshotSequence"].as_u64());
         Some(Self {
+            archive_scope: None,
             rows,
             row_revisions: BTreeMap::new(),
             initial_revision: sequence,

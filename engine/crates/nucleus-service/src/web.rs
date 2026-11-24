@@ -666,6 +666,7 @@ async fn next(
         state_label: summary.state_label,
         state_since_ms: summary.state_since_ms,
         wait: summary.wait,
+        wait_detail: summary.wait_detail,
         attention: summary.attention,
         next_check_at: summary.next_check_at,
         question: summary.question,
@@ -988,7 +989,7 @@ struct Summary {
     #[serde(skip)]
     created_at_ms: Option<u64>,
     wait: Option<WaitReason>,
-    wait_detail: Option<&'static str>,
+    wait_detail: Option<String>,
     attention: crate::attention::TaskAttention,
     lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
     next_check_at: Option<u64>,
@@ -1025,7 +1026,7 @@ impl Summary {
         };
         let archive_detail = match state.wait_detail(id) {
             Some(crate::WaitDetail::Archive(message)) if task.phase() == Phase::Done => {
-                Some(message)
+                Some(message.as_str())
             }
             _ => None,
         };
@@ -1051,8 +1052,8 @@ impl Summary {
                 return None;
             }
             match state.wait_detail(id)? {
-                crate::WaitDetail::BeforeSend(message) => Some(message),
-                crate::WaitDetail::Observation(message) => Some(message),
+                crate::WaitDetail::BeforeSend(message)
+                | crate::WaitDetail::Observation(message) => Some(*message),
                 crate::WaitDetail::Archive(_) => None,
             }
         });
@@ -1076,7 +1077,7 @@ impl Summary {
             created_at_ms,
             next_check_at: None,
             wait,
-            wait_detail,
+            wait_detail: wait_detail.map(str::to_owned),
             question: task.question().cloned(),
             hold: task.hold().cloned(),
             dependency_status,
@@ -1148,6 +1149,8 @@ struct NextView {
     state_label: String,
     state_since_ms: Option<u64>,
     wait: Option<WaitReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wait_detail: Option<String>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
     question: Option<Question>,

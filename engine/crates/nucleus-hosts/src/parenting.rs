@@ -55,6 +55,8 @@ pub enum ParentSendError {
 pub struct ArchiveCustody {
     binding: Option<Binding>,
     provider: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
     roster_run: Option<String>,
     members: BTreeMap<String, ArchiveMember>,
 }
@@ -63,6 +65,8 @@ pub struct ArchiveCustody {
 struct ArchiveMember {
     owned: bool,
     closed: Option<Closure>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    closure_lost: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +79,7 @@ enum Closure {
 /// An acceptance matched by the transport to its exact guarded archive command.
 pub struct ArchiveReceipt {
     binding: Binding,
+    scope: Option<String>,
     thread: String,
     acceptance: ArchiveAcceptance,
 }
@@ -96,6 +101,28 @@ enum ClosureState {
 }
 
 impl ArchiveCustody {
+    fn qualify(&mut self, scope: &str) {
+        if self.scope.as_deref() != Some(scope) {
+            self.scope = Some(scope.into());
+            self.roster_run = None;
+            for member in self.members.values_mut() {
+                member.closure_lost |= member.closed.take().is_some();
+                member.owned = false;
+            }
+        }
+    }
+
+    fn lost_closure(&self, shell: &ThreadSnapshots, parent: &str) -> Option<ArchiveWait> {
+        self.members
+            .iter()
+            .filter(|(id, member)| member.closure_lost && shell.marker(id).is_none())
+            .min_by_key(|(id, _)| id.as_str() == parent)
+            .map(|(id, _)| ArchiveWait::LostClosure {
+                thread: id.clone(),
+                parent: id == parent,
+            })
+    }
+
     fn refresh(&mut self, shell: Option<&ThreadSnapshots>) -> Option<String> {
         let mut pending = None;
         for (id, member) in &mut self.members {
@@ -118,20 +145,20 @@ impl ArchiveCustody {
     /// # Errors
     /// Returns an error for a receipt from another checkout binding.
     pub fn record_archive(&mut self, receipt: ArchiveReceipt) -> Result<(), HostError> {
-        if self.binding.as_ref() != Some(&receipt.binding) {
+        if self.binding.as_ref() != Some(&receipt.binding) || self.scope != receipt.scope {
             return Err(HostError::Binding);
         }
         self.close(&receipt.thread, Closure::Accepted(receipt.acceptance));
         Ok(())
     }
 
-    /// Check the roster and every saved closure at the archive or checkout gate.
-    #[must_use]
-    pub fn is_current(&self, host: &T3) -> bool {
-        self.members.values().all(|member| member.closed.is_some())
-            && host
-                .rpc
-                .with_shell(|shell| self.holds(shell, host.rpc.uses_held_shell()))
+    /// Finish the local closeout while the qualified shell and roster are current.
+    pub fn finish<T>(&self, host: &T3, closeout: impl FnOnce() -> T) -> Option<T> {
+        host.rpc.with_shell(|shell| {
+            (self.members.values().all(|member| member.closed.is_some())
+                && self.holds(shell, host.rpc.uses_held_shell()))
+            .then(closeout)
+        })
     }
 
     fn holds(&self, shell: Option<&ThreadSnapshots>, managed: bool) -> bool {
@@ -141,9 +168,11 @@ impl ArchiveCustody {
         let parent = parent_thread(Path::new(&binding.worktree_path));
         (shell.is_some() || !managed)
             && shell.is_none_or(|shell| {
-                shell
-                    .children(&parent)
-                    .all(|id| self.members.contains_key(id))
+                self.scope.is_some()
+                    && self.scope == shell.archive_scope
+                    && shell
+                        .children(&parent)
+                        .all(|id| self.members.contains_key(id))
             })
             && self.members.iter().all(|(id, member)| {
                 member.closed.as_ref().is_none_or(|proof| {
@@ -159,7 +188,14 @@ impl ArchiveCustody {
     }
 
     fn close(&mut self, id: &str, proof: Closure) {
-        self.members.entry(id.into()).or_default().closed = Some(proof);
+        self.members.entry(id.into()).or_default().close(proof);
+    }
+}
+
+impl ArchiveMember {
+    fn close(&mut self, proof: Closure) {
+        self.closed = Some(proof);
+        self.closure_lost = false;
     }
 }
 
@@ -282,16 +318,19 @@ pub enum ArchiveStep {
 
 /// Native evidence still needed before closing this family.
 pub enum ArchiveWait {
+    Runtime,
     ParentInventory,
     ParentCustody,
     ParentRoster,
     Child(String),
+    LostClosure { thread: String, parent: bool },
 }
 
 impl ArchiveWait {
     #[must_use]
-    pub fn note(&self, worker: Option<&str>, reviewer: Option<&str>) -> &'static str {
+    pub fn note(&self, worker: Option<&str>, reviewer: Option<&str>) -> String {
         match self {
+            Self::Runtime => "Waiting for T3 to confirm its runtime before continuing archive.",
             Self::ParentInventory => {
                 "Waiting for T3 to list the task thread so its closure can be confirmed."
             }
@@ -306,7 +345,22 @@ impl ArchiveWait {
                 "Waiting to confirm the reviewer thread is closed."
             }
             Self::Child(_) => "Waiting to confirm a delegated child thread is closed.",
+            Self::LostClosure { thread, parent } => {
+                let role = if *parent {
+                    "task"
+                } else if worker == Some(thread) {
+                    "worker"
+                } else if reviewer == Some(thread) {
+                    "reviewer"
+                } else {
+                    "delegated child"
+                };
+                return format!(
+                    "T3 reconnected during archive and can no longer confirm closure. Unarchive the {role} thread ({thread}) in T3 to resume closeout."
+                );
+            }
         }
+        .into()
     }
 }
 
@@ -424,19 +478,32 @@ impl T3 {
             };
         }
         let parent = parent_thread(Path::new(&binding.worktree_path));
-        let (dormant, pending) = self.rpc.with_shell(|shell| {
-            let pending = custody.refresh(shell);
+        let marker = self.rpc.with_shell(|shell| {
+            let managed = self.rpc.uses_held_shell();
+            let scope = shell.and_then(|shell| shell.archive_scope.as_deref());
+            if managed && scope.is_none() {
+                return None;
+            }
+            if let Some(scope) = scope {
+                custody.qualify(scope);
+            }
             if let Some(shell) = shell {
                 for id in shell.children(&parent).filter(|id| *id != parent) {
                     custody.members.entry(id.into()).or_default();
                 }
             }
-            (
-                self.rpc.uses_held_shell()
-                    && shell.and_then(|shell| shell.marker(&parent)).is_none(),
-                pending,
-            )
+            Some((
+                managed && shell.and_then(|shell| shell.marker(&parent)).is_none(),
+                custody.refresh(shell),
+                shell.and_then(|shell| custody.lost_closure(shell, &parent)),
+            ))
         });
+        let Some((dormant, pending, lost)) = marker else {
+            return Ok(ArchiveStep::Wait(ArchiveWait::Runtime));
+        };
+        if let Some(wait) = lost {
+            return Ok(ArchiveStep::Wait(wait));
+        }
         if let Some(thread) = pending {
             return Ok(ArchiveStep::Wait(if thread == parent {
                 ArchiveWait::ParentInventory
@@ -551,7 +618,7 @@ impl T3 {
             }
             if let Some((view, fence, state)) = observation {
                 if state == RetainedThread::Gone {
-                    member.closed = Some(Closure::Gone);
+                    member.close(Closure::Gone);
                     continue;
                 }
                 let view = view.ok_or(HostError::Uncertain)?;
@@ -561,7 +628,7 @@ impl T3 {
                         .as_deref()
                         .is_some_and(|row| row_activity(row) == RowChildren::Quiet)
                     {
-                        member.closed = Some(Closure::observed(&view));
+                        member.close(Closure::observed(&view));
                     } else {
                         unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
                     }
@@ -874,6 +941,7 @@ impl T3 {
                 let row = fence.target.row.as_deref();
                 Ok(Some(ArchiveReceipt {
                     binding: write.binding,
+                    scope: fence.custody.scope.clone(),
                     thread: fence.thread.clone(),
                     acceptance: ArchiveAcceptance {
                         command,

@@ -379,7 +379,11 @@ async fn unlisted_legacy_worker_waits_for_held_closure_without_a_native_read() {
 }
 
 #[tokio::test]
-async fn archive_restart_requires_the_exact_receipt_and_reopen_vetoes_it() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "reuse the same archive receipt across restart and reopen controls"
+)]
+async fn archive_restart_requires_same_t3_and_the_exact_receipt_and_reopen_vetoes_it() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let parent_id = crate::parent_thread(checkout.path());
@@ -435,7 +439,7 @@ async fn archive_restart_requires_the_exact_receipt_and_reopen_vetoes_it() {
     );
     assert_eq!(native.await.unwrap().len(), 3);
 
-    for (saved, accepted) in [(without_receipt, false), (with_receipt, true)] {
+    for (saved, accepted) in [(without_receipt, false), (with_receipt.clone(), true)] {
         let (host, native) = server(vec![(read, Response::ParentSnapshot(parent.clone()))]).await;
         host.rpc.use_held_shell();
         host.rpc
@@ -475,6 +479,33 @@ async fn archive_restart_requires_the_exact_receipt_and_reopen_vetoes_it() {
                 .contains_key("threadReads.archivedOrDeleted")
         );
     }
+
+    let replacement = T3::new("http://127.0.0.1:9/", "fixture-bearer").unwrap();
+    replacement.rpc.use_held_shell();
+    replacement.rpc.fixture_shell_in(
+        &json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":999,"threads":[shell_row(&parent)],"projects":[]
+        }}),
+        "fixture:replacement-server",
+    );
+    let mut custody = serde_json::from_value(with_receipt).unwrap();
+    for _ in 0..2 {
+        let crate::ArchiveStep::Wait(wait) = replacement
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD], &mut custody)
+            .await
+            .unwrap()
+        else {
+            panic!("a replacement server cannot confirm the saved receipt");
+        };
+        assert_eq!(
+            wait.note(Some(THREAD), None),
+            format!(
+                "T3 reconnected during archive and can no longer confirm closure. Unarchive the worker thread ({THREAD}) in T3 to resume closeout."
+            )
+        );
+        custody = serde_json::from_value(serde_json::to_value(custody).unwrap()).unwrap();
+    }
+    assert!(replacement.host_calls().is_empty());
 }
 
 #[tokio::test]

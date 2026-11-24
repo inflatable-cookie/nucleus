@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     net::IpAddr,
+    path::Path,
     sync::{
         Arc, Mutex as SyncMutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -27,6 +28,7 @@ use crate::{
     HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
     admission::Admission,
     catalog::CatalogRevision,
+    runtime::ServerRuntime,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
 };
@@ -738,10 +740,16 @@ impl Rpc {
 
     #[cfg(any(test, feature = "loopback-fixture"))]
     pub(crate) fn fixture_shell(&self, item: &Value) {
+        self.fixture_shell_in(item, "fixture:same-server");
+    }
+
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    pub(crate) fn fixture_shell_in(&self, item: &Value, scope: &str) {
         let mut snapshots = self.snapshots.lock().expect("thread snapshots");
         if item["kind"] == "snapshot" {
-            *snapshots = ThreadSnapshots::read(item);
-            assert!(snapshots.is_some(), "fixture shell must be valid");
+            let mut shell = ThreadSnapshots::read(item).expect("fixture shell must be valid");
+            shell.archive_scope = Some(scope.to_owned());
+            *snapshots = Some(shell);
         } else {
             snapshots.as_mut().expect("fixture snapshot").update(item);
         }
@@ -772,6 +780,28 @@ impl Rpc {
         }
     }
 
+    async fn archive_scope(
+        &self,
+        descriptor: Option<&Path>,
+        opened_runtime: Option<&str>,
+    ) -> Result<Option<String>, HostError> {
+        if let Some(path) = descriptor {
+            if let Some(runtime) = ServerRuntime::read(path, &self.base)
+                && opened_runtime == Some(runtime.identity().as_str())
+                && runtime.still_current(None).await
+            {
+                return Ok(Some(format!("t3:{}:{}", self.base, runtime.identity())));
+            }
+            // A descriptor may be temporarily unavailable while T3 starts.
+            // Keep existing receipts until a synchronized runtime can qualify them.
+            return Ok(None);
+        }
+        // Without a descriptor, a receipt can only use this continuously held stream.
+        let mut bytes = [0; 16];
+        getrandom::fill(&mut bytes).map_err(|_| HostError::Uncertain)?;
+        Ok(Some(format!("shell:{:032x}", u128::from_ne_bytes(bytes))))
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "keep shell synchronization and its ordered deltas together"
@@ -780,7 +810,11 @@ impl Rpc {
         &self,
         hints: &mpsc::Sender<ThreadHint>,
         inbox_thread: Option<&str>,
+        runtime_descriptor: Option<&Path>,
     ) -> Result<(), HostError> {
+        let opened_runtime = runtime_descriptor
+            .and_then(|path| ServerRuntime::read(path, &self.base))
+            .map(|server| server.identity());
         let admission = self.admission.enter(false).await?;
         let socket = self.open().await?;
         let mut connection = Connection { socket, next_id: 0 };
@@ -831,8 +865,15 @@ impl Rpc {
                                     if synchronized {
                                         continue;
                                     }
-                                    *self.snapshots.lock().expect("thread snapshots") =
-                                        Some(initial_snapshots.take().ok_or(HostError::Protocol)?);
+                                    let mut shell =
+                                        initial_snapshots.take().ok_or(HostError::Protocol)?;
+                                    shell.archive_scope = self
+                                        .archive_scope(
+                                            runtime_descriptor,
+                                            opened_runtime.as_deref(),
+                                        )
+                                        .await?;
+                                    *self.snapshots.lock().expect("thread snapshots") = Some(shell);
                                     synchronized = true;
                                 }
                                 Some("snapshot") => {}
@@ -1218,7 +1259,7 @@ mod tests {
         let (hints, _) = mpsc::channel(1);
         let theme = tokio::sync::watch::channel(None).0;
         assert!(
-            matches!(rpc.watch_threads(&hints, None).await, Err(HostError::Deferred { until }) if until == due)
+            matches!(rpc.watch_threads(&hints, None, None).await, Err(HostError::Deferred { until }) if until == due)
         );
         assert!(
             matches!(rpc.watch_theme(&theme).await, Err(HostError::Deferred { until }) if until == due)
