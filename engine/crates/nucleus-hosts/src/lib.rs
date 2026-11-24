@@ -10,6 +10,7 @@ mod rpc;
 mod runtime;
 #[cfg(test)]
 mod t3_tests;
+mod title_shell;
 
 use std::{
     future::Future,
@@ -34,6 +35,7 @@ pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
+pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
 
 const LATE_REPLY_MS: u64 = 10 * 60 * 1000;
@@ -217,6 +219,7 @@ pub trait TaskHost: Send + Sync {
 pub struct T3 {
     rpc: Rpc,
     runtime_descriptor: Option<PathBuf>,
+    titles: title_shell::TitleShell,
 }
 
 /// Exact T3 reads share a single bounded process inventory within each pass.
@@ -237,6 +240,7 @@ impl T3 {
         Ok(Self {
             rpc: Rpc::new(endpoint, bearer)?,
             runtime_descriptor: None,
+            titles: title_shell::TitleShell::default(),
         })
     }
 
@@ -282,8 +286,17 @@ impl T3 {
     pub async fn watch_threads(
         &self,
         hints: &tokio::sync::mpsc::Sender<ThreadHint>,
+        title_scope: Option<(&str, &str)>,
     ) -> Result<(), HostError> {
-        self.rpc.watch_threads(hints).await
+        let result = self
+            .rpc
+            .watch_threads(
+                hints,
+                title_scope.map(|(project, provider)| (&self.titles, project, provider)),
+            )
+            .await;
+        self.titles.replace(None);
+        result
     }
 
     async fn read_catalog(&self) -> Result<ProfileCatalog, HostError> {

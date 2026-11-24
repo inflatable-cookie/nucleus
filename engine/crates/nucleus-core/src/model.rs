@@ -82,6 +82,31 @@ impl Brief {
             digest,
         }
     }
+
+    /// A title supplied in the brief's YAML frontmatter.
+    #[must_use]
+    pub fn declared_title(&self) -> Option<String> {
+        let front = Self::frontmatter(&self.text).ok()??;
+        let values: yaml_serde::Value = yaml_serde::from_str(front).ok()?;
+        values.get("title")?.as_str().map(str::to_owned)
+    }
+
+    pub(crate) fn frontmatter(text: &str) -> Result<Option<&str>, ()> {
+        let Some((first, body)) = text.split_once('\n') else {
+            return Ok(None);
+        };
+        if first.trim_end_matches('\r') != "---" {
+            return Ok(None);
+        }
+        let mut offset = 0;
+        for line in body.split_inclusive('\n') {
+            if line.trim_end_matches(['\r', '\n']) == "---" {
+                return Ok(Some(&body[..offset]));
+            }
+            offset += line.len();
+        }
+        Err(())
+    }
 }
 
 /// A full GitHub commit SHA, normalized to lowercase.
@@ -278,6 +303,15 @@ pub enum Repair {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hold {
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<HoldBy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoldBy {
+    Operator,
+    Planner,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, de};
 
 use super::{Complexity, Effort};
-use crate::Role;
+use crate::{Brief, Role};
 
 /// Only the routing keys from the existing `queue` frontmatter.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -76,24 +76,16 @@ impl BriefPolicy {
         struct Frontmatter {
             queue: Option<BriefPolicy>,
         }
-        let Some((first, body)) = brief.split_once('\n') else {
+        let Some(front) =
+            Brief::frontmatter(brief).map_err(|()| BriefPolicyError::UnclosedFrontmatter)?
+        else {
             return Ok(Self::default());
         };
-        if first.trim_end_matches('\r') != "---" {
-            return Ok(Self::default());
-        }
-        let mut offset = 0;
-        for line in body.split_inclusive('\n') {
-            if line.trim_end_matches(['\r', '\n']) == "---" {
-                let parsed: Option<Frontmatter> = yaml_serde::from_str(&body[..offset])
-                    .map_err(BriefPolicyError::InvalidFrontmatter)?;
-                let mut policy = parsed.and_then(|front| front.queue).unwrap_or_default();
-                policy.normalize_requests()?;
-                return Ok(policy);
-            }
-            offset += line.len();
-        }
-        Err(BriefPolicyError::UnclosedFrontmatter)
+        let parsed: Option<Frontmatter> =
+            yaml_serde::from_str(front).map_err(BriefPolicyError::InvalidFrontmatter)?;
+        let mut policy = parsed.and_then(|front| front.queue).unwrap_or_default();
+        policy.normalize_requests()?;
+        Ok(policy)
     }
 
     #[must_use]

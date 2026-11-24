@@ -3,6 +3,7 @@
 mod inbox;
 mod settings;
 mod settings_domains;
+mod titles;
 mod usage;
 mod volume;
 
@@ -24,10 +25,11 @@ pub use settings_domains::{
     DispatchSettings, Hosts, NamedProfile, Profiles, ProjectSettings, Projects, RepositorySettings,
     T3Settings,
 };
+pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
@@ -130,11 +132,12 @@ impl Store {
                 tx.execute(ACP_SESSIONS, [])?;
                 tx.execute_batch(usage::SCHEMA)?;
                 tx.execute(inbox::SCHEMA, [])?;
+                tx.execute(titles::SCHEMA, [])?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1..=5) => {
+            (APPLICATION_ID, 1..=6) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -148,7 +151,10 @@ impl Store {
                 if version < 5 {
                     tx.execute_batch(usage::SCHEMA)?;
                 }
-                tx.execute(inbox::SCHEMA, [])?;
+                if version < 6 {
+                    tx.execute(inbox::SCHEMA, [])?;
+                }
+                tx.execute(titles::SCHEMA, [])?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {

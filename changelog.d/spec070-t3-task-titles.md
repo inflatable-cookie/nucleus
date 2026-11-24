@@ -1,0 +1,1 @@
+- T3 task rows show their phase or wait, task reference and brief title. Worker and reviewer children use the numbered title style with the same reference.
