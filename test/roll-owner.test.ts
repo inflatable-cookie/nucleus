@@ -147,7 +147,10 @@ test("an installed root spawns the owner on the stable data home", () => {
   const { home, dataDir, root } = fixtureEnvironment("owner-installed-", true);
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(join(root, "bin", "queue-roll-owner.mjs"), "");
-  writeFileSync(join(root, "manifest.json"), JSON.stringify({ format: "nucleus-package-v1", files: {} }));
+  writeFileSync(
+    join(root, "manifest.json"),
+    JSON.stringify({ format: "nucleus-package-v1", files: {} }),
+  );
   const { calls, spawnProcess } = fakeSpawn(4343);
   const launch = withHome(home, () =>
     ensureRollOwner({ dataDir, root, spawnProcess, pidAlive: () => false }),

@@ -19,9 +19,20 @@ import {
 } from "../service/install/main-channel.mjs";
 
 test("a path inside an installed version becomes the stable current link", () => {
-  assert.equal(stableInstalledPath("/h/.local/share/nucleus/versions/0.0.0-abc-def/runtime/node"), "/h/.local/share/nucleus/current/runtime/node");
-  assert.equal(stableInstalledPath("/h/.local/share/nucleus/versions/0.0.0-abc-def/"), "/h/.local/share/nucleus/current/");
-  assert.equal(stableInstalledPath("/h/.local/share/nucleus/current/runtime/node"), "/h/.local/share/nucleus/current/runtime/node");
+  assert.equal(
+    stableInstalledPath(
+      "/h/.local/share/nucleus/versions/0.0.0-abc-def/runtime/node",
+    ),
+    "/h/.local/share/nucleus/current/runtime/node",
+  );
+  assert.equal(
+    stableInstalledPath("/h/.local/share/nucleus/versions/0.0.0-abc-def/"),
+    "/h/.local/share/nucleus/current/",
+  );
+  assert.equal(
+    stableInstalledPath("/h/.local/share/nucleus/current/runtime/node"),
+    "/h/.local/share/nucleus/current/runtime/node",
+  );
 });
 
 test("pruning keeps the named versions and one other, and leaves links alone", async () => {
@@ -30,12 +41,19 @@ test("pruning keeps the named versions and one other, and leaves links alone", a
   await mkdir(join(versions, ".stage-x"));
   await symlink("../current", join(versions, "0-old-alias"));
   await pruneVersions(versions, new Set([join(versions, "a")]));
-  assert.deepEqual((await readdir(versions)).sort(), [".stage-x", "0-old-alias", "a", "d"]);
+  assert.deepEqual((await readdir(versions)).sort(), [
+    ".stage-x",
+    "0-old-alias",
+    "a",
+    "d",
+  ]);
   assert.ok((await lstat(join(versions, "0-old-alias"))).isSymbolicLink());
 });
 
 test("retention never prunes the version a live roll owner runs from", async () => {
-  const scratch = await realpath(await mkdtemp(join(await realpath(tmpdir()), "prune-live-owner-")));
+  const scratch = await realpath(
+    await mkdtemp(join(await realpath(tmpdir()), "prune-live-owner-")),
+  );
   const versions = join(scratch, "versions");
   const dataDir = join(scratch, "data");
   await mkdir(versions, { recursive: true });
