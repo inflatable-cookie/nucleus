@@ -477,7 +477,7 @@ const waits: Record<string, string> = {
   hold: "On hold",
   question: "Waiting for the planner",
   host_unknown: "Waiting for the host",
-  host_observation_blocked: "T3 state could not be confirmed. Review the task before retrying.",
+  host_observation_blocked: "Check the task in T3. Hold and release it to retry.",
   operator_declined: "The operator declined. Move or cancel the task.",
   starting: "Starting",
   running: "Running",

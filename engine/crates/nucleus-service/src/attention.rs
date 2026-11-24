@@ -44,7 +44,7 @@ impl State {
             _ => {}
         }
         if wait == Some(WaitReason::Starting)
-            || (wait == Some(WaitReason::Running)
+            || ((wait == Some(WaitReason::Running) || (wait.is_none() && task.hold().is_none()))
                 && task
                     .run()
                     .is_some_and(|run| !run.revoked() && run.report().is_none()))
