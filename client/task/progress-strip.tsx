@@ -5,18 +5,19 @@ import { detailToneColor } from "./task-header";
 import { roles, space, taskDetail, type as typeScale } from "../design";
 
 /**
- * 5-step progress strip rendered for every task (Tom: "Keep for all"):
- * Queued → Working → Review → Merge → Close.
+ * The task lifecycle as a strip of steps.
  * Completed steps show in green; the current step uses the state's tone;
  * upcoming steps use the muted raised bar.
  */
 export function ProgressStrip({
   steps,
   compact,
+  subLines = 1,
   c,
 }: {
-  steps: readonly ProgressStep[];
+  steps: readonly (Omit<ProgressStep, "key"> & { key: string })[];
   compact: boolean;
+  subLines?: 1 | 2;
   c: Colors;
 }) {
   const r = roles(c);
@@ -67,7 +68,7 @@ export function ProgressStrip({
             </Text>
             {Boolean(step.sub) && (
               <Text
-                numberOfLines={1}
+                numberOfLines={subLines}
                 style={{
                   color: r.muted,
                   fontSize: typeScale.metadata.fontSize,

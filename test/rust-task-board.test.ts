@@ -71,6 +71,20 @@ const task = (
   reference: string = id,
 ): RustTask => ({
   identity: { id, repository, reference, base: "main" },
+  lifecycle: {
+    steps: [
+      { key: "queued", label: "Queued", state: phase === "queued" ? "current" : "done", tone: "accent", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
+      { key: "working", label: "Working", state: phase === "working" ? "current" : "todo", tone: "accent", elapsedMs: phase === "working" ? 831_000 : null, activeSinceMs: null, note: null, roundLabel: null },
+      { key: "review", label: "Review", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: "Round 2" },
+      { key: "merge", label: "Merge", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
+      { key: "close", label: "Close", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
+    ],
+    admittedAtMs: 1_790_000_000_000,
+    finishedAtMs: null,
+    reviewRound: 2,
+    worker: { thread: "fixture-worker", provider: "codex", model: "fixture-worker-model" },
+    reviewer: { thread: "fixture-reviewer", provider: "claude", model: "fixture-review-model" },
+  },
   phase,
   version: 7,
   wait: null,
@@ -449,8 +463,20 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   );
   await click("Working, 1");
   // The card shows the task number alone; the project shows beside it.
+  const workingStep = '[aria-label="Step Working: current · 13m 51s"]';
+  await eventually(
+    () => Boolean(dom.window.document.querySelector(workingStep)),
+    "the board card shows the projected work duration",
+  );
   await click("#81");
   await eventually(() => text().includes(activity), "initial activity");
+  await eventually(
+    () => dom.window.document.querySelectorAll(workingStep).length === 2,
+    "the card and detail render the same progress step",
+  );
+  assert.match(text(), /fixture-worker-model/);
+  assert.match(text(), /fixture-review-model/);
+  assert.equal(dom.window.document.querySelectorAll('[aria-label="Step Review: todo · Round 2"]').length, 2);
   await eventually(() => text().includes("3m / 1h"), "task allowance");
   const beforeList = reads("/v1/tasks");
   const beforeDetail = reads("/v1/tasks/running");
@@ -796,10 +822,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.match(heldHeader.textContent ?? "", /^#81/);
   assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
   assert.match(heldCard.textContent ?? "", /Held taskWait for the schema review\./);
-  assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
+  const withoutProgress = (card: HTMLElement) => {
+    const progress = card.querySelector('[aria-label^="Progress:"]');
+    assert.ok(progress, "the card renders the shared progress strip");
+    return (card.textContent ?? "").replace(progress.textContent ?? "", "");
+  };
+  assert.doesNotMatch(withoutProgress(heldCard), /Then continue|Queued|On hold/);
   const capacityCard = selector("#80, Standalone task")!;
   header(capacityCard, "Waiting for capacity", "12m ago");
-  assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
+  assert.doesNotMatch(withoutProgress(capacityCard), /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";

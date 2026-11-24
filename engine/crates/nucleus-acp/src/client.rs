@@ -130,7 +130,7 @@ pub(crate) struct Detail {
     pub identity: Identity,
     pub reference: Option<String>,
     pub phase: Phase,
-    pub wait: Option<String>,
+    pub lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
     pub question: Option<Question>,
     #[serde(default)]
     pub operator_inbox: bool,
@@ -154,8 +154,6 @@ pub(crate) struct Run {
     pub role: Role,
     pub purpose: String,
     pub last_send_at: Option<u64>,
-    #[serde(default)]
-    pub reported: bool,
     pub activity: Option<Activity>,
 }
 

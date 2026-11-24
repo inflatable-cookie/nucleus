@@ -269,6 +269,13 @@ async fn view(
         json!({"instance":INSTANCE,"role":"worker","purpose":"Write the fixture","lastSendAt":1,
             "reported":state == 4,"activity":activity})
     };
+    let step_state = if state == 3 { "done" } else { "current" };
+    let step_note = match state {
+        4 => Some("Waiting on Nucleus"),
+        5 => Some("Waiting for prerequisite"),
+        8 => Some("Waiting for capacity"),
+        _ => None,
+    };
     (
         StatusCode::OK,
         Json(json!({
@@ -276,7 +283,10 @@ async fn view(
             "reference":"fixture#67",
             "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
             "phase": if state == 3 { "done" } else { "working" },
-            "wait": match state { 0 => Some("starting"), 4 => Some("host_unknown"), 5 => Some("prerequisite"), 8 => Some("capacity"), _ => None },
+            "lifecycle":{"steps":[
+                {"key":"queued","label":"Queued","state":"done","tone":"success"},
+                {"key":"working","label":"Working","state":step_state,"note":step_note,"tone":"accent"}
+            ]},
             "question":null,"run":run,
             "parentHold": (state == 0).then(|| parent_hold_prompt("fixture-hold")),
             "activeChild": matches!(state, 1 | 2 | 8)
@@ -486,7 +496,11 @@ async fn an_active_child_keeps_the_parent_hold_through_pause_and_a_read_failure(
         .expect("authenticated hold enters its follow loop");
     fixture.state.store(8, Ordering::Relaxed);
     let _ = fixture.changes.send(());
-    agent.update("plan").await;
+    let plan = agent.update("plan").await;
+    assert_eq!(
+        plan["entries"][1]["content"],
+        "fixture#67 · Working · Waiting for capacity"
+    );
     assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
     let pointer = home.path().join("binding.json");
     let mut renewed: Binding =

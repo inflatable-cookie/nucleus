@@ -29,6 +29,7 @@ import {
   useRustDetail,
   type RustCommand,
   type RustHistoryPage,
+  type RustLifecycle,
   type RustInvalidation,
   type RustNext,
   type RustQuestion,
@@ -36,6 +37,8 @@ import {
   type RustTaskDetail,
   type RustVerdict,
 } from "../web/rust-board";
+
+import { RustTaskProgress } from "./rust-progress";
 
 type Section = "amend" | "hold" | "cancel" | "complete" | "move_work" | null;
 type CommandOutcome = Awaited<ReturnType<typeof postRustCommand>>;
@@ -184,6 +187,8 @@ export function RustTaskDialog({
                 )}
                 {detail.run && <RunActivity run={detail.run} c={c} />}
               </DetailSection>
+              <RustTaskProgress progress={detail.lifecycle} c={c} compact={compact} />
+              <Participants lifecycle={detail.lifecycle} c={c} />
               {allowance && (
                 <DetailSection c={c} title="Allowance">
                   <BudgetBars
@@ -539,6 +544,33 @@ function QuestionSection({
 
 const roleLabel = { worker: "Worker", reviewer: "Reviewer" };
 
+function Participants({ lifecycle, c }: { lifecycle: RustLifecycle; c: Colors }) {
+  const { worker, reviewer } = lifecycle;
+  if (!worker && !reviewer) return null;
+  return (
+    <DetailSection c={c} title="Participants">
+      <View style={{ ...row, flexWrap: "wrap", gap: space.sm }}>
+        {(["worker", "reviewer"] as const).map((role) => {
+          const participant = lifecycle[role];
+          if (!participant) return null;
+          const profile = [participant.provider, participant.model]
+            .filter(Boolean)
+            .join(" / ");
+          return (
+            <DetailField
+              key={role}
+              c={c}
+              compact={false}
+              label={roleLabel[role]}
+              value={profile || participant.thread}
+            />
+          );
+        })}
+      </View>
+    </DetailSection>
+  );
+}
+
 function RunActivity({
   run,
   c,
@@ -621,6 +653,7 @@ function ActivityHistory({
         let body;
         switch (record.kind) {
           case "run_ended":
+          case "run_reported":
             return null;
           case "run_started":
             body = (

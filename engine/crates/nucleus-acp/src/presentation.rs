@@ -1,11 +1,12 @@
 use std::{
     collections::BTreeMap,
+    fmt::Write as _,
     sync::LazyLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Phase, Question, Repair, Review, Role, Verdict};
+use nucleus_core::{Phase, Question, Repair, Review, Role, Verdict, acp::lifecycle::StepState};
 use serde_json::{Value, json};
 
 use crate::client::{Activity, Detail, Event, Milestone};
@@ -16,10 +17,8 @@ pub(crate) struct Presentation {
     plan: Option<Value>,
     runs: BTreeMap<String, Tool>,
     order: Vec<String>,
-    completed_reviews: usize,
     question: Option<Question>,
     phase: Option<Phase>,
-    last_active_phase: Option<Phase>,
 }
 
 struct Tool {
@@ -44,11 +43,8 @@ impl Presentation {
             }
         }
 
-        if !detail.phase.is_terminal() {
-            self.last_active_phase = Some(detail.phase);
-        }
         if structured {
-            let plan = plan(&detail, self.completed_reviews, self.last_active_phase);
+            let plan = plan(&detail);
             if self.plan.as_ref() != Some(&plan) {
                 updates.push(plan.clone());
                 self.plan = Some(plan);
@@ -102,9 +98,6 @@ impl Presentation {
                 }
             }
             Milestone::Verdict { verdict } => {
-                if matches!(verdict, Verdict::Reviewed { .. }) {
-                    self.completed_reviews += 1;
-                }
                 if !attaching {
                     let text = match verdict {
                         Verdict::Reviewed {
@@ -195,112 +188,45 @@ impl Tool {
     }
 }
 
-fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
-    let phase = match detail.phase {
-        Phase::Cancelled => previous
-            .filter(|phase| !phase.is_terminal())
-            .unwrap_or(Phase::Queued),
-        phase => phase,
-    };
-    let step = match phase {
-        Phase::Queued | Phase::Cancelled => 0,
-        Phase::Working | Phase::Blocked | Phase::Error => 1,
-        Phase::ReportReady | Phase::Reviewing => 2,
-        Phase::Merging => 3,
-        Phase::Closing | Phase::Done => 4,
-    };
-    let round = if step <= 2 {
-        reviews + 1
-    } else {
-        reviews.max(1)
-    };
-    let mut titles = vec![
-        "Queued".into(),
-        "Working".into(),
-        format!("Review round {round}"),
-        "Merge".into(),
-        "Close".into(),
-    ];
-    let step = if detail.report.is_some() {
-        titles = vec![
-            "Queued".into(),
-            "Working".into(),
-            "Report ready".into(),
-            "Done".into(),
-        ];
-        if phase == Phase::Done { 3 } else { step }
-    } else {
-        step
-    };
-    if let Some(reference) = &detail.reference {
-        titles[step] = format!("{reference} · {}", titles[step]);
-    }
-    if detail.phase == Phase::ReportReady
-        && let Some(delivery) = detail
-            .report
-            .as_ref()
-            .and_then(|report| report.delivery.as_ref())
-    {
-        use std::fmt::Write as _;
-        let _ = write!(
-            titles[step],
-            " · {} v{}",
-            delivery.artifact.key, delivery.artifact.version
-        );
-    }
-    if detail.phase == Phase::Cancelled {
-        titles[step].push_str(" · cancelled");
-    } else if !detail.phase.is_terminal()
-        && let Some(wait) = wait_text(detail)
-    {
-        titles[step].push_str(" · ");
-        titles[step].push_str(wait);
-    }
-    let entries: Vec<_> = titles
-        .into_iter()
+fn plan(detail: &Detail) -> Value {
+    let steps = &detail.lifecycle.steps;
+    let entries: Vec<_> = steps
+        .iter()
         .enumerate()
-        .map(|(index, content)| {
-            let status = if index < step
-                || phase == Phase::Done
-                || (index == step && detail.phase == Phase::Cancelled)
+        .map(|(index, step)| {
+            let mut content = step.label.clone();
+            if step.state == StepState::Current
+                || (detail.phase == Phase::Done && index + 1 == steps.len())
             {
-                "completed"
-            } else if index == step {
-                "in_progress"
-            } else {
-                "pending"
+                if let Some(reference) = &detail.reference {
+                    content = format!("{reference} · {content}");
+                }
+                if detail.phase == Phase::ReportReady
+                    && let Some(delivery) = detail
+                        .report
+                        .as_ref()
+                        .and_then(|report| report.delivery.as_ref())
+                {
+                    let _ = write!(
+                        content,
+                        " · {} v{}",
+                        delivery.artifact.key, delivery.artifact.version
+                    );
+                }
+            }
+            for suffix in [&step.round_label, &step.note].into_iter().flatten() {
+                let _ = write!(content, " · {suffix}");
+            }
+            let status = match step.state {
+                StepState::Done => "completed",
+                StepState::Current if detail.phase == Phase::Cancelled => "completed",
+                StepState::Current => "in_progress",
+                StepState::Todo => "pending",
             };
             json!({"content":content,"priority":"medium","status":status})
         })
         .collect();
     json!({"sessionUpdate":"plan","entries":entries})
-}
-
-fn wait_text(detail: &Detail) -> Option<&'static str> {
-    Some(match detail.wait.as_deref()? {
-        "capacity" if detail.phase == Phase::Reviewing => "waiting for a review slot",
-        "capacity" => "waiting for a work slot",
-        "checks_pending" => "waiting for checks",
-        "hold" => "on hold",
-        "input" | "question" => "waiting for an answer",
-        "permission" => "waiting for permission",
-        "forge_unknown" => "waiting for GitHub",
-        "host_unknown" | "idle_without_terminal_run"
-            if let Some(run) = &detail.run
-                && run.reported =>
-        {
-            match run.role {
-                Role::Worker => "waiting to confirm the worker is idle",
-                Role::Reviewer => "waiting to confirm the reviewer is idle",
-            }
-        }
-        "host_unknown" | "idle_without_terminal_run" => "waiting for the host",
-        "operator_declined" => "operator declined. Move or cancel the task",
-        "stopping" => "waiting for the run to finish",
-        "workspace_unknown" => "checking the workspace",
-        "retained_thread_busy" => "waiting for the previous turn",
-        _ => return None,
-    })
 }
 
 fn question_text(question: &Question, operator_inbox: bool) -> String {
