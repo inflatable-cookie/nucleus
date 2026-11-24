@@ -653,6 +653,71 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
     })
 }
 
+#[tokio::test]
+async fn missing_or_steered_history_does_not_prove_a_terminal_role_run() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let message = format!("{instance}-message");
+    let exact = snapshot(&binding, &instance, "completed", false);
+    let mut steered = exact.clone();
+    steered["projection"]["runs"][0]["userMessageId"] = json!("other-message");
+    steered["projection"]["messages"] = json!([{"id":message,"runId":NATIVE_RUN}]);
+    let mut truncated = exact.clone();
+    truncated["hasMoreHistory"] = json!(true);
+    truncated["historyCursor"] = json!("more");
+    truncated["projection"]["runs"] = json!([]);
+    let (client, server) = server(
+        [exact, steered, truncated]
+            .into_iter()
+            .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
+            .collect(),
+    )
+    .await;
+    let pass = quiet_pass(&client);
+    let run = task.run().unwrap();
+    let seen = |state| Host::Current {
+        instance: instance.clone(),
+        state,
+    };
+    assert_eq!(
+        pass.observe_run(run, 2).await.unwrap().host,
+        seen(RunState::Ended)
+    );
+    assert_eq!(
+        pass.observe_run(run, 3).await.unwrap().host,
+        seen(RunState::IdleWithoutTerminalRun)
+    );
+    assert!(matches!(
+        pass.observe_run(run, 4).await,
+        Err(HostError::Uncertain)
+    ));
+    server.await.unwrap();
+
+    let inputs = T3::prepare_report_reminder(
+        task.run().unwrap(),
+        &binding,
+        "reminder",
+        2,
+        "Report your earlier work.",
+    )
+    .unwrap();
+    let wire: Value = serde_json::from_str(&inputs.input).unwrap();
+    assert_eq!(inputs.thread, THREAD);
+    assert_eq!(
+        wire["selection"],
+        json!({"instanceId":"fixture-provider","model":"fixture-model"})
+    );
+    assert_eq!(wire["payload"]["commandId"], "reminder");
+    assert_eq!(wire["payload"]["messageId"], "reminder-message");
+    assert_eq!(wire["payload"]["modelSelection"], wire["selection"]);
+    assert_eq!(
+        wire["payload"]["dispatchMode"],
+        json!({"type":"queue_after_active"})
+    );
+    assert!(wire["payload"].get("freshContext").is_none());
+}
+
 fn absent() -> Response {
     missing_thread(THREAD)
 }
@@ -1534,7 +1599,7 @@ async fn ready_notice(
 }
 
 #[tokio::test]
-async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
+async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_removal() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, _, instance) = reserve(binding.clone());
@@ -1579,32 +1644,85 @@ async fn terminal_exact_thread_waits_for_a_process_in_its_checkout() {
     let run = task.run().expect("run");
     let pass = client.pass(checkout.path());
     assert_eq!(
-        pass.observe_run(run, 2).await.expect("busy checkout").host,
-        Host::Current {
-            instance: instance.clone(),
-            state: RunState::Running
-        }
-    );
-    process.kill().await.expect("stop fixture child");
-    assert_eq!(
-        pass.observe_run(run, 3).await.expect("same inventory").host,
-        Host::Current {
-            instance: instance.clone(),
-            state: RunState::Running
-        }
-    );
-    assert_eq!(
-        quiet_pass(&client)
-            .observe_run(run, 3)
+        pass.observe_run(run, 2)
             .await
-            .expect("quiet checkout")
+            .expect("exact turn ended")
             .host,
         Host::Current {
             instance,
             state: RunState::Ended
         }
     );
+    assert_eq!(
+        pass.observe_retained(&binding, THREAD)
+            .await
+            .expect("writer present"),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Busy
+        }
+    );
+    process.kill().await.expect("stop fixture child");
+    assert_eq!(
+        quiet_pass(&client)
+            .observe_retained(&binding, THREAD)
+            .await
+            .expect("writer exited"),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Idle
+        }
+    );
     server.await.expect("scripted host");
+}
+
+#[tokio::test]
+async fn terminal_role_uses_explicit_background_clearance_from_current_bound_shell() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let mut terminal = snapshot(&binding, &instance, "completed", false);
+    terminal["hasMoreHistory"] = json!(true);
+    terminal["historyCursor"] = json!("earlier-items");
+    let mut row = terminal["projection"]["thread"].clone();
+    row["status"] = json!("completed");
+    // The shell knows a separate T3 completion after the primary role run.
+    row["latestRunId"] = json!("later-completion");
+    row["activeRunId"] = Value::Null;
+    row["pendingRuntimeRequest"] = Value::Null;
+    row["pendingBackgroundTasks"] = json!([]);
+    let probe = "orchestration.subscribeThread";
+    let (host, requests) = server(vec![
+        (probe, Response::Snapshot(terminal.clone())),
+        (probe, Response::Snapshot(terminal)),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    let run = task.run().unwrap();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":15, "projects":[], "threads":[row]
+        }}));
+    assert!(matches!(
+        pass.observe_run(run, 2).await,
+        Err(HostError::RetainedIdleCoverage { .. })
+    ));
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    assert_eq!(
+        pass.observe_run(run, 3).await.unwrap().host,
+        Host::Current {
+            instance,
+            state: RunState::Ended
+        }
+    );
+    // The second observation may reuse the held exact projection.
+    assert!(
+        host.host_calls()
+            .get(probe)
+            .is_some_and(|calls| (1..=2).contains(calls))
+    );
+    requests.abort();
 }
 
 #[tokio::test]
@@ -1809,7 +1927,7 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
         (RunState::Ended, None),
         (RunState::Ended, None),
         (RunState::Ended, None),
-        (RunState::Ended, None),
+        (RunState::IdleWithoutTerminalRun, None),
     ] {
         let seen = pass.observe_run(run, 2).await.expect("native observation");
         assert_eq!(
@@ -1996,6 +2114,14 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
 fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, String) {
     let (mut task, mut observation, original) = reserve_entry(binding.clone(), Entry::Brief);
     task.record_send(&original, 2).unwrap();
+    task.command(
+        Command::Move(Phase::Working),
+        &Authority::Operator {
+            actor: "fixture".into(),
+        },
+        &observation,
+    )
+    .expect("supersede the old assignment");
     observation.host = Observed::Known(Host::Current {
         instance: original,
         state: RunState::Ended,

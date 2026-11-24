@@ -178,6 +178,7 @@ pub enum Action {
         workspace: CloseWorkspace,
     },
     Relaunch(Role),
+    RemindReport,
     Ask(Question),
     Nothing,
 }
@@ -191,6 +192,7 @@ enum Signal {
     Admitted,
     Start(Role, Launch),
     Failed(Role),
+    RemindReport,
     WorkerReported,
     ReportSettled(Phase),
     ReviewerReported(Review),
@@ -228,6 +230,7 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
         Signal::Failed(role) if task.attempts < 2 => Action::Relaunch(role),
         Signal::Failed(_) if task.report_task().is_some() => Action::Advance(Phase::Blocked),
         Signal::Failed(role) => Action::Ask(Question::Retry { role }),
+        Signal::RemindReport => Action::RemindReport,
         Signal::ReadyToMerge(head) => Action::Merge { head },
         Signal::ReadyToClose(commit, workspace) => Action::Close { commit, workspace },
         Signal::Question(question) => Action::Ask(question),
@@ -260,7 +263,7 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
     if let Some(run) = task.run() {
         let role = run.launch.role;
         if let Some(report) = run.report() {
-            return settled(task, observation, role, Some(report));
+            return settled(task, observation, role, Ok(report));
         }
         if role == Role::Reviewer
             && run.last_send_at_ms().is_none()
@@ -279,12 +282,15 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
+            Some(RunState::UsageLimited) if run.report_reminder_for().is_some() => {
+                settled(task, observation, role, Err(RunState::UsageLimited))
+            }
             Some(RunState::UsageLimited | RunState::ParentEnded | RunState::AssignmentRejected) => {
                 Signal::Stopped(task.phase)
             }
             None => Signal::Wait(WaitReason::HostUnknown),
-            Some(RunState::Ended | RunState::Gone | RunState::Rejected) => {
-                settled(task, observation, role, None)
+            Some(state @ (RunState::Ended | RunState::Gone | RunState::Rejected)) => {
+                settled(task, observation, role, Err(state))
             }
         };
     }
@@ -319,12 +325,24 @@ fn prepared(observation: &Observation, role: Role, review_head: Option<&Head>) -
     }
 }
 
-fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&Report>) -> Signal {
+fn settled(
+    task: &Task,
+    observation: &Observation,
+    role: Role,
+    disposition: Result<&Report, RunState>,
+) -> Signal {
+    let report = disposition.ok();
+    let missing = || {
+        disposition.err().map_or(Signal::Failed(role), |state| {
+            missing_report(task, role, state)
+        })
+    };
     if task.report_task().is_some() {
         return match report {
             Some(Report::ReportReady(_)) => Signal::ReportSettled(Phase::ReportReady),
             Some(Report::Blocked(_)) => Signal::ReportSettled(Phase::Blocked),
             Some(Report::Error(_)) => Signal::ReportSettled(Phase::Error),
+            None => missing(),
             _ => Signal::Failed(role),
         };
     }
@@ -337,15 +355,23 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
         let reported_approval = matches!(report, Some(Report::Review { head, decision: Review::Approve, .. }) if *head == pr.head);
         return merged_signal(task, pr, reported_approval);
     }
-    if (role == Role::Reviewer || report.is_none())
+    if (role == Role::Reviewer || disposition.is_err_and(|state| state != RunState::Ended))
         && observation
             .pr()
             .is_some_and(|pr| Some(pr) != task.pr.as_ref())
     {
         return Signal::Refresh(task.phase);
     }
+    if role == Role::Reviewer
+        && matches!(disposition, Err(RunState::Ended))
+        && !matches!(&observation.forge, Observed::Known(Forge::Open { pr, .. })
+            if task.run().and_then(|run| run.launch.review_head.as_ref()) == Some(&pr.head))
+    {
+        return Signal::Refresh(task.phase);
+    }
     match report {
-        None | Some(Report::ReportReady(_) | Report::Blocked(_) | Report::Error(_)) => {
+        None => missing(),
+        Some(Report::ReportReady(_) | Report::Blocked(_) | Report::Error(_)) => {
             Signal::Failed(role)
         }
         Some(Report::Question { prompt, options }) => Signal::Question(Question::Work {
@@ -380,6 +406,43 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
             }
         },
     }
+}
+
+pub(crate) fn missing_report_cause(role: Role, state: RunState) -> String {
+    let role = match role {
+        Role::Worker => "worker",
+        Role::Reviewer => "reviewer",
+    };
+    let outcome = match state {
+        RunState::Gone => "could no longer be found",
+        RunState::Rejected => "was rejected by the host",
+        RunState::UsageLimited => "hit the provider usage limit",
+        _ => "ended",
+    };
+    format!("The {role}'s report reminder {outcome} without an authenticated report.")
+}
+
+fn missing_report(task: &Task, role: Role, state: RunState) -> Signal {
+    if task
+        .run()
+        .and_then(crate::model::Run::report_reminder_for)
+        .is_some()
+    {
+        if task.report_task().is_some() {
+            return Signal::ReportSettled(Phase::Blocked);
+        }
+        let cause = missing_report_cause(role, state);
+        return Signal::Question(Question::Work {
+            prompt: format!(
+                "{cause} Inspect the retained thread. Answer with instructions to retry, or cancel the task."
+            ),
+            options: Vec::new(),
+        });
+    }
+    if state == RunState::Ended {
+        return Signal::RemindReport;
+    }
+    Signal::Failed(role)
 }
 
 fn unbound(task: &Task, observation: &Observation) -> Signal {

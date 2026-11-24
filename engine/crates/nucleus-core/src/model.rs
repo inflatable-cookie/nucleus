@@ -542,6 +542,8 @@ pub struct Run {
     pub(crate) last_send_at_ms: Option<u64>,
     #[serde(default)]
     pub(crate) rejected_awaiting_archive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) report_reminder_for: Option<String>,
 }
 
 impl Run {
@@ -569,6 +571,11 @@ impl Run {
     #[must_use]
     pub const fn rejected_awaiting_archive(&self) -> bool {
         self.rejected_awaiting_archive
+    }
+
+    #[must_use]
+    pub fn report_reminder_for(&self) -> Option<&str> {
+        self.report_reminder_for.as_deref()
     }
 }
 

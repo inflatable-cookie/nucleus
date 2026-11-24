@@ -72,7 +72,7 @@ use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility, snooze_deadline};
-use thread_snapshots::ThreadRead;
+use thread_snapshots::{ShellCustody, ThreadRead, row_activity};
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
 pub use traffic::HostCalls;
@@ -672,6 +672,17 @@ impl T3 {
         Ok((thread, state))
     }
 
+    fn terminal_role_quiet(&self, wire: &Wire, thread: &str, terminal_revision: u64) -> bool {
+        self.rpc.with_shell(|shell| {
+            shell
+                .filter(|shell| shell.revision().is_some_and(|seq| seq >= terminal_revision))
+                .and_then(|shell| shell.marker(thread))
+                .is_some_and(|row| {
+                    retained_row_matches(wire, &row) && row_activity(&row) == RowChildren::Quiet
+                })
+        })
+    }
+
     fn verify_retained_target(
         &self,
         wire: &Wire,
@@ -689,17 +700,9 @@ impl T3 {
             .thread_row(target.thread_id)
             .ok_or(HostError::RetainedBindingChanged)?;
         let parent = wire.parent.as_deref();
-        let lineage = &row["lineage"];
-        if row["projectId"] != wire.binding.project_id
-            || row["worktreePath"] != wire.binding.worktree_path
-            || row["branch"] != wire.binding.branch
+        if !retained_row_matches(wire, &row)
             || !row["archivedAt"].is_null()
             || !row["deletedAt"].is_null()
-            || parent.is_some_and(|parent| {
-                lineage["parentThreadId"] != parent
-                    || lineage["rootThreadId"] != parent
-                    || lineage["relationshipToParent"] != "subagent"
-            })
         {
             return Err(HostError::RetainedBindingChanged);
         }
@@ -930,12 +933,19 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::Uncertain);
         }
-        let quiet = !matches!(state, RunState::Ended | RunState::Gone)
-            || self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?;
+        let background_pending = match &thread {
+            Some(thread) if state == RunState::Ended => {
+                // The exact run proves the end. A synchronized, bound shell can
+                // prove an empty background roster at that revision or later.
+                !self
+                    .host
+                    .terminal_role_quiet(&wire, &run.launch().thread, thread.sequence())
+                    && thread.terminal_background_pending()?
+            }
+            _ => false,
+        };
         let message = wire.message_id(&run.launch().instance);
-        if quiet
+        if !background_pending
             && state == RunState::Ended
             && thread
                 .as_ref()
@@ -947,10 +957,18 @@ impl TaskHost for T3Pass<'_> {
             .as_ref()
             .filter(|_| state == RunState::Ended)
             .and_then(|thread| thread.provider_limit(&message));
-        let state = if !quiet {
+        let state = if background_pending {
             RunState::Running
         } else if provider_limit.is_some() {
             RunState::UsageLimited
+        } else if state == RunState::Ended
+            && !thread
+                .as_ref()
+                .is_some_and(|thread| thread.has_exact_run(&message))
+        {
+            // A steer's linked turn can settle a report or a stop, but it
+            // cannot prove that the assignment ran without reporting.
+            RunState::IdleWithoutTerminalRun
         } else {
             state
         };
@@ -1022,9 +1040,9 @@ impl TaskHost for T3Pass<'_> {
             ThreadRead::Exact
         };
         let (thread, state) = self.host.delivery(run, &wire, policy).await?;
-        if !worker
-            && continuation
-            && run.launch().profile().is_some()
+        if continuation
+            && ((!worker && run.launch().profile().is_some())
+                || run.report_reminder_for().is_some())
             && !wire.selection.as_ref().is_some_and(|selection| {
                 thread
                     .as_ref()
@@ -1263,6 +1281,16 @@ fn assignment_rejected(run: &Run) -> RunObservation {
         routing: None,
         active_child: None,
     }
+}
+
+fn retained_row_matches(wire: &Wire, row: &Value) -> bool {
+    row["projectId"] == wire.binding.project_id
+        && row["worktreePath"] == wire.binding.worktree_path
+        && row["branch"] == wire.binding.branch
+        && wire
+            .parent
+            .as_deref()
+            .is_none_or(|parent| ShellCustody(row).parent() == Some(parent))
 }
 
 fn worker_continuation(run: &Run, wire: &Wire) -> bool {

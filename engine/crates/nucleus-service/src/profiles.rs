@@ -276,7 +276,7 @@ impl Service {
             let Some(pause) = state.prepared_pause(run)? else {
                 return Ok(None);
             };
-            if run.last_send_at_ms().is_some() {
+            if run.last_send_at_ms().is_some() || run.report_reminder_for().is_some() {
                 state
                     .group_waits
                     .insert(row.task.identity().id.clone(), pause);

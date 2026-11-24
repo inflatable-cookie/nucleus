@@ -508,15 +508,29 @@ impl Projection {
             return Ok(RetainedThread::Busy);
         }
         if !self.has_idle_coverage() {
-            return Err(HostError::RetainedIdleCoverage {
-                revision: self.sequence,
-                providers: self.provider_threads.is_some(),
-                turn_items: self.turn_items.is_some(),
-                shell_background: !(self.windowed || self.compact_turn_items)
-                    || self.shell_background_work.is_some(),
-            });
+            return Err(self.idle_coverage_error());
         }
         Ok(RetainedThread::Idle)
+    }
+
+    pub(crate) fn terminal_background_pending(&self) -> Result<bool, HostError> {
+        if self.background_work() || self.shell_background_work == Some(true) {
+            return Ok(true);
+        }
+        if self.shell_background_work == Some(false) || self.has_idle_coverage() {
+            return Ok(false);
+        }
+        Err(self.idle_coverage_error())
+    }
+
+    fn idle_coverage_error(&self) -> HostError {
+        HostError::RetainedIdleCoverage {
+            revision: self.sequence,
+            providers: self.provider_threads.is_some(),
+            turn_items: self.turn_items.is_some(),
+            shell_background: !(self.windowed || self.compact_turn_items)
+                || self.shell_background_work.is_some(),
+        }
     }
 
     fn busy_reason(&self) -> Option<&'static str> {
@@ -601,6 +615,12 @@ impl Projection {
             });
         }
         Ok(run.status.run_state())
+    }
+
+    pub(crate) fn has_exact_run(&self, message_id: &str) -> bool {
+        self.runs
+            .iter()
+            .any(|run| run.user_message_id.as_deref() == Some(message_id))
     }
 
     pub(crate) fn has_delivery(&self, message_id: &str) -> bool {
@@ -738,9 +758,15 @@ impl Projection {
     fn delivery(&self, id: &str) -> (Option<&Message>, Option<&Run>) {
         let message = self.messages.iter().find(|message| message.id == id);
         let linked_id = message.and_then(|message| message.run_id.as_deref());
-        let run = self.runs.iter().find(|run| {
-            run.user_message_id.as_deref() == Some(id) || linked_id == Some(run.id.as_str())
-        });
+        let run = self
+            .runs
+            .iter()
+            .find(|run| run.user_message_id.as_deref() == Some(id))
+            .or_else(|| {
+                self.runs
+                    .iter()
+                    .find(|run| linked_id == Some(run.id.as_str()))
+            });
         (message, run)
     }
 

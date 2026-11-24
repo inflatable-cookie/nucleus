@@ -128,6 +128,7 @@ impl Task {
                 });
             }
             Action::Launch { .. }
+            | Action::RemindReport
             | Action::Wait(_)
             | Action::Merge { .. }
             | Action::Close { .. }
@@ -144,6 +145,16 @@ impl Task {
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
         }
+        let reminder_cause = run
+            .as_ref()
+            .filter(|run| run.report_reminder_for().is_some() && run.report.is_none())
+            .and_then(|run| {
+                let state = observation.current(&run.launch.instance)?;
+                Some(crate::decision::missing_report_cause(
+                    run.launch.role,
+                    state,
+                ))
+            });
         let report = run.and_then(|run| run.report);
         if let Some(state) = &mut self.report_state {
             if let Some(report) = report {
@@ -155,7 +166,14 @@ impl Task {
                     _ => {}
                 }
             } else if phase == Phase::Blocked {
-                state.failure = Some("The worker did not deliver an authenticated report.".into());
+                state.failure = Some(reminder_cause.map_or_else(
+                    || "The worker did not deliver an authenticated report.".into(),
+                    |cause| {
+                        format!(
+                            "{cause} Inspect the retained thread and use Move to work to retry."
+                        )
+                    },
+                ));
             }
             self.phase = phase;
             self.attempts = 0;
@@ -333,13 +351,7 @@ impl Task {
         };
         let head = observation.pr().map_or("none", |pr| pr.head.as_str());
         let label = format!("task-{id}-{phase}-{head}-{}", self.attempts);
-        let bearer = CallbackCredential(
-            Sha256::new()
-                .chain_update(seed)
-                .chain_update(instance.as_bytes())
-                .finalize()
-                .into(),
-        );
+        let bearer = launch_credential(seed, &instance);
         self.threads.launch_sequence = sequence;
         self.run = Some(Run {
             launch: PreparedLaunch {
@@ -359,6 +371,50 @@ impl Task {
             revoked: false,
             last_send_at_ms: None,
             rejected_awaiting_archive: false,
+            report_reminder_for: None,
+        });
+        Ok(bearer)
+    }
+
+    /// Reserve a report-only continuation on the exact role thread. The prior
+    /// callback remains authoritative until this reservation is committed.
+    ///
+    /// # Errors
+    /// Returns an error unless the exact terminal run still needs its reminder.
+    pub fn reserve_report_reminder(
+        &mut self,
+        observation: &Observation,
+        inputs: LaunchInputs,
+        seed: &[u8; 32],
+    ) -> Result<CallbackCredential, CommandError> {
+        if decide(self, observation) != Action::RemindReport {
+            return Err(CommandError::LaunchNoLongerApplies);
+        }
+        let prior = self
+            .run
+            .as_ref()
+            .ok_or(CommandError::LaunchNoLongerApplies)?;
+        if prior.launch.thread != inputs.thread {
+            return Err(CommandError::LaunchNoLongerApplies);
+        }
+        let sequence = self.next_launch_sequence()?;
+        let instance = self.launch_instance(sequence);
+        let bearer = launch_credential(seed, &instance);
+        let mut launch = prior.launch.clone();
+        let original = std::mem::replace(&mut launch.instance, instance);
+        launch.started_at = inputs.started_at;
+        launch.credential = CredentialDigest(Sha256::digest(bearer.as_bytes()).into());
+        launch.input = inputs.input;
+        launch.scratch = inputs.scratch;
+        self.threads.bind(&launch);
+        self.threads.launch_sequence = sequence;
+        self.run = Some(Run {
+            launch,
+            report: None,
+            revoked: false,
+            last_send_at_ms: None,
+            rejected_awaiting_archive: false,
+            report_reminder_for: Some(original),
         });
         Ok(bearer)
     }
@@ -369,6 +425,7 @@ impl Task {
             !run.revoked
                 && run.last_send_at_ms.is_none()
                 && run.report.is_none()
+                && run.report_reminder_for().is_none()
                 && observation.current(&run.launch.instance) == Some(RunState::ReadyToSend)
         });
         if unsent {
@@ -792,6 +849,16 @@ impl Task {
         self.question = None;
         Ok(())
     }
+}
+
+fn launch_credential(seed: &[u8; 32], instance: &str) -> CallbackCredential {
+    CallbackCredential(
+        Sha256::new()
+            .chain_update(seed)
+            .chain_update(instance.as_bytes())
+            .finalize()
+            .into(),
+    )
 }
 
 fn forge_at_head<'a>(

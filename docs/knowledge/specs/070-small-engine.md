@@ -391,7 +391,11 @@ Later decisions carry their own attribution.
     authority at the current head. Fresh role sends can proceed while a
     retained role or local process is still active. A reviewer still needs the
     exact clean head. Checkout removal and revoked runs still check writer
-    custody.
+    custody. An exact terminal role with no pending native background work
+    releases the parent. A synchronized bound shell can establish an empty
+    background roster after the exact run is terminal. A prepared report
+    reminder does not extend that hold.
+    Local process custody is checked at checkout removal.
 
     The planner also ruled that a task row snoozes only when the held shell
     shows its retained and sent role children quiet. An unsent reservation adds no
@@ -512,8 +516,15 @@ Every action is idempotent:
 
 ### Faults
 
-- **A run that's gone, or that ended without reporting**, is relaunched in the same
-  role, and `attempts` goes up.
+- **An exact terminal role run without an authenticated report** gets one
+  report-only continuation on the same thread and pinned provider and model.
+  It asks for the work actually done, with the original review head and a
+  run-bound report credential. The durable reservation reuses its command ID
+  across a lost reply or engine restart. A terminal reminder with no report
+  gives the owner a cause and an action. A missing slice of host history cannot
+  establish that the turn ended.
+- **A run that's gone or a reliably rejected dispatch** is relaunched in the
+  same role, and `attempts` goes up.
 - **Three failed attempts** at the same phase and head end in one question to the
   planner. A report-only task parks as blocked and awaits an owner instruction.
 - **Uncertain T3 observations** have a due check after the host's deferral or

@@ -7,7 +7,7 @@ use serde_json::{
     value::{RawValue, to_raw_value},
 };
 
-use crate::{HostError, ParentRun, parent_thread};
+use crate::{HostError, ParentRun, T3, parent_thread};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +80,10 @@ impl RunRequest {
         started_at: u64,
     ) -> Result<LaunchInputs, HostError> {
         let message = message_id(instance);
+        let selection = match &self.dispatch {
+            Dispatch::Continue { profile } => profile.as_ref().map(RoleProfile::selection),
+            _ => None,
+        };
         let (method, payload) = match &self.dispatch {
             Dispatch::Create { title, profile } => (
                 Method::Create,
@@ -109,30 +113,17 @@ impl RunRequest {
                     "completionWake":"settled_only"
                 }),
             ),
-            Dispatch::Continue { .. } => (Method::Continue, {
-                let mut payload = json!({
-                    "type": "message.dispatch", "commandId": instance, "threadId": thread,
-                    "messageId": message, "text": self.text, "attachments": [],
-                    "createdBy": "user", "creationSource": "server", "dispatchMode": {"type": "queue_after_active"},
-                });
-                if let Dispatch::Continue {
-                    profile: Some(profile),
-                } = &self.dispatch
-                {
-                    payload["modelSelection"] = profile.selection();
-                }
-                payload
-            }),
+            Dispatch::Continue { .. } => (
+                Method::Continue,
+                continuation_payload(instance, &thread, &self.text, selection.as_ref()),
+            ),
         };
         let wire = Wire {
             binding: self.binding.clone(),
             pinned: false,
             parent: self.parent.clone(),
             method,
-            selection: match &self.dispatch {
-                Dispatch::Continue { profile } => profile.as_ref().map(RoleProfile::selection),
-                _ => None,
-            },
+            selection,
             payload: to_raw_value(&payload).map_err(|_| HostError::Configuration)?,
         };
         let input = serde_json::to_string(&wire).map_err(|_| HostError::Configuration)?;
@@ -143,6 +134,59 @@ impl RunRequest {
             scratch: None,
         })
     }
+}
+
+impl T3 {
+    /// Freeze a report reminder with the exact previous role's wire selection.
+    ///
+    /// # Errors
+    /// Returns an error if the prior reservation's thread or route is invalid.
+    pub fn prepare_report_reminder(
+        run: &Run,
+        binding: &Binding,
+        instance: &str,
+        started_at: u64,
+        text: &str,
+    ) -> Result<LaunchInputs, HostError> {
+        let prior = Wire::read(run)?;
+        if prior.binding != *binding {
+            return Err(HostError::Binding);
+        }
+        let thread = run.launch().thread.clone();
+        let selection = prior.model_selection()?.ok_or(HostError::Binding)?;
+        let payload = continuation_payload(instance, &thread, text, Some(&selection));
+        let wire = Wire {
+            pinned: false,
+            selection: Some(selection),
+            binding: prior.binding,
+            parent: prior.parent,
+            method: Method::Continue,
+            payload: to_raw_value(&payload).map_err(|_| HostError::Configuration)?,
+        };
+        Ok(LaunchInputs {
+            thread,
+            started_at,
+            input: serde_json::to_string(&wire).map_err(|_| HostError::Configuration)?,
+            scratch: None,
+        })
+    }
+}
+
+fn continuation_payload(
+    instance: &str,
+    thread: &str,
+    text: &str,
+    selection: Option<&Value>,
+) -> Value {
+    let mut payload = json!({
+        "type": "message.dispatch", "commandId": instance, "threadId": thread,
+        "messageId": message_id(instance), "text": text, "attachments": [],
+        "createdBy": "user", "creationSource": "server", "dispatchMode": {"type": "queue_after_active"},
+    });
+    if let Some(selection) = selection {
+        payload["modelSelection"] = selection.clone();
+    }
+    payload
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,7 +330,8 @@ impl Wire {
                     && payload["dispatchMode"]["type"] == "queue_after_active"
             }
         };
-        if matches && payload["commandId"] == launch.instance {
+        let reminder_matches = run.report_reminder_for().is_none() || wire.pinned;
+        if matches && reminder_matches && payload["commandId"] == launch.instance {
             Ok(wire)
         } else {
             Err(HostError::Binding)

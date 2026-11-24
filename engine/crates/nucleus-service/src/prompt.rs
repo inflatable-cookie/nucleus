@@ -5,7 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nucleus_core::{Brief, Head, Launch, PullRequest, ReportTask, Review, Role, Verdict};
+use nucleus_core::{
+    Brief, Head, Launch, PullRequest, ReportTask, Review, Role, Run, Task, Verdict,
+};
 use nucleus_store::{TaskRow, planning::Lane};
 use serde::Serialize;
 
@@ -30,6 +32,47 @@ pub(super) struct PromptSize {
 pub(super) struct Assignment {
     pub(super) text: String,
     pub(super) size: PromptSize,
+}
+
+pub(super) fn report_reminder(
+    task: &Task,
+    prior: &Run,
+    command: &Path,
+    ticket: &Path,
+) -> Assignment {
+    let launch = prior.launch();
+    let callback = bound_command(command, "report", ticket);
+    let mut text = format!(
+        "Nucleus did not receive an authenticated report for your earlier run {} on task {}.\n",
+        launch.instance,
+        task.identity().reference
+    );
+    if let Some(head) = &launch.review_head {
+        let _ = writeln!(
+            text,
+            "Report the review you actually performed at exact head {head}."
+        );
+    }
+    text.push_str(
+        "Use your findings and evidence from this thread. Do not redo the assignment, repeat checks, or claim work you did not perform. If the work was incomplete, report what was actually done and what prevented completion.\n",
+    );
+    let _ = writeln!(
+        text,
+        "Use the report JSON format from the earlier assignment. Submit it on stdin to `{callback}`. Exit status zero means accepted."
+    );
+    text.push_str(if task.report_task().is_some() {
+        " If you cannot report an existing delivery, report blocked or error with the concrete reason.\n"
+    } else {
+        " If you cannot report a completed result, use a planner question with the concrete reason and next step.\n"
+    });
+    let total = text.encode_utf16().count();
+    Assignment {
+        text,
+        size: PromptSize {
+            total,
+            sections: BTreeMap::from([("report", total)]),
+        },
+    }
 }
 
 impl Assignment {
@@ -365,12 +408,16 @@ impl Prompt<'_> {
     }
 
     fn bound_command(&self, verb: &str) -> String {
-        format!(
-            "{} {verb} --ticket {}",
-            shell_path(self.command),
-            shell_path(self.ticket)
-        )
+        bound_command(self.command, verb, self.ticket)
     }
+}
+
+fn bound_command(command: &Path, verb: &str, ticket: &Path) -> String {
+    format!(
+        "{} {verb} --ticket {}",
+        shell_path(command),
+        shell_path(ticket)
+    )
 }
 
 fn shell_path(path: &Path) -> String {

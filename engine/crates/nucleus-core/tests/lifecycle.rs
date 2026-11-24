@@ -485,8 +485,9 @@ fn three_confirmed_failures_open_one_question_and_retry_reuses_the_thread() {
     assert_eq!(task.attempts(), 1);
     let idle = retained(obs.clone(), "worker", RetainedThread::Idle);
     start(&mut task, &idle, Role::Worker, "worker", "work-2");
-    let silent = host(&task, obs.clone(), RunState::Ended);
-    assert_eq!(task.reconcile(&silent), Action::Relaunch(Role::Worker));
+    task.record_send(&instance(&task), 2).unwrap();
+    let rejected = host(&task, obs.clone(), RunState::Rejected);
+    assert_eq!(task.reconcile(&rejected), Action::Relaunch(Role::Worker));
     assert_eq!(task.attempts(), 2);
     start(&mut task, &idle, Role::Worker, "worker", "work-3");
     let gone = host(&task, obs, RunState::Gone);
@@ -511,23 +512,19 @@ fn three_confirmed_failures_open_one_question_and_retry_reuses_the_thread() {
 }
 
 #[test]
-fn the_first_pr_seen_as_a_worker_ends_does_not_inherit_its_failures() {
+fn a_worker_without_a_report_can_recover_its_first_pr() {
     let (mut task, workspace) = working();
     let no_pr = Observation {
         forge: Observed::Known(Forge::Absent),
         ..workspace
     };
-    let idle = retained(no_pr.clone(), "worker", RetainedThread::Idle);
     start(&mut task, &no_pr, Role::Worker, "worker", "initial work");
-    for _ in 0..2 {
-        let ended = host(&task, no_pr.clone(), RunState::Ended);
-        assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Worker));
-        start(&mut task, &idle, Role::Worker, "worker", "retry");
-    }
-    assert_eq!(task.attempts(), 2);
-
     let first_pr = host(&task, open('a', CheckState::Ready), RunState::Ended);
-    assert_eq!(task.reconcile(&first_pr), Action::Advance(Phase::Working));
+    assert_eq!(task.reconcile(&first_pr), Action::RemindReport);
+    let credential = remind(&mut task, &first_pr, "worker");
+    report(&mut task, &credential, Report::Work(pr('a').into()));
+    let reported = host(&task, open('a', CheckState::Ready), RunState::Ended);
+    assert_eq!(task.reconcile(&reported), Action::Advance(Phase::Reviewing));
     assert_eq!(task.attempts(), 0);
     assert_eq!(task.pull_request(), Some(&pr('a')));
     assert_eq!(task.question(), None);
@@ -537,7 +534,8 @@ fn the_first_pr_seen_as_a_worker_ends_does_not_inherit_its_failures() {
 fn the_first_pr_seen_between_worker_runs_resets_the_next_launch() {
     let (mut task, no_pr) = working();
     start(&mut task, &no_pr, Role::Worker, "worker", "initial work");
-    let ended = host(&task, no_pr, RunState::Ended);
+    task.record_send(&instance(&task), 2).unwrap();
+    let ended = host(&task, no_pr, RunState::Gone);
     assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Worker));
     assert_eq!(task.attempts(), 1);
 
@@ -566,7 +564,8 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
     ] {
         let (mut task, obs) = working();
         start(&mut task, &obs, Role::Worker, "worker", "work-1");
-        let failed = host(&task, obs.clone(), RunState::Ended);
+        task.record_send(&instance(&task), 2).unwrap();
+        let failed = host(&task, obs.clone(), RunState::Gone);
         task.reconcile(&failed);
         let idle = retained(obs.clone(), "worker", RetainedThread::Idle);
         let bearer = start(&mut task, &idle, Role::Worker, "worker", "work-2");
@@ -866,12 +865,13 @@ fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions
         "first review",
     );
     for _ in 0..2 {
-        let ended = host(&task, old_head.clone(), RunState::Ended);
+        task.record_send(&instance(&task), 2).unwrap();
+        let ended = host(&task, old_head.clone(), RunState::Gone);
         assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Reviewer));
         start(&mut task, &idle, Role::Reviewer, "reviewer", "retry review");
     }
 
-    let outage = host(&task, observation(), RunState::Ended);
+    let outage = host(&task, observation(), RunState::Gone);
     assert_eq!(
         task.reconcile(&outage),
         Action::Wait(WaitReason::ForgeUnknown)
@@ -889,7 +889,7 @@ fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions
     assert_eq!(recovered.attempts(), 0);
     assert_eq!(recovered.question(), None);
 
-    let ended_at_old_head = host(&task, old_head, RunState::Ended);
+    let ended_at_old_head = host(&task, old_head, RunState::Gone);
     assert_eq!(
         task.reconcile(&ended_at_old_head),
         Action::Ask(Question::Retry {
@@ -909,6 +909,115 @@ fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions
     assert_eq!(task.reconcile(&new_head), Action::Advance(Phase::Reviewing));
     assert_eq!(task.attempts(), 0);
     assert_eq!(task.question(), None);
+}
+
+fn remind(task: &mut Task, observation: &Observation, thread: &str) -> CallbackCredential {
+    let credential = task
+        .reserve_report_reminder(
+            observation,
+            LaunchInputs {
+                thread: thread.into(),
+                started_at: 3,
+                input: "report reminder".into(),
+                scratch: None,
+            },
+            &SEED,
+        )
+        .expect("reserve reminder");
+    task.record_send(&instance(task), 4).unwrap();
+    credential
+}
+
+#[test]
+fn a_silent_report_only_reminder_parks_with_an_owner_action() {
+    let base = task(Entry::Brief);
+    let mut task = Task::new_report_only(
+        base.identity().clone(),
+        base.brief().text.clone(),
+        "fixture".into(),
+        "delivery".into(),
+        sha('a'),
+    );
+    let obs = observation();
+    assert_eq!(task.reconcile(&obs), Action::Advance(Phase::Working));
+    let obs = Observation {
+        workspace: Observed::Known(Workspace::Clean(sha('a'))),
+        ..obs
+    };
+    start(&mut task, &obs, Role::Worker, "worker", "write report");
+    let ended = host(&task, obs.clone(), RunState::Ended);
+    remind(&mut task, &ended, "worker");
+    let ended = host(&task, obs, RunState::Ended);
+    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Blocked));
+    assert!(task.run().is_none());
+    let failure = task.report_task().unwrap().failure.as_deref().unwrap();
+    assert!(failure.contains("report reminder ended without an authenticated report"));
+    assert!(failure.contains("Move to work"));
+    assert_eq!(decide(&task, &ended), Action::Nothing);
+}
+
+#[test]
+fn an_exact_silent_review_gets_one_reminder_or_an_owner_question() {
+    let mut task = task(Entry::ReviewEntry);
+    let open = open('a', CheckState::Ready);
+    let original_credential = start(&mut task, &open, Role::Reviewer, "reviewer", "review");
+    let original = instance(&task);
+    let not_ended = host(&task, open.clone(), RunState::IdleWithoutTerminalRun);
+    assert_eq!(
+        decide(&task, &not_ended),
+        Action::Wait(WaitReason::IdleWithoutTerminalRun)
+    );
+    let ended = host(&task, open.clone(), RunState::Ended);
+    assert_eq!(decide(&task, &ended), Action::RemindReport);
+    let credential = remind(&mut task, &ended, "reviewer");
+    let reminder = instance(&task);
+    let mut task: Task = serde_json::from_str(&serde_json::to_string(&task).unwrap()).unwrap();
+    let run = task.run().unwrap();
+    assert_eq!(run.report_reminder_for(), Some(original.as_str()));
+    assert_eq!(run.launch().thread, "reviewer");
+    assert_eq!(run.launch().review_head, Some(sha('a')));
+    assert_eq!(task.attempts(), 0);
+    assert_eq!(decide(&task, &ended), Action::Wait(WaitReason::HostUnknown));
+    let ended = host(&task, open.clone(), RunState::Ended);
+    let mut silent = task.clone();
+    assert!(
+        matches!(silent.reconcile(&ended), Action::Ask(Question::Work { prompt, .. })
+        if prompt.contains("report reminder ended without an authenticated report")
+            && prompt.contains("Inspect the retained thread"))
+    );
+    assert!(silent.run().is_none());
+    assert_eq!(silent.reconcile(&ended), Action::Wait(WaitReason::Question));
+
+    let approval = |head| Report::Review {
+        head,
+        decision: Review::Approve,
+        summary: "Actual earlier review".into(),
+        finding_titles: Vec::new(),
+    };
+    assert_eq!(
+        task.record_report(
+            &original,
+            original_credential.as_bytes(),
+            approval(sha('a'))
+        ),
+        Err(CommandError::InvalidReportCredential)
+    );
+    assert_eq!(
+        task.record_report(&reminder, credential.as_bytes(), approval(sha('b'))),
+        Err(CommandError::ReportDoesNotMatch)
+    );
+    let external = host(
+        &task,
+        merged('a', Workspace::Clean(sha('a'))),
+        RunState::Ended,
+    );
+    assert!(matches!(
+        decide(&task, &external),
+        Action::Ask(Question::Accept { .. })
+    ));
+    report(&mut task, &credential, approval(sha('a')));
+    report(&mut task, &credential, approval(sha('a')));
+    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Merging));
 }
 
 #[test]
