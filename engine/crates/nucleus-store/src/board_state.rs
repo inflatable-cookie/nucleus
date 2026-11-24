@@ -21,7 +21,7 @@ impl Store {
                          'question_delivery', 'operator_decline_notified', 'provider_limit',
                          'delegated_parent_ended', 'paused_reservation_released',
                          'host_send_not_sent', 'report_ready_planner_unavailable',
-                         'role_threads_archived', 'role_archive_progress'
+                         'role_threads_archived', 'role_archive_progress', 'project_removed'
                        )
                        AND kind NOT GLOB 'closed_checkout_*'
                        AND kind NOT GLOB 'host_observation_*'

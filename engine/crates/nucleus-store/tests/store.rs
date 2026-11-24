@@ -295,6 +295,7 @@ fn board_activity_keeps_the_work_time_after_done_housekeeping() {
         "task_title_set",
         "row_snoozed",
         "telemetry_stage",
+        "project_removed",
     ]) {
         store
             .record_task_effect("closed", &EventDraft { at, ..event(kind) })

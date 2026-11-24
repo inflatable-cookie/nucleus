@@ -323,6 +323,25 @@ fn registry_api(service: &Arc<Service>) -> Router {
     )
 }
 
+fn registry_board_api(registry: &Registry) -> Router {
+    let assets = registry.home.path().join("board");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    crate::router_with_board_and_t3_callers(
+        Arc::clone(&registry.service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture-operator".into(),
+            },
+        }],
+        &assets,
+        Some(T3_KEY),
+    )
+    .unwrap()
+}
+
 fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
     let projects = nucleus_store::Projects {
         projects: BTreeMap::from([(
@@ -818,22 +837,7 @@ async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
     };
     let alpha = project_id("alpha-planner");
     let beta = project_id("beta-planner");
-    let assets = registry.home.path().join("board");
-    std::fs::create_dir(&assets).unwrap();
-    std::fs::write(assets.join("index.html"), "").unwrap();
-    std::fs::write(assets.join("app.js"), "").unwrap();
-    let api = crate::router_with_board_and_t3_callers(
-        Arc::clone(&registry.service),
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "fixture-operator".into(),
-            },
-        }],
-        &assets,
-        Some(T3_KEY),
-    )
-    .unwrap();
+    let api = registry_board_api(&registry);
     let operator = pair_board(&api, &BOARD_KEY).await;
     let link = json_body(
         caller_request(
@@ -2265,13 +2269,12 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     let task = json_body(get_as(&registry.api, task_path, &BOARD_KEY).await).await;
     assert_eq!(task["phase"], "done");
     assert_eq!(task["identity"]["repository"], ALPHA_REPO);
-    let history = get_as(&registry.api, &format!("{task_path}/history"), &BOARD_KEY).await;
-    assert_eq!(history.status(), StatusCode::OK);
     let registry = registry.reopen();
     assert_eq!(
         json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
         receipt
     );
+    assert_retirement_history(&registry, task_path).await;
     registry.enroll("alpha-planner").await;
     assert!(
         !registry
@@ -2296,6 +2299,20 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
             .await,
         Err(ServiceError::Project)
     ));
+}
+
+async fn assert_retirement_history(registry: &Registry, task_path: &str) {
+    let response = get_as(&registry.api, &format!("{task_path}/history"), &BOARD_KEY).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let history = json_body(response).await;
+    let mut kinds = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| &event["content"]["kind"]);
+    assert_eq!(kinds.next(), Some(&json!("project_removed")));
+    assert_eq!(kinds.next(), Some(&json!("fixture_finished")));
+    assert!(kinds.all(|kind| kind != "project_removed"));
 }
 
 #[tokio::test]
@@ -2369,6 +2386,8 @@ async fn assert_removal_restoration(destination: Option<&str>) {
     registry.enroll("alpha-planner").await;
     registry.task("alpha-planner", "old-task").await;
     finish_removal_task(&registry, "old-task", None).await;
+    let prior_age = restored_task_board_age(&registry).await;
+    assert!(prior_age[0].is_some());
 
     let before = removal_settings(&registry);
     let (old_id, original) = before.value.projects.iter().next().unwrap();
@@ -2420,6 +2439,7 @@ async fn assert_removal_restoration(destination: Option<&str>) {
         expected,
         "an old exact receipt is replayable after re-add",
     );
+    assert_eq!(restored_task_board_age(&registry).await, prior_age);
     assert_eq!(
         registry
             .service
@@ -2452,6 +2472,22 @@ async fn assert_removal_restoration(destination: Option<&str>) {
             .await
             .is_ok()
     );
+}
+
+async fn restored_task_board_age(registry: &Registry) -> [Option<u64>; 4] {
+    let api = registry_board_api(registry);
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let tasks = read_paired_task(&api, "/api/engine/tasks", &cookie).await;
+    let task = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["identity"]["id"] == "old-task")
+        .expect("finished history is visible on the board after re-add");
+    let latest = task["latestEventAtMs"].as_u64();
+    let since = task["stateSinceMs"].as_u64();
+    let admitted = task["lifecycle"]["admittedAtMs"].as_u64();
+    [latest, since, admitted, latest.or(since).or(admitted)]
 }
 
 fn removal_settings(
