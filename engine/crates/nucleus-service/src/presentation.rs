@@ -118,7 +118,6 @@ pub(super) struct RunView {
     review_head: Option<Head>,
     reported: bool,
     revoked: bool,
-    outcome: Option<Outcome>,
     activity: Option<RunActivity>,
 }
 
@@ -143,7 +142,6 @@ impl RunView {
             review_head: launch.review_head.clone(),
             reported: run.report().is_some(),
             revoked: run.revoked(),
-            outcome: run.report().map(|report| report_outcome(&row.task, report)),
             activity: activity
                 .filter(|seen| {
                     !run.revoked()
@@ -199,17 +197,6 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
         if let Some(run) = prior_run {
             records.push(Milestone::RunEnded {
                 instance: run.launch().instance.clone(),
-                outcome: if run.report().is_none() {
-                    task.question()
-                        .filter(|_| task.question() != prior.question())
-                        .cloned()
-                        .map(|mut question| {
-                            redact_question(&mut question);
-                            Outcome::Question { question }
-                        })
-                } else {
-                    None
-                },
             });
         }
         if let Some(run) = run {
@@ -297,10 +284,7 @@ fn report_outcome(task: &Task, report: &Report) -> Outcome {
     match report {
         Report::Work(report) => Outcome::Work {
             url: report.pull_request.url.clone(),
-            summary: report
-                .summary
-                .as_deref()
-                .map(|summary| one_line(summary, 240)),
+            summary: report.summary.as_deref().and_then(summary_line),
             revision: is_revision(task),
         },
         Report::Review {
@@ -323,10 +307,14 @@ fn report_outcome(task: &Task, report: &Report) -> Outcome {
                 .map(|pr| format!("{}/commits/{head}", pr.url.trim_end_matches('/'))),
         },
         Report::ReportReady(delivery) => Outcome::Report {
-            summary: one_line(&delivery.summary, 240),
+            summary: summary_line(&delivery.summary)
+                .or_else(|| delivery.headline.as_deref().and_then(summary_line))
+                .unwrap_or_default(),
         },
         Report::Blocked(failure) | Report::Error(failure) => Outcome::Blocked {
-            reason: one_line(&failure.summary, 240),
+            reason: summary_line(&failure.summary)
+                .or_else(|| failure.headline.as_deref().and_then(summary_line))
+                .unwrap_or_else(|| "The worker did not supply a reason.".into()),
         },
         Report::Question { prompt, options } => {
             let mut question = Question::Work {
@@ -356,6 +344,11 @@ pub(super) fn is_revision(task: &Task) -> bool {
             ..
         })
     )
+}
+
+fn summary_line(text: &str) -> Option<String> {
+    let line = one_line(text, 240);
+    (!line.is_empty()).then_some(line)
 }
 
 fn one_line(text: &str, limit: usize) -> String {

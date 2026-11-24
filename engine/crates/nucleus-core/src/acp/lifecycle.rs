@@ -120,8 +120,6 @@ pub enum Milestone {
     },
     RunEnded {
         instance: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        outcome: Option<Outcome>,
     },
     PullRequest {
         url: String,

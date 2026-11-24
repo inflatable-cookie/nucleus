@@ -12,7 +12,7 @@ use nucleus_core::{
     Identity, Phase, PullRequest, Question, Role,
     acp::{
         InboxAnswer, InboxSnapshot, SessionBinding,
-        lifecycle::{Lifecycle, Milestone, Outcome},
+        lifecycle::{Lifecycle, Milestone},
         session_id,
     },
     profiles::Provider,
@@ -166,7 +166,6 @@ pub(crate) struct Run {
     pub thread_url: Option<String>,
     pub provider: Option<Provider>,
     pub model: Option<String>,
-    pub outcome: Option<Outcome>,
     pub activity: Option<Activity>,
 }
 

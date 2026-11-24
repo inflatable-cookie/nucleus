@@ -40,7 +40,8 @@ struct Tool {
 struct Card {
     title: String,
     status: &'static str,
-    lines: Vec<String>,
+    link: Option<String>,
+    body: Option<String>,
 }
 
 impl Presentation {
@@ -80,9 +81,6 @@ impl Presentation {
             if let Some(sent) = run.last_send_at {
                 tool.clock.sent(sent);
             }
-            if tool.outcome.is_none() {
-                tool.outcome.clone_from(&run.outcome);
-            }
         }
 
         for participant in [&detail.lifecycle.worker, &detail.lifecycle.reviewer]
@@ -105,9 +103,10 @@ impl Presentation {
 
         // Only the most recent occurrence of the open question can still be answered.
         let question_owner = detail.question.as_ref().and_then(|question| {
+            let summary = question_summary(question);
             self.order.iter().rev().find(|&instance| {
                 matches!(&self.runs[instance].outcome, Some(Outcome::Question { question: asked })
-                    if question_summary(asked) == question_summary(question))
+                    if question_summary(asked) == summary)
             })
         });
         for instance in &self.order {
@@ -182,12 +181,9 @@ impl Presentation {
                         tool.record_report(at, sent_at_ms, outcome);
                     }
                 }
-                Milestone::RunEnded { instance, outcome } => {
+                Milestone::RunEnded { instance } => {
                     if let Some(tool) = self.runs.get_mut(&instance) {
                         tool.ended = true;
-                        if tool.outcome.is_none() {
-                            tool.outcome = outcome;
-                        }
                         ended = Some(instance);
                     }
                 }
@@ -331,30 +327,33 @@ impl Tool {
         if let Some(start) = self.clock.started_at_ms.and_then(start_time) {
             let _ = write!(title, " · {start}");
         }
+        let finished = self.ended || self.outcome.is_some();
         if let Some(elapsed) = self.clock.elapsed_ms() {
             let _ = write!(title, " · {}", duration(elapsed));
-        }
-        let mut lines = Vec::new();
-        if let Some(url) = &self.thread_url {
-            let role = role.to_ascii_lowercase();
-            lines.push(format!("[Open {role}]({url})"));
-        }
-        if let Some(outcome) = &self.outcome {
-            lines.push(outcome_text(outcome, answer));
-        } else if !self.ended {
-            lines.push(
-                activity.map_or_else(|| self.purpose.clone(), |activity| activity.label.clone()),
-            );
+        } else if finished {
+            title.push_str(" · Duration unavailable");
         }
         let status = match self.outcome {
             Some(Outcome::Blocked { .. }) => "failed",
-            _ if self.ended || self.outcome.is_some() => "completed",
+            _ if finished => "completed",
             _ => "in_progress",
+        };
+        let link = self.thread_url.as_ref().map(|url| {
+            let role = role.to_ascii_lowercase();
+            format!("[Open {role}]({url})")
+        });
+        let body = match &self.outcome {
+            Some(outcome) => Some(outcome_text(outcome, answer)),
+            None if !finished => Some(
+                activity.map_or_else(|| self.purpose.clone(), |activity| activity.label.clone()),
+            ),
+            None => None,
         };
         let card = Card {
             title,
             status,
-            lines,
+            link,
+            body,
         };
         if !replay && self.shown.as_ref() == Some(&card) {
             return None;
@@ -366,8 +365,9 @@ impl Tool {
                 "tool_call"
             };
             let content = card
-                .lines
+                .link
                 .iter()
+                .chain(card.body.iter())
                 .map(|text| {
                     json!({
                         "type":"content","content":{"type":"text","text":text}
@@ -376,13 +376,13 @@ impl Tool {
                 .collect::<Vec<_>>();
             Some(json!({"sessionUpdate":kind,"toolCallId":instance,
                 "title":card.title,"kind":"other","status":card.status,"content":content}))
-        } else if self
-            .shown
-            .as_ref()
-            .is_none_or(|shown| shown.status == "in_progress")
-            && let Some(outcome) = &self.outcome
+        } else if self.outcome.is_some()
+            && self
+                .shown
+                .as_ref()
+                .is_none_or(|shown| shown.status == "in_progress")
         {
-            Some(message(&outcome_text(outcome, answer)))
+            card.body.as_deref().map(message)
         } else {
             None
         };
@@ -404,10 +404,12 @@ fn outcome_text(outcome: &Outcome, answer: Option<&str>) -> String {
                 "Ready for review"
             };
             let pr = pr_link(url);
-            match summary.as_deref().filter(|summary| !summary.is_empty()) {
-                Some(summary) => format!("{status} · {pr}\n\n{summary}"),
-                None => format!("{status} · {pr}"),
-            }
+            let summary = summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|summary| !summary.is_empty())
+                .unwrap_or("No change summary supplied.");
+            format!("{status} · {pr}\n\n{summary}")
         }
         Outcome::Review {
             decision,
@@ -429,7 +431,14 @@ fn outcome_text(outcome: &Outcome, answer: Option<&str>) -> String {
             }
             line
         }
-        Outcome::Report { summary } => format!("Report ready\n\n{summary}"),
+        Outcome::Report { summary } => {
+            let summary = if summary.trim().is_empty() {
+                "No report summary supplied."
+            } else {
+                summary
+            };
+            format!("Report ready\n\n{summary}")
+        }
         Outcome::Blocked { reason } => format!("Blocked · {reason}"),
         Outcome::Question { question } => {
             let status = match (question, answer) {
@@ -602,4 +611,29 @@ fn answer_action(detail: &Detail) -> String {
 
 pub(crate) fn message(text: &str) -> Value {
     json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":format!("{text}\n\n")}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_worker_card_names_missing_summary_and_timing() {
+        let mut presentation = Presentation::default();
+        let tool = presentation.start("fixture-run", Role::Worker, "Fixture work");
+        for summary in [None, Some("  ".into())] {
+            tool.outcome = Some(Outcome::Work {
+                url: "https://github.com/example/fixture/pull/7".into(),
+                summary,
+                revision: false,
+            });
+            let card = tool.render("fixture-run", None, None, true, true).unwrap();
+            assert_eq!(card["title"], "Worker · Duration unavailable");
+            assert_eq!(card["status"], "completed");
+            assert_eq!(
+                card["content"][0]["content"]["text"],
+                "Ready for review · [PR #7](https://github.com/example/fixture/pull/7)\n\nNo change summary supplied."
+            );
+        }
+    }
 }
