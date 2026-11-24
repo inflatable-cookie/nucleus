@@ -183,11 +183,8 @@ impl Schedule {
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
         let more = ids.len() == SCAN_PAGE as usize;
         self.cursor = ids.last().filter(|_| more).cloned();
-        let archival = if parenting {
-            store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE)?
-        } else {
-            Vec::new()
-        };
+        let archival =
+            store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
         let more_archival = archival.len() == SCAN_PAGE as usize;
         self.archive_cursor = archival.last().filter(|_| more_archival).cloned();
         self.scan_at = now

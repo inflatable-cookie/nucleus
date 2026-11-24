@@ -54,13 +54,6 @@ const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase
 const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
-const CURRENT_ARCHIVE_RECEIPT: &str = "EXISTS (
-  SELECT 1 FROM events AS receipt
-  WHERE receipt.task_id = tasks.id AND receipt.kind = 'role_threads_archived'
-  AND receipt.sequence > COALESCE((
-    SELECT max(sequence) FROM events WHERE task_id = tasks.id AND kind = 'entered_done'
-  ), 0)
-)";
 const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id),
   reader BLOB NOT NULL CHECK (length(reader) = 32),
@@ -424,48 +417,24 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Read completed tasks whose native archive receipt is still absent.
+    /// Page completed tasks for native thread housekeeping.
     /// # Errors
     /// Returns an error if the pending archive page cannot be read.
     pub fn archive_due_ids(
         &self,
         after: Option<&str>,
         limit: u32,
+        parenting: bool,
     ) -> Result<Vec<String>, StoreError> {
-        let mut query = self.connection.prepare_cached(&format!(
-            "SELECT tasks.id FROM tasks WHERE tasks.id > ?1 AND phase = 'done' AND run IS NULL
-             AND NOT {CURRENT_ARCHIVE_RECEIPT} ORDER BY tasks.id LIMIT ?2",
-        ))?;
-        let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
+        let mut query = self.connection.prepare_cached(
+            "SELECT id FROM tasks WHERE id > ?1 AND phase = 'done' AND run IS NULL
+             AND (?3 OR report_task IS NOT NULL) ORDER BY id LIMIT ?2",
+        )?;
+        let rows = query.query_map(
+            params![after.unwrap_or_default(), limit, parenting],
+            |row| row.get(0),
+        )?;
         Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Check the receipt from successful native archive readback.
-    /// # Errors
-    /// Returns an error if audit history cannot be read.
-    pub fn archive_confirmed(&self, id: &str) -> Result<bool, StoreError> {
-        Ok(self.connection.query_row(
-            &format!("SELECT EXISTS (SELECT 1 FROM tasks WHERE id = ?1 AND phase = 'done' AND {CURRENT_ARCHIVE_RECEIPT})"),
-            [id], |row| row.get(0),
-        )?)
-    }
-
-    /// Read recorded archive progress for the current closeout.
-    ///
-    /// # Errors
-    /// Returns an error if the task journal cannot be read.
-    pub fn archive_progress(&self, id: &str) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT detail FROM events WHERE task_id = ?1 AND kind = 'role_archive_progress'
-             AND sequence > coalesce((SELECT max(sequence) FROM events
-                 WHERE task_id = ?1 AND kind = 'entered_done'), 0)
-             ORDER BY sequence DESC LIMIT 1",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?)
     }
 
     /// Append a task effect observation without changing the task version.
