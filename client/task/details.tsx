@@ -38,6 +38,7 @@ import {
   RunRow,
   taskIdentityFields,
 } from "./parts";
+import { PrerequisiteList } from "./dependencies";
 import { RunsCloseout } from "./runs-closeout";
 import { buildOutputCleanupSubject, taskRunPartition } from "./runs-view";
 import type { TaskDetailRead } from "./task-dialog";
@@ -508,18 +509,16 @@ export function DetailsTab({
 
       {/* 5. Prerequisites */}
       {Boolean(detailQuery.data?.dependencies.length) && (
-        <DetailSection title="Prerequisites" c={c}>
-          {detailQuery.data?.dependencies.map((dependency) => (
-            <TextLink
-              key={dependency.id}
-              c={c}
-              text={`${dependency.title} · ${dependency.phase === "done" ? "complete" : dependency.removedAt ? "removed before completion" : phaseLabel(dependency)}${dependency.purgedAt ? " · history purged" : ""}`}
-              onPress={() => {
-                if (!dependency.purgedAt) onSelectTask(dependency.id);
-              }}
-            />
-          ))}
-        </DetailSection>
+        <PrerequisiteList
+          c={c}
+          items={(detailQuery.data?.dependencies ?? []).map((dependency) => ({
+            key: dependency.id,
+            text: `${dependency.title} · ${dependency.phase === "done" ? "complete" : dependency.removedAt ? "removed before completion" : phaseLabel(dependency)}${dependency.purgedAt ? " · history purged" : ""}`,
+            onPress: () => {
+              if (!dependency.purgedAt) onSelectTask(dependency.id);
+            },
+          }))}
+        />
       )}
 
       {/* 6. Runs and delivery */}

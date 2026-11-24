@@ -49,7 +49,8 @@ import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
-import { rustPhaseLabels, rustQuestionText, rustTaskLabel, rustWaitText, type RustTask } from "../web/rust-board";
+import { rustPhaseLabels, rustPrerequisiteLine, rustQuestionText, rustTaskLabel, rustWaitText, type RustTask } from "../web/rust-board";
+import { waitStateLabels } from "../../shared/wait-state";
 
 type Project = UiQueueState["projects"][number];
 
@@ -881,10 +882,14 @@ export function RustListRows({ c, rust, view }: {
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const wait = rustWaitText(task);
+      // The shared prerequisite detail, ranked as on TypeScript cards: after a question.
+      const prerequisite = question ? null : rustPrerequisiteLine(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
-        status={wait || view === "history" ? {
+        status={prerequisite ? {
+          tone: "muted", state: waitStateLabels.waiting_prerequisite, detail: prerequisite,
+        } : wait || view === "history" ? {
           tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
           state: question ? "Question" : rustPhaseLabels[task.phase], detail: question ? null : wait,
         } : null}

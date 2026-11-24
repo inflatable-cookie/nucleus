@@ -5,6 +5,7 @@ import {
   type QueryFilters,
 } from "@tanstack/react-query";
 import { z } from "zod";
+import { prerequisiteSummary } from "../board/text";
 import { readLiveFrames, type LiveFrame } from "./live-channel";
 
 const api = "/api/engine";
@@ -45,12 +46,43 @@ const question = z.union([
   z.object({ allowance: z.object({ used_ms: revision, limit_ms: revision }) }),
   z.object({ repair }),
 ]);
+const dependencyFact = z.object({
+  taskId: z.string(),
+  // Empty for a redacted prerequisite in another scope.
+  reference: z.string(),
+  title: z.string().nullable(),
+  phase: phase.nullable(),
+  status: z.enum([
+    "satisfied",
+    "pending",
+    "cancelled",
+    "removed",
+    "goal_unmet",
+    "missing",
+  ]),
+});
+const dependencyStatus = z.object({
+  dependencies: z.array(dependencyFact),
+  prerequisiteWait: z
+    .object({
+      reason: z.string(),
+      releasedAtMs: timestamp.nullable(),
+      prerequisites: z.array(dependencyFact),
+    })
+    .nullable(),
+  blocking: z.boolean(),
+});
+const dependencyEdits = z.object({
+  setDependencies: z.boolean(),
+  setPrerequisiteWait: z.boolean(),
+});
 const current = z.object({
   version: revision,
   phase,
   wait: z.string().nullable(),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
+  dependencyStatus,
 });
 const summary = current.extend({
   title: z.string().optional(),
@@ -88,6 +120,7 @@ const allowance = z.object({
 });
 const detail = summary.extend({
   allowance: allowance.optional(),
+  dependencyEdits,
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
@@ -118,11 +151,22 @@ const detail = summary.extend({
 const readiness = z.enum(["ready", "pending", "unavailable"]);
 const next = current.extend({
   allowance: allowance.optional(),
+  dependencyEdits,
   commands: z.array(
     z.union([
       z.object({ name: z.literal("move"), phase, preflight: readiness }),
       z.object({
-        name: z.enum(["answer", "cancel", "amend", "hold", "release", "complete", "move_work"]),
+        name: z.enum([
+          "answer",
+          "cancel",
+          "amend",
+          "hold",
+          "release",
+          "complete",
+          "move_work",
+          "set_dependencies",
+          "set_prerequisite_wait",
+        ]),
         preflight: readiness,
       }),
     ]),
@@ -166,6 +210,8 @@ export type RustTask = z.infer<typeof summary>;
 export type RustTaskDetail = z.infer<typeof detail>;
 export type RustNext = z.infer<typeof next>;
 export type RustVerdict = z.infer<typeof verdict>;
+export type RustDependencyFact = z.infer<typeof dependencyFact>;
+export type RustDependencyStatus = z.infer<typeof dependencyStatus>;
 export type RustHistoryPage = z.infer<typeof history>;
 export type RustCommand =
   | { move: RustPhase }
@@ -179,6 +225,7 @@ export type RustCommand =
         | { accept: { head: string; reason: string } };
     }
   | { amend: string }
+  | { set_dependencies: { version: number; depends_on: string[] } }
   | { hold: string }
   | "cancel"
   | "release";
@@ -466,6 +513,7 @@ const waits: Record<string, string> = {
   forge_unknown: "Waiting for GitHub",
   workspace_unknown: "Checking the workspace",
   checks_pending: "Waiting for checks",
+  prerequisite: "Waiting for prerequisite",
 };
 
 export function rustWaitText({
@@ -499,4 +547,72 @@ export function rustQuestionText(question: RustQuestion): string {
 
 export function rustTaskLabel(task: RustTask): string {
   return task.reference || task.identity.reference || task.identity.id;
+}
+
+/** A dependency's status in task detail, worded as the TypeScript prerequisite list words it. */
+export function rustDependencyText(fact: RustDependencyFact): string {
+  return `${rustDependencyTitle(fact)} · ${rustDependencyState(fact)}`;
+}
+
+const rustDependencyTitle = (fact: RustDependencyFact) =>
+  fact.title || fact.reference || "Prerequisite";
+
+function rustDependencyState(fact: RustDependencyFact): string {
+  switch (fact.status) {
+    case "satisfied":
+      return "complete";
+    case "removed":
+      return "removed before completion";
+    case "goal_unmet":
+      return "goal unmet";
+    case "missing":
+      return "missing";
+    case "cancelled":
+      return rustPhaseLabels.cancelled;
+    case "pending":
+      return fact.phase ? rustPhaseLabels[fact.phase] : "pending";
+  }
+}
+
+/** The prerequisites a task is still waiting on: an unreleased wait's list, then its dependencies. */
+export function rustUnfinishedPrerequisites({
+  dependencies,
+  prerequisiteWait,
+}: RustDependencyStatus): RustDependencyFact[] {
+  const waiting =
+    prerequisiteWait && prerequisiteWait.releasedAtMs === null
+      ? prerequisiteWait.prerequisites
+      : [];
+  const seen = new Set<string>();
+  return [...waiting, ...dependencies].filter((fact) => {
+    if (fact.status === "satisfied") return false;
+    // A redacted prerequisite has no identity to share, so it always counts once.
+    if (!fact.taskId) return true;
+    if (seen.has(fact.taskId)) return false;
+    seen.add(fact.taskId);
+    return true;
+  });
+}
+
+/** The card's prerequisite detail for a blocked Rust task, through the shared card formatter. */
+export function rustPrerequisiteLine({
+  dependencyStatus: status,
+}: Pick<RustTask, "dependencyStatus">): string | null {
+  if (!status.blocking) return null;
+  const unfinished = rustUnfinishedPrerequisites(status);
+  const wait =
+    status.prerequisiteWait?.releasedAtMs === null
+      ? status.prerequisiteWait
+      : null;
+  return prerequisiteSummary(
+    unfinished[0]?.reference || null,
+    unfinished.length
+      ? unfinished.map((fact) => ({
+          title: fact.title || "Prerequisite",
+          status: rustDependencyState(fact),
+        }))
+      : wait?.reason
+        ? [{ title: wait.reason, status: "" }]
+        : [],
+  );
 }

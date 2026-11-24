@@ -60,16 +60,22 @@ export function presentHoldKinds(task: { holdKind?: HoldKind; holds?: { dispatch
 const STOP_BADGE_LABEL = { incident: "Incident", recovery: "Recovery", run: "Stopped run", attention: "Attention" } as const;
 export const stopBadgeLabel = (stop: TaskSummary["stop"]) =>
   stop && stop in STOP_BADGE_LABEL ? STOP_BADGE_LABEL[stop as keyof typeof STOP_BADGE_LABEL] : null;
+/** One unfinished prerequisite as a card names it: its title and its display status. */
+export type PrerequisiteEntry = { title: string; status: string };
+/** The card's prerequisite detail for either engine: the reference it waits on, then the first unfinished entry. */
+export function prerequisiteSummary(reference: string | null | undefined, entries: readonly PrerequisiteEntry[]): string {
+  const first = entries[0];
+  if (!first) return reference ? `After ${reference}` : "Waiting for prerequisite";
+  const lead = reference ? `After ${reference}` : "After prerequisite";
+  const rest = [first.title, first.status, entries.length > 1 ? `+${entries.length - 1} more` : ""].filter(Boolean).join(" · ");
+  return `${lead} · ${rest}`;
+}
 export function prerequisiteLine(task: TaskSummary): string | null {
   if (task.waitState?.state !== "waiting_prerequisite") return null;
-  const entries = prerequisiteReasonEntries(task.reason);
-  const first = entries[0];
-  if (!first) return task.waitingOn ? `After ${task.waitingOn}` : "Waiting for prerequisite";
-  const { title, status: rawStatus } = first;
-  const status = isTaskPhase(rawStatus) ? phaseStateLabel({ held: false, phase: rawStatus }) : rawStatus;
-  const reference = task.waitingOn ? `After ${task.waitingOn}` : "After prerequisite";
-  const rest = [title, status, entries.length > 1 ? `+${entries.length - 1} more` : ""].filter(Boolean).join(" · ");
-  return `${reference} · ${rest}`;
+  return prerequisiteSummary(task.waitingOn, prerequisiteReasonEntries(task.reason).map(({ title, status }) => ({
+    title,
+    status: isTaskPhase(status) ? phaseStateLabel({ held: false, phase: status }) : status,
+  })));
 }
 
 /** A card preview uses the first recorded sentence verbatim; the task view retains the full reason. */

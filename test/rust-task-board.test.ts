@@ -77,7 +77,9 @@ const task = (
   nextCheckAt: null,
   question: null,
   hold: null,
+  dependencyStatus: { dependencies: [], prerequisiteWait: null, blocking: false },
 });
+const noDependencyEdits = { setDependencies: false, setPrerequisiteWait: false };
 
 async function eventually(
   check: () => boolean,
@@ -211,6 +213,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         question: row.question,
         nextCheckAt: row.nextCheckAt,
         allowance: { usedMs: 180_000, limitMs: 3_600_000, exhausted: false },
+        dependencyStatus: row.dependencyStatus,
+        dependencyEdits: noDependencyEdits,
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
@@ -249,6 +253,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     }
     json({
       ...row,
+      dependencyEdits: noDependencyEdits,
       brief: { text: "Fixture brief", version: 1, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
@@ -538,6 +543,8 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     { amend: "Updated brief" },
     { hold: "Hold for proof" },
     "release",
+    { set_dependencies: { version: 7, depends_on: ["fixture#12"] } },
+    { set_dependencies: { version: 7, depends_on: [] } },
   ];
   const sent: unknown[] = [];
   const transport = createRustBoardTransport(async (url, options) => {
@@ -580,6 +587,16 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
+  // A queued task blocked on one pending and one missing prerequisite, in the engine's DTO.
+  const pending = { taskId: "board-task", reference: "fixture#1", title: "Standalone task", phase: "queued", status: "pending" } as const;
+  const missing = { taskId: "gone", reference: "fixture#9", title: "", phase: null, status: "missing" } as const;
+  const dependent = {
+    ...task("dependent", "queued", "fixture#2"),
+    number: 2,
+    title: "Dependent task",
+    dependencyStatus: { dependencies: [pending, missing], prerequisiteWait: null, blocking: true },
+  };
+  const commandBodies: unknown[] = [];
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
     projectSlotOverrides: {},
@@ -627,7 +644,27 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }
     if (path === "/api/engine/theme") return Response.json({ theme: null });
     if (path === "/api/engine/tasks")
-      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }]);
+      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }, dependent]);
+    if (path === "/api/engine/tasks/dependent/commands") {
+      commandBodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ status: "pending", version: dependent.version });
+    }
+    const taskRead = /^\/api\/engine\/tasks\/(dependent|board-task)(\/next)?$/.exec(path);
+    if (taskRead) {
+      const row = taskRead[1] === "dependent" ? dependent : { ...task("board-task", taskPhase, "D1"), title: "Standalone task" };
+      const dependencyEdits = { setDependencies: taskRead[1] === "dependent", setPrerequisiteWait: false };
+      if (taskRead[2]) {
+        const { version, phase, wait, question, nextCheckAt, dependencyStatus } = row;
+        return Response.json({
+          version, phase, wait, question, nextCheckAt, dependencyStatus, dependencyEdits,
+          commands: dependencyEdits.setDependencies ? [{ name: "set_dependencies", preflight: "ready" }] : [],
+        });
+      }
+      return Response.json({
+        ...row, dependencyEdits, brief: { text: "Fixture brief", version: 1 },
+        pullRequest: null, verdict: null, run: null,
+      });
+    }
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
@@ -662,8 +699,40 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const text = () => dom.window.document.body.textContent ?? "";
   dom.window.eval(`(() => { ${script} })()`);
   // The shared navigation, header and project filter render from the Rust data.
-  await click("Queue, 1");
+  await click("Queue, 2");
   await eventually(() => text().includes("Standalone task"), "task title renders");
+  // The shared card prerequisite detail, worded as TypeScript cards word it.
+  await eventually(
+    () => text().includes("Waiting for prerequisite") && text().includes("After fixture#1 · Standalone task · Queued · +1 more"),
+    "the prerequisite detail renders on the card",
+  );
+  // The shared prerequisite list in task detail; a missing prerequisite is plain text.
+  await click("#2, Dependent task");
+  await click("Details");
+  await eventually(() => text().includes("Standalone task · Queued") && text().includes("fixture#9 · missing"), "prerequisites list");
+  assert.ok(selector("Standalone task · Queued"), "a readable prerequisite links to its task");
+  assert.equal(selector("fixture#9 · missing"), null, "a missing prerequisite has no link");
+  // The shared editor saves the list through the set_dependencies command at the read version.
+  await click("Overview");
+  await click("Set dependencies");
+  const field = await (async () => {
+    const label = "Prerequisites (comma-separated task IDs or references; leave empty to clear)";
+    await eventually(() => Boolean(selector(label)), "dependency field");
+    return selector(label) as HTMLInputElement;
+  })();
+  assert.equal(field.value, "fixture#1, fixture#9");
+  assert.equal(selector("Reason (optional)"), null, "the engine records no edit reason");
+  const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!;
+  setValue.call(field, "fixture#1");
+  field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  await click("Save dependencies");
+  await eventually(() => commandBodies.length === 1, "set_dependencies sent");
+  assert.deepEqual(commandBodies[0], { set_dependencies: { version: 7, depends_on: ["fixture#1"] } });
+  // A prerequisite link opens that task's own detail.
+  await click("Details");
+  await click("Standalone task · Queued");
+  await eventually(() => requests.includes("/api/engine/tasks/board-task"), "the prerequisite opens its task");
+  await click("Close task");
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc } from "../shell";
 import {
@@ -22,6 +22,7 @@ import {
 import { isTerminalPhase } from "../../shared/task-state";
 import { TechnicalRouting } from "./technical-routing";
 import { TechnicalDisposition } from "./technical-disposition";
+import { DependencyListEditor } from "./dependencies";
 import { useTaskDraft, type TaskDrafts } from "./drafts";
 import { verbKey, verbText } from "./next-section";
 import { RecordNotice } from "./parts";
@@ -755,20 +756,9 @@ function budgetExtensionVerb(next: TaskNext | null): TaskNextVerb | null {
   );
 }
 
-/** A dependency list in one comparable form: entries split on commas or spaces. */
-function normalizeDependencies(text: string): string {
-  return text
-    .split(/[,\s]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .join(",");
-}
-
 /**
- * The dependency editor. Its text starts from this task's stored `dependsOn` and
- * lives only while the editor is open for this task, so another task's draft can
- * never reach it. Save stays disabled until the list differs from the stored one,
- * so an untouched form never submits and an empty list goes out only on purpose.
+ * The shared dependency editor over this task's stored `dependsOn`, saved as the
+ * board's `set_dependencies` control.
  */
 function DependenciesPanel({
   task,
@@ -784,86 +774,24 @@ function DependenciesPanel({
   c: Colors;
 }) {
   const setTask = useRpc(api.taskControl);
-  const stored = (task.dependsOn ?? []).join(", ");
-  // The list the edit started from. An untouched form follows refreshes; an
-  // edited one is fenced to its starting list, so a prerequisite added elsewhere
-  // while it is open is never cleared by a save the operator did not intend.
-  const [base, setBase] = useState(stored);
-  const [depsText, setDepsText] = useState(stored);
-  const [depsReason, setDepsReason] = useState("");
-  const edited =
-    normalizeDependencies(depsText) !== normalizeDependencies(base);
-  const moved = normalizeDependencies(stored) !== normalizeDependencies(base);
-  useEffect(() => {
-    if (moved && !edited) {
-      setBase(stored);
-      setDepsText(stored);
-    }
-  }, [stored, moved, edited]);
-  const changed = edited && !moved;
   return (
-    <DetailSection title="Set dependencies" c={c}>
-      {moved && edited && (
-        <View accessibilityRole="alert" style={{ gap: space.xs }}>
-          <Text
-            style={{
-              color: c.statusWarning,
-              fontSize: typeScale.metadata.fontSize,
-            }}
-          >
-            These prerequisites changed while you were editing: now{" "}
-            {stored || "none"}.
-          </Text>
-          <Button
-            small
-            c={c}
-            text="Start from the current list"
-            onPress={() => {
-              setBase(stored);
-              setDepsText(stored);
-            }}
-          />
-        </View>
-      )}
-      <Field
-        c={c}
-        label="Prerequisites (comma-separated task IDs or references; leave empty to clear)"
-        value={depsText}
-        onChange={setDepsText}
-        placeholder="e.g. #1501, #1502"
-      />
-      <Field
-        c={c}
-        label="Reason (optional)"
-        value={depsReason}
-        onChange={setDepsReason}
-        placeholder="Why the dependency list changed"
-      />
-      <View style={row}>
-        <Button
-          small
-          c={c}
-          text="Save dependencies"
-          label="Save dependencies"
-          disabled={busy || !changed}
-          onPress={() =>
-            void act(async () => {
-              await setTask({
-                taskId: task.id,
-                version: task.version,
-                action: "set_dependencies",
-                dependsOn: depsText
-                  .split(/[,\s]+/)
-                  .map((entry) => entry.trim())
-                  .filter(Boolean),
-                ...(depsReason.trim() ? { reason: depsReason.trim() } : {}),
-              });
-              onClose();
-            })
-          }
-        />
-        <Button small c={c} text="Close" onPress={onClose} />
-      </View>
-    </DetailSection>
+    <DependencyListEditor
+      stored={task.dependsOn ?? []}
+      busy={busy}
+      onClose={onClose}
+      c={c}
+      onSave={(dependsOn, reason) =>
+        void act(async () => {
+          await setTask({
+            taskId: task.id,
+            version: task.version,
+            action: "set_dependencies",
+            dependsOn,
+            ...(reason ? { reason } : {}),
+          });
+          onClose();
+        })
+      }
+    />
   );
 }

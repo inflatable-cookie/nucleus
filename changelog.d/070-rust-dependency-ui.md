@@ -1,0 +1,1 @@
+- On the Rust engine, task cards show what a blocked task is waiting for, task detail lists its prerequisites and any prerequisite wait, and the shared dependency editor sets its dependency list.

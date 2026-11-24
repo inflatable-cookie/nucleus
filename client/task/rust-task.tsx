@@ -19,14 +19,17 @@ import { space } from "../design";
 import { errorText } from "../error-text";
 import { wallTimeBudgetBar } from "../../shared/task-detail-summary";
 import { BudgetBars, DetailField, TaskDetailTabs, type TaskDetailTab } from "./parts";
+import { DependencyListEditor, PrerequisiteList } from "./dependencies";
 import {
   postRustCommand,
+  rustDependencyText,
   rustPhaseLabels,
   rustQuestionText,
   rustTaskLabel,
   rustWaitText,
   useRustDetail,
   type RustCommand,
+  type RustDependencyFact,
   type RustHistoryPage,
   type RustInvalidation,
   type RustNext,
@@ -36,7 +39,14 @@ import {
   type RustVerdict,
 } from "../web/rust-board";
 
-type Section = "amend" | "hold" | "cancel" | "complete" | "move_work" | null;
+type Section =
+  | "amend"
+  | "hold"
+  | "cancel"
+  | "complete"
+  | "move_work"
+  | "dependencies"
+  | null;
 type CommandOutcome = Awaited<ReturnType<typeof postRustCommand>>;
 
 export function RustTaskDialog({
@@ -47,6 +57,7 @@ export function RustTaskDialog({
   c,
   onClose,
   invalidate,
+  onSelectTask,
 }: {
   id: string;
   summary: RustTask | undefined;
@@ -55,6 +66,8 @@ export function RustTaskDialog({
   c: Colors;
   onClose: () => void;
   invalidate: RustInvalidation;
+  /** Opens a prerequisite's own task detail. */
+  onSelectTask?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<TaskDetailTab>("overview");
   const [section, setSection] = useState<Section>(null);
@@ -125,6 +138,23 @@ export function RustTaskDialog({
     ) ?? [];
   const toggle = (value: Section) =>
     setSection((current) => (current === value ? null : value));
+  // The dependency editor follows `next` and edits the revision both reads agree
+  // on. A redacted prerequisite has no reference to resubmit, so a list holding
+  // one is never offered for editing: saving it would drop that prerequisite.
+  const canSetDependencies = Boolean(
+    commands?.dependencyEdits.setDependencies &&
+      detail?.dependencyStatus.dependencies.every((fact) => fact.reference),
+  );
+  const prerequisiteItems = (facts: readonly RustDependencyFact[]) =>
+    facts.map((fact, index) => ({
+      key: `${index}:${fact.taskId}`,
+      text: rustDependencyText(fact),
+      onPress:
+        onSelectTask && fact.taskId && fact.status !== "missing"
+          ? () => onSelectTask(fact.taskId)
+          : undefined,
+    }));
+  const prerequisiteWait = detail?.dependencyStatus.prerequisiteWait;
   const phaseView = commands ?? card;
   const wait = phaseView ? rustWaitText(phaseView) : null;
 
@@ -272,6 +302,16 @@ export function RustTaskDialog({
                         onPress={() => run("release")}
                       />
                     )}
+                    {canSetDependencies && (
+                      <Button
+                        c={c}
+                        small
+                        text="Set dependencies"
+                        selected={section === "dependencies"}
+                        disabled={busy || section === "amend"}
+                        onPress={() => toggle("dependencies")}
+                      />
+                    )}
                     {offered("cancel") && (
                       <Button
                         c={c}
@@ -342,6 +382,26 @@ export function RustTaskDialog({
                   )}
                 </DetailSection>
               )}
+              {section === "dependencies" && canSetDependencies && (
+                <DependencyListEditor
+                  key={id}
+                  stored={detail.dependencyStatus.dependencies.map(
+                    (fact) => fact.reference,
+                  )}
+                  busy={busy}
+                  reason={false}
+                  onClose={() => setSection(null)}
+                  c={c}
+                  onSave={(dependsOn) =>
+                    run({
+                      set_dependencies: {
+                        version: detail.version,
+                        depends_on: dependsOn,
+                      },
+                    })
+                  }
+                />
+              )}
             </>
           )}
           {tab === "activity" && (
@@ -403,6 +463,29 @@ export function RustTaskDialog({
                   <VerdictText verdict={detail.verdict} c={c} />
                 )}
               </DetailSection>
+              {detail.dependencyStatus.dependencies.length > 0 && (
+                <PrerequisiteList
+                  c={c}
+                  items={prerequisiteItems(
+                    detail.dependencyStatus.dependencies,
+                  )}
+                />
+              )}
+              {prerequisiteWait && (
+                <PrerequisiteList
+                  c={c}
+                  title="Prerequisite wait"
+                  note={[
+                    prerequisiteWait.reason,
+                    prerequisiteWait.releasedAtMs === null
+                      ? null
+                      : `Released ${new Date(prerequisiteWait.releasedAtMs).toLocaleString()}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  items={prerequisiteItems(prerequisiteWait.prerequisites)}
+                />
+              )}
             </>
           )}
         </>

@@ -305,7 +305,10 @@ records the native notice attempt before sending it so an unknown delivery
 cannot trigger a resend.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
-`dependencyEdits` from local state. The scheduler uses the same recorded edges
+`dependencyEdits` from local state. The board shows prerequisites and their wait
+status. Its shared editor replaces the dependency list at the current task version
+when the caller can see and edit the whole list. Prerequisite wait edits use the CLI.
+The scheduler uses the same recorded edges
 for first dispatch and open waits. Native assignments carry the recorded
 prerequisite references and any released wait as context.
 

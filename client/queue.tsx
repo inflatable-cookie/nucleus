@@ -354,7 +354,7 @@ export function MainSurface({
     <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
       summary={rustTasks.data?.find(({ identity }) => identity.id === rustTaskId)}
       inline={inlineDetail} compact={compact} c={c}
-      onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
+      onClose={() => setRustTaskId(null)} invalidate={rustBoard} onSelectTask={selectRustTask} />
   ) : task ? (
     <TaskDialog
       key={`task:${task.id}`}
