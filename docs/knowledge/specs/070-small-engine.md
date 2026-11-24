@@ -219,6 +219,18 @@ Later decisions carry their own attribution.
     reuses them. The old engine's test families leave milestone QA
     and the affected-test selection.
 
+32. **Role prompts stay lean.** Tom, 2026-11-24, after Rust worker assignments
+    passed T3's 120,000-character limit: "worker and reviewer prompts need to
+    stay lean". A role prompt carries run facts, the held brief and only the
+    context the brief pins. Lane membership adds the lane's title and aim. A
+    lane document is inlined only when the brief links or cites it, and is
+    also written read-only to the run scratch (TS `queueLaneDocumentBlock`,
+    Spec 026). The role protocol stays in the skill (ruling 29). Every launch
+    records its prompt's per-section character counts in the run scratch
+    (TS `measureRunPrompt`). An assignment that would pass the host's message
+    limit fails before sending, with a typed cause that names its largest
+    sections.
+
 ## The model
 
 ### Stored state per task
