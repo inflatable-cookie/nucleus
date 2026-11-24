@@ -9,7 +9,10 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::tests::{fixture, native_fixture};
+use crate::{
+    native_inbox::NativeInbox,
+    tests::{fixture, native_fixture},
+};
 
 async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
     let head = service.project.start.clone();
@@ -104,6 +107,40 @@ async fn acceptance_waits_for_forge_evidence_and_withdraws_its_old_binding() {
     assert_eq!(requests[2]["operation"], "withdraw");
     assert_eq!(requests[2]["id"], requests[0]["id"]);
     bridge.abort();
+}
+
+#[tokio::test]
+async fn cutover_fences_the_legacy_version_before_it_can_appear_in_rust() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (legacy, first, pending) = bridge_fixture(json!({"state":"pending"})).await;
+    service.inbox = Some(legacy);
+    let (row, _) = seed(&service, "handoff").await;
+    service.operator_decision(&row).await.unwrap();
+    service.native_inbox = Some(NativeInbox::open(&service, None).unwrap());
+    service.operator_decision(&row).await.unwrap();
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .decisions("local-fixture", true)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(first.lock().unwrap()[1]["operation"], "handoff");
+    pending.abort();
+
+    let (legacy, second, fenced) = bridge_fixture(json!({"state":"withdrawn"})).await;
+    service.inbox = Some(legacy);
+    service.operator_decision(&row).await.unwrap();
+    let state = service.state.lock().await;
+    assert!(state.store.inbox_binding("handoff").unwrap().is_none());
+    let pending = state.store.decisions("local-fixture", true).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].task.as_ref().unwrap().task_version, row.version);
+    assert_eq!(second.lock().unwrap()[0]["operation"], "handoff");
+    fenced.abort();
 }
 
 #[tokio::test]

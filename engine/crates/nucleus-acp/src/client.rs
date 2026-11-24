@@ -10,7 +10,7 @@ use std::{
 
 use nucleus_core::{
     Command, Identity, Phase, PullRequest, Question, Role, Verdict,
-    acp::{Binding, session_id},
+    acp::{InboxAnswer, InboxSnapshot, SessionBinding, session_id},
 };
 use reqwest::{
     Client, Method, Response, StatusCode,
@@ -39,7 +39,7 @@ pub(crate) enum Failure {
     Refused(String),
 }
 
-pub(crate) fn binding(cwd: &Path) -> Result<Binding, Failure> {
+pub(crate) fn binding(cwd: &Path) -> Result<SessionBinding, Failure> {
     let explicit = env::var_os("NUCLEUS_ACP_SESSION").map(PathBuf::from);
     let (path, inferred) = if let Some(path) = explicit {
         (path, None)
@@ -73,18 +73,15 @@ pub(crate) fn binding(cwd: &Path) -> Result<Binding, Failure> {
     if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 || metadata.len() > 4096 {
         return Err(Failure::Binding);
     }
-    let binding: Binding =
+    let binding: SessionBinding =
         serde_json::from_reader(file.take(4096)).map_err(|_| Failure::Binding)?;
-    if inferred.is_some_and(|id| id != binding.session_id)
-        || binding.session_id.is_empty()
-        || !binding.endpoint.ip().is_loopback()
-        || binding.endpoint.port() == 0
-        || binding.task_id.is_empty()
-        || binding.task_id.len() > 64
-        || !binding
-            .task_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    if inferred.is_some_and(|id| id != binding.id())
+        || binding.id().is_empty()
+        || !binding.endpoint().ip().is_loopback()
+        || binding.endpoint().port() == 0
+        || matches!(&binding, SessionBinding::Task(task)
+            if task.task_id.is_empty() || task.task_id.len() > 64
+                || !task.task_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
     {
         return Err(Failure::Binding);
     }
@@ -119,7 +116,7 @@ pub(crate) fn enter_scratch(workspace: &Path, scratch: &Path) -> Result<(), Fail
 pub(crate) struct ServiceClient {
     http: Client,
     endpoint: SocketAddr,
-    task: String,
+    task: Option<String>,
     auth: HeaderValue,
     command_auth: Option<HeaderValue>,
 }
@@ -131,6 +128,8 @@ pub(crate) struct Detail {
     pub phase: Phase,
     pub wait: Option<String>,
     pub question: Option<Question>,
+    #[serde(default)]
+    pub operator_inbox: bool,
     pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
 }
@@ -188,7 +187,7 @@ pub(crate) enum Milestone {
 }
 
 impl ServiceClient {
-    pub(crate) fn new(binding: &Binding) -> Result<Self, Failure> {
+    pub(crate) fn new(binding: &SessionBinding) -> Result<Self, Failure> {
         let http = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -196,31 +195,43 @@ impl ServiceClient {
             .connect_timeout(DEADLINE)
             .build()
             .map_err(|_| Failure::Binding)?;
+        let (task, key, command) = match binding {
+            SessionBinding::Task(task) => (
+                Some(task.task_id.clone()),
+                &task.credential,
+                task.command_credential.as_ref(),
+            ),
+            SessionBinding::Inbox(inbox) => (None, &inbox.inbox_credential, None),
+        };
         Ok(Self {
             http,
-            endpoint: binding.endpoint,
-            task: binding.task_id.clone(),
-            auth: authorization(&binding.credential)?,
-            command_auth: binding
-                .command_credential
-                .as_ref()
-                .map(authorization)
-                .transpose()?,
+            endpoint: binding.endpoint(),
+            task,
+            auth: authorization(key)?,
+            command_auth: command.map(authorization).transpose()?,
         })
     }
 
+    pub(crate) const fn is_inbox(&self) -> bool {
+        self.task.is_none()
+    }
+
     fn request(&self, method: Method, path: &str, key: &HeaderValue) -> reqwest::RequestBuilder {
+        let resource = self
+            .task
+            .as_ref()
+            .map_or_else(|| "acp/inbox".to_owned(), |task| format!("tasks/{task}"));
         self.http
             .request(
                 method,
-                format!("http://{}/v1/tasks/{}{path}", self.endpoint, self.task),
+                format!("http://{}/v1/{resource}{path}", self.endpoint),
             )
             .header(AUTHORIZATION, key.clone())
     }
 
     pub(crate) async fn detail(&self) -> Result<Detail, Failure> {
         let detail: Detail = self.get("").await?;
-        if detail.identity.id != self.task {
+        if self.task.as_ref() != Some(&detail.identity.id) {
             return Err(Failure::Binding);
         }
         Ok(detail)
@@ -273,6 +284,21 @@ impl ServiceClient {
         }
         let response = accepted(Ok(response)).await?;
         Ok(response.status() != StatusCode::ACCEPTED)
+    }
+
+    pub(crate) async fn inbox(&self) -> Result<InboxSnapshot, Failure> {
+        self.get("").await
+    }
+
+    pub(crate) async fn answer(&self, answer: &InboxAnswer) -> Result<(), Failure> {
+        let response = self
+            .request(Method::POST, "/answer", &self.auth)
+            .timeout(DEADLINE)
+            .json(answer)
+            .send()
+            .await;
+        accepted(response).await?;
+        Ok(())
     }
 
     pub(crate) async fn stream(&self) -> Result<Invalidations, Failure> {

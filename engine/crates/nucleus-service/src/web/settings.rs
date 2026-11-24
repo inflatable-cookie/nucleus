@@ -81,6 +81,21 @@ impl RuntimeSettings {
         }
     }
 
+    pub(crate) fn planning_projects<'a>(
+        &'a self,
+        binding: &'a Project,
+    ) -> impl Iterator<Item = &'a str> {
+        // The registry belongs to this engine profile, which is connected to one host.
+        self.projects
+            .iter()
+            .flat_map(|registry| registry.projects.keys().map(String::as_str))
+            .chain(
+                self.projects
+                    .is_none()
+                    .then_some(binding.host_project.as_str()),
+            )
+    }
+
     pub(crate) fn fixture_checks(&self, fixture: &Project) -> Vec<String> {
         self.fixture_project(fixture)
             .map_or_else(Vec::new, |(_, _, repo)| repo.required_checks.clone())
@@ -117,6 +132,7 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
     }).collect();
     Json(json!({
         "lanes": {"t3": {"depth": state.schedule.depth(), "status": state.settings.host}},
+        "inbox": api.service.inbox_health(),
         "oldestWaits": oldest,
     }))
 }
@@ -482,6 +498,7 @@ impl Service {
         state.invalidate_planner_authority();
         state.observed_forge.clear();
         self.planner_wake.notify_one();
+        self.inbox_changed();
         self.wake_settings_capacity(state);
     }
 

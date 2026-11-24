@@ -70,7 +70,7 @@ impl Presentation {
         }
         if detail.question != self.question {
             if let Some(question) = &detail.question {
-                updates.push(message(&question_text(question)));
+                updates.push(message(&question_text(question, detail.operator_inbox)));
             }
             self.question = detail.question;
         }
@@ -276,7 +276,7 @@ fn wait_text(detail: &Detail) -> Option<&'static str> {
     })
 }
 
-fn question_text(question: &Question) -> String {
+fn question_text(question: &Question, operator_inbox: bool) -> String {
     static REDACTOR: LazyLock<Redactor> =
         LazyLock::new(|| Redactor::new([], RedactionRules::common()));
     match question {
@@ -292,6 +292,9 @@ fn question_text(question: &Question) -> String {
             };
             format!("The {role} could not finish. Use `answer retry` to try again.")
         }
+        Question::Accept { head } if operator_inbox => format!(
+            "The external merge at {head} needs operator acceptance. Answer in the pinned Nucleus Inbox."
+        ),
         Question::Accept { .. } => {
             "An external merge needs acceptance. Use `answer accept <head> <reason>`.".into()
         }

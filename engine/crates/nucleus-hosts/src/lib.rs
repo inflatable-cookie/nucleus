@@ -1,6 +1,7 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
 mod catalog;
+mod inbox;
 mod launch;
 mod parenting;
 mod process;
@@ -23,6 +24,7 @@ use std::{
 };
 
 pub use catalog::{ProfileCatalog, ProfileOffer};
+pub use inbox::{INBOX_THREAD, InboxLifecycle, InboxStatus, InboxStep, InboxTarget, InboxWrite};
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_provider_instance,
 };
@@ -308,12 +310,14 @@ impl T3 {
         &self,
         hints: &tokio::sync::mpsc::Sender<ThreadHint>,
         title_scope: Option<(&str, &str)>,
+        inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let result = self
             .rpc
             .watch_threads(
                 hints,
                 title_scope.map(|(project, provider)| (&self.titles, project, provider)),
+                inbox_thread,
             )
             .await;
         self.titles.replace(None);

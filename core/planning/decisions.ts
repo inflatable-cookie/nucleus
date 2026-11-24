@@ -198,12 +198,15 @@ export class Decisions {
           normalizeRepositoryOrigin(decision.askedBy.project?.origin ?? "") !== normalizeRepositoryOrigin(project.origin)) {
         throw new Error("The Rust Inbox decision no longer matches its request.");
       }
-      if (input.operation === "withdraw") {
+      if (input.operation === "withdraw" ||
+          (input.operation === "handoff" && decision.status !== "answered")) {
         if (decision.status === "open") {
           this.withdrawInTransaction({
             id: decision.id,
             version: decision.version,
-            reason: "The Rust task moved past this question.",
+            reason: input.operation === "handoff"
+              ? "This decision moved to the Rust Inbox."
+              : "The Rust task moved past this question.",
             withdrawnBy: askedBy,
           });
         }

@@ -347,6 +347,14 @@ ended is a settlement and records nothing. T3-specific thread creation, card
 settlement and restart behavior belong to the
 [T3 adapter](t3code-host-adapter.md#operator-decisions-on-t3).
 
+In the Rust engine, the Inbox subscribes to service invalidations while a turn
+is held. A form identifies one ordinary decision from the planning store.
+The authenticated Inbox callback records its operator answer against the
+pending record. For a task question, that record also carries the task row
+version, and the scheduler checks the exact merged head before using the
+answer. The scheduler observes and settles native requests and re-enters an
+idle Inbox when decisions are pending.
+
 ## Not in this spec
 
 Parenting role threads as ACP children of this session, and registering the

@@ -1,12 +1,13 @@
 //! The model-free Nucleus ACP agent. Stdio is reserved for ACP frames.
 
 mod client;
+mod inbox;
 mod presentation;
 
 use std::{collections::BTreeMap, env, io, path::PathBuf, sync::Arc, time::Duration};
 
 use client::{Failure, ServiceClient};
-use nucleus_core::{Answer, Command};
+use nucleus_core::{Answer, Command, acp::SessionBinding};
 use presentation::{Presentation, message};
 use regex::Regex;
 use serde_json::{Value, json};
@@ -40,6 +41,7 @@ struct Session {
 struct Turn {
     id: Value,
     job: JoinHandle<()>,
+    replies: Option<mpsc::Sender<Value>>,
 }
 
 impl Drop for Turn {
@@ -52,7 +54,7 @@ impl Drop for Turn {
 async fn main() -> io::Result<()> {
     let launch_cwd = env::current_dir().ok();
     if let Some(workspace) = &launch_cwd
-        && let Ok(binding) = client::binding(workspace)
+        && let Ok(SessionBinding::Task(binding)) = client::binding(workspace)
         && let Some(scratch) = binding.scratch_dir
     {
         client::enter_scratch(workspace, &scratch).map_err(io::Error::other)?;
@@ -94,6 +96,20 @@ impl Agent {
             return;
         };
         let method = frame["method"].as_str();
+        if frame["jsonrpc"] == "2.0"
+            && method.is_none()
+            && let Some(session_id) = inbox::response_session(&frame)
+        {
+            if let Some(replies) = self
+                .sessions
+                .get(session_id)
+                .and_then(|session| session.turn.as_ref())
+                .and_then(|turn| turn.replies.as_ref())
+            {
+                let _ = replies.try_send(frame);
+            }
+            return;
+        }
         if frame["jsonrpc"] != "2.0"
             || method.is_none()
             || frame
@@ -166,13 +182,10 @@ impl Agent {
             .ok_or(Failure::Binding)?;
         let (session_id, client) = match client::binding(&cwd) {
             Ok(binding) => {
-                if loading && params["sessionId"] != binding.session_id {
+                if loading && params["sessionId"] != binding.id() {
                     return Err(Failure::Binding);
                 }
-                (
-                    binding.session_id.clone(),
-                    Some(ServiceClient::new(&binding)?),
-                )
+                (binding.id().to_owned(), Some(ServiceClient::new(&binding)?))
             }
             Err(Failure::Missing) if !loading => {
                 let mut random = [0; 16];
@@ -193,8 +206,13 @@ impl Agent {
         let structured = self.structured && structured(params);
         let mut view = Presentation::default();
         let updates = if let Some(client) = &client {
-            let (detail, history) = attach(client).await?;
-            view.update(detail, history, structured)
+            if client.is_inbox() {
+                client.inbox().await?;
+                Vec::new()
+            } else {
+                let (detail, history) = attach(client).await?;
+                view.update(detail, history, structured)
+            }
         } else {
             Vec::new()
         };
@@ -245,6 +263,10 @@ impl Agent {
                 -32602,
                 "This session already has a prompt in progress.",
             );
+            return;
+        }
+        if client.is_inbox() {
+            session.turn = Some(inbox::prompt(client, &self.output, session_id, id));
             return;
         }
         let prompt = prompt_text(&params["prompt"]);
@@ -306,6 +328,7 @@ impl Agent {
         session.turn = Some(Turn {
             id: id.clone(),
             job,
+            replies: None,
         });
     }
 }

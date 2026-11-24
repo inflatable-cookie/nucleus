@@ -18,7 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
-use nucleus_core::acp::Binding;
+use nucleus_core::acp::{Binding, InboxBinding};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -94,6 +94,105 @@ impl AgentIo {
         assert_eq!(update["sessionUpdate"], kind);
         update.clone()
     }
+}
+
+#[tokio::test]
+async fn inbox_holds_concurrent_native_forms_and_sends_one_answer_per_live_request() {
+    let fixture = Arc::new(Fixture {
+        state: AtomicU8::new(0),
+        commands: AtomicUsize::new(0),
+        stream_ready: Notify::new(),
+        changes: broadcast::channel(8).0,
+    });
+    let api = Router::new()
+        .route(
+            "/v1/acp/inbox",
+            get(async |State(fixture): State<Arc<Fixture>>| {
+                let pending: Vec<_> = [("first", 1), ("second", 2)]
+                    .into_iter()
+                    .filter(|(_, bit)| fixture.state.load(Ordering::Relaxed) & bit == 0)
+                    .map(|(field, _)| {
+                        json!({"field":field,"question":format!("Decide {field}?"),
+                    "choices":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}],"offer":true})
+                    })
+                    .collect();
+                Json(json!({"pending":pending}))
+            }),
+        )
+        .route("/v1/acp/inbox/events", get(events))
+        .route(
+            "/v1/acp/inbox/answer",
+            post(
+                async |State(fixture): State<Arc<Fixture>>, Json(answer): Json<Value>| {
+                    assert_eq!(answer["optionId"], "yes");
+                    let bit = match answer["field"].as_str() {
+                        Some("first") => 1,
+                        Some("second") => 2,
+                        _ => panic!("unknown fixture choice"),
+                    };
+                    let prior = fixture.state.fetch_or(bit, Ordering::Relaxed);
+                    assert_eq!(prior & bit, 0);
+                    fixture.commands.fetch_add(1, Ordering::Relaxed);
+                    let _ = fixture.changes.send(());
+                    axum::http::StatusCode::NO_CONTENT
+                },
+            ),
+        )
+        .with_state(Arc::clone(&fixture));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    let home = tempfile::tempdir().unwrap();
+    let pointer = home.path().join("inbox.json");
+    write_pointer(
+        &pointer,
+        &InboxBinding {
+            session_id: SESSION.into(),
+            endpoint,
+            inbox_credential: [5; 32],
+        },
+    );
+    let mut agent = AgentIo::spawn(Some(&pointer), Some(home.path()));
+    let opened = agent.call(1, "session/new", json!({})).await;
+    assert_eq!(opened["result"]["sessionId"], SESSION);
+    agent
+        .send(
+            json!({"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{
+                "sessionId":SESSION,"prompt":"move queued"
+            }}),
+        )
+        .await;
+    let first = agent.read().await;
+    let second = agent.read().await;
+    for form in [&first, &second] {
+        assert_eq!(form["method"], "elicitation/create");
+        assert_eq!(form["params"]["sessionId"], SESSION);
+    }
+    assert_eq!(
+        first["params"]["requestedSchema"]["required"],
+        json!(["first"])
+    );
+    assert_eq!(
+        first["params"]["requestedSchema"]["properties"]["first"]["oneOf"][0]["const"],
+        "yes"
+    );
+    assert_eq!(
+        second["params"]["requestedSchema"]["required"],
+        json!(["second"])
+    );
+    let reply = |form: &Value, content: Value| {
+        json!({"jsonrpc":"2.0","id":form["id"],
+        "result":{"action":"accept","content":content}})
+    };
+    let answer = reply(&second, json!({"second":"yes"}));
+    agent.send(answer.clone()).await;
+    agent.send(answer).await;
+    agent.send(reply(&first, json!({"first":"yes"}))).await;
+    let ended = agent.read().await;
+    assert_eq!(ended["id"], 2);
+    assert_eq!(ended["result"]["stopReason"], "end_turn");
+    assert_eq!(fixture.commands.load(Ordering::Relaxed), 2);
+    server.abort();
 }
 
 #[tokio::test]
@@ -245,15 +344,19 @@ async fn loopback() -> (
         command_credential: Some([6; 32]),
         scratch_dir: Some(scratch),
     };
+    write_pointer(&pointer, &binding);
+    let agent = AgentIo::spawn(Some(&pointer), Some(&checkout));
+    (agent, fixture, home, server)
+}
+
+fn write_pointer(path: &Path, binding: &impl serde::Serialize) {
     let file = OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(&pointer)
+        .open(path)
         .expect("binding file");
-    serde_json::to_writer(file, &binding).expect("write binding");
-    let agent = AgentIo::spawn(Some(&pointer), Some(&checkout));
-    (agent, fixture, home, server)
+    serde_json::to_writer(file, binding).expect("write binding");
 }
 
 #[tokio::test]

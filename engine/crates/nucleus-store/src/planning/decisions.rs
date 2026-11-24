@@ -38,6 +38,26 @@ impl Store {
         read(&self.connection, DecisionRecord, project, id)
     }
 
+    /// Read one task version's decision, whether or not it has been answered.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot read the decision.
+    pub fn task_decision(
+        &self,
+        project: &str,
+        target: &DecisionTarget,
+    ) -> Result<Option<Decision>, StoreError> {
+        let id = task_decision_id(&target.task_id, target.task_version);
+        let decision = self.decision(project, &id)?;
+        if decision
+            .as_ref()
+            .is_some_and(|record| record.task.as_ref() != Some(target))
+        {
+            return Err(StoreError::PlanningConflict);
+        }
+        Ok(decision)
+    }
+
     /// Record an operator question in the same store the Inbox reads.
     ///
     /// # Errors

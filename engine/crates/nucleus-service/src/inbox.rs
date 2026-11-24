@@ -40,6 +40,7 @@ pub(super) struct Inbox {
 enum Operation {
     Ensure,
     Withdraw,
+    Handoff,
 }
 
 #[derive(Serialize)]
@@ -210,7 +211,7 @@ fn wire<'a>(
     }
 }
 
-fn reference(row: &TaskRow) -> String {
+pub(super) fn reference(row: &TaskRow) -> String {
     row.task
         .identity()
         .reference
@@ -221,18 +222,23 @@ fn reference(row: &TaskRow) -> String {
 }
 
 impl Service {
+    pub(super) const fn uses_operator_inbox(&self) -> bool {
+        self.inbox.is_some() || self.native_inbox.is_some()
+    }
+
     /// Configure the optional scheduler bridge from its environment and owner-only key.
     /// # Errors
     /// Returns an error if any supplied bridge setting is invalid.
     pub fn with_inbox_from_env(mut self) -> Result<Self, ServiceError> {
         self.inbox = Inbox::configured()?;
+        self.native_inbox = crate::native_inbox::NativeInbox::configured(&self)?;
         Ok(self)
     }
 
     pub(super) async fn clear_stale_inbox(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let Some(inbox) = &self.inbox else {
+        if self.inbox.is_none() && self.native_inbox.is_none() {
             return Ok(());
-        };
+        }
         let task = &row.task.identity().id;
         let Some(binding) = self.state.lock().await.store.inbox_binding(task)? else {
             return Ok(());
@@ -243,6 +249,7 @@ impl Service {
         {
             return Ok(());
         }
+        let inbox = self.inbox.as_ref().ok_or_else(bridge_unavailable)?;
         let _fence = self.effect(row).await?;
         let reference = reference(row);
         if matches!(
@@ -266,41 +273,77 @@ impl Service {
 
     pub(super) async fn operator_decision(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let waiting = Action::Wait(WaitReason::Question);
-        let Some(inbox) = &self.inbox else {
-            return Ok(waiting);
-        };
         let Some(head) = row.task.operator_question() else {
             return Ok(waiting);
         };
+        if self.inbox.is_none() && self.native_inbox.is_none() {
+            return Ok(waiting);
+        }
         let _fence = self.effect(row).await?;
         let id = &row.task.identity().id;
+        let native = self.native_inbox.is_some();
         let binding = {
             let mut state = self.state.lock().await;
             if let Some(bound) = state.store.inbox_binding(id)? {
                 if bound.task_version != row.version || bound.head != head.as_str() {
                     return Ok(waiting);
                 }
-                bound
-            } else {
+                Some(bound)
+            } else if let Some(inbox) = self.inbox.as_ref().filter(|_| !native) {
                 let binding = InboxBinding {
                     task_version: row.version,
                     decision_id: format!("rust-inbox:{}:{id}:{}", inbox.engine, row.version),
                     head: head.as_str().into(),
                 };
                 state.store.bind_inbox(id, &binding)?;
-                binding
+                Some(binding)
+            } else {
+                None
             }
+        };
+        let Some(binding) = binding else {
+            return self.native_task_decision(row).await;
+        };
+        let inbox = self.inbox.as_ref().ok_or_else(bridge_unavailable)?;
+        let operation = if native {
+            Operation::Handoff
+        } else {
+            Operation::Ensure
         };
         let reference = reference(row);
         let reply = inbox
-            .call(&wire(Operation::Ensure, row, &binding, &reference))
+            .call(&wire(operation, row, &binding, &reference))
             .await?;
+        if native && matches!(reply, Reply::Withdrawn) {
+            self.state
+                .lock()
+                .await
+                .store
+                .clear_inbox(id, &binding.decision_id)?;
+            return self.native_task_decision(row).await;
+        }
         let (actor, reason, declined) = match reply {
             Reply::Accepted { actor, reason } => (actor, reason, false),
             Reply::Declined => ("operator (Inbox)".into(), String::new(), true),
             Reply::Pending | Reply::Withdrawn => return Ok(waiting),
         };
+        self.apply_operator_answer(row, actor, reason, declined)
+            .await
+    }
+
+    pub(super) async fn apply_operator_answer(
+        &self,
+        row: &TaskRow,
+        actor: String,
+        reason: String,
+        declined: bool,
+    ) -> Result<Action, ServiceError> {
+        let waiting = Action::Wait(WaitReason::Question);
+        let Some(head) = row.task.operator_question() else {
+            return Ok(waiting);
+        };
         let mut state = self.state.lock().await;
+        let id = &row.task.identity().id;
         let current = self.lookup(&state, id)?;
         if current != *row {
             return Ok(waiting);
@@ -336,5 +379,11 @@ impl Service {
             None,
         )?;
         Ok(waiting)
+    }
+}
+
+fn bridge_unavailable() -> ServiceError {
+    ServiceError::InboxUnavailable {
+        until: Instant::now() + RETRY,
     }
 }
