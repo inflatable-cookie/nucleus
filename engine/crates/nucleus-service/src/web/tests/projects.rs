@@ -2212,21 +2212,7 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
         .unwrap();
     let id = snapshot.value.projects.keys().next().unwrap();
     let removal = format!("{PROJECTS}/{id}/removal");
-    registry.task("alpha-planner", "finished-removal").await;
-    {
-        let mut state = registry.service.state.lock().await;
-        let row = state.store.row("finished-removal").unwrap().unwrap();
-        let mut snapshot = serde_json::to_value(&row.task).unwrap();
-        snapshot["phase"] = json!("done");
-        state
-            .store
-            .save_row(
-                &row,
-                &serde_json::from_value(snapshot).unwrap(),
-                &event("fixture_finished"),
-            )
-            .unwrap();
-    }
+    seed_finished_removal_task(&registry).await;
     let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
     let confirm = |digest: &Value| json!({"digest":digest, "reason":"Retired fixture"});
     seed_removal_planning(&registry, id).await;
@@ -2247,11 +2233,16 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     assert_eq!(first.status(), StatusCode::OK);
     let receipt = json_body(first).await;
     let original = &snapshot.value.projects[id].repositories[0];
+    let saved = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
     assert_eq!(
         receipt,
         json!({
             "repositories":[{"origin":original.origin,"path":original.path}],
-            "removedAtMs":receipt["removedAtMs"].as_u64().expect("durable removal time"),
+            "removedAtMs":saved.value.removed[id].removed_at_ms,
         })
     );
 
@@ -2304,6 +2295,22 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
             .await,
         Err(ServiceError::Project)
     ));
+}
+
+async fn seed_finished_removal_task(registry: &Registry) {
+    registry.task("alpha-planner", "finished-removal").await;
+    let mut state = registry.service.state.lock().await;
+    let row = state.store.row("finished-removal").unwrap().unwrap();
+    let mut snapshot = serde_json::to_value(&row.task).unwrap();
+    snapshot["phase"] = json!("done");
+    state
+        .store
+        .save_row(
+            &row,
+            &serde_json::from_value(snapshot).unwrap(),
+            &event("fixture_finished"),
+        )
+        .unwrap();
 }
 
 async fn seed_removal_planning(registry: &Registry, id: &str) {
