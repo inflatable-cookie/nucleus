@@ -26,12 +26,12 @@ send or a positively observed completed turn binds the retained thread.
 
 Keep PRs near 1,500 changed lines plus tests. Open each against `main` once its
 dependencies land. The planner arranges independent review and merges. Run
-formatting, check, strict Clippy and nextest for changed crates through Effigy,
-with a shared Cargo target under `NUCLEUS_SCRATCH_ROOT`. Oxide uses its registered
-removable pool and refuses a pool path inside the task's Stash scratch directory.
-Cargo deny and the whole workspace run at milestone QA. The fixture exercises
-success, a stopped run, and readback after uncertain delivery before the
-planner's live check.
+formatting, check, strict Clippy and nextest for changed crates through Effigy.
+Oxide manages Cargo storage for `engine:check`, `engine:clippy`, and
+`engine:nextest`. Set `TMPDIR`, `TMP` and `TEMP` for tests as described in
+[AGENTS.md](../AGENTS.md). Cargo deny and the whole workspace run at milestone
+QA. The fixture exercises success, a stopped run, and readback after uncertain
+delivery before the planner's live check.
 
 Use `publish = false` for workspace packages. The Longhorn crates are pinned to
 tag `v0.6.0` and require Rust 1.97.1.
@@ -73,13 +73,27 @@ class directory to exist on its registered volume and can create the `nucleus`
 child. Startup refuses a missing class or volume, including a Barge response
 that reports an absent-volume fallback. Explicit worktree, scratch, build and
 log overrides take precedence. Placement and root changes apply on restart.
-Settings and `t3 status` show the active roots. Use the reported builds root
-when selecting install output, such as the `engine:board-build` destination.
+Settings and `t3 status` show the active roots.
 
 The registered project checkout still anchors Git and retains its Git objects.
 The engine creates task checkouts under its work root and sets `TMPDIR`, `TMP` and
 `TEMP` for local commands. The task launch tells the role to keep command
-temporary files under scratch and Cargo output under builds.
+temporary files under scratch.
+
+### Stage an engine release
+
+From a clean checkout of the intended revision with the web dependencies
+installed, run `effigy engine:stage -- /absolute/builds-root`. Pass the active
+builds root shown in Storage. This is the Barge builds class when placement is
+enabled and no explicit override is set. The selector builds `nucleus` with
+`oxide build --profile release` and publishes the executable and
+`board-assets/` together under `<builds-root>/releases/<git-sha>/`. It
+refuses an existing release directory.
+
+Point the CLI runtime link and the service and ACP launchers at the staged
+`nucleus`. Pass the matching `board-assets/` to the service and keep the
+previous launcher definitions, executable and board assets for rollback.
+Staging leaves running processes and launcher definitions untouched.
 
 ### Move an existing engine home
 

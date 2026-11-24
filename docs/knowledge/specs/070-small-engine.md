@@ -430,10 +430,14 @@ cutover. Keep the engine below 30,000 source lines through milestone 4.
 Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
 Cargo builds" rule for the `engine/` workspace only:
 
-- **Each change:** `cargo check`, clippy, and nextest of the affected crates.
+- **Each change:** `effigy engine:check`, `engine:clippy`, and `engine:nextest` for the affected crates.
 - **Milestone QA:** runs the whole workspace.
-- **Shared build cache:** builds share one target directory or sccache, so parallel
-  workers don't rebuild the world.
+- **Shared build cache:** Oxide leases reusable Cargo intermediates and keeps
+  final outputs scoped to each checkout. The check, Clippy, and nextest selectors
+  use Oxide, as does the release build. Staging copies the binary and bundles the
+  board into a revision directory under the configured builds root, outside Oxide storage.
+  The current and rollback launchers use these release copies. See
+  [engine release staging](../../../engine/README.md#stage-an-engine-release).
 
 ## Migration
 
