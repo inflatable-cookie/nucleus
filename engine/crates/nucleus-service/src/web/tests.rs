@@ -146,7 +146,7 @@ async fn admission_commits_when_t3_is_unreachable() {
         "/v1/tasks",
         &PLANNER_KEY,
         &json!({
-            "id":"fixture-admit", "reference":"fixture-admit", "brief":"Implement the brief"
+            "id":"fixture-admit", "reference":"fixture-admit", "brief":"---\nqueue:\n  complexity: low\n---\nImplement the brief"
         }),
     )
     .await;
@@ -1960,7 +1960,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     assert_eq!(saved["value"]["globalSlots"], 3);
     assert_eq!(saved["value"]["mode"], "held");
     assert_event(&mut events, &["event: settings"]).await;
-    let admission = json!({"id":"board-task","reference":"D1","brief":"# Standalone task"});
+    let admission = json!({"id":"board-task","reference":"D1","brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
     let response =
         browser_request(&api, Method::POST, tasks, Some(&operator), Some(&admission)).await;
     assert_eq!(response.status(), StatusCode::CREATED);

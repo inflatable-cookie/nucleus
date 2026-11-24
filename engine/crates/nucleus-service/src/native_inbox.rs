@@ -365,6 +365,7 @@ fn task_target(row: &TaskRow) -> DecisionTarget {
     DecisionTarget {
         task_id: row.task.identity().id.clone(),
         task_version: row.version,
+        kind: Default::default(),
     }
 }
 

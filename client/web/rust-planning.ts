@@ -311,9 +311,9 @@ export function createRustPlanning(rust: RustApi, keys: () => Keys) {
     throw new Error(`${id} is not in any project.`);
   }
 
-  async function promote(input: { id: string }) {
+  async function promote(input: { id: string; complexity?: api.CapabilityLevel }) {
     const { row } = await itemOwner(input.id);
-    const task = await rust.promoteItem(row.id, input.id);
+    const task = await rust.promoteItem(row.id, input.id, input.complexity);
     return { taskId: task.identity.id, reference: String((task as { identity: { reference?: string } }).identity.reference ?? task.identity.id) };
   }
 

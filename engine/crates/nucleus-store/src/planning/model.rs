@@ -179,6 +179,32 @@ pub struct DecisionAnswer {
 pub struct DecisionTarget {
     pub task_id: String,
     pub task_version: i64,
+    #[serde(default, skip_serializing_if = "DecisionKind::is_question")]
+    pub kind: DecisionKind,
+}
+
+/// The task fact that gives an operator decision custody of its answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionKind {
+    #[default]
+    Question,
+    UsagePermission,
+}
+
+impl DecisionKind {
+    fn is_question(&self) -> bool {
+        *self == Self::Question
+    }
+}
+
+impl DecisionTarget {
+    pub(super) fn record_id(&self) -> String {
+        match self.kind {
+            DecisionKind::Question => format!("task-{}-{}", self.task_id, self.task_version),
+            DecisionKind::UsagePermission => format!("usage-permission-{}", self.task_id),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

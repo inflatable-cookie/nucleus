@@ -235,6 +235,7 @@ impl Store {
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
+        tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         Ok(())
     }
 
@@ -446,10 +447,23 @@ impl Store {
     /// # Errors
     /// Returns an error on duplicate identity, invalid state, or database failure.
     pub fn create(&mut self, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
+        self.create_with_permission(task, event, None)
+    }
+
+    /// Create the task and its optional Low usage decision in the same transaction.
+    ///
+    /// # Errors
+    /// Returns the same conflicts and write errors as [`Self::create`].
+    pub fn create_with_permission(
+        &mut self,
+        task: &Task,
+        event: &EventDraft,
+        permission: Option<planning::UsagePermission<'_>>,
+    ) -> Result<i64, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let number = admit(&tx, task, event)?;
+        let number = admit(&tx, task, event, permission)?;
         tx.commit()?;
         Ok(number)
     }
@@ -714,12 +728,21 @@ fn decode_error(column: usize, error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(column, rusqlite::types::Type::Text, Box::new(error))
 }
 
-fn admit(tx: &Transaction<'_>, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
+fn admit(
+    tx: &Transaction<'_>,
+    task: &Task,
+    event: &EventDraft,
+    permission: Option<planning::UsagePermission<'_>>,
+) -> Result<i64, StoreError> {
     let identity = task.identity();
     let number = numbers::reserve(tx, identity)?;
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
+    if let Some(permission) = permission {
+        let reference = numbers::reference(&identity.repository, number);
+        planning::decisions::insert_usage_permission(tx, &identity.id, &reference, permission)?;
+    }
     Ok(number)
 }
 

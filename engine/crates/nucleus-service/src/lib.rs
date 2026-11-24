@@ -88,6 +88,12 @@ pub enum ServiceError {
     ReportCheckout(&'static str),
     #[error("task input is invalid")]
     Input,
+    #[error("queue.complexity is required: very_low, low, medium, high or very_high")]
+    ComplexityRequired,
+    #[error("a lead names its complexity in its brief (queue.complexity); edit the lead")]
+    LeadComplexity,
+    #[error("{0}")]
+    BriefPolicy(#[from] nucleus_core::profiles::BriefPolicyError),
     #[error("answering an operator decision requires the operator binding")]
     DecisionOperator,
     #[error("the question is assigned to a different planner")]
@@ -458,6 +464,12 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
+        {
+            let mut state = self.state.lock().await;
+            if let Some(wait) = self.usage_permission_wait(&mut state, row)? {
+                return Ok(Action::Wait(wait));
+            }
+        }
         if let Err(error) = self.clear_stale_inbox(row).await
             && row.task.operator_question().is_some()
             && row.task.operator_decline().is_none()

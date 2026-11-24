@@ -1,17 +1,23 @@
-use nucleus_core::{Authority, Entry, Head, Identity, PullRequest, Task, profiles::BriefPolicy};
+use nucleus_core::{
+    Authority, Entry, Head, Identity, PullRequest, Task, WaitReason,
+    profiles::{BriefPolicy, Complexity, UsageLevel},
+};
 use nucleus_forge::Branches;
 use nucleus_store::{
     StoreError, TaskRow,
     planning::{
-        Decision, DecisionAnswerInput, DecisionInput, ItemSource, ItemState, MAX_TEXT_BYTES,
-        WriteAt, valid_key,
+        Decision, DecisionAnswerInput, DecisionInput, DecisionKind, ItemKind, ItemSource,
+        ItemState, MAX_TEXT_BYTES, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
     },
 };
 use serde::Deserialize;
 use tokio::sync::MutexGuard;
 
 use crate::enrollment::PlanningRepository;
-use crate::{ControllerScope, Service, ServiceError, State, event, now_ms, schedule::Priority};
+use crate::{
+    ControllerScope, Service, ServiceError, State, event, now_ms, profiles::usage,
+    schedule::Priority,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,7 +89,7 @@ impl Service {
                 return Err(ServiceError::Project);
             }
             require_report_lanes(&state, &route, &policy, &[], &lane)?;
-            Task::new_report_only(identity, input.brief, route.project_id, lane, head)
+            Task::new_report_only(identity, input.brief, route.project_id.clone(), lane, head)
         } else {
             if input.planning_commit.is_some() {
                 return Err(ServiceError::ReportInput(
@@ -92,9 +98,16 @@ impl Service {
             }
             Task::new(identity, input.brief, input.review)
         };
+        let permission = usage_permission(&state, &route.project_id, &policy);
+        let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
-        let number = state.store.create(&task, &admitted)?;
+        let number = state
+            .store
+            .create_with_permission(&task, &admitted, permission)?;
+        if requested_permission {
+            self.inbox_changed();
+        }
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(TaskRow {
             task,
@@ -107,6 +120,7 @@ impl Service {
         &self,
         project: Option<&str>,
         id: &str,
+        complexity: Option<Complexity>,
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<(bool, TaskRow), ServiceError> {
@@ -130,8 +144,12 @@ impl Service {
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
             return Err(StoreError::PlanningConflict.into());
         }
-        let brief = &item.content.body;
-        let policy = check_brief(brief)?;
+        let brief = match complexity {
+            Some(_) if item.kind == ItemKind::Lead => return Err(ServiceError::LeadComplexity),
+            Some(complexity) => BriefPolicy::with_complexity(&item.content.body, complexity)?,
+            None => item.content.body.clone(),
+        };
+        let policy = check_brief(&brief)?;
         let task_id = new_id("t")?;
         let identity = admission_identity(task_id.clone(), task_id, None, caller, &route)?;
         let attached = &item.content.lanes;
@@ -147,15 +165,25 @@ impl Service {
                 return Err(StoreError::PlanningConflict.into());
             }
             require_report_lanes(&state, &route, &policy, attached, &lane)?;
-            Task::new_report_only(identity, brief.clone(), route.project_id, lane, head)
+            Task::new_report_only(identity, brief, route.project_id.clone(), lane, head)
         } else {
-            Task::new(identity, brief.clone(), None)
+            Task::new(identity, brief, None)
         };
+        let permission = usage_permission(&state, &route.project_id, &policy);
+        let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
-        let (_, number) = state
-            .store
-            .promote_item(&source, &task, &admitted, stamp(caller))?;
+        let (_, number) = state.store.promote_item_with_permission(
+            &source,
+            &item.content.body,
+            &task,
+            &admitted,
+            stamp(caller),
+            permission,
+        )?;
+        if requested_permission {
+            self.inbox_changed();
+        }
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok((
             true,
@@ -240,6 +268,18 @@ impl Service {
         if !matches!(caller, Authority::Operator { .. }) {
             return Err(ServiceError::DecisionOperator);
         }
+        if let Some(decision) = state.store.decision(project, id)?
+            && let Some(target) = decision.task.as_ref()
+            && target.kind == DecisionKind::UsagePermission
+        {
+            let row = self.lookup(state, &target.task_id)?;
+            if self
+                .reconcile_usage_permission(state, &row.task, decision)?
+                .is_none()
+            {
+                return Err(StoreError::PlanningConflict.into());
+            }
+        }
         let decision = state
             .store
             .answer_decision(project, id, input, stamp(caller))?;
@@ -253,6 +293,57 @@ impl Service {
         }
         self.inbox_changed();
         Ok(decision)
+    }
+
+    pub(super) fn usage_permission_wait(
+        &self,
+        state: &mut State,
+        row: &TaskRow,
+    ) -> Result<Option<WaitReason>, ServiceError> {
+        let id = &row.task.identity().id;
+        let Some(decision) = state
+            .store
+            .usage_permission(id)?
+            .filter(|decision| !decision.withdrawn)
+        else {
+            return Ok(None);
+        };
+        if self.lookup(state, id)?.version != row.version {
+            return Err(StoreError::StaleTask.into());
+        }
+        self.reconcile_usage_permission(state, &row.task, decision)
+    }
+
+    fn reconcile_usage_permission(
+        &self,
+        state: &mut State,
+        task: &Task,
+        decision: Decision,
+    ) -> Result<Option<WaitReason>, ServiceError> {
+        let Some(target) = decision.task.filter(|_| !decision.withdrawn) else {
+            return Ok(None);
+        };
+        let level = usage(state);
+        let needed = !task.phase().is_terminal()
+            && level == UsageLevel::Low
+            && gated_complexity(BriefPolicy::parse(&task.brief().text)?.complexity).is_some();
+        if !needed {
+            state.store.withdraw_task_decision(
+                &decision.project_id,
+                &target,
+                WriteAt {
+                    actor: "Nucleus",
+                    at_ms: now_ms(),
+                },
+            )?;
+            self.inbox_changed();
+            return Ok(None);
+        }
+        Ok(decision
+            .answer
+            .as_ref()
+            .is_none_or(|answer| answer.input.option_id != USAGE_APPROVE)
+            .then_some(WaitReason::UsagePermission))
     }
 }
 
@@ -275,8 +366,10 @@ fn check_brief(brief: &str) -> Result<BriefPolicy, ServiceError> {
     if brief.trim().is_empty() || brief.len() > MAX_TEXT_BYTES {
         return Err(ServiceError::Input);
     }
-    let policy =
-        BriefPolicy::parse(brief).map_err(|error| ServiceError::ReportInput(error.to_string()))?;
+    let policy = BriefPolicy::parse(brief)?;
+    if policy.complexity.is_none() {
+        return Err(ServiceError::ComplexityRequired);
+    }
     if policy.report_only == Some(true)
         && !brief
             .lines()
@@ -368,4 +461,27 @@ fn require_report_lanes(
         }
     }
     Ok(())
+}
+
+fn usage_permission<'a>(
+    state: &State,
+    project: &'a str,
+    policy: &BriefPolicy,
+) -> Option<UsagePermission<'a>> {
+    if usage(state) != UsageLevel::Low {
+        return None;
+    }
+    gated_complexity(policy.complexity).map(|complexity| UsagePermission {
+        project,
+        complexity,
+        at_ms: now_ms(),
+    })
+}
+
+fn gated_complexity(complexity: Option<Complexity>) -> Option<&'static str> {
+    match complexity {
+        Some(Complexity::High) => Some("high"),
+        Some(Complexity::VeryHigh) => Some("very-high"),
+        _ => None,
+    }
 }

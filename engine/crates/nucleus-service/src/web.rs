@@ -990,6 +990,9 @@ impl IntoResponse for ApiError {
                     }
                     ServiceError::Input
                     | ServiceError::ReportInput(_)
+                    | ServiceError::ComplexityRequired
+                    | ServiceError::LeadComplexity
+                    | ServiceError::BriefPolicy(_)
                     | ServiceError::TaskReferenceAmbiguous
                     | ServiceError::TaskReferenceNeedsRepository
                     | ServiceError::Store(nucleus_store::StoreError::PlanningInput)

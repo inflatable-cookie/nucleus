@@ -32,15 +32,16 @@ impl TaskRow {
         let identity = self.task.identity();
         self.number.map_or_else(
             || Cow::Borrowed(identity.reference.as_str()),
-            |number| {
-                let repository = identity
-                    .repository
-                    .rsplit_once('/')
-                    .map_or(identity.repository.as_str(), |(_, name)| name);
-                Cow::Owned(format!("{repository}#{number}"))
-            },
+            |number| Cow::Owned(reference(&identity.repository, number)),
         )
     }
+}
+
+pub(super) fn reference(repository: &str, number: i64) -> String {
+    let repository = repository
+        .rsplit_once('/')
+        .map_or(repository, |(_, name)| name);
+    format!("{repository}#{number}")
 }
 
 impl Store {

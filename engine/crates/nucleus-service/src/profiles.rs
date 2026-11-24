@@ -359,7 +359,7 @@ fn earliest_eligible_pause(
     matches!(choose(candidates), Ok(Some(_))).then_some(GroupPause::Manual)
 }
 
-fn usage(state: &State) -> UsageLevel {
+pub(super) fn usage(state: &State) -> UsageLevel {
     state
         .settings
         .dispatch

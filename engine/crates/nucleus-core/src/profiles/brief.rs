@@ -109,6 +109,44 @@ impl fmt::Display for BriefPolicyError {
 impl std::error::Error for BriefPolicyError {}
 
 impl BriefPolicy {
+    /// Write the explicit promotion choice into a papercut's task brief.
+    ///
+    /// # Errors
+    /// Returns an error if the brief's existing YAML cannot be read.
+    pub fn with_complexity(
+        brief: &str,
+        complexity: Complexity,
+    ) -> Result<String, BriefPolicyError> {
+        use yaml_serde::{Mapping, Value};
+
+        let error = BriefPolicyError::InvalidFrontmatter;
+        let front =
+            Brief::frontmatter(brief).map_err(|()| BriefPolicyError::UnclosedFrontmatter)?;
+        let (mut document, body) = if let Some(front) = front {
+            let document: Option<Mapping> = yaml_serde::from_str(front).map_err(error)?;
+            let (_, lines) = brief
+                .split_once('\n')
+                .ok_or(BriefPolicyError::UnclosedFrontmatter)?;
+            let body = lines[front.len()..]
+                .split_once('\n')
+                .map_or("", |(_, body)| body);
+            (document.unwrap_or_default(), body)
+        } else {
+            (Mapping::new(), brief)
+        };
+        let key = Value::String("queue".into());
+        let queue: Option<Mapping> =
+            yaml_serde::from_value(document.remove(&key).unwrap_or(Value::Null)).map_err(error)?;
+        let mut queue = queue.unwrap_or_default();
+        queue.insert(
+            Value::String("complexity".into()),
+            yaml_serde::to_value(complexity).map_err(error)?,
+        );
+        document.insert(key, Value::Mapping(queue));
+        let yaml = yaml_serde::to_string(&document).map_err(error)?;
+        Ok(format!("---\n{yaml}---\n{body}"))
+    }
+
     /// Read the YAML block at the start of the brief. Plain milestone 1 briefs
     /// and briefs without a routing section keep the normal defaults.
     ///

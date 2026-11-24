@@ -5,7 +5,7 @@ use std::sync::{
 
 use nucleus_forge::GitHub;
 use nucleus_hosts::{InboxLifecycle, InboxStatus};
-use nucleus_store::{ProjectSettings, Projects};
+use nucleus_store::{DispatchSettings, ProjectSettings, Projects, planning::USAGE_APPROVE};
 use serde_json::{Value, json};
 
 use super::*;
@@ -14,6 +14,125 @@ use crate::tests::{fixture, native_fixture};
 const LEGACY: &str = "thread:legacy-fixture";
 const PROJECT: &str = "project:nucleus-rust-inbox";
 const PROVIDER: &str = "fixture-acp";
+
+#[tokio::test]
+async fn low_usage_permission_survives_task_edits_and_preserves_independent_holds() {
+    use nucleus_core::{Command, profiles::UsageLevel};
+
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
+    let inbox = service.native_inbox.as_ref().unwrap();
+    inbox.set_observation(Observation::Pinned(BTreeSet::new()));
+    let planner = Authority::Planner {
+        actor: "planner".into(),
+    };
+    let operator = Authority::Operator {
+        actor: "fixture operator".into(),
+    };
+    let brief = "---\nqueue:\n  complexity: high\n---\nFixture task.";
+    {
+        let mut state = service.state.lock().await;
+        let mut dispatch = DispatchSettings::default();
+        dispatch.usage = UsageLevel::Low;
+        state.settings.dispatch = Some(dispatch);
+    }
+    for id in ["approved", "declined", "amended"] {
+        service
+            .admit(id.into(), id.into(), brief.into(), &planner)
+            .await
+            .unwrap();
+    }
+    service
+        .command(
+            "approved",
+            &operator,
+            Command::Hold("Keep the operator hold".into()),
+        )
+        .await
+        .unwrap();
+
+    let batch = service.pass().await.unwrap();
+    for id in ["approved", "declined", "amended"] {
+        assert!(batch.iter().any(|outcome| outcome.task == id
+            && matches!(
+                outcome.result,
+                Ok(Action::Wait(WaitReason::UsagePermission))
+            )));
+    }
+    let snapshot = service.inbox_snapshot(&inbox.credential).await.unwrap();
+    assert_eq!(snapshot.pending.len(), 3);
+    for (id, option) in [("approved", USAGE_APPROVE), ("declined", "decline")] {
+        service
+            .answer_inbox(
+                &inbox.credential,
+                InboxAnswer {
+                    field: inbox_field("local-fixture", &format!("usage-permission-{id}")),
+                    option_id: option.into(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    service
+        .command(
+            "amended",
+            &operator,
+            Command::Amend(brief.replace("high", "medium")),
+        )
+        .await
+        .unwrap();
+    let mut state = service.state.lock().await;
+    let approved = service.lookup(&state, "approved").unwrap();
+    assert!(approved.task.hold().is_some());
+    assert_eq!(
+        service
+            .usage_permission_wait(&mut state, &approved)
+            .unwrap(),
+        None
+    );
+    let declined = service.lookup(&state, "declined").unwrap();
+    assert_eq!(
+        service
+            .usage_permission_wait(&mut state, &declined)
+            .unwrap(),
+        Some(WaitReason::UsagePermission)
+    );
+    let amended = service.lookup(&state, "amended").unwrap();
+    assert_eq!(
+        service.usage_permission_wait(&mut state, &amended).unwrap(),
+        None
+    );
+    assert!(
+        state
+            .store
+            .usage_permission("amended")
+            .unwrap()
+            .unwrap()
+            .withdrawn
+    );
+    state.settings.dispatch.as_mut().unwrap().usage = UsageLevel::Normal;
+    assert_eq!(
+        service
+            .usage_permission_wait(&mut state, &declined)
+            .unwrap(),
+        None
+    );
+    drop(state);
+    service
+        .admit("earlier".into(), "earlier".into(), brief.into(), &planner)
+        .await
+        .unwrap();
+    let mut state = service.state.lock().await;
+    state.settings.dispatch.as_mut().unwrap().usage = UsageLevel::Low;
+    assert_eq!(
+        service
+            .usage_permission_wait(&mut state, &declined)
+            .unwrap(),
+        None
+    );
+    assert!(state.store.usage_permission("earlier").unwrap().is_none());
+}
 
 #[tokio::test]
 async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
