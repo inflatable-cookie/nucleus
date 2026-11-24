@@ -276,15 +276,10 @@ impl Fixture {
             assert!(error.to_string().contains("operator snooze is active"));
         }
         let history = self.service.history(ID, None, 100).await.unwrap();
-        let [receipt] = history
-            .iter()
-            .filter(|event| event.content.kind == "native_turn_not_sent")
-            .collect::<Vec<_>>()[..]
-        else {
-            panic!("one refusal receipt for the same visibility observation");
-        };
-        let detail: Value = serde_json::from_str(&receipt.content.detail).unwrap();
-        assert_eq!(detail["version"], row.version);
+        assert!(history.iter().all(|event| !matches!(
+            event.content.kind.as_str(),
+            "native_turn_intent" | "acp_row_refresh_intent" | "native_turn_not_sent"
+        )));
     }
 }
 
@@ -505,18 +500,125 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
     };
     assert_eq!(retry.command_id(), Some(command.as_str()));
     service
-        .deliver_parent(
-            &row,
-            retry,
-            &service.turn_failure_scope(&runtime),
-            Some("native_turn_replay"),
-        )
+        .deliver_parent(&row, retry, &runtime, Some("native_turn_intent"))
         .await
         .unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch"]);
     assert_eq!(
         fixture.native.lock().unwrap().commands[0]["commandId"],
         command
+    );
+    let history = service.history(ID, None, 100).await.unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event.content.kind == "native_turn_intent")
+            .count(),
+        1
+    );
+    assert!(
+        history
+            .iter()
+            .all(|event| event.content.kind != "native_turn_replay")
+    );
+}
+
+#[tokio::test]
+async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create(&pending_task(), &event("fixture"))
+            .unwrap();
+        service.lookup(&state, ID).unwrap()
+    };
+    fixture.publish_shell();
+    let prepare = |prompt, prior| {
+        service.host.prepare_parent(
+            &fixture.binding,
+            PROVIDER,
+            "Fixture",
+            prompt,
+            prior,
+            std::future::pending(),
+        )
+    };
+    let nucleus_hosts::ParentStep::Write(write) =
+        prepare("Original task prompt", None).await.unwrap()
+    else {
+        panic!("prepare a pinned parent hold");
+    };
+    let command = write.command_id().unwrap().to_owned();
+    let session = service.host.runtime_identity().unwrap();
+    fixture.native.lock().unwrap().fail_next = true;
+    assert!(matches!(
+        service
+            .deliver_parent(&row, write, &session, Some("native_turn_intent"))
+            .await,
+        Err(ServiceError::ParentDeliveryUnknown(_))
+    ));
+    let reopened = nucleus_store::Store::open(&service.storage).unwrap();
+    let original = reopened
+        .task_turn_command(ID, "native_turn_intent", row.version, &session)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original, command);
+    let retry = || {
+        prepare(
+            "A later render must not change the frozen prompt",
+            Some(nucleus_hosts::ParentAttempt {
+                command: &command,
+                released: false,
+            }),
+        )
+    };
+    let nucleus_hosts::ParentStep::Write(refused) = retry().await.unwrap() else {
+        panic!("retry the known command after a lost reply");
+    };
+    service
+        .host
+        .fixture_project_shell(&json!({"projects":[],"threads":[]}), PROVIDER);
+    assert!(matches!(
+        service
+            .deliver_parent(&row, refused, &session, Some("native_turn_intent"))
+            .await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(fixture.commands().len(), 1);
+    assert!(matches!(
+        reopened.task_turn_attempt(ID, "native_turn_intent", row.version, &session, &command),
+        Ok(Some((_, false)))
+    ));
+    fixture.publish_shell();
+    let nucleus_hosts::ParentStep::Write(write) = retry().await.unwrap() else {
+        panic!("retry the known command after a lost reply");
+    };
+    assert!(
+        service
+            .deliver_parent(&row, write, &session, Some("native_turn_intent"))
+            .await
+            .unwrap()
+    );
+    {
+        let native = fixture.native.lock().unwrap();
+        assert_eq!(native.commands.len(), 2);
+        assert_eq!(native.commands[0], native.commands[1]);
+    }
+    let history = service.history(ID, None, 100).await.unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event.content.kind == "native_turn_intent")
+            .count(),
+        1
+    );
+    assert!(
+        history
+            .iter()
+            .all(|event| event.content.kind != "native_turn_replay")
     );
 }
 

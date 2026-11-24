@@ -50,11 +50,6 @@ impl ActiveChild {
     }
 }
 
-struct ReentryFence {
-    child: ActiveChild,
-    latest_parent: Option<String>,
-}
-
 pub enum ParentStep {
     Live(ParentRun),
     Failed,
@@ -107,7 +102,7 @@ pub struct ParentWrite {
     idle_at: Option<(String, u64)>,
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
-    reentry: Option<Box<ReentryFence>>,
+    reentry: Option<Box<ActiveChild>>,
 }
 
 struct ParentDelivery {
@@ -446,7 +441,7 @@ impl T3 {
         commands: &[String],
     ) -> Result<bool, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self.thread(binding, &thread).await? else {
+        let Some(projection) = self.observe_parent(binding, &thread).await?.0 else {
             return Ok(false);
         };
         projection.require_parent_provider(provider)?;
@@ -592,12 +587,7 @@ impl T3 {
     /// A bound child is active only on positive run or background evidence.
     #[must_use]
     pub fn bound_child_active(&self, thread: &str, checkout: &Path) -> bool {
-        self.rpc.thread_row(thread).is_some_and(|row| {
-            row["worktreePath"]
-                .as_str()
-                .is_some_and(|path| Path::new(path) == checkout)
-                && child_activity(&row, row["activeRunId"].as_str())
-        })
+        self.held_child_active(thread, checkout, None)
     }
 
     #[must_use]
@@ -640,16 +630,6 @@ impl T3 {
         Ok(self.active_child_in_shell(&child).then_some(child))
     }
 
-    /// A held row can authorize re-entry planning only during exact child activity.
-    #[must_use]
-    pub fn parent_reentry_due(&self, child: &ActiveChild) -> bool {
-        let thread = parent_thread(Path::new(&child.binding.worktree_path));
-        self.rpc
-            .thread_row(&thread)
-            .is_some_and(|row| parent_accepts_reentry(&row))
-            && self.active_child_in_shell(child)
-    }
-
     /// Prepare the first hold for this child or one new hold after an exact ended turn.
     /// A bounded read can confirm a matching command, but cannot authorize a new ID
     /// solely from the absence of the prior command.
@@ -668,7 +648,7 @@ impl T3 {
         let Some(row) = self.rpc.thread_row(&thread) else {
             return Ok(None);
         };
-        if !parent_accepts_reentry(&row) || !self.active_child_in_shell(child) {
+        if !parent_accepts_reentry(&row) {
             return Ok(None);
         }
         if !parent_row_matches(&row, binding, provider) {
@@ -688,11 +668,8 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        if projection.has_pending_turn() {
-            return Ok(None);
-        }
-
-        if latest.is_some_and(|run| !projection.terminal_run(run)) {
+        if projection.has_pending_turn() || latest.is_some_and(|run| !projection.terminal_run(run))
+        {
             return Ok(None);
         }
         let ended_owned = prior
@@ -712,19 +689,35 @@ impl T3 {
             (Some(_), None) => return Ok(None),
         };
         let mut write = parent_hold(binding, thread, provider, &command, prompt, None);
-        write.reentry = Some(Box::new(ReentryFence {
-            child: child.clone(),
-            latest_parent: latest.map(str::to_owned),
-        }));
+        write.reentry = Some(Box::new(child.clone()));
         Ok(Some(write))
     }
 
     pub(crate) fn active_child_in_shell(&self, child: &ActiveChild) -> bool {
-        self.rpc.thread_row(&child.thread).is_some_and(|row| {
-            row["projectId"] == child.binding.project_id
-                && row["worktreePath"] == child.binding.worktree_path
-                && row["branch"] == child.binding.branch
-                && child_activity(&row, child.native.as_deref())
+        self.held_child_active(
+            &child.thread,
+            Path::new(&child.binding.worktree_path),
+            Some(child),
+        )
+    }
+
+    fn held_child_active(
+        &self,
+        thread: &str,
+        checkout: &Path,
+        exact: Option<&ActiveChild>,
+    ) -> bool {
+        self.rpc.thread_row(thread).is_some_and(|row| match exact {
+            Some(child) => {
+                row["projectId"] == child.binding.project_id
+                    && row["worktreePath"] == child.binding.worktree_path
+                    && row["branch"] == child.binding.branch
+                    && child_activity(&row, child.native.as_deref())
+            }
+            None => {
+                row["worktreePath"].as_str().map(Path::new) == Some(checkout)
+                    && child_activity(&row, row["activeRunId"].as_str())
+            }
         })
     }
 
@@ -860,10 +853,8 @@ impl T3 {
                     {
                         return Err(HostError::Binding);
                     }
-                    if let Some(reentry) = &write.reentry
-                        && (!self.active_child_in_shell(&reentry.child)
-                            || !parent_accepts_reentry(&row)
-                            || row["latestRunId"].as_str() != reentry.latest_parent.as_deref())
+                    if let Some(child) = &write.reentry
+                        && (!self.active_child_in_shell(child) || !parent_accepts_reentry(&row))
                     {
                         return Err(HostError::Uncertain);
                     }

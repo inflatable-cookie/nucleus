@@ -131,70 +131,14 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         "later_send",
         "new_ambiguity",
         "legacy_without_claim",
+        "legacy_unresolved",
+        "legacy_refused",
         "no_attempt",
         "refused",
     ] {
         let version = store.create(&task(id, id), &event("admitted")).unwrap();
         versions.push((id, version));
-        let mut append = |kind, detail: serde_json::Value| {
-            let mut entry = event(kind);
-            entry.detail = detail.to_string();
-            store.claim_task_effect(id, &entry, false).unwrap();
-        };
-        if matches!(id, "completed" | "ambiguous" | "refused") {
-            append(
-                "native_turn_intent",
-                serde_json::json!({
-                    "version":version, "session":"runtime", "command":"thread-hold-1",
-                }),
-            );
-        }
-        if !matches!(id, "legacy_without_claim" | "no_attempt") {
-            append(
-                "native_turn_not_sent",
-                serde_json::json!({
-                    "version":version,
-                    "session": if id == "refused" { "runtime" } else { "preflight" },
-                    "command": if matches!(id, "ambiguous" | "refused") { "thread-hold-1" } else { "thread-hold-2" },
-                }),
-            );
-        }
-        if id == "later_send" {
-            append(
-                "native_turn_intent",
-                serde_json::json!({
-                    "version":version, "session":"runtime", "command":"thread-hold-3",
-                }),
-            );
-        }
-        let mut blocked =
-            serde_json::json!({"version":version,"session":"runtime/previous-engine"});
-        if id == "new_ambiguity" {
-            blocked["deliveryPending"] = serde_json::json!(true);
-        }
-        append("host_observation_blocked", blocked);
-        if matches!(id, "ambiguous" | "no_attempt" | "new_ambiguity") {
-            append(
-                "host_observation_blocked",
-                serde_json::json!({
-                    "version":version, "session":"runtime/previous-engine", "deliveryPending":false,
-                }),
-            );
-        }
-        if id == "completed" {
-            append(
-                "native_turn_observed",
-                serde_json::json!({
-                    "version":version, "session":"runtime", "command":"thread-hold-1",
-                }),
-            );
-            append(
-                "native_turn_replay",
-                serde_json::json!({
-                    "version":version, "session":"runtime", "command":"thread-hold-1",
-                }),
-            );
-        }
+        seed_delivery_fence(&mut store, id, version);
     }
     drop(store);
     let store = Store::open(&storage).unwrap();
@@ -202,7 +146,7 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         assert_eq!(
             store.task_delivery_fence(id, version, "runtime").unwrap(),
             match id {
-                "ambiguous" => Some(vec!["thread-hold-1".into()]),
+                "ambiguous" | "legacy_unresolved" => Some(vec!["thread-hold-1".into()]),
                 "later_send" => Some(vec!["thread-hold-3".into()]),
                 "new_ambiguity" => Some(vec![]),
                 _ => None,
@@ -214,6 +158,81 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
                 .task_delivery_fence(id, version, "replacement")
                 .unwrap()
                 .is_none()
+        );
+    }
+}
+
+fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
+    let mut append = |kind, detail: serde_json::Value| {
+        let mut entry = event(kind);
+        entry.detail = detail.to_string();
+        store.claim_task_effect(id, &entry, false).unwrap().unwrap()
+    };
+    let attempt = matches!(
+        id,
+        "completed" | "ambiguous" | "refused" | "legacy_unresolved" | "legacy_refused"
+    )
+    .then(|| {
+        append(
+            "native_turn_intent",
+            serde_json::json!({
+                "version":version, "session":"runtime", "command":"thread-hold-1",
+            }),
+        )
+    });
+    if !matches!(
+        id,
+        "legacy_without_claim" | "legacy_unresolved" | "legacy_refused" | "no_attempt"
+    ) {
+        append(
+            "native_turn_not_sent",
+            serde_json::json!({
+                "version":version,
+                "attempt": if id == "refused" { attempt } else { None },
+                "session": if id == "refused" { "runtime" } else { "preflight" },
+                "command": if matches!(id, "ambiguous" | "refused") { "thread-hold-1" } else { "thread-hold-2" },
+            }),
+        );
+    }
+    if id == "legacy_refused" {
+        append(
+            "native_turn_not_sent",
+            serde_json::json!({"version":version,"session":"runtime","command":"thread-hold-1"}),
+        );
+    }
+    if id == "later_send" {
+        append(
+            "native_turn_intent",
+            serde_json::json!({
+                "version":version, "session":"runtime", "command":"thread-hold-3",
+            }),
+        );
+    }
+    let mut blocked = serde_json::json!({"version":version,"session":"runtime/previous-engine"});
+    if !id.starts_with("legacy_") {
+        blocked["deliveryPending"] = serde_json::json!(id == "new_ambiguity");
+    }
+    append("host_observation_blocked", blocked);
+    if id == "new_ambiguity" {
+        append(
+            "host_observation_blocked",
+            serde_json::json!({
+                "version":version, "session":"runtime/previous-engine", "deliveryPending":false,
+            }),
+        );
+    }
+    if id == "completed" {
+        append(
+            "native_turn_observed",
+            serde_json::json!({
+                "version":version, "session":"runtime", "command":"thread-hold-1",
+            }),
+        );
+        append(
+            "native_turn_replay",
+            serde_json::json!({
+                "version":version, "session":"runtime", "command":"thread-hold-1",
+            }),
         );
     }
 }

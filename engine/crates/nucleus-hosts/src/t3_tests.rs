@@ -733,6 +733,72 @@ fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
 }
 
 #[tokio::test]
+async fn parent_reentry_ignores_unrelated_completed_revisions_but_keeps_the_wire_vetoes() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let child = crate::ActiveChild {
+        binding: binding.clone(),
+        thread: THREAD.into(),
+        instance: "active-worker".into(),
+        native: Some("native-worker-run".into()),
+    };
+    let prior = format!("{}:fixture-acp", child.parent_command_prefix());
+    let mut projection = parent_snapshot(&binding, "completed", false);
+    projection["projection"]["runs"][0]["userMessageId"] = json!(crate::message_id(&prior));
+    let mut row = projection["projection"]["thread"].clone();
+    row["status"] = json!("completed");
+    row["latestRunId"] = projection["projection"]["runs"][0]["id"].clone();
+    let mut worker = json!({"id":THREAD, "status":"running", "activeRunId":"native-worker-run",
+        "projectId":binding.project_id,"branch":binding.branch,"worktreePath":binding.worktree_path});
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(projection),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":20,"threads":[row,worker],"projects":[]
+        }}));
+    assert!(host.active_child_in_shell(&child));
+    let prepare =
+        || host.prepare_parent_reentry(&child, "fixture-acp", "Starting worker", Some(&prior));
+    let check_pending = prepare().await.unwrap().unwrap();
+    let check_child = prepare().await.unwrap().unwrap();
+    let replay = prepare().await.unwrap().unwrap();
+    assert!(replay.command_id().unwrap().contains("-after-"));
+    row["latestRunId"] = json!("unrelated-completed-run");
+    row["pendingRuntimeRequest"] = json!({"id":"operator-question"});
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
+    assert!(matches!(
+        host.write_verified_parent(check_pending).await,
+        Err(crate::ParentSendError::NotSent(_))
+    ));
+    row["pendingRuntimeRequest"] = Value::Null;
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":22,"thread":row}));
+    worker["activeRunId"] = json!("different-child-run");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":23,"thread":worker}));
+    assert!(matches!(
+        host.write_verified_parent(check_child).await,
+        Err(crate::ParentSendError::NotSent(_))
+    ));
+    worker["activeRunId"] = json!("native-worker-run");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":24,"thread":worker}));
+    host.write_verified_parent(replay).await.unwrap();
+    let seen = native.await.unwrap();
+    assert_thread_subscription(&seen[0], &parent);
+    assert_eq!(seen.len(), 2);
+}
+
+#[tokio::test]
 async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
