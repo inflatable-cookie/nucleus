@@ -18,6 +18,8 @@ pub(crate) enum ThreadRead {
 
 pub(crate) struct ThreadSnapshots {
     rows: BTreeMap<String, Arc<Value>>,
+    row_revisions: BTreeMap<String, u64>,
+    initial_revision: Option<u64>,
     projects: BTreeMap<String, Value>,
     sequence: Option<u64>,
     held: BTreeMap<String, Held>,
@@ -54,12 +56,15 @@ impl ThreadSnapshots {
                 return None;
             }
         }
+        let sequence = snapshot["snapshotSequence"]
+            .as_u64()
+            .or_else(|| shell["snapshotSequence"].as_u64());
         Some(Self {
             rows,
+            row_revisions: BTreeMap::new(),
+            initial_revision: sequence,
             projects,
-            sequence: snapshot["snapshotSequence"]
-                .as_u64()
-                .or_else(|| shell["snapshotSequence"].as_u64()),
+            sequence,
             held: BTreeMap::new(),
             reads: 0,
         })
@@ -75,17 +80,21 @@ impl ThreadSnapshots {
         match item["kind"].as_str() {
             Some("thread.updated") => {
                 let row = &item["thread"];
-                if let Some(id) = row["id"].as_str()
-                    && self.rows.get(id).is_none_or(|prior| **prior != *row)
-                {
-                    self.held.remove(id);
-                    self.rows.insert(id.to_owned(), Arc::new(row.clone()));
+                if let Some(id) = row["id"].as_str() {
+                    if let Some(revision) = item["sequence"].as_u64() {
+                        self.row_revisions.insert(id.to_owned(), revision);
+                    }
+                    if self.rows.get(id).is_none_or(|prior| **prior != *row) {
+                        self.held.remove(id);
+                        self.rows.insert(id.to_owned(), Arc::new(row.clone()));
+                    }
                 }
             }
             Some("thread.removed") => {
                 if let Some(id) = item["threadId"].as_str() {
                     self.held.remove(id);
                     self.rows.remove(id);
+                    self.row_revisions.remove(id);
                 }
             }
             Some("project.updated") => {
@@ -109,6 +118,17 @@ impl ThreadSnapshots {
 
     pub(crate) fn marker(&self, id: &str) -> Option<Arc<Value>> {
         self.rows.get(id).cloned()
+    }
+
+    pub(crate) fn background_row(&self, id: &str, revision: u64) -> Option<(Arc<Value>, bool)> {
+        let same_revision = self.row_revisions.get(id).map_or_else(
+            || {
+                self.initial_revision
+                    .is_some_and(|initial| revision <= initial)
+            },
+            |observed| *observed == revision,
+        );
+        Some((self.marker(id)?, same_revision))
     }
 
     pub(crate) fn closed(&self, id: &str) -> Option<(Value, Option<u64>)> {

@@ -737,8 +737,14 @@ impl Service {
                 }),
                 host.profile_catalog(),
             )
-            .await?
-        {
+            .await
+            .map_err(|error| {
+                if prior_turn.is_some() {
+                    error.into()
+                } else {
+                    self.parent_not_sent(error)
+                }
+            })? {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
@@ -764,9 +770,7 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
-                if !self.wake_parent_delivery(row, provider, &mut write).await? {
-                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
-                }
+                self.wake_parent_delivery(row, provider, &mut write).await?;
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
                 self.verify_native_parent(row, &write).await?;

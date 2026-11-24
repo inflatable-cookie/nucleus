@@ -58,6 +58,7 @@ struct Thread {
     parent_thread_id: Option<String>,
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
+    active_provider_thread_id: Option<String>,
     model_selection: Option<Value>,
     #[serde(flatten)]
     visibility: ThreadVisibility,
@@ -108,6 +109,7 @@ pub(crate) struct Subagent {
     pub id: String,
     pub child_thread_id: Option<String>,
     pub origin: String,
+    status: Option<String>,
     pub completion_delivery: Option<CompletionDelivery>,
 }
 
@@ -139,6 +141,12 @@ struct TurnItem {
     started_at: Option<Value>,
 }
 
+#[derive(PartialEq, Eq)]
+pub(crate) struct ParentCustody {
+    latest_run: Option<(String, Status)>,
+    active_provider_thread: Option<String>,
+}
+
 /// A display-only summary of a running item on the launch's exact native run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,7 +160,7 @@ fn timestamp_ms(value: Option<&str>) -> Option<u64> {
     u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Status {
     Idle,
@@ -384,16 +392,29 @@ impl Projection {
         self.subagents.as_deref().ok_or(HostError::Uncertain)
     }
 
-    pub(crate) fn use_shell_background(&mut self, row: &Value) {
+    pub(crate) fn use_shell_background(&mut self, row: &Value, same_revision: bool) {
         // T3 derives this summary from the full projection for a settled run.
-        // The row must describe this same revision. Provider rosters for
-        // older sessions still come from the bounded projection itself.
+        // The held shell can publish the same custody revision with a different
+        // presentation timestamp. A matching run alone cannot prove an empty
+        // background roster: an older writer can change without a new run.
         if (self.windowed || self.compact_turn_items)
-            && self
-                .thread
-                .updated_at
-                .as_deref()
-                .is_some_and(|updated| row["updatedAt"] == updated)
+            && (same_revision
+                || self
+                    .thread
+                    .updated_at
+                    .as_deref()
+                    .is_some_and(|updated| row["updatedAt"] == updated))
+            && row["id"] == self.thread.id
+            && row["projectId"] == self.thread.project_id
+            && row["worktreePath"].as_str() == self.thread.worktree_path.as_deref()
+            && row["branch"].as_str() == self.thread.branch.as_deref()
+            && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
+            && row["activeProviderThreadId"].as_str()
+                == self.thread.active_provider_thread_id.as_deref()
+            && row["archivedAt"].as_str() == self.thread.archived_at.as_deref()
+            && row["deletedAt"].as_str() == self.thread.deleted_at.as_deref()
+            && row["activeRunId"].is_null()
+            && row["pendingRuntimeRequest"].is_null()
             && matches!(
                 row["status"].as_str(),
                 Some("completed" | "failed" | "interrupted" | "cancelled")
@@ -406,6 +427,41 @@ impl Projection {
                 .as_array()
                 .map(|tasks| !tasks.is_empty());
         }
+    }
+
+    pub(crate) fn delivery_custody(&self) -> Result<ParentCustody, &'static str> {
+        if self.archived() || self.thread.deleted_at.is_some() {
+            return Err("parent is archived or deleted");
+        }
+        if self.thread_active() {
+            return Err("parent has an active run or runtime request");
+        }
+        if self.background_work() || self.shell_background_work == Some(true) {
+            return Err("parent has a pending background writer");
+        }
+        if !matches!(self.retained(), Ok(RetainedThread::Idle)) {
+            return Err(
+                "idle custody is unknown (provider roster, turn items or matching shell background coverage missing)",
+            );
+        }
+        let Some(children) = &self.subagents else {
+            return Err("delegated child roster is missing");
+        };
+        if children.iter().any(|child| {
+            matches!(
+                child.status.as_deref(),
+                Some("pending" | "starting" | "running" | "waiting")
+            )
+        }) {
+            return Err("parent has a starting or running child");
+        }
+        if children.iter().any(|child| child.status.is_none()) {
+            return Err("delegated child status is missing");
+        }
+        Ok(ParentCustody {
+            latest_run: self.runs.last().map(|run| (run.id.clone(), run.status)),
+            active_provider_thread: self.thread.active_provider_thread_id.clone(),
+        })
     }
 
     pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {

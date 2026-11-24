@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Binding, HostError, ProfileCatalog, RowObservation, T3, clock_ms, message_id,
+    projection::ParentCustody,
     rpc::{Read, Reply},
     thread_snapshots::ThreadRead,
 };
@@ -44,7 +45,13 @@ pub struct ParentWrite {
     rpc: &'static str,
     payload: Value,
     idle_at: Option<(String, u64)>,
-    delivery: Option<RowObservation>,
+    delivery: Option<ParentDelivery>,
+}
+
+struct ParentDelivery {
+    row: RowObservation,
+    provider: String,
+    custody: ParentCustody,
 }
 
 impl ParentWrite {
@@ -61,14 +68,16 @@ impl ParentWrite {
     /// The current row state a prepared message would deliver over.
     #[must_use]
     pub const fn delivery_row(&self) -> Option<RowObservation> {
-        self.delivery
+        match &self.delivery {
+            Some(delivery) => Some(delivery.row),
+            None => None,
+        }
     }
 
     /// Replace stale idle evidence after a visibility-only wake.
     pub fn after_row_wake(&mut self, row: RowObservation) {
-        if let Some((_, sequence)) = &mut self.idle_at {
-            *sequence = row.sequence;
-            self.delivery = Some(row);
+        if let Some(delivery) = &mut self.delivery {
+            delivery.row = row;
         }
     }
 
@@ -108,7 +117,7 @@ impl T3 {
             binding: binding.clone(),
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
-            delivery: projection.row_observation()?,
+            delivery: prepare_delivery(&projection, provider)?,
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -285,7 +294,7 @@ impl T3 {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
                 idle_at: Some((thread.clone(), sequence)),
-                delivery: projection.row_observation()?,
+                delivery: prepare_delivery(&projection, provider)?,
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
                     "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
@@ -332,25 +341,47 @@ impl T3 {
     /// Returns an error if the current binding, custody or visibility changed.
     pub async fn verify_parent_write(&self, write: &ParentWrite) -> Result<(), HostError> {
         if let Some((thread, sequence)) = &write.idle_at {
-            let Some(fresh) = self.thread(&write.binding, thread).await? else {
-                return Err(HostError::Uncertain);
+            let refuse = |predicate, observed| HostError::ParentPreflight {
+                predicate,
+                prepared: *sequence,
+                observed,
             };
-            if fresh.retained()? != RetainedThread::Idle
-                || (write.delivery.is_none() && fresh.sequence() != *sequence)
-            {
-                return Err(HostError::Uncertain);
-            }
-            let now = clock_ms()?;
-            if write.delivery.is_some()
-                && fresh.row_observation()?.is_none_or(|fresh| {
-                    fresh.visibility.settled
-                        || fresh
-                            .visibility
-                            .snoozed_until_ms
-                            .is_some_and(|until| until > now)
-                })
-            {
-                return Err(HostError::Uncertain);
+            let Some(fresh) = self.thread(&write.binding, thread).await? else {
+                return Err(refuse("parent thread is absent", None));
+            };
+            let observed = Some(fresh.sequence());
+            if let Some(delivery) = &write.delivery {
+                fresh
+                    .require_parent_provider(&delivery.provider)
+                    .map_err(|_| refuse("root ACP provider binding changed", observed))?;
+                let custody = fresh
+                    .delivery_custody()
+                    .map_err(|predicate| refuse(predicate, observed))?;
+                if custody != delivery.custody {
+                    return Err(refuse(
+                        "latest run or active provider thread changed",
+                        observed,
+                    ));
+                }
+                let Some(row) = fresh.row_observation()? else {
+                    return Err(refuse("parent row is unavailable", observed));
+                };
+                if row.visibility.settled {
+                    return Err(refuse("parent row is still settled", observed));
+                }
+                let now = clock_ms()?;
+                if row
+                    .visibility
+                    .snoozed_until_ms
+                    .is_some_and(|until| until > now)
+                {
+                    return Err(refuse("parent row has a current snooze", observed));
+                }
+            } else if fresh.retained()? != RetainedThread::Idle || fresh.sequence() != *sequence {
+                return Err(refuse(
+                    "idle custody or exact revision changed for archive/unarchive",
+                    observed,
+                ));
             }
         }
         Ok(())
@@ -365,6 +396,28 @@ impl T3 {
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
     }
+}
+
+fn prepare_delivery(
+    projection: &crate::Projection,
+    provider: &str,
+) -> Result<Option<ParentDelivery>, HostError> {
+    let Some(row) = projection.row_observation()? else {
+        return Ok(None);
+    };
+    let custody =
+        projection
+            .delivery_custody()
+            .map_err(|predicate| HostError::ParentPreflight {
+                predicate,
+                prepared: row.sequence,
+                observed: Some(row.sequence),
+            })?;
+    Ok(Some(ParentDelivery {
+        row,
+        provider: provider.into(),
+        custody,
+    }))
 }
 
 fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {

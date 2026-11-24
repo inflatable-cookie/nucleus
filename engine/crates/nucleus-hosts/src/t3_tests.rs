@@ -650,7 +650,7 @@ fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
     projection["runs"][0]["rootNodeId"] = json!("parent-root");
     projection["runs"][0]["userMessageId"] = json!("fixture-parent-command-message");
     projection["subagents"] =
-        json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned"}]);
+        json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned","status":"completed"}]);
     reply
 }
 
@@ -896,11 +896,11 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let mut projection = crate::Projection::parse(worker.clone(), &binding, THREAD).unwrap();
     let mut stale = shell_row(&worker);
     stale["updatedAt"] = json!("2026-11-24T15:59:00Z");
-    projection.use_shell_background(&stale);
+    projection.use_shell_background(&stale, false);
     assert!(matches!(projection.retained(), Err(HostError::Uncertain)));
     let mut busy = shell_row(&worker);
     busy["pendingBackgroundTasks"] = json!([{"taskId":"before-the-window"}]);
-    projection.use_shell_background(&busy);
+    projection.use_shell_background(&busy, false);
     assert_eq!(projection.retained().unwrap(), RetainedThread::Busy);
 
     assert_eq!(

@@ -70,6 +70,11 @@ pub use web::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("T3 parent message was not sent: {reason}")]
+    ParentNotSent {
+        reason: String,
+        retry_at: Option<Instant>,
+    },
     #[error("run scratch is already reserved for another run")]
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
@@ -836,7 +841,9 @@ impl Service {
         let id = &row.task.identity().id;
         let wait = match result {
             Ok(Action::Wait(reason)) => Some(*reason),
-            Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
+            Err(ServiceError::Host(_) | ServiceError::ParentNotSent { .. }) => {
+                Some(WaitReason::HostUnknown)
+            }
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
             Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
             Err(ServiceError::InboxUnavailable { .. }) => Some(WaitReason::Question),
@@ -872,7 +879,9 @@ impl Service {
             }
             return Ok(());
         }
-        if wait == Some(WaitReason::HostUnknown) {
+        if wait == Some(WaitReason::HostUnknown)
+            && !matches!(result, Err(ServiceError::ParentNotSent { .. }))
+        {
             return self.schedule_host_observation(&mut state, row, result);
         }
         state.schedule.reset_host_backoff(id);
@@ -882,6 +891,9 @@ impl Service {
         let now = Instant::now();
         let (delay, priority) = schedule::retry(wait);
         let due = match result {
+            Err(ServiceError::ParentNotSent { retry_at, .. }) => {
+                retry_at.unwrap_or(now).max(now + delay)
+            }
             Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
             Err(ServiceError::InboxUnavailable { until }) => *until,
             _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),

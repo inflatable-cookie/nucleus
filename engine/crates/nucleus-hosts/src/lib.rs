@@ -94,6 +94,14 @@ pub enum HostError {
     Binding,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
+    #[error(
+        "parent message preflight failed: {predicate} (prepared revision {prepared}, observed revision {observed:?})"
+    )]
+    ParentPreflight {
+        predicate: &'static str,
+        prepared: u64,
+        observed: Option<u64>,
+    },
     #[error("the local process census could not confirm workspace custody")]
     ProcessCoverage,
     #[error("the frozen assignment exceeds T3's 120,000-character input limit")]
@@ -498,8 +506,10 @@ impl T3 {
             }
             ThreadReply::Snapshot(Reply::Value(value)) => {
                 let mut projection = Projection::parse(value, binding, id)?;
-                if let Some(row) = self.rpc.thread_row(id) {
-                    projection.use_shell_background(&row);
+                if let Some((row, same_revision)) =
+                    self.rpc.background_row(id, projection.sequence())
+                {
+                    projection.use_shell_background(&row, same_revision);
                 }
                 Ok(Some(projection))
             }

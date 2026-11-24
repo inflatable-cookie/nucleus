@@ -149,12 +149,32 @@ impl Service {
     ) -> Result<(), ServiceError> {
         if let Err(error) = self.host.verify_parent_write(write).await {
             if let Some(command) = write.command_id() {
-                self.record_native_turn(row, "native_turn_not_sent", "preflight", command)
-                    .await?;
+                let mut audit = event("native_turn_not_sent");
+                audit.detail = serde_json::json!({
+                    "command": command, "version": row.version, "session": "preflight",
+                    "reason": error.to_string(),
+                })
+                .to_string();
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .claim_task_effect(&row.task.identity().id, &audit)?;
             }
-            return Err(error.into());
+            return Err(if write.starts_turn() {
+                self.parent_not_sent(error)
+            } else {
+                error.into()
+            });
         }
         Ok(())
+    }
+
+    pub(super) fn parent_not_sent(&self, reason: impl std::fmt::Display) -> ServiceError {
+        ServiceError::ParentNotSent {
+            reason: reason.to_string(),
+            retry_at: self.host.request_retry_at(),
+        }
     }
 
     pub(super) async fn record_failed_parent_turn(
@@ -209,7 +229,12 @@ impl Service {
         let work = self.worktrees()?;
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
         let binding = route.binding(&checkout)?;
-        let Some(mut write) = self.host.prepare_parent_refresh(&binding, provider).await? else {
+        let Some(mut write) = self
+            .host
+            .prepare_parent_refresh(&binding, provider)
+            .await
+            .map_err(|error| self.parent_not_sent(error))?
+        else {
             return Ok(false);
         };
         let Some(_permit) = self
@@ -225,24 +250,23 @@ impl Service {
         else {
             return Ok(false);
         };
-        match self.wake_parent_delivery(row, provider, &mut write).await {
-            Ok(true) => {}
-            result => {
-                let mut state = self.state.lock().await;
-                if self.lookup(&state, id)?.version == row.version {
-                    state.acp_refresh_requests.insert(id.into(), row.version);
-                }
-                return Err(result
-                    .err()
-                    .unwrap_or_else(|| nucleus_hosts::HostError::Uncertain.into()));
-            }
-        }
         self.ensure_parent_reader(id, checkout.path()).await?;
+        if let Err(error) = async {
+            self.wake_parent_delivery(row, provider, &mut write).await?;
+            self.verify_native_parent(row, &write).await
+        }
+        .await
+        {
+            let mut state = self.state.lock().await;
+            if self.lookup(&state, id)?.version == row.version {
+                state.acp_refresh_requests.insert(id.into(), row.version);
+            }
+            return Err(error);
+        }
         let session = self
             .host
             .runtime_identity()
             .ok_or(nucleus_hosts::HostError::Uncertain)?;
-        self.verify_native_parent(row, &write).await?;
         if self
             .state
             .lock()

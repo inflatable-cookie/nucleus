@@ -503,6 +503,18 @@ impl Rpc {
             .marker(id)
     }
 
+    pub(crate) fn background_row(
+        &self,
+        id: &str,
+        sequence: u64,
+    ) -> Option<(std::sync::Arc<Value>, bool)> {
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()?
+            .background_row(id, sequence)
+    }
+
     #[cfg(test)]
     pub(crate) fn fixture_shell(&self, item: &Value) {
         let mut snapshots = self.snapshots.lock().expect("thread snapshots");

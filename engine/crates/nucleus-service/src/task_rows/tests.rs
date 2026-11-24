@@ -72,7 +72,7 @@ impl Fixture {
                                 "providerInstanceId":PROVIDER,
                                 "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
                                 "snoozedUntil":row.until,"settledAt":row.settled_at},
-                            "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                            "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
                         }},
                         {"kind":"synchronized"}
                     ]})
@@ -284,12 +284,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .prepare_parent_refresh(&fixture.binding, PROVIDER)
     };
     let mut write = prepare().await.unwrap().unwrap();
-    assert!(
-        service
-            .wake_parent_delivery(&row, PROVIDER, &mut write)
-            .await
-            .unwrap()
-    );
+    service
+        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .await
+        .unwrap();
     service.host.write_parent(write).await.unwrap();
     assert_eq!(
         fixture.commands(),
@@ -305,23 +303,20 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
     let mut write = prepare().await.unwrap().unwrap();
-    assert!(
-        !service
-            .wake_parent_delivery(&row, PROVIDER, &mut write)
-            .await
-            .unwrap()
-    );
+    let error = service
+        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("operator snooze is active"));
     assert_eq!(fixture.commands().len(), 4);
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 
     fixture.native.lock().unwrap().until = Value::Null;
     let mut write = prepare().await.unwrap().unwrap();
-    assert!(
-        service
-            .wake_parent_delivery(&row, PROVIDER, &mut write)
-            .await
-            .unwrap()
-    );
+    service
+        .wake_parent_delivery(&row, PROVIDER, &mut write)
+        .await
+        .unwrap();
     service.host.write_parent(write).await.unwrap();
     assert_eq!(
         fixture.commands()[4..],
