@@ -2261,20 +2261,12 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
                 .is_empty()
         );
     }
-    let task =
-        json_body(get_as(&registry.api, "/v1/tasks/finished-removal", &BOARD_KEY).await).await;
+    let task_path = "/v1/tasks/finished-removal";
+    let task = json_body(get_as(&registry.api, task_path, &BOARD_KEY).await).await;
     assert_eq!(task["phase"], "done");
     assert_eq!(task["identity"]["repository"], ALPHA_REPO);
-    assert_eq!(
-        get_as(
-            &registry.api,
-            "/v1/tasks/finished-removal/history",
-            &BOARD_KEY
-        )
-        .await
-        .status(),
-        StatusCode::OK
-    );
+    let history = get_as(&registry.api, &format!("{task_path}/history"), &BOARD_KEY).await;
+    assert_eq!(history.status(), StatusCode::OK);
     let registry = registry.reopen();
     assert_eq!(
         json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
@@ -2322,7 +2314,7 @@ async fn seed_removal_planning(registry: &Registry, id: &str) {
             &registry.api,
             &plan,
             &BOARD_KEY,
-            &json!({"version":0,"lanes":[{"key":"release","horizon":"now","doneWhen":"Released"}]})
+            &json!({"version":0,"lanes":[{"key":"release","horizon":"now","doneWhen":"Released","statusNote":"Fixture"}]})
         )
         .await
         .status(),
