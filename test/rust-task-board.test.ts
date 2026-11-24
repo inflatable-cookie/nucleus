@@ -359,7 +359,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "overflow expands in its view",
   );
   await click("Working, 1");
-  await click("board-fixture#81");
+  // The card shows the task number alone; the project shows beside it.
+  await click("#81");
   await eventually(() => text().includes(activity), "initial activity");
   const beforeList = reads("/v1/tasks");
   const beforeDetail = reads("/v1/tasks/running");
@@ -559,7 +560,7 @@ test("typed Board commands match Rust serde shapes and pending is a single write
   );
 });
 
-test("the standalone bundle uses only the Rust browser routes and refreshes on push", async (t) => {
+test("the standalone bundle is the shared web board on the Rust routes and refreshes on push", async (t) => {
   const root = await mkdtemp(join(process.env.TMPDIR!, "engine-board-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const { buildEngineBoard } = await (new Function(
@@ -574,12 +575,31 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
     pretendToBeVisual: true,
   });
   t.after(() => dom.window.close());
-  const bodies: unknown[] = [];
-  const planWrites: unknown[] = [];
+  const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
-  let slots = 2;
+  let dispatch = {
+    usage: "normal", usageUntilMs: null, slots: 2, hostConcurrency: 1,
+    allowanceMinutes: null, providerLimitCooldownSeconds: 300, mode: "running",
+  };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
+  const views = {
+    profiles: () => snap({ profiles: [], pausedGroups: [] }, "profiles-1"),
+    dispatch: () => snap(dispatch, "dispatch-" + dispatch.slots),
+    projects: () => ({
+      settings: snap({ projects: { fixture: { name: "Fixture project", slots: 2, archived: false, repositories: [
+        { origin: "example/fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+      ] } } }, "projects-1"),
+      resolvedPlanners: { fixture: "fixture-planner" },
+    }),
+    hosts: () => ({ settings: snap({ t3: null }, "hosts-1"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
+    storage: () => ({
+      settings: snap({ enabled: true, workRoot: null, scratchRoot: null, logRoot: null, retention: { keepNewest: 5, maxAgeDays: null } }, "storage-1"),
+      active: { databaseRoot: "/e/db", workRoot: "/e/work", backupRoot: "/e/backups", scratchRoot: "/e/scratch", logRoot: "/e/logs" },
+      backups: { complete: true, issues: 0, verified: [] },
+    }),
+  };
   const fetcher: typeof fetch = async (input, init) => {
     const path = String(input);
     requests.push(path);
@@ -592,97 +612,39 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
       return new Response(null, { status: 204 });
     }
     assert.equal(headers.get("authorization"), null);
-    if (path === "/api/engine/session")
-      return Response.json({ canEditSettings: true });
     if (path === "/api/engine/events") {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           stream = controller;
-          controller.enqueue(
-            new TextEncoder().encode("event: refresh\ndata: {}\n\n"),
-          );
+          controller.enqueue(new TextEncoder().encode("event: refresh\ndata: {}\n\n"));
         },
       });
-      init?.signal?.addEventListener("abort", () => stream?.close(), {
-        once: true,
-      });
+      init?.signal?.addEventListener("abort", () => stream?.close(), { once: true });
       return new Response(body);
     }
+    if (path === "/api/engine/theme") return Response.json({ theme: null });
     if (path === "/api/engine/tasks")
-      return Response.json([
-        { ...task("board-task", taskPhase, "D1"), title: "Standalone task" },
-      ]);
-    if (path === "/api/engine/settings/dispatch") {
+      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }]);
+    if (path === "/api/engine/settings")
+      return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
+    const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
+    if (domain) {
       if (init?.method === "PUT") {
-        bodies.push(JSON.parse(String(init.body)));
-        slots = 3;
+        const body = JSON.parse(String(init.body));
+        writes.push({ path, body });
+        if (domain === "dispatch") dispatch = body.value;
       }
-      return Response.json({
-        revision: "dispatch-" + slots,
-        configured: true,
-        value: {
-          slots,
-          hostConcurrency: 1,
-          usage: "normal",
-          usageUntilMs: null,
-          allowanceMinutes: null,
-          providerLimitCooldownSeconds: 300,
-        },
-      });
+      return Response.json(views[domain]());
     }
-    if (path === "/api/engine/settings/projects") {
-      return Response.json({
-        settings: {
-          revision: "projects-1",
-          configured: true,
-          value: {
-            projects: {
-              fixture: {
-                name: "Fixture project",
-                slots: 2,
-                archived: false,
-                repositories: [],
-              },
-            },
-          },
-        },
-        resolvedPlanners: { fixture: "fixture-planner" },
-        verifiedPlanners: { fixture: ["fixture-planner", "second-planner"] },
-      });
-    }
-    if (path === "/api/engine/planning/fixture/plan") {
-      if (init?.method === "PUT")
-        planWrites.push(JSON.parse(String(init.body)));
-      const lanes = [
-        {
-          key: "board",
-          horizon: planWrites.length ? "later" : "now",
-          doneWhen: "Board works",
-          statusNote: "In progress",
-        },
-      ];
-      if (init?.method === "PUT") return Response.json({ version: 3, lanes });
-      return Response.json({
-        version: 2,
-        lanes,
-        documents: [
-          {
-            key: "board",
-            version: 1,
-            title: "Board lane",
-            aim: "Serve the board",
-            document: "## Assets",
-            status: "open",
-          },
-        ],
-      });
-    }
+    if (path === "/api/engine/planning/fixture/plan")
+      return Response.json({ version: 0, lanes: [], documents: [], idle: true });
+    if (path === "/api/engine/planning/fixture/items" || path === "/api/engine/planning/fixture/decisions")
+      return Response.json([]);
     assert.fail("Unexpected standalone route " + path);
   };
   Object.assign(dom.window, {
     innerWidth: 1280,
-    matchMedia: () =>
-      Object.assign(new dom.window.EventTarget(), { matches: true }),
+    matchMedia: () => Object.assign(new dom.window.EventTarget(), { matches: true }),
     fetch: fetcher,
     TextDecoder,
     TextEncoder,
@@ -691,80 +653,30 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
   const selector = (label: string) =>
     dom.window.document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
   const click = async (label: string) => {
-    await eventually(
-      () => Boolean(selector(label)),
-      "visible control: " + label,
-    );
+    await eventually(() => Boolean(selector(label)), "visible control: " + label);
     selector(label)?.click();
   };
   const text = () => dom.window.document.body.textContent ?? "";
   dom.window.eval(`(() => { ${script} })()`);
+  // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 1");
-  await eventually(
-    () => text().includes("Standalone task"),
-    "task title renders",
-  );
-  assert.ok(
-    [...dom.window.document.querySelectorAll("div")].some(
-      (element) =>
-        element.textContent?.includes("Standalone task") &&
-        dom.window.getComputedStyle(element).flexBasis === `${inboxListWidth}px`,
-    ),
-    "the desktop task pane has a fixed nonzero flex basis",
-  );
+  await eventually(() => text().includes("Standalone task"), "task title renders");
+  assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
+  assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
   assert.ok(stream, "the board subscribed to engine changes");
-  stream.enqueue(
-    new TextEncoder().encode(
-      'event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n',
-    ),
-  );
+  stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
   await click("Working, 1");
-  await eventually(
-    () => text().includes("Standalone task"),
-    "working view renders",
-  );
-  await click("Queue, 0");
-  await eventually(
-    () => !text().includes("Standalone task"),
-    "empty queue renders",
-  );
+  await eventually(() => text().includes("Standalone task"), "working view renders");
+  // Dispatch hold writes the Rust Dispatch mode through Settings.
+  await click("Queue controls menu");
+  await click("Dispatch hold");
+  await eventually(() => writes.length === 1, "the hold is written to the Dispatch domain");
+  assert.equal(writes[0]!.path, "/api/engine/settings/dispatch");
+  assert.equal(writes[0]!.body.value.mode, "held");
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
-  await click("Increase Slots");
-  await eventually(() => bodies.length === 1, "slot edit autosaved to Rust");
-  assert.deepEqual(bodies[0], {
-    revision: "dispatch-2",
-    value: {
-      usage: "normal",
-      usageUntilMs: null,
-      slots: 3,
-      hostConcurrency: 1,
-      allowanceMinutes: null,
-      providerLimitCooldownSeconds: 300,
-    },
-  });
-  await click("Projects");
-  await click("Fixture project");
-  await eventually(
-    () => text().includes("fixture-planner, second-planner"),
-    "the verified planners are displayed",
-  );
-  await click("Lanes");
-  await click("Board lane");
-  await click("Horizon, Now");
-  await click("Horizon: Later");
-  await eventually(() => planWrites.length === 1, "the horizon autosaves");
-  assert.deepEqual(planWrites[0], {
-    version: 2,
-    lanes: [
-      {
-        key: "board",
-        horizon: "later",
-        doneWhen: "Board works",
-        statusNote: "In progress",
-      },
-    ],
-  });
+  await eventually(() => text().includes("Usage level"), "the shared Limits section renders");
+  assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

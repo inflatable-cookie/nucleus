@@ -302,17 +302,16 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           c={c}
           label="Settings sections"
           nowrap
-          tabs={settingsViews
-            .filter(
-              (view) =>
-                (view.id !== "backups" || features.backupsTab) &&
-                (view.id !== "telemetry" || features.telemetry),
-            )
-            .map((view) => ({
+          tabs={settingsViews.map((view) => ({
             id: view.id,
             text: view.short,
             label: view.label,
-          }))}
+          })).filter(
+            // Rust engine (Spec 070 rulings 16 and 17): no Telemetry, backups live in Storage.
+            (tab) =>
+              (tab.id !== "backups" || features.backupsTab) &&
+              (tab.id !== "telemetry" || features.telemetry),
+          )}
           value={settingsTab}
           onChange={setSettingsTab}
         />
