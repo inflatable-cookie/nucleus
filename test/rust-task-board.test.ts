@@ -527,3 +527,125 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     /loopback/,
   );
 });
+
+test("the standalone bundle uses only the Rust browser routes and refreshes on push", async (t) => {
+  const root = await mkdtemp(join(process.env.TMPDIR!, "engine-board-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { buildEngineBoard } = await (new Function(
+    "return import('../scripts/build-web.mjs')",
+  )() as Promise<{ buildEngineBoard(path: string): Promise<void> }>);
+  await buildEngineBoard(root);
+  const script = await readFile(join(root, "app.js"), "utf8");
+  const token = "a".repeat(64);
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: "http://127.0.0.1:4319/#token=" + token,
+    runScripts: "dangerously",
+    pretendToBeVisual: true,
+  });
+  t.after(() => dom.window.close());
+  const bodies: unknown[] = [];
+  const requests: string[] = [];
+  let taskPhase: RustTask["phase"] = "queued";
+  let slots = 2;
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fetcher: typeof fetch = async (input, init) => {
+    const path = String(input);
+    requests.push(path);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("x-nucleus-board"), "1");
+    if (path === "/api/engine/pair") {
+      assert.equal(init?.method, "POST");
+      assert.equal(headers.get("authorization"), "Bearer " + token);
+      assert.equal(dom.window.location.hash, "");
+      return new Response(null, { status: 204 });
+    }
+    assert.equal(headers.get("authorization"), null);
+    if (path === "/api/engine/session")
+      return Response.json({ canEditSettings: true });
+    if (path === "/api/engine/events") {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          stream = controller;
+          controller.enqueue(
+            new TextEncoder().encode("event: refresh\ndata: {}\n\n"),
+          );
+        },
+      });
+      init?.signal?.addEventListener("abort", () => stream?.close(), {
+        once: true,
+      });
+      return new Response(body);
+    }
+    if (path === "/api/engine/tasks")
+      return Response.json([
+        { ...task("board-task", taskPhase, "D1"), title: "Standalone task" },
+      ]);
+    if (path === "/api/engine/settings/dispatch") {
+      if (init?.method === "PUT") {
+        bodies.push(JSON.parse(String(init.body)));
+        slots = 3;
+      }
+      return Response.json({
+        revision: "dispatch-" + slots,
+        configured: true,
+        value: {
+          slots,
+          hostConcurrency: 1,
+          usage: "normal",
+          usageUntilMs: null,
+          allowanceMinutes: null,
+          providerLimitCooldownSeconds: 300,
+        },
+      });
+    }
+    assert.fail("Unexpected standalone route " + path);
+  };
+  Object.assign(dom.window, {
+    matchMedia: () =>
+      Object.assign(new dom.window.EventTarget(), { matches: true }),
+    fetch: fetcher,
+    TextDecoder,
+    TextEncoder,
+    AbortController,
+  });
+  const selector = (label: string) =>
+    dom.window.document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  const click = async (label: string) => {
+    await eventually(
+      () => Boolean(selector(label)),
+      "visible control: " + label,
+    );
+    selector(label)?.click();
+  };
+  const text = () => dom.window.document.body.textContent ?? "";
+  dom.window.eval(`(() => { ${script} })()`);
+  await click("Queue, 1");
+  await eventually(
+    () => text().includes("Standalone task"),
+    "task title renders",
+  );
+  taskPhase = "working";
+  assert.ok(stream, "the board subscribed to engine changes");
+  stream.enqueue(
+    new TextEncoder().encode(
+      'event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n',
+    ),
+  );
+  await click("Working, 1");
+  await click("Settings");
+  assert.equal(dom.window.location.pathname, "/settings");
+  await click("Increase Slots");
+  await eventually(() => bodies.length === 1, "slot edit autosaved to Rust");
+  assert.deepEqual(bodies[0], {
+    revision: "dispatch-2",
+    value: {
+      usage: "normal",
+      usageUntilMs: null,
+      slots: 3,
+      hostConcurrency: 1,
+      allowanceMinutes: null,
+      providerLimitCooldownSeconds: 300,
+    },
+  });
+  assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
+});

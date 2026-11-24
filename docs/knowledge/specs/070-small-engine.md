@@ -311,6 +311,20 @@ Cargo builds" rule for the `engine/` workspace only:
 
 A task never moves between engines.
 
+### Standalone board
+
+Build the browser assets with `effigy engine:board-build -- /absolute/asset-directory`,
+or use `web/engine` from a packaged runtime. Pass that directory to
+`nucleus-engine serve --board-assets`. Axum serves the board at `/` and Settings
+at `/settings` on the engine's loopback listener. The browser subscribes to task
+and Settings changes on that listener, regardless of whether the TypeScript
+service is running. The TypeScript transition board still proxies Rust task views.
+
+`nucleus-engine ui` prints a two-minute, one-use link for the authenticated
+controller. Pairing consumes the token and issues an eight-hour HttpOnly session
+cookie with the same authority. The board discards the link fragment before
+pairing. The controller credential stays with the CLI and service.
+
 ## Planning model (milestone 3)
 
 Planning is plain record-keeping in the Rust service. It never calls a host (ruling 11), and it replaces about 35 TypeScript commands with these records and verbs.

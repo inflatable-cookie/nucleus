@@ -41,13 +41,13 @@ use nucleus_work::{WorkError, Worktrees, checkout_path};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
-    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc},
+    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc, watch},
     time::Instant,
 };
 
 pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
-pub use web::{Controller, router};
+pub use web::{Controller, router, router_with_board};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -115,6 +115,7 @@ pub struct Service {
     pass_lock: Mutex<()>,
     watch_lock: Mutex<()>,
     changes: broadcast::Sender<TaskChange>,
+    settings_changes: watch::Sender<()>,
     wake: Notify,
     planner_wake: Notify,
     title_wake: Notify,
@@ -237,6 +238,7 @@ impl Service {
             pass_lock: Mutex::new(()),
             watch_lock: Mutex::new(()),
             changes,
+            settings_changes: watch::channel(()).0,
             wake: Notify::new(),
             planner_wake: Notify::new(),
             title_wake: Notify::new(),
@@ -421,7 +423,10 @@ impl Service {
             }
             {
                 let mut state = self.state.lock().await;
-                state.settings.host = web::CachedHost::Unavailable;
+                self.set_cached_host(&mut state, web::CachedHost::Unavailable);
+                if !state.planner_authority.is_empty() {
+                    self.settings_changes.send_replace(());
+                }
                 state.invalidate_planner_authority();
                 for seen in state
                     .thread_tasks
@@ -437,8 +442,12 @@ impl Service {
 
     async fn wake_from_host(&self, hint: ThreadHint) {
         let mut state = self.state.lock().await;
-        state.settings.host = web::CachedHost::Reachable;
+        self.set_cached_host(&mut state, web::CachedHost::Reachable);
+        let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
+        if authorities != state.planner_authority.len() {
+            self.settings_changes.send_replace(());
+        }
         let State {
             thread_tasks,
             schedule,
@@ -461,6 +470,13 @@ impl Service {
                     self.wake.notify_one();
                 }
             }
+        }
+    }
+
+    fn set_cached_host(&self, state: &mut State, status: web::CachedHost) {
+        if state.settings.host != status {
+            state.settings.host = status;
+            self.settings_changes.send_replace(());
         }
     }
 

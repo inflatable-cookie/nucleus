@@ -175,6 +175,7 @@ export function InboxMenu({
   counts,
   loaded,
   rust,
+  standalone = false,
   onSelect,
 }: {
   c: Colors;
@@ -182,14 +183,19 @@ export function InboxMenu({
   counts: InboxMenuCounts;
   loaded: boolean;
   rust?: { totals: Partial<Record<BoardView, number>> };
+  standalone?: boolean;
   onSelect: (view: BoardView) => void;
 }) {
-  const entries: readonly { id: BoardView; label: string; icon: string }[] = rust
+  const allEntries: readonly { id: BoardView; label: string; icon: string }[] = rust
     ? [...inboxViews.slice(0, -1), { id: "merging", label: "Merging", icon: "GitMerge" },
         ...inboxViews.slice(-1), { id: "history", label: "History", icon: "History" }]
     : inboxViews;
+  const entries = standalone
+    ? allEntries.filter(({ id }) => id !== "planning" && id !== "leads" && id !== "papercuts")
+    : allEntries;
   const count = (id: BoardView) => {
     const rustTotal = rust?.totals[id];
+    if (standalone) return rustTotal ?? null;
     if (id === "merging" || id === "history") return rustTotal ?? null;
     if (rust && ["needs", "queue", "working", "review", "closing"].includes(id) && rustTotal === undefined) return null;
     return counts[id] + (rustTotal ?? 0);
