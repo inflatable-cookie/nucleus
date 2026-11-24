@@ -151,6 +151,11 @@ Later decisions carry their own attribution.
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
    the exact frozen command ID, so a parent hold pinned to the ACP provider and
    model can queue while busy and reconcile an ambiguous send under that ID.
+   A pinned retry reuses the original intent and prompt. A check that fails
+   before an intent is recorded leaves no attempted-send record. A refusal
+   after that point names its exact attempt. Re-entry uses one bounded read
+   to identify the ended hold and rechecks current child activity, parent
+   availability, binding and operator snooze at send time.
    Older parent holds still require an idle thread. Delegated launch absence
    still requires an exact terminal parent run and an authoritative child absence.
    New retained worker continuations pin provider and model and can enter the
