@@ -258,13 +258,18 @@ impl T3 {
     /// Recheck the actual thread and workspace of an authorized notice.
     /// # Errors
     /// Returns an error if the destination changed or could not be read.
-    pub async fn check_notice_target(&self, target: &NoticeTarget) -> Result<(), HostError> {
+    pub async fn check_notice_target(
+        &self,
+        authorization: &NoticeAuthorization,
+    ) -> Result<(), HostError> {
+        let target = authorization.target();
         let snapshot = self
             .notice_projection(&target.thread)
             .await?
             .ok_or(HostError::Binding)?;
-        if snapshot.thread.planner.project_id != target.project_id
+        if !authorization.matches_planner(&snapshot.thread.planner)
             || snapshot.thread.worktree_path != target.worktree_path
+            || snapshot.thread.planner.is_child()
         {
             return Err(HostError::Binding);
         }

@@ -157,7 +157,8 @@ Later decisions carry their own attribution.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
-    - Several verified planners can bind to the same project through any of its repositories. Archive or identity changes revoke that caller's cached authority. Task commands accept any live planner binding for the project. Notices address the task's original planner and fall back to the most recently verified live planner in the project after T3 confirms that the origin is gone.
+    - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
+    - Task commands accept any live planner binding for the project. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
     - Projects settings edit slots and lanes and show the live planners. Dispatch uses the verified repository route automatically.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
@@ -339,9 +340,15 @@ while the merge is still fenced by the wait. A prerequisite satisfies the gate
 when it reaches `done`. A cancelled or missing prerequisite needs an owner edit.
 The final prerequisite's phase change wakes its dependents. Release records an
 informational planner notice and returns the task to ordinary scheduling, where
-the existing run, question, hold and exact-head rules still apply. The scheduler
-records the native notice attempt before sending it so an unknown delivery
-cannot trigger a resend.
+the existing run, question, hold and exact-head rules still apply.
+
+Report-ready, work-question, operator-decline and prerequisite-release notices
+stay pending while a planner route is unavailable. A binding change wakes the
+waiting notice, and the next due pass can also retry routing. The scheduler
+unsettles a settled planner and reads it again before recording a concrete send
+intent. An uncertain send keeps its exact attempt. Legacy report notices marked
+attempted, including `report_ready_planner_unavailable`, stay closed because a
+planner may already have delivered them manually.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
 `dependencyEdits` from local state. The scheduler uses the same recorded edges

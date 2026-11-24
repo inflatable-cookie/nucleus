@@ -3,9 +3,7 @@ use nucleus_hosts::{NoticeHost, NoticeWrite, T3};
 use nucleus_store::{Dependencies, DependencyEdit, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget, schedule::Priority,
-};
+use crate::{ControllerScope, Service, ServiceError, State, event, schedule::Priority};
 
 const MAX_PREREQUISITES: usize = 100;
 const MAX_REFERENCE_LENGTH: usize = 160;
@@ -490,11 +488,11 @@ impl Service {
         Ok(true)
     }
 
-    /// Deliver the informational notice without granting any continuation authority.
+    /// Deliver the informational notice, returning whether it remains pending.
     pub(super) async fn notify_prerequisite_release(
         &self,
         row: &TaskRow,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<bool, ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
         let pending = self
@@ -504,11 +502,11 @@ impl Service {
             .store
             .pending_prerequisite_notice(id)?;
         let Some((version, release)) = pending else {
-            return Ok(());
+            return Ok(false);
         };
         let _fence = self.effect(row).await?;
-        let Some(thread) = self.responsible_planner(task).await? else {
-            return Ok(());
+        let Some(thread) = self.planner_notice_target(task).await? else {
+            return Ok(true);
         };
         let command = format!("task-{id}-prerequisite-release-{version}");
         let text = format!(
@@ -518,21 +516,10 @@ impl Service {
             release.prerequisites.len(),
         );
         let mut attempt = T3::prepare_notice(thread.clone(), command.clone(), &text)?;
-        let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
-            return Ok(());
-        };
-        let Some(_permit) = self
-            .dispatch_gate(task, DispatchTarget::Planner(authorization.target()))
-            .await?
+        let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
-            return Ok(());
+            return Ok(true);
         };
-        if authorization.needs_unsettle() {
-            self.host
-                .deliver_notice(NoticeWrite::Prepare(&authorization))
-                .await?;
-            return Ok(());
-        }
         let dispatch = authorization.record(&mut attempt)?;
         let mut audit = event("prerequisite_notice_intent");
         audit.detail = serde_json::json!({ "command": command, "recipient": thread }).to_string();
@@ -549,7 +536,13 @@ impl Service {
                 .deliver_notice(NoticeWrite::Queue(dispatch))
                 .await?;
         }
-        Ok(())
+        Ok(self
+            .state
+            .lock()
+            .await
+            .store
+            .pending_prerequisite_notice(id)?
+            .is_some())
     }
 
     pub(super) async fn dependencies_blocked(&self, row: &TaskRow) -> Result<bool, ServiceError> {

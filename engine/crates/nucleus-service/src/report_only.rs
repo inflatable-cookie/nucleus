@@ -19,7 +19,6 @@ use crate::{
     ControllerScope, Service, ServiceError, State,
     acp::{self, WriteAccess},
     event, now_ms,
-    pass::DispatchTarget,
 };
 
 impl Service {
@@ -251,12 +250,8 @@ impl Service {
             return Ok(Action::Nothing);
         };
         let _fence = self.effect(row).await?;
-        let Some(thread) = self.responsible_planner(task).await? else {
-            let mut updated = task.clone();
-            updated.mark_report_notice_attempted();
-            self.save(row, updated, &event("report_ready_planner_unavailable"))
-                .await?;
-            return Ok(Action::Nothing);
+        let Some(thread) = self.planner_notice_target(task).await? else {
+            return Ok(Action::Wait(WaitReason::Question));
         };
         let artifact = &delivery.artifact;
         let command = format!("task-{}-report-ready-{}", task.identity().id, row.version);
@@ -269,26 +264,18 @@ impl Service {
             artifact.digest
         );
         let mut attempt = T3::prepare_notice(thread, command, &text)?;
-        let Some(authorization) = self.host.authorize_notice(&attempt).await? else {
-            return Ok(Action::Wait(WaitReason::HostUnknown));
-        };
-        let Some(_permit) = self
-            .dispatch_gate(task, DispatchTarget::Planner(authorization.target()))
-            .await?
+        let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
-            return Ok(Action::Wait(WaitReason::Capacity));
+            return Ok(Action::Wait(WaitReason::Question));
         };
-        if authorization.needs_unsettle() {
-            self.host
-                .deliver_notice(NoticeWrite::Prepare(&authorization))
-                .await?;
-            return Ok(Action::Wait(WaitReason::Starting));
-        }
         let dispatch = authorization.record(&mut attempt)?;
         let mut updated = task.clone();
         updated.mark_report_notice_attempted();
-        self.save(row, updated, &event("report_ready_planner_notice_intent"))
-            .await?;
+        let mut audit = event("report_ready_planner_notice_intent");
+        audit.detail =
+            serde_json::json!({ "command": attempt.command, "recipient": attempt.thread })
+                .to_string();
+        self.save(row, updated, &audit).await?;
         // The intent is durable before the write. Unknown delivery grants no retry.
         self.host
             .deliver_notice(NoticeWrite::Queue(dispatch))

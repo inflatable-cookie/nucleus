@@ -737,8 +737,7 @@ impl Service {
         state.observed_forge.clear();
         self.planner_wake.notify_one();
         self.title_wake.notify_one();
-        self.project_changes.send_replace(());
-        self.settings_changes.send_replace(());
+        self.planner_routes_changed(state);
         self.inbox_changed();
         self.wake_settings_capacity(state);
     }
