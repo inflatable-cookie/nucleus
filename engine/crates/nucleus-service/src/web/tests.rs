@@ -1177,7 +1177,7 @@ async fn seed_planner_task(service: &Service, id: &str, planner: &str) {
     seed_task(service, &task).await;
 }
 
-async fn json_body(response: Response) -> Value {
+pub(crate) async fn json_body(response: Response) -> Value {
     let body = to_bytes(response.into_body(), 64 * 1024)
         .await
         .expect("response bytes");
@@ -2730,7 +2730,7 @@ async fn pair_board(api: &Router, key: &[u8; 32]) -> String {
     pair_board_link(api, url).await
 }
 
-async fn pair_board_link(api: &Router, url: &str) -> String {
+pub(crate) async fn pair_board_link(api: &Router, url: &str) -> String {
     let token = url
         .strip_prefix("http://127.0.0.1:9/#token=")
         .expect("token in fragment");
@@ -2764,7 +2764,7 @@ async fn pair_board_link(api: &Router, url: &str) -> String {
     session
 }
 
-async fn browser_request(
+pub(crate) async fn browser_request(
     api: &Router,
     method: Method,
     path: &str,

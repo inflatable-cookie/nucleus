@@ -46,7 +46,7 @@ pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[derive(Clone)]
 struct Api {

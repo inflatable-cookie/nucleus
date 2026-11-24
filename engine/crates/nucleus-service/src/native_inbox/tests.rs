@@ -3,13 +3,17 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use axum::http::Method;
 use nucleus_forge::GitHub;
 use nucleus_hosts::InboxStatus;
 use nucleus_store::{DispatchSettings, ProjectSettings, Projects, planning::USAGE_APPROVE};
 use serde_json::{Value, json};
 
 use super::*;
-use crate::tests::{fixture, native_fixture};
+use crate::{
+    tests::{fixture, native_fixture},
+    web::tests::{browser_request, json_body, pair_board_link},
+};
 
 const LEGACY: &str = "thread:legacy-fixture";
 const PROJECT: &str = "project:nucleus-rust-inbox";
@@ -168,7 +172,7 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     std::fs::write(assets.join("index.html"), "<!doctype html>").unwrap();
     std::fs::write(assets.join("app.js"), "").unwrap();
     let service = Arc::new(service);
-    let _board = crate::web::router_with_board(Arc::clone(&service), [], &assets).unwrap();
+    let board = crate::web::router_with_board(Arc::clone(&service), [], &assets).unwrap();
     let inbox = service.native_inbox.as_ref().unwrap();
     let target = InboxTarget {
         root: &inbox.root,
@@ -220,6 +224,21 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     inbox.host_synchronized("replacement runtime".into());
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 4);
+    let reopened = trace.lock().unwrap().links[3].clone();
+    let cookie = pair_board_link(&board, &reopened).await;
+    let session = json_body(
+        browser_request(
+            &board,
+            Method::GET,
+            "/api/engine/session",
+            Some(&cookie),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(session["canEditSettings"], true);
+    assert_eq!(session["planningProjects"], Value::Null);
 
     inbox.host_stream_ended(Err(HostError::Unavailable));
     synchronize_preview_session(&service).await;
@@ -228,9 +247,11 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     reconcile().await.unwrap();
     let trace = trace.lock().unwrap();
     assert_eq!(trace.links.len(), 5);
+    let automatic = ["list", "close-success", "open"].as_slice();
+    let typed = ["list", "close-success", "close-failed", "open"].as_slice();
     assert_eq!(
         trace.calls,
-        ["list", "close-success", "close-failed", "open"].repeat(5)
+        [automatic, typed, automatic, automatic, typed].concat()
     );
     assert_eq!(take_replies(), [format!("Board at {board_url}")]);
     server.abort();
@@ -254,7 +275,7 @@ async fn synchronize_preview_session(service: &Service) {
 #[derive(Default)]
 struct PreviewTrace {
     calls: Vec<&'static str>,
-    links: BTreeSet<String>,
+    links: Vec<String>,
 }
 
 fn preview_response(
@@ -273,15 +294,31 @@ fn preview_response(
         "preview.list" => {
             assert_eq!(*payload, json!({"threadId":INBOX_THREAD}));
             trace.calls.push("list");
+            // A successfully loaded board can still have an expired or planner-scoped pairing.
+            let mut sessions = vec![
+                tab(
+                    INBOX_THREAD,
+                    "old-success",
+                    json!({"_tag":"Success","url":format!("{board_url}settings"),"title":"Board"}),
+                ),
+                tab(
+                    INBOX_THREAD,
+                    "unrelated",
+                    json!({"_tag":"Loading","url":"https://example.test/","title":""}),
+                ),
+                tab(INBOX_THREAD, "idle", json!({"_tag":"Idle"})),
+                tab(
+                    LEGACY,
+                    "other-thread",
+                    json!({"_tag":"Success","url":board_url,"title":"Board"}),
+                ),
+            ];
+            if matches!(trace.links.len(), 1 | 4) {
+                sessions.push(tab(INBOX_THREAD, "old-failed", json!({"_tag":"LoadFailed","url":board_url,"title":"Board","code":-1,"description":"failed"})));
+            }
             Some(success(
                 request,
-                &json!({"serverEpoch":"fixture","revision":1,"sessions":[
-                    tab(INBOX_THREAD, "old-success", json!({"_tag":"Success","url":format!("{board_url}settings"),"title":"Board"})),
-                    tab(INBOX_THREAD, "old-failed", json!({"_tag":"LoadFailed","url":board_url,"title":"Board","code":-1,"description":"failed"})),
-                    tab(INBOX_THREAD, "unrelated", json!({"_tag":"Loading","url":"https://example.test/","title":""})),
-                    tab(INBOX_THREAD, "idle", json!({"_tag":"Idle"})),
-                    tab(LEGACY, "other-thread", json!({"_tag":"Success","url":board_url,"title":"Board"})),
-                ]}),
+                &json!({"serverEpoch":"fixture","revision":1,"sessions":sessions}),
             ))
         }
         "preview.close" => {
@@ -307,7 +344,11 @@ fn preview_response(
                 .and_then(|path| path.strip_prefix("#token="));
             assert!(token.is_some_and(|token| token.len() == 64));
             trace.calls.push("open");
-            assert!(trace.links.insert(url.to_owned()), "the link must be fresh");
+            assert!(
+                trace.links.iter().all(|prior| prior != url),
+                "the link must be fresh"
+            );
+            trace.links.push(url.to_owned());
             if trace.links.len() <= 3 {
                 return Some(json!({"_tag":"Exit","requestId":request["id"],"exit":{
                     "_tag":"Failure","cause":[{"_tag":"Fail","error":{
