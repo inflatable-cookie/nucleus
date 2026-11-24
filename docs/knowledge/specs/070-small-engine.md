@@ -23,6 +23,8 @@ had its own clear command, ID and refusals. On the same day, a brief timeout too
 four commands to clear (nucleus#1560), and one task had no command at all, because
 every route led into the same proof-gated launch (praxis#391).
 
+The Rust engine has its own [production source line budget](#validation).
+
 The new engine:
 
 - **Stores almost nothing.** It reads the world fresh on every pass.
@@ -455,6 +457,31 @@ Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes
 Every fix states its general rule and what it replaces. An independent review
 checks for special cases, duplicate paths and dead code before the milestone 3
 cutover. Keep the engine below 30,000 source lines through milestone 4.
+
+Count nonblank lines of operator-shipped Rust after removing comments, tests,
+fixtures and generated source. Keep lines with code alongside comments, the
+nonblank contents of multiline literals and production platform variants.
+The counter reads tracked crate `src` files from each commit's own Git tree
+and follows module declarations to exclude test-only source files.
+
+In a Python 3.11 virtual environment, install the pinned parser with
+`python -m pip install tree-sitter==0.25.2 tree-sitter-rust==0.24.2`.
+From the repo root, run this on the committed PR head:
+
+```sh
+python scripts/count-engine-rust.py "$(git merge-base origin/main HEAD)" HEAD
+```
+
+Use the checkout containing the counter for both revisions. You can pass older
+commit IDs even if those commits predate the counter. Report the net production
+Rust line delta in each engine PR. For growth, explain why the change could not
+reuse existing code.
+
+Planner ruling, 2026-11-24. Land recovery (#609 and #607) first, then #608,
+without holding those PRs for the line budget. After #608, reduce the engine
+below 30,000 lines with headroom before the remaining parity ports. Limit each
+reduction batch to three modules and state its general rule, what it replaces
+and its net line delta.
 
 Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
 Cargo builds" rule for the `engine/` workspace only:
