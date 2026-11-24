@@ -140,6 +140,17 @@ impl Fixture {
             .unwrap();
     }
 
+    fn observe_quiet_child(&self, thread: &str) {
+        self.service
+            .host
+            .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":1, "projects":[], "threads":[{
+                    "id": thread, "status":"idle", "activeRunId":null,
+                    "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
+                }]
+            }}));
+    }
+
     async fn observed_snooze(&self) -> RowSnooze {
         let state = self.service.state.lock().await;
         let receipt = state.store.row_snooze(ID, &self.thread).unwrap().unwrap();
@@ -314,14 +325,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
         .observe_role_state(&row, &observed(RunState::IdleWithoutTerminalRun))
         .await
         .unwrap();
-    service
-        .host
-        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1, "projects":[], "threads":[{
-                "id": worker.run().unwrap().launch().thread, "status":"idle", "activeRunId":null,
-                "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
-            }]
-        }}));
+    fixture.observe_quiet_child(&worker.run().unwrap().launch().thread);
     fixture.sync().await;
     worker
         .record_report(
