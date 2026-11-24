@@ -35,6 +35,31 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[tokio::test]
+async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    seed_task(&service, &task).await;
+    let row = service.task("worker").await.expect("reserved row");
+    assert!(
+        row.task
+            .run()
+            .expect("reservation")
+            .last_send_at_ms()
+            .is_none()
+    );
+    let mut state = service.state.lock().await;
+    assert_eq!(
+        service.acp_turn_view(&state, &row).expect("reserved view"),
+        (None, true)
+    );
+    state.set_wait("worker", Some(WaitReason::Capacity));
+    assert_eq!(
+        service.acp_turn_view(&state, &row).expect("waiting view"),
+        (None, false)
+    );
+}
+
+#[tokio::test]
 async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     for id in ["task-one", "task-two"] {

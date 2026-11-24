@@ -299,6 +299,29 @@ impl Projection {
         })
     }
 
+    pub(crate) fn active_run(&self, id: &str) -> bool {
+        !self.archived()
+            && self.thread.deleted_at.is_none()
+            && self
+                .runs
+                .iter()
+                .any(|run| run.id == id && matches!(run.status, Status::Running | Status::Waiting))
+    }
+
+    pub(crate) fn terminal_run(&self, id: &str) -> bool {
+        self.runs.iter().any(|run| {
+            run.id == id
+                && matches!(
+                    run.status,
+                    Status::Completed
+                        | Status::Failed
+                        | Status::Interrupted
+                        | Status::Cancelled
+                        | Status::RolledBack
+                )
+        })
+    }
+
     pub(crate) const fn sequence(&self) -> u64 {
         self.sequence
     }

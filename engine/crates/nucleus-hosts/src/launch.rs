@@ -167,6 +167,20 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
+    pub(crate) fn delegated_parent_run(&self) -> Result<Option<String>, HostError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ParentRunId {
+            parent_run_id: String,
+        }
+        if self.method != Method::Delegate {
+            return Ok(None);
+        }
+        let parent: ParentRunId =
+            serde_json::from_str(self.payload.get()).map_err(|_| HostError::Configuration)?;
+        Ok(Some(parent.parent_run_id))
+    }
+
     fn model_selection(&self) -> Result<Option<Value>, HostError> {
         if self.method == Method::Continue {
             return Ok(self.selection.clone());

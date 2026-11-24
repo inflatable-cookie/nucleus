@@ -50,6 +50,8 @@ pub enum RunState {
     Ended,
     /// The exact native turn ended on a provider usage limit.
     UsageLimited,
+    /// The frozen parent ended and the exact delegated child is absent.
+    ParentEnded,
     /// A previously confirmed run or thread disappeared on an authoritative read.
     Gone,
     /// A checked receipt or a proven pre-send failure confirms that the exact
@@ -61,7 +63,12 @@ impl RunState {
     pub(crate) const fn quiescent(self) -> bool {
         matches!(
             self,
-            Self::ReadyToSend | Self::Ended | Self::UsageLimited | Self::Gone | Self::Rejected
+            Self::ReadyToSend
+                | Self::Ended
+                | Self::UsageLimited
+                | Self::ParentEnded
+                | Self::Gone
+                | Self::Rejected
         )
     }
 
@@ -248,7 +255,6 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             return Signal::ReservationDiscarded(Phase::Reviewing);
         }
         return match observation.current(&run.launch.instance) {
-            None => Signal::Wait(WaitReason::HostUnknown),
             Some(RunState::ReadyToSend) => {
                 prepared(observation, role, run.launch.review_head.as_ref())
             }
@@ -259,7 +265,10 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
-            Some(RunState::UsageLimited) if run.report.is_none() => Signal::Stopped(task.phase),
+            Some(RunState::UsageLimited | RunState::ParentEnded) if run.report.is_none() => {
+                Signal::Stopped(task.phase)
+            }
+            None | Some(RunState::ParentEnded) => Signal::Wait(WaitReason::HostUnknown),
             Some(RunState::Ended | RunState::UsageLimited) => {
                 settled(task, observation, role, run.report.as_ref())
             }
