@@ -15,7 +15,7 @@ const PROJECTS: &str = "/v1/settings/projects";
 const T3_KEY: [u8; 32] = [8; 32];
 
 struct Registry {
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
     service: Arc<Service>,
     api: Router,
     reads: Arc<AtomicUsize>,
@@ -151,7 +151,7 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
         Some(T3_KEY),
     );
     Registry {
-        _home: home,
+        home,
         service,
         api,
         reads,
@@ -445,7 +445,7 @@ async fn planning_records_need_a_live_binding_but_not_a_cached_checkout() {
     let actor = "alpha-planner";
     registry.enroll(actor).await;
     registry.service.host.fixture_project_shell(
-        &json!({"projects":[{"id":"alpha-native","workspaceRoot":registry._home.path()}]}),
+        &json!({"projects":[{"id":"alpha-native","workspaceRoot":registry.home.path()}]}),
         "fixture-acp",
     );
     let api = &registry.api;
