@@ -796,6 +796,24 @@ mod tests {
         assert!(scoped_listing(&listing, &witnesses).is_none());
     }
 
+    #[test]
+    fn mount_scope_includes_nested_devices_and_rejects_display_escapes() {
+        let root = Witness::open(Path::new("/")).expect("root witness");
+        let listing = Listing {
+            exit: Some(0),
+            output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nroot 20 1 19 5% /\ndevfs 10 10 0 100% /dev\n".to_vec(),
+            pid: 0,
+        };
+        let mounts = select_mounts(&listing, &[root]).expect("mount scope");
+        assert!(mounts.iter().any(|(path, _)| path == Path::new("/dev")));
+        assert_eq!(mounts.len(), 2);
+        let undecodable = Listing {
+            output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nsource with spaces 20 1 19 5% /Volume\\040Alias\n".to_vec(),
+            ..listing
+        };
+        assert!(mount_points(&undecodable).is_none());
+    }
+
     #[tokio::test]
     async fn a_standing_runtime_releases_both_scopes_but_its_tool_holds() {
         let private = || {
@@ -885,7 +903,10 @@ mod tests {
 
     #[tokio::test]
     async fn positive_cwd_evidence_wins_when_open_file_coverage_is_truncated() {
-        let checkout = tempfile::tempdir().expect("checkout");
+        let checkout = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("checkout");
         let checkout = checkout.path().canonicalize().expect("canonical checkout");
         let mut inventory = Inventory::cwd_fixture(&checkout);
         inventory.scoped.get_mut().insert(
