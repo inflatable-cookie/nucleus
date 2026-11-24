@@ -1,0 +1,1 @@
+Return confirmed merge conflicts, moved bases and named required-check failures to the retained worker. Review the replacement head before merging. Code tasks also accept an instruction in the owner move-to-work command and in work answers to existing merge-blocked questions.

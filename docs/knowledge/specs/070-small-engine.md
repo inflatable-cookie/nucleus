@@ -170,6 +170,19 @@ Later decisions carry their own attribution.
    - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
 
 13. **No Nucleus-held merge turn.** Tom, 2026-11-23, approving the planner's surface review ("Sounds good, go for it"). The engine merges at the exact approved head and lets GitHub's mergeability and required checks decide. A conflict sends the task back to its worker. A project's pre-merge validation is a GitHub check (CI or a required status), not a Nucleus turn. There is no per-repository integration turn, prospective-merge candidate, warm checkout, `task.pre_merge` hook manifest or closeout reservation. Tonight's old-engine deadlock (concurrent merge intents each waiting for a turn none could take) is the reason.
+    GitHub's conflict evidence or verified movement of the base sends a task
+    with a retained worker back to that worker with a rebase instruction.
+    A confirmed required check failure returns to the worker with the names
+    GitHub marks required at that head. Pending and unreported checks wait.
+    Incomplete evidence and unrelated branch protection keep their own gates.
+    Recovery retires the old merge authority and freezes the instruction in
+    the retained worker's next run, using its provider and model and the same
+    native command ID on replay. The worker publishes a new head for independent
+    review. Reporting the same head asks for a revision instead of resending
+    the same recovery. A legacy merge-blocked work answer or
+    `move <task> work --instruction …` sends a code task back to work through
+    the same owner command.
+
 14. **Messages go by project, through the host adapter.** Tom: "we sometimes need to send a message from one planner to all the others".
     - `tell` addresses a project, a list of projects or `all` planners, and never a thread, a reply handle or an ADE.
     - Nucleus resolves each project's current planner from the in-memory authority snapshot (ruling 11). It then hands the text to that planner's host adapter, whose one delivery operation queues a notice and never steers a running turn. T3's adapter un-settles a settled thread to deliver. An adapter for another ADE implements the same operation its own way, so a broadcast can reach planners in different ADEs at once.
@@ -414,6 +427,7 @@ Later decisions carry their own attribution.
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. Report-only tasks also use `report_ready`, `blocked` and `error`. |
 | `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |
 | `run` | The current role, thread ID, credential digest, label, start time and launch instance. It holds the immutable launch request and selected profile, the last possible send time and at most one authenticated report. A revoked run stays bound until the engine observes it quiescent, even after cancellation. |
+| `work_continuation` | The next code worker instruction and, for automatic merge recovery, the head that must be replaced before review. Cleared when the task leaves work. |
 | `report_task` | For a [report-only task](../contracts/milestone-qa.md), the delivery lane, planning base, authenticated reports and planner disposition. |
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. Step-up requires an applied changes verdict at the current head with a review launch sequence newer than the climb recorded on the worker binding. |
