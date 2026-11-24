@@ -287,7 +287,7 @@ fn selection(provider: &str) -> Value {
 
 fn pinned(thread: &Value) -> Result<bool, HostError> {
     match thread.get("pinnedAt") {
-        Some(Value::Null) => Ok(false),
+        None | Some(Value::Null) => Ok(false),
         Some(Value::String(at)) if !at.is_empty() => Ok(true),
         _ => Err(HostError::Protocol),
     }

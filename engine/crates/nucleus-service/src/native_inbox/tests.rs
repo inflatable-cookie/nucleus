@@ -216,10 +216,13 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
             } else {
                 json!([{"id":"turn","status":"running"}])
             };
+            let mut thread = json!({"id":INBOX_THREAD,"projectId":PROJECT,"providerInstanceId":PROVIDER,
+                "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},"archivedAt":archived});
+            if let Some(at) = pinned {
+                thread["pinnedAt"] = json!(at);
+            }
             json!({"kind":"snapshot","snapshotSequence":step,"projection":{
-                "thread":{"id":INBOX_THREAD,"projectId":PROJECT,"providerInstanceId":PROVIDER,
-                    "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},"pinnedAt":pinned,
-                    "archivedAt":archived},
+                "thread":thread,
                 "runs":runs,
                 "runtimeRequests":[],"turnItems":[]
             }})
