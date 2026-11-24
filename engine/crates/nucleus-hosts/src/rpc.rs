@@ -636,7 +636,15 @@ impl Rpc {
             }
             Reply::Failure(cause) if crate::projection::missing_thread(&cause, id) => {
                 if !same_marker || row.is_some() {
-                    return Err(HostError::Uncertain);
+                    return Err(
+                        if matches!(policy, ThreadRead::Observation) && row.is_some() {
+                            HostError::HeldThreadMissing {
+                                revision: snapshots.as_ref().and_then(ThreadSnapshots::revision),
+                            }
+                        } else {
+                            HostError::Uncertain
+                        },
+                    );
                 }
                 ThreadReply::Missing
             }

@@ -949,7 +949,13 @@ async fn a_sibling_helper_needs_exact_idle_proof_and_never_hides_other_work() {
         if let Some(expected) = expected {
             assert_eq!(result.expect("custody"), expected);
         } else {
-            assert!(matches!(result, Err(HostError::Uncertain)));
+            assert!(matches!(
+                result,
+                Err(HostError::RetainedIdleCoverage {
+                    providers: false,
+                    ..
+                })
+            ));
         }
         let requests = server.await.expect("scripted host");
         let payload: Value = serde_json::from_str(requests[0].payload.get()).expect("payload");
@@ -1491,6 +1497,28 @@ async fn archived_reads_are_attributed_to_the_terminal_policy() {
 }
 
 #[tokio::test]
+async fn a_retained_read_cannot_infer_absence_when_the_held_shell_lists_the_thread() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        missing_thread(THREAD),
+    )])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16, "projects":[], "threads":[
+                snapshot(&binding, "worker", "completed", false)["projection"]["thread"]
+            ]
+        }}));
+    assert!(matches!(
+        quiet_pass(&host).observe_retained(&binding, THREAD).await,
+        Err(HostError::HeldThreadMissing { revision: Some(16) })
+    ));
+    assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -1533,7 +1561,13 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let mut stale = shell_row(&worker);
     stale["updatedAt"] = json!("2026-11-24T15:59:00Z");
     projection.use_shell_background(&stale, false);
-    assert!(matches!(projection.retained(), Err(HostError::Uncertain)));
+    assert!(matches!(
+        projection.retained(),
+        Err(HostError::RetainedIdleCoverage {
+            shell_background: false,
+            ..
+        })
+    ));
     let mut busy = shell_row(&worker);
     busy["pendingBackgroundTasks"] = json!([{"taskId":"before-the-window"}]);
     projection.use_shell_background(&busy, false);
@@ -1786,12 +1820,18 @@ async fn settlement_needs_every_provider_and_background_turn_item() {
     let pass = quiet_pass(&client);
     assert!(matches!(
         pass.observe_retained(&binding, THREAD).await,
-        Err(HostError::Uncertain)
+        Err(HostError::RetainedIdleCoverage {
+            providers: false,
+            ..
+        })
     ));
     let run = task.run().expect("run");
     assert!(matches!(
         pass.observe_run(run, 2).await,
-        Err(HostError::Uncertain)
+        Err(HostError::RetainedIdleCoverage {
+            shell_background: false,
+            ..
+        })
     ));
     for _ in 0..2 {
         assert_eq!(

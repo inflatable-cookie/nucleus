@@ -629,9 +629,9 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
     let refusal = Err(service.parent_not_sent("parent proof changed"));
     let unknown = Err(ServiceError::Host(HostError::Uncertain));
     let process = Err(ServiceError::Host(HostError::ProcessCoverage(
-        nucleus_hosts::ProcessEvidenceFailure::Incomplete,
+        nucleus_hosts::ProcessEvidenceFailure::Cwd { pid: 41 },
     )));
-    for result in [&refusal, &unknown, &unknown, &process] {
+    for result in [&refusal, &unknown, &unknown, &process, &process] {
         service
             .schedule_result(&row, result, Priority::Decision)
             .await
@@ -647,6 +647,17 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
             row.version
         );
     }
+    let observations: Vec<_> = service
+        .history("runless", None, 20)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.content.kind == "host_observation_incomplete")
+        .collect();
+    assert_eq!(observations.len(), 1);
+    let detail: serde_json::Value = serde_json::from_str(&observations[0].content.detail).unwrap();
+    assert_eq!(detail["stage"], "cwd_followup");
+    assert_eq!(detail["pid"], 41);
     let state = service.state.lock().await;
     assert!(matches!(
         state.wait_detail("runless"),

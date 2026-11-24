@@ -44,6 +44,8 @@ pub enum ProcessEvidenceFailure {
     Scope,
     #[error("the process listing was incomplete")]
     Incomplete,
+    #[error("PID {pid} has no verified working directory after the cwd follow-up")]
+    Cwd { pid: u32 },
 }
 
 pub(crate) const fn coverage_error(error: HostError) -> HostError {
@@ -59,7 +61,7 @@ pub(crate) const fn coverage_error(error: HostError) -> HostError {
 pub(crate) enum Activity {
     Busy,
     Quiet,
-    Unknown,
+    Unknown(Option<u32>),
 }
 
 /// Snapshot of the local host user's processes. Missing lsof rows stay unknown
@@ -268,7 +270,7 @@ impl Inventory {
         runtime: &HashSet<u32>,
     ) -> Result<Activity, HostError> {
         verify_root(path)?;
-        let mut missing = false;
+        let mut missing: Option<u32> = None;
         for (&pid, process) in &self.processes {
             if runtime.contains(&pid) {
                 continue;
@@ -280,10 +282,12 @@ impl Inventory {
             {
                 return Ok(Activity::Busy);
             }
-            missing |= process.cwd.is_none() || process.ambiguous_path;
+            if process.cwd.is_none() || process.ambiguous_path {
+                missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
+            }
         }
-        Ok(if missing || self.processes.is_empty() {
-            Activity::Unknown
+        Ok(if missing.is_some() || self.processes.is_empty() {
+            Activity::Unknown(missing)
         } else {
             Activity::Quiet
         })
@@ -336,7 +340,9 @@ impl Inventory {
             run_scratch.map_or(Ok(Activity::Quiet), |path| self.activity(path, runtime))?,
         ) {
             (_, Activity::Busy) => return Ok(Activity::Busy),
-            (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
+            (Activity::Unknown(pid), _) | (_, Activity::Unknown(pid)) => {
+                return Ok(Activity::Unknown(pid));
+            }
             _ => {}
         }
         let mut scoped = self.scoped.lock().await;
@@ -751,7 +757,26 @@ mod tests {
         .expect("parse inventory");
         assert!(matches!(
             inventory.activity(&path, &HashSet::new()),
-            Ok(Activity::Unknown)
+            Ok(Activity::Unknown(Some(2)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn one_bounded_cwd_followup_drops_an_exited_missing_pid() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let checkout = scratch.path().canonicalize().expect("canonical");
+        let exited = u32::try_from(i32::MAX).unwrap();
+        assert!(gone(exited), "fixture PID must not exist");
+        let mut inventory = Inventory::quiet_fixture();
+        inventory.processes.insert(exited, ProcessPaths::default());
+        assert!(matches!(
+            inventory.activity(&checkout, &HashSet::new()),
+            Ok(Activity::Unknown(Some(pid))) if pid == exited
+        ));
+        inventory.complete_missing(&checkout).await;
+        assert!(matches!(
+            inventory.activity(&checkout, &HashSet::new()),
+            Ok(Activity::Quiet)
         ));
     }
 
@@ -1046,7 +1071,7 @@ root 20 1 19 5% /
                 Inventory::from_listings(&listing, b"1 0 501 S\n", 501, 0).expect("inventory");
             assert!(matches!(
                 inventory.activity(&checkout, &HashSet::new()),
-                Ok(Activity::Unknown)
+                Ok(Activity::Unknown(Some(1)))
             ));
         }
     }
