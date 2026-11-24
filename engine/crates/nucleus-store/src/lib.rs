@@ -761,6 +761,30 @@ impl Store {
             .optional()?)
     }
 
+    /// Recover the exact text attached to a native command before it could be sent.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal is unreadable.
+    pub fn task_turn_prompt(&self, id: &str, command: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT COALESCE(json_extract(detail, '$.prompt'), ?3) FROM events
+             WHERE task_id = ?1 AND kind IN ('native_turn_intent', 'native_turn_replay')
+             AND json_valid(detail) AND json_extract(detail, '$.command') = ?2
+             ORDER BY sequence LIMIT 1",
+            )?
+            .query_row(
+                params![
+                    id,
+                    command,
+                    nucleus_core::acp::legacy_parent_hold_prompt(command)
+                ],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// Check whether an exact turn intent has a known failure, even after restart.
     /// # Errors
     /// Returns an error if the journal is unreadable.

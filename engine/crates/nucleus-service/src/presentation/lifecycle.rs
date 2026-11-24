@@ -1,10 +1,12 @@
 use nucleus_core::{
     Phase, Review, Role, Task, Verdict, WaitReason,
-    acp::lifecycle::{Lifecycle, Participant, Step, StepKey, StepState, StepTone},
+    acp::lifecycle::{
+        Lifecycle, Milestone, Participant, RunClock, Step, StepKey, StepState, StepTone,
+    },
 };
 use nucleus_store::{Store, StoreError};
 
-use super::{HistoryEvent, Milestone};
+use super::HistoryEvent;
 use crate::titles::phase_label;
 
 #[derive(Default)]
@@ -20,7 +22,7 @@ pub(super) struct Audit {
 struct SentRun {
     instance: String,
     role: Role,
-    sent_at_ms: Option<u64>,
+    clock: RunClock,
 }
 
 impl Audit {
@@ -31,12 +33,14 @@ impl Audit {
             let at = u64::try_from(event.content.at).ok();
             let event = HistoryEvent::from(event);
             // Earlier engines recorded send/replay and report times as separate audit rows.
-            if let Some(run) = &mut sent {
-                if event.event.content.kind == "host_send" {
-                    run.sent_at_ms = at;
-                }
-                if event.event.content.kind == "reported" && event.presentation.is_empty() {
-                    audit.record_duration(run, at);
+            if let Some(run) = &mut sent
+                && let Some(at) = at
+                && event.presentation.is_empty()
+            {
+                match event.event.content.kind.as_str() {
+                    "host_send" => run.clock.sent(at),
+                    "reported" => audit.record_duration(run, at, None),
+                    _ => {}
                 }
             }
 
@@ -52,24 +56,29 @@ impl Audit {
                             Role::Worker => Phase::Working,
                             Role::Reviewer => Phase::Reviewing,
                         });
+                        let mut clock = RunClock::default();
+                        if let Some(start) = started_at_ms.or(at) {
+                            clock.sent(start);
+                        }
                         sent = Some(SentRun {
                             instance,
                             role,
-                            sent_at_ms: started_at_ms.or(at),
+                            clock,
                         });
                     }
                     Milestone::RunReported {
                         instance,
                         sent_at_ms,
+                        ..
                     } => {
                         if let Some(run) = &mut sent
                             && run.instance == instance
+                            && let Some(at) = at
                         {
-                            run.sent_at_ms = Some(sent_at_ms);
-                            audit.record_duration(run, at);
+                            audit.record_duration(run, at, Some(sent_at_ms));
                         }
                     }
-                    Milestone::RunEnded { instance }
+                    Milestone::RunEnded { instance, .. }
                         if sent.as_ref().is_some_and(|run| run.instance == instance) =>
                     {
                         sent = None;
@@ -101,10 +110,12 @@ impl Audit {
         Ok(audit)
     }
 
-    fn record_duration(&mut self, run: &mut SentRun, reported_at_ms: Option<u64>) {
-        if let (Some(sent_at_ms), Some(reported_at_ms)) = (run.sent_at_ms.take(), reported_at_ms)
-            && let Some(elapsed) = reported_at_ms.checked_sub(sent_at_ms)
-        {
+    fn record_duration(&mut self, run: &mut SentRun, reported_at_ms: u64, sent_at_ms: Option<u64>) {
+        if run.clock.elapsed_ms().is_some() {
+            return;
+        }
+        run.clock.reported(reported_at_ms, sent_at_ms);
+        if let Some(elapsed) = run.clock.elapsed_ms() {
             let total = match run.role {
                 Role::Worker => &mut self.work_ms,
                 Role::Reviewer => &mut self.review_ms,
@@ -213,6 +224,7 @@ pub(crate) fn read(
         admitted_at_ms,
         finished_at_ms: audit.finished_at_ms.filter(|_| phase.is_terminal()),
         review_round,
+        completed_reviews: Some(audit.completed_reviews).filter(|&rounds| rounds > 0),
         worker: participant(task, Role::Worker),
         reviewer: participant(task, Role::Reviewer),
     })
@@ -251,8 +263,11 @@ fn current_note(task: &Task, step: StepKey, state_label: &str) -> Option<String>
 fn participant(task: &Task, role: Role) -> Option<Participant> {
     let threads = task.threads();
     let profile = threads.profile(role);
+    let thread = threads.get(role)?;
     Some(Participant {
-        thread: threads.get(role)?.into(),
+        thread: thread.into(),
+        origin_instance: nucleus_hosts::child_origin_instance(thread).map(str::to_owned),
+        thread_url: nucleus_hosts::thread_link(thread),
         provider: profile.map(|profile| profile.provider),
         model: profile.map(|profile| profile.model.clone()),
     })

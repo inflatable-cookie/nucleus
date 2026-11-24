@@ -1327,7 +1327,9 @@ impl Service {
                 &identity.base,
                 &format!("ns-{}", identity.id),
             )?;
-            branches.target(&pr.url).map_err(|_| ServiceError::Input)?;
+            branches
+                .target(&pr.pull_request.url)
+                .map_err(|_| ServiceError::Input)?;
         }
         if task != prior.task {
             self.commit(&mut state, &prior, &task, &event("reported"), None)?;

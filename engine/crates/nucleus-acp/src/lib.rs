@@ -209,7 +209,7 @@ impl Agent {
                 Vec::new()
             } else {
                 let (detail, history) = attach(client).await?;
-                view.update(detail, history, structured)
+                view.update(&detail, history, structured, false)
             }
         } else {
             Vec::new()
@@ -347,7 +347,12 @@ async fn task_prompt(
     let cursor = view.lock().await.cursor;
     let (detail, history) = snapshot(client, cursor).await?;
     let hold = !detail.phase.is_terminal() && detail.parent_hold.as_deref() == Some(prompt);
-    for update in view.lock().await.update(detail, history, structured) {
+    let updates = {
+        let mut view = view.lock().await;
+        let replay = !std::mem::replace(&mut view.prompt_seen, true);
+        view.update(&detail, history, structured, replay)
+    };
+    for update in updates {
         notify(output, session, update);
     }
     if !hold {
@@ -362,8 +367,14 @@ async fn task_prompt(
                 let cursor = view.lock().await.cursor;
                 let (detail, history) = snapshot(client, cursor).await?;
                 let hold = !detail.phase.is_terminal()
-                    && (detail.parent_hold.as_deref() == Some(prompt) || detail.active_child);
-                for update in view.lock().await.update(detail, history, structured) {
+                    && (detail.parent_hold.as_deref() == Some(prompt)
+                        || detail.active_child
+                        || detail.transcript_pending);
+                for update in view
+                    .lock()
+                    .await
+                    .update(&detail, history, structured, false)
+                {
                     notify(output, session, update);
                 }
                 if !hold {

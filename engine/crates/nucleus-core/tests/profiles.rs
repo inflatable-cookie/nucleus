@@ -448,7 +448,7 @@ fn finish_worker(task: &mut Task, worker: &Profile) {
     let first = pick(task, &obs, Normal, &[candidate(worker)]);
     let (instance, bearer) = reserve(task, &obs, first, "worker-1");
     task.record_send(&instance, 2).unwrap();
-    task.record_report(&instance, bearer.as_bytes(), Report::Work(pr('a')))
+    task.record_report(&instance, bearer.as_bytes(), Report::Work(pr('a').into()))
         .unwrap();
     assert_eq!(
         task.reconcile(&current(open('a'), &instance, RunState::Ended)),
@@ -467,6 +467,7 @@ fn review_changes(task: &mut Task, obs: &Observation, reviewer: &Profile) {
             head: pr('a').head,
             decision: Review::Changes,
             summary: "Fix the race in the revision path.".into(),
+            finding_titles: Vec::new(),
         },
     )
     .unwrap();

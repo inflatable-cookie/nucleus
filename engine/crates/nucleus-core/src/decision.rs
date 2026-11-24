@@ -354,7 +354,7 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
         }),
         Some(Report::Work(reported)) => match &observation.forge {
             Observed::Unknown => Signal::Wait(WaitReason::ForgeUnknown),
-            Observed::Known(Forge::Open { pr, .. }) if pr == reported => {
+            Observed::Known(Forge::Open { pr, .. }) if *pr == reported.pull_request => {
                 if matches!(&task.verdict, Some(Verdict::Reviewed { head, decision: Review::Changes, .. }) if *head == pr.head)
                 {
                     Signal::Question(Question::Repair(Repair::RevisionHasSameHead))

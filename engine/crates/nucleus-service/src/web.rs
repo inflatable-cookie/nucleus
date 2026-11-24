@@ -592,11 +592,22 @@ async fn detail(
     } else {
         (None, false)
     };
+    // The native host supports a plan that is updated across role turns.
+    let plan_scope_id =
+        (credential.is_some() && api.service.acp_provider().is_some()).then_some("task-lifecycle");
+    let transcript_pending = credential.is_some() && Service::transcript_pending(&state, &row);
+    let question_url = task
+        .question_delivery()
+        .filter(|delivery| delivery.last_send_at_ms.is_some())
+        .and_then(|delivery| nucleus_hosts::thread_link(&delivery.thread));
     Ok(Json(Detail {
         created_at_ms: summary.created_at_ms,
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
+        plan_scope_id,
+        transcript_pending,
+        question_url,
         parent_hold,
         active_child,
         source: state.store.task_source(&id).map_err(ServiceError::from)?,
@@ -1101,6 +1112,12 @@ struct Detail {
     created_at_ms: Option<u64>,
     brief: Brief,
     operator_inbox: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_scope_id: Option<&'static str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    transcript_pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_hold: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]

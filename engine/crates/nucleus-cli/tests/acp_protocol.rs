@@ -19,7 +19,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
-use nucleus_core::acp::{Binding, InboxBinding, parent_hold_prompt};
+use nucleus_core::acp::{Binding, InboxBinding, legacy_parent_hold_prompt};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -288,7 +288,7 @@ async fn view(
                 {"key":"working","label":"Working","state":step_state,"note":step_note,"tone":"accent"}
             ]},
             "question":null,"run":run,
-            "parentHold": (state == 0).then(|| parent_hold_prompt("fixture-hold")),
+            "parentHold": (state == 0).then(|| legacy_parent_hold_prompt("fixture-hold")),
             "activeChild": matches!(state, 1 | 2 | 8)
         })),
     )
@@ -299,12 +299,23 @@ async fn history(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
         return Json(json!([]));
     }
     let mut history = vec![json!({"sequence":1,"presentation":[
-        {"kind":"run_started","instance":INSTANCE,"role":"worker","purpose":"Write the fixture"}
+        {"kind":"run_started","instance":INSTANCE,"role":"worker","purpose":"Write the fixture",
+            "provider":"codex","model":"fixture-model","threadUrl":"t3-thread://v1/thread:worker",
+            "startedAtMs":1_000}
     ]})];
     if matches!(fixture.state.load(Ordering::Relaxed), 3 | 7) {
         history.insert(
             0,
-            json!({"sequence":2,"presentation":[{"kind":"run_ended","instance":INSTANCE}]}),
+            json!({"sequence":3,"presentation":[{"kind":"run_ended","instance":INSTANCE}]}),
+        );
+    }
+    if fixture.state.load(Ordering::Relaxed) == 3 {
+        history.insert(
+            1,
+            json!({"sequence":2,"content":{"kind":"reported","at":63_000},
+            "presentation":[{"kind":"run_reported","instance":INSTANCE,"sentAtMs":1_000,
+                "outcome":{"kind":"work","url":"https://github.com/example/fixture/pull/7",
+                    "summary":"Fixed the fixture.","revision":false}}]}),
         );
     }
     Json(json!(history))
@@ -417,19 +428,34 @@ async fn a_reloaded_session_holds_for_preparation_and_ends_cleanly_after_done() 
     agent.update("plan").await;
     agent.send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
         "params":{"sessionId":SESSION,"prompt":[{"type":"text",
-            "text":format!("Envelope\n<user_request>{}</user_request>", parent_hold_prompt("fixture-hold"))}]}})).await;
+            "text":format!("Envelope\n<user_request>{}</user_request>", legacy_parent_hold_prompt("fixture-hold"))}]}})).await;
     tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
         .await
         .expect("deployment's scheduler hold stays open after reload");
     fixture.state.store(2, Ordering::Relaxed);
     let _ = fixture.changes.send(());
-    assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
+    let start = agent.update("tool_call").await;
+    assert_eq!(start["toolCallId"], INSTANCE);
+    assert_eq!(start["title"], "Worker · Codex / fixture-model · 00:00 UTC");
     fixture.state.store(3, Ordering::Relaxed);
     let _ = fixture.changes.send(());
     agent.update("plan").await;
+    let finished = agent.update("tool_call_update").await;
+    assert_eq!(finished["toolCallId"], INSTANCE);
+    assert_eq!(finished["status"], "completed");
     assert_eq!(
-        agent.update("tool_call_update").await["status"],
-        "completed"
+        finished["title"],
+        "Worker · Codex / fixture-model · 00:00 UTC · 1m 2s"
+    );
+    assert_eq!(
+        finished["content"][0]["content"]["text"],
+        "[Open worker](t3-thread://v1/thread:worker)"
+    );
+    assert_eq!(
+        finished["content"][1]["content"]["text"],
+        "Ready for review · [PR #7](https://github.com/example/fixture/pull/7)
+
+Fixed the fixture."
     );
     let end = agent.response(2).await;
     assert_eq!(end["result"]["stopReason"], "end_turn");
@@ -463,7 +489,7 @@ async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() 
     }
     agent
         .send(json!({"jsonrpc":"2.0","id":4,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":parent_hold_prompt("fixture-hold")}}))
+        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
         .await;
     tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
         .await
@@ -489,7 +515,7 @@ async fn an_active_child_keeps_the_parent_hold_through_pause_and_a_read_failure(
     agent.update("plan").await;
     agent
         .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":parent_hold_prompt("fixture-hold")}}))
+        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
         .await;
     tokio::time::timeout(Duration::from_secs(10), fixture.stream_ready.notified())
         .await

@@ -15,5 +15,5 @@ pub use model::{
     Acceptance, Authority, Brief, CallbackCredential, Entry, Head, Hold, HoldBy, Identity,
     InvalidHead, LaunchInputs, OperatorDecline, Phase, PreparedLaunch, PullRequest, Question,
     QuestionDelivery, Repair, Report, ReportAcceptance, ReportArtifact, ReportDelivery,
-    ReportFailure, ReportTask, Review, Role, Run, Task, Threads, Verdict,
+    ReportFailure, ReportTask, Review, Role, Run, Task, Threads, Verdict, WorkReport,
 };

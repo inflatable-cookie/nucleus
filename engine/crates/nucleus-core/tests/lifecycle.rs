@@ -144,7 +144,7 @@ fn ready_for_merge() -> Task {
         }
     );
     let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
-    report(&mut task, &bearer, Report::Work(pr('a')));
+    report(&mut task, &bearer, Report::Work(pr('a').into()));
     let review = open('a', CheckState::Pending);
     let ended = host(&task, review.clone(), RunState::Ended);
     assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
@@ -156,6 +156,7 @@ fn ready_for_merge() -> Task {
             head: sha('a'),
             decision: Review::Approve,
             summary: "Matches brief".into(),
+            finding_titles: Vec::new(),
         },
     );
     let ended = host(&task, review, RunState::Ended);
@@ -376,6 +377,7 @@ fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() 
             head: sha('a'),
             decision: Review::Approve,
             summary: "Reviewed".into(),
+            finding_titles: Vec::new(),
         },
     );
     let changed = open('b', CheckState::Ready);
@@ -393,7 +395,7 @@ fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() 
 fn changes_continue_the_worker_and_require_a_new_head() {
     let (mut task, obs) = working();
     let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
-    report(&mut task, &bearer, Report::Work(pr('a')));
+    report(&mut task, &bearer, Report::Work(pr('a').into()));
     let review = open('a', CheckState::Ready);
     let ended = host(&task, review.clone(), RunState::Ended);
     task.reconcile(&ended);
@@ -405,6 +407,7 @@ fn changes_continue_the_worker_and_require_a_new_head() {
             head: sha('a'),
             decision: Review::Changes,
             summary: "Add handling for empty input".into(),
+            finding_titles: Vec::new(),
         },
     );
     let ended = host(&task, review.clone(), RunState::Ended);
@@ -420,7 +423,7 @@ fn changes_continue_the_worker_and_require_a_new_head() {
         }
     );
     let bearer = start(&mut task, &worker, Role::Worker, "worker", "work-2");
-    report(&mut task, &bearer, Report::Work(pr('a')));
+    report(&mut task, &bearer, Report::Work(pr('a').into()));
     let ended = host(&task, review, RunState::Ended);
     assert_eq!(
         task.reconcile(&ended),
@@ -580,7 +583,11 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
         assert_eq!(task.attempts(), 0);
         assert!(task.run().expect("still bound").revoked());
         assert_eq!(
-            task.record_report(&old_instance, bearer.as_bytes(), Report::Work(pr('a'))),
+            task.record_report(
+                &old_instance,
+                bearer.as_bytes(),
+                Report::Work(pr('a').into())
+            ),
             Err(CommandError::InvalidReportCredential)
         );
         assert_eq!(task.reconcile(&obs), Action::Wait(WaitReason::Stopping));
@@ -686,7 +693,11 @@ fn an_authenticated_question_updates_the_brief_and_a_hold_survives_amendment() {
     report(&mut task, &bearer, question.clone());
     report(&mut task, &bearer, question);
     assert_eq!(
-        task.record_report(&instance(&task), bearer.as_bytes(), Report::Work(pr('a'))),
+        task.record_report(
+            &instance(&task),
+            bearer.as_bytes(),
+            Report::Work(pr('a').into())
+        ),
         Err(CommandError::ReportAlreadyReceived)
     );
     let ended = host(&task, obs, RunState::Ended);
@@ -798,6 +809,7 @@ fn review_handoff_checks_workspace_and_credential_binding() {
         head: sha('b'),
         decision: Review::Approve,
         summary: "Wrong head".into(),
+        finding_titles: Vec::new(),
     };
     assert_eq!(
         task.record_report(&instance(&task), &[0; 32], report.clone()),
@@ -967,6 +979,7 @@ fn a_superseded_review_with_possible_delivery_is_revoked_until_quiescent() {
         head: sha('a'),
         decision: Review::Approve,
         summary: "old review".into(),
+        finding_titles: Vec::new(),
     };
     assert_eq!(
         task.record_report(&instance, bearer.as_bytes(), approval),
@@ -1006,11 +1019,11 @@ fn a_reservation_after_move_cannot_restore_the_old_bearer() {
     assert_ne!(fresh.as_bytes(), original.as_bytes());
     for supplied in [&prepared.instance, &current] {
         assert_eq!(
-            task.record_report(supplied, original.as_bytes(), Report::Work(pr('a'))),
+            task.record_report(supplied, original.as_bytes(), Report::Work(pr('a').into())),
             Err(CommandError::InvalidReportCredential)
         );
     }
-    report(&mut task, &fresh, Report::Work(pr('a')));
+    report(&mut task, &fresh, Report::Work(pr('a').into()));
 }
 
 #[test]
@@ -1030,6 +1043,7 @@ fn a_settled_reviewer_report_survives_forge_outage_and_applies_to_a_fresh_merge(
             head: sha('a'),
             decision: Review::Approve,
             summary: "Reviewed".into(),
+            finding_titles: Vec::new(),
         },
     );
     let timeout = host(&task, observation(), RunState::Ended);

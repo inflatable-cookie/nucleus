@@ -9,8 +9,13 @@ use std::{
 };
 
 use nucleus_core::{
-    Identity, Phase, PullRequest, Question, Role, Verdict,
-    acp::{InboxAnswer, InboxSnapshot, SessionBinding, session_id},
+    Identity, Phase, PullRequest, Question, Role,
+    acp::{
+        InboxAnswer, InboxSnapshot, SessionBinding,
+        lifecycle::{Lifecycle, Milestone, Outcome},
+        session_id,
+    },
+    profiles::Provider,
 };
 use reqwest::{
     Client, Method, Response, StatusCode,
@@ -130,13 +135,17 @@ pub(crate) struct Detail {
     pub identity: Identity,
     pub reference: Option<String>,
     pub phase: Phase,
-    pub lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
+    pub lifecycle: Lifecycle,
     pub question: Option<Question>,
+    pub question_url: Option<String>,
     #[serde(default)]
     pub operator_inbox: bool,
+    pub plan_scope_id: Option<String>,
     pub parent_hold: Option<String>,
     #[serde(default)]
     pub active_child: bool,
+    #[serde(default)]
+    pub transcript_pending: bool,
     pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
@@ -154,6 +163,10 @@ pub(crate) struct Run {
     pub role: Role,
     pub purpose: String,
     pub last_send_at: Option<u64>,
+    pub thread_url: Option<String>,
+    pub provider: Option<Provider>,
+    pub model: Option<String>,
+    pub outcome: Option<Outcome>,
     pub activity: Option<Activity>,
 }
 
@@ -161,40 +174,20 @@ pub(crate) struct Run {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Activity {
     pub label: String,
-    pub started_at: Option<u64>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct Event {
     pub sequence: i64,
+    pub content: Option<EventContent>,
     #[serde(default)]
     pub presentation: Vec<Milestone>,
 }
 
 #[derive(Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub(crate) enum Milestone {
-    RunStarted {
-        instance: String,
-        role: Role,
-        purpose: String,
-    },
-    RunEnded {
-        instance: String,
-    },
-    PullRequest {
-        url: String,
-    },
-    Verdict {
-        verdict: Verdict,
-    },
-    Merged,
-    #[serde(other)]
-    Other,
+pub(crate) struct EventContent {
+    pub at: u64,
+    pub kind: String,
 }
 
 impl ServiceClient {

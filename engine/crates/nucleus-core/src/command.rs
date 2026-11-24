@@ -176,6 +176,7 @@ impl Task {
             head,
             decision,
             summary,
+            ..
         }) = run
             .filter(|run| {
                 observation

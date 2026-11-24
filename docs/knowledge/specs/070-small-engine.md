@@ -65,7 +65,7 @@ Later decisions carry their own attribution.
      does not start the clock. The task retains its worker and reviewer bindings
      between runs.
    - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
-   - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
+   - A role's outcome is one message on its card. The transcript also records the task's finish and any decisions made outside a run.
    - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
 
    Tom approved the transcript design on 2026-11-24 (“The mockup looks good,
@@ -78,6 +78,9 @@ Later decisions carry their own attribution.
    the role's outcome until answered. Waits update the plan once per episode.
    The finish records the merge or report, closure, elapsed time and review
    rounds. All of this comes from engine records without additional T3 reads.
+   Older reports can lack a summary or an exact participant binding. Their
+   cards show the facts the engine can recover. Previously journalled hold
+   payloads replay with their original text.
 8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);

@@ -69,6 +69,7 @@ fn task_with_approval() -> Task {
             head: sha('a'),
             decision: Review::Approve,
             summary: "Reviewed".into(),
+            finding_titles: Vec::new(),
         },
     )
     .expect("record approval");

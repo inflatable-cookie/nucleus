@@ -8,7 +8,7 @@ use std::{
 
 use nucleus_core::{
     RetainedThread,
-    acp::{REFRESH_TASK_ROW, parent_hold_prompt, session_id},
+    acp::{REFRESH_TASK_ROW, session_id},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -392,6 +392,24 @@ impl ParentWrite {
         self.payload["commandId"].as_str()
     }
 
+    #[must_use]
+    pub fn prompt(&self) -> Option<&str> {
+        if self.rpc == "orchestration.launchThread" {
+            self.payload["initialMessage"]["text"].as_str()
+        } else {
+            self.payload["text"].as_str()
+        }
+    }
+
+    /// Restore the original text for an already recorded native command.
+    pub fn set_prompt(&mut self, prompt: String) {
+        if self.rpc == "orchestration.launchThread" {
+            self.payload["initialMessage"]["text"] = prompt.into();
+        } else {
+            self.payload["text"] = prompt.into();
+        }
+    }
+
     /// The row and ACP provider bound to a prepared message.
     #[must_use]
     pub fn delivery_row(&self) -> Option<(RowObservation, &str)> {
@@ -700,6 +718,7 @@ impl T3 {
         binding: &Binding,
         provider: &str,
         title: &str,
+        start_line: &str,
         prior_turn: Option<ParentAttempt<'_>>,
         catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
     ) -> Result<ParentStep, HostError> {
@@ -767,7 +786,7 @@ impl T3 {
                 delivery: prepare_delivery(&projection, provider, fence.row)?,
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
-                    "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
+                    "messageId":message_id(&command), "text":start_line, "attachments":[],
                     "createdBy":"user", "creationSource":"server",
                     "dispatchMode":{"type":"queue_after_active"}
                 }),
@@ -794,7 +813,7 @@ impl T3 {
                 "workspaceStrategy":{
                     "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
                 },
-                "initialMessage":{"messageId":message_id(&command),"text":parent_hold_prompt(&command),"attachments":[]}
+                "initialMessage":{"messageId":message_id(&command),"text":start_line,"attachments":[]}
             }),
         }))
     }
