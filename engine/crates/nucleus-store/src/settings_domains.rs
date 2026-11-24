@@ -329,6 +329,27 @@ impl<'de> Deserialize<'de> for ProjectSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Projects {
     pub projects: BTreeMap<String, ProjectSettings>,
+    /// Removed project IDs and their canonical repository origins.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<String, RemovedProject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemovedProject {
+    pub origins: Vec<String>,
+    pub reason: String,
+    pub removed_at_ms: u64,
+}
+
+impl Projects {
+    #[must_use]
+    pub fn removed_origin(&self, origin: &str) -> bool {
+        self.removed
+            .values()
+            .flat_map(|project| &project.origins)
+            .any(|removed| removed.eq_ignore_ascii_case(origin))
+    }
 }
 
 impl SettingsValue for Projects {
@@ -344,7 +365,7 @@ impl SettingsValue for Projects {
         let mut planners = std::collections::BTreeSet::new();
         for (id, project) in &self.projects {
             check(
-                key(id) && text(&project.name),
+                key(id) && text(&project.name) && !self.removed.contains_key(id),
                 "project",
                 "each project needs a stable ID and name",
             )?;
@@ -353,6 +374,7 @@ impl SettingsValue for Projects {
                     repo.origin
                         .split_once('/')
                         .is_some_and(|(owner, name)| key(owner) && key(name))
+                        && !self.removed_origin(&repo.origin)
                         && origins.insert(repo.origin.to_ascii_lowercase())
                         && absolute_path(&repo.path)
                         && branch(&repo.base)

@@ -3,6 +3,7 @@
 pub(super) mod decisions;
 pub mod legacy;
 mod model;
+mod removal;
 
 use std::collections::BTreeSet;
 
@@ -14,6 +15,7 @@ use crate::{EventDraft, Store, StoreError, TaskAdmissionFacts, admit, decode_err
 
 pub use decisions::{USAGE_APPROVE, UsagePermission};
 pub use model::*;
+pub use removal::{ProjectRemoval, RemovalTask};
 
 /// Space for legacy Markdown even when every character uses four UTF-8 bytes.
 pub const MAX_TEXT_BYTES: usize = 4_000_000;
