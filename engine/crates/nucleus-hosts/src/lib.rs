@@ -398,6 +398,7 @@ impl T3 {
     }
 
     /// Stream thread change hints over a socket independent of exact reads.
+    /// A successful return means the synchronized stream reached planned rotation.
     /// # Errors
     /// Returns an error on disconnect or if the listener missed a hint.
     pub async fn watch_threads(

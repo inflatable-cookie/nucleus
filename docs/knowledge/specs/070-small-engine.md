@@ -154,6 +154,11 @@ Later decisions carry their own attribution.
     - The profile matrix is unchanged (ruling 9).
 
 18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
+    - The planner ruled on 2026-11-24 that the board preview opens once when T3
+      first synchronizes, after a real disconnect and reconnect, or after a
+      runtime replacement. Routine subscription rotation invalidates shell
+      proof and resynchronizes without opening the preview. Typing `ui` still
+      opens it on request.
     - The title shows pending operator decisions first, then the host's running tasks, then `All quiet`. `Paused: ` covers Pause, Dispatch hold and Stop. The engine derives the counts locally and updates only the title metadata using a new receipt generation when the text changes.
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
     - Before native Rust Inbox setup, the scheduler sends Rust operator questions to the TypeScript decision store and reads the answers back. The planner retires the TypeScript Inbox manually after global no-new-work is on and its decisions have drained.

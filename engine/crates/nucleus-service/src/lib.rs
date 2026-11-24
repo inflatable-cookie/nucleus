@@ -681,9 +681,9 @@ impl Service {
             );
             tokio::pin!(watch);
             let mut inbox_hint = None;
-            loop {
+            let outcome = loop {
                 tokio::select! {
-                    _ = &mut watch => break,
+                    result = &mut watch => break result,
                     Some(hint) = hints.recv() => {
                         if hint.thread == nucleus_hosts::INBOX_THREAD {
                             if inbox_hint.as_ref() == Some(&hint) {
@@ -694,9 +694,9 @@ impl Service {
                         self.wake_from_host(hint).await;
                     },
                 }
-            }
+            };
             if let Some(inbox) = inbox {
-                inbox.host_disconnected();
+                inbox.host_stream_ended(outcome);
             }
             {
                 let mut state = self.state.lock().await;
@@ -725,8 +725,10 @@ impl Service {
         if let Some(inbox) = &self.native_inbox
             && hint.thread == nucleus_hosts::INBOX_THREAD
         {
-            if hint.inbox_synchronized() {
-                inbox.host_synchronized();
+            if hint.inbox_synchronized()
+                && let Some(identity) = self.host.runtime_identity()
+            {
+                inbox.host_synchronized(identity);
             }
             inbox.wake();
         }

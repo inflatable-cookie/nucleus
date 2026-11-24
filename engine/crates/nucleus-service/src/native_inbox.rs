@@ -43,6 +43,7 @@ pub(super) struct NativeInbox {
     observed: watch::Sender<Observation>,
     reconcile: Notify,
     replies: Mutex<VecDeque<String>>,
+    preview_session: Mutex<Option<String>>,
     preview_pending: AtomicBool,
 }
 
@@ -89,6 +90,7 @@ impl NativeInbox {
             observed: watch::channel(Observation::Unknown).0,
             reconcile: Notify::new(),
             replies: Mutex::new(VecDeque::new()),
+            preview_session: Mutex::new(None),
             preview_pending: AtomicBool::new(false),
         })
     }
@@ -101,12 +103,20 @@ impl NativeInbox {
         self.reconcile.notify_one();
     }
 
-    pub(super) fn host_synchronized(&self) {
-        self.preview_pending.store(true, Ordering::Relaxed);
+    pub(super) fn host_synchronized(&self, identity: String) {
+        let mut session = self.preview_session.lock().expect("preview session");
+        if session.as_ref() != Some(&identity) {
+            *session = Some(identity);
+            self.preview_pending.store(true, Ordering::Relaxed);
+        }
     }
 
-    pub(super) fn host_disconnected(&self) {
-        self.preview_pending.store(false, Ordering::Relaxed);
+    pub(super) fn host_stream_ended(&self, result: Result<(), HostError>) {
+        if matches!(result, Err(HostError::Unavailable | HostError::Timeout)) {
+            let mut session = self.preview_session.lock().expect("preview session");
+            *session = None;
+            self.preview_pending.store(false, Ordering::Relaxed);
+        }
         self.unobserved();
     }
 

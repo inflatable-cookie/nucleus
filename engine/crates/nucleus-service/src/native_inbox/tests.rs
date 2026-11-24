@@ -100,6 +100,13 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 1);
+    for outcome in [Ok(()), Err(HostError::Uncertain)] {
+        inbox.host_stream_ended(outcome);
+        assert!(*inbox.observed.borrow() == Observation::Unknown);
+        synchronize_preview_session(&service).await;
+        reconcile().await.unwrap();
+        assert_eq!(trace.lock().unwrap().links.len(), 1);
+    }
     assert!(
         service
             .take_inbox_replies(&inbox.credential)
@@ -119,7 +126,8 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
         "the reply must contain only the plain board address and retry instruction"
     );
 
-    inbox.host_disconnected();
+    inbox.host_stream_ended(Ok(()));
+    inbox.host_stream_ended(Err(HostError::Unavailable));
     synchronize_preview_session(&service).await;
     reconcile().await.unwrap();
     reconcile().await.unwrap();
@@ -131,16 +139,22 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
             .is_empty()
     );
 
-    inbox.host_disconnected();
+    inbox.host_stream_ended(Ok(()));
+    inbox.host_synchronized("replacement runtime".into());
+    inbox.host_synchronized("replacement runtime".into());
+    reconcile().await.unwrap();
+    assert_eq!(trace.lock().unwrap().links.len(), 4);
+
+    inbox.host_stream_ended(Err(HostError::Unavailable));
     synchronize_preview_session(&service).await;
     message.store(2, Ordering::Relaxed);
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     let trace = trace.lock().unwrap();
-    assert_eq!(trace.links.len(), 4);
+    assert_eq!(trace.links.len(), 5);
     assert_eq!(
         trace.calls,
-        ["list", "close-success", "close-failed", "open"].repeat(4)
+        ["list", "close-success", "close-failed", "open"].repeat(5)
     );
     assert_eq!(
         service.take_inbox_replies(&inbox.credential).unwrap(),
