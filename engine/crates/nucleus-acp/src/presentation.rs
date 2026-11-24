@@ -258,6 +258,15 @@ fn wait_text(detail: &Detail) -> Option<&'static str> {
         "input" | "question" => "waiting for an answer",
         "permission" => "waiting for permission",
         "forge_unknown" => "waiting for GitHub",
+        "host_unknown" | "idle_without_terminal_run"
+            if let Some(run) = &detail.run
+                && run.reported =>
+        {
+            match run.role {
+                Role::Worker => "waiting to confirm the worker is idle",
+                Role::Reviewer => "waiting to confirm the reviewer is idle",
+            }
+        }
         "host_unknown" | "idle_without_terminal_run" => "waiting for the host",
         "operator_declined" => "operator declined. Move or cancel the task",
         "stopping" => "waiting for the run to finish",

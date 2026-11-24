@@ -13,8 +13,9 @@ use crate::ServiceError;
 const SCAN_PAGE: u32 = 32;
 pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
-const LIVE_CHECK: Duration = Duration::from_secs(45);
+pub(crate) const LIVE_CHECK: Duration = Duration::from_secs(45);
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
+const HOST_RETRY_CAP: Duration = Duration::from_mins(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
@@ -82,6 +83,7 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
 
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
+    host_retry: BTreeMap<String, Duration>,
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
@@ -91,6 +93,7 @@ impl Schedule {
     pub(crate) fn new() -> Self {
         Self {
             tasks: BTreeMap::new(),
+            host_retry: BTreeMap::new(),
             scan_at: Instant::now(),
             cursor: None,
             archive_cursor: None,
@@ -99,6 +102,26 @@ impl Schedule {
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
         self.tasks.entry(id.into()).or_default().wake(due, priority);
+    }
+
+    pub(crate) fn retry_task(
+        &mut self,
+        id: &str,
+        wait: Option<WaitReason>,
+    ) -> (Duration, Priority) {
+        if wait == Some(WaitReason::HostUnknown) {
+            let next = self.host_retry.entry(id.into()).or_insert(T3_RETRY_DELAY);
+            let delay = *next;
+            *next = (delay * 2).min(HOST_RETRY_CAP);
+            (delay, Priority::Decision)
+        } else {
+            self.reset_host_backoff(id);
+            retry(wait)
+        }
+    }
+
+    pub(crate) fn reset_host_backoff(&mut self, id: &str) -> bool {
+        self.host_retry.remove(id).is_some()
     }
 
     pub(crate) fn seed(
@@ -190,6 +213,20 @@ impl Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_host_reads_back_off_per_task_and_reset_on_evidence() {
+        let mut schedule = Schedule::new();
+        let unknown = Some(WaitReason::HostUnknown);
+        for seconds in [15, 30, 60, 120, 240, 240] {
+            assert_eq!(schedule.retry_task("worker", unknown).0.as_secs(), seconds);
+        }
+        assert_eq!(schedule.retry_task("reviewer", unknown).0, T3_RETRY_DELAY);
+        assert!(schedule.reset_host_backoff("worker"));
+        assert_eq!(schedule.retry_task("worker", unknown).0, T3_RETRY_DELAY);
+        schedule.retry_task("worker", Some(WaitReason::Running));
+        assert_eq!(schedule.retry_task("worker", unknown).0, T3_RETRY_DELAY);
+    }
 
     #[test]
     fn earlier_due_tasks_win_over_more_recent_wakes() {

@@ -208,6 +208,10 @@ also check the open PR and clean checkout after native authorization.
   items. Pending tasks and active command, tool and subagent items keep the
   thread busy. An omitted or windowed roster leaves settlement unknown.
   [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
+- Planner authority uses only the exact thread record from a compact bounded
+  snapshot, on scheduler demand. Only notice routing after confirmed absence
+  needs the complete candidate inventory. Request for T3: a single-thread shell
+  RPC on the WebSocket contract so authority checks can skip the transcript.
 - A pass shares one bounded cwd census across checkout checks. The Mac adapter
   cross-checks cwd-only `lsof` against the local T3 user's PIDs, then checks open
   files recursively under the checkout and engine scratch. It holds both
@@ -259,9 +263,9 @@ also check the open PR and clean checkout after native authorization.
 At startup, enqueue every active task, including a cancelled task with a pending
 run. Keep the earliest due time for each task in memory. Receipts and commands
 wake that task after their transaction commits. A T3 stream wakes the task when
-its known thread changes. Stream events are hints. A disconnect wakes watched
-tasks, and a periodic active scan catches any missed wake. The next due time
-drives the timer even when the scan is idle.
+its known thread changes. A fresh running hint can defer a routine refresh.
+A disconnect discards hints, and a periodic active scan catches any missed wake.
+The next due time drives the timer even when the scan is idle.
 The backstop pages through the active index with a fixed read budget.
 
 A pass takes tasks that are due and shares one bounded process inventory.
@@ -269,9 +273,10 @@ For each task, read its row, then fetch the exact T3 turn, PR and checkout facts
 needed for its decision. Process coverage and the full provider projection gate
 continuation and release. A live process keeps the checkout in use regardless
 of elapsed time. The service rechecks Git cleanliness just before removal.
-Waits schedule another check. A provider retry deadline takes precedence over
-the ordinary check interval. Unknown facts leave the task waiting for a read;
-the existing decision table owns questions about the work.
+Waits schedule another check. Unknown host reads back off from 15 seconds to
+4 minutes, with thread events resetting the delay. A provider retry deadline
+takes precedence over a shorter check interval. The decision table owns questions
+about the work.
 
 Read adapters outside the store lock. Every pass write compares the task row's
 version and run instance with what it read. A stale result drops out and wakes
@@ -342,11 +347,12 @@ resolve the session. A held presentation turn never needs files in the checkout.
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
 credential. The service checks current authority locally before committing
-an ACP command or a planner's answer through the API. The scheduler refreshes
-the project's authority from the shared host roster and routing provenance. A
-closure invalidates affected authority. If the authority is unknown, the
-service asks the caller to retry. Rebinding keeps the session ID and rotates
-the credentials. Reaching Done revokes command access and keeps the final view
+an ACP command or a planner's answer through the API. A planner's writable
+binding or command with unknown authority wakes the scheduler to read the exact
+bound planner or task origin, and the service asks the caller to retry. The
+service keeps that authority in memory until the host reports an identity change,
+the connection fails or the task reaches Done. Rebinding keeps the session ID
+and rotates the credentials. Reaching Done revokes command access and keeps the final view
 readable. The live turn follows task invalidations, including changes within a
 row version. Attach and load read the committed view and history locally.
 A stream interruption reconnects

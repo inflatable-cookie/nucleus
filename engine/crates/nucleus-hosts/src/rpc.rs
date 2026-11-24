@@ -57,6 +57,8 @@ pub struct ThreadHint {
     pub thread: String,
     change: Option<Value>,
     closed: bool,
+    running: bool,
+    identity: Option<crate::PlannerIdentity>,
 }
 
 impl ThreadHint {
@@ -66,6 +68,23 @@ impl ThreadHint {
         self.closed
     }
 
+    /// Positive activity can postpone a routine refresh. Idle and missing
+    /// shells cannot establish that a run ended.
+    #[must_use]
+    pub const fn running(&self) -> bool {
+        self.running && !self.closed
+    }
+
+    /// An event can invalidate a prior authority proof. It cannot grant one.
+    #[must_use]
+    pub fn is_identity_change(&self, prior: Option<&crate::PlannerIdentity>) -> bool {
+        self.closed
+            || self
+                .identity
+                .as_ref()
+                .is_some_and(|observed| prior.is_none_or(|prior| !observed.same_role(prior)))
+    }
+
     fn read(item: &Value) -> Option<Self> {
         match item["kind"].as_str()? {
             "thread.updated" => {
@@ -73,6 +92,9 @@ impl ThreadHint {
                 Some(Self {
                     thread: thread["id"].as_str()?.into(),
                     closed: !thread["archivedAt"].is_null() || !thread["deletedAt"].is_null(),
+                    running: thread["status"] == "running"
+                        && thread["activeRunId"].as_str().is_some(),
+                    identity: serde_json::from_value(thread.clone()).ok(),
                     change: Some(json!([
                         item["location"],
                         thread["status"],
@@ -92,6 +114,8 @@ impl ThreadHint {
                 thread: item["threadId"].as_str()?.into(),
                 change: None,
                 closed: true,
+                running: false,
+                identity: None,
             }),
             _ => None,
         }
@@ -408,6 +432,23 @@ mod tests {
         assert!(!ThreadHint::read(&revised).expect("completed hint").closed());
         revised["thread"]["archivedAt"] = json!("2026-11-23T20:00:01Z");
         assert!(ThreadHint::read(&revised).expect("archived hint").closed());
+    }
+
+    #[test]
+    fn a_thread_move_revokes_authority_but_activity_does_not() {
+        let mut update = json!({"kind":"thread.updated","location":"active","thread":{
+            "id":"planner","projectId":"project","providerInstanceId":"fixture",
+            "status":"running","activeRunId":"turn"
+        }});
+        let prior = ThreadHint::read(&update).expect("planner event");
+        assert!(prior.running());
+        update["thread"]["status"] = json!("idle");
+        let idle = ThreadHint::read(&update).expect("idle event");
+        assert!(!idle.running());
+        assert!(!idle.is_identity_change(prior.identity.as_ref()));
+        update["thread"]["projectId"] = json!("moved");
+        let moved = ThreadHint::read(&update).expect("project move");
+        assert!(moved.is_identity_change(prior.identity.as_ref()));
     }
 
     #[tokio::test]

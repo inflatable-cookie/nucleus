@@ -173,8 +173,10 @@ async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -
     let state = service.state.lock().await;
     let planner = state
         .planner_authority
-        .as_ref()
-        .and_then(|authority| authority.resolved());
+        .values()
+        .filter_map(super::super::question::PlannerAuthority::resolved)
+        .max_by_key(|(checked_at, _)| *checked_at)
+        .map(|(_, planner)| planner);
     let mut resolved = serde_json::Map::new();
     for id in settings.value.projects.keys() {
         let planner = planner.filter(|_| {
