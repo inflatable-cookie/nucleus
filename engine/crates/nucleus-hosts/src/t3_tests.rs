@@ -217,6 +217,7 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
                 instance_id: "fixture-provider".into(),
                 model: "fixture-model".into(),
                 runtime_mode: "full-access".into(),
+                options: Vec::new(),
             },
         },
         text: "Frozen prompt".into(),
@@ -273,17 +274,21 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         Response::ParentSnapshot(parent_snapshot(&binding, "running", false)),
     )])
     .await;
-    let crate::ParentStep::Live(parent) = client
-        .prepare_parent(&binding, "fixture-acp", "Synthetic task")
-        .await
-        .expect("parent read")
-    else {
+    let crate::ParentStep::Live(parent) = Box::pin(client.prepare_parent(
+        &binding,
+        "fixture-acp",
+        "Synthetic task",
+        quiet_pass(&client).profile_catalog(),
+    ))
+    .await
+    .expect("parent read") else {
         panic!("live parent and its root are required");
     };
     let profile = RoleProfile {
         instance_id: "fixture-worker".into(),
         model: "fixture".into(),
         runtime_mode: "full-access".into(),
+        options: Vec::new(),
     };
     let inputs = quiet_pass(&client)
         .prepare_launch(crate::LaunchRequest {
@@ -307,7 +312,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
 }
 
 #[tokio::test]
-async fn archival_waits_for_idle_children_then_reads_back_both_threads() {
+async fn archival_finds_displaced_children_and_reads_back_both_threads() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let parent = parent_snapshot(&binding, "completed", false);
@@ -340,14 +345,14 @@ async fn archival_waits_for_idle_children_then_reads_back_both_threads() {
     .await;
     assert!(matches!(
         client
-            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .prepare_parent_archive(&binding, "fixture-acp", &[])
             .await
             .expect("busy read"),
         crate::ArchiveStep::Wait
     ));
     for _ in 0..2 {
         let crate::ArchiveStep::Write(effect) = client
-            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .prepare_parent_archive(&binding, "fixture-acp", &[])
             .await
             .expect("idle read")
         else {
@@ -357,7 +362,7 @@ async fn archival_waits_for_idle_children_then_reads_back_both_threads() {
     }
     assert!(matches!(
         client
-            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD])
+            .prepare_parent_archive(&binding, "fixture-acp", &[])
             .await
             .expect("readback"),
         crate::ArchiveStep::Finished
@@ -708,7 +713,7 @@ async fn next_review_resumes_the_same_thread_after_archival() {
     let inputs = RunRequest {
         parent: None,
         binding,
-        dispatch: Dispatch::Continue,
+        dispatch: Dispatch::Continue { profile: None },
         text: "Fresh review".into(),
     }
     .inputs(&instance, THREAD.into(), 2)

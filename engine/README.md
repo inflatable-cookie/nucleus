@@ -462,7 +462,7 @@ Remove inside the editor.
 
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
-| Profiles | `config/profiles.json` | Name and canonical selection with stable ID, capability, weight, provider, model and effort. |
+| Profiles | `config/profiles.json` | Name, optional subscription group, and canonical selection with stable ID, capability, weight, provider, model and effort. |
 | Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, local load, one host call slot and one optional allowance in minutes. |
 | Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
@@ -506,6 +506,12 @@ transaction. The store keeps the last 50 assignments per role and lifetime
 counts. The group tie-break uses the most recent 50 assignments across roles.
 An empty or unreadable history leaves selection to the configured weights. A
 failed usage write rolls back the charge while leaving the launch available.
+Configured profiles use one T3 catalog read per pass for due launch decisions.
+A profile's optional `group` names its subscription. Unset groups use the
+resolved T3 provider instance ID. The scheduler freezes the profile and native
+request together, using the retained worker's model to require an independent
+reviewer. An unavailable profile leaves the task waiting. Fixture serve files
+without a Profiles domain keep their static worker and reviewer settings.
 
 ## Milestone 1 proof
 

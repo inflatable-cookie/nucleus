@@ -1,10 +1,10 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, future::Future, path::Path};
 
 use nucleus_core::{RetainedThread, acp::session_id};
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, T3, message_id,
+    Binding, HostError, ProfileCatalog, T3, message_id,
     rpc::{Read, Reply},
 };
 
@@ -148,11 +148,12 @@ impl T3 {
     /// A missing root or uncertain projection waits for another pass.
     /// # Errors
     /// Returns an error for a failed native read or a mismatched parent.
-    pub async fn prepare_parent(
+    pub async fn prepare_parent<'a>(
         &self,
         binding: &Binding,
         provider: &str,
         title: &str,
+        catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
     ) -> Result<ParentStep, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         if let Some(projection) = self.thread(binding, &thread).await? {
@@ -190,7 +191,9 @@ impl T3 {
             }));
         }
 
-        self.check_parent_provider(provider).await?;
+        if !catalogue.await?.supports_parent(provider) {
+            return Err(HostError::Configuration);
+        }
         let command = format!("{thread}-launch");
         Ok(ParentStep::Write(ParentWrite {
             binding: binding.clone(),
@@ -224,29 +227,6 @@ impl T3 {
             Reply::Value(_) => Ok(()),
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
-    }
-
-    async fn check_parent_provider(&self, instance: &str) -> Result<(), HostError> {
-        let Reply::Value(config) = self
-            .rpc
-            .call("server.getConfig", json!({}), Read::One)
-            .await?
-        else {
-            return Err(HostError::Uncertain);
-        };
-        let profile = crate::RoleProfile {
-            instance_id: instance.into(),
-            model: "nucleus".into(),
-            runtime_mode: "full-access".into(),
-        };
-        if !config["providers"].as_array().is_some_and(|providers| {
-            providers.iter().any(|provider| {
-                provider["driver"] == "acpRegistry" && crate::available(provider, &profile)
-            })
-        }) {
-            return Err(HostError::Configuration);
-        }
-        Ok(())
     }
 }
 
