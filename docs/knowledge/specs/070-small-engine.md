@@ -352,6 +352,13 @@ Later decisions carry their own attribution.
 
 34. **Archiving a Done task is housekeeping.** Tom, 2026-11-24: "it shouldn't matter that the workers are archived already. We're just archiving task containers! It's all getting too fiddly." Custody is proven once, when a task's checkout is removed. After that, archiving its threads proves nothing further. The archive step archives each of the task's threads that the held shell shows as present, unarchived and idle. A thread that is already archived, absent or deleted counts as done, with no read. A thread showing activity waits with a plain cause. The task is closed when none of its threads remain unarchived. This replaces family-closure receipts and archive proofs.
 
+35. **A lubricated workflow.** Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
+    - Only destructive or irreversible steps (removing a checkout or worktree, merging, closing a PR) prove custody, and they prove it once.
+    - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
+    - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
+    - Already done counts as done. A step never fails because the world is already in the state it wanted.
+    - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
+
 ## The model
 
 ### Stored state per task
