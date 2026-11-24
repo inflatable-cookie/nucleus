@@ -6,7 +6,7 @@ use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason}
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
 use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
 
-use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget, presentation};
+use crate::{Service, ServiceError, State, WaitDetail, now_ms, pass::DispatchTarget, presentation};
 
 const T3_TITLE_LIMIT: usize = 200;
 
@@ -26,11 +26,22 @@ fn task_title(task: &Task, number: Option<i64>, label: &str) -> String {
 }
 
 // The compact taskTitleStateLabel rule serves both native titles and the board.
-pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String {
+pub(super) fn task_state_label(
+    task: &Task,
+    wait: Option<WaitReason>,
+    detail: Option<&WaitDetail>,
+) -> String {
     if let Some(label) = task_label_from_facts(task) {
         return label;
     }
-    if let Some(label) = wait_label(wait) {
+    if (wait.is_none() || (wait == Some(WaitReason::HostUnknown) && detail.is_none()))
+        && task.run().is_some_and(|run| {
+            !run.revoked() && run.report().is_none() && run.last_send_at_ms().is_none()
+        })
+    {
+        return "Starting".into();
+    }
+    if let Some(label) = wait_label(wait, detail) {
         return label.into();
     }
     let phase = phase_label(task);
@@ -100,14 +111,22 @@ fn held_label(phase: Phase, hold: &Hold) -> String {
     .into()
 }
 
-fn wait_label(wait: Option<WaitReason>) -> Option<&'static str> {
+fn wait_label(wait: Option<WaitReason>, detail: Option<&WaitDetail>) -> Option<&'static str> {
     Some(match wait {
         Some(WaitReason::Question) => "Waiting for the planner",
         Some(WaitReason::Capacity) => "Waiting for capacity",
         Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
         Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
         Some(WaitReason::UsagePermission) => "Waiting on Tom",
-        Some(WaitReason::HostUnknown) => "Checking task thread",
+        Some(WaitReason::HostUnknown) => match detail {
+            Some(WaitDetail::OperatorSnoozed { .. }) => "You snoozed this thread",
+            Some(
+                WaitDetail::BeforeSend(None)
+                | WaitDetail::ShowingForDelivery(None)
+                | WaitDetail::ConfirmingDelivery(_),
+            ) => "Starting",
+            _ => "Waiting for T3",
+        },
         Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
         Some(WaitReason::Permission) => "Waiting for permission",
         Some(WaitReason::Input) => "Waiting for input",
@@ -206,7 +225,7 @@ impl Service {
         }
         let id = &task.identity().id;
         let label = match state.effective_wait(task) {
-            Ok(wait) => task_state_label(task, wait),
+            Ok(wait) => task_state_label(task, wait, state.wait_detail(id)),
             Err(error) => {
                 eprintln!("{id}: {error}");
                 return;
@@ -544,7 +563,7 @@ mod tests {
             task_title(
                 &task,
                 Some(1),
-                &task_state_label(&task, Some(WaitReason::Capacity))
+                &task_state_label(&task, Some(WaitReason::Capacity), None)
             ),
             "Waiting for capacity: #1 Add a greeting"
         );
@@ -552,9 +571,13 @@ mod tests {
             task_title(
                 &task,
                 Some(1),
-                &task_state_label(&task, Some(WaitReason::HostUnknown))
+                &task_state_label(
+                    &task,
+                    Some(WaitReason::HostUnknown),
+                    Some(&WaitDetail::ShowingForDelivery(None))
+                )
             ),
-            "Checking task thread: #1 Add a greeting"
+            "Starting: #1 Add a greeting"
         );
         let authority = Authority::Planner {
             actor: "planner".into(),
@@ -570,7 +593,7 @@ mod tests {
             task_title(
                 &task,
                 Some(1),
-                &task_state_label(&task, Some(WaitReason::Hold))
+                &task_state_label(&task, Some(WaitReason::Hold), None)
             ),
             "Waiting on fixture#2: #1 Add a greeting"
         );
@@ -580,7 +603,7 @@ mod tests {
             task_title(
                 &task,
                 Some(1),
-                &task_state_label(&task, Some(WaitReason::Hold))
+                &task_state_label(&task, Some(WaitReason::Hold), None)
             ),
             "Held by planner: #1 Add a greeting"
         );
@@ -590,7 +613,7 @@ mod tests {
             task_title(
                 &task,
                 Some(1),
-                &task_state_label(&task, Some(WaitReason::Stopping))
+                &task_state_label(&task, Some(WaitReason::Stopping), None)
             ),
             "Cancelled: #1 Add a greeting"
         );

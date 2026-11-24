@@ -402,9 +402,7 @@ impl Service {
         if state.observe_wait_detail(
             &row.task,
             Some(WaitReason::HostUnknown),
-            Some(WaitDetail::ShowingForDelivery(
-                "Checking the task thread before sending.",
-            )),
+            Some(WaitDetail::ShowingForDelivery(None)),
         )? {
             self.desire_title(&state, &row.task, row.number);
             self.title_wake.notify_one();

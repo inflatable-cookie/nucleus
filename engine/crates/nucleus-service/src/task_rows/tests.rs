@@ -419,7 +419,7 @@ async fn checking_without_a_due_send_snoozes_once_after_a_prior_wake() {
             .observe_wait_detail(
                 &task,
                 Some(WaitReason::HostUnknown),
-                Some(WaitDetail::ShowingForDelivery("Checking delivery.")),
+                Some(WaitDetail::ShowingForDelivery(None)),
             )
             .unwrap();
         state.schedule.wake(
@@ -477,6 +477,17 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
         .await
         .unwrap();
     assert!(service.operator_snooze_wait(&row).await.is_some());
+    {
+        let state = service.state.lock().await;
+        assert_eq!(
+            crate::titles::task_state_label(
+                &row.task,
+                state.wait_reason(ID),
+                state.wait_detail(ID)
+            ),
+            "You snoozed this thread"
+        );
+    }
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert!(service.state.lock().await.schedule.due(ID).unwrap() > tokio::time::Instant::now());
 

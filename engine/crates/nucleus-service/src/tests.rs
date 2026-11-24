@@ -590,7 +590,7 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
                 .observe_wait_detail(
                     &row.task,
                     Some(WaitReason::HostUnknown),
-                    Some(crate::WaitDetail::Observation("Checking task thread.")),
+                    Some(crate::WaitDetail::ShowingForDelivery(None)),
                 )
                 .unwrap()
         );
@@ -724,9 +724,9 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
     let state = service.state.lock().await;
     assert!(matches!(
         state.wait_detail("runless"),
-        Some(crate::WaitDetail::BeforeSend(
+        Some(crate::WaitDetail::BeforeSend(Some(
             "Checking whether the checkout is idle."
-        ))
+        )))
     ));
 }
 

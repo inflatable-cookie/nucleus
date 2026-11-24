@@ -229,7 +229,7 @@ impl Service {
         .to_string();
         let starting = matches!(kind, "native_turn_intent" | "native_turn_replay");
         let wait = Some(WaitReason::Starting);
-        let entered = starting && state.wait_label_changed(&row.task, wait);
+        let entered = starting && state.wait_label_changed(&row.task, wait, None);
         let attempt = state.store.claim_task_effect(id, &intent, entered)?;
         if attempt.is_some() && starting {
             state.apply_observed_wait(&row.task, wait, entered);
