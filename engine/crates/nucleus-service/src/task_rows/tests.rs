@@ -174,6 +174,40 @@ impl Fixture {
             .map(|payload| payload["type"].as_str().unwrap().into())
             .collect()
     }
+
+    async fn assert_operator_snooze_receipt(&self, row: &TaskRow) {
+        for kind in ["native_turn_intent", "acp_row_refresh_intent"] {
+            let write = self
+                .service
+                .host
+                .prepare_parent_refresh(&self.binding, PROVIDER)
+                .await
+                .unwrap()
+                .unwrap();
+            let error = self
+                .service
+                .deliver_parent(row, write, "fixture", Some(kind))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("operator snooze is active"));
+        }
+        let history = self.service.history(ID, None, 100).await.unwrap();
+        let [receipt] = history
+            .iter()
+            .filter(|event| event.content.kind == "native_turn_not_sent")
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("unchanged launch and ACP reattach refusals should share one receipt");
+        };
+        let detail: Value = serde_json::from_str(&receipt.content.detail).unwrap();
+        assert_eq!(detail["version"], row.version);
+        assert!(
+            detail["reason"]
+                .as_str()
+                .unwrap()
+                .contains("operator snooze is active")
+        );
+    }
 }
 
 impl Drop for Fixture {
@@ -389,12 +423,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.until = json!(OPERATOR_SNOOZE);
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
-    let write = prepare().await.unwrap().unwrap();
-    let error = service
-        .wake_parent_delivery(&row, PROVIDER, &write)
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("operator snooze is active"));
+    fixture.assert_operator_snooze_receipt(&row).await;
     assert_eq!(fixture.commands().len(), 4);
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 

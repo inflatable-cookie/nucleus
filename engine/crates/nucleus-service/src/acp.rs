@@ -171,8 +171,17 @@ impl Service {
     ) -> Result<bool, ServiceError> {
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let message = write.starts_turn();
+        if let Some(provider) = write.delivery_provider()
+            && let Err(error) = self.wake_parent_delivery(row, provider, &write).await
+        {
+            if let ServiceError::ParentNotSent { reason, .. } = &error {
+                self.record_parent_refusal(row, &command, "preflight", None, reason)
+                    .await?;
+            }
+            return Err(error);
+        }
         if let Err(cause) = self.host.verify_parent_write(&mut write).await {
-            self.record_parent_refusal(row, &command, "preflight", None, cause)
+            self.record_parent_refusal(row, &command, "preflight", None, &cause.to_string())
                 .await?;
             return Err(if message {
                 self.parent_not_sent(cause)
@@ -194,7 +203,7 @@ impl Service {
             }
             Err(nucleus_hosts::ParentSendError::Unknown(error)) => Err(error.into()),
             Err(nucleus_hosts::ParentSendError::NotSent(error)) => {
-                self.record_parent_refusal(row, &command, session, intent_kind, error)
+                self.record_parent_refusal(row, &command, session, intent_kind, &error.to_string())
                     .await?;
                 Err(if message {
                     self.parent_not_sent(error)
@@ -211,7 +220,7 @@ impl Service {
         command: &str,
         session: &str,
         intent_kind: Option<&str>,
-        error: nucleus_hosts::HostError,
+        reason: &str,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
@@ -226,7 +235,7 @@ impl Service {
         let mut audit = event("native_turn_not_sent");
         audit.detail = serde_json::json!({
             "command": command, "version": row.version, "session": session,
-            "attempt": attempt, "reason": error.to_string(),
+            "attempt": attempt, "reason": reason,
         })
         .to_string();
         state.store.claim_task_effect(id, &audit)?;
@@ -332,7 +341,6 @@ impl Service {
         else {
             return Ok(false);
         };
-        self.wake_parent_delivery(row, provider, &write).await?;
         self.ensure_parent_reader(id, checkout.path()).await?;
         let session = self
             .host

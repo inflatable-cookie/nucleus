@@ -90,6 +90,13 @@ impl ParentWrite {
     }
 
     #[must_use]
+    pub fn delivery_provider(&self) -> Option<&str> {
+        self.delivery
+            .as_ref()
+            .map(|delivery| delivery.provider.as_str())
+    }
+
+    #[must_use]
     pub fn starts_turn(&self) -> bool {
         self.rpc == "orchestration.launchThread" || self.payload["type"] == "message.dispatch"
     }

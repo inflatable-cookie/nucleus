@@ -776,7 +776,6 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
-                self.wake_parent_delivery(row, provider, &write).await?;
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
                 let command = write.command_id().ok_or(ServiceError::Input)?;
