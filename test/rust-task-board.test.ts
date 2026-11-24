@@ -5,7 +5,7 @@ import { createServer, request, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { profilesView } from "../client/web/engine-settings-api";
+import { profilesSnapshot } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
   type RustCommand,
@@ -58,7 +58,7 @@ test("Rust board settings retain imported profile fields across edits", () => {
     unrated: true,
   };
   const saved = { profiles: [profile], pausedGroups: ["fixture-group"] };
-  const { settings } = profilesView.parse({
+  const settings = profilesSnapshot.parse({
     revision: "fixture-revision", configured: true, value: saved,
   });
   assert.deepEqual(settings.value, saved);

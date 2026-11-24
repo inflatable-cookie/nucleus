@@ -2101,8 +2101,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     assert_eq!(json_body(added).await["kind"], "papercut");
     // The theme is a cache read; a fixture without a host config stream has none yet.
     let theme =
-        json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await)
-            .await;
+        json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await).await;
     assert_eq!(theme, json!({"theme": null}));
     let reassign = browser_request(
         api,

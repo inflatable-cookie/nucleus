@@ -690,6 +690,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       scratchRoot?: string | null;
       logRoot?: string | null;
       buildsRoot?: string | null;
+      placement?: "internal" | "barge";
     }) => {
       const current = await rust.domain(storageView, "storage");
       await rust.saveDomain(storageView, "storage", current.settings.revision, {
@@ -698,6 +699,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         ...(input.scratchRoot !== undefined ? { scratchRoot: input.scratchRoot } : {}),
         ...(input.logRoot !== undefined ? { logRoot: input.logRoot } : {}),
         ...(input.buildsRoot !== undefined ? { buildsRoot: input.buildsRoot } : {}),
+        ...(input.placement ? { placement: input.placement } : {}),
       });
       return storageState();
     },
@@ -712,7 +714,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       workVolumeId: stored.value.workVolume?.volumeId ?? null,
       worktreesRoot: active.bargePaths?.worktrees ?? active.workRoot,
       ...(active.buildsRoot ? { buildsRoot: active.buildsRoot } : {}),
-      ...(active.placement ? { placement: active.placement } : {}),
+      ...(stored.value.placement ?? active.placement
+        ? { placement: stored.value.placement ?? active.placement }
+        : {}),
+      ...(active.placement ? { activePlacement: active.placement } : {}),
       ...(active.home ? { home: active.home } : {}),
       backupRoot: active.backupRoot,
       scratchRoot: active.scratchRoot,

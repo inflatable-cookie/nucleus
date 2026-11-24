@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import {
   Button,
+  DropdownSelect,
   Field,
   HelpPopover,
   HelpTip,
@@ -299,13 +300,26 @@ export function StoragePanel({
               </Text>
             )}
           </View>
-          {(state.placement || state.home) && (
-            <Text style={muted(c)} accessibilityLabel="Placement">
+          {state.placement && (
+            <DropdownSelect
+              c={c}
+              label="Placement"
+              value={state.placement}
+              disabled={saving}
+              options={[
+                { value: "internal", label: "Internal" },
+                { value: "barge", label: "Barge pool" },
+              ]}
+              onChange={(value) =>
+                void persist({ placement: value === "barge" ? "barge" : "internal" }).catch(() => {})
+              }
+            />
+          )}
+          {(state.activePlacement || state.home) && (
+            <Text style={muted(c)} accessibilityLabel="Placement in force">
               {[
-                state.placement
-                  ? state.placement === "barge"
-                    ? "Placement: Barge pool"
-                    : "Placement: internal"
+                state.activePlacement
+                  ? `In force: ${state.activePlacement === "barge" ? "Barge pool" : "internal"}`
                   : null,
                 state.home ? `home ${state.home}` : null,
               ]

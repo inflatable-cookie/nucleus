@@ -47,6 +47,8 @@ export const workStorageStateSchema = z
     /** The Rust engine only: its durable home and whether work sits in a Barge pool. */
     home: z.string().min(1).optional(),
     placement: z.enum(["internal", "barge"]).optional(),
+    /** The placement in force; a saved change applies on restart. */
+    activePlacement: z.enum(["internal", "barge"]).optional(),
     /** The Rust engine only: where its database lives. */
     databaseRoot: z.string().min(1).optional(),
     /** Null when the engine resolves platform defaults itself and does not report them. */
@@ -108,6 +110,8 @@ export const workStorageInputSchema = z
     custodianRoot: z.string().min(1).nullable().optional(),
     logRoot: z.string().min(1).nullable().optional(),
     buildsRoot: z.string().min(1).nullable().optional(),
+    /** The Rust engine only: keep work internal or place it in a Barge pool. */
+    placement: z.enum(["internal", "barge"]).optional(),
   })
   .strict();
 
