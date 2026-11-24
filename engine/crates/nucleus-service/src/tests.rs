@@ -415,7 +415,10 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
                 "session": format!("{}/previous-engine", service.host.runtime_identity().unwrap()),
             })
             .to_string();
-            state.store.claim_task_effect("worker", &blocked).unwrap();
+            state
+                .store
+                .claim_task_effect("worker", &blocked, false)
+                .unwrap();
             service.track(&mut state, &task);
             service.lookup(&state, "worker").unwrap()
         };
@@ -431,7 +434,7 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             .unwrap();
         {
             let mut state = service.state.lock().await;
-            assert_eq!(state.waits["worker"].reason, WaitReason::HostUnknown);
+            assert_eq!(state.wait_reason("worker"), Some(WaitReason::HostUnknown));
             let due = state.schedule.due("worker").expect("one decisive recheck");
             assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
             assert!(state.schedule.recover_host_observation("worker", due, None));
@@ -510,6 +513,23 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             state.task_attention(&row).unwrap(),
             crate::attention::TaskAttention::Attention
         );
+    }
+    {
+        let mut state = service.state.lock().await;
+        let board_times = state.store.board_times("unsent").unwrap();
+        assert!(board_times.0.is_some());
+        let since = state.waits["unsent"].since;
+        assert!(
+            state
+                .observe_wait_detail(
+                    &row.task,
+                    Some(WaitReason::HostUnknown),
+                    Some(crate::WaitDetail::Observation("Checking task thread.")),
+                )
+                .unwrap()
+        );
+        assert_eq!(state.store.board_times("unsent").unwrap(), board_times);
+        assert_eq!(state.waits["unsent"].since, since);
     }
     assert!(
         !service

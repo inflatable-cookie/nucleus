@@ -2118,12 +2118,178 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_body(response).await["phase"], "queued");
     assert_event(&mut events, &["event: invalidate", "board-task"]).await;
     assert_eq!(
         json_body(get_as(&api, "/v1/tasks/board-task", &BOARD_KEY).await).await["wait"],
         "hold"
     );
     assert_browser_lanes(&api, &operator, &mut events).await;
+}
+
+#[tokio::test]
+async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
+    let forge = || GitHub::new("unused-fixture-forge").unwrap();
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    let service = Arc::new(service);
+    let setup = |service| {
+        router_with_board(
+            service,
+            [Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "fixture".into(),
+                },
+            }],
+            &assets,
+        )
+        .unwrap()
+    };
+    let api = setup(Arc::clone(&service));
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let list = "/api/engine/tasks";
+    let detail = "/api/engine/tasks/age";
+    let next = "/api/engine/tasks/age/next";
+    let admitted = json!({"id":"age","reference":"age","brief":"---\nqueue:\n  complexity: low\n---\n# Initial title"});
+    let response = browser_request(&api, Method::POST, list, Some(&cookie), Some(&admitted)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let queued = read_paired_task(&api, detail, &cookie).await;
+    assert_eq!(queued["stateLabel"], "Queued");
+    let created = &queued["createdAtMs"];
+    assert!(created.is_u64());
+    assert_eq!(&queued["stateSinceMs"], created);
+
+    observe_task_wait(&service, WaitReason::Capacity).await;
+    let since = 1_700_000_000_000_i64;
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .record_board_entry("age", since)
+        .unwrap();
+    let capacity = read_paired_task(&api, list, &cookie).await[0].clone();
+    assert_eq!(capacity["stateLabel"], "Waiting for capacity");
+    assert_eq!(capacity["stateSinceMs"], since);
+
+    let amend = json!({"amend": "---\nqueue:\n  complexity: low\n---\n# Renamed title"});
+    let response = browser_request(
+        &api,
+        Method::POST,
+        "/api/engine/tasks/age/commands",
+        Some(&cookie),
+        Some(&amend),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let changed = json_body(response).await;
+    assert_eq!(changed["title"], "Renamed title");
+    assert_eq!(changed["stateSinceMs"], since);
+    assert!(
+        service.host.host_calls().is_empty(),
+        "board GETs do not read the host"
+    );
+    drop(api);
+    drop(service);
+
+    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let api = setup(Arc::clone(&reopened));
+    observe_task_wait(&reopened, WaitReason::Capacity).await;
+    let recorded = reopened
+        .state
+        .lock()
+        .await
+        .store
+        .board_times("age")
+        .unwrap()
+        .0;
+    assert_eq!(
+        recorded,
+        u64::try_from(since).ok(),
+        "restart did not write a clock"
+    );
+
+    for (path, array) in [(list, true), (detail, false), (next, false)] {
+        let dto = read_paired_task(&api, path, &cookie).await;
+        let view = if array { &dto[0] } else { &dto };
+        assert_eq!(view["stateLabel"], "Waiting for capacity", "{path}");
+        assert!(
+            view["stateSinceMs"].is_null(),
+            "{path} has no verified entry"
+        );
+    }
+    observe_task_wait(&reopened, WaitReason::ForgeUnknown).await;
+    let changed = read_paired_task(&api, detail, &cookie).await;
+    assert_eq!(changed["stateLabel"], "Waiting for GitHub");
+    assert!(changed["stateSinceMs"].as_i64().unwrap() > since);
+    assert_eq!(&changed["createdAtMs"], created);
+}
+
+#[tokio::test]
+async fn operator_hold_keeps_its_state_entry_across_restart() {
+    let forge = || GitHub::new("unused-fixture-forge").unwrap();
+    let (_home, service) = fixture(forge());
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    seed_planner_task(&service, "held", "fixture-planner").await;
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    service
+        .command("held", &operator, Command::Hold("Wait for approval".into()))
+        .await
+        .unwrap();
+    let api = settings_api(&Arc::new(service));
+    let path = "/v1/tasks/held";
+    let before = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(before["stateLabel"], "Waiting on Tom");
+    assert!(before["stateSinceMs"].is_u64());
+    drop(api);
+
+    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let after = json_body(get_as(&settings_api(&reopened), path, &BOARD_KEY).await).await;
+    assert_eq!(after["stateLabel"], before["stateLabel"]);
+    assert_eq!(after["stateSinceMs"], before["stateSinceMs"]);
+}
+
+async fn observe_task_wait(service: &Service, wait: WaitReason) {
+    let row = service.task("age").await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(wait)),
+            crate::schedule::Priority::Wake,
+        )
+        .await
+        .unwrap();
+}
+
+async fn read_paired_task(api: &Router, path: &str, cookie: &str) -> Value {
+    let response = browser_request(api, Method::GET, path, Some(cookie), None).await;
+    assert_eq!(response.status(), StatusCode::OK, "{path}");
+    json_body(response).await
+}
+
+fn reopen_fixture(
+    settings: &nucleus_store::SettingsFile,
+    project: crate::Project,
+    forge: GitHub,
+) -> Service {
+    Service::open(
+        settings,
+        project,
+        T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+        forge,
+        LOCAL_HOST.parse().unwrap(),
+        std::env::current_exe().unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -2159,17 +2325,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     drop(api);
 
-    let reopen = || {
-        Service::open(
-            &settings,
-            project.clone(),
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            forge(),
-            "127.0.0.1:9".parse().unwrap(),
-            std::env::current_exe().unwrap(),
-        )
-        .unwrap()
-    };
+    let reopen = || reopen_fixture(&settings, project.clone(), forge());
     let api = setup(reopen());
     let session_path = "/api/engine/session";
     let session = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;

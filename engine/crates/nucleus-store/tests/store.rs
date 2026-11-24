@@ -90,7 +90,7 @@ fn old_preflight_fences_reopen_and_ambiguous_delivery_survives_reopen() {
         let mut append = |kind, detail: serde_json::Value| {
             let mut entry = event(kind);
             entry.detail = detail.to_string();
-            store.claim_task_effect(id, &entry).unwrap();
+            store.claim_task_effect(id, &entry, false).unwrap();
         };
         if matches!(id, "completed" | "ambiguous") {
             append(
@@ -153,19 +153,23 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
         })
         .to_string();
         let sequence = store
-            .claim_task_effect("fixture", &receipt)
+            .claim_task_effect("fixture", &receipt, true)
             .expect("claim")
             .expect("new event");
         assert_eq!(
             store.history("fixture", None, 1).unwrap()[0].sequence,
             sequence
         );
+        let entered_at = u64::try_from(receipt.at).unwrap();
+        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
+        receipt.at += 1;
         assert_eq!(
             store
-                .claim_task_effect("fixture", &receipt)
+                .claim_task_effect("fixture", &receipt, true)
                 .expect("duplicate"),
             None
         );
+        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
         version
     };
     let store = Store::open(&storage).expect("reopen");

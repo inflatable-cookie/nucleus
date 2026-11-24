@@ -281,7 +281,7 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &intent)?
+            .claim_task_effect(id, &intent, false)?
             .is_some())
     }
 

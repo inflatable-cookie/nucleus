@@ -121,7 +121,7 @@ impl Service {
         .to_string();
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
-        let recorded = state.store.claim_task_effect(id, &intent)?.is_some();
+        let recorded = state.store.claim_task_effect(id, &intent, false)?.is_some();
         if recorded {
             if kind == "native_turn_failed" {
                 state.wake_capacity(tokio::time::Instant::now());
@@ -155,9 +155,12 @@ impl Service {
             "command": command, "version": row.version, "session": session, "retryOf": retry_of,
         })
         .to_string();
-        let attempt = state.store.claim_task_effect(id, &intent)?;
-        if attempt.is_some() && matches!(kind, "native_turn_intent" | "native_turn_replay") {
-            state.set_wait(id, Some(WaitReason::Starting));
+        let starting = matches!(kind, "native_turn_intent" | "native_turn_replay");
+        let wait = Some(WaitReason::Starting);
+        let entered = starting && state.wait_label_changed(&row.task, wait);
+        let attempt = state.store.claim_task_effect(id, &intent, entered)?;
+        if attempt.is_some() && starting {
+            state.apply_observed_wait(&row.task, wait, entered);
             self.publish(id, row.version);
         }
         Ok(attempt)
@@ -236,7 +239,7 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &audit)?;
+            .claim_task_effect(id, &audit, false)?;
         Ok(())
     }
 

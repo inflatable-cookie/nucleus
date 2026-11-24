@@ -623,7 +623,7 @@ impl Service {
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            title: crate::titles::child_title(task, row.reference().as_ref(), role),
+            title: crate::titles::child_title(task, row.number, role),
             profile,
             via: &via,
             instance: &instance,
@@ -672,7 +672,7 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &audit)?
+            .claim_task_effect(id, &audit, false)?
             .is_some()
         {
             eprintln!(

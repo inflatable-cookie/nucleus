@@ -192,9 +192,9 @@ Later decisions carry their own attribution.
     - The Dispatch settings domain drops `max_load`, and a saved domain that still carries it loads with the field ignored.
 22. **Native task titles.** Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
     - Tom, 2026-11-24: "We'll need the generated project badge icons that match T3 (the screenshot shows a card from rust version and a card from TS version) along with task numbers". Each repository gets its own durable allocator. Seed it from the fenced TypeScript allocator before admitting into a migrated repository and backfill the three pilot tasks in admission order.
-    - The task row shows `<State>: <reference> <brief title>`. The public reference is `repo#N`, with the number shown as assigned. Worker children use `<reference>: <brief title>` and reviewer children use `<reference> review: <brief title>`. Strip a trailing `worker` and fit the title to the host's limit at a word boundary.
+    - The task row shows `<State>: #N <brief title>`. Worker children use `#N: <brief title>` and reviewer children use `#N review: <brief title>`. T3 already shows the project. Use the assigned number without padding, and omit the number until it is assigned. Strip a trailing `worker` and fit the title to the host's limit at a word boundary. Update existing live task rows through the title receipt. Already-launched child titles keep their frozen value.
     - Rust CLI task commands and task API paths accept `repo#N` wherever they took only an internal task ID. The engine uses its assigned numbers and the authenticated controller's scope. Bare `#N` requires a project with exactly one repository. When a slug matches multiple visible tasks, use `owner/repo#N`. Internal IDs remain valid.
-    - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
+    - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Checking task thread, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
     - One local attention projection feeds the board, `task.next` and the scheduler's T3 row reconciliation. A person needed for a question, decision, role input or approval sees the row, as does an active role. Capacity, prerequisites, holds and report-ready tasks wait quietly. A missing or cancelled prerequisite needs an owner edit.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
@@ -572,6 +572,18 @@ The standalone board is the TypeScript web board itself: the same navigation,
 cards, task dialog, Inbox list, planning screens and Settings sections. One
 client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
 board contracts from the paired API, so there is no second set of screens.
+
+A Rust card puts the engine's effective state and the time spent in that state
+beside each other in the top right. List, detail, `next` and native task titles
+share the label. A blocking hold supplies the label. A hold that lets the
+current turn finish adds an asterisk when the phase is shown. The engine
+records a label change with the task update or scheduler wait that caused it.
+Unrelated updates and repeated observations leave the entry time intact. Reads
+use local task state and the recorded entry time. Older rows start showing an
+age after a recorded transition. The first scheduler observation after restart
+establishes a volatile wait without dating it. A label fixed by committed facts,
+such as a blocking hold or a finished phase, keeps its recorded entry time.
+
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. Screens leave out
 controls for machinery these rulings retire; `client/engine-features.ts` names

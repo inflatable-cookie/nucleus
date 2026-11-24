@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-use crate::{EventDraft, Store, StoreError, append};
+use crate::{EventDraft, Store, StoreError, append, board_state};
 
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS task_prerequisite_waits (
@@ -68,7 +68,7 @@ impl Store {
     /// # Errors
     /// Returns a database error if the gate cannot be read.
     pub fn dependency_blocked(&self, id: &str) -> Result<bool, StoreError> {
-        self.dependency_gate(id, false)
+        dependency_gate(&self.connection, id, false)
     }
 
     /// Whether a blocking dependency needs an owner edit before work can proceed.
@@ -76,29 +76,7 @@ impl Store {
     /// # Errors
     /// Returns a database error if the gate cannot be read.
     pub fn dependency_needs_edit(&self, id: &str) -> Result<bool, StoreError> {
-        self.dependency_gate(id, true)
-    }
-
-    fn dependency_gate(&self, id: &str, needs_edit: bool) -> Result<bool, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT EXISTS (
-                SELECT 1 FROM task_dependencies d
-                LEFT JOIN tasks p ON p.id = d.prerequisite_id
-                JOIN tasks t ON t.id = d.task_id
-                WHERE d.task_id = ?1 AND CASE ?2 WHEN 0 THEN coalesce(p.phase, '') != 'done'
-                                      ELSE p.phase IS NULL OR p.phase = 'cancelled' END
-                AND CASE d.after_dispatch
-                    WHEN 0 THEN json_extract(t.threads, '$.worker') IS NULL
-                            AND json_extract(t.threads, '$.reviewer') IS NULL
-                    ELSE EXISTS (
-                        SELECT 1 FROM task_prerequisite_waits w
-                        WHERE w.task_id = d.task_id AND w.released_at_ms IS NULL
-                    )
-                END
-            )",
-            params![id, needs_edit],
-            |row| row.get(0),
-        )?)
+        dependency_gate(&self.connection, id, true)
     }
 
     /// Find tasks to wake and invalidate after a prerequisite's state changes.
@@ -198,6 +176,7 @@ impl Store {
         version: i64,
         edit: DependencyEdit<'_>,
         event: &EventDraft,
+        clock: DependencyClock<'_>,
     ) -> Result<i64, StoreError> {
         let tx = self
             .connection
@@ -255,10 +234,52 @@ impl Store {
                 )?;
             }
         }
+        record_board_gate(&tx, id, clock, event.at)?;
         append(&tx, id, event)?;
         tx.commit()?;
         Ok(version + 1)
     }
+}
+
+pub(super) fn dependency_gate(
+    connection: &Connection,
+    id: &str,
+    needs_edit: bool,
+) -> Result<bool, StoreError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS (
+                SELECT 1 FROM task_dependencies d
+                LEFT JOIN tasks p ON p.id = d.prerequisite_id
+                JOIN tasks t ON t.id = d.task_id
+                WHERE d.task_id = ?1 AND CASE ?2 WHEN 0 THEN coalesce(p.phase, '') != 'done'
+                                      ELSE p.phase IS NULL OR p.phase = 'cancelled' END
+                AND CASE d.after_dispatch
+                    WHEN 0 THEN json_extract(t.threads, '$.worker') IS NULL
+                            AND json_extract(t.threads, '$.reviewer') IS NULL
+                    ELSE EXISTS (
+                        SELECT 1 FROM task_prerequisite_waits w
+                        WHERE w.task_id = d.task_id AND w.released_at_ms IS NULL
+                    )
+                END
+            )",
+        params![id, needs_edit],
+        |row| row.get(0),
+    )?)
+}
+
+/// Reports the committed dependency gate to the service's label comparison.
+pub type DependencyClock<'a> = &'a mut dyn FnMut(bool) -> bool;
+
+pub(super) fn record_board_gate(
+    connection: &Connection,
+    id: &str,
+    clock: DependencyClock<'_>,
+    at: i64,
+) -> Result<(), StoreError> {
+    if clock(dependency_gate(connection, id, false)?) {
+        board_state::record(connection, id, at)?;
+    }
+    Ok(())
 }
 
 fn read(connection: &Connection, id: &str) -> Result<Dependencies, StoreError> {

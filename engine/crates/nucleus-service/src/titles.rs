@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use nucleus_core::{HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
+use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
 use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
 
@@ -10,17 +10,39 @@ use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget, presenta
 
 const T3_TITLE_LIMIT: usize = 200;
 
-pub(super) fn child_title(task: &Task, reference: &str, role: Role) -> String {
-    let role = if role == Role::Reviewer {
-        " review"
-    } else {
-        ""
+pub(super) fn child_title(task: &Task, number: Option<i64>, role: Role) -> String {
+    let prefix = match (number, role) {
+        (Some(number), Role::Worker) => format!("#{number}: "),
+        (Some(number), Role::Reviewer) => format!("#{number} review: "),
+        (None, Role::Worker) => String::new(),
+        (None, Role::Reviewer) => "Review: ".into(),
     };
-    fit(&format!("{reference}{role}: {}", brief(task)))
+    fit(&format!("{prefix}{}", brief(task)))
 }
 
-fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> String {
-    let phase = match task.phase() {
+fn task_title(task: &Task, number: Option<i64>, label: &str) -> String {
+    let number = number.map_or_else(String::new, |number| format!("#{number} "));
+    fit(&format!("{label}: {number}{}", brief(task)))
+}
+
+// The compact taskTitleStateLabel rule serves both native titles and the board.
+pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String {
+    if let Some(label) = task_label_from_facts(task) {
+        return label;
+    }
+    if let Some(label) = wait_label(wait) {
+        return label.into();
+    }
+    let phase = phase_label(task);
+    if task.hold().is_some() {
+        format!("{phase}*")
+    } else {
+        phase.into()
+    }
+}
+
+fn phase_label(task: &Task) -> &'static str {
+    match task.phase() {
         Phase::Queued => "Queued",
         Phase::Working
             if matches!(
@@ -42,42 +64,61 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
         Phase::Closing => "Closing",
         Phase::Done => "Done",
         Phase::Cancelled => "Cancelled",
-    };
-    let label = if task.phase().is_terminal() {
-        phase.into()
-    } else if task.operator_question().is_some() && task.operator_decline().is_none() {
-        "Waiting on Tom".into()
-    } else if let Some(hold) = task.hold() {
-        if task
-            .run()
-            .is_some_and(|run| !run.revoked() && run.last_send_at_ms().is_some())
-        {
-            format!("{phase}*")
-        } else if let Some(target) = reference(&hold.reason) {
-            format!("Waiting on {target}")
-        } else {
-            match (task.phase(), hold.by) {
-                (Phase::Merging, Some(HoldBy::Operator)) => "Merge held by Tom",
-                (Phase::Merging, Some(HoldBy::Planner)) => "Merge held by planner",
-                (Phase::Merging, None) => "Merge held",
-                (_, Some(HoldBy::Operator)) => "Waiting on Tom",
-                (_, Some(HoldBy::Planner)) => "Held by planner",
-                (_, None) => "Held",
-            }
-            .into()
+    }
+}
+
+// These committed facts determine the label regardless of the scheduler wait.
+pub(super) fn task_label_from_facts(task: &Task) -> Option<String> {
+    let has_live_run = task.run().is_some_and(|run| {
+        !run.revoked() && run.last_send_at_ms().is_some() && run.report().is_none()
+    });
+    Some(match task.phase() {
+        Phase::Done | Phase::Cancelled => phase_label(task).into(),
+        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "Stopping".into(),
+        _ if let Some(hold) = task.hold().filter(|_| !has_live_run) => {
+            held_label(task.phase(), hold)
         }
-    } else {
-        match wait {
-            Some(WaitReason::Capacity) => "Waiting for capacity",
-            Some(WaitReason::Prerequisite) => "Waiting for prerequisites",
-            Some(WaitReason::HostUnknown) => "Checking task thread",
-            Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
-            Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
-            _ => phase,
-        }
-        .into()
-    };
-    fit(&format!("{label}: {label_reference} {}", brief(task)))
+        _ if task.operator_decline().is_some() => "Declined by Tom".into(),
+        _ if task.operator_question().is_some() => "Waiting on Tom".into(),
+        _ if task.question().is_some() => "Waiting for the planner".into(),
+        _ => return None,
+    })
+}
+
+fn held_label(phase: Phase, hold: &Hold) -> String {
+    if let Some(target) = reference(&hold.reason) {
+        return format!("Waiting on {target}");
+    }
+    match (phase, hold.by) {
+        (Phase::Merging, Some(HoldBy::Operator)) => "Merge held by Tom",
+        (Phase::Merging, Some(HoldBy::Planner)) => "Merge held by planner",
+        (Phase::Merging, None) => "Merge held",
+        (_, Some(HoldBy::Operator)) => "Waiting on Tom",
+        (_, Some(HoldBy::Planner)) => "Held by planner",
+        (_, None) => "Held",
+    }
+    .into()
+}
+
+fn wait_label(wait: Option<WaitReason>) -> Option<&'static str> {
+    Some(match wait {
+        Some(WaitReason::Question) => "Waiting for the planner",
+        Some(WaitReason::Capacity) => "Waiting for capacity",
+        Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
+        Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
+        Some(WaitReason::UsagePermission) => "Waiting on Tom",
+        Some(WaitReason::HostUnknown) => "Checking task thread",
+        Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
+        Some(WaitReason::Permission) => "Waiting for permission",
+        Some(WaitReason::Input) => "Waiting for input",
+        Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
+        Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
+        Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
+        Some(WaitReason::ChecksPending) => "Waiting for checks",
+        Some(WaitReason::AssignmentTooLarge) => "Assignment too large",
+        Some(WaitReason::Starting) => "Starting",
+        _ => return None,
+    })
 }
 
 pub(super) fn brief(task: &Task) -> String {
@@ -158,17 +199,18 @@ fn inbox_title(decisions: usize, running: usize, mode: DispatchMode) -> String {
 }
 
 impl Service {
-    pub(super) fn desire_title(
-        &self,
-        state: &State,
-        task: &Task,
-        reference: &str,
-        wait: Option<WaitReason>,
-    ) {
+    pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) {
         if self.acp_provider().is_none() {
             return;
         }
         let id = &task.identity().id;
+        let label = match state.effective_wait(task) {
+            Ok(wait) => task_state_label(task, wait),
+            Err(error) => {
+                eprintln!("{id}: {error}");
+                return;
+            }
+        };
         let path = nucleus_work::checkout_path(
             self.storage.work().path(),
             &task.identity().repository,
@@ -177,7 +219,7 @@ impl Service {
         let thread = nucleus_hosts::parent_thread(&path);
         match state
             .store
-            .desire_title(id, &thread, &task_title(task, reference, wait))
+            .desire_title(id, &thread, &task_title(task, number, &label))
         {
             Ok(true) => self.title_wake.notify_one(),
             Ok(false) => {}
@@ -197,8 +239,7 @@ impl Service {
                         .into_iter()
                         .filter(|row| self.task_scope(row.task.identity()).is_ok())
                     {
-                        let wait = state.wait_reason(&row.task.identity().id);
-                        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
+                        self.desire_title(&state, &row.task, row.number);
                     }
                 }
                 Err(error) => eprintln!("{error}"),
@@ -290,7 +331,7 @@ impl Service {
         let running = state
             .waits
             .values()
-            .filter(|wait| wait.reason == WaitReason::Running)
+            .filter(|wait| wait.reason == Some(WaitReason::Running))
             .count();
         let mode = state
             .settings
@@ -434,20 +475,28 @@ mod tests {
     fn title_policy_formats_reference_roles_and_waits() {
         let mut task = task();
         assert_eq!(
-            child_title(&task, "fixture#1", Role::Worker),
-            "fixture#1: Add a greeting"
+            child_title(&task, Some(1), Role::Worker),
+            "#1: Add a greeting"
         );
         assert_eq!(
-            child_title(&task, "fixture#1", Role::Reviewer),
-            "fixture#1 review: Add a greeting"
+            child_title(&task, Some(1), Role::Reviewer),
+            "#1 review: Add a greeting"
         );
         assert_eq!(
-            task_title(&task, "fixture#1", Some(WaitReason::Capacity)),
-            "Waiting for capacity: fixture#1 Add a greeting"
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Capacity))
+            ),
+            "Waiting for capacity: #1 Add a greeting"
         );
         assert_eq!(
-            task_title(&task, "fixture#1", Some(WaitReason::HostUnknown)),
-            "Checking task thread: fixture#1 Add a greeting"
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::HostUnknown))
+            ),
+            "Checking task thread: #1 Add a greeting"
         );
         let authority = Authority::Planner {
             actor: "planner".into(),
@@ -460,20 +509,32 @@ mod tests {
         task.command(Command::Hold("After (fixture#2).".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, "fixture#1", Some(WaitReason::Hold)),
-            "Waiting on fixture#2: fixture#1 Add a greeting"
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Hold))
+            ),
+            "Waiting on fixture#2: #1 Add a greeting"
         );
         task.command(Command::Hold("Wait for copy".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, "fixture#1", Some(WaitReason::Hold)),
-            "Held by planner: fixture#1 Add a greeting"
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Hold))
+            ),
+            "Held by planner: #1 Add a greeting"
         );
         task.command(Command::Cancel, &authority, &obs)
             .expect("cancel");
         assert_eq!(
-            task_title(&task, "fixture#1", Some(WaitReason::Stopping)),
-            "Cancelled: fixture#1 Add a greeting"
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Stopping))
+            ),
+            "Cancelled: #1 Add a greeting"
         );
         let prefix = "🔬 ".repeat(66);
         assert_eq!(
@@ -649,7 +710,7 @@ mod tests {
                 assert_eq!(
                     req["payload"],
                     json!({"type":"thread.metadata.update","threadId":expected,
-                    "commandId":"task-fixture-title-1","title":"Queued: nucleus-fixture#1 Add a greeting"})
+                    "commandId":"task-fixture-title-1","title":"Waiting for the planner: #1 Add a greeting"})
                 );
                 json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
             }
@@ -667,7 +728,7 @@ mod tests {
             let row = service
                 .lookup(&state, &subject.identity().id)
                 .expect("task");
-            service.desire_title(&state, &row.task, row.reference().as_ref(), None);
+            service.desire_title(&state, &row.task, row.number);
             assert!(
                 state
                     .store
@@ -704,7 +765,7 @@ mod tests {
         {
             let state = service.state.lock().await;
             let row = service.lookup(&state, id).unwrap();
-            service.desire_title(&state, &row.task, row.reference().as_ref(), None);
+            service.desire_title(&state, &row.task, row.number);
         }
         assert!(
             service

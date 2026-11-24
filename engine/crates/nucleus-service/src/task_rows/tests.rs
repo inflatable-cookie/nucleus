@@ -252,7 +252,7 @@ async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
     {
         let mut state = service.state.lock().await;
         state.store.create(&task, &event("fixture")).unwrap();
-        service.desire_title(&state, &task, ID, None);
+        service.desire_title(&state, &task, None);
         service.track(&mut state, &task);
     }
     let mut row = json!({"id":child, "status":"completed", "activeRunId":null,
@@ -318,7 +318,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
                 },
             )
             .unwrap();
-        service.desire_title(&state, &pending, ID, None);
+        service.desire_title(&state, &pending, None);
     }
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     fixture.sync().await;
@@ -334,9 +334,10 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     let row = {
         let mut state = service.state.lock().await;
         let prior = service.lookup(&state, ID).unwrap();
+        let release = event("dependency_released");
         state
             .store
-            .save_brief_with_dependencies(&prior, &pending, &event("dependency_released"), &[])
+            .save_brief_with_dependencies(&prior, &pending, &release, &[], None)
             .unwrap();
         let released = service.lookup(&state, ID).unwrap();
         service
@@ -403,7 +404,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let row = {
         let mut state = service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        service.desire_title(&state, &pending, ID, None);
+        service.desire_title(&state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
     fixture.observe_empty_shell();

@@ -219,7 +219,15 @@ export function activityStatus(activity: TaskActivity): CardStatus {
 }
 
 /** The row's status line, one line: dot, state, then ` · detail`. */
-export function StatusLine({ status, c }: { status: CardStatus; c: Colors }) {
+export function StatusLine({
+  status,
+  c,
+  compact = false,
+}: {
+  status: CardStatus;
+  c: Colors;
+  compact?: boolean;
+}) {
   const color = toneColor(status.tone, c);
   return (
     <View
@@ -245,7 +253,7 @@ export function StatusLine({ status, c }: { status: CardStatus; c: Colors }) {
         numberOfLines={1}
         ellipsizeMode="tail"
         style={{
-          flex: 1,
+          flex: compact ? undefined : 1,
           minWidth: 0,
           fontSize: typeScale.metadata.fontSize,
           lineHeight: typeScale.metadata.lineHeight,
@@ -285,6 +293,7 @@ export const BoardCard = React.memo(function BoardCard({
   age,
   title,
   status,
+  statusInHeader = false,
   flags,
   actions,
 }: {
@@ -309,6 +318,8 @@ export const BoardCard = React.memo(function BoardCard({
   /** The record's own title, drawn as written (the caller sanitizes operational titles). */
   title: string;
   status?: CardStatus | null;
+  /** Put the state beside the age and leave any detail under the title. */
+  statusInHeader?: boolean;
   /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
   flags?: React.ReactNode;
   /**
@@ -319,7 +330,8 @@ export const BoardCard = React.memo(function BoardCard({
   actions?: React.ReactNode;
 }) {
   const variant = React.useContext(BoardCardVariantContext);
-  const hasMeta = Boolean(meta || project || age);
+  const headerStatus = statusInHeader ? status : null;
+  const hasMeta = Boolean(meta || project || age || headerStatus);
   const content = (
     <View
       pointerEvents="box-none"
@@ -366,6 +378,11 @@ export const BoardCard = React.memo(function BoardCard({
             </View>
           ) : null}
           <View style={{ flex: 1 }} />
+          {headerStatus && (
+            <View style={{ minWidth: 0, flexShrink: 1 }}>
+              <StatusLine c={c} status={{ ...headerStatus, detail: null }} compact />
+            </View>
+          )}
           {age ? (
             <Text
               numberOfLines={1}
@@ -393,7 +410,11 @@ export const BoardCard = React.memo(function BoardCard({
       >
         {title}
       </Text>
-      {status ? (
+      {headerStatus?.detail ? (
+        <Text pointerEvents="none" numberOfLines={1} style={muted(c)}>
+          {plainCardText(headerStatus.detail)}
+        </Text>
+      ) : status && !headerStatus ? (
         <View pointerEvents="none">
           <StatusLine status={status} c={c} />
         </View>
