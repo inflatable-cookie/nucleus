@@ -80,13 +80,15 @@ Later decisions carry their own attribution.
    The finish records the merge or report, closure, elapsed time and review
    rounds. All of this comes from engine records without additional T3 reads.
    Card updates reuse the run instance, and plan updates reuse the session plan.
-   Task transitions depend on the existing lifecycle facts independently of
-   presentation updates.
+   Parent holds end with their existing launch or child custody. The next
+   update or attach shows outcomes and the finish from the lifecycle audit.
    When the engine has no recorded change summary, the worker outcome says
    so. If the recorded send and report times cannot establish a duration,
    the finished card says it is unavailable. Older cards show participant
-   details when an exact binding survives. Previously journalled hold
-   payloads replay with their original text.
+   details when an exact binding survives. Provider and model show as
+   observed only with evidence from that exact run. Otherwise the card labels
+   any recorded assignment and leaves missing details unknown. Previously
+   journalled hold payloads replay with their original text.
 8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);

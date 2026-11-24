@@ -258,10 +258,11 @@ async fn view(
     {
         return (StatusCode::UNAUTHORIZED, Json(json!(null)));
     }
+    let reported = matches!(state, 3 | 9);
     let cards = if matches!(state, 0 | 5) {
         Vec::new()
     } else {
-        let outcome = (state == 3).then(|| {
+        let outcome = reported.then(|| {
             json!({
                 "kind":"work","url":"https://github.com/example/fixture/pull/7",
                 "summary":"Fixed the fixture.","revision":false,
@@ -269,13 +270,20 @@ async fn view(
         });
         vec![json!({
             "instance":INSTANCE,"role":"worker","purpose":"Write the fixture",
-            "provider":"codex","model":"fixture-model","threadUrl":"t3-thread://v1/thread:worker",
-            "startedAtMs":1_000,"elapsedMs":(state == 3).then_some(62_000),
-            "ended":matches!(state, 3 | 7),"outcome":outcome,
+            "provider":if reported { "claude" } else { "codex" },
+            "model":if reported { "observed-model" } else { "assigned-model" },
+            "modelObserved":reported,"threadUrl":"t3-thread://v1/thread:worker",
+            "startedAtMs":1_000,"elapsedMs":reported.then_some(62_000),
+            "ended":reported || state == 7,"outcome":outcome,
             "activity":(state == 2).then_some("Running Rust tests"),
         })]
     };
-    let step_state = if state == 3 { "done" } else { "current" };
+    let step_state = if reported { "done" } else { "current" };
+    let phase = match state {
+        3 => "done",
+        9 => "closing",
+        _ => "working",
+    };
     let step_note = match state {
         4 => Some("Waiting on Nucleus"),
         5 => Some("Waiting for prerequisite"),
@@ -288,13 +296,22 @@ async fn view(
             "version":1,
             "reference":"fixture#67",
             "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
-            "phase": if state == 3 { "done" } else { "working" },
-            "lifecycle":{"steps":[
-                {"key":"queued","label":"Queued","state":"done","tone":"success"},
-                {"key":"working","label":"Working","state":step_state,"note":step_note,"tone":"accent"}
-            ],"transcript":{"cards":cards,"completedReviews":0,"merged":false,"externalAcceptances":[]}},
+            "phase":phase,
+            "lifecycle":{
+                "steps":[
+                    {"key":"queued","label":"Queued","state":"done","tone":"success"},
+                    {"key":"working","label":"Working","state":step_state,"note":step_note,"tone":"accent"}
+                ],
+                "admittedAtMs":0,"finishedAtMs":(state == 3).then_some(120_000),
+                "transcript":{"cards":cards,"completedReviews":0,"merged":reported,"externalAcceptances":[]}
+            },
+            "pullRequest":reported.then(|| json!({
+                "url":"https://github.com/example/fixture/pull/7","head":format!("{:040x}",1)
+            })),
             "parentHold": (state == 0).then(|| legacy_parent_hold_prompt("fixture-hold")),
-            "activeChild": matches!(state, 1 | 2 | 8)
+            "activeChild": matches!(state, 1 | 2 | 8),
+            // Older candidates may still send this presentation hint.
+            "transcriptPending":state == 9,
         })),
     )
 }
@@ -390,7 +407,7 @@ fn write_pointer(path: &Path, binding: &impl serde::Serialize) {
 }
 
 #[tokio::test]
-async fn a_reloaded_session_holds_for_preparation_and_ends_cleanly_after_done() {
+async fn a_slow_close_releases_the_parent_and_reattach_renders_the_finish() {
     let (mut agent, fixture, home, server) = loopback().await;
     fixture.state.store(0, Ordering::Relaxed);
     let opened = agent
@@ -413,8 +430,11 @@ async fn a_reloaded_session_holds_for_preparation_and_ends_cleanly_after_done() 
     let _ = fixture.changes.send(());
     let start = agent.update("tool_call").await;
     assert_eq!(start["toolCallId"], INSTANCE);
-    assert_eq!(start["title"], "Worker · Codex / fixture-model · 00:00 UTC");
-    fixture.state.store(3, Ordering::Relaxed);
+    assert_eq!(
+        start["title"],
+        "Worker · Codex / assigned-model (assigned) · 00:00 UTC"
+    );
+    fixture.state.store(9, Ordering::Relaxed);
     let _ = fixture.changes.send(());
     agent.update("plan").await;
     let finished = agent.update("tool_call_update").await;
@@ -422,7 +442,7 @@ async fn a_reloaded_session_holds_for_preparation_and_ends_cleanly_after_done() 
     assert_eq!(finished["status"], "completed");
     assert_eq!(
         finished["title"],
-        "Worker · Codex / fixture-model · 00:00 UTC · 1m 2s"
+        "Worker · Claude / observed-model (observed) · 00:00 UTC · 1m 2s"
     );
     assert_eq!(
         finished["content"][0]["content"]["text"],
@@ -436,6 +456,26 @@ Fixed the fixture."
     );
     let end = agent.response(2).await;
     assert_eq!(end["result"]["stopReason"], "end_turn");
+
+    fixture.state.store(3, Ordering::Relaxed);
+    let loaded = agent
+        .call(
+            3,
+            "session/load",
+            json!({"sessionId":SESSION,"cwd":"/fixture"}),
+        )
+        .await;
+    assert_eq!(loaded["result"]["sessionId"], SESSION);
+    agent.update("plan").await;
+    let reattached = agent.update("tool_call").await;
+    assert_eq!(reattached["toolCallId"], INSTANCE);
+    assert_eq!(reattached["title"], finished["title"]);
+    assert_eq!(reattached["content"], finished["content"]);
+    let finish = agent.update("agent_message_chunk").await;
+    assert_eq!(
+        finish["content"]["text"],
+        "Merged [PR #7](https://github.com/example/fixture/pull/7) and closed · 2m 0s\n\n"
+    );
     assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
     server.abort();
 }

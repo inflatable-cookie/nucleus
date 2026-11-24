@@ -106,11 +106,17 @@ impl Card {
             Role::Reviewer => "Reviewer",
         };
         let mut title = role.to_owned();
-        if let Some(provider) = run.provider {
-            let _ = write!(title, " · {}", provider_label(provider));
-        }
-        if let Some(model) = &run.model {
-            let _ = write!(title, " / {model}");
+        if run.provider.is_none() && run.model.is_none() {
+            title.push_str(" · Provider and model unknown");
+        } else {
+            let provider = run.provider.map_or("Provider unknown", provider_label);
+            let model = run.model.as_deref().unwrap_or("model unknown");
+            let source = if run.model_observed {
+                "observed"
+            } else {
+                "assigned"
+            };
+            let _ = write!(title, " · {provider} / {model} ({source})");
         }
         if let Some(start) = run.started_at_ms.and_then(start_time) {
             let _ = write!(title, " · {start}");
@@ -392,7 +398,10 @@ mod tests {
             }))
             .unwrap();
             let card = Card::from_run(&run, None);
-            assert_eq!(card.title, "Worker · Duration unavailable");
+            assert_eq!(
+                card.title,
+                "Worker · Provider and model unknown · Duration unavailable"
+            );
             assert_eq!(card.status, "completed");
             assert_eq!(
                 card.body.as_deref(),

@@ -102,6 +102,8 @@ pub enum Milestone {
         provider: Option<Provider>,
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        model_observed: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         started_at_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,6 +184,9 @@ pub struct RoleCard {
     pub thread_url: Option<String>,
     pub provider: Option<Provider>,
     pub model: Option<String>,
+    /// The provider and model come from the exact native run, when recorded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_observed: bool,
     pub started_at_ms: Option<u64>,
     pub elapsed_ms: Option<u64>,
     pub ended: bool,

@@ -120,25 +120,6 @@ impl Service {
         Ok((prompt, false))
     }
 
-    pub(super) fn transcript_pending(state: &State, row: &TaskRow) -> bool {
-        let task = &row.task;
-        task.question().is_none()
-            && task.hold().is_none()
-            && task.operator_decline().is_none()
-            && !matches!(
-                state.wait_reason(&task.identity().id),
-                Some(
-                    WaitReason::Hold
-                        | WaitReason::OperatorDeclined
-                        | WaitReason::HostObservationBlocked
-                )
-            )
-            && (matches!(task.phase(), Phase::Merging | Phase::Closing)
-                || task
-                    .run()
-                    .is_some_and(|run| !run.revoked() && run.report().is_some()))
-    }
-
     pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
         let Some(runtime) = self.host.runtime_identity() else {
             return Ok(false);

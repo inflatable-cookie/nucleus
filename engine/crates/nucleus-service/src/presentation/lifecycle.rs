@@ -54,6 +54,7 @@ impl Audit {
                     thread,
                     provider,
                     model,
+                    model_observed,
                     started_at_ms,
                     ..
                 } => {
@@ -70,6 +71,7 @@ impl Audit {
                         thread_url: thread.as_deref().and_then(nucleus_hosts::thread_link),
                         provider,
                         model,
+                        model_observed,
                         started_at_ms: self.sent_at_ms,
                         elapsed_ms: None,
                         ended: false,
@@ -215,6 +217,7 @@ impl Audit {
                     thread_url: None,
                     provider: None,
                     model: None,
+                    model_observed: false,
                     started_at_ms: Some(sent),
                     elapsed_ms: None,
                     ended: false,
@@ -261,7 +264,9 @@ fn bind_card(card: &mut RoleCard, thread: &str, profile: Option<&Profile>) {
     if card.thread_url.is_none() {
         card.thread_url = nucleus_hosts::thread_link(thread);
     }
-    if let Some(profile) = profile {
+    if !card.model_observed
+        && let Some(profile) = profile
+    {
         card.provider.get_or_insert(profile.provider);
         card.model.get_or_insert_with(|| profile.model.clone());
     }

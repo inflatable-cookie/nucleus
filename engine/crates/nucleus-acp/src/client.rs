@@ -137,8 +137,6 @@ pub(crate) struct Detail {
     pub parent_hold: Option<String>,
     #[serde(default)]
     pub active_child: bool,
-    #[serde(default)]
-    pub transcript_pending: bool,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
 }

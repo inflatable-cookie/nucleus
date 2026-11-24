@@ -215,6 +215,7 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
                 thread: Some(launch.thread.clone()),
                 provider: launch.profile().map(|profile| profile.provider),
                 model: launch.profile().map(|profile| profile.model.clone()),
+                model_observed: false,
                 started_at_ms: run.last_send_at_ms(),
                 round,
             });

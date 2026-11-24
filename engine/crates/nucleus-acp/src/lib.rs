@@ -356,9 +356,7 @@ async fn task_prompt(
                 stream.next().await?;
                 let detail = client.detail().await?;
                 let hold = !detail.phase.is_terminal()
-                    && (detail.parent_hold.as_deref() == Some(prompt)
-                        || detail.active_child
-                        || detail.transcript_pending);
+                    && (detail.parent_hold.as_deref() == Some(prompt) || detail.active_child);
                 for update in view.lock().await.update(&detail, structured, false) {
                     notify(output, session, update);
                 }
