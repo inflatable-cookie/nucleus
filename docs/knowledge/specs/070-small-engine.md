@@ -294,7 +294,7 @@ Planning is plain record-keeping in the Rust service. It never calls a host (rul
 
 **What gets simpler**
 
-- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A planner's promotion is the authorization. The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
+- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A planner's promotion is the authorization (Tom confirmed, 2026-11-24). The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
 - **A task needs no item.** `task.add` takes a brief and puts it straight on the board (ruling 12).
 - **Concurrency is checked only where edits collide.** A lane document and the plan carry one version number for optimistic writes. Other records use last write wins, with history kept. There are no digest fences.
 - **No ceremony records.** Lane keeps, drain prompts and idle marks are gone. The board shows a lane with no open tasks, and a plan with no `now` lane is idle. Notes are short sentences with no hard 200-character cap.
