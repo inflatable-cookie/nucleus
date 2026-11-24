@@ -481,6 +481,7 @@ const waits: Record<string, string> = {
   starting: "Starting",
   running: "Running",
   idle_without_terminal_run: "Waiting for the host",
+  assignment_too_large: "Assignment exceeds the T3 message limit",
   permission: "Waiting for permission",
   usage_permission: "Low usage requires operator approval",
   input: "Waiting for input",

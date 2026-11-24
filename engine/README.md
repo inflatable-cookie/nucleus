@@ -394,6 +394,13 @@ open-file census covers the checkout and that run's scratch. An existing
 reservation keeps its original scratch path. The shared class root only hosts
 temporary files for the census itself.
 
+Role assignments use each member lane's title and aim. Explicit
+`queue.laneDocuments` references pin a version at reservation and give that
+run a read-only copy in `lane-documents/` under its scratch directory.
+`nucleus-prompt-size.json` records counts per section for the exact assignment.
+The scheduler checks the T3 input limit before preparing a parent turn and
+records the largest sections when an assignment cannot fit.
+
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
 credential. The service checks current authority locally before committing

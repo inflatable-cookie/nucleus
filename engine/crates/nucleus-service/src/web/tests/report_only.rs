@@ -528,12 +528,13 @@ impl ReportFixture {
             pr: None,
             discovered_skill: None,
             model: "fixture",
-            lanes: &[],
+            lanes: &crate::prompt::LaneContext::default(),
             dependencies: &crate::DependencyStatus::default(),
             command: std::path::Path::new("/engine"),
             ticket: std::path::Path::new("/scratch/ticket"),
         }
-        .render();
+        .render()
+        .text;
         assert!(prompt.contains("Report-only delivery"));
         assert!(prompt.contains("lane.put 'local-fixture' 'qa' VERSION --ticket"));
         assert!(prompt.contains("report_ready"));

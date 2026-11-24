@@ -24,11 +24,34 @@ use crate::{
     Service, ServiceError, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
     project::{ProjectRoute, linked_checkout},
-    prompt::Prompt,
+    prompt::{Assignment, LaneContext, Prompt, PromptSize},
     scratch, ticket,
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
+
+struct PromptArtifacts<'a> {
+    lanes: &'a LaneContext,
+    size: &'a PromptSize,
+}
+
+fn write_prompt_artifacts(
+    root: &nucleus_store::StorageDirectory,
+    run: &Run,
+    task: &Task,
+    prompt: &PromptArtifacts<'_>,
+) -> Result<(), ServiceError> {
+    let launch = run.launch();
+    scratch::allocate(root, launch)?;
+    scratch::materialize_lane_documents(root, launch, &prompt.lanes.pins)?;
+    let role = match launch.role {
+        Role::Reviewer => "reviewer",
+        Role::Worker if task.threads().get(Role::Worker).is_some() => "revision",
+        Role::Worker => "worker",
+    };
+    let directory = launch.scratch.as_deref().ok_or(ServiceError::Ticket)?;
+    scratch::write_prompt_size(directory, &launch.instance, role, prompt.size)
+}
 
 enum SendAttempt {
     Deferred,
@@ -426,6 +449,17 @@ impl Service {
                 if matches!(
                     observation.host,
                     Observed::Known(Host::Current {
+                        state: RunState::AssignmentRejected,
+                        ..
+                    })
+                ) =>
+            {
+                "assignment_input_rejected"
+            }
+            Action::Advance(_)
+                if matches!(
+                    observation.host,
+                    Observed::Known(Host::Current {
                         state: RunState::UsageLimited,
                         ..
                     })
@@ -455,13 +489,17 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
-        if kind == "delegated_parent_ended"
+        if matches!(kind, "delegated_parent_ended" | "assignment_input_rejected")
             && let Some(run) = row.task.run()
         {
             audit.detail = serde_json::json!({
                 "instance": run.launch().instance,
                 "thread": run.launch().thread,
-                "outcome": "parent ended before the delegated child started",
+                "outcome": if kind == "delegated_parent_ended" {
+                    "parent ended before the delegated child started"
+                } else {
+                    "assignment failed the host input-size check before execution"
+                },
             })
             .to_string();
         }
@@ -523,23 +561,7 @@ impl Service {
             Observed::Known(Workspace::Clean(head)) => Some(head),
             _ => None,
         };
-        let ticket_path = ticket::path(self.storage.scratch(), &instance);
-        let scratch = self
-            .storage
-            .scratch()
-            .path()
-            .join(scratch::relative_path(&instance));
-        if ticket_path.starts_with(checkout.path()) || scratch.starts_with(checkout.path()) {
-            return Err(ServiceError::Ticket);
-        }
-        let binding = route.binding(checkout)?;
-        let parent = match self
-            .prepare_run_parent(row, checkout, &binding, host)
-            .await?
-        {
-            ControlFlow::Continue(parent) => parent,
-            ControlFlow::Break(reason) => return Ok(Action::Wait(reason)),
-        };
+        let (ticket_path, scratch) = self.launch_paths(checkout, &instance)?;
         let profile = self.launch_profile(role, selection)?;
         let discovered_skill = if selection.is_some() {
             host.profile_catalog()
@@ -548,12 +570,8 @@ impl Service {
         } else {
             None
         };
-        let lanes = self.prompt_lanes(task, &route).await?;
-        let dependencies = {
-            let state = self.state.lock().await;
-            crate::DependencyStatus::read(&state, row, &crate::ControllerScope::default())?
-        };
-        let text = Prompt {
+        let (lanes, dependencies) = self.prompt_context(row, &route).await?;
+        let assignment = Prompt {
             row,
             role,
             via: &via,
@@ -572,6 +590,17 @@ impl Service {
             ticket: &ticket_path,
         }
         .render();
+        if self.assignment_blocked(row, &assignment).await? {
+            return Ok(Action::Wait(WaitReason::AssignmentTooLarge));
+        }
+        let binding = route.binding(checkout)?;
+        let parent = match self
+            .prepare_run_parent(row, checkout, &binding, host)
+            .await?
+        {
+            ControlFlow::Continue(parent) => parent,
+            ControlFlow::Break(reason) => return Ok(Action::Wait(reason)),
+        };
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
@@ -580,13 +609,58 @@ impl Service {
             via: &via,
             instance: &instance,
             started_at: now_ms(),
-            text,
+            text: assignment.text,
         })?;
         inputs.scratch = Some(scratch);
         let (updated, credential) =
             freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
-        self.persist_reservation(row, &updated, &credential, selection, via)
+        let artifacts = PromptArtifacts {
+            lanes: &lanes,
+            size: &assignment.size,
+        };
+        self.persist_reservation(row, &updated, &credential, selection, (via, artifacts))
             .await
+    }
+
+    fn launch_paths(
+        &self,
+        checkout: &Checkout<'_>,
+        instance: &str,
+    ) -> Result<(PathBuf, PathBuf), ServiceError> {
+        let root = self.storage.scratch();
+        let ticket = ticket::path(root, instance);
+        let scratch = root.path().join(scratch::relative_path(instance));
+        if ticket.starts_with(checkout.path()) || scratch.starts_with(checkout.path()) {
+            return Err(ServiceError::Ticket);
+        }
+        Ok((ticket, scratch))
+    }
+
+    async fn assignment_blocked(
+        &self,
+        row: &TaskRow,
+        assignment: &Assignment,
+    ) -> Result<bool, ServiceError> {
+        let Some(mut cause) = assignment.too_large() else {
+            return Ok(false);
+        };
+        cause["version"] = serde_json::json!(row.version);
+        let mut audit = event("assignment_too_large");
+        audit.detail = cause.to_string();
+        let id = &row.task.identity().id;
+        if self
+            .state
+            .lock()
+            .await
+            .store
+            .claim_task_effect(id, &audit)?
+        {
+            eprintln!(
+                "{id}: assignment exceeds the T3 message limit: {}",
+                audit.detail
+            );
+        }
+        Ok(true)
     }
 
     async fn prepare_run_parent(
@@ -693,22 +767,26 @@ impl Service {
         }
     }
 
-    async fn prompt_lanes(
+    async fn prompt_context(
         &self,
-        task: &Task,
+        row: &TaskRow,
         route: &ProjectRoute,
-    ) -> Result<Vec<nucleus_store::planning::Lane>, ServiceError> {
-        let Some(project) = &route.project_id else {
-            return Ok(Vec::new());
-        };
+    ) -> Result<(LaneContext, crate::DependencyStatus), ServiceError> {
+        let task = &row.task;
+        let policy = nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
+            .map_err(nucleus_core::profiles::ProfileLaunchError::Brief)?;
         let state = self.state.lock().await;
+        let dependencies =
+            crate::DependencyStatus::read(&state, row, &crate::ControllerScope::default())?;
+        let mut context = LaneContext::default();
+        let Some(project) = &route.project_id else {
+            context.missing = policy.lane_documents;
+            return Ok((context, dependencies));
+        };
         let mut keys = if let Some(report) = task.report_task() {
             vec![report.lane.clone()]
         } else {
-            nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
-                .map_err(nucleus_core::profiles::ProfileLaunchError::Brief)?
-                .lanes()
-                .to_vec()
+            policy.lanes().to_vec()
         };
         if task.report_task().is_none()
             && let Some(source) = state.store.task_source(&task.identity().id)?
@@ -721,13 +799,27 @@ impl Service {
                 }
             }
         }
-        let mut lanes = Vec::new();
         for key in keys {
-            if let Some(lane) = state.store.lane(project, &key)? {
-                lanes.push(lane);
+            if let Some(lane) = state.store.lane_context(project, &key)? {
+                context.memberships.push(lane);
             }
         }
-        Ok(lanes)
+        let mut seen = std::collections::BTreeSet::new();
+        for key in policy.lane_documents {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            if let Some(lane) = state
+                .store
+                .lane(project, &key)?
+                .filter(|lane| !lane.document.document.is_empty())
+            {
+                context.pins.push(lane);
+            } else {
+                context.missing.push(key);
+            }
+        }
+        Ok((context, dependencies))
     }
 
     async fn persist_reservation(
@@ -736,11 +828,11 @@ impl Service {
         updated: &Task,
         credential: &CallbackCredential,
         selection: Option<&SelectedLaunch>,
-        via: Launch,
+        (via, prompt): (Launch, PromptArtifacts<'_>),
     ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
         self.storage.database().verify()?;
-        scratch::allocate(self.storage.scratch(), run.launch())?;
+        write_prompt_artifacts(self.storage.scratch(), run, &row.task, &prompt)?;
         ticket::prepare(
             self.storage.scratch(),
             updated,
@@ -749,6 +841,16 @@ impl Service {
             &format!("http://{}", self.callback),
         )?;
         let mut audit = event("run_reserved");
+        let pins: Vec<_> = prompt
+            .lanes
+            .pins
+            .iter()
+            .map(nucleus_store::planning::Lane::artifact)
+            .collect();
+        let mut detail = serde_json::Map::new();
+        if !pins.is_empty() {
+            detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
+        }
         if let Some(selected) = selection
             && let Some(worker) = selected.intent.critical_fallback_worker()
         {
@@ -759,7 +861,10 @@ impl Service {
                 reviewer_profile_id: selected.intent.profile().id.clone(),
                 reason: "No available independent reviewer with a known capability at least as high as the worker. Ordinary reviewer selection used.".into(),
             };
-            audit.detail = serde_json::json!({ "criticalReviewFallback": receipt }).to_string();
+            detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+        }
+        if !detail.is_empty() {
+            audit.detail = serde_json::Value::Object(detail).to_string();
         }
         let saved = {
             let mut state = self.state.lock().await;

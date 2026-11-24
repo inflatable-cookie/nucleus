@@ -1,0 +1,1 @@
+- Role assignments include only the title and aim of a member lane. Explicitly pinned documents have read-only run copies. Prompt counts are recorded per section, and oversized assignments stop before dispatch.

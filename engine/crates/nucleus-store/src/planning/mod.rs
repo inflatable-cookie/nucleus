@@ -75,6 +75,26 @@ impl Store {
         read(&self.connection, LaneRecord, project, key)
     }
 
+    /// Read the prompt context for a lane without loading its document.
+    ///
+    /// # Errors
+    /// Returns an error if the lane metadata cannot be read.
+    pub fn lane_context(
+        &self,
+        project: &str,
+        key: &str,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT json_extract(snapshot,'$.title'), json_extract(snapshot,'$.aim')
+             FROM planning_lanes WHERE project = ?1 AND id = ?2",
+                params![project, key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
+    }
+
     /// Read the exact document version, including versions since superseded.
     ///
     /// # Errors
