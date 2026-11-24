@@ -268,7 +268,7 @@ async fn a_sibling_helper_needs_exact_idle_proof_and_never_hides_other_work() {
             Response::Snapshot(observed),
         )])
         .await;
-        let mut pass = client.fixture_pass().for_task(&task);
+        let mut pass = client.fixture_pass().for_task(&task, None);
         pass.evidence = std::sync::Arc::new(crate::PassEvidence {
             processes: tokio::sync::OnceCell::new_with(Some(Ok(
                 crate::Inventory::bound_helper_fixture(&root, THREAD, unrelated),
@@ -478,6 +478,39 @@ async fn send(pass: &impl TaskHost, task: &mut Task) -> Result<SendOutcome, Host
             .await?;
     }
     pass.send(permit.record(task)?).await
+}
+
+#[tokio::test]
+async fn unrelated_shared_scratch_process_does_not_block_a_worker_send() {
+    let checkout = checkout_fixture();
+    let scratch = checkout_fixture();
+    let root = scratch.path().canonicalize().expect("scratch root");
+    let run_scratch = root.join("fixture").join("run-1");
+    let unrelated = root.join("other-job");
+    std::fs::create_dir_all(&run_scratch).expect("run directory");
+    std::fs::set_permissions(&run_scratch, Permissions::from_mode(0o700))
+        .expect("private run directory");
+    std::fs::create_dir(&unrelated).expect("shared fixture directory");
+    let checkout = checkout.path().canonicalize().expect("checkout");
+    let (mut task, _, _) = reserve_entry(binding(&checkout), Entry::Brief);
+    let (client, server) = server(vec![
+        ("orchestration.subscribeThread", absent()),
+        ("orchestration.launchThread", Response::Success),
+    ])
+    .await;
+    let mut pass = client.pass(&root).for_task(&task, Some(run_scratch));
+    pass.evidence = std::sync::Arc::new(crate::PassEvidence {
+        processes: tokio::sync::OnceCell::new_with(Some(Ok(crate::Inventory::cwd_fixture(
+            &unrelated,
+        )))),
+        ..crate::PassEvidence::default()
+    });
+    assert_eq!(
+        send(&pass, &mut task).await.expect("send worker"),
+        SendOutcome::Sent
+    );
+    assert!(task.run().expect("run").last_send_at_ms().is_some());
+    assert_eq!(server.await.expect("scripted host").len(), 2);
 }
 
 async fn stop(

@@ -166,6 +166,29 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
+    fn model_selection(&self) -> Result<Option<Value>, HostError> {
+        if self.method == Method::Continue {
+            return Ok(self.selection.clone());
+        }
+        let payload: Value =
+            serde_json::from_str(self.payload.get()).map_err(|_| HostError::Configuration)?;
+        Ok(payload.get("modelSelection").cloned())
+    }
+
+    pub(crate) fn diagnostic(&self) -> String {
+        let selection = self.model_selection().ok().flatten().unwrap_or(Value::Null);
+        let operation = match self.method {
+            Method::Create => self.method.rpc(),
+            Method::Delegate => "orchestration.dispatchCommand delegated_task.request",
+            Method::Continue => "orchestration.dispatchCommand message.dispatch",
+        };
+        format!(
+            "{operation} instance={:?} model={:?}",
+            selection["instanceId"].as_str(),
+            selection["model"].as_str()
+        )
+    }
+
     pub(crate) fn message_id(&self, instance: &str) -> String {
         if self.method == Method::Delegate {
             format!("message:delegated-task:{instance}")
@@ -228,18 +251,21 @@ impl Wire {
 /// Returns an error if the reservation is not a valid T3 request.
 pub fn launch_provider_instance(run: &Run) -> Result<Option<String>, HostError> {
     let wire = Wire::read(run)?;
-    let selection = if wire.method == Method::Continue {
-        wire.selection
-    } else {
-        let payload: Value =
-            serde_json::from_str(wire.payload.get()).map_err(|_| HostError::Configuration)?;
-        payload.get("modelSelection").cloned()
-    };
+    let selection = wire.model_selection()?;
     Ok(selection
         .as_ref()
         .and_then(|selection| selection["instanceId"].as_str())
         .filter(|instance| !instance.is_empty())
         .map(str::to_owned))
+}
+
+/// Name the frozen native operation and profile without including its payload.
+#[must_use]
+pub fn launch_diagnostic(run: &Run) -> String {
+    Wire::read(run).map_or_else(
+        |_| "invalid T3 launch binding".into(),
+        |wire| wire.diagnostic(),
+    )
 }
 
 pub(crate) fn delegated_child(instance: &str) -> String {

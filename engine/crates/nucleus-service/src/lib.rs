@@ -473,7 +473,8 @@ impl Service {
             let result = if defer_refresh {
                 Ok(Action::Wait(WaitReason::Running))
             } else {
-                Box::pin(self.advance_due_task(&row, &host.for_task(&row.task))).await
+                let scratch = self.existing_run_scratch(&row.task);
+                Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
             };
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
