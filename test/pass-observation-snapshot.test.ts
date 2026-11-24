@@ -3249,15 +3249,15 @@ test("execution custody uses an exact idle roster and shares only a covering com
     assert.equal(await lease(), true);
     assert.equal(
       await lease(second),
-      false,
-      "the shared scan has no prior observation of this participant",
+      true,
+      "a fresh listing after the exact inactivity read covers a participant the shared scan never saw",
     );
-    assert.equal(scans, 2);
+    assert.equal(scans, 3, "the uncovered participant costs one direct listing");
   });
 
   background = ["shell previous-provider-session"];
   await missed(async () => assert.equal(await lease(), false));
-  assert.equal(scans, 2, "known background work declines before scanning");
+  assert.equal(scans, 3, "known background work declines before scanning");
   background = [];
   processes = Object.assign([], { cwdComplete: false });
   await missed(async () => assert.equal(await lease(), false));
