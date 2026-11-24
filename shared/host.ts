@@ -709,6 +709,9 @@ export type HostCatalog = z.infer<typeof hostCatalogSchema>;
  * directory, with the time it was read from the host (nucleus#970).
  */
 export const storedHostCatalogSchema = hostCatalogSchema
-  .extend({ readAt: z.string() })
+  .extend({
+    readAt: z.string(),
+    cacheStatus: z.enum(["pending", "current", "stale"]).optional(),
+  })
   .strict();
 export type StoredHostCatalog = z.infer<typeof storedHostCatalogSchema>;

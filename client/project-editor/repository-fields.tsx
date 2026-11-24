@@ -359,24 +359,20 @@ function RustRepositoryFields({
   save: (field: string, value: Omit<RepositorySetInput, "repository">, delay: number) => void;
   flush: () => void;
 }) {
-  const [base, setBase] = useState(settings?.base ?? "");
   const [checks, setChecks] = useState((settings?.requiredChecks ?? []).join(", "));
   const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? 30);
   return (
     <View style={{ gap: space.sm }}>
       <Pair>
-        <Field
-          c={c}
-          label="Base"
-          a11yLabel={`Base branch for ${label}`}
-          value={base}
-          disabled={disabled}
-          onChange={(next) => {
-            setBase(next);
-            if (next.trim()) save("base", { base: next.trim() }, 600);
-          }}
-          onBlur={flush}
-        />
+        <View style={{ gap: space.xxs }}>
+          <FieldCaption c={c} text="Base branch" />
+          <Text
+            accessibilityLabel={`Base branch for ${label}`}
+            style={{ color: c.foreground, fontSize: type.body.fontSize }}
+          >
+            {settings?.base ?? "Unresolved"}
+          </Text>
+        </View>
         <Field
           c={c}
           label="Checks"

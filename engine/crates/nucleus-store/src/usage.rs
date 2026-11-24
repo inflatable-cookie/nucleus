@@ -152,3 +152,77 @@ pub(super) fn counts(
         },
     )
 }
+
+/// Recent and total profile assignments, as the board's usage strips read them.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUsage {
+    /// The last assignments across roles, by profile, and how many that is.
+    pub recent: UsageWindow,
+    pub worker: UsageWindow,
+    pub reviewer: UsageWindow,
+    /// Every recorded assignment, by profile.
+    pub totals: BTreeMap<String, u64>,
+    /// Every recorded assignment, by subscription group.
+    pub group_totals: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UsageWindow {
+    pub counts: BTreeMap<String, u64>,
+    /// The same window by subscription group.
+    pub groups: BTreeMap<String, u64>,
+    pub sample: u64,
+}
+
+fn window(connection: &Connection, role: Option<&str>) -> rusqlite::Result<UsageWindow> {
+    let statement = if role.is_some() {
+        "SELECT profile_id, group_id FROM profile_assignments
+         WHERE role = ?2 ORDER BY sequence DESC LIMIT ?1"
+    } else {
+        "SELECT profile_id, group_id FROM profile_assignments ORDER BY sequence DESC LIMIT ?1"
+    };
+    let mut query = connection.prepare_cached(statement)?;
+    let arguments: &[&dyn rusqlite::ToSql] = if role.is_some() {
+        &[&WINDOW, &role]
+    } else {
+        &[&WINDOW]
+    };
+    let mut usage = UsageWindow::default();
+    for row in query.query_map(arguments, |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (profile, group) = row?;
+        *usage.counts.entry(profile).or_default() += 1;
+        *usage.groups.entry(group).or_default() += 1;
+        usage.sample += 1;
+    }
+    Ok(usage)
+}
+
+/// Read the usage strips' windows and totals from the Spec 053 tables.
+pub(super) fn profile_usage(connection: &Connection) -> rusqlite::Result<ProfileUsage> {
+    Ok(ProfileUsage {
+        recent: window(connection, None)?,
+        worker: window(connection, Some("worker"))?,
+        reviewer: window(connection, Some("reviewer"))?,
+        totals: totals(connection, "profile_id")?,
+        group_totals: totals(connection, "group_id")?,
+    })
+}
+
+fn totals(connection: &Connection, column: &str) -> rusqlite::Result<BTreeMap<String, u64>> {
+    let mut query = connection.prepare_cached(&format!(
+        "SELECT {column}, sum(count) FROM profile_assignment_totals GROUP BY {column}"
+    ))?;
+    query
+        .query_map([], |row| {
+            let count = row.get::<_, i64>(1)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                u64::try_from(count)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, count))?,
+            ))
+        })?
+        .collect()
+}

@@ -1587,16 +1587,17 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     seed_planner_task(&service, "planned", "planner-one").await;
     let service = Arc::new(service);
     let api = settings_api(&service);
+    let dispatch = dispatch_with_project_slots(&api, json!({"alpha": 4, "beta": 2})).await;
     let path = "/v1/settings/projects";
     let starting = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     let update = json!({
         "revision": starting["settings"]["revision"],
         "value": {"projects": {
-            "alpha": {"name": "Alpha", "slots": 4, "repositories": [{
+            "alpha": {"name": "Alpha", "repositories": [{
                 "origin": REPOSITORY, "path": service.fixture().checkout, "base": service.fixture().base,
                 "requiredChecks": ["CI"]
             }]},
-            "beta": {"name": "Beta", "slots": 2},
+            "beta": {"name": "Beta"},
         }},
     });
     let initial_epoch = service.state.lock().await.planner_authority_epoch;
@@ -1661,16 +1662,30 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         .status(),
         StatusCode::CONFLICT
     );
+    assert_eq!(
+        json_body(get_as(&api, "/v1/settings/dispatch", &BOARD_KEY).await).await,
+        dispatch
+    );
     let state = service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
     assert!(state.planner_authority.is_empty());
-    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(4));
+    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(2));
     assert_eq!(
         reads.load(Ordering::Relaxed),
         1,
         "reassignment made no host request"
     );
     native.abort();
+}
+
+async fn dispatch_with_project_slots(api: &Router, overrides: Value) -> Value {
+    let path = "/v1/settings/dispatch";
+    let starting = json_body(get_as(api, path, &BOARD_KEY).await).await;
+    let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
+    update["value"]["projectSlotOverrides"] = overrides;
+    let response = put_settings(api, path, &BOARD_KEY, &update).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await
 }
 
 #[tokio::test]
@@ -2216,6 +2231,24 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let theme =
         json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await).await;
     assert_eq!(theme, json!({"theme": null}));
+    let catalog = browser_request(
+        api,
+        Method::GET,
+        "/api/engine/profiles/catalog",
+        cookie,
+        None,
+    )
+    .await;
+    assert_eq!(
+        json_body(catalog).await,
+        json!({"providers":null,"readAtMs":null,"status":"pending"})
+    );
+    let usage = browser_request(api, Method::GET, "/api/engine/profiles/usage", cookie, None).await;
+    let window = json!({"counts":{},"groups":{},"sample":0});
+    assert_eq!(
+        json_body(usage).await,
+        json!({"recent":window,"worker":window,"reviewer":window,"totals":{},"groupTotals":{}})
+    );
     let reassign = browser_request(
         api,
         Method::POST,

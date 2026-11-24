@@ -599,6 +599,10 @@ fn an_empty_usage_store_allows_a_profiled_launch() {
     let root = tempfile::tempdir().expect("scratch");
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
+    assert_eq!(
+        store.profile_usage().expect("usage"),
+        nucleus_store::ProfileUsage::default()
+    );
     let group = "shared-subscription";
     assert_eq!(
         store.rotation_counts(Role::Worker, "greeting", group),
@@ -641,6 +645,12 @@ fn reopening_keeps_the_role_window_and_lifetime_counts() {
     }
     drop(store);
     let store = Store::open(&storage).expect("reopen");
+    let usage = store.profile_usage().expect("usage");
+    assert_eq!(usage.recent.sample, 50);
+    assert_eq!(usage.worker.counts["greeting"], 50);
+    assert_eq!(usage.reviewer.counts["greeting"], 2);
+    assert_eq!(usage.totals["greeting"], 54);
+    assert_eq!(usage.group_totals[group], 54);
     for (role, recent, lifetime) in [(Role::Worker, 50, 52), (Role::Reviewer, 2, 2)] {
         assert_eq!(
             store.rotation_counts(role, "greeting", group),

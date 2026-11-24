@@ -708,6 +708,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       return new Response(body);
     }
     if (path === "/api/engine/theme") return Response.json({ theme: null });
+    if (path === "/api/engine/profiles/usage") {
+      const empty = { counts: {}, groups: {}, sample: 0 };
+      return Response.json({
+        recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {},
+      });
+    }
+    if (path === "/api/engine/profiles/catalog")
+      return Response.json({ providers: null, readAtMs: null, status: "pending" });
     if (path === "/api/engine/tasks")
       return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }]);
     if (path === "/api/engine/settings")

@@ -1,52 +1,144 @@
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use nucleus_core::profiles::{Effort, Profile, Provider};
 use serde_json::{Value, json};
 
 use crate::{HostError, ModelOption, RoleProfile, available};
 
+#[derive(Debug, PartialEq)]
 pub struct ProfileCatalog(Vec<Value>);
 
 #[derive(Default)]
 pub(crate) struct CatalogRevision {
     pub(crate) epoch: u64,
-    pub(crate) catalog: Option<Arc<ProfileCatalog>>,
+    last_good: Option<Arc<ProfileCatalog>>,
+    read_at_ms: Option<u64>,
+    current: bool,
+    stale: bool,
     instances: Option<Value>,
 }
 
 impl CatalogRevision {
-    pub(crate) fn apply(&mut self, event: &Value) {
+    pub(crate) fn apply(&mut self, event: &Value) -> bool {
         match event["type"].as_str() {
             Some("snapshot") => {
-                self.epoch += 1;
                 self.instances = event.pointer("/config/settings/providerInstances").cloned();
-                self.catalog = ProfileCatalog::parse(event["config"].clone())
-                    .ok()
-                    .map(Arc::new);
+                self.replace(ProfileCatalog::parse(event["config"].clone()).ok())
             }
-            Some("providerStatuses") => {
-                self.epoch += 1;
-                self.catalog = event
+            Some("providerStatuses") => self.replace(
+                event
                     .pointer("/payload/providers")
                     .and_then(Value::as_array)
-                    .map(|providers| Arc::new(ProfileCatalog(providers.clone())));
-            }
+                    .and_then(|providers| ProfileCatalog::from_providers(providers.clone()).ok()),
+            ),
             Some("settingsUpdated") => {
                 if let Some(instances) = event.pointer("/payload/settings/providerInstances")
                     && self.instances.as_ref() != Some(instances)
                 {
                     self.instances = Some(instances.clone());
-                    self.invalidate();
+                    return self.invalidate();
                 }
+                false
             }
-            _ => {}
+            _ => false,
         }
     }
 
-    pub(crate) fn invalidate(&mut self) {
-        self.epoch += 1;
-        self.catalog = None;
+    pub(crate) fn current(&self) -> Option<Arc<ProfileCatalog>> {
+        self.current.then(|| self.last_good.clone()).flatten()
     }
+
+    pub(crate) fn replace(&mut self, catalog: Option<ProfileCatalog>) -> bool {
+        let Some(catalog) = catalog else {
+            return self.invalidate();
+        };
+        self.epoch += 1;
+        let changed = !self.current || self.last_good.as_deref() != Some(&catalog);
+        if changed {
+            self.last_good = Some(Arc::new(catalog));
+        }
+        self.read_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| duration.as_millis().try_into().ok());
+        self.current = true;
+        self.stale = false;
+        changed
+    }
+
+    pub(crate) fn invalidate(&mut self) -> bool {
+        self.epoch += 1;
+        self.current = false;
+        !std::mem::replace(&mut self.stale, true)
+    }
+
+    pub(crate) fn board_view(&self) -> Value {
+        let status = if self.current {
+            "current"
+        } else if self.stale {
+            "stale"
+        } else {
+            "pending"
+        };
+        json!({
+            "status": status,
+            "readAtMs": self.read_at_ms,
+            "providers": self.last_good.as_deref().map(ProfileCatalog::board_providers),
+        })
+    }
+}
+
+fn fields(value: &Value, keys: &[&str]) -> Value {
+    Value::Object(
+        keys.iter()
+            .filter_map(|key| Some(((*key).to_owned(), value.get(key)?.clone())))
+            .collect(),
+    )
+}
+
+fn list(value: &Value, project: impl FnMut(&Value) -> Value) -> Value {
+    value.as_array().map_or(Value::Null, |rows| {
+        Value::Array(rows.iter().map(project).collect())
+    })
+}
+
+fn board_provider(provider: &Value) -> Value {
+    let mut view = fields(
+        provider,
+        &[
+            "instanceId",
+            "driver",
+            "enabled",
+            "status",
+            "supportedRuntimeModes",
+        ],
+    );
+    view["models"] = list(&provider["models"], |model| {
+        let mut view = fields(model, &["slug", "name"]);
+        if let Some(options) = model.pointer("/capabilities/optionDescriptors") {
+            view["capabilities"] = json!({
+                "optionDescriptors": list(options, |option| {
+                    let mut view = fields(
+                        option,
+                        &["type", "id", "label", "description", "currentValue", "role"],
+                    );
+                    if let Some(choices) = option.get("options") {
+                        view["options"] = list(choices, |choice|
+                            fields(choice, &["id", "label", "description", "isDefault"])
+                        );
+                    }
+                    view
+                })
+            });
+        }
+        view
+    });
+    view
 }
 
 pub struct ProfileOffer {
@@ -83,6 +175,10 @@ impl ProfileOffer {
 }
 
 impl ProfileCatalog {
+    fn board_providers(&self) -> Vec<Value> {
+        self.0.iter().map(board_provider).collect()
+    }
+
     pub(super) fn parse(mut config: Value) -> Result<Self, HostError> {
         if config
             .pointer("/environment/orchestrationProtocolVersion")
@@ -94,6 +190,20 @@ impl ProfileCatalog {
         let Value::Array(providers) = config["providers"].take() else {
             return Err(HostError::Protocol);
         };
+        Self::from_providers(providers)
+    }
+
+    fn from_providers(providers: Vec<Value>) -> Result<Self, HostError> {
+        if !providers.is_empty()
+            && !providers.iter().any(|provider| {
+                provider["instanceId"].is_string()
+                    && provider["enabled"].is_boolean()
+                    && provider["status"].is_string()
+                    && provider["models"].is_array()
+            })
+        {
+            return Err(HostError::Protocol);
+        }
         Ok(Self(providers))
     }
 

@@ -130,6 +130,8 @@ export const t3codeVocabulary: HostVocabulary = {
     },
     cursor: reasoning("cursor"),
     opencode: reasoning("opencode"),
+    copilot: reasoning("copilot"),
+    omp: reasoning("omp"),
     antigravity: reasoning("antigravity"),
     muse: reasoning("muse"),
     kiro: reasoning("kiro"),

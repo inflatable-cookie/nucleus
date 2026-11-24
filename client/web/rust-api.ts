@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { CapabilityLevel } from "../../shared/contracts";
+import { CANONICAL_PROVIDERS, THINKING_LEVELS } from "../../shared/profile-vocabulary";
 import { createRustBoardTransport } from "./rust-board";
 
 /**
@@ -9,30 +10,8 @@ import { createRustBoardTransport } from "./rust-board";
  * engine response fails loudly instead of rendering a guess.
  */
 
-export const providers = z.enum([
-  "codex",
-  "claude",
-  "pi",
-  "grok",
-  "cursor",
-  "opencode",
-  "copilot",
-  "omp",
-  "antigravity",
-  "muse",
-  "fx",
-  "kiro",
-]);
-export const efforts = z.enum([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-]);
+export const providers = z.enum(CANONICAL_PROVIDERS);
+export const efforts = z.enum(THINKING_LEVELS);
 export const capabilities = z.enum([
   "mechanical",
   "worker",
@@ -60,6 +39,7 @@ export const namedProfile = z
       })
       .loose(),
     group: z.string().optional(),
+    providerInstanceId: z.string().optional(),
     enabled: z.boolean().optional(),
     roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).optional(),
     scopes: z.array(z.string()).optional(),
@@ -166,6 +146,23 @@ export const allSettings = z.object({
   storage: storageView,
 });
 export const browserSession = z.object({ canEditSettings: z.boolean() });
+
+const cachedCatalog = z.object({
+  providers: z.array(z.unknown()).nullable(),
+  readAtMs: integer.nullable(),
+  status: z.enum(["pending", "current", "stale"]),
+});
+const countMap = z.record(z.string(), integer);
+const usageWindow = z.object({ counts: countMap, groups: countMap, sample: integer });
+const profileUsage = z.object({
+  recent: usageWindow,
+  worker: usageWindow,
+  reviewer: usageWindow,
+  totals: countMap,
+  groupTotals: countMap,
+});
+export type RustCachedCatalog = z.infer<typeof cachedCatalog>;
+export type RustProfileUsage = z.infer<typeof profileUsage>;
 
 const horizon = z.enum(["now", "next", "later"]);
 export const plan = z.object({
@@ -280,6 +277,8 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         json("POST", { revision, origin, toProject }),
       ),
     theme: () => board.read(themeInputs, "/theme"),
+    catalog: () => board.read(cachedCatalog, "/profiles/catalog"),
+    profileUsage: () => board.read(profileUsage, "/profiles/usage"),
     plan: (project: string) => board.read(planView, planning(project, "/plan")),
     setPlan: (project: string, value: RustPlan) =>
       board.read(plan, planning(project, "/plan"), json("PUT", value)),

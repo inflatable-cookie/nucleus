@@ -53,6 +53,7 @@ enum Response {
     Snapshot(Value),
     ParentSnapshot(Value),
     ShellSnapshot(Value),
+    ConfigStream(Vec<Value>),
     Success,
     Value(Value),
     Failure(Value),
@@ -73,36 +74,39 @@ fn check_upgrade(
     Err(error)
 }
 
+async fn serve_ticket(listener: &TcpListener) {
+    let (mut http, _) = listener.accept().await.expect("ticket HTTP");
+    let mut headers = Vec::new();
+    while !headers.ends_with(b"\r\n\r\n") {
+        assert!(headers.len() < 8192);
+        headers.push(http.read_u8().await.expect("header byte"));
+    }
+    let headers = String::from_utf8(headers).expect("header text");
+    assert!(headers.starts_with("POST /api/auth/websocket-ticket/rpc HTTP/1.1\r\n"));
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-key")
+    );
+    let ticket = r#"{"ticket":"fixture-ticket"}"#;
+    http.write_all(
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ticket}",
+            ticket.len()
+        )
+        .as_bytes(),
+    )
+    .await
+    .expect("ticket response");
+    drop(http);
+}
+
 async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Request>>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listen");
     let address = listener.local_addr().expect("address");
     let client = T3::new(&format!("http://{address}"), "fixture-key").expect("client");
     let runner = tokio::spawn(async move {
-        let (mut http, _) = listener.accept().await.expect("ticket HTTP");
-        let mut headers = Vec::new();
-        while !headers.ends_with(b"\r\n\r\n") {
-            assert!(headers.len() < 8192);
-            headers.push(http.read_u8().await.expect("header byte"));
-        }
-        let headers = String::from_utf8(headers).expect("header text");
-        assert!(headers.starts_with("POST /api/auth/websocket-ticket/rpc HTTP/1.1\r\n"));
-        assert!(
-            headers
-                .to_ascii_lowercase()
-                .contains("authorization: bearer fixture-key")
-        );
-        let ticket = r#"{"ticket":"fixture-ticket"}"#;
-        http.write_all(
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ticket}",
-                ticket.len()
-            )
-            .as_bytes(),
-        )
-        .await
-        .expect("ticket response");
-        drop(http);
-
+        serve_ticket(&listener).await;
         let (socket, _) = listener.accept().await.expect("websocket");
         let mut socket = accept_hdr_async(socket, check_upgrade)
             .await
@@ -120,6 +124,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
             assert_eq!(request.tag, tag);
             let id = &request.id;
             let shell = matches!(&response, Response::ShellSnapshot(_));
+            let config = matches!(&response, Response::ConfigStream(_));
             let thread = match &response {
                 Response::Snapshot(_) => Some(THREAD.to_owned()),
                 Response::ParentSnapshot(value) => Some(
@@ -146,11 +151,20 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 Response::Failure(cause) => {
                     json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Failure","cause":cause}})
                 }
+                Response::ConfigStream(values) => {
+                    json!({"_tag":"Chunk","requestId":id,"values":values})
+                }
             };
             socket
                 .send(Message::Text(reply.to_string().into()))
                 .await
                 .expect("write reply");
+            if config {
+                let frame = socket.next().await.expect("ack").expect("ack frame");
+                let value: Value =
+                    serde_json::from_str(frame.to_text().expect("ack text")).expect("ack envelope");
+                assert_eq!(value, json!({"_tag":"Ack","requestId":id}));
+            }
             if thread.is_some() || shell {
                 for expected in ["Ack", "Interrupt"] {
                     let frame = socket
@@ -1880,6 +1894,8 @@ fn setup_config(instance: Option<Value>, ready: bool) -> Response {
 async fn catalog_cache_uses_config_revision_across_passes() {
     let initial = setup_config(Some(setup_instance(RUST_LAUNCHER)), true);
     let (host, native) = server(vec![("server.getConfig", initial)]).await;
+    assert_eq!(host.board_catalog()["status"], "pending");
+    assert!(host.host_calls().is_empty());
     for _ in 0..3 {
         assert!(
             host.fixture_pass()
@@ -1890,6 +1906,37 @@ async fn catalog_cache_uses_config_revision_across_passes() {
         );
     }
     assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn held_config_updates_the_board_catalog_and_keeps_choices_after_disconnect() {
+    let providers = json!([{
+        "instanceId":"codex", "enabled":true, "status":"ready", "driver":"codex",
+        "models":[{"slug":"first","name":"First"}],
+    }]);
+    let first = json!({"type":"snapshot", "config":{
+        "environment":{"orchestrationProtocolVersion":2},
+        "providers":providers,
+    }});
+    let mut newer = providers;
+    newer[0]["models"][0] = json!({"slug":"second","name":"Second"});
+    newer[0]["skills"] = json!([{"path":"/synthetic/private/skill"}]);
+    let updated = json!({"type":"providerStatuses","payload":{"providers":newer}});
+    let (host, native) = server(vec![(
+        "subscribeServerConfig",
+        Response::ConfigStream(vec![first, updated]),
+    )])
+    .await;
+    let (theme, _) = tokio::sync::watch::channel(None);
+    let mut changes = host.catalog_changes();
+    assert!(host.watch_theme(&theme).await.is_err());
+    changes.changed().await.expect("catalog invalidation");
+    let catalog = host.board_catalog();
+    assert_eq!(catalog["status"], "stale");
+    assert!(catalog["readAtMs"].is_u64());
+    assert_eq!(catalog["providers"][0]["models"][0]["slug"], "second");
+    assert!(catalog["providers"][0].get("skills").is_none());
+    assert_eq!(native.await.expect("one config subscription").len(), 1);
 }
 
 #[tokio::test]

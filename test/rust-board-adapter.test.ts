@@ -1,9 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
+import { useNativeStubs, mount } from "./support/render";
+import {
+  EngineFeaturesContext,
+  RUST_ENGINE_FEATURES,
+} from "../client/engine-features";
+import { waitFor, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from "./support/budgets";
 import * as api from "../shared/contracts";
 import { createRustApi } from "../client/web/rust-api";
-import { createRustAdapter, projectKeys, RustUnsupported } from "../client/web/rust-adapter";
+import {
+  createRustAdapter,
+  projectKeys,
+  RustUnsupported,
+} from "../client/web/rust-adapter";
 import { rustProjectArchive } from "../client/rust-contracts";
+import { profileUsage } from "../client/settings-profile-helpers";
+import { nightlyProviders } from "./support/pool-shapes";
+import type {
+  RustCachedCatalog,
+  RustProfileUsage,
+} from "../client/web/rust-api";
 
 /**
  * The Rust engine's board adapter (Spec 070 ruling 4): the shared screens'
@@ -35,6 +54,10 @@ function engine() {
       { origin: "example/lantern", path: "/work/lantern", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     ] },
   } };
+  let catalog: RustCachedCatalog = { providers: null, readAtMs: null, status: "pending" };
+  const empty = { counts: {}, groups: {}, sample: 0 };
+  let usage: RustProfileUsage = { recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {} };
+  const reads: string[] = [];
   const revisions: Record<string, number> = { dispatch: 1, profiles: 1, projects: 1 };
   const writes: Array<{ domain: string; body: { revision: string; value: unknown } }> = [];
   const snap = (value: unknown, domain: string) => ({ value, revision: String(revisions[domain] ?? 1), configured: true });
@@ -53,6 +76,9 @@ function engine() {
     const path = String(input).replace("/api/engine", "");
     assert.equal(new Headers(init?.headers).get("x-nucleus-board"), "1");
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    reads.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/profiles/catalog") return json(catalog);
+    if (path === "/profiles/usage") return json(usage);
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     if (path === "/tasks") return json([]);
     if (path === "/settings/projects/reassign") {
@@ -69,6 +95,9 @@ function engine() {
     const domain = /^\/settings\/(\w+)$/.exec(path)?.[1];
     if (domain && init?.method === "PUT") {
       const body = JSON.parse(String(init.body)) as { revision: string; value: never };
+      if (Number(body.revision) !== revisions[domain]) {
+        return new Response(JSON.stringify({ error: { message: "Revision changed" } }), { status: 409 });
+      }
       writes.push({ domain, body });
       if (domain === "dispatch") dispatch = body.value;
       if (domain === "profiles") profiles = body.value;
@@ -79,7 +108,11 @@ function engine() {
     if (/\/plan$/.test(path)) return json({ version: 0, lanes: [], documents: [], idle: true });
     return new Response(JSON.stringify({ error: { message: "no route" } }), { status: 404 });
   }) as typeof fetch;
-  return { fetcher, writes, mode: () => dispatch.mode };
+  return {
+    fetcher, writes, reads, mode: () => dispatch.mode,
+    setCatalog: (next: RustCachedCatalog) => { catalog = next; },
+    setUsage: (next: RustProfileUsage) => { usage = next; },
+  };
 }
 
 test("the board snapshot carries the engine's settings and its dispatch mode", async () => {
@@ -145,7 +178,7 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
     assert.ok(!("unchanged" in board));
     assert.equal(board.globalLimit, 8);
     assert.equal(board.projectLimit, 4);
-    assert.deepEqual(board.projectLimitOverrides, limit === null ? {} : { [projectKey]: limit });
+    assert.deepEqual(board.projectLimitOverrides, limit === null ? { lantern: 1 } : { lantern: 1, [projectKey]: limit });
   }
   assert.ok(fake.writes.every((write) => write.domain === "dispatch"));
 });
@@ -188,5 +221,320 @@ test("moving a repository in the shared Projects editor reassigns it in the engi
   await assert.rejects(
     adapter.rpc(api.projectUpsert, { key: "lantern", name: "Lantern", repositories: [{ origin: "example/new", path: "" }] }),
     /first dispatch/,
+  );
+});
+
+test("profile identity and pool saves persist independently through the paired settings revision", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const created = await adapter.rpc(api.createNucleusProfile, {
+    name: "Codex test",
+    provider: "codex",
+    model: "gpt-6-luna",
+    modeId: "supervised",
+    thinkingOptionId: "high",
+    featureValues: { speed: "default" },
+  });
+  const { id } = created.profile;
+  assert.notEqual(id, "w");
+  const [saved] = await Promise.all([
+    adapter.rpc(api.updateNucleusProfile, {
+      id,
+      name: "Claude test",
+      provider: "claude",
+      model: "claude-haiku-5-5",
+      modeId: "full-access",
+      thinkingOptionId: "ultra",
+      featureValues: { ultracode: "on" },
+    }),
+    adapter.rpc(api.configureProfile, {
+      profileId: id,
+      group: "synthetic team",
+      enabled: true,
+      roles: ["reviewer"],
+      capability: "heavyweight",
+      weight: "more",
+      scopes: ["general"],
+    }),
+  ]);
+  const reloaded = createRustAdapter(createRustApi(fake.fetcher));
+  assert.deepEqual(
+    (await reloaded.rpc(api.listNucleusProfiles, {})).profiles.at(-1),
+    saved.profile,
+  );
+  const board = await reloaded.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board));
+  assert.deepEqual(
+    board.pool.find((entry) => entry.profileId === id),
+    {
+      profileId: id,
+      group: "synthetic team",
+      enabled: true,
+      roles: ["reviewer"],
+      capability: "heavyweight",
+      weight: "more",
+      scopes: ["general"],
+    },
+  );
+  assert.deepEqual(
+    fake.writes.map((write) => write.body.revision),
+    ["1", "2", "3"],
+  );
+  assert.ok(fake.writes.every(({ domain }) => domain === "profiles"));
+});
+
+test("Refresh takes the newest held revision and retains usable choices on failure", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  assert.equal(
+    (await adapter.rpc(api.readProfileVocabulary, {})).cacheStatus,
+    "pending",
+  );
+  await assert.rejects(
+    adapter.rpc(api.readProfileVocabulary, { refresh: true }),
+    /not published/,
+  );
+  const current: RustCachedCatalog = {
+    status: "current",
+    readAtMs: 1_790_000_000_000,
+    providers: [
+      { instanceId: "broken", models: "wrong shape" },
+      ...nightlyProviders(),
+      {
+        instanceId: "other-claude",
+        driver: "claudeAgent",
+        enabled: true,
+        status: "ready",
+        models: [
+          {
+            slug: "legacy",
+            name: null,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  type: "select",
+                  currentValue: [],
+                  options: [null, { id: "ultrathink" }],
+                },
+                { id: "bad", type: "unknown" },
+              ],
+            },
+          },
+          { slug: "no-capabilities", capabilities: null },
+          { name: "Missing ID" },
+        ],
+      },
+    ],
+  };
+  fake.setCatalog(current);
+  const first = await adapter.rpc(api.readProfileVocabulary, {});
+  const legacy = first.providers
+    .find((provider) => provider.key === "claude")
+    ?.models.find((model) => model.id === "legacy");
+  assert.equal(legacy?.label, "legacy");
+  assert.deepEqual(legacy?.thinkingOptions, [{ id: "ultra", label: "Ultra" }]);
+  assert.deepEqual(legacy?.features, []);
+  assert.ok(first.providers.some(({ key }) => key === "codex"));
+  const validProviders = [
+    {
+      instanceId: "codex",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "replacement", name: "Replacement" }],
+    },
+  ];
+  fake.setCatalog({
+    ...current,
+    readAtMs: 1_790_000_001_000,
+    providers: validProviders,
+  });
+  const changed = await adapter.rpc(api.readProfileVocabulary, {
+    refresh: true,
+  });
+  assert.deepEqual(
+    changed.providers[0]?.models.map(({ id, label }) => [id, label]),
+    [["replacement", "Replacement"]],
+  );
+  assert.notEqual(first.readAt, changed.readAt);
+  fake.setCatalog({ ...current, status: "stale", providers: validProviders });
+  await assert.rejects(
+    adapter.rpc(api.readProfileVocabulary, { refresh: true }),
+    /temporarily unavailable/,
+  );
+  const retained = await adapter.rpc(api.readProfileVocabulary, {});
+  assert.deepEqual(retained.providers, changed.providers);
+  assert.equal(retained.cacheStatus, "stale");
+  assert.ok(fake.reads.every((path) => path === "GET /profiles/catalog"));
+});
+
+test("the shared usage strips project recorded zero and active role windows", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const zero = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in zero));
+  assert.deepEqual(profileUsage(zero, "w", ["w"]), {
+    count: 0,
+    max: 0,
+    sample: 0,
+  });
+  fake.setUsage({
+    recent: { counts: { w: 3, removed: 7 }, groups: { team: 3 }, sample: 10 },
+    worker: { counts: { w: 2, removed: 7 }, groups: { team: 2 }, sample: 9 },
+    reviewer: { counts: { w: 1 }, groups: { team: 1 }, sample: 1 },
+    totals: { w: 12 },
+    groupTotals: { team: 16 },
+  });
+  const active = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in active));
+  assert.deepEqual(profileUsage(active, "w", ["w"]), {
+    count: 3,
+    max: 3,
+    sample: 10,
+  });
+  assert.deepEqual(profileUsage(active, "w", ["w"], "worker"), {
+    count: 2,
+    max: 2,
+    sample: 9,
+  });
+  assert.deepEqual(profileUsage(active, "w", ["w"], "reviewer"), {
+    count: 1,
+    max: 1,
+    sample: 1,
+  });
+  assert.equal(active.assignments["profile:w"], 12);
+  assert.equal(active.assignments.team, 16);
+});
+
+test("the paired Profiles panel adds, edits, and duplicates using the shared controls", async (t) => {
+  const fake = engine();
+  const catalog: RustCachedCatalog = {
+    providers: nightlyProviders(),
+    status: "current",
+    readAtMs: 1_790_000_000_000,
+  };
+  fake.setCatalog(catalog);
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const state = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in state));
+  useNativeStubs();
+  const h = React.createElement;
+  const { ProfilesPanel } = await import("../client/settings-profiles");
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  t.after(() => client.clear());
+  const vocabulary = ["nucleus", "profile-vocabulary", ""];
+  client.setQueryData(
+    vocabulary,
+    await adapter.rpc(api.readProfileVocabulary, {}),
+  );
+  client.setQueryData(
+    ["nucleus", "profiles"],
+    await adapter.rpc(api.listNucleusProfiles, {}),
+  );
+  const invoke = (method: string, input: never): Promise<unknown> => {
+    switch (method) {
+      case "profile.vocabulary":
+        return adapter.rpc(api.readProfileVocabulary, input);
+      case "profile.compatibility":
+        return adapter.rpc(api.readProfileCompatibility, input);
+      case "profile.list":
+        return adapter.rpc(api.listNucleusProfiles, input);
+      case "profile.create":
+        return adapter.rpc(api.createNucleusProfile, input);
+      case "profile.update":
+        return adapter.rpc(api.updateNucleusProfile, input);
+      default:
+        throw new Error(`Unexpected profile RPC ${method}`);
+    }
+  };
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: invoke as never,
+        children: h(EngineFeaturesContext.Provider, {
+          value: RUST_ENGINE_FEATURES,
+          children: h(ProfilesPanel, {
+            c: new Proxy({}, { get: () => "#123" }) as never,
+            compact: false,
+            inset: 0,
+            state,
+            repositories: [],
+            busy: false,
+            savePool: async () => {},
+            savePoolList: async () => true,
+            saveAvailability: async () => {},
+          }),
+        }),
+      }),
+    }),
+  );
+  assert.ok(ui.query("Worker, all roles: 0 of 0 recent assignments"));
+  assert.equal(ui.query("Coordinators"), undefined);
+  ui.press("Add profile");
+  ui.type("Name", "Shared profile");
+  ui.press("Provider, Choose a provider");
+  ui.press("Provider: Codex");
+  ui.press("Model, Choose a model");
+  ui.press("Model: Luna, gpt-6-luna");
+  const wait = (ready: () => boolean, reason: string) =>
+    waitFor(ready, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, reason);
+  await wait(
+    () => Boolean(ui.query("Duplicate Shared profile")),
+    "the new profile's editor",
+  );
+  assert.equal(ui.all(/^Thinking, /).length, 1);
+  ui.press("Provider, Codex");
+  ui.press("Provider: Claude");
+  ui.press("Model, Choose a model");
+  ui.press("Model: Haiku, claude-haiku-5-5");
+  await wait(() => fake.writes.length === 2, "the provider and model edit");
+  const list = () =>
+    adapter.rpc(api.listNucleusProfiles, {}).then((value) => value.profiles);
+  const initial = (await list()).find(({ name }) => name === "Shared profile");
+  assert.ok(initial);
+  assert.deepEqual(
+    [initial.provider, initial.model],
+    ["claude", "claude-haiku-5-5"],
+  );
+  await wait(
+    () =>
+      client
+        .getQueryData<{
+          profiles: Awaited<ReturnType<typeof list>>;
+        }>(["nucleus", "profiles"])
+        ?.profiles.some(({ model }) => model === initial.model) === true,
+    "the saved identity to reach the editor",
+  );
+  ui.press("Duplicate Shared profile");
+  await wait(() => fake.writes.length === 3, "the duplicate to save");
+  const copy = (await list()).find(
+    ({ name }) => name === "Shared profile copy",
+  );
+  assert.ok(copy);
+  assert.notEqual(copy.id, initial.id);
+  assert.deepEqual(copy, { ...initial, id: copy.id, name: copy.name });
+  await adapter.rpc(api.updateNucleusProfile, {
+    id: copy.id,
+    thinkingOptionId: "ultra",
+  });
+  assert.deepEqual(
+    (await list()).find(({ id }) => id === initial.id),
+    initial,
+  );
+
+  ui.press("Refresh providers and models");
+  await wait(
+    () => ui.text().includes("Providers and models refreshed."),
+    "the Refresh receipt",
+  );
+  fake.setCatalog({ ...catalog, status: "stale" });
+  ui.press("Refresh providers and models");
+  await wait(() => ui.text().includes("Refresh failed"), "the Refresh failure");
+  assert.ok(
+    ui.query("Model, Haiku, claude-haiku-5-5"),
+    "the last usable options remain",
   );
 });

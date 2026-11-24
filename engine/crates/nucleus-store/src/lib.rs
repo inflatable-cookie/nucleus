@@ -40,6 +40,7 @@ pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
 pub use titles::TitleReceipt;
+pub use usage::{ProfileUsage, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
@@ -609,6 +610,14 @@ impl Store {
         group: &str,
     ) -> Option<RotationCounts> {
         usage::counts(&self.connection, role, profile, group).ok()
+    }
+
+    /// Read the board's assignment windows and totals from recorded charges.
+    ///
+    /// # Errors
+    /// Returns a database error if the recorded counts could not be read.
+    pub fn profile_usage(&self) -> Result<ProfileUsage, StoreError> {
+        Ok(usage::profile_usage(&self.connection)?)
     }
 
     /// Record a positive provider deadline without shortening another known pause.
