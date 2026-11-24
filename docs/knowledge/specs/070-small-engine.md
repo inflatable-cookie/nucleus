@@ -59,7 +59,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
    - Each worker or reviewer run is one `tool_call`, titled with its role and what it's doing ("Worker: adding the retry test", "Reviewer: checking round 2"). It's updated in place with the agent's current activity and elapsed time, drawn from the observed turn: the running command, a file being edited or tests running.
    - Messages appear only for things a person would want to read: the PR opened (with its link), a review verdict and its findings in a sentence or two, a merge, a question for the planner, and the finish with a short summary.
    - No noise. Retries, timeouts, deferrals, unknown reads and repeated identical states produce nothing. A state that persists becomes a status change, shown once.
-8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, load, budgets and usage levels), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
+8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, budgets and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);
    - its slot limit;
@@ -121,6 +121,10 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - `serve` can name its process `nucleusd` so the daemon is recognisable in process lists. There's no second binary.
     - The CLI, the ACP agent and the service then share one build and can't drift apart.
     - Milestone 3 does the fold. The pilot's `nucleus-engine` and `nucleus-acp` binaries and the Python startup helper are interim. When `ensure` moves into the binary, the service opens its storage before binding its port, so a caller sees only "refused" or "healthy".
+21. **No machine-load gate.** Tom, 2026-11-24: "running tasks on the queue isn't the load issue, it's them running tests, etc, which is ultimately a separate problem. We shouldn't hold up doing task work because the machine is loaded".
+    - Dispatch never reads the machine's load average. Slots and the allowance are the only dispatch limits.
+    - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
+    - The Dispatch settings domain drops `max_load`, and a saved domain that still carries it loads with the field ignored.
 
 ## The model
 
