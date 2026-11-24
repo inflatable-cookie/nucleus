@@ -42,8 +42,9 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ArchiveStep, ParentAttempt, ParentRun, ParentStep, ParentWrite, parent_thread,
+    ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite, parent_thread,
 };
+pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};
 use projection::Projection;
 pub use projection::RunActivity;
@@ -58,7 +59,7 @@ pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc, ThreadReply};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
-pub use task_row::{RowChange, RowObservation, RowVisibility};
+pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility};
 use thread_snapshots::ThreadRead;
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
@@ -94,8 +95,40 @@ pub enum HostError {
     Binding,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
-    #[error("the local process census could not confirm workspace custody")]
-    ProcessCoverage,
+    #[error(
+        "parent message preflight failed: {predicate} (prepared revision {prepared}, observed revision {observed:?})"
+    )]
+    ParentPreflight {
+        predicate: &'static str,
+        prepared: u64,
+        observed: Option<u64>,
+    },
+    #[error("parent row is snoozed until {until} ms (verified revision {revision})")]
+    ParentSnoozed { until: u64, revision: u64 },
+    #[error(
+        "parent ACP binding changed (prepared revision {prepared}, observed revision {observed}; root, provider and model matches expected [true, true, true], observed {matches:?})"
+    )]
+    ParentBindingMismatch {
+        prepared: u64,
+        observed: u64,
+        matches: [bool; 3],
+    },
+    #[error(
+        "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, custody before {activity_before:?}, custody now {activity_now:?}; values are fingerprints)"
+    )]
+    ParentShellChanged {
+        field: &'static str,
+        prepared: u64,
+        observed: Option<u64>,
+        before: u64,
+        after: u64,
+        activity_before: RowChildren,
+        activity_now: RowChildren,
+    },
+    #[error("the held shell could not confirm all recorded role children are quiet")]
+    RowChildBusy,
+    #[error("the local process census could not confirm workspace custody: {0}")]
+    ProcessCoverage(ProcessEvidenceFailure),
     #[error("the frozen assignment exceeds T3's 120,000-character input limit")]
     AssignmentLimit,
     #[error("a process still occupies the task checkout or run scratch directory")]
@@ -148,6 +181,7 @@ pub struct ReplayAuthorization {
     revoked: bool,
     archived: bool,
     wake: Option<ControlDispatch>,
+    parent_row: Option<RowObservation>,
 }
 
 /// Frozen native write whose send marker must be committed before dispatch.
@@ -160,6 +194,11 @@ impl ReplayAuthorization {
     #[must_use]
     pub const fn binding(&self) -> &Binding {
         &self.wire.binding
+    }
+
+    #[must_use]
+    pub const fn parent_row(&self) -> Option<RowObservation> {
+        self.parent_row
     }
 
     #[must_use]
@@ -386,6 +425,7 @@ impl T3 {
     }
 
     /// Stream thread change hints over a socket independent of exact reads.
+    /// A successful return means the synchronized stream reached planned rotation.
     /// # Errors
     /// Returns an error on disconnect or if the listener missed a hint.
     pub async fn watch_threads(
@@ -498,8 +538,10 @@ impl T3 {
             }
             ThreadReply::Snapshot(Reply::Value(value)) => {
                 let mut projection = Projection::parse(value, binding, id)?;
-                if let Some(row) = self.rpc.thread_row(id) {
-                    projection.use_shell_background(&row);
+                if let Some((row, same_revision)) =
+                    self.rpc.background_row(id, projection.sequence())
+                {
+                    projection.use_shell_background(&row, same_revision);
                 }
                 Ok(Some(projection))
             }
@@ -614,7 +656,7 @@ impl T3Pass<'_> {
             })
             .await
             .as_ref()
-            .map_err(|_| HostError::ProcessCoverage)?;
+            .map_err(|&error| process::coverage_error(error))?;
         let checkout = Path::new(&binding.worktree_path);
         let mut runtime = inventory.standing_pids(thread);
         for sibling in self
@@ -635,13 +677,15 @@ impl T3Pass<'_> {
             Some(scratch) => inventory
                 .activity_for(checkout, self.run_scratch.as_deref(), scratch, &runtime)
                 .await
-                .map_err(|_| HostError::ProcessCoverage)?,
+                .map_err(process::coverage_error)?,
             None => inventory.activity(checkout, &runtime)?,
         };
         match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
-            Activity::Unknown => Err(HostError::ProcessCoverage),
+            Activity::Unknown => Err(HostError::ProcessCoverage(
+                ProcessEvidenceFailure::Incomplete,
+            )),
         }
     }
 }
@@ -776,7 +820,7 @@ impl TaskHost for T3Pass<'_> {
         if wire.assignment_too_large() {
             return Err(HostError::AssignmentLimit);
         }
-        if let Some(parent) = &wire.parent {
+        let parent_row = if let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
@@ -787,7 +831,14 @@ impl TaskHost for T3Pass<'_> {
             {
                 return Err(HostError::Uncertain);
             }
-        }
+            if !run.revoked() && wire.method == Method::Continue {
+                projection.row_observation()?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let (thread, state) = self.host.delivery(run, &wire, ThreadRead::Exact).await?;
         if wire.method == Method::Continue
             && run.launch().profile().is_some()
@@ -841,6 +892,7 @@ impl TaskHost for T3Pass<'_> {
             wake,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
+            parent_row,
         })
     }
 
@@ -947,12 +999,14 @@ impl T3Pass<'_> {
             return Ok(false);
         }
         // Observe the exact child again after proving its parent can no longer launch it.
+        // With no send intent, discarding the reservation cannot abandon child work.
         let (child, state) = self.host.delivery(run, wire, ThreadRead::Exact).await?;
         Ok(child.is_none()
             && state == RunState::ReadyToSend
-            && self
-                .quiet(&wire.binding, &run.launch().thread, None)
-                .await?)
+            && (run.last_send_at_ms().is_none()
+                || self
+                    .quiet(&wire.binding, &run.launch().thread, None)
+                    .await?))
     }
 
     async fn observe_rejected_archive(

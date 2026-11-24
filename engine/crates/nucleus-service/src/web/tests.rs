@@ -38,7 +38,12 @@ const LOCAL_HOST: &str = "127.0.0.1:9";
 #[tokio::test]
 async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
-    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    let (task, _, _) = crate::tests::reservation_at(
+        "worker",
+        Entry::Brief,
+        &service.fixture().start,
+        crate::now_ms(),
+    );
     seed_task(&service, &task).await;
     let mut row = service.task("worker").await.expect("reserved row");
     assert!(
@@ -83,6 +88,21 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
         service.acp_turn_view(&state, &row).expect("deferred view"),
         (None, true)
     );
+    for wait in [
+        WaitReason::HostObservationBlocked,
+        WaitReason::Permission,
+        WaitReason::Question,
+    ] {
+        state.set_wait("worker", Some(wait));
+        assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    }
+    state.set_wait("worker", Some(WaitReason::IdleWithoutTerminalRun));
+    state.role_observations.insert(
+        "worker".into(),
+        (instance.clone(), RunState::IdleWithoutTerminalRun),
+    );
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    state.set_wait("worker", Some(WaitReason::Running));
     state
         .role_observations
         .insert("worker".into(), (instance, RunState::Ended));

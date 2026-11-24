@@ -159,8 +159,7 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.verify_native_parent(row, &write).await?;
-                self.write_claimed_parent(row, "archive", write).await?;
+                self.deliver_parent(row, write, "archive", None).await?;
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
@@ -674,6 +673,7 @@ impl Service {
             .await
             .store
             .claim_task_effect(id, &audit, false)?
+            .is_some()
         {
             eprintln!(
                 "{id}: assignment exceeds the T3 message limit: {}",
@@ -733,9 +733,18 @@ impl Service {
                 }),
                 host.profile_catalog(),
             )
-            .await?
-        {
+            .await
+            .map_err(|error| {
+                if prior_turn.is_some() && !matches!(error, HostError::ParentPreflight { .. }) {
+                    ServiceError::ParentDeliveryUnknown(error)
+                } else {
+                    self.parent_not_sent(error)
+                }
+            })? {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::DeliveryUnknown => {
+                Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain))
+            }
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
             )),
@@ -744,9 +753,9 @@ impl Service {
                     self.record_failed_parent_turn(row, &session, &command)
                         .await?;
                 }
-                Ok(ControlFlow::Break(WaitReason::HostUnknown))
+                Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
             }
-            ParentStep::Write(mut write) => {
+            ParentStep::Write(write) => {
                 let Some(_permit) = self
                     .dispatch_gate(
                         task,
@@ -760,47 +769,21 @@ impl Service {
                 else {
                     return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
                 };
-                if !self.wake_parent_delivery(row, provider, &mut write).await? {
-                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
-                }
                 self.ensure_parent_reader(&identity.id, checkout.path())
                     .await?;
-                self.verify_native_parent(row, &write).await?;
-                if !self
-                    .claim_preparation_turn(row, &write, &session, prior_turn.as_deref())
-                    .await?
-                {
-                    return Ok(ControlFlow::Break(WaitReason::HostUnknown));
+                let command = write.command_id().ok_or(ServiceError::Input)?;
+                let (scope, kind) = if prior_turn.as_deref() == Some(command) {
+                    (&failed_scope, "native_turn_replay")
+                } else {
+                    (&session, "native_turn_intent")
+                };
+                let intent = write.starts_turn().then_some(kind);
+                if !self.deliver_parent(row, write, scope, intent).await? {
+                    return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain));
                 }
-                self.write_claimed_parent(row, &session, write).await?;
                 self.recheck_effect(row, WaitReason::HostUnknown).await;
                 Ok(ControlFlow::Break(WaitReason::Starting))
             }
-        }
-    }
-
-    async fn claim_preparation_turn(
-        &self,
-        row: &TaskRow,
-        write: &nucleus_hosts::ParentWrite,
-        session: &str,
-        prior: Option<&str>,
-    ) -> Result<bool, ServiceError> {
-        if !write.starts_turn() {
-            return Ok(true);
-        }
-        let command = write.command_id().ok_or(ServiceError::Input)?;
-        if prior == Some(command) {
-            self.record_native_turn(
-                row,
-                "native_turn_replay",
-                &self.turn_failure_scope(session),
-                command,
-            )
-            .await
-        } else {
-            self.record_native_turn(row, "native_turn_intent", session, command)
-                .await
         }
     }
 
@@ -991,6 +974,10 @@ impl Service {
         Ok(action)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep admission, intent and send in order"
+    )]
     async fn send(
         &self,
         row: &TaskRow,
@@ -999,6 +986,7 @@ impl Service {
     ) -> Result<SendAttempt, ServiceError> {
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
+        let _fence = self.effect(row).await?;
         let authorization = host.authorize_send(run).await.inspect_err(|error| {
             eprintln!(
                 "{}: before sending T3 {}: {error}",
@@ -1006,7 +994,6 @@ impl Service {
                 launch_diagnostic(run)
             );
         })?;
-        let _fence = self.effect(row).await?;
         if task
             .run()
             .is_some_and(|run| run.last_send_at_ms().is_none())
@@ -1043,6 +1030,18 @@ impl Service {
             }
             return Ok(SendAttempt::Deferred);
         }
+        let parent = authorization.parent_row().zip(self.acp_provider());
+        if let Some((parent, provider)) = parent
+            && let Err(error) = self
+                .wake_task_parent(row, authorization.binding(), provider, parent)
+                .await
+        {
+            if let ServiceError::ParentNotSent { reason, .. } = &error {
+                self.record_parent_refusal(row, &run.launch().instance, "role-wake", None, reason)
+                    .await?;
+            }
+            return Err(error);
+        }
         let archive = permit.superseded;
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
@@ -1068,6 +1067,12 @@ impl Service {
                 dispatch,
             )
         };
+        if let Some((_, provider)) = parent
+            && run.last_send_at_ms().is_none()
+            && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
+        {
+            eprintln!("{}: {error}", task.identity().id);
+        }
         let result = match host.send(dispatch).await {
             Err(error @ HostError::Deferred { .. }) => {
                 let mut audit = event("host_send_not_sent");
@@ -1489,7 +1494,11 @@ fn prior_preparation_command(
         .store
         .task_turn_command(id, "native_turn_intent", row.version, session)?;
     if let Some(command) = &prior
-        && state.store.task_turn_failed(id, command)?
+        && (state.store.task_turn_failed(id, command)?
+            || state
+                .store
+                .task_turn_attempt(id, "native_turn_intent", row.version, session, command)?
+                .is_some_and(|(_, refused)| refused))
     {
         return Ok(None);
     }
@@ -2388,7 +2397,7 @@ mod tests {
                 std::fs::write(checkout.path().join("local-edit.txt"), "local changes")
                     .expect("edit after observation");
             }
-            let host = Due(std::sync::atomic::AtomicUsize::new(0));
+            let host = Due(std::sync::atomic::AtomicUsize::new(0), None);
             service
                 .state
                 .lock()

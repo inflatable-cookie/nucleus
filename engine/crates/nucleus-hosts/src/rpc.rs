@@ -23,7 +23,7 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    HostError, ProfileCatalog, T3_RETRY_DELAY,
+    HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
     catalog::CatalogRevision,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
@@ -90,6 +90,7 @@ pub struct ThreadHint {
     running: bool,
     identity: Option<crate::PlannerIdentity>,
     inbox_synchronized: bool,
+    parent_thread: Option<String>,
 }
 
 impl ThreadHint {
@@ -106,6 +107,12 @@ impl ThreadHint {
         Self::read(item)
     }
 
+    /// Attached child updates can change whether a task row should be visible.
+    #[must_use]
+    pub fn parent_thread(&self) -> Option<&str> {
+        self.parent_thread.as_deref()
+    }
+
     /// A closure can revoke existing planner authority. It cannot grant it.
     #[must_use]
     pub const fn closed(&self) -> bool {
@@ -117,6 +124,20 @@ impl ThreadHint {
     #[must_use]
     pub const fn running(&self) -> bool {
         self.running && !self.closed
+    }
+
+    /// A run change is a reason to check delivery again.
+    #[must_use]
+    pub fn has_delivery_change(&self, prior: Option<&Self>) -> bool {
+        if self.closed {
+            return prior.is_none_or(|prior| !prior.closed);
+        }
+        self.change.as_ref().is_some_and(|current| {
+            (current[2].is_string() || current[3].is_string())
+                && prior
+                    .and_then(|hint| hint.change.as_ref())
+                    .is_none_or(|prior| (1..=8).any(|field| current[field] != prior[field]))
+        })
     }
 
     /// An event can invalidate a prior authority proof. It cannot grant one.
@@ -141,6 +162,9 @@ impl ThreadHint {
                         && thread["activeRunId"].as_str().is_some(),
                     identity: serde_json::from_value(thread.clone()).ok(),
                     inbox_synchronized: false,
+                    parent_thread: crate::thread_snapshots::ShellCustody(thread)
+                        .parent()
+                        .map(str::to_owned),
                     change: Some(json!([
                         item["location"],
                         thread["status"],
@@ -164,6 +188,7 @@ impl ThreadHint {
                 running: false,
                 identity: None,
                 inbox_synchronized: false,
+                parent_thread: None,
             }),
             _ => None,
         }
@@ -334,6 +359,28 @@ impl Rpc {
             .await
     }
 
+    pub(crate) async fn write_guarded(
+        &self,
+        method: &'static str,
+        payload: Value,
+        check: impl FnOnce() -> Result<(), HostError> + Send,
+    ) -> Result<Reply, ParentSendError> {
+        let mut reached_send = false;
+        self.call_guarded(method, payload, Read::One, || {
+            check()?;
+            reached_send = true;
+            Ok(true)
+        })
+        .await
+        .map_err(|error| {
+            if reached_send {
+                ParentSendError::Unknown(error)
+            } else {
+                ParentSendError::NotSent(error)
+            }
+        })
+    }
+
     async fn call_locked(
         &self,
         slot: &mut Option<Connection>,
@@ -478,6 +525,9 @@ impl Rpc {
             && (!row["archivedAt"].is_null() || !row["deletedAt"].is_null())
         {
             self.traffic.record("threadReads.archivedOrDeleted");
+            if matches!(policy, ThreadRead::Terminal) {
+                self.traffic.record("threadReads.terminalArchivedOrDeleted");
+            }
         }
         if let Some(marker) = marker
             && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
@@ -503,7 +553,45 @@ impl Rpc {
             .marker(id)
     }
 
-    #[cfg(test)]
+    pub(crate) fn background_row(
+        &self,
+        id: &str,
+        sequence: u64,
+    ) -> Option<(std::sync::Arc<Value>, bool)> {
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()?
+            .background_row(id, sequence)
+    }
+
+    pub(crate) fn thread_row_with_revision(
+        &self,
+        id: &str,
+    ) -> (Option<std::sync::Arc<Value>>, Option<u64>) {
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()
+            .map_or((None, None), |shell| (shell.marker(id), shell.revision(id)))
+    }
+
+    pub(crate) fn row_children(
+        &self,
+        parent: &str,
+        roles: &[&str],
+    ) -> crate::task_row::RowChildren {
+        use crate::task_row::RowChildren;
+        self.snapshots
+            .lock()
+            .expect("thread snapshots")
+            .as_ref()
+            .map_or(RowChildren::Unknown, |shell| {
+                shell.row_children(parent, roles)
+            })
+    }
+
+    #[cfg(any(test, feature = "loopback-fixture"))]
     pub(crate) fn fixture_shell(&self, item: &Value) {
         let mut snapshots = self.snapshots.lock().expect("thread snapshots");
         if item["kind"] == "snapshot" {
@@ -629,6 +717,7 @@ impl Rpc {
                                         running: false,
                                         identity: None,
                                         inbox_synchronized: true,
+                                        parent_thread: None,
                                     })
                                     .map_err(|_| HostError::Uncertain)?;
                             }

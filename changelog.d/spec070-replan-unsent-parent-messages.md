@@ -1,0 +1,1 @@
+Retry T3 task-parent messages that Nucleus knows never reached the wire, even when the task version stays the same. Keep operator snoozes and custody checks in force, and report which check deferred delivery.

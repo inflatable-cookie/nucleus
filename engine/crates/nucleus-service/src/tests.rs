@@ -123,6 +123,15 @@ pub(super) fn reservation(
     entry: Entry,
     head: &Head,
 ) -> (Task, CallbackCredential, Observation) {
+    reservation_at(id, entry, head, 1)
+}
+
+pub(super) fn reservation_at(
+    id: &str,
+    entry: Entry,
+    head: &Head,
+    started_at: u64,
+) -> (Task, CallbackCredential, Observation) {
     let pr = PullRequest {
         url: PR.into(),
         head: head.clone(),
@@ -158,7 +167,7 @@ pub(super) fn reservation(
             LaunchInputs {
                 scratch: None,
                 thread: format!("thread:{id}"),
-                started_at: 1,
+                started_at,
                 input: "fixture-only wire".into(),
             },
             &[3; 32],
@@ -170,9 +179,17 @@ pub(super) fn reservation(
 pub(super) async fn forge_fixture(
     head: &Head,
 ) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    forge_fixture_for_branch(head, "ns-reviewer").await
+}
+
+async fn forge_fixture_for_branch(
+    head: &Head,
+    branch: &str,
+) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let reads = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&reads);
-    let pull = forge_pull(head);
+    let mut pull = forge_pull(head);
+    pull["head"]["ref"] = Value::from(branch);
     let checks = forge_checks(head);
     let server = Router::new()
         .route(
@@ -217,7 +234,10 @@ pub(super) async fn serve_forge(app: Router) -> (GitHub, tokio::task::JoinHandle
     (client, server)
 }
 
-pub(super) struct Due(pub(super) AtomicUsize);
+pub(super) struct Due(
+    pub(super) AtomicUsize,
+    pub(super) Option<nucleus_core::RunState>,
+);
 
 impl TaskHost for Due {
     async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
@@ -234,8 +254,15 @@ impl TaskHost for Due {
     async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
-    async fn observe_run(&self, _: &Run, _: u64) -> Result<RunObservation, HostError> {
-        unreachable!("only revoked runs are exercised")
+    async fn observe_run(&self, run: &Run, _: u64) -> Result<RunObservation, HostError> {
+        Ok(RunObservation {
+            host: Host::Current {
+                instance: run.launch().instance.clone(),
+                state: self.1.ok_or(HostError::Uncertain)?,
+            },
+            activity: None,
+            provider_limit: None,
+        })
     }
 
     async fn authorize_send(&self, _: &Run) -> Result<ReplayAuthorization, HostError> {
@@ -354,6 +381,164 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         Workspace::Absent
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() {
+    for question in [false, true] {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let head = service.fixture().start.clone();
+        let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
+        service.forge = forge;
+        let (mut task, credential, _) = reservation("worker", Entry::Brief, &head);
+        let instance = task.run().unwrap().launch().instance.clone();
+        task.record_send(&instance, 1).unwrap();
+        let report = if question {
+            nucleus_core::Report::Question {
+                prompt: "Choose the scope".into(),
+                options: vec!["Small".into(), "Large".into()],
+            }
+        } else {
+            nucleus_core::Report::Work(PullRequest {
+                url: PR.into(),
+                head,
+            })
+        };
+        task.record_report(&instance, credential.as_bytes(), report)
+            .unwrap();
+        let row = {
+            let mut state = service.state.lock().await;
+            let version = state.store.create(&task, &event("fixture")).unwrap();
+            let mut blocked = event("host_observation_blocked");
+            blocked.detail = serde_json::json!({
+                "version": version, "deliveryPending": true,
+                "session": format!("{}/previous-engine", service.host.runtime_identity().unwrap()),
+            })
+            .to_string();
+            state
+                .store
+                .claim_task_effect("worker", &blocked, false)
+                .unwrap();
+            service.track(&mut state, &task);
+            service.lookup(&state, "worker").unwrap()
+        };
+        let unknown = Due(AtomicUsize::new(0), None);
+        let result = Box::pin(service.advance_due_task(&row, &unknown)).await;
+        assert!(matches!(
+            result,
+            Err(ServiceError::Host(HostError::Uncertain))
+        ));
+        service
+            .schedule_result(&row, &result, Priority::Effect)
+            .await
+            .unwrap();
+        {
+            let mut state = service.state.lock().await;
+            assert_eq!(state.wait_reason("worker"), Some(WaitReason::HostUnknown));
+            let due = state.schedule.due("worker").expect("one decisive recheck");
+            assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+            assert!(state.schedule.recover_host_observation("worker", due, None));
+        }
+        service
+            .schedule_result(&row, &result, Priority::Effect)
+            .await
+            .unwrap();
+        assert!(service.state.lock().await.schedule.due("worker").is_none());
+        let hint = nucleus_hosts::ThreadHint::fixture(&serde_json::json!({
+            "kind":"thread.updated","thread":{
+                "id":"thread:worker","status":"completed","latestRunId":"native-worker-turn",
+            }
+        }))
+        .unwrap();
+        service.wake_from_host(hint).await;
+        assert!(service.state.lock().await.schedule.due("worker").is_some());
+        let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
+        let result = Box::pin(service.advance_due_task(&row, &ended))
+            .await
+            .unwrap();
+        let next = service.task("worker").await.unwrap();
+        if question {
+            assert!(matches!(
+                result,
+                Action::Ask(nucleus_core::Question::Work { .. })
+            ));
+            assert!(matches!(
+                next.task.question(),
+                Some(nucleus_core::Question::Work { .. })
+            ));
+        } else {
+            assert_eq!(result, Action::Advance(Phase::Reviewing));
+            assert_eq!(next.task.phase(), Phase::Reviewing);
+        }
+        assert!(next.task.run().is_none());
+        assert_eq!(
+            unknown.0.load(Ordering::Relaxed) + ended.0.load(Ordering::Relaxed),
+            0
+        );
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let row = {
+        let (task, _, _) = reservation("unsent", Entry::Brief, &service.fixture().start);
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        let row = service.lookup(&state, "unsent").unwrap();
+        state.schedule.block_host_observation("unsent");
+        state.set_wait("unsent", Some(WaitReason::HostObservationBlocked));
+        row
+    };
+    let refused = Err(service.parent_not_sent("preflight custody revision no longer matches"));
+    let before_role_send = Err(ServiceError::Host(HostError::Uncertain));
+    for result in [&refused, &before_role_send, &before_role_send] {
+        service
+            .schedule_result(&row, result, Priority::Decision)
+            .await
+            .unwrap();
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due("unsent").unwrap();
+        let scheduled = state.schedule.take_ready(due, &BTreeSet::new()).unwrap();
+        assert_eq!(scheduled.id, "unsent");
+        assert_eq!(
+            service.lookup(&state, "unsent").unwrap().version,
+            row.version
+        );
+        assert_eq!(state.wait_reason("unsent"), Some(WaitReason::HostUnknown));
+        assert!(state.wait_detail("unsent") == Some(crate::WaitDetail::BeforeSend));
+        assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+        assert_eq!(
+            state.task_attention(&row).unwrap(),
+            crate::attention::TaskAttention::Attention
+        );
+    }
+    {
+        let mut state = service.state.lock().await;
+        let board_times = state.store.board_times("unsent").unwrap();
+        assert!(board_times.0.is_some());
+        let since = state.waits["unsent"].since;
+        assert!(
+            state
+                .observe_wait_detail(
+                    &row.task,
+                    Some(WaitReason::HostUnknown),
+                    Some(crate::WaitDetail::Observation("Checking task thread.")),
+                )
+                .unwrap()
+        );
+        assert_eq!(state.store.board_times("unsent").unwrap(), board_times);
+        assert_eq!(state.waits["unsent"].since, since);
+    }
+    assert!(
+        !service
+            .history("unsent", None, 100)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.content.kind == "host_observation_blocked")
+    );
 }
 
 #[tokio::test]

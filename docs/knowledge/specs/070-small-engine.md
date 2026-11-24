@@ -149,6 +149,12 @@ Later decisions carry their own attribution.
     - The audit keeps a small set of typed events (the milestones the ACP session shows, plus faults).
     - One health endpoint reports queue depth per host lane, the oldest waits and host status, readable without opening the database.
     - There is no catalogue of hundreds of event kinds or telemetry stages.
+    - The planner ruled on 2026-11-24 that a pre-wire refusal names the failed
+      predicate and the relevant compared values. The diagnostic omits secrets
+      and message contents.
+    - Task rows and detail name the check and show its due time while scheduled.
+      After an inconclusive delivery check, the owner opens the task thread to
+      verify the outcome. The UI reports a host fault only when there is evidence.
 17. **Settings beyond Projects shrink too.**
     - Hosts lists T3 (and any later ADE adapter) with no Paseo or BB fields.
     - Storage folds in backups, retention and worktree roots.
@@ -158,6 +164,11 @@ Later decisions carry their own attribution.
     - The profile matrix is unchanged (ruling 9).
 
 18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
+    - The planner ruled on 2026-11-24 that the board preview opens once when T3
+      first synchronizes, after a real disconnect and reconnect, or after a
+      runtime replacement. Routine subscription rotation invalidates shell
+      proof and resynchronizes without opening the preview. Typing `ui` still
+      opens it on request.
     - The title shows pending operator decisions first, then the host's running tasks, then `All quiet`. `Paused: ` covers Pause, Dispatch hold and Stop. The engine derives the counts locally and updates only the title metadata using a new receipt generation when the text changes.
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
     - Before native Rust Inbox setup, the scheduler sends Rust operator questions to the TypeScript decision store and reads the answers back. The planner retires the TypeScript Inbox manually after global no-new-work is on and its decisions have drained.
@@ -195,6 +206,10 @@ Later decisions carry their own attribution.
     - One local attention projection feeds the board, `task.next` and the scheduler's T3 row reconciliation. A person needed for a question, decision, role input or approval sees the row, as does an active role. Capacity, prerequisites, holds and report-ready tasks wait quietly. A missing or cancelled prerequisite needs an owner edit.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
     - Before a native message brings a task parent or retained child back into use, the scheduler explicitly unsnoozes its own parent occurrence or unsettles the destination and reads the result back. An operator snooze holds delivery. Nucleus never sends a settle command.
+    - A retained role can send directly to its own thread. The scheduler uses
+      the exact parent read under the task fence to keep the parent visible
+      at that send. It records Starting with the first role send intent and
+      updates the native title through the existing receipt.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
     - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
@@ -252,6 +267,34 @@ Later decisions carry their own attribution.
     ruling 27. A native turn failure is recorded against the task version,
     T3 session and engine instance. A change to any of these permits one fresh
     attempt. A fenced task without a sent run leaves room for other project work.
+
+    The planner ruled on 2026-11-24 that an effect proven unsent replans on the
+    next eligible pass, even at the same task version. Ambiguous delivery keeps
+    its readback deadline and may block if it stays unresolved. A completed
+    hold uses its own native outcome across subsequent retries and restarts.
+    Title, settle and snooze changes preserve matching custody evidence.
+    Delivery still checks current binding, requests, children, background
+    work and row visibility, including ownership of any snooze it clears.
+    A pre-wire retry keeps the row visible and releases the ACP turn while
+    it waits. An exact terminal parent and an exact absent child let Nucleus
+    discard a delegation that has no send intent and prepare it again.
+    On rollout, an old delivery fence with matching preflight refusal evidence
+    reopens at the same version if no later or same-command send might have
+    reached T3. An unresolved delivery fence survives restart for the same
+    task version and T3 runtime.
+
+    The planner ruled on 2026-11-24 that a human wait or a typed custody block
+    releases the ACP parent. A verified running role or a launch inside its
+    delivery deadline holds it, and expiry publishes at the same task version.
+    Authenticated reports prove delivery. A quiet role observation still gates
+    the report's next decision. If the decisive recheck cannot confirm custody,
+    a native run, request or background-work change can wake another check.
+    The scheduler can then reacquire the parent when the task becomes eligible.
+
+    The planner also ruled that a task row snoozes only when the held shell
+    shows all its recorded role children quiet. A live turn, pending request or
+    background writer keeps the row visible, including after a report. Positive
+    child activity clears an owned snooze. Operator snoozes keep their horizon.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code

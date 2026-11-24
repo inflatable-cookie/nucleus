@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility};
+use crate::{
+    Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility,
+    thread_snapshots::ShellCustody,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +61,7 @@ struct Thread {
     parent_thread_id: Option<String>,
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
+    active_provider_thread_id: Option<String>,
     model_selection: Option<Value>,
     #[serde(flatten)]
     visibility: ThreadVisibility,
@@ -108,6 +112,7 @@ pub(crate) struct Subagent {
     pub id: String,
     pub child_thread_id: Option<String>,
     pub origin: String,
+    status: Option<String>,
     pub completion_delivery: Option<CompletionDelivery>,
 }
 
@@ -139,6 +144,12 @@ struct TurnItem {
     started_at: Option<Value>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ParentCustody {
+    latest_run: Option<(String, Status)>,
+    active_provider_thread: Option<String>,
+}
+
 /// A display-only summary of a running item on the launch's exact native run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,7 +163,7 @@ fn timestamp_ms(value: Option<&str>) -> Option<u64> {
     u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Status {
     Idle,
@@ -197,18 +208,10 @@ impl Projection {
         binding: &Binding,
         id: &str,
     ) -> Result<Self, HostError> {
+        let shell = ShellCustody(row);
         let state = if !row["deletedAt"].is_null() {
             RetainedThread::Gone
-        } else if !row["activeRunId"].is_null()
-            || !row["pendingRuntimeRequest"].is_null()
-            || row["pendingBackgroundTasks"]
-                .as_array()
-                .is_some_and(|tasks| !tasks.is_empty())
-            || matches!(
-                row["status"].as_str(),
-                Some("running" | "waiting" | "starting" | "queued" | "preparing")
-            )
-        {
+        } else if shell.has_active_turn() || shell.background() == Some(true) {
             RetainedThread::Busy
         } else {
             RetainedThread::Idle
@@ -265,22 +268,25 @@ impl Projection {
     }
 
     pub(crate) fn require_parent_provider(&self, instance: &str) -> Result<(), HostError> {
-        if self.thread.parent_thread_id.is_some()
-            || self
-                .thread
-                .lineage
-                .as_ref()
-                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
-            || self.thread.provider_instance_id.as_deref() != Some(instance)
-            || !self
-                .thread
-                .model_selection
-                .as_ref()
-                .is_some_and(|model| model["instanceId"] == instance && model["model"] == "nucleus")
-        {
+        if self.parent_binding(instance) != [true; 3] {
             return Err(HostError::Binding);
         }
         Ok(())
+    }
+
+    pub(crate) fn parent_binding(&self, instance: &str) -> [bool; 3] {
+        [
+            self.thread.parent_thread_id.is_none()
+                && self
+                    .thread
+                    .lineage
+                    .as_ref()
+                    .is_none_or(|lineage| lineage.parent_thread_id.is_none()),
+            self.thread.provider_instance_id.as_deref() == Some(instance),
+            self.thread.model_selection.as_ref().is_some_and(|model| {
+                model["instanceId"] == instance && model["model"] == "nucleus"
+            }),
+        ]
     }
 
     pub(crate) fn belongs_to_parent(&self, parent: &str, in_parent_roster: bool) -> bool {
@@ -384,16 +390,29 @@ impl Projection {
         self.subagents.as_deref().ok_or(HostError::Uncertain)
     }
 
-    pub(crate) fn use_shell_background(&mut self, row: &Value) {
+    pub(crate) fn use_shell_background(&mut self, row: &Value, same_revision: bool) {
+        let shell = ShellCustody(row);
         // T3 derives this summary from the full projection for a settled run.
-        // The row must describe this same revision. Provider rosters for
-        // older sessions still come from the bounded projection itself.
+        // The held shell can publish the same custody revision with a different
+        // presentation timestamp. A matching run alone cannot prove an empty
+        // background roster: an older writer can change without a new run.
         if (self.windowed || self.compact_turn_items)
-            && self
-                .thread
-                .updated_at
-                .as_deref()
-                .is_some_and(|updated| row["updatedAt"] == updated)
+            && (same_revision
+                || self
+                    .thread
+                    .updated_at
+                    .as_deref()
+                    .is_some_and(|updated| row["updatedAt"] == updated))
+            && row["id"] == self.thread.id
+            && row["projectId"] == self.thread.project_id
+            && row["worktreePath"].as_str() == self.thread.worktree_path.as_deref()
+            && row["branch"].as_str() == self.thread.branch.as_deref()
+            && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
+            && row["activeProviderThreadId"].as_str()
+                == self.thread.active_provider_thread_id.as_deref()
+            && row["archivedAt"].as_str() == self.thread.archived_at.as_deref()
+            && row["deletedAt"].as_str() == self.thread.deleted_at.as_deref()
+            && !shell.has_active_turn()
             && matches!(
                 row["status"].as_str(),
                 Some("completed" | "failed" | "interrupted" | "cancelled")
@@ -402,10 +421,38 @@ impl Projection {
                 .as_str()
                 .is_some_and(|id| self.terminal_run(id))
         {
-            self.shell_background_work = row["pendingBackgroundTasks"]
-                .as_array()
-                .map(|tasks| !tasks.is_empty());
+            self.shell_background_work = shell.background();
         }
+    }
+
+    pub(crate) fn delivery_custody(&self) -> Result<ParentCustody, &'static str> {
+        if self.archived() || self.thread.deleted_at.is_some() {
+            return Err("parent is archived or deleted");
+        }
+        if let Some(reason) = self.busy_reason() {
+            return Err(reason);
+        }
+        if !self.has_idle_coverage() {
+            return Err(
+                "idle custody is unknown (provider roster, turn items or matching shell background coverage missing)",
+            );
+        }
+        let Some(children) = &self.subagents else {
+            return Err("delegated child roster is missing");
+        };
+        for child in children {
+            match child.status.as_deref() {
+                Some("idle" | "completed" | "failed" | "cancelled" | "interrupted") => (),
+                Some("pending" | "queued" | "preparing" | "starting" | "running" | "waiting") => {
+                    return Err("parent has a starting or running child");
+                }
+                _ => return Err("delegated child status is missing or unknown"),
+            }
+        }
+        Ok(ParentCustody {
+            latest_run: self.runs.last().map(|run| (run.id.clone(), run.status)),
+            active_provider_thread: self.thread.active_provider_thread_id.clone(),
+        })
     }
 
     pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {
@@ -415,19 +462,29 @@ impl Projection {
         if self.thread.deleted_at.is_some() {
             return Ok(RetainedThread::Gone);
         }
-        if self.thread_active()
-            || self.background_work()
-            || self.shell_background_work == Some(true)
-        {
+        if self.busy_reason().is_some() {
             return Ok(RetainedThread::Busy);
         }
-        if self.provider_threads.is_none()
-            || ((self.windowed || self.compact_turn_items) && self.shell_background_work.is_none())
-            || self.turn_items.is_none()
-        {
+        if !self.has_idle_coverage() {
             return Err(HostError::Uncertain);
         }
         Ok(RetainedThread::Idle)
+    }
+
+    fn busy_reason(&self) -> Option<&'static str> {
+        if self.thread_active() {
+            Some("parent has an active run or runtime request")
+        } else if self.background_work() || self.shell_background_work == Some(true) {
+            Some("parent has a pending background writer")
+        } else {
+            None
+        }
+    }
+
+    const fn has_idle_coverage(&self) -> bool {
+        self.provider_threads.is_some()
+            && self.turn_items.is_some()
+            && (!(self.windowed || self.compact_turn_items) || self.shell_background_work.is_some())
     }
 
     // Equivalent presence tests to T3's pending background work derivation.

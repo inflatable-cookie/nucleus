@@ -2,7 +2,11 @@
 
 use std::{path::Path, time::Duration};
 
-use nucleus_hosts::{ParentWrite, RowChange, RowObservation, RowVisibility, SendOutcome};
+use nucleus_core::{Role, Task};
+use nucleus_hosts::{
+    ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
+    SendOutcome,
+};
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
 use crate::{
@@ -26,8 +30,9 @@ fn plan_row(
     visibility: RowVisibility,
     receipt: Option<RowSnooze>,
     now: u64,
+    children: RowChildren,
 ) -> Plan {
-    if visibility.settled {
+    if visibility.settled && children != RowChildren::Active {
         return Plan::Idle(None);
     }
     let shown = visibility.snoozed_until_ms;
@@ -42,7 +47,7 @@ fn plan_row(
             ..receipt.clone()
         });
     }
-    if attention != TaskAttention::Waiting {
+    if attention != TaskAttention::Waiting || children == RowChildren::Active {
         let Some(mut receipt) = receipt else {
             return Plan::Idle(None);
         };
@@ -88,6 +93,9 @@ fn plan_row(
             return Plan::Idle(Some(until - RENEW_BEFORE_MS + 1));
         }
     }
+    if children != RowChildren::Quiet {
+        return Plan::Idle(None);
+    }
     let until = now + HORIZON_MS;
     let episode = receipt
         .as_ref()
@@ -129,7 +137,8 @@ impl Service {
                     continue;
                 };
                 let receipt = state.store.row_snooze(&id, thread)?;
-                match plan_row(attention, hint, receipt, now) {
+                let children = self.host.row_children(thread, &visibility_roles(&row.task));
+                match plan_row(attention, hint, receipt, now, children) {
                     Plan::Idle(deadline) => next = earliest(next, deadline),
                     _ => jobs.push((row, thread)),
                 }
@@ -182,13 +191,21 @@ impl Service {
         let Some(observed) = self.host.observe_task_row(&binding, provider).await? else {
             return Ok(());
         };
-        let (change, mut receipt) = {
+        let roles = visibility_roles(task);
+        let (change, mut receipt, prior) = {
             let state = self.state.lock().await;
             let Some(attention) = row_attention_for_effect(&state, row)? else {
                 return Ok(());
             };
-            let receipt = state.store.row_snooze(id, thread)?;
-            match plan_row(attention, observed.visibility, receipt, now_ms()) {
+            let prior = state.store.row_snooze(id, thread)?;
+            let children = self.host.row_children(thread, &roles);
+            match plan_row(
+                attention,
+                observed.visibility,
+                prior.clone(),
+                now_ms(),
+                children,
+            ) {
                 Plan::Idle(_) => return Ok(()),
                 Plan::Forget => return Ok(state.store.forget_row_snooze(id)?),
                 Plan::Record(receipt) => {
@@ -196,15 +213,22 @@ impl Service {
                 }
                 Plan::Write(change, receipt) => {
                     state.store.save_row_snooze(id, thread, &receipt)?;
-                    (change, receipt)
+                    (change, receipt, prior)
                 }
             }
         };
         let command = snooze_command(id, thread, change, &receipt);
         let result = self
             .host
-            .write_row_visibility(&binding, &command, change, Some(&target))
+            .write_row_visibility(&binding, &command, change, Some(&target), &roles)
             .await;
+        if let Err(ParentSendError::NotSent(error)) = result {
+            self.restore_row_snooze(id, thread, prior.as_ref()).await?;
+            return match error {
+                nucleus_hosts::HostError::RowChildBusy => Ok(()),
+                _ => Err(error.into()),
+            };
+        }
         if matches!(result, Ok(SendOutcome::Rejected))
             && matches!(change, RowChange::SnoozeUntil(_))
         {
@@ -217,7 +241,23 @@ impl Service {
         }
         let fresh = self.host.observe_task_row(&binding, provider).await?;
         self.record_row_readback(id, thread, receipt, fresh).await?;
-        result.map(|_| ()).map_err(ServiceError::from)
+        result.map(|_| ()).map_err(|error| match error {
+            ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause.into(),
+        })
+    }
+
+    async fn restore_row_snooze(
+        &self,
+        id: &str,
+        thread: &str,
+        prior: Option<&RowSnooze>,
+    ) -> Result<(), ServiceError> {
+        let state = self.state.lock().await;
+        match prior {
+            Some(prior) => state.store.save_row_snooze(id, thread, prior)?,
+            None => state.store.forget_row_snooze(id)?,
+        }
+        Ok(())
     }
 
     async fn record_row_readback(
@@ -257,7 +297,8 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &intent, false)?)
+            .claim_task_effect(id, &intent, false)?
+            .is_some())
     }
 
     /// Wake an exact task parent before an already authorized native message.
@@ -265,80 +306,120 @@ impl Service {
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,
+        write: &ParentWrite,
+    ) -> Result<(), ServiceError> {
+        if let Some((initial, provider)) = write.delivery_row() {
+            self.wake_task_parent(row, write.binding(), provider, initial)
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep ownership, both visibility writes and readback in order"
+    )]
+    pub(super) async fn wake_task_parent(
+        &self,
+        row: &TaskRow,
+        binding: &nucleus_hosts::Binding,
         provider: &str,
-        write: &mut ParentWrite,
-    ) -> Result<bool, ServiceError> {
-        let Some(initial) = write.delivery_row() else {
-            return Ok(true);
-        };
-        let binding = write.binding();
+        mut observed: RowObservation,
+    ) -> Result<(), ServiceError> {
         let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
         let id = &row.task.identity().id;
-        let mut observed = initial;
         // Settling and snoozing are distinct in T3. Clear each one explicitly.
         for _ in 0..2 {
-            let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
             let visibility = observed.visibility;
             let shown = visibility
                 .snoozed_until_ms
                 .filter(|&until| until > now_ms());
+            if !visibility.settled && shown.is_none() {
+                return Ok(());
+            }
+            let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
             let owned = receipt.filter(|receipt| receipt.owns(shown));
-            if shown.is_some() && owned.is_none() {
-                return Ok(false);
+            if let Some(until) = shown
+                && owned.is_none()
+            {
+                let retry = tokio::time::Instant::now()
+                    + Duration::from_millis(until.saturating_sub(now_ms()).min(45_000));
+                return Err(ServiceError::ParentNotSent {
+                    reason: format!(
+                        "operator snooze is active (horizon {until}, revision {})",
+                        observed.sequence
+                    ),
+                    retry_at: self.host.request_retry_at().max(Some(retry)),
+                });
             }
             let change = if visibility.settled {
                 RowChange::Unsettle
             } else if shown.is_some() {
                 RowChange::Unsnooze
             } else {
-                write.after_row_wake(observed);
-                return Ok(true);
+                return Ok(());
             };
-            let Some(fresh) = self.host.observe_task_row(binding, provider).await? else {
-                return Ok(false);
+            let fresh = match self.host.observe_task_row(binding, provider).await {
+                Ok(Some(fresh)) if fresh.visibility == visibility => fresh,
+                actual => return Err(self.parent_not_sent(format!(
+                    "visibility preflight for {change:?} expected {observed:?}, observed {actual:?}"
+                ))),
             };
-            if fresh.visibility != visibility {
-                return Ok(false);
-            }
             let (command, cleared) = if matches!(change, RowChange::Unsettle) {
                 let occurrence = visibility
                     .settled_at_ms
                     .map_or_else(|| format!("version-{}", row.version), |at| at.to_string());
                 let command = format!("task-{id}-{thread}-unsettle-{occurrence}");
                 if !self.claim_row_unsettle(id, &command).await? {
-                    return Ok(false);
+                    return Err(self.parent_not_sent(format!(
+                        "unsettle already claimed (revision {}, settled at {:?})",
+                        fresh.sequence, visibility.settled_at_ms
+                    )));
                 }
                 (command, None)
             } else {
-                let Some(mut receipt) =
-                    owned.filter(|receipt| receipt.clear_attempted_for != shown)
+                let Some(prior) = owned.filter(|receipt| receipt.clear_attempted_for != shown)
                 else {
-                    return Ok(false);
+                    return Err(self.parent_not_sent(format!(
+                        "unsnooze already attempted (revision {}, horizon {shown:?})",
+                        fresh.sequence
+                    )));
                 };
+                let mut receipt = prior.clone();
                 receipt.clear_attempted_for = shown;
                 self.state
                     .lock()
                     .await
                     .store
                     .save_row_snooze(id, &thread, &receipt)?;
-                (snooze_command(id, &thread, change, &receipt), Some(receipt))
+                (
+                    snooze_command(id, &thread, change, &receipt),
+                    Some((prior, receipt)),
+                )
             };
-            let _result = self
+            let result = self
                 .host
-                .write_row_visibility(binding, &command, change, None)
+                .write_row_visibility(binding, &command, change, None, &[])
                 .await;
-            let fresh = self.host.observe_task_row(binding, provider).await?;
-            if let Some(receipt) = cleared {
-                self.record_row_readback(id, &thread, receipt, fresh)
+            if let Err(ParentSendError::NotSent(error)) = result {
+                if let Some((prior, _)) = &cleared {
+                    self.restore_row_snooze(id, &thread, Some(prior)).await?;
+                }
+                return Err(self.parent_not_sent(format!(
+                    "{change:?} refused before send (prepared {fresh:?}): {error}"
+                )));
+            }
+            let readback = self.host.observe_task_row(binding, provider).await;
+            if let (Some((_, receipt)), Ok(fresh)) = (cleared, &readback) {
+                self.record_row_readback(id, &thread, receipt, *fresh)
                     .await?;
             }
-            let Some(fresh) = fresh else {
-                return Ok(false);
+            observed = match readback {
+                Ok(Some(fresh)) if fresh.visibility != visibility => fresh,
+                actual => return Err(self.parent_not_sent(format!(
+                    "{change:?} has no visibility readback (prepared {observed:?}, observed {actual:?}, write {result:?})"
+                ))),
             };
-            if fresh.visibility == visibility {
-                return Ok(false);
-            }
-            observed = fresh;
         }
         if observed.visibility.settled
             || observed
@@ -346,11 +427,21 @@ impl Service {
                 .snoozed_until_ms
                 .is_some_and(|until| until > now_ms())
         {
-            return Ok(false);
+            return Err(self.parent_not_sent(format!(
+                "row is still settled or snoozed after wake (revision {}, visibility {:?})",
+                observed.sequence, observed.visibility
+            )));
         }
-        write.after_row_wake(observed);
-        Ok(true)
+        Ok(())
     }
+}
+
+pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
+    [Role::Worker, Role::Reviewer]
+        .into_iter()
+        .filter_map(|role| task.threads().get(role))
+        .chain(task.run().map(|run| run.launch().thread.as_str()))
+        .collect()
 }
 
 fn row_attention_for_effect(

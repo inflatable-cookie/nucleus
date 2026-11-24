@@ -45,7 +45,15 @@ impl State {
         task: &Task,
     ) -> Result<(Option<WaitReason>, bool), StoreError> {
         let before = self.effective_wait(prior)?;
-        let after = if prior.phase() == task.phase()
+        let initial_send = prior
+            .run()
+            .is_some_and(|run| run.last_send_at_ms().is_none())
+            && task
+                .run()
+                .is_some_and(|run| !run.revoked() && run.last_send_at_ms().is_some());
+        let after = if initial_send {
+            Some(WaitReason::Starting)
+        } else if prior.phase() == task.phase()
             && run_basis(prior) == run_basis(task)
             && titles::task_state_label(prior, None) == titles::task_state_label(task, None)
         {
@@ -82,10 +90,15 @@ impl State {
     }
 }
 
-fn run_basis(task: &Task) -> Option<&str> {
+fn run_basis(task: &Task) -> Option<(&str, bool)> {
     task.run()
         .filter(|run| !run.revoked() && run.report().is_none())
-        .map(|run| run.launch().instance.as_str())
+        .map(|run| {
+            (
+                run.launch().instance.as_str(),
+                run.last_send_at_ms().is_some(),
+            )
+        })
 }
 
 #[derive(Serialize)]

@@ -7,9 +7,8 @@ use serde_json::json;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    Binding, HostError, SendOutcome, T3, TitleTarget, command_failure, command_rejected,
-    defect_named, parent_thread,
-    rpc::{Read, Reply},
+    Binding, HostError, ParentSendError, SendOutcome, T3, TitleTarget, command_failure,
+    command_rejected, defect_named, parent_thread, rpc::Reply,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -58,7 +57,27 @@ pub enum RowChange {
     Unsettle,
 }
 
+/// What the held shell knows about a task row's role children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RowChildren {
+    Quiet,
+    Unknown,
+    Active,
+}
+
 impl T3 {
+    /// Read activity from the held shell for recorded and attached role children.
+    #[must_use]
+    pub fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
+        self.rpc.row_children(parent, roles)
+    }
+
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn fixture_held_shell(&self, item: &serde_json::Value) {
+        self.rpc.fixture_shell(item);
+    }
+
     /// Read the exact root, provider and visibility of a task's parent.
     ///
     /// # Errors
@@ -92,7 +111,8 @@ impl T3 {
         command: &str,
         change: RowChange,
         shell: Option<&TitleTarget>,
-    ) -> Result<SendOutcome, HostError> {
+        quiet_roles: &[&str],
+    ) -> Result<SendOutcome, ParentSendError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let kind = match change {
             RowChange::SnoozeUntil(_) => "thread.snooze",
@@ -104,9 +124,9 @@ impl T3 {
             RowChange::SnoozeUntil(until) => {
                 let deadline =
                     OffsetDateTime::from_unix_timestamp_nanos(i128::from(until) * 1_000_000)
-                        .map_err(|_| HostError::Protocol)?
+                        .map_err(|_| ParentSendError::NotSent(HostError::Protocol))?
                         .format(&Rfc3339)
-                        .map_err(|_| HostError::Protocol)?;
+                        .map_err(|_| ParentSendError::NotSent(HostError::Protocol))?;
                 payload["snoozedUntil"] = deadline.into();
             }
             RowChange::Unsnooze | RowChange::Unsettle => payload["reason"] = "user".into(),
@@ -114,20 +134,25 @@ impl T3 {
         let hint = self.row_visibility_hint(&thread);
         let reply = self
             .rpc
-            .call_guarded("orchestration.dispatchCommand", payload, Read::One, || {
+            .write_guarded("orchestration.dispatchCommand", payload, || {
+                if matches!(change, RowChange::SnoozeUntil(_))
+                    && self.row_children(&thread, quiet_roles) != RowChildren::Quiet
+                {
+                    return Err(HostError::RowChildBusy);
+                }
                 if shell.is_some_and(|target| {
                     !target.matches_current_visibility(self) || target.thread() != thread
                 }) || (hint.is_some() && self.row_visibility_hint(&thread) != hint)
                 {
                     return Err(HostError::Binding);
                 }
-                Ok(true)
+                Ok(())
             })
             .await?;
         match reply {
             Reply::Value(_) => Ok(SendOutcome::Sent),
             Reply::Failure(cause) if refused(&cause, command, kind) => Ok(SendOutcome::Rejected),
-            Reply::Failure(_) => Err(HostError::Uncertain),
+            Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
         }
     }
 }

@@ -355,6 +355,15 @@ impl Service {
         } else {
             self.write_inbox_title(provider, receipt).await
         };
+        self.finish_title(receipt, now, applied).await
+    }
+
+    async fn finish_title(
+        &self,
+        receipt: &TitleReceipt,
+        now: i64,
+        applied: Result<bool, ServiceError>,
+    ) -> Result<(), ServiceError> {
         let state = self.state.lock().await;
         match applied {
             Ok(true) => state.store.confirm_title(receipt)?,
@@ -420,11 +429,55 @@ impl Service {
         let Some(_permit) = self.dispatch_gate(&row.task, destination).await? else {
             return Ok(false);
         };
+        self.write_task_title_target(target, task_id, receipt).await
+    }
+
+    async fn write_task_title_target(
+        &self,
+        target: TitleTarget,
+        task_id: &str,
+        receipt: &TitleReceipt,
+    ) -> Result<bool, ServiceError> {
+        if target.current_title() == Some(&receipt.desired) {
+            return Ok(true);
+        }
         let key = format!("task-{task_id}-title-{}", receipt.generation);
         self.host
             .write_title(target, &key, &receipt.desired)
             .await?;
         Ok(true)
+    }
+
+    /// Try the existing title receipt while the role admission holds both fences.
+    pub(super) async fn reflect_role_admission(
+        &self,
+        row: &TaskRow,
+        checkout: &nucleus_work::Checkout<'_>,
+        provider: &str,
+    ) -> Result<(), ServiceError> {
+        let identity = row.task.identity();
+        let binding = self.project_for(identity).await?.binding(checkout)?;
+        let Some(target) = checkout
+            .repository()
+            .to_str()
+            .and_then(|root| self.host.title_target(&binding, provider, root))
+        else {
+            return Ok(());
+        };
+        let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+        let receipt = self
+            .state
+            .lock()
+            .await
+            .store
+            .pending_title(target.thread())?;
+        if let Some(receipt) = receipt.filter(|receipt| receipt.retry_at <= now) {
+            let result = self
+                .write_task_title_target(target, &identity.id, &receipt)
+                .await;
+            self.finish_title(&receipt, now, result).await?;
+        }
+        Ok(())
     }
 
     async fn title_current(

@@ -660,7 +660,7 @@ impl Store {
         )?)
     }
 
-    /// Record a task effect's exact intent once without changing its task version.
+    /// Record a task effect once and return its journal sequence when newly inserted.
     ///
     /// # Errors
     /// Returns an error if the journal cannot be updated.
@@ -669,7 +669,7 @@ impl Store {
         id: &str,
         event: &EventDraft,
         entered: bool,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<Option<i64>, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -678,14 +678,18 @@ impl Store {
             params![id, event.kind, event.detail],
             |row| row.get(0),
         )?;
-        if !recorded {
+        let sequence = if recorded {
+            None
+        } else {
             append(&tx, id, event)?;
+            let sequence = tx.last_insert_rowid();
             if entered {
                 board_state::record(&tx, id, event.at)?;
             }
-        }
+            Some(sequence)
+        };
         tx.commit()?;
-        Ok(!recorded)
+        Ok(sequence)
     }
 
     /// Read a native turn intent for the current task state and host session.
@@ -723,6 +727,82 @@ impl Store {
             params![id, command],
             |row| row.get(0),
         )?)
+    }
+
+    /// Read the latest exact turn attempt and whether it is proven unsent.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal is unreadable.
+    pub fn task_turn_attempt(
+        &self,
+        id: &str,
+        kind: &str,
+        version: i64,
+        session: &str,
+        command: &str,
+    ) -> Result<Option<(i64, bool)>, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT sequence, (kind = 'native_turn_not_sent') FROM events
+             WHERE task_id = ?1 AND kind IN (?2, 'native_turn_not_sent', 'native_turn_replay')
+             AND json_valid(detail) AND json_extract(detail, '$.version') = ?3
+             AND json_extract(detail, '$.command') = ?5
+             AND (json_extract(detail, '$.session') = ?4 OR
+                  (kind = 'native_turn_replay' AND
+                   instr(json_extract(detail, '$.session'), ?4 || '/') = 1))
+             ORDER BY sequence DESC LIMIT 1",
+            )?
+            .query_row(params![id, kind, version, session, command], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?)
+    }
+
+    /// Restore a delivery fence for this task version and native runtime.
+    /// Older engines could fence a parent preflight that had already proved
+    /// the message unsent. A later send intent takes precedence over that proof.
+    /// Remove the legacy compatibility branch first in the reduction pass,
+    /// after a store query confirms no current live task still carries one.
+    ///
+    /// # Errors
+    /// Returns an error if the task's delivery history is unreadable.
+    pub fn task_delivery_blocked(
+        &self,
+        id: &str,
+        version: i64,
+        runtime: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.prepare_cached(
+            "SELECT EXISTS(
+               SELECT 1 FROM events AS blocked
+               WHERE blocked.task_id = ?1 AND blocked.kind = 'host_observation_blocked'
+                 AND json_valid(blocked.detail)
+                 AND json_extract(blocked.detail, '$.version') = ?2
+                 AND instr(json_extract(blocked.detail, '$.session'), ?3 || '/') = 1
+                 AND (json_extract(blocked.detail, '$.deliveryPending') = 1
+                   OR (json_extract(blocked.detail, '$.deliveryPending') IS NULL AND NOT EXISTS (
+                     SELECT 1 FROM events AS refusal
+                     WHERE refusal.task_id = blocked.task_id
+                       AND refusal.kind = 'native_turn_not_sent' AND refusal.sequence < blocked.sequence
+                       AND json_valid(refusal.detail)
+                       AND json_extract(refusal.detail, '$.version') = ?2
+                       AND json_extract(refusal.detail, '$.session') = 'preflight'
+                       AND json_type(refusal.detail, '$.command') = 'text'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events AS sent
+                         WHERE sent.task_id = blocked.task_id AND sent.sequence < blocked.sequence
+                           AND sent.kind IN ('host_send', 'native_turn_intent',
+                             'native_turn_replay', 'acp_row_refresh_intent')
+                           AND (sent.sequence > refusal.sequence OR (
+                             json_valid(sent.detail) AND json_extract(sent.detail, '$.version') = ?2
+                             AND json_extract(sent.detail, '$.command') =
+                                 json_extract(refusal.detail, '$.command')
+                           ))
+                       )
+                   )))
+             )"
+        )?.query_row(params![id, version, runtime], |row| row.get(0))?)
     }
 
     /// Read all subscription groups with a deadline in the future.

@@ -874,6 +874,26 @@ fn invalidations(
     Sse::new(invalidation_events(service, scope, project)).keep_alive(KeepAlive::default())
 }
 
+async fn acp_hold_expiry(service: &Service, scope: Option<&(String, Option<SessionCredential>)>) {
+    if let Some((id, Some(_))) = scope {
+        let state = service.state.lock().await;
+        let deadline = service.lookup(&state, id).ok().and_then(|row| {
+            (state.role_observation(&row.task) != Some(nucleus_core::RunState::Running))
+                .then(|| crate::acp::run_hold_deadline(&row))
+                .flatten()
+        });
+        drop(state);
+        if let Some(delay) = deadline
+            .and_then(|until| until.checked_sub(now_ms()))
+            .filter(|&delay| delay > 0)
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
 fn invalidation_events(
     service: Arc<Service>,
     scope: Option<(String, Option<SessionCredential>)>,
@@ -898,6 +918,7 @@ fn invalidation_events(
                 loop {
                     let change = tokio::select! {
                         result = receiver.recv() => result,
+                        () = acp_hold_expiry(&service, scope.as_ref()) => break Event::default().event("refresh").data("{}"),
                         Ok(()) = projects.changed() => break Event::default().event("refresh").data("{}"),
                         Ok(()) = settings.changed(), if scope.is_some() => {
                             break Event::default().event("refresh").data("{}");
@@ -967,6 +988,7 @@ struct Summary {
     #[serde(skip)]
     created_at_ms: Option<u64>,
     wait: Option<WaitReason>,
+    wait_detail: Option<&'static str>,
     attention: crate::attention::TaskAttention,
     lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
     next_check_at: Option<u64>,
@@ -1017,6 +1039,14 @@ impl Summary {
             } else {
                 wait
             };
+        let wait_detail =
+            (wait == state.wait_reason(id) && task.hold().is_none() && task.question().is_none())
+                .then(|| state.wait_detail(id))
+                .flatten()
+                .map(|detail| match detail {
+                    crate::WaitDetail::BeforeSend => "Checking the task thread before sending.",
+                    crate::WaitDetail::Observation(message) => message,
+                });
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -1028,7 +1058,7 @@ impl Summary {
             lifecycle: crate::presentation::task_lifecycle(
                 task,
                 &state.store,
-                &state_label,
+                wait_detail.unwrap_or(&state_label),
                 wait,
                 created_at_ms,
             )?,
@@ -1037,6 +1067,7 @@ impl Summary {
             created_at_ms,
             next_check_at: None,
             wait,
+            wait_detail,
             question: task.question().cloned(),
             hold: task.hold().cloned(),
             dependency_status,

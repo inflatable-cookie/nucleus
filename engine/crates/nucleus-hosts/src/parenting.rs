@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, path::Path};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    hash::{BuildHasher, RandomState},
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 
 use nucleus_core::{
     RetainedThread,
@@ -7,9 +13,11 @@ use nucleus_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, RowObservation, T3, clock_ms, message_id,
-    rpc::{Read, Reply},
-    thread_snapshots::ThreadRead,
+    Binding, HostError, ProfileCatalog, RowObservation, RowVisibility, T3, clock_ms, message_id,
+    projection::ParentCustody,
+    rpc::Reply,
+    task_row::ThreadVisibility,
+    thread_snapshots::{ShellCustody, ThreadRead},
 };
 
 /// Evidence for the exact active turn and root node that can parent a child.
@@ -23,6 +31,7 @@ pub struct ParentRun {
 pub enum ParentStep {
     Live(ParentRun),
     Failed,
+    DeliveryUnknown,
     Write(ParentWrite),
     Wait,
 }
@@ -30,6 +39,13 @@ pub enum ParentStep {
 pub struct ParentAttempt<'a> {
     pub command: &'a str,
     pub released: bool,
+}
+
+/// Whether failure happened before the command could enter the transport.
+#[derive(Debug)]
+pub enum ParentSendError {
+    NotSent(HostError),
+    Unknown(HostError),
 }
 
 pub enum ArchiveStep {
@@ -44,7 +60,14 @@ pub struct ParentWrite {
     rpc: &'static str,
     payload: Value,
     idle_at: Option<(String, u64)>,
-    delivery: Option<RowObservation>,
+    delivery: Option<Box<ParentDelivery>>,
+}
+
+struct ParentDelivery {
+    row: RowObservation,
+    provider: String,
+    custody: ParentCustody,
+    shell: Option<Arc<Value>>,
 }
 
 impl ParentWrite {
@@ -58,18 +81,12 @@ impl ParentWrite {
         self.payload["commandId"].as_str()
     }
 
-    /// The current row state a prepared message would deliver over.
+    /// The row and ACP provider bound to a prepared message.
     #[must_use]
-    pub const fn delivery_row(&self) -> Option<RowObservation> {
+    pub fn delivery_row(&self) -> Option<(RowObservation, &str)> {
         self.delivery
-    }
-
-    /// Replace stale idle evidence after a visibility-only wake.
-    pub fn after_row_wake(&mut self, row: RowObservation) {
-        if let Some((_, sequence)) = &mut self.idle_at {
-            *sequence = row.sequence;
-            self.delivery = Some(row);
-        }
+            .as_ref()
+            .map(|delivery| (delivery.row, delivery.provider.as_str()))
     }
 
     #[must_use]
@@ -99,7 +116,12 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        if projection.archived() || projection.retained()? != RetainedThread::Idle {
+        if projection.archived()
+            || matches!(
+                projection.retained(),
+                Ok(RetainedThread::Busy | RetainedThread::Gone)
+            )
+        {
             return Ok(None);
         }
         let sequence = projection.sequence();
@@ -108,7 +130,7 @@ impl T3 {
             binding: binding.clone(),
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
-            delivery: projection.row_observation()?,
+            delivery: prepare_delivery(&projection, provider)?,
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -237,11 +259,10 @@ impl T3 {
         if let Some(projection) = self.thread(binding, &thread).await? {
             projection.require_parent_provider(provider)?;
             let mut replay = None;
-            if let Some((run, node)) = prior_turn.as_ref().and_then(|attempt| {
-                (!attempt.released)
-                    .then(|| projection.live_parent_run(&message_id(attempt.command)))
-                    .flatten()
-            }) {
+            if let Some((run, node)) = prior_turn
+                .as_ref()
+                .and_then(|attempt| projection.live_parent_run(&message_id(attempt.command)))
+            {
                 return Ok(ParentStep::Live(ParentRun {
                     thread,
                     run: run.into(),
@@ -253,25 +274,32 @@ impl T3 {
             {
                 let message = message_id(attempt.command);
                 let completed = projection.turn_completed(&message);
-                if projection.turn_failed(&message) || (completed && !attempt.released) {
+                if projection.turn_failed(&message) {
                     return Ok(ParentStep::Failed);
                 }
                 if !completed {
                     if projection.has_delivery(&message) {
                         return Ok(ParentStep::Wait);
                     }
-                    // A recorded intent is not proof of a send. Reuse the exact
-                    // message.dispatch ID only after proving the thread is idle.
-                    if attempt.command != format!("{thread}-launch") {
-                        replay = Some(attempt.command);
+                    // The bounded window cannot prove absence. T3 deduplicates
+                    // this exact message command, including a delayed receipt.
+                    if !attempt.command.starts_with(&format!("{thread}-hold-")) {
+                        return Ok(ParentStep::DeliveryUnknown);
                     }
+                    replay = Some(attempt.command);
                 }
             }
-            if projection.retained()? != RetainedThread::Idle {
+            if matches!(
+                projection.retained(),
+                Ok(RetainedThread::Busy | RetainedThread::Gone)
+            ) {
                 return Ok(ParentStep::Wait);
             }
             let sequence = projection.sequence();
             if projection.archived() {
+                if projection.retained()? != RetainedThread::Idle {
+                    return Ok(ParentStep::Wait);
+                }
                 return Ok(ParentStep::Write(ParentWrite {
                     binding: binding.clone(),
                     rpc: "orchestration.dispatchCommand",
@@ -285,7 +313,7 @@ impl T3 {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
                 idle_at: Some((thread.clone(), sequence)),
-                delivery: projection.row_observation()?,
+                delivery: prepare_delivery(&projection, provider)?,
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
                     "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
@@ -296,7 +324,7 @@ impl T3 {
         }
 
         if prior_turn.is_some() {
-            return Ok(ParentStep::Wait);
+            return Ok(ParentStep::DeliveryUnknown);
         }
         if !catalogue.await?.supports_parent(provider) {
             return Err(HostError::Configuration);
@@ -322,49 +350,181 @@ impl T3 {
     /// Execute the prepared parent write after the service's destination gate.
     /// # Errors
     /// Returns an error if the native receipt cannot be confirmed.
-    pub async fn write_parent(&self, write: ParentWrite) -> Result<(), HostError> {
-        self.verify_parent_write(&write).await?;
-        self.write_verified_parent(write).await
+    pub async fn write_parent(&self, mut write: ParentWrite) -> Result<(), HostError> {
+        self.verify_parent_write(&mut write).await?;
+        self.write_verified_parent(write)
+            .await
+            .map_err(|error| match error {
+                ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
+            })
     }
 
     /// Verify the destination before the owner records the send intent.
     /// # Errors
     /// Returns an error if the current binding, custody or visibility changed.
-    pub async fn verify_parent_write(&self, write: &ParentWrite) -> Result<(), HostError> {
+    pub async fn verify_parent_write(&self, write: &mut ParentWrite) -> Result<(), HostError> {
         if let Some((thread, sequence)) = &write.idle_at {
-            let Some(fresh) = self.thread(&write.binding, thread).await? else {
-                return Err(HostError::Uncertain);
+            let refuse = |predicate, observed| HostError::ParentPreflight {
+                predicate,
+                prepared: *sequence,
+                observed,
             };
-            if fresh.retained()? != RetainedThread::Idle
-                || (write.delivery.is_none() && fresh.sequence() != *sequence)
-            {
-                return Err(HostError::Uncertain);
-            }
-            let now = clock_ms()?;
-            if write.delivery.is_some()
-                && fresh.row_observation()?.is_none_or(|fresh| {
-                    fresh.visibility.settled
-                        || fresh
-                            .visibility
-                            .snoozed_until_ms
-                            .is_some_and(|until| until > now)
-                })
-            {
-                return Err(HostError::Uncertain);
+            let shell = write
+                .delivery
+                .as_ref()
+                .and_then(|_| self.rpc.thread_row(thread));
+            let Some(fresh) =
+                self.thread(&write.binding, thread)
+                    .await
+                    .map_err(|error| match error {
+                        HostError::Binding => {
+                            refuse("thread/project/checkout binding no longer matches", None)
+                        }
+                        _ => error,
+                    })?
+            else {
+                return Err(refuse("parent thread is absent", None));
+            };
+            let observed = Some(fresh.sequence());
+            if let Some(delivery) = &mut write.delivery {
+                let matches = fresh.parent_binding(&delivery.provider);
+                if matches != [true; 3] {
+                    return Err(HostError::ParentBindingMismatch {
+                        prepared: *sequence,
+                        observed: fresh.sequence(),
+                        matches,
+                    });
+                }
+                let custody = fresh
+                    .delivery_custody()
+                    .map_err(|predicate| refuse(predicate, observed))?;
+                if custody != delivery.custody {
+                    return Err(refuse(
+                        "latest run or active provider thread changed",
+                        observed,
+                    ));
+                }
+                let Some(row) = fresh.row_observation()? else {
+                    return Err(refuse("parent row is unavailable", observed));
+                };
+                verify_delivery_visibility(row.visibility, *sequence, observed)?;
+                delivery.row = row;
+                delivery.shell = shell;
+            } else if fresh.retained()? != RetainedThread::Idle || fresh.sequence() != *sequence {
+                return Err(refuse(
+                    "idle custody or exact revision changed for archive/unarchive",
+                    observed,
+                ));
             }
         }
         Ok(())
     }
 
-    /// Send the already verified effect without another destination guard.
+    /// Send the verified effect, checking any newer shell evidence at the wire.
     /// # Errors
     /// Returns an error if T3 cannot confirm the command.
-    pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), HostError> {
-        match self.rpc.call(write.rpc, write.payload, Read::One).await? {
+    pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
+        match self
+            .rpc
+            .write_guarded(write.rpc, write.payload, || {
+                if let (Some(delivery), Some((thread, _))) = (&write.delivery, &write.idle_at) {
+                    self.check_delivery_shell(thread, delivery)?;
+                }
+                Ok(())
+            })
+            .await?
+        {
             Reply::Value(_) => Ok(()),
-            Reply::Failure(_) => Err(HostError::Uncertain),
+            Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
         }
     }
+
+    fn check_delivery_shell(
+        &self,
+        thread: &str,
+        delivery: &ParentDelivery,
+    ) -> Result<(), HostError> {
+        let (row, observed) = self.rpc.thread_row_with_revision(thread);
+        if delivery.shell == row {
+            return Ok(());
+        }
+        let refuse = |predicate| HostError::ParentPreflight {
+            predicate,
+            prepared: delivery.row.sequence,
+            observed,
+        };
+        let (Some(prior), Some(row)) = (&delivery.shell, row) else {
+            return Err(refuse(
+                "held shell added or lost the parent after verification",
+            ));
+        };
+        let (before, after) = (ShellCustody(prior), ShellCustody(&row));
+        if let Some(field) = before.changed_field(&after) {
+            static DIAGNOSTIC_HASH: OnceLock<RandomState> = OnceLock::new();
+            let digest = DIAGNOSTIC_HASH.get_or_init(RandomState::new);
+            return Err(HostError::ParentShellChanged {
+                field,
+                prepared: delivery.row.sequence,
+                observed,
+                before: digest.hash_one(prior.get(field).map(Value::to_string)),
+                after: digest.hash_one(row.get(field).map(Value::to_string)),
+                activity_before: before.activity(),
+                activity_now: after.activity(),
+            });
+        }
+        let visibility: ThreadVisibility = serde_json::from_value((*row).clone())
+            .map_err(|_| refuse("held shell visibility is invalid"))?;
+        let visibility = visibility
+            .read()
+            .map_err(|_| refuse("held shell visibility is invalid"))?;
+        verify_delivery_visibility(visibility, delivery.row.sequence, observed)
+    }
+}
+
+fn verify_delivery_visibility(
+    visibility: RowVisibility,
+    prepared: u64,
+    observed: Option<u64>,
+) -> Result<(), HostError> {
+    if visibility.settled {
+        return Err(HostError::ParentPreflight {
+            predicate: "parent row is still settled",
+            prepared,
+            observed,
+        });
+    }
+    if let Some(until) = visibility.snoozed_until_ms
+        && until > clock_ms()?
+    {
+        return Err(HostError::ParentSnoozed {
+            until,
+            revision: observed.unwrap_or(prepared),
+        });
+    }
+    Ok(())
+}
+
+fn prepare_delivery(
+    projection: &crate::Projection,
+    provider: &str,
+) -> Result<Option<Box<ParentDelivery>>, HostError> {
+    let Some(row) = projection.row_observation()? else {
+        return Ok(None);
+    };
+    let custody =
+        projection
+            .delivery_custody()
+            .map_err(|predicate| HostError::ParentPreflight {
+                predicate,
+                prepared: row.sequence,
+                observed: Some(row.sequence),
+            })?;
+    Ok(Some(Box::new(ParentDelivery {
+        row,
+        provider: provider.into(),
+        custody,
+        shell: None,
+    })))
 }
 
 fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {

@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use serde_json::{Value, json};
 
-use crate::rpc::Reply;
+use crate::{rpc::Reply, task_row::RowChildren};
 
 const MAX_SNAPSHOTS: usize = 64;
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
@@ -16,8 +16,78 @@ pub(crate) enum ThreadRead {
     Terminal,
 }
 
+pub(crate) struct ShellCustody<'a>(pub &'a Value);
+
+impl<'a> ShellCustody<'a> {
+    pub(crate) fn parent(&self) -> Option<&'a str> {
+        let lineage = &self.0["lineage"];
+        let parent = lineage["parentThreadId"].as_str()?;
+        (lineage["rootThreadId"] == parent && lineage["relationshipToParent"] == "subagent")
+            .then_some(parent)
+    }
+
+    pub(crate) fn background(&self) -> Option<bool> {
+        self.0["pendingBackgroundTasks"]
+            .as_array()
+            .map(|tasks| !tasks.is_empty())
+    }
+
+    pub(crate) fn has_active_turn(&self) -> bool {
+        let row = self.0;
+        !row["activeRunId"].is_null()
+            || !row["pendingRuntimeRequest"].is_null()
+            || matches!(
+                row["status"].as_str(),
+                Some("pending" | "preparing" | "queued" | "starting" | "running" | "waiting")
+            )
+    }
+
+    pub(crate) fn activity(&self) -> RowChildren {
+        let row = self.0;
+        if self.has_active_turn() || self.background() == Some(true) {
+            RowChildren::Active
+        } else if row.get("activeRunId").is_some_and(Value::is_null)
+            && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
+            && self.background() == Some(false)
+            && matches!(
+                row["status"].as_str(),
+                Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
+            )
+        {
+            RowChildren::Quiet
+        } else {
+            RowChildren::Unknown
+        }
+    }
+
+    pub(crate) fn changed_field(&self, other: &Self) -> Option<&'static str> {
+        [
+            "id",
+            "projectId",
+            "worktreePath",
+            "branch",
+            "lineage",
+            "providerInstanceId",
+            "modelSelection",
+            "activeProviderThreadId",
+            "archivedAt",
+            "deletedAt",
+            "activeRunId",
+            "status",
+            "latestRunId",
+            "latestRunCompletedAt",
+            "pendingRuntimeRequest",
+            "pendingBackgroundTasks",
+        ]
+        .into_iter()
+        .find(|&field| self.0.get(field) != other.0.get(field))
+    }
+}
+
 pub(crate) struct ThreadSnapshots {
     rows: BTreeMap<String, Arc<Value>>,
+    row_revisions: BTreeMap<String, u64>,
+    initial_revision: Option<u64>,
     projects: BTreeMap<String, Value>,
     sequence: Option<u64>,
     held: BTreeMap<String, Held>,
@@ -54,12 +124,15 @@ impl ThreadSnapshots {
                 return None;
             }
         }
+        let sequence = snapshot["snapshotSequence"]
+            .as_u64()
+            .or_else(|| shell["snapshotSequence"].as_u64());
         Some(Self {
             rows,
+            row_revisions: BTreeMap::new(),
+            initial_revision: sequence,
             projects,
-            sequence: snapshot["snapshotSequence"]
-                .as_u64()
-                .or_else(|| shell["snapshotSequence"].as_u64()),
+            sequence,
             held: BTreeMap::new(),
             reads: 0,
         })
@@ -75,17 +148,21 @@ impl ThreadSnapshots {
         match item["kind"].as_str() {
             Some("thread.updated") => {
                 let row = &item["thread"];
-                if let Some(id) = row["id"].as_str()
-                    && self.rows.get(id).is_none_or(|prior| **prior != *row)
-                {
-                    self.held.remove(id);
-                    self.rows.insert(id.to_owned(), Arc::new(row.clone()));
+                if let Some(id) = row["id"].as_str() {
+                    if let Some(revision) = item["sequence"].as_u64() {
+                        self.row_revisions.insert(id.to_owned(), revision);
+                    }
+                    if self.rows.get(id).is_none_or(|prior| **prior != *row) {
+                        self.held.remove(id);
+                        self.rows.insert(id.to_owned(), Arc::new(row.clone()));
+                    }
                 }
             }
             Some("thread.removed") => {
                 if let Some(id) = item["threadId"].as_str() {
                     self.held.remove(id);
                     self.rows.remove(id);
+                    self.row_revisions.remove(id);
                 }
             }
             Some("project.updated") => {
@@ -109,6 +186,38 @@ impl ThreadSnapshots {
 
     pub(crate) fn marker(&self, id: &str) -> Option<Arc<Value>> {
         self.rows.get(id).cloned()
+    }
+
+    pub(crate) fn revision(&self, id: &str) -> Option<u64> {
+        self.row_revisions
+            .get(id)
+            .copied()
+            .or(self.initial_revision)
+    }
+
+    pub(crate) fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
+        let attached = self
+            .rows
+            .values()
+            .filter(|row| ShellCustody(row).parent() == Some(parent));
+        roles
+            .iter()
+            .map(|role| self.rows.get(*role))
+            .chain(attached.map(Some))
+            .map(|row| row.map_or(RowChildren::Unknown, |row| ShellCustody(row).activity()))
+            .max()
+            .unwrap_or(RowChildren::Quiet)
+    }
+
+    pub(crate) fn background_row(&self, id: &str, revision: u64) -> Option<(Arc<Value>, bool)> {
+        let same_revision = self.row_revisions.get(id).map_or_else(
+            || {
+                self.initial_revision
+                    .is_some_and(|initial| revision <= initial)
+            },
+            |observed| *observed == revision,
+        );
+        Some((self.marker(id)?, same_revision))
     }
 
     pub(crate) fn closed(&self, id: &str) -> Option<(Value, Option<u64>)> {
@@ -141,12 +250,7 @@ impl ThreadSnapshots {
             .rows
             .get(id)
             .is_some_and(|row| Arc::ptr_eq(row, marker))
-            || !marker["pendingRuntimeRequest"].is_null()
-            || !marker["activeRunId"].is_null()
-            || matches!(
-                marker["status"].as_str(),
-                Some("running" | "waiting" | "starting" | "queued" | "preparing")
-            )
+            || ShellCustody(marker).has_active_turn()
         {
             return;
         }

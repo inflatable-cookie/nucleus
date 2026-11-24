@@ -70,6 +70,13 @@ pub use web::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("T3 parent message was not sent: {reason}")]
+    ParentNotSent {
+        reason: String,
+        retry_at: Option<Instant>,
+    },
+    #[error("T3 parent message delivery could not be confirmed: {0}")]
+    ParentDeliveryUnknown(HostError),
     #[error("run scratch is already reserved for another run")]
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
@@ -200,8 +207,14 @@ pub struct Service {
 struct TaskWait {
     reason: Option<WaitReason>,
     since: Instant,
-    // The stored timestamp belongs to this runtime's observed label.
     timed: bool,
+    detail: Option<WaitDetail>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaitDetail {
+    BeforeSend,
+    Observation(&'static str),
 }
 
 struct State {
@@ -227,7 +240,14 @@ struct State {
     enrollments: enrollment::Enrollments,
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
     planner_notice_waiters: BTreeSet<String>,
-    thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
+    thread_tasks: BTreeMap<String, BTreeMap<String, TrackedThread>>,
+}
+
+#[derive(Default)]
+struct TrackedThread {
+    seen: Option<SeenThread>,
+    role: bool,
+    due: bool,
 }
 
 struct SeenThread {
@@ -536,14 +556,18 @@ impl Service {
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
         let id = &row.task.identity().id;
-        let refresh = {
-            let mut state = self.state.lock().await;
-            state.planner_notice_waiters.remove(id);
-            state.acp_refresh_requests.remove(id) == Some(row.version)
-        };
-        if refresh {
-            self.refresh_acp_parent(row).await?;
+        {
+            let state = self.state.lock().await;
+            if row.task.run().is_none()
+                && let Some(runtime) = self.host.runtime_identity()
+                && state
+                    .store
+                    .task_delivery_blocked(id, row.version, &runtime)?
+            {
+                return Ok(Action::Wait(WaitReason::HostObservationBlocked));
+            }
         }
+        self.refresh_acp_if_requested(row).await?;
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
         }
@@ -672,9 +696,9 @@ impl Service {
             );
             tokio::pin!(watch);
             let mut inbox_hint = None;
-            loop {
+            let outcome = loop {
                 tokio::select! {
-                    _ = &mut watch => break,
+                    result = &mut watch => break result,
                     Some(hint) = hints.recv() => {
                         if hint.thread == nucleus_hosts::INBOX_THREAD {
                             if inbox_hint.as_ref() == Some(&hint) {
@@ -685,9 +709,9 @@ impl Service {
                         self.wake_from_host(hint).await;
                     },
                 }
-            }
+            };
             if let Some(inbox) = inbox {
-                inbox.host_disconnected();
+                inbox.host_stream_ended(outcome);
             }
             {
                 let mut state = self.state.lock().await;
@@ -705,7 +729,7 @@ impl Service {
                     .values_mut()
                     .flat_map(|threads| threads.values_mut())
                 {
-                    *seen = None;
+                    seen.seen = None;
                 }
             }
             tokio::time::sleep(T3_RETRY_DELAY).await;
@@ -716,8 +740,10 @@ impl Service {
         if let Some(inbox) = &self.native_inbox
             && hint.thread == nucleus_hosts::INBOX_THREAD
         {
-            if hint.inbox_synchronized() {
-                inbox.host_synchronized();
+            if hint.inbox_synchronized()
+                && let Some(identity) = self.host.runtime_identity()
+            {
+                inbox.host_synchronized(identity);
             }
             inbox.wake();
         }
@@ -738,16 +764,28 @@ impl Service {
         } = &mut *state;
         let now = Instant::now();
         for (id, threads) in thread_tasks {
-            if let Some(prior) = threads.get_mut(&hint.thread) {
-                let changed = prior.as_ref().is_none_or(|prior| prior.hint != hint);
-                *prior = Some(SeenThread {
-                    hint: hint.clone(),
-                    at: now,
-                });
-                if changed {
+            if hint
+                .parent_thread()
+                .is_some_and(|parent| threads.contains_key(parent))
+            {
+                self.title_wake.notify_one();
+            }
+            if let Some(tracked) = threads.get_mut(&hint.thread) {
+                let prior = tracked.seen.as_ref().map(|seen| &seen.hint);
+                if tracked.role && prior != Some(&hint) {
+                    self.title_wake.notify_one();
+                    if tracked.due && hint.has_delivery_change(prior) {
+                        schedule.resume_on_host_evidence(id);
+                    }
+                }
+                if tracked.due && prior != Some(&hint) {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
+                tracked.seen = Some(SeenThread {
+                    hint: hint.clone(),
+                    at: now,
+                });
             }
         }
     }
@@ -840,7 +878,9 @@ impl Service {
         let id = &row.task.identity().id;
         let wait = match result {
             Ok(Action::Wait(reason)) => Some(*reason),
-            Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
+            Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
+                Some(WaitReason::HostUnknown)
+            }
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
             Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
             Err(ServiceError::InboxUnavailable { .. }) => Some(WaitReason::Question),
@@ -874,6 +914,9 @@ impl Service {
             if state.schedule.due(id).is_none() {
                 state.schedule.wake(id, Instant::now(), Priority::Decision);
             }
+            return Ok(());
+        }
+        if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
             return Ok(());
         }
         if wait == Some(WaitReason::HostUnknown) {
@@ -929,6 +972,55 @@ impl Service {
         Ok(())
     }
 
+    fn schedule_parent_wait(
+        &self,
+        state: &mut State,
+        row: &TaskRow,
+        result: &Result<Action, ServiceError>,
+        wait: Option<WaitReason>,
+        previous: Priority,
+    ) -> Result<bool, ServiceError> {
+        let id = &row.task.identity().id;
+        let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
+            || (wait == Some(WaitReason::HostUnknown)
+                && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                && row.task.run().is_some_and(|run| {
+                    !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
+                }));
+        let (wait, detail) = if before_send {
+            let now = Instant::now();
+            let backoff = match result {
+                Err(ServiceError::ParentNotSent { retry_at, .. }) => *retry_at,
+                Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+                _ => None,
+            };
+            state.schedule.reset_host_backoff(id);
+            state.schedule.wake(
+                id,
+                backoff.unwrap_or(now).max(now + T3_RETRY_DELAY),
+                previous,
+            );
+            (Some(WaitReason::HostUnknown), WaitDetail::BeforeSend)
+        } else if wait == Some(WaitReason::HostObservationBlocked) {
+            state.schedule.block_host_observation(id);
+            if state.wait_reason(id) == wait {
+                return Ok(true);
+            }
+            (
+                wait,
+                WaitDetail::Observation("Couldn’t verify the task thread. Open it to check."),
+            )
+        } else {
+            return Ok(false);
+        };
+        if state.observe_wait_detail(&row.task, wait, Some(detail))? {
+            self.desire_title(state, &row.task, row.number);
+            self.title_wake.notify_one();
+            self.publish(id, row.version);
+        }
+        Ok(true)
+    }
+
     fn schedule_host_observation(
         &self,
         state: &mut State,
@@ -937,13 +1029,18 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
         let deferred = match result {
-            Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+            Err(
+                ServiceError::Host(HostError::Deferred { until })
+                | ServiceError::ParentDeliveryUnknown(HostError::Deferred { until }),
+            ) => Some(*until),
             _ => None,
         };
         let now = Instant::now();
+        let reported = row.task.run().is_some_and(|run| run.report().is_some());
         let reply_due = row
             .task
             .run()
+            .filter(|_| !reported)
             .and_then(nucleus_core::Run::last_send_at_ms)
             .and_then(|sent| {
                 sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
@@ -959,12 +1056,37 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
-        let changed = state.observe_wait(&row.task, wait)?;
-        if blocked && changed {
+        let delivery_pending = !reported
+            && (matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                || row
+                    .task
+                    .run()
+                    .is_some_and(|run| run.last_send_at_ms().is_some()));
+        let cause = match (blocked, reported, delivery_pending, result) {
+            (_, _, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
+                process_check_detail(*failure, blocked)
+            }
+            (true, true, _, _) => {
+                "Couldn’t verify that the reporting role finished. Open its thread to check."
+            }
+            (false, true, _, _) => "Checking that the reporting role has finished.",
+            (true, _, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
+            (true, _, false, _) => "Couldn’t verify the task thread. Open it to check.",
+            (false, _, _, Err(ServiceError::Host(HostError::Unavailable))) => {
+                "Couldn’t reach T3. Checking again."
+            }
+            (false, _, true, _) => "Checking whether the message reached the task thread.",
+            (false, _, false, _) => "Checking the task thread.",
+        };
+        let prior = state.wait_reason(id);
+        let changed =
+            state.observe_wait_detail(&row.task, wait, Some(WaitDetail::Observation(cause)))?;
+        if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
             audit.detail = serde_json::json!({"version": row.version,
                 "session": self.host.runtime_identity().map(|session| self.turn_failure_scope(&session)),
-                "reason": result.as_ref().err().map(ToString::to_string)}).to_string();
+                "reason": result.as_ref().err().map(ToString::to_string),
+                "deliveryPending": delivery_pending}).to_string();
             state.store.claim_task_effect(id, &audit, false)?;
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
@@ -1313,9 +1435,7 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
         }
-        if task
-            .run()
-            .is_none_or(|run| run.revoked() || run.report().is_some())
+        if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
                 != prior.task.run().map(|run| &run.launch().instance)
         {
@@ -1429,6 +1549,37 @@ impl Service {
     }
 }
 
+fn process_check_detail(
+    failure: nucleus_hosts::ProcessEvidenceFailure,
+    blocked: bool,
+) -> &'static str {
+    use nucleus_hosts::ProcessEvidenceFailure;
+    match (failure, blocked) {
+        (ProcessEvidenceFailure::Timeout, false) => {
+            "The local process check timed out. Checking again."
+        }
+        (ProcessEvidenceFailure::Timeout, true) => {
+            "The local process check timed out. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Truncated, false) => {
+            "The local process listing was cut short. Checking again."
+        }
+        (ProcessEvidenceFailure::Truncated, true) => {
+            "The local process listing was cut short. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Scope, false) => {
+            "Couldn’t verify the checkout and scratch paths. Checking again."
+        }
+        (ProcessEvidenceFailure::Scope, true) => {
+            "Couldn’t verify the checkout and scratch paths. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Incomplete, false) => "Checking whether the checkout is idle.",
+        (ProcessEvidenceFailure::Incomplete, true) => {
+            "Couldn’t verify that the checkout is idle. Open the task thread to check."
+        }
+    }
+}
+
 fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
     if (task.phase() != prior.phase() && matches!(task.phase(), Phase::Merging | Phase::Closing))
         || (task.run().is_some_and(nucleus_core::Run::revoked)
@@ -1462,12 +1613,16 @@ impl State {
                 .thread_tasks
                 .get(id)
                 .and_then(|threads| threads.get(&run.launch().thread))
-                .and_then(Option::as_ref)
+                .and_then(|thread| thread.seen.as_ref())
                 .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
     }
 
     fn wait_reason(&self, id: &str) -> Option<WaitReason> {
         self.waits.get(id).and_then(|wait| wait.reason)
+    }
+
+    fn wait_detail(&self, id: &str) -> Option<WaitDetail> {
+        self.waits.get(id).and_then(|wait| wait.detail)
     }
 
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
@@ -1478,12 +1633,14 @@ impl State {
             reason: None,
             since: Instant::now(),
             timed: false,
+            detail: None,
         });
         let prior = std::mem::replace(&mut entry.reason, reason);
         if prior == reason {
             return false;
         }
         entry.since = Instant::now();
+        entry.detail = None;
         if prior == Some(WaitReason::Capacity) {
             self.capacity_waiters.retain(|waiting| waiting != id);
         } else if reason == Some(WaitReason::Capacity) {
@@ -1497,6 +1654,15 @@ impl State {
         task: &Task,
         reason: Option<WaitReason>,
     ) -> Result<bool, StoreError> {
+        self.observe_wait_detail(task, reason, None)
+    }
+
+    fn observe_wait_detail(
+        &mut self,
+        task: &Task,
+        reason: Option<WaitReason>,
+        detail: Option<WaitDetail>,
+    ) -> Result<bool, StoreError> {
         let id = &task.identity().id;
         // The first pass after restart establishes a baseline for a volatile wait.
         let entered = self.wait_label_changed(task, reason);
@@ -1504,7 +1670,12 @@ impl State {
             self.store
                 .record_board_entry(id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
         }
-        Ok(self.apply_observed_wait(task, reason, entered))
+        let changed = self.apply_observed_wait(task, reason, entered);
+        let detail_changed = self
+            .waits
+            .get_mut(id)
+            .is_some_and(|wait| std::mem::replace(&mut wait.detail, detail) != detail);
+        Ok(changed || detail_changed)
     }
 
     fn wait_label_changed(&self, task: &Task, reason: Option<WaitReason>) -> bool {
@@ -1575,6 +1746,7 @@ impl Service {
             state.thread_tasks.remove(id);
             return;
         }
+        let roles = task_rows::visibility_roles(task);
         let thread = task
             .run()
             .map(|run| run.launch().thread.as_str())
@@ -1596,9 +1768,15 @@ impl Service {
             threads.push(binding.thread.clone());
         }
         let tracked = state.thread_tasks.entry(id.clone()).or_default();
-        tracked.retain(|thread, _| threads.contains(thread));
-        for thread in threads {
-            tracked.entry(thread).or_insert(None);
+        tracked.retain(|thread, _| threads.contains(thread) || roles.contains(&thread.as_str()));
+        for thread in roles
+            .iter()
+            .copied()
+            .chain(threads.iter().map(String::as_str))
+        {
+            let tracked = tracked.entry(thread.to_owned()).or_default();
+            tracked.role = roles.contains(&thread);
+            tracked.due = threads.iter().any(|due| due == thread);
         }
     }
 }

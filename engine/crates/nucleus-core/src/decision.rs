@@ -260,6 +260,9 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             return Signal::ReservationDiscarded(Phase::Reviewing);
         }
         return match observation.current(&run.launch.instance) {
+            Some(RunState::ReadyToSend | RunState::Rejected) if run.report().is_some() => {
+                Signal::Wait(WaitReason::HostUnknown)
+            }
             Some(RunState::ReadyToSend) => {
                 prepared(observation, role, run.launch.review_head.as_ref())
             }
@@ -281,7 +284,8 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             Some(RunState::Ended | RunState::UsageLimited) => {
                 settled(task, observation, role, run.report.as_ref())
             }
-            Some(RunState::Gone | RunState::Rejected) => settled(task, observation, role, None),
+            Some(RunState::Gone) => settled(task, observation, role, run.report.as_ref()),
+            Some(RunState::Rejected) => settled(task, observation, role, None),
         };
     }
     if task.report_task().is_some() {

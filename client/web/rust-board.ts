@@ -49,6 +49,7 @@ const current = z.object({
   version: revision,
   phase,
   wait: z.string().nullable(),
+  waitDetail: z.string().nullish(),
   attention: z.enum(["finished", "attention", "active", "waiting"]),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
@@ -517,7 +518,20 @@ export const rustPhaseLabels: Record<RustPhase, string> = {
 };
 
 /** Keep actionable guidance under the engine's state label. */
-export function rustWaitDetail({ wait }: Pick<RustTask, "wait">): string | null {
+export function rustWaitDetail({
+  wait,
+  waitDetail,
+  nextCheckAt,
+}: Pick<RustTask, "wait" | "waitDetail" | "nextCheckAt">): string | null {
+  if (waitDetail) {
+    if (nextCheckAt === null) return waitDetail;
+    const time = new Date(nextCheckAt).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    return `${waitDetail} Next check at ${time}.`;
+  }
   switch (wait) {
     case "host_observation_blocked":
       return "Open the task thread to check.";
