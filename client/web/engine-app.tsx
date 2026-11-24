@@ -278,8 +278,10 @@ function EngineBoard({
         )}
         <View
           style={{
-            width: wide ? inboxListWidth : undefined,
-            flex: wide ? 0 : 1,
+            flexBasis: wide ? inboxListWidth : 0,
+            flexGrow: wide ? 0 : 1,
+            flexShrink: wide ? 0 : 1,
+            minWidth: 0,
             backgroundColor: palette.list,
           }}
         >
