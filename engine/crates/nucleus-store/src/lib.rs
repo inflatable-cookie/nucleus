@@ -761,6 +761,8 @@ impl Store {
 
     /// Find same-version native sends whose outcome a delivery fence could still protect.
     /// An empty list inside Some represents a typed uncertain send with no usable command.
+    /// Remove legacy NULL deliveryPending and unlinked refusals first in the reduction pass,
+    /// after a live store inventory confirms that no current tasks carry those fences.
     ///
     /// # Errors
     /// Returns an error if the task's delivery history is unreadable.
