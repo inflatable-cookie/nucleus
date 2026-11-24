@@ -434,7 +434,7 @@ async fn ensure(launcher: &Path) -> Result<()> {
 
 async fn engine_health(endpoint: SocketAddr, key: &[u8; 32]) -> Result<Value> {
     tokio::time::timeout(Duration::from_secs(3), async {
-        let mut response = request(endpoint, Method::GET, "/v1/health", key, None)
+        let mut response = request(endpoint, Method::GET, "/v1/health", key, None, None)
             .await?
             .error_for_status()?;
         let mut body = Vec::new();

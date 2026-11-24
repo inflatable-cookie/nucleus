@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod acp;
+mod enrollment;
 mod inbox;
 mod native_inbox;
 mod numbers;
@@ -29,6 +30,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use enrollment::PlanningRepository;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
@@ -42,19 +44,28 @@ use nucleus_store::{
 use nucleus_work::{WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
-    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc, watch},
+    sync::{Mutex, Notify, OwnedMutexGuard, RwLock, broadcast, mpsc, watch},
     time::Instant,
 };
 
 pub use native_inbox::native_inbox_directory;
 pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
-pub use web::{Controller, router, router_with_board};
+use web::ControllerScope;
+pub use web::{
+    Controller, router, router_with_board, router_with_board_and_t3_callers, router_with_t3_callers,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("the task is outside this engine's configured project")]
     Project,
+    #[error("the controller cannot access this project")]
+    ControllerProject,
+    #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
+    PlannerEnrollmentPending,
+    #[error("{0}")]
+    PlannerEnrollmentRefused(&'static str),
     #[error("task was not found")]
     Missing,
     #[error("task input is invalid")]
@@ -105,7 +116,8 @@ pub struct Service {
     storage: EngineStorage,
     git: project::LocalGit,
     settings: SettingsFile,
-    project: Project,
+    project: Option<Project>,
+    registry_provider: Option<String>,
     host: T3,
     forge: GitHub,
     inbox: Option<inbox::Inbox>,
@@ -113,13 +125,16 @@ pub struct Service {
     callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
+    project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
     watch_lock: Mutex<()>,
     changes: broadcast::Sender<TaskChange>,
+    project_changes: watch::Sender<()>,
     settings_changes: watch::Sender<()>,
     wake: Notify,
     planner_wake: Notify,
     title_wake: Notify,
+    enrollment_wake: Notify,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -141,6 +156,8 @@ struct State {
     planner_authority_epoch: u64,
     planner_requests: BTreeSet<String>,
     planner_check: Option<String>,
+    enrollments: enrollment::Enrollments,
+    enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
     thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
 }
 
@@ -184,11 +201,59 @@ impl Service {
         callback: SocketAddr,
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
+        Self::open_runtime(
+            settings,
+            Some(project),
+            None,
+            host,
+            forge,
+            callback,
+            report_command,
+        )
+    }
+
+    /// Open one service for the repositories registered in Projects settings.
+    ///
+    /// # Errors
+    /// Returns an error if service configuration or storage is invalid.
+    pub fn open_projects(
+        settings: &SettingsFile,
+        acp_provider: String,
+        host: T3,
+        forge: GitHub,
+        callback: SocketAddr,
+        report_command: PathBuf,
+    ) -> Result<Self, ServiceError> {
+        if acp_provider.trim().is_empty() || acp_provider.trim() != acp_provider {
+            return Err(ServiceError::Project);
+        }
+        Self::open_runtime(
+            settings,
+            None,
+            Some(acp_provider),
+            host,
+            forge,
+            callback,
+            report_command,
+        )
+    }
+
+    fn open_runtime(
+        settings: &SettingsFile,
+        project: Option<Project>,
+        registry_provider: Option<String>,
+        host: T3,
+        forge: GitHub,
+        callback: SocketAddr,
+        report_command: PathBuf,
+    ) -> Result<Self, ServiceError> {
         let storage = settings.storage()?;
         storage.scratch().ensure()?;
         storage.log().ensure()?;
         let git = project::LocalGit(storage.scratch().path().into());
-        project.verify(&git)?;
+        if let Some(project) = &project {
+            project.verify(&git)?;
+        }
         let runtime_settings = web::RuntimeSettings::open(settings)?;
         if !callback.ip().is_loopback()
             || callback.port() == 0
@@ -205,6 +270,7 @@ impl Service {
             git,
             settings: settings.clone(),
             project,
+            registry_provider,
             host,
             forge,
             inbox: None,
@@ -226,22 +292,27 @@ impl Service {
                 planner_authority_epoch: 0,
                 planner_requests: BTreeSet::new(),
                 planner_check: None,
+                enrollments: enrollment::Enrollments::default(),
+                enrolled_planners: BTreeMap::new(),
                 thread_tasks: BTreeMap::new(),
             }),
+            project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
             watch_lock: Mutex::new(()),
             changes,
+            project_changes: watch::Sender::new(()),
             settings_changes: watch::channel(()).0,
             wake: Notify::new(),
             planner_wake: Notify::new(),
             title_wake: Notify::new(),
+            enrollment_wake: Notify::new(),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
         })
     }
 
-    /// Admit a brief on the configured synthetic project.
+    /// Admit a brief through the legacy single-repository route.
     ///
     /// # Errors
     /// Returns an error for malformed or duplicate input or a storage failure.
@@ -252,12 +323,49 @@ impl Service {
         brief: String,
         caller: &Authority,
     ) -> Result<TaskRow, ServiceError> {
-        let task = self.admission_task(id, reference, brief, None, caller)?;
+        self.admit_to(None, id, reference, brief, caller).await
+    }
+
+    /// Admit a brief for a configured repository without contacting any host.
+    ///
+    /// # Errors
+    /// Returns an error for unbound, malformed or duplicate input or a storage failure.
+    pub async fn admit_to(
+        &self,
+        repository: Option<&str>,
+        id: String,
+        reference: String,
+        brief: String,
+        caller: &Authority,
+    ) -> Result<TaskRow, ServiceError> {
+        self.admit_in_scope(
+            repository,
+            id,
+            reference,
+            brief,
+            caller,
+            &ControllerScope::default(),
+        )
+        .await
+    }
+
+    async fn admit_in_scope(
+        &self,
+        repository: Option<&str>,
+        id: String,
+        reference: String,
+        brief: String,
+        caller: &Authority,
+        scope: &ControllerScope,
+    ) -> Result<TaskRow, ServiceError> {
+        project::check_task_id(&id)?;
+        if reference.trim().is_empty() || brief.trim().is_empty() {
+            return Err(ServiceError::Input);
+        }
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
-        if state.settings.fixture_slots(&self.project).is_none() {
-            return Err(ServiceError::Project);
-        }
+        let route = self.planning_repository(&mut state, scope, None, repository)?;
+        let task = Self::admission_task(id, reference, brief, None, caller, route)?;
         let number = state.store.create(&task, &event("admitted"))?;
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(TaskRow {
@@ -268,18 +376,22 @@ impl Service {
     }
 
     fn admission_task(
-        &self,
         id: String,
         reference: String,
         brief: String,
         review: Option<PullRequest>,
         caller: &Authority,
+        route: PlanningRepository,
     ) -> Result<Task, ServiceError> {
+        project::check_task_id(&id)?;
+        if reference.trim().is_empty() || brief.trim().is_empty() {
+            return Err(ServiceError::Input);
+        }
         let identity = Identity {
             id,
             reference,
-            repository: self.project.repository.clone(),
-            base: self.project.base.clone(),
+            repository: route.repository,
+            base: route.base,
             entry: if review.is_some() {
                 Entry::ReviewEntry
             } else {
@@ -290,10 +402,6 @@ impl Service {
                 Authority::Operator { .. } => None,
             },
         };
-        self.project.scope(&identity)?;
-        if identity.reference.trim().is_empty() || brief.trim().is_empty() {
-            return Err(ServiceError::Input);
-        }
         if let Some(pr) = &review {
             Branches::for_review_entry(&identity.repository, &identity.base)?
                 .target(&pr.url)
@@ -369,7 +477,7 @@ impl Service {
         }
         if row.task.phase() == Phase::Done
             && row.task.run().is_none()
-            && self.project.acp_provider.is_some()
+            && self.acp_provider().is_some()
         {
             return self.archive_done(row).await;
         }
@@ -381,16 +489,21 @@ impl Service {
             let (enabled, configured) = {
                 let state = self.state.lock().await;
                 (
-                    state.settings.fixture_slots(&self.project).is_some(),
+                    self.resolve_project(&state, row.task.identity())
+                        .is_ok_and(|route| route.slots.is_some()),
                     state.settings.profiles.is_some(),
                 )
             };
-            if !enabled || (!configured && self.project.mode == ProjectMode::Project) {
+            let fixture = self
+                .project
+                .as_ref()
+                .filter(|project| project.mode == ProjectMode::Fixture);
+            if !enabled || (!configured && fixture.is_none()) {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
-            if !configured {
+            if let Some(fixture) = fixture.filter(|_| !configured) {
                 let catalog = host.profile_catalog().await?;
-                if ![&self.project.worker, &self.project.reviewer]
+                if ![&fixture.worker, &fixture.reviewer]
                     .into_iter()
                     .all(|profile| catalog.supports(profile))
                 {
@@ -409,6 +522,7 @@ impl Service {
             self.watch_thread_hints(),
             Box::pin(self.watch_planner_authority()),
             Box::pin(self.watch_titles()),
+            Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_inbox())
         );
     }
@@ -416,15 +530,10 @@ impl Service {
     async fn watch_thread_hints(&self) {
         loop {
             let (sender, mut hints) = mpsc::channel(128);
-            let titles = self
-                .project
-                .acp_provider
-                .as_deref()
-                .map(|provider| (self.project.host_project.as_str(), provider));
             let inbox = self.native_inbox.as_ref();
             let watch = self.host.watch_threads(
                 &sender,
-                titles,
+                self.acp_provider(),
                 inbox.map(|_| nucleus_hosts::INBOX_THREAD),
             );
             tokio::pin!(watch);
@@ -444,6 +553,11 @@ impl Service {
                     self.settings_changes.send_replace(());
                 }
                 state.invalidate_planner_authority();
+                if !state.enrolled_planners.is_empty() {
+                    state.enrolled_planners.clear();
+                    self.project_changes.send_replace(());
+                    self.settings_changes.send_replace(());
+                }
                 for seen in state
                     .thread_tasks
                     .values_mut()
@@ -466,6 +580,10 @@ impl Service {
         self.set_cached_host(&mut state, web::CachedHost::Reachable);
         let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
+        if state.invalidate_enrolled_planner(&hint) {
+            self.project_changes.send_replace(());
+            self.settings_changes.send_replace(());
+        }
         if authorities != state.planner_authority.len() {
             self.settings_changes.send_replace(());
         }
@@ -501,12 +619,20 @@ impl Service {
         }
     }
 
-    async fn launch_capacity(&self, id: &str, recovery: bool) -> Result<bool, ServiceError> {
+    async fn launch_capacity(
+        &self,
+        identity: &Identity,
+        recovery: bool,
+    ) -> Result<bool, ServiceError> {
         let state = self.state.lock().await;
-        let fallback_slots = self.project.launch_budget.slots;
-        let project_slots = match state.settings.fixture_slots(&self.project) {
+        let route = self.resolve_project(&state, identity)?;
+        let fallback_slots = self.project.as_ref().map_or_else(
+            || nucleus_store::DispatchSettings::default().slots,
+            |project| project.launch_budget.slots,
+        );
+        let project_slots = match route.slots {
             Some(slots) => slots,
-            None if recovery => fallback_slots,
+            None if recovery => u32::MAX,
             None => return Ok(false),
         };
         let slots = state
@@ -514,7 +640,13 @@ impl Service {
             .dispatch
             .as_ref()
             .map_or(fallback_slots, |dispatch| dispatch.slots);
-        Ok(state.store.occupied_slots(id)? < slots.min(project_slots))
+        if state.store.occupied_slots(&identity.id)? >= slots {
+            return Ok(false);
+        }
+        Ok(state
+            .store
+            .occupied_project_slots(&identity.id, &route.repositories)?
+            < project_slots)
     }
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
@@ -526,7 +658,7 @@ impl Service {
                 let State {
                     store, schedule, ..
                 } = &mut *state;
-                schedule.seed(store, now, self.project.acp_provider.is_some())?;
+                schedule.seed(store, now, self.acp_provider().is_some())?;
                 if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
@@ -559,7 +691,7 @@ impl Service {
         };
         let mut state = self.state.lock().await;
         let current = self.lookup(&state, id)?;
-        let archive_due = self.project.acp_provider.is_some()
+        let archive_due = self.acp_provider().is_some()
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
@@ -639,8 +771,20 @@ impl Service {
         before: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Event>, ServiceError> {
+        self.history_in_scope(id, before, limit, &ControllerScope::default())
+            .await
+    }
+
+    async fn history_in_scope(
+        &self,
+        id: &str,
+        before: Option<i64>,
+        limit: u32,
+        scope: &ControllerScope,
+    ) -> Result<Vec<Event>, ServiceError> {
         let state = self.state.lock().await;
-        let _ = self.lookup(&state, id)?;
+        let row = self.lookup(&state, id)?;
+        scope.task(&state, row.task.identity())?;
         Ok(state.store.history(id, before, limit.min(100))?)
     }
 
@@ -661,7 +805,7 @@ impl Service {
         authority: &Authority,
         command: Command,
     ) -> Result<CommandOutcome, ServiceError> {
-        self.command_with_session(id, authority, command, None)
+        self.command_with_session(id, authority, command, None, &ControllerScope::default())
             .await
     }
 
@@ -671,6 +815,7 @@ impl Service {
         authority: &Authority,
         command: Command,
         session: Option<&acp::WriteAccess>,
+        scope: &ControllerScope,
     ) -> Result<CommandOutcome, ServiceError> {
         let fence = self.task_fence(id).await;
         let local_planner_answer = matches!(
@@ -687,6 +832,7 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
+        scope.task(&state, prior.task.identity())?;
         if self.uses_operator_inbox()
             && prior.task.operator_question().is_some()
             && matches!(&command, Command::Answer(_))
@@ -770,7 +916,7 @@ impl Service {
 
     fn lookup(&self, state: &State, id: &str) -> Result<TaskRow, ServiceError> {
         let row = state.store.row(id)?.ok_or(ServiceError::Missing)?;
-        self.project.scope(row.task.identity())?;
+        self.task_scope(row.task.identity())?;
         Ok(row)
     }
 
@@ -790,23 +936,6 @@ impl Service {
             return Err(StoreError::StaleTask.into());
         }
         Ok(fence)
-    }
-
-    async fn check_project(&self) -> Result<(), ServiceError> {
-        let project = self.project.clone();
-        let git = self.git.clone();
-        tokio::task::spawn_blocking(move || project.verify(&git))
-            .await
-            .map_err(|_| ServiceError::Project)??;
-        let root = self
-            .project
-            .checkout
-            .to_str()
-            .ok_or(ServiceError::Project)?;
-        self.host
-            .check_project(&self.project.host_project, root)
-            .await?;
-        Ok(())
     }
 
     fn worktrees(&self) -> Result<Worktrees<'_>, ServiceError> {
@@ -1087,8 +1216,9 @@ impl Service {
                 task.threads().get(role)
             });
         let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
-        if self.project.acp_provider.is_some() {
-            let checkout = checkout_path(self.storage.work().path(), &self.project.repository, id);
+        if self.acp_provider().is_some() {
+            let checkout =
+                checkout_path(self.storage.work().path(), &task.identity().repository, id);
             threads.push(nucleus_hosts::parent_thread(&checkout));
         }
         if let Some(binding) = task.question_delivery() {

@@ -11,10 +11,12 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         state.store.seed_task_numbers(seed)?;
-        if self.project.acp_provider.is_some() {
-            for row in state.store.list()?.into_iter().filter(|row| {
-                row.number.is_some() && self.project.scope(row.task.identity()).is_ok()
-            }) {
+        if self.acp_provider().is_some() {
+            for row in
+                state.store.list()?.into_iter().filter(|row| {
+                    row.number.is_some() && self.task_scope(row.task.identity()).is_ok()
+                })
+            {
                 self.desire_title(&state, &row.task, row.reference().as_ref(), None);
             }
         }

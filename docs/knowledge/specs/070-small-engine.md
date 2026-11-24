@@ -65,10 +65,10 @@ Later decisions carry their own attribution.
    - its repositories (origin, path, base branch);
    - its slot limit;
    - per-repository merge checks (command and timeout), with an optional required reviewer;
-   - its planner, shown as resolved and never typed in by hand;
+   - its verified planners, shown from their live bindings;
    - an archived toggle.
 
-   It drops agent registration and the preferred and responsible thread fields (planners resolve live, ruling 2), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Moving a repository between projects becomes one reassign action. Editing autosaves, one noun per control, with explanations only in help popovers.
+   It drops agent registration and the preferred and responsible thread fields (rulings 2 and 23), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Repository routes come from first contact (ruling 23). Editing autosaves, one noun per control, with explanations only in help popovers.
 
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
@@ -141,9 +141,10 @@ Later decisions carry their own attribution.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
-    - When a planner thread Nucleus doesn't know calls `task.add` or `item.promote`, the scheduler reads that one T3 thread, reads origin and default branch from its project root's checkout, records the project and repository, and mints the planner binding. The caller gets the ordinary retry response meanwhile. Later calls use the binding with no host I/O.
+    - When an unknown planner calls `task.add` or `item.promote`, the scheduler reads that exact T3 thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout, records the Projects route and binds the caller. The initial request asks for a retry. Later calls use the live binding locally.
+    - Several verified planners can bind to the same project. Archive or identity changes revoke that caller's cached authority. Task commands accept any live planner binding for the project. Notices address the task's original planner and fall back to the most recently verified live planner for the native project after T3 confirms that the origin is gone.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
-    - Projects settings edit slots, lanes and planners. They are never a precondition for dispatch, and there is no per-repository routing.
+    - Projects settings edit slots and lanes and show the live planners. Dispatch uses the verified repository route automatically.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
 24. **Host setup commands.** Tom, 2026-11-24: "we'll need the `nucleus t3 install/uninstall/status` surface for setting up the ACP, etc".
     - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.

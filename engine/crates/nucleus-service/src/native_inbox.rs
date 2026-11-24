@@ -67,7 +67,7 @@ impl NativeInbox {
                     .map_err(|_| ServiceError::InboxConfiguration)
             })
             .transpose()?;
-        if service.project.acp_provider.is_none()
+        if service.acp_provider().is_none()
             || (service.inbox.is_some() && legacy.is_none())
             || legacy.as_ref().is_some_and(|id| {
                 !id.starts_with("thread:")
@@ -228,10 +228,8 @@ impl Service {
     }
 
     pub(super) async fn watch_inbox(&self) {
-        let (Some(inbox), Some(provider)) = (
-            self.native_inbox.as_ref(),
-            self.project.acp_provider.as_deref(),
-        ) else {
+        let (Some(inbox), Some(provider)) = (self.native_inbox.as_ref(), self.acp_provider())
+        else {
             return;
         };
         let target = InboxTarget {
@@ -303,7 +301,8 @@ impl Service {
         let target = task_target(row);
         let decision = {
             let mut state = self.state.lock().await;
-            let project = state.settings.planning_project_id(&self.project).to_owned();
+            let route = self.resolve_project(&state, row.task.identity())?;
+            let project = route.project_id.unwrap_or(route.host_project);
             if let Some(decision) = state.store.task_decision(&project, &target)? {
                 decision
             } else {
@@ -353,11 +352,14 @@ impl Service {
         if self.native_inbox.is_none() || row.task.operator_question().is_none() {
             return;
         }
-        let project = state.settings.planning_project_id(&self.project);
+        let Ok(route) = self.resolve_project(state, row.task.identity()) else {
+            return;
+        };
+        let project = route.project_id.unwrap_or(route.host_project);
         if let Err(error) =
             state
                 .store
-                .withdraw_task_decision(project, &task_target(row), engine_stamp())
+                .withdraw_task_decision(&project, &task_target(row), engine_stamp())
         {
             // The old row version is already fenced by the shared pending and answer paths.
             eprintln!("{}: {error}", row.task.identity().id);
@@ -368,7 +370,7 @@ impl Service {
 
 fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {
     let mut decisions = Vec::new();
-    for project in state.settings.planning_projects(&service.project) {
+    for project in state.settings.planning_projects(service.project.as_ref()) {
         decisions.extend(state.store.decisions(project, true)?);
     }
     Ok(decisions)

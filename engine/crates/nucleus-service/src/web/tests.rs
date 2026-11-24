@@ -21,6 +21,8 @@ use crate::{
 
 #[path = "tests/planning.rs"]
 mod planning;
+#[path = "tests/projects.rs"]
+mod projects;
 
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 const BOARD_KEY: [u8; 32] = [2; 32];
@@ -32,7 +34,7 @@ const LOCAL_HOST: &str = "127.0.0.1:9";
 async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     for id in ["task-one", "task-two"] {
-        let (task, _, _) = reservation(id, Entry::Brief, &service.project.start);
+        let (task, _, _) = reservation(id, Entry::Brief, &service.fixture().start);
         seed_task(&service, &task).await;
     }
     let api = router(
@@ -164,7 +166,7 @@ async fn admission_commits_when_t3_is_unreachable() {
 #[tokio::test]
 async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let (task, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     seed_task(&service, &task).await;
     let row = service.task("worker").await.expect("row");
     let authority = Authority::Operator {
@@ -227,7 +229,8 @@ async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
 #[tokio::test]
 async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let (task, key, mut observation) = reservation("worker", Entry::Brief, &service.project.start);
+    let (task, key, mut observation) =
+        reservation("worker", Entry::Brief, &service.fixture().start);
     let instance = task.run().expect("run").launch().instance.clone();
     seed_task(&service, &task).await;
     let mut row = service.task("worker").await.expect("row");
@@ -241,7 +244,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     }
     let pr = PullRequest {
         url: PR.into(),
-        head: service.project.start.clone(),
+        head: service.fixture().start.clone(),
     };
     let mut updated = row.task.clone();
     updated
@@ -296,7 +299,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
 #[tokio::test]
 async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     let (task, key, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
     let first = task.run().expect("first review").launch().clone();
     seed_task(&service, &task).await;
@@ -394,9 +397,9 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
 #[tokio::test]
 async fn http_reports_bind_the_task_instance_credential_and_role() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let (worker, worker_key, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let (worker, worker_key, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let (reviewer, reviewer_key, _) =
-        reservation("reviewer", Entry::ReviewEntry, &service.project.start);
+        reservation("reviewer", Entry::ReviewEntry, &service.fixture().start);
     for task in [&worker, &reviewer] {
         seed_task(&service, task).await;
     }
@@ -417,8 +420,8 @@ async fn http_reports_bind_the_task_instance_credential_and_role() {
     );
     let worker_id = &worker.run().expect("worker run").launch().instance;
     let reviewer_id = &reviewer.run().expect("reviewer run").launch().instance;
-    let work = json!({"work":{"url": PR, "head":service.project.start}});
-    let review = json!({"review":{"head": service.project.start, "decision": "approve", "summary": "Tested"}});
+    let work = json!({"work":{"url": PR, "head":service.fixture().start}});
+    let review = json!({"review":{"head": service.fixture().start, "decision": "approve", "summary": "Tested"}});
     let worker_path = format!("/v1/runs/worker/{worker_id}/report");
     let reviewer_path = format!("/v1/runs/reviewer/{reviewer_id}/report");
     let stream = get_as(&api, "/v1/events", &BOARD_KEY).await;
@@ -550,7 +553,7 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
 #[tokio::test]
 async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     seed_held_acceptance(&service, &head).await;
     let (forge, readable, reads, server) = serve_merged_forge(&head).await;
     service.forge = forge;
@@ -657,7 +660,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let (_home, mut service) = fixture(forge);
     let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
     service.host = host;
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     let exact = seed_review_work_question(&service, &head).await;
     service
         .refresh_planner_authority("reviewer")
@@ -829,11 +832,11 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
     let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (host, replaced, reads, native) = planner_roster_fixture("origin", "responsible").await;
     service.host = host;
-    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let mut identity = reserved.identity().clone();
     identity.origin_thread = Some("origin".into());
     let mut task = Task::new(identity, "Synthetic change".into(), None);
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     let forge = Observed::Known(Forge::Merged {
         pr: nucleus_core::PullRequest {
             url: PR.into(),
@@ -923,7 +926,7 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
 #[tokio::test]
 async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
     let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
-    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.project.start);
+    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let task = Task::new(reserved.identity().clone(), "Synthetic change".into(), None);
     seed_task(&service, &task).await;
     let mut changes = service.changes();
@@ -1217,7 +1220,7 @@ async fn mint_binding(api: &Router, task: &str, key: &[u8; 32]) -> nucleus_core:
 #[tokio::test]
 async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     seed_held_acceptance(&service, &head).await;
     let service = Arc::new(service);
     let api = router(
@@ -1284,7 +1287,7 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
     })
     .await;
     service.host = host;
-    service.project.acp_provider = Some("fixture-acp".into());
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
     let service = Arc::new(service);
@@ -1337,7 +1340,7 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
 }
 
 async fn fixture_at_done(service: &Service) -> (nucleus_store::TaskRow, Observed<Forge>) {
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     seed_held_acceptance(service, &head).await;
     let actor = Authority::Operator {
         actor: "fixture".into(),
@@ -1478,7 +1481,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         "revision": starting["settings"]["revision"],
         "value": {"projects": {
             "alpha": {"name": "Alpha", "slots": 4, "repositories": [{
-                "origin": REPOSITORY, "path": service.project.checkout, "base": service.project.base,
+                "origin": REPOSITORY, "path": service.fixture().checkout, "base": service.fixture().base,
                 "requiredChecks": ["CI"]
             }]},
             "beta": {"name": "Beta", "slots": 2},
@@ -1549,7 +1552,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let state = service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
     assert!(state.planner_authority.is_empty());
-    assert_eq!(state.settings.fixture_slots(&service.project), Some(2));
+    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(2));
     assert_eq!(
         reads.load(Ordering::Relaxed),
         1,
@@ -1632,7 +1635,7 @@ async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -
 #[tokio::test]
 async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    service.project.acp_provider = Some("fixture-acp".into());
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (mut first, merged) = fixture_at_done(&service).await;
     {
         let mut state = service.state.lock().await;
@@ -1710,7 +1713,7 @@ async fn reopen_and_finish_review(
     done: &nucleus_store::TaskRow,
     merged: &Observed<Forge>,
 ) -> nucleus_store::TaskRow {
-    let head = service.project.start.clone();
+    let head = service.fixture().start.clone();
     let role = nucleus_core::Role::Reviewer;
     let old_thread = done.task.threads().get(role).expect("prior review");
     let mut observation = Observation {
@@ -1792,8 +1795,8 @@ async fn archive_roster_fixture(
     let worktrees = service.worktrees().expect("worktree scope");
     let checkout = worktrees
         .checkout(
-            &service.project.checkout,
-            &service.project.repository,
+            &service.fixture().checkout,
+            &service.fixture().repository,
             "reviewer",
         )
         .expect("reviewer path");
@@ -1801,7 +1804,7 @@ async fn archive_roster_fixture(
     let parent = parent_id.clone();
     let path = checkout.path().to_owned();
     let branch = checkout.branch().to_owned();
-    let project_root = service.project.checkout.clone();
+    let project_root = service.fixture().checkout.clone();
     let child = new_child.to_owned();
     let archived = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let writes = Arc::clone(&archived);

@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{Service, ServiceError, State};
+use crate::{ControllerScope, Service, ServiceError, State};
 use nucleus_core::{
     Authority, Phase,
     acp::{Binding, InboxBinding, session_id},
@@ -39,10 +39,12 @@ impl Service {
         task: &str,
         controller: [u8; 32],
         authority: &Authority,
+        scope: &ControllerScope,
         read_only: bool,
     ) -> Result<MintedSession, ServiceError> {
         let mut state = self.state.lock().await;
         let row = self.lookup(&state, task)?;
+        scope.task(&state, row.task.identity())?;
         if !read_only
             && row.task.phase() != Phase::Done
             && let Authority::Planner { actor } = authority
@@ -53,15 +55,18 @@ impl Service {
             }
             check?;
         }
-        let worktrees = self.worktrees()?;
-        let checkout =
-            worktrees.checkout(&self.project.checkout, &self.project.repository, task)?;
+        self.resolve_project(&state, row.task.identity())?;
+        let checkout = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &row.task.identity().repository,
+            task,
+        );
         let command_credential = if read_only || row.task.phase() == Phase::Done {
             None
         } else {
             Some(random_key()?)
         };
-        let (session_id, binding_path, scratch_dir) = self.acp_paths(checkout.path())?;
+        let (session_id, binding_path, scratch_dir) = self.acp_paths(&checkout)?;
         let binding = Binding {
             session_id: session_id.clone(),
             task_id: task.into(),
@@ -167,17 +172,16 @@ impl Service {
         Ok(key)
     }
 
-    pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> bool {
-        if self.storage.database().verify().is_err() {
-            return false;
-        }
+    pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
+        self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
         state
             .store
             .acp_session(task)
             .ok()
             .flatten()
-            .is_some_and(|session| bool::from(session.reader.ct_eq(&digest(key))))
+            .filter(|session| bool::from(session.reader.ct_eq(&digest(key))))
+            .map(|session| session.controller)
     }
 
     pub(super) async fn acp_controller(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {

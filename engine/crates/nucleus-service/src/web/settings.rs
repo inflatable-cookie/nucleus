@@ -19,7 +19,7 @@ use crate::{Project, Service, ServiceError};
 pub(crate) struct RuntimeSettings {
     pub dispatch: Option<DispatchSettings>,
     pub profiles: Option<Arc<Profiles>>,
-    projects: Option<Projects>,
+    pub(crate) projects: Option<Projects>,
     pub host: CachedHost,
 }
 
@@ -32,6 +32,20 @@ pub(crate) enum CachedHost {
 }
 
 impl RuntimeSettings {
+    pub(crate) fn planner_route(&self, actor: &str) -> Option<(&str, &RepositorySettings)> {
+        self.projects
+            .as_ref()?
+            .projects
+            .iter()
+            .find_map(|(id, project)| {
+                project
+                    .repositories
+                    .iter()
+                    .find(|repo| repo.planner_threads.iter().any(|thread| thread == actor))
+                    .map(|repo| (id.as_str(), repo))
+            })
+    }
+
     pub(crate) fn open(file: &SettingsFile) -> Result<Self, StorageError> {
         let dispatch = file.read::<DispatchSettings>()?;
         let profiles = file.read::<Profiles>()?;
@@ -44,7 +58,7 @@ impl RuntimeSettings {
         })
     }
 
-    fn fixture_project(
+    pub(crate) fn fixture_project(
         &self,
         fixture: &Project,
     ) -> Option<(&str, &ProjectSettings, &RepositorySettings)> {
@@ -65,6 +79,36 @@ impl RuntimeSettings {
             })
     }
 
+    pub(crate) fn project_for_origin(
+        &self,
+        origin: &str,
+    ) -> Option<(&str, &ProjectSettings, &RepositorySettings)> {
+        self.projects
+            .as_ref()?
+            .projects
+            .iter()
+            .find_map(|(id, project)| {
+                project
+                    .repositories
+                    .iter()
+                    .find(|repo| repo.origin.eq_ignore_ascii_case(origin))
+                    .map(|repo| (id.as_str(), project, repo))
+            })
+    }
+
+    pub(crate) fn repository(
+        &self,
+        project_id: &str,
+        origin: &str,
+    ) -> Result<&RepositorySettings, ServiceError> {
+        self.project_for_origin(origin)
+            .filter(|(id, project, repo)| {
+                *id == project_id && !project.archived && repo.host_project.is_some()
+            })
+            .map(|(_, _, repo)| repo)
+            .ok_or(ServiceError::Project)
+    }
+
     pub(crate) const fn uses_project_registry(&self) -> bool {
         self.projects.is_some()
     }
@@ -74,25 +118,38 @@ impl RuntimeSettings {
             .map_or(binding.host_project.as_str(), |(id, _, _)| id)
     }
 
-    pub(crate) fn knows_planning_project(&self, binding: &Project, project: &str) -> bool {
+    pub(crate) fn knows_planning_project(&self, binding: Option<&Project>, project: &str) -> bool {
         match &self.projects {
             Some(registry) => registry.projects.contains_key(project),
-            None => binding.host_project == project,
+            None => binding.is_some_and(|binding| binding.host_project == project),
         }
+    }
+
+    pub(crate) fn only_bound_repository(&self, project: &str) -> Option<&str> {
+        let mut bound = self
+            .projects
+            .as_ref()?
+            .projects
+            .get(project)?
+            .repositories
+            .iter()
+            .filter(|repo| repo.host_project.is_some());
+        let origin = &bound.next()?.origin;
+        bound.next().is_none().then_some(origin.as_str())
     }
 
     pub(crate) fn planning_projects<'a>(
         &'a self,
-        binding: &'a Project,
+        binding: Option<&'a Project>,
     ) -> impl Iterator<Item = &'a str> {
         // The registry belongs to this engine profile, which is connected to one host.
         self.projects
             .iter()
             .flat_map(|registry| registry.projects.keys().map(String::as_str))
             .chain(
-                self.projects
-                    .is_none()
-                    .then_some(binding.host_project.as_str()),
+                binding
+                    .filter(|_| self.projects.is_none())
+                    .map(|project| project.host_project.as_str()),
             )
     }
 
@@ -203,24 +260,37 @@ async fn read<S: SettingsValue + Send + 'static>(
 
 async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -> Value {
     let state = service.state.lock().await;
-    let planner = state
-        .planner_authority
-        .values()
-        .filter_map(super::super::question::PlannerAuthority::resolved)
-        .max_by_key(|(checked_at, _)| *checked_at)
-        .map(|(_, planner)| planner);
     let mut resolved = serde_json::Map::new();
-    for id in settings.value.projects.keys() {
-        let planner = planner.filter(|_| {
-            state
-                .settings
-                .fixture_project(&service.project)
-                .is_some_and(|(active, project, _)| active == id && !project.archived)
-                && state.settings.projects.as_ref() == Some(&settings.value)
-        });
-        resolved.insert(id.clone(), json!(planner));
+    let mut verified = serde_json::Map::new();
+    for (id, project) in &settings.value.projects {
+        let mut planners = Vec::new();
+        if !project.archived && state.settings.projects.as_ref() == Some(&settings.value) {
+            planners.extend(
+                state
+                    .enrolled_planners
+                    .values()
+                    .filter(|proof| state.live_planner_project(&proof.identity.id) == Some(id))
+                    .map(|proof| (proof.verified_at, proof.identity.id.as_str())),
+            );
+            planners.extend(
+                state
+                    .planner_authority
+                    .values()
+                    .filter(|authority| authority.project_id() == Some(id))
+                    .filter_map(super::super::question::PlannerAuthority::resolved),
+            );
+        }
+        planners.sort_unstable_by(|left, right| right.cmp(left));
+        let mut seen = std::collections::BTreeSet::new();
+        let planners: Vec<_> = planners
+            .into_iter()
+            .map(|(_, thread)| thread)
+            .filter(|thread| seen.insert(*thread))
+            .collect();
+        resolved.insert(id.clone(), json!(planners.first()));
+        verified.insert(id.clone(), json!(planners));
     }
-    json!({"settings": settings, "resolvedPlanners": resolved})
+    json!({"settings": settings, "resolvedPlanners": resolved, "verifiedPlanners": verified})
 }
 
 async fn host_view(service: &Service, settings: SettingsSnapshot<Hosts>) -> Value {
@@ -270,9 +340,14 @@ pub(super) async fn put(
             }
             Domain::Projects => {
                 let value = decode::<Projects>(value)?;
+                let legacy = service.project.is_some();
                 save_projects(&service, revision, move |current| {
-                    *current = value;
-                    Ok(())
+                    if legacy {
+                        *current = value;
+                        Ok(())
+                    } else {
+                        edit_project_details(current, value)
+                    }
                 })
                 .await
             }
@@ -286,7 +361,7 @@ pub(super) async fn put(
                 Ok(storage_view(&service, &saved))
             }
         };
-        if result.is_ok() {
+        if result.is_ok() && !matches!(domain, Domain::Projects) {
             service.settings_changes.send_replace(());
         }
         result
@@ -310,6 +385,9 @@ pub(super) async fn reassign(
     input: Result<Json<Reassign>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     require_operator(&authority)?;
+    if api.service.project.is_none() {
+        return Err(ServiceError::Project.into());
+    }
     let Reassign {
         revision,
         origin,
@@ -318,16 +396,46 @@ pub(super) async fn reassign(
     let service = api.service;
     Ok(Json(
         task::spawn(async move {
-            let saved = save_projects(&service, revision, move |projects| {
+            save_projects(&service, revision, move |projects| {
                 move_repository(projects, &origin, &to_project)
             })
-            .await?;
-            service.settings_changes.send_replace(());
-            Ok::<_, ApiError>(saved)
+            .await
         })
         .await
         .map_err(|_| ServiceError::Input)??,
     ))
+}
+
+fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), StorageError> {
+    let changed_route =
+        || StorageError::InvalidSettings("Nucleus discovers project routes from T3".into());
+    if !current.projects.keys().eq(value.projects.keys()) {
+        return Err(changed_route());
+    }
+    for (id, edits) in value.projects {
+        let project = current.projects.get_mut(&id).ok_or_else(changed_route)?;
+        if project.repositories.len() != edits.repositories.len() {
+            return Err(changed_route());
+        }
+        project.name = edits.name;
+        project.slots = edits.slots;
+        project.archived = edits.archived;
+        for (repo, edit) in project.repositories.iter_mut().zip(edits.repositories) {
+            if (repo.origin.as_str(), &repo.path, repo.base.as_str())
+                != (edit.origin.as_str(), &edit.path, edit.base.as_str())
+                || edit
+                    .host_project
+                    .as_ref()
+                    .is_some_and(|id| Some(id) != repo.host_project.as_ref())
+                || !edit.planner_threads.is_empty() && edit.planner_threads != repo.planner_threads
+            {
+                return Err(changed_route());
+            }
+            repo.required_checks = edit.required_checks;
+            repo.hung_tool_minutes = edit.hung_tool_minutes;
+        }
+    }
+    Ok(())
 }
 
 fn move_repository(
@@ -472,6 +580,7 @@ async fn save_projects(
     revision: String,
     patch: impl FnOnce(&mut Projects) -> Result<(), StorageError> + Send + 'static,
 ) -> Result<Value, ApiError> {
+    let _writes = service.project_writes.write().await;
     // This is the same lock direct and ACP planner commands use to apply a decision.
     // An in-flight scheduler refresh carries the previous epoch and cannot publish.
     let mut state = service.state.lock().await;
@@ -498,10 +607,13 @@ async fn save_projects(
 }
 
 impl Service {
-    fn project_settings_changed(&self, state: &mut crate::State) {
+    pub(crate) fn project_settings_changed(&self, state: &mut crate::State) {
         state.invalidate_planner_authority();
         state.observed_forge.clear();
         self.planner_wake.notify_one();
+        self.title_wake.notify_one();
+        self.project_changes.send_replace(());
+        self.settings_changes.send_replace(());
         self.inbox_changed();
         self.wake_settings_capacity(state);
     }

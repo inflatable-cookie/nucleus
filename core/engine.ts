@@ -664,7 +664,9 @@ export class Engine {
    * skips sibling creation (tests and adapters without a data directory).
    */
   siblingDataDir: string | null = null;
-  /** The repository taking new work through the Rust pilot. */
+  /** After global cutover, new admissions go to Rust. */
+  rustEngineDraining = false;
+  /** Legacy single-repository pilot before global cutover. */
   rustEngineRepository: string | null = null;
   private readonly controlContext = new ControlContext();
   // Tests and `verbs/agent-controls.ts` reach these by name; these go with the delegates in F2.

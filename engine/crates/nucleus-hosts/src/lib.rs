@@ -236,6 +236,11 @@ pub trait TaskHost: Send + Sync {
     ) -> impl Future<Output = Result<StopProgress, HostError>> + Send;
 }
 
+pub struct RegisteredProject {
+    pub root: String,
+    pub title: Option<String>,
+}
+
 pub struct T3 {
     rpc: Rpc,
     runtime_descriptor: Option<PathBuf>,
@@ -313,14 +318,14 @@ impl T3 {
     pub async fn watch_threads(
         &self,
         hints: &tokio::sync::mpsc::Sender<ThreadHint>,
-        title_scope: Option<(&str, &str)>,
+        title_provider: Option<&str>,
         inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let result = self
             .rpc
             .watch_threads(
                 hints,
-                title_scope.map(|(project, provider)| (&self.titles, project, provider)),
+                title_provider.map(|provider| (&self.titles, provider)),
                 inbox_thread,
             )
             .await;
@@ -345,6 +350,17 @@ impl T3 {
     /// # Errors
     /// Returns an error when the project or snapshot cannot be verified.
     pub async fn check_project(&self, id: &str, root: &str) -> Result<(), HostError> {
+        if self.registered_project(id).await?.root != root {
+            return Err(HostError::Binding);
+        }
+        Ok(())
+    }
+
+    /// Resolve the exact registered local root for an active native project.
+    ///
+    /// # Errors
+    /// Returns an error when the project or snapshot cannot be verified.
+    pub async fn registered_project(&self, id: &str) -> Result<RegisteredProject, HostError> {
         let Reply::Value(snapshot) = self.rpc.call(
             "orchestration.subscribeShell",
             json!({"requestCompletionMarker": true, "omitIdleSubagents": true, "omitOlderSettled": true}),
@@ -357,13 +373,18 @@ impl T3 {
         let mut matched = projects.iter().filter(|project| project["id"] == id);
         let project = matched.next().ok_or(HostError::Binding)?;
         if matched.next().is_some()
-            || project["workspaceRoot"] != root
             || !project["archivedAt"].is_null()
             || !project["deletedAt"].is_null()
         {
             return Err(HostError::Binding);
         }
-        Ok(())
+        let root = project["workspaceRoot"]
+            .as_str()
+            .filter(|root| !root.is_empty())
+            .map(str::to_owned)
+            .ok_or(HostError::Binding)?;
+        let title = project["title"].as_str().map(str::to_owned);
+        Ok(RegisteredProject { root, title })
     }
 
     async fn thread(&self, binding: &Binding, id: &str) -> Result<Option<Projection>, HostError> {

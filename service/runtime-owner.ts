@@ -282,7 +282,9 @@ export interface HostSettings {
 export interface RuntimeOwnerOptions {
   /** Data directory override; defaults to the one data-home resolver (`shared/data-home.mjs`). */
   dataDir?: string;
-  /** Canonical repository selected for Rust admission. */
+  /** After global cutover, accept only replays and controls for existing tasks. */
+  rustEngineDraining?: boolean;
+  /** Legacy single-repository pilot before global cutover. */
   rustEngineRepository?: string;
   /** Host config home used to locate the installed plugin source (the host's own registration file). */
   hostHome?: string;
@@ -834,6 +836,7 @@ export class QueueRuntime {
       store: this.store,
     });
     this.engine.siblingDataDir = this.dataDir;
+    this.engine.rustEngineDraining = options.rustEngineDraining ?? false;
     this.engine.rustEngineRepository = options.rustEngineRepository ?? null;
     this.engine.setSourcePromotionHandler((payload, hostId, selection) =>
       this.executeSourcePromotion(payload, hostId, selection),

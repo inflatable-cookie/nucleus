@@ -79,7 +79,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
 #[tokio::test]
 async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answer() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    service.project.acp_provider = Some(PROVIDER.into());
+    service.project.as_mut().unwrap().acp_provider = Some(PROVIDER.into());
     service.native_inbox = Some(NativeInbox::open(&service, Some(LEGACY.into())).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
     let root = inbox.root.clone();

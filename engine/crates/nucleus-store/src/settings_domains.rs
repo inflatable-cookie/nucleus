@@ -139,6 +139,14 @@ pub struct RepositorySettings {
     pub origin: String,
     pub path: PathBuf,
     pub base: String,
+    /// T3 project registered at this repository's exact checkout root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_project_title: Option<String>,
+    /// Exact T3 callers enrolled for this route.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub planner_threads: Vec<String>,
     #[serde(default)]
     pub required_checks: Vec<String>,
     #[serde(default = "default_hung_tool_minutes")]
@@ -175,6 +183,8 @@ impl SettingsValue for Projects {
 
     fn validate(&self) -> Result<(), DomainIssue> {
         let mut origins = std::collections::BTreeSet::new();
+        let mut host_projects = std::collections::BTreeSet::new();
+        let mut planners = std::collections::BTreeSet::new();
         for (id, project) in &self.projects {
             check(
                 key(id) && text(&project.name) && project.slots > 0,
@@ -189,9 +199,22 @@ impl SettingsValue for Projects {
                         && origins.insert(repo.origin.to_ascii_lowercase())
                         && absolute_path(&repo.path)
                         && branch(&repo.base)
+                        && repo.host_project.as_deref().is_none_or(|id| {
+                            text(id) && id.trim() == id && host_projects.insert(id)
+                        })
                         && repo.hung_tool_minutes > 0,
                     "repository",
                     "each repository needs a unique GitHub origin, absolute path, base and positive hung-tool limit",
+                )?;
+                check(
+                    repo.planner_threads.iter().all(|id| {
+                        repo.host_project.is_some()
+                            && text(id)
+                            && id.trim() == id
+                            && planners.insert(id.as_str())
+                    }),
+                    "routing",
+                    "a planner binding requires its native project",
                 )?;
                 check(
                     repo.required_checks.iter().all(|name| text(name))

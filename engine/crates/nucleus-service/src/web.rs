@@ -37,7 +37,7 @@ mod board;
 mod inbox;
 mod planning;
 mod settings;
-pub use board::router_with_board;
+pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, RuntimeSettings};
 
 #[cfg(test)]
@@ -46,13 +46,91 @@ mod tests;
 #[derive(Clone)]
 struct Api {
     service: Arc<Service>,
-    controllers: Arc<[Controller]>,
+    controllers: Arc<[ControllerEntry]>,
+    t3_caller_key: Option<[u8; 32]>,
 }
 
 /// A controller key and the identity authenticated by that key.
+#[derive(Clone)]
 pub struct Controller {
     pub credential: [u8; 32],
     pub authority: Authority,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ControllerScope(Option<String>);
+
+impl ControllerScope {
+    pub(crate) fn actor(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
+    pub(crate) fn require(
+        &self,
+        state: &EngineState,
+        project_id: &str,
+    ) -> Result<(), ServiceError> {
+        if self
+            .actor()
+            .is_none_or(|actor| state.live_planner_project(actor) == Some(project_id))
+        {
+            Ok(())
+        } else {
+            Err(ServiceError::ControllerProject)
+        }
+    }
+
+    pub(crate) fn task(
+        &self,
+        state: &EngineState,
+        identity: &Identity,
+    ) -> Result<(), ServiceError> {
+        if self.0.is_some() {
+            let (id, _, repo) = state
+                .settings
+                .project_for_origin(&identity.repository)
+                .ok_or(ServiceError::ControllerProject)?;
+            self.require(state, id)?;
+            if repo.base != identity.base {
+                return Err(ServiceError::ControllerProject);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ControllerEntry {
+    controller: Controller,
+    scope: ControllerScope,
+}
+
+impl ControllerEntry {
+    fn t3(actor: &str, credential: [u8; 32]) -> Self {
+        Self {
+            controller: Controller {
+                credential,
+                authority: Authority::Planner {
+                    actor: actor.into(),
+                },
+            },
+            scope: ControllerScope(Some(actor.into())),
+        }
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        self.controller.digest()
+    }
+
+    fn extend(&self, request: &mut Request) {
+        request
+            .extensions_mut()
+            .insert(self.controller.authority.clone());
+        request.extensions_mut().insert(self.scope.clone());
+        request
+            .extensions_mut()
+            .insert(ControllerDigest(self.digest()));
+    }
 }
 
 impl Controller {
@@ -76,17 +154,38 @@ struct ControllerDigest([u8; 32]);
 /// Bind the engine's JSON API and its revision stream. Task commands and
 /// callbacks use separate credentials. Serve on the configured loopback address.
 pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controller>) -> Router {
-    routes(service, controllers, None)
+    router_with_t3_callers(service, controllers, None)
+}
+
+/// Bind the API with the machine-local T3 CLI credential alongside the operator key.
+pub fn router_with_t3_callers(
+    service: Arc<Service>,
+    controllers: impl IntoIterator<Item = Controller>,
+    t3_caller_key: Option<[u8; 32]>,
+) -> Router {
+    routes(service, controllers, None, t3_caller_key)
 }
 
 fn routes(
     service: Arc<Service>,
     controllers: impl IntoIterator<Item = Controller>,
     board: Option<board::Board>,
+    t3_caller_key: Option<[u8; 32]>,
 ) -> Router {
+    let carriers = controllers
+        .into_iter()
+        .filter(|controller| {
+            service.project.is_some() || matches!(controller.authority, Authority::Operator { .. })
+        })
+        .map(|controller| ControllerEntry {
+            controller,
+            scope: ControllerScope::default(),
+        })
+        .collect();
     let api = Api {
         service,
-        controllers: controllers.into_iter().collect(),
+        controllers: carriers,
+        t3_caller_key,
     };
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
@@ -155,25 +254,90 @@ async fn authorize(
     next: Next,
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
-    let caller = controller(&api, &supplied).ok_or(ApiError::Unauthorized)?;
-    request.extensions_mut().insert(caller.authority.clone());
-    request
-        .extensions_mut()
-        .insert(ControllerDigest(caller.digest()));
+    let caller =
+        request_controller(&api, &supplied, request.headers()).ok_or(ApiError::Unauthorized)?;
+    reauthorize_known(&api, &caller.scope, request.method()).await?;
+    caller.extend(&mut request);
     Ok(next.run(request).await)
 }
 
-fn controller<'a>(api: &'a Api, supplied: &[u8; 32]) -> Option<&'a Controller> {
+fn controller<'a>(api: &'a Api, supplied: &[u8; 32]) -> Option<&'a ControllerEntry> {
     let mut matches = api
         .controllers
         .iter()
-        .filter(|caller| bool::from(caller.credential.ct_eq(supplied)));
+        .filter(|caller| bool::from(caller.controller.credential.ct_eq(supplied)));
     let caller = matches.next()?;
     matches.next().is_none().then_some(caller)
 }
 
+fn request_controller(
+    api: &Api,
+    supplied: &[u8; 32],
+    headers: &HeaderMap,
+) -> Option<ControllerEntry> {
+    let mut callers = headers.get_all("x-nucleus-t3-caller").iter();
+    let Some(actor) = callers.next() else {
+        return controller(api, supplied).cloned();
+    };
+    let actor = actor.to_str().ok()?;
+    let key = api.t3_caller_key?;
+    if callers.next().is_some()
+        || api.service.project.is_some()
+        || actor.is_empty()
+        || actor.len() > 240
+        || actor.trim() != actor
+        || !bool::from(key.ct_eq(supplied))
+    {
+        return None;
+    }
+    Some(ControllerEntry::t3(actor, key))
+}
+
+async fn reauthorize_known(
+    api: &Api,
+    scope: &ControllerScope,
+    method: &Method,
+) -> Result<(), ServiceError> {
+    if !method.is_safe()
+        && let Some(actor) = scope.actor()
+    {
+        let mut state = api.service.state.lock().await;
+        if state.settings.planner_route(actor).is_some()
+            && state.live_planner_project(actor).is_none()
+        {
+            return Err(api.service.request_enrollment(&mut state, actor));
+        }
+    }
+    Ok(())
+}
+
+async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<ControllerEntry> {
+    if let Some(caller) = api
+        .controllers
+        .iter()
+        .find(|caller| bool::from(caller.digest().ct_eq(digest)))
+    {
+        return controller(api, &caller.controller.credential).cloned();
+    }
+    let key = api.t3_caller_key?;
+    let state = api.service.state.lock().await;
+    state
+        .settings
+        .projects
+        .as_ref()?
+        .projects
+        .values()
+        .flat_map(|project| &project.repositories)
+        .flat_map(|repo| repo.planner_threads.iter().map(String::as_str))
+        .map(|actor| ControllerEntry::t3(actor, key))
+        .find(|caller| bool::from(caller.digest().ct_eq(digest)))
+}
+
 #[derive(Clone)]
-struct SessionCredential([u8; 32]);
+struct SessionCredential {
+    key: [u8; 32],
+    controller: [u8; 32],
+}
 
 async fn authorize_task(
     State(api): State<Api>,
@@ -182,30 +346,44 @@ async fn authorize_task(
     next: Next,
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
-    if let Some(caller) = controller(&api, &supplied) {
-        request.extensions_mut().insert(caller.authority.clone());
+    if let Some(caller) = request_controller(&api, &supplied, request.headers()) {
+        reauthorize_known(&api, &caller.scope, request.method()).await?;
+        caller.extend(&mut request);
     } else if request.method() == Method::POST {
         let digest = api
             .service
             .acp_controller(&id, &supplied)
             .await
             .ok_or(ApiError::Unauthorized)?;
-        let caller = api
-            .controllers
-            .iter()
-            .find(|caller| bool::from(caller.digest().ct_eq(&digest)))
-            .and_then(|caller| controller(&api, &caller.credential))
+        let caller = controller_for_digest(&api, &digest)
+            .await
             .ok_or(ApiError::Unauthorized)?;
-        request.extensions_mut().insert(caller.authority.clone());
+        caller.extend(&mut request);
         request.extensions_mut().insert(WriteAccess {
             credential: supplied,
             controller: digest,
         });
     } else {
-        if !api.service.acp_reader(&id, &supplied).await {
-            return Err(ApiError::Unauthorized);
-        }
-        request.extensions_mut().insert(SessionCredential(supplied));
+        let digest = api
+            .service
+            .acp_reader(&id, &supplied)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+        // Pilot readers are task-scoped independently of the current
+        // controller roster. Registry planner readers also carry project scope.
+        let scope = if api.service.project.is_some() || digest == [0; 32] {
+            ControllerScope::default()
+        } else {
+            controller_for_digest(&api, &digest)
+                .await
+                .ok_or(ApiError::Unauthorized)?
+                .scope
+        };
+        request.extensions_mut().insert(scope);
+        request.extensions_mut().insert(SessionCredential {
+            key: supplied,
+            controller: digest,
+        });
     }
     Ok(next.run(request).await)
 }
@@ -222,11 +400,12 @@ async fn bind_acp(
     Path(id): Path<String>,
     Extension(ControllerDigest(controller)): Extension<ControllerDigest>,
     Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
     Query(options): Query<BindOptions>,
 ) -> Result<Json<MintedSession>, ApiError> {
     Ok(Json(
         api.service
-            .bind_acp(&id, controller, &authority, options.read_only)
+            .bind_acp(&id, controller, &authority, &scope, options.read_only)
             .await?,
     ))
 }
@@ -257,6 +436,7 @@ async fn report(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Admission {
+    repository: Option<String>,
     id: String,
     reference: String,
     brief: String,
@@ -265,17 +445,28 @@ struct Admission {
 async fn admit(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
     input: Result<Json<Admission>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
     let input = body(input)?;
     let task = api
         .service
-        .admit(input.id, input.reference, input.brief, &authority)
+        .admit_in_scope(
+            input.repository.as_deref(),
+            input.id,
+            input.reference,
+            input.brief,
+            &authority,
+            &scope,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(Summary::new(&task, None))))
 }
 
-async fn list(State(api): State<Api>) -> Result<Json<Vec<Summary>>, ApiError> {
+async fn list(
+    State(api): State<Api>,
+    Extension(scope): Extension<ControllerScope>,
+) -> Result<Json<Vec<Summary>>, ApiError> {
     api.service
         .storage
         .database()
@@ -286,15 +477,21 @@ async fn list(State(api): State<Api>) -> Result<Json<Vec<Summary>>, ApiError> {
     Ok(Json(
         tasks
             .iter()
-            .filter(|row| api.service.project.scope(row.task.identity()).is_ok())
+            .filter(|row| api.service.task_scope(row.task.identity()).is_ok())
+            .filter(|row| scope.task(&state, row.task.identity()).is_ok())
             .map(|row| Summary::read(row, &state))
             .collect(),
     ))
 }
 
-async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<Detail>, ApiError> {
+async fn detail(
+    State(api): State<Api>,
+    Path(id): Path<String>,
+    Extension(scope): Extension<ControllerScope>,
+) -> Result<Json<Detail>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
+    scope.task(&state, row.task.identity())?;
     let task = &row.task;
     let summary = Summary::read(&row, &state);
     let run = RunView::read(&row, state.activity.get(&id), &state.store);
@@ -312,10 +509,12 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
 async fn next(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
     Path(id): Path<String>,
 ) -> Result<Json<NextView>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
+    scope.task(&state, row.task.identity())?;
     let task = &row.task;
     let summary = Summary::read(&row, &state);
     Ok(Json(NextView {
@@ -397,6 +596,7 @@ fn command_options(
 async fn command(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
     Path(id): Path<String>,
     session: Option<Extension<WriteAccess>>,
     input: Result<Json<Command>, JsonRejection>,
@@ -404,7 +604,7 @@ async fn command(
     let command = body(input)?;
     let outcome = api
         .service
-        .command_with_session(&id, &authority, command, session.as_deref())
+        .command_with_session(&id, &authority, command, session.as_deref(), &scope)
         .await?;
     match outcome {
         CommandOutcome::Applied(row) => Ok(Json(Summary::new(&row, None)).into_response()),
@@ -425,11 +625,12 @@ struct Page {
 async fn history(
     State(api): State<Api>,
     Path(id): Path<String>,
+    Extension(scope): Extension<ControllerScope>,
     Query(page): Query<Page>,
 ) -> Result<Json<Vec<HistoryEvent>>, ApiError> {
     Ok(Json(
         api.service
-            .history(&id, page.before, page.limit.unwrap_or(30))
+            .history_in_scope(&id, page.before, page.limit.unwrap_or(30), &scope)
             .await?
             .into_iter()
             .map(HistoryEvent::from)
@@ -437,45 +638,72 @@ async fn history(
     ))
 }
 
-async fn events(State(api): State<Api>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    invalidations(api.service, None)
+async fn events(
+    State(api): State<Api>,
+    Extension(project): Extension<ControllerScope>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    invalidations(api.service, None, project)
 }
 
 async fn task_events(
     State(api): State<Api>,
     Path(id): Path<String>,
+    Extension(project): Extension<ControllerScope>,
     credential: Option<Extension<SessionCredential>>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let _ = api.service.task(&id).await?;
+    {
+        let state = api.service.state.lock().await;
+        let row = api.service.lookup(&state, &id)?;
+        project.task(&state, row.task.identity())?;
+    }
     Ok(invalidations(
         api.service,
         Some((id, credential.map(|Extension(key)| key))),
+        project,
     ))
+}
+
+async fn task_visible(service: &Service, project: &ControllerScope, task: &str) -> bool {
+    if project.0.is_none() {
+        return true;
+    }
+    let state = service.state.lock().await;
+    service
+        .lookup(&state, task)
+        .is_ok_and(|row| project.task(&state, row.task.identity()).is_ok())
 }
 
 fn invalidations(
     service: Arc<Service>,
     scope: Option<(String, Option<SessionCredential>)>,
+    project: ControllerScope,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    Sse::new(invalidation_events(service, scope)).keep_alive(KeepAlive::default())
+    Sse::new(invalidation_events(service, scope, project)).keep_alive(KeepAlive::default())
 }
 
 fn invalidation_events(
     service: Arc<Service>,
     scope: Option<(String, Option<SessionCredential>)>,
+    project: ControllerScope,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
+    let projects = service.project_changes.subscribe();
     stream::unfold(
-        (service.changes(), service, scope, true),
-        |(mut receiver, service, scope, first)| async move {
+        (service.changes(), projects, service, scope, project, true),
+        |(mut receiver, mut projects, service, scope, project, first)| async move {
             let event = if first {
                 Event::default().event("refresh").data("{}")
             } else {
                 loop {
-                    match receiver.recv().await {
+                    let change = tokio::select! {
+                        result = receiver.recv() => result,
+                        Ok(()) = projects.changed() => break Event::default().event("refresh").data("{}"),
+                    };
+                    match change {
                         Ok(change)
                             if scope
                                 .as_ref()
-                                .is_none_or(|(task, _)| *task == change.task_id) =>
+                                .is_none_or(|(task, _)| *task == change.task_id)
+                                && task_visible(&service, &project, &change.task_id).await =>
                         {
                             break Event::default()
                                 .event("invalidate")
@@ -490,12 +718,20 @@ fn invalidation_events(
                     }
                 }
             };
-            if let Some((id, Some(credential))) = &scope
-                && !service.acp_reader(id, &credential.0).await
-            {
-                return None;
+            if let Some((id, credential)) = &scope {
+                if !task_visible(&service, &project, id).await {
+                    return None;
+                }
+                if let Some(credential) = credential
+                    && service.acp_reader(id, &credential.key).await != Some(credential.controller)
+                {
+                    return None;
+                }
             }
-            Some((Ok(event), (receiver, service, scope, false)))
+            Some((
+                Ok(event),
+                (receiver, projects, service, scope, project, false),
+            ))
         },
     )
 }
@@ -651,6 +887,8 @@ impl IntoResponse for ApiError {
                         | nucleus_store::StorageError::ConfinedDirectory(_),
                     ) => StatusCode::BAD_REQUEST,
                     ServiceError::QuestionPlanner
+                    | ServiceError::ControllerProject
+                    | ServiceError::PlannerEnrollmentRefused(_)
                     | ServiceError::PlannerAuthorityRefused
                     | ServiceError::AnswerInInbox
                     | ServiceError::DecisionOperator => StatusCode::FORBIDDEN,

@@ -16,7 +16,10 @@ use clap::{Parser, Subcommand};
 use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
-use nucleus_service::{Controller, Project, ReportTicket, Service, router, router_with_board};
+use nucleus_service::{
+    Controller, Project, ReportTicket, Service, router_with_board_and_t3_callers,
+    router_with_t3_callers,
+};
 use nucleus_store::{Hosts, SettingsFile, TaskNumberSeed, planning::legacy::read_task_number_seed};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
@@ -32,6 +35,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const MAX_INPUT: u64 = 64 * 1024;
 const CONTROL_KEY: &str = "NUCLEUS_ENGINE_CONTROL_KEY";
 const FIXTURE_ORIGIN_KEY: &str = "NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY";
+const T3_CALLER_KEY: &str = "NUCLEUS_ENGINE_T3_CALLER_KEY";
 
 #[derive(Parser)]
 #[command(about = "Run the isolated Nucleus task engine")]
@@ -60,12 +64,20 @@ enum Action {
         #[arg(long)]
         log_root: Option<PathBuf>,
     },
-    /// Serve one isolated engine profile.
+    /// Serve the engine for the configured projects.
     Serve {
         #[arg(long)]
         home: Option<PathBuf>,
+        /// Keep running a legacy single-repository pilot or fixture.
+        #[arg(
+            long,
+            conflicts_with = "acp_provider",
+            required_unless_present = "acp_provider"
+        )]
+        project: Option<PathBuf>,
+        /// Use this T3 ACP provider for tasks in the Projects registry.
         #[arg(long)]
-        project: PathBuf,
+        acp_provider: Option<String>,
         /// Override the saved T3 connection for this serve process.
         #[arg(long)]
         t3: Option<String>,
@@ -100,8 +112,14 @@ enum Action {
     },
     /// Set up the Nucleus Rust provider in a local T3 environment.
     T3(t3_setup::Args),
-    /// Admit a fixture task. Read the brief from stdin.
-    Admit { id: String, reference: String },
+    /// Admit a task. Read the brief from stdin.
+    Admit {
+        id: String,
+        reference: String,
+        /// Canonical GitHub repository. Required in Projects registry mode.
+        #[arg(long)]
+        repository: Option<String>,
+    },
     /// List task summaries.
     Tasks,
     /// Read the task detail.
@@ -186,6 +204,7 @@ async fn main() -> Result<()> {
         Action::Serve {
             home,
             project,
+            acp_provider,
             t3,
             actor,
             planner,
@@ -197,10 +216,14 @@ async fn main() -> Result<()> {
             } else {
                 Authority::Operator { actor }
             };
+            let routing = match project.as_deref() {
+                Some(file) => Routing::Legacy(file),
+                None => Routing::Registry(acp_provider.ok_or("supply the T3 ACP provider")?),
+            };
             serve(
                 endpoint,
                 home.as_deref(),
-                &project,
+                routing,
                 t3.as_deref(),
                 authority,
                 fixture_origin_thread,
@@ -251,24 +274,12 @@ fn open_settings(home: Option<&Path>) -> Result<SettingsFile> {
     Ok(home.map_or_else(SettingsFile::open_default, SettingsFile::open)?)
 }
 
-async fn serve(
-    endpoint: SocketAddr,
-    home: Option<&Path>,
-    project: &Path,
-    host: Option<&str>,
-    authority: Authority,
-    fixture_origin_thread: Option<String>,
-    board_assets: Option<&Path>,
-) -> Result<()> {
-    loopback(endpoint)?;
-    let actor = match &authority {
-        Authority::Operator { actor } | Authority::Planner { actor } => actor,
-    };
-    if actor.trim().is_empty() {
-        return Err("supply the controller identity".into());
-    }
-    let settings = open_settings(home)?;
-    let project: Project = from_reader(File::open(project)?)?;
+enum Routing<'a> {
+    Legacy(&'a Path),
+    Registry(String),
+}
+
+fn configured_host(settings: &SettingsFile, host: Option<&str>) -> Result<T3> {
     let saved_host = if host.is_none() {
         settings.read::<Hosts>()?.value.t3
     } else {
@@ -283,8 +294,41 @@ async fn serve(
     if let Some(path) = env::var_os("NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR") {
         host = host.with_runtime_descriptor(path.into());
     }
+    Ok(host)
+}
+
+async fn serve(
+    endpoint: SocketAddr,
+    home: Option<&Path>,
+    routing: Routing<'_>,
+    host: Option<&str>,
+    authority: Authority,
+    fixture_origin_thread: Option<String>,
+    board_assets: Option<&Path>,
+) -> Result<()> {
+    loopback(endpoint)?;
+    let actor = match &authority {
+        Authority::Operator { actor } | Authority::Planner { actor } => actor,
+    };
+    if actor.trim().is_empty() {
+        return Err("supply the controller identity".into());
+    }
+    let settings = open_settings(home)?;
+    let host = configured_host(&settings, host)?;
     let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
     let credential = control_key(CONTROL_KEY)?;
+    let t3_caller_key = if matches!(routing, Routing::Registry(_)) {
+        if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
+            return Err("use the T3 caller credential with the Projects registry".into());
+        }
+        let key = control_key(T3_CALLER_KEY)?;
+        if key == credential {
+            return Err("supply a distinct T3 caller credential".into());
+        }
+        Some(key)
+    } else {
+        None
+    };
     let mut controllers = vec![Controller {
         credential,
         authority,
@@ -299,25 +343,37 @@ async fn serve(
             authority: Authority::Planner { actor },
         });
     }
-    let repository = project.repository.clone();
-    let tcp = TcpListener::bind(endpoint).await?;
-    let service = Service::open(
-        &settings,
-        project,
-        host,
-        forge,
-        tcp.local_addr()?,
-        env::current_exe()?.canonicalize()?,
-    )?
-    .with_inbox_from_env()?;
-    if let Some(seed) = legacy_number_seed(Some(&repository))? {
+    let callback = endpoint;
+    let command = env::current_exe()?.canonicalize()?;
+    let (service, repository) = match routing {
+        Routing::Legacy(file) => {
+            let project: Project = from_reader(File::open(file)?)?;
+            let repository = project.repository.clone();
+            (
+                Service::open(&settings, project, host, forge, callback, command)?,
+                Some(repository),
+            )
+        }
+        Routing::Registry(provider) => (
+            Service::open_projects(&settings, provider, host, forge, callback, command)?,
+            None,
+        ),
+    };
+    let service = service.with_inbox_from_env()?;
+    if let Some(seed) = legacy_number_seed(repository.as_deref())? {
         service.seed_task_numbers(&seed).await?;
     }
     let service = Arc::new(service);
     let api = match board_assets {
-        Some(path) => router_with_board(Arc::clone(&service), controllers, path)?,
-        None => router(Arc::clone(&service), controllers),
+        Some(path) => router_with_board_and_t3_callers(
+            Arc::clone(&service),
+            controllers,
+            path,
+            t3_caller_key,
+        )?,
+        None => router_with_t3_callers(Arc::clone(&service), controllers, t3_caller_key),
     };
+    let tcp = TcpListener::bind(endpoint).await?;
     let watch = Arc::clone(&service);
     let watcher = tokio::spawn(async move {
         watch.watch_host().await;
@@ -381,6 +437,7 @@ async fn report(path: &Path) -> Result<()> {
         &path,
         &ticket.credential,
         Some(serde_json::to_value(report)?),
+        None,
     )
     .await?;
     let _ = response.error_for_status()?;
@@ -409,14 +466,20 @@ fn private_file(path: &Path) -> Result<Option<File>> {
 async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     use Action as A;
     loopback(endpoint)?;
-    let key = control_key(CONTROL_KEY)?;
+    let (key, actor) = control_caller()?;
     let board_link = matches!(action, A::Ui);
     let (method, path, body) = match action {
         A::Planning(action) => action.request()?,
-        A::Admit { id, reference } => (
+        A::Admit {
+            id,
+            reference,
+            repository,
+        } => (
             Method::POST,
             "/v1/tasks".into(),
-            Some(json!({"id": id, "reference": reference, "brief": stdin_text()?})),
+            Some(
+                json!({"id": id, "reference": reference, "repository": repository, "brief": stdin_text()?}),
+            ),
         ),
         A::Tasks => (Method::GET, "/v1/tasks".into(), None),
         A::Task { id } => (Method::GET, format!("/v1/tasks/{}", segment(&id)?), None),
@@ -445,7 +508,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Release { id } => command_path(&id, Command::Release)?,
         _ => return Err("this command does not use the control API".into()),
     };
-    let response = request(endpoint, method, &path, &key, body).await?;
+    let response = request(endpoint, method, &path, &key, body, actor.as_deref()).await?;
     let status = response.status();
     if board_link && status == reqwest::StatusCode::NOT_FOUND {
         return Err("the engine is running without board assets".into());
@@ -474,12 +537,31 @@ fn command_path(id: &str, command: Command) -> Result<(Method, String, Option<Va
     ))
 }
 
+fn control_caller() -> Result<([u8; 32], Option<String>)> {
+    let actor = env::var("T3CODE_THREAD_ID").unwrap_or_default();
+    let host = env::var("T3CODE_DESKTOP_HOST_SCOPE").unwrap_or_default();
+    // The legacy pilot predates the machine-local T3 caller credential.
+    if env::var_os(T3_CALLER_KEY).is_none() || (actor.trim().is_empty() && host.trim().is_empty()) {
+        return Ok((control_key(CONTROL_KEY)?, None));
+    }
+    if actor.trim().is_empty() || host.trim().is_empty() {
+        return Err("T3 caller identity requires the host's thread ID and desktop scope".into());
+    }
+    if env::var_os("NUCLEUS_CONTINUATION_TICKET").is_some()
+        || env::var_os("NUCLEUS_TICKET").is_some_and(|path| Path::new(&path).exists())
+    {
+        return Err("use the authenticated Nucleus task ticket for this call".into());
+    }
+    Ok((control_key(T3_CALLER_KEY)?, Some(actor.trim().into())))
+}
+
 async fn request(
     endpoint: SocketAddr,
     method: Method,
     path: &str,
     key: &[u8; 32],
     body: Option<Value>,
+    t3_actor: Option<&str>,
 ) -> Result<Response> {
     let client = Client::builder()
         .no_proxy()
@@ -492,6 +574,11 @@ async fn request(
     let request = client
         .request(method, format!("http://{endpoint}{path}"))
         .header(header::AUTHORIZATION, credential);
+    let request = if let Some(actor) = t3_actor {
+        request.header("x-nucleus-t3-caller", actor)
+    } else {
+        request
+    };
     let request = match body {
         Some(body) => request.json(&body),
         None => request,

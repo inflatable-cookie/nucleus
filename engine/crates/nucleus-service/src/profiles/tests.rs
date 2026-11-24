@@ -239,7 +239,7 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     ))
     .await;
     let (_home, mut service) = fixture(forge);
-    let root = service.project.checkout.clone();
+    let root = service.fixture().checkout.clone();
     let native = Arc::new(Mutex::new(NativeRuns::default()));
     let fixture_runs = Arc::clone(&native);
     let traffic = Arc::new(NativeTraffic::default());

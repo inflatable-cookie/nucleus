@@ -482,8 +482,9 @@ when the receipt follows its latest transition into Done. Reopening and
 finishing the task schedules a new archive pass. Archival never settles a task
 thread.
 
-Set `acpProvider` in the isolated project's configuration to the registered T3
-ACP provider for the Rust `nucleus-acp` binary. Configure the provider's
+Pass the registered T3 ACP provider for the Rust `nucleus-acp` binary to
+`serve --acp-provider`. A legacy serve file supplies it as `acpProvider`.
+Configure the provider's
 `NUCLEUS_ACP_BINDINGS` to the service's binding directory. The scheduler supplies
 a read-only binding when no session has been minted. Keep an existing writable
 binding so the planner can use the task's commands. Standalone roles remain
@@ -529,19 +530,23 @@ controller. Paired browsers receive only the capability flag and talk to
 same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
 
-For a one-repository cutover, the TypeScript service reads an owner-only
-`rust-engine-pilot.json` beside its own settings at startup. Set `repository` to
-the canonical GitHub slug, `endpoint` to the Rust loopback HTTP origin,
+The TypeScript service reads an owner-only `rust-engine-pilot.json` beside its
+own settings at startup. Set `"drain": true` to send all new work to Rust.
+The single-repository pilot accepts its existing `repository` setting until
+the global switch. Set `endpoint` to the Rust loopback HTTP origin,
 `boardKeyFile` and `inboxKeyFile` to the absolute paths to their separate
 owner-only keys, and `inboxEngine` to the engine's Inbox namespace. The Rust
 service needs the same Inbox key file and namespace.
 
-After the service rolls, fresh TypeScript admissions for that repository direct
-the planner to `nucleus-engine admit <id> <reference>` with the brief on stdin.
+After the global switch, fresh TypeScript admissions direct the planner to
+`nucleus-engine task.add`.
 Already accepted TypeScript operations and existing tasks keep their original
 engine. The same board shows both engines' task rows. If the Rust service is
 unavailable, its board section can retry while the TypeScript board stays usable.
 An invalid pilot file is logged, and the TypeScript service starts with the pilot off.
+
+Delete the pilot manifest reader, single-repository compatibility path and
+global drain gate when the TypeScript engine is retired.
 
 ### Seed task numbers at cutover
 
@@ -598,16 +603,15 @@ Remove inside the editor.
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Name, optional subscription group, canonical selection with stable ID, capability, weight, provider, model and effort, and the operator's `pausedGroups` list. |
 | Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, one host call slot, one optional allowance in minutes and `providerLimitCooldownSeconds` (default 300). |
-| Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
+| Projects | `state/projects.json` | Name, slots, archival, discovered repository routes, required check names and hung-tool limit. The limit defaults to 30 minutes. Planners appear from verified live bindings. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
 | Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
 
 Use `GET /v1/settings/{domain}` to read one domain. `PUT` takes its current
 `revision` and replacement `value`. The operator can save only one domain
-per request. An edit whose revision changed returns HTTP 409. Move a
-repository with `POST /v1/settings/projects/reassign` and the current
-`revision`, `origin` and `toProject`. Both projects update in one write.
-Project saves invalidate planner authority at commit and wake the scheduler.
+per request. An edit whose revision changed returns HTTP 409. A Projects edit
+preserves the discovered repository routes and planner bindings. Project saves
+publish the local settings change and wake the scheduler.
 Capacity changes wake local waiters. GitHub confirms that each configured check
 is required and passing at the exact head. GitHub's branch rules and the
 exact-head approval still govern the merge.
@@ -660,16 +664,46 @@ One process holds the engine profile's write lock. Use
 a real guarded merge and verify task state, exact heads, T3 turn settlement,
 merge commit and worktree disposition by hand with the planner.
 
-## Binding one real project
+## Routing repositories to T3
 
-The `serve --project` file pins one GitHub repository, canonical local checkout,
+Start one Rust service with `serve --acp-provider <provider-id>`. Give the
+service and installed CLI the same machine-local
+`NUCLEUS_ENGINE_T3_CALLER_KEY`, a 32-byte hex key distinct from the operator
+key. The CLI takes the caller from T3's environment. The planner runs
+`nucleus-engine task.add` or `nucleus-engine item.promote <id>` from its T3 thread.
+
+On first contact the request queues a scheduler check and returns a retry
+message. The scheduler reads the exact active top-level thread, uses the registered
+project root from the synchronized T3 shell, then checks both GitHub remotes
+and the local default branch via
+`refs/remotes/origin/HEAD`. It saves the Projects route and planner binding
+together. The retry derives its repository and base from that binding.
+Further admissions, task commands and settings reads use local state. Each
+verified planner has its own project binding. A closed thread loses its cached
+authority. Task notices address the original planner and fall back to a live
+verified planner in the same project when the origin is gone.
+
+New project IDs are `repo-` followed by the lowercase hex SHA-256 of the
+canonical lowercase GitHub slug. Use the same ID for offline planning imports,
+even if a repository has yet to enroll. Enrollment keeps an existing Projects
+ID for an exact matching route.
+
+Projects settings edits cover the project name, slot limit, archive state and
+repository checks. The Dispatch domain sets the service-wide slot limit. The
+logical project's limit covers all its routed repositories. A non-fixture
+launch uses the Profiles domain and the head of the verified local base.
+
+For single-repository pilot and fixture compatibility, `serve --project` pins
+one GitHub repository, canonical local checkout,
 base branch and T3 project ID. Existing files default to fixture mode. Set
 `"mode": "project"` explicitly for a real project and name its Rust ACP provider
 in `acpProvider`. Real dispatch waits for configured profiles.
 
-The native write gate verifies both origin remotes against the configured
-repository and confirms that the exact T3 project is active at the pinned
-checkout. Role threads use the task's ACP parent in project mode.
+The native write gate compares the prepared destination with the current
+repository binding, verifies both origin remotes and confirms that the exact
+T3 project is active at the registered checkout. Projects settings edits and
+native writes are ordered so an edited binding cannot authorize an earlier
+destination. Role threads use the task's ACP parent.
 
 ## Pinned Inbox during transition
 

@@ -254,7 +254,27 @@ impl Store {
     /// # Errors
     /// Returns an error if row custody cannot be read.
     pub fn occupied_slots(&self, except: &str) -> Result<u32, StoreError> {
-        Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
+        Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
+    }
+
+    /// Count other held slots among the repositories and bases in one project.
+    /// # Errors
+    /// Returns an error if row custody cannot be read.
+    pub fn occupied_project_slots(
+        &self,
+        except: &str,
+        repositories: &[(String, String)],
+    ) -> Result<u32, StoreError> {
+        let repositories = serde_json::to_string(repositories)?;
+        Ok(self.connection.query_row(
+            "SELECT count(*) FROM tasks
+             WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL
+             AND EXISTS (SELECT 1 FROM json_each(?2) AS route
+                 WHERE tasks.repository = json_extract(route.value, '$[0]') COLLATE NOCASE
+                   AND tasks.base = json_extract(route.value, '$[1]'))",
+            params![except, repositories],
+            |row| row.get(0),
+        )?)
     }
 
     /// Read completed tasks whose native archive receipt is still absent.

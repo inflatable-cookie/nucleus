@@ -83,11 +83,18 @@ pub(super) enum Action {
     },
     /// Admit a task from an item's current body.
     #[command(name = "item.promote")]
-    ItemPromote { project: String, id: String },
+    ItemPromote {
+        /// Item ID, or project ID when followed by an item ID.
+        project_or_id: String,
+        id: Option<String>,
+    },
     /// Admit a task directly. Read the brief from stdin.
     #[command(name = "task.add")]
     TaskAdd {
-        project: String,
+        /// Explicit project ID for operator calls.
+        project: Option<String>,
+        #[arg(long)]
+        repository: Option<String>,
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -211,23 +218,29 @@ impl Action {
                 format!("items/{}/drop", segment(&id)?),
                 Some(json!({ "reason": reason })),
             ),
-            A::ItemPromote { project, id } => (
-                Method::POST,
-                project,
-                format!("items/{}/promote", segment(&id)?),
-                None,
-            ),
+            A::ItemPromote { project_or_id, id } => {
+                let (project, id) = id.map_or((String::new(), project_or_id.clone()), |id| {
+                    (project_or_id, id)
+                });
+                (
+                    Method::POST,
+                    project,
+                    format!("items/{}/promote", segment(&id)?),
+                    None,
+                )
+            }
             A::TaskAdd {
                 project,
+                repository,
                 id,
                 reference,
                 review,
             } => (
                 Method::POST,
-                project,
+                project.unwrap_or_default(),
                 "tasks".into(),
                 Some(json!({
-                    "id": id, "reference": reference, "brief": stdin_text()?,
+                    "id": id, "reference": reference, "repository": repository, "brief": stdin_text()?,
                     "review": match review.as_slice() {
                         [url, head] => Some(json!({"url": url, "head": head})),
                         _ => None,
@@ -262,11 +275,12 @@ impl Action {
                 Some(json!({ "optionId": option_id, "note": note })),
             ),
         };
-        Ok((
-            method,
-            format!("/v1/planning/{}/{path}", segment(&project)?),
-            body,
-        ))
+        let path = if project.is_empty() {
+            format!("/v1/planning/{path}")
+        } else {
+            format!("/v1/planning/{}/{path}", segment(&project)?)
+        };
+        Ok((method, path, body))
     }
 }
 

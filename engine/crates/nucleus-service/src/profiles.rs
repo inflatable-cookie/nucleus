@@ -58,6 +58,17 @@ impl SelectedLaunch {
 }
 
 impl Service {
+    pub(super) fn launch_profile<'a>(
+        &'a self,
+        role: Role,
+        selection: Option<&'a SelectedLaunch>,
+    ) -> Result<&'a RoleProfile, ServiceError> {
+        selection
+            .map(|selected| &selected.native)
+            .or_else(|| self.project.as_ref().map(|project| project.profile(role)))
+            .ok_or(ServiceError::ProfileConfiguration)
+    }
+
     pub(super) async fn select_launch(
         &self,
         task: &Task,
@@ -68,10 +79,12 @@ impl Service {
         {
             let mut state = self.state.lock().await;
             if state.settings.profiles.is_none() {
-                if self.project.mode == ProjectMode::Project {
-                    return Err(ServiceError::ProfileConfiguration);
-                }
-                let group = &self.project.profile(role).instance_id;
+                let project = self
+                    .project
+                    .as_ref()
+                    .filter(|project| project.mode == ProjectMode::Fixture)
+                    .ok_or(ServiceError::ProfileConfiguration)?;
+                let group = &project.profile(role).instance_id;
                 if let Some(pause) = state.group_pause(group, now_ms())? {
                     state.group_waits.insert(task.identity().id.clone(), pause);
                     return Ok(LaunchSelection::Paused);
@@ -84,14 +97,10 @@ impl Service {
         }
         let catalog = host.profile_catalog().await?;
         let mut state = self.state.lock().await;
-        select_profile(
-            &mut state,
-            task,
-            observation,
-            role,
-            catalog,
-            &self.project.profile(role).runtime_mode,
-        )
+        let runtime_mode = self.project.as_ref().map_or("full-access", |project| {
+            project.profile(role).runtime_mode.as_str()
+        });
+        select_profile(&mut state, task, observation, role, catalog, runtime_mode)
     }
 }
 
