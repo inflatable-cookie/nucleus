@@ -103,6 +103,7 @@ export async function runStandaloneService(
     `Nucleus service ready on ${service["socketPath"]} pid ${process.pid} build ${service.buildId}`,
   );
   await service.drainedPromise();
+  process.exit(0);
 }
 
 function ignoreDetachedOutputEpipe(stream: NodeJS.WriteStream) {

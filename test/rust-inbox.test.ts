@@ -168,4 +168,7 @@ test("the Rust bridge accepts one dedicated key and fences withdrawal before an 
     state: "withdrawn",
   });
   assert.deepEqual(decisions.list({ status: "open" }), []);
+  await board.close();
+  assert.equal(bridge.authorization(`Bearer ${key}`), false);
+  await assert.rejects(bridge.call(input), /bridge is closed/);
 });
