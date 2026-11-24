@@ -14,7 +14,8 @@ import { rustAllowance, rustProjectArchive, rustSetAllowance } from "../client/r
 
 function engine() {
   let dispatch = {
-    usage: "normal", usageUntilMs: null, slots: 4, hostConcurrency: 1,
+    usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 2,
+    projectSlotOverrides: { Orbit_Main: 3 }, hostConcurrency: 1,
     allowanceMinutes: 600, providerLimitCooldownSeconds: 300, mode: "running",
   };
   let profiles: Record<string, unknown> = {
@@ -26,7 +27,7 @@ function engine() {
     pausedGroups: [],
   };
   let projects = { projects: {
-    Orbit_Main: { name: "Orbit", slots: 3, archived: false, repositories: [
+    Orbit_Main: { name: "Orbit", archived: false, repositories: [
       { origin: "example/orbit", path: "/work/orbit", base: "main", requiredChecks: ["ci"], hungToolMinutes: 30, hostProjectTitle: "Orbit" },
     ] },
   } };
@@ -114,17 +115,23 @@ test("a profile write keeps the engine's fields this client does not know", asyn
   });
 });
 
-test("project slot edits map the board key back to the engine's project ID", async () => {
+test("shared Limits writes sparse project overrides and the two Dispatch defaults", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await adapter.rpc(api.uiSnapshot, {});
-  await adapter.rpc(api.configureProjectDispatchLimit, { projectKey: "p-orbit-main", limit: 5 });
-  const written = fake.writes[0]!.body.value as { projects: Record<string, { slots: number }> };
-  assert.equal(written.projects.Orbit_Main!.slots, 5);
-  await assert.rejects(
-    adapter.rpc(api.configureProjectDispatchLimit, { projectKey: "p-orbit-main", limit: null }),
-    /positive slot limit/,
-  );
+  const { effective } = await adapter.rpc(api.capacityState, {});
+  assert.equal(effective.projectLimit, 2);
+  await adapter.rpc(api.configureCapacity, { ...effective, globalLimit: 8, projectLimit: 4 });
+  for (const limit of [5, null, 0]) {
+    const projectKey = "p-orbit-main";
+    await adapter.rpc(api.configureProjectDispatchLimit, { projectKey, limit });
+    const board = await adapter.rpc(api.uiSnapshot, {});
+    assert.ok(!("unchanged" in board));
+    assert.equal(board.globalLimit, 8);
+    assert.equal(board.projectLimit, 4);
+    assert.deepEqual(board.projectLimitOverrides, limit === null ? {} : { [projectKey]: limit });
+  }
+  assert.ok(fake.writes.every((write) => write.domain === "dispatch"));
 });
 
 test("retired machinery is refused by name instead of guessed", async () => {

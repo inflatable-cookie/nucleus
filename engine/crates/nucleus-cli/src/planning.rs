@@ -363,6 +363,18 @@ pub(super) fn import_projects(source: &Path, apply: Option<&Path>) -> Result<()>
     Ok(())
 }
 
+pub(super) fn import_limits(source: &Path, apply: Option<&Path>) -> Result<()> {
+    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
+        .map(PathBuf::from)
+        .ok_or("set NUCLEUS_SCRATCH_ROOT to the configured scratch root")?;
+    let settings = apply
+        .map(|home| super::open_settings(Some(home)))
+        .transpose()?;
+    let report = legacy::import_limits(&scratch, source, settings.as_ref())?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

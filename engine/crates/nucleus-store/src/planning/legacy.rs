@@ -1,5 +1,6 @@
 //! Offline import from a standalone TypeScript `SQLite` copy.
 
+mod limits;
 mod profiles;
 mod project_records;
 mod registry;
@@ -27,6 +28,7 @@ use super::{
 };
 use crate::{DATABASE_FILE, SettingsFile, StorageError, Store, StoreError, TaskNumberSeed};
 
+pub use limits::{LimitsImport, import_limits};
 pub(crate) use registry::JOURNAL as PROJECT_IMPORT_JOURNAL;
 pub use registry::{ProjectImportReport, import_projects};
 
@@ -40,6 +42,8 @@ pub enum ImportError {
     ProfilesSchema,
     #[error("the copy does not contain the legacy project registry and planning tables")]
     ProjectsSchema,
+    #[error("missing or invalid legacy dispatch setting {0}")]
+    LimitsSchema(&'static str),
     #[error("project import conflict: {0}")]
     ProjectConflict(String),
     #[error("every repository needs a project mapping; missing {0}")]

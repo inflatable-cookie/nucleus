@@ -211,8 +211,8 @@ function capacityValues(
   ) as Record<keyof typeof capacityBounds, number>;
   return {
     ...fallback,
-    globalLimit: Math.max(1, Math.min(64, dispatch.slots)),
-    projectLimit: Math.max(1, Math.min(32, dispatch.slots)),
+    globalLimit: Math.max(1, Math.min(64, dispatch.globalSlots)),
+    projectLimit: dispatch.projectDefaultSlots,
     hostCallLimit: Math.max(1, dispatch.hostConcurrency),
     operatorDefaultHostKind: DEFAULT_HOST_KIND,
   };
@@ -304,14 +304,13 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       stoppedThreads: 0,
       resumedThreads: 0,
       ...capacityValues(dispatch),
-      globalLimit: dispatch.slots,
-      projectLimit: dispatch.slots,
+      globalLimit: dispatch.globalSlots,
       usage: usageView(dispatch),
-      // Every Rust project carries its own slot limit (ruling 8).
       projectLimitOverrides: Object.fromEntries(
-        rows
-          .filter(({ project }) => !project.archived)
-          .map(({ board, project }) => [board.key, Math.min(64, project.slots)]),
+        rows.flatMap(({ id, board, project }) => {
+          if (project.archived || !Object.hasOwn(dispatch.projectSlotOverrides, id)) return [];
+          return [[board.key, dispatch.projectSlotOverrides[id]]];
+        }),
       ),
       projectCapacities: [],
       operationLimit: 64,
@@ -382,7 +381,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       ({ board }) => !input.project || board.key === input.project,
     );
     return {
-      defaultSlots: all.dispatch.value.slots,
+      defaultSlots: all.dispatch.value.projectDefaultSlots,
       projects: rows.map(({ id, project, board }) => {
         const planner = all.projects.resolvedPlanners[id] ?? null;
         return {
@@ -403,7 +402,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
             primary: index === 0,
             settings: boardRepositorySettings(repo),
           })),
-          slots: { value: project.slots, override: project.slots },
+          slots: {
+            value: all.dispatch.value.projectDefaultSlots,
+            override: null,
+          },
           plannerLive: planner ? true : null,
           plannerTicket: null,
           problems: [],
@@ -420,7 +422,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       return { effective: capacityValues(dispatch.value), changes: [] };
     },
     "queue.capacity": async (input: api.CapacityAuthorityValues) => {
-      await editDispatch((value) => ({ ...value, slots: input.globalLimit }));
+      await editDispatch((value) => ({
+        ...value,
+        globalSlots: input.globalLimit,
+        projectDefaultSlots: input.projectLimit,
+      }));
       return { ok: true };
     },
     "queue.usage": async (input: {
@@ -461,18 +467,16 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       projectKey: string;
       limit: number | null;
     }) => {
+      const all = await settings();
       const id = keys.id(input.projectKey);
-      await editProjects((value) => {
-        const project = value.projects[id];
-        if (!project) throw new Error(`Project ${input.projectKey} is not registered.`);
-        if (input.limit === null || input.limit < 1)
-          throw new Error("A project needs a positive slot limit.");
-        return {
-          projects: {
-            ...value.projects,
-            [id]: { ...project, slots: input.limit },
-          },
-        };
+      if (!Object.hasOwn(all.projects.settings.value.projects, id))
+        throw new Error(`Project ${input.projectKey} is not registered.`);
+      await editDispatch((value) => {
+        const projectSlotOverrides = input.limit === null
+          ? { ...value.projectSlotOverrides }
+          : { ...value.projectSlotOverrides, [id]: input.limit };
+        if (input.limit === null) delete projectSlotOverrides[id];
+        return { ...value, projectSlotOverrides };
       });
       return { ok: true };
     },

@@ -77,7 +77,9 @@ const profiles = z
 const dispatch = z.object({
   usage,
   usageUntilMs: integer.nullable(),
-  slots: integer,
+  globalSlots: integer,
+  projectDefaultSlots: integer,
+  projectSlotOverrides: z.record(z.string(), integer),
   hostConcurrency: integer,
   allowanceMinutes: integer.nullable(),
   providerLimitCooldownSeconds: integer.optional(),
@@ -95,7 +97,6 @@ const repository = z.object({
 }).loose();
 const project = z.object({
   name: z.string(),
-  slots: integer,
   archived: z.boolean(),
   repositories: z.array(repository),
 }).loose();

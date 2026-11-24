@@ -124,8 +124,19 @@ impl SettingsValue for Profiles {
 pub struct DispatchSettings {
     pub usage: UsageLevel,
     pub usage_until_ms: Option<u64>,
-    pub slots: u32,
+    #[serde(alias = "slots")]
+    pub global_slots: u32,
+    #[serde(default = "default_project_slots")]
+    pub project_default_slots: u32,
+    #[serde(default)]
+    pub project_slot_overrides: BTreeMap<String, u32>,
     pub host_concurrency: u32,
+    #[serde(default = "default_thread_retention_days")]
+    pub thread_retention_days: u32,
+    #[serde(default = "default_thread_retention_interval_hours")]
+    pub thread_retention_interval_hours: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) legacy_limits_imported: bool,
     pub allowance_minutes: Option<u32>,
     #[serde(default = "default_provider_limit_cooldown_seconds")]
     pub provider_limit_cooldown_seconds: u32,
@@ -165,13 +176,30 @@ const fn default_provider_limit_cooldown_seconds() -> u32 {
     300
 }
 
+const fn default_project_slots() -> u32 {
+    4
+}
+
+const fn default_thread_retention_days() -> u32 {
+    3
+}
+
+const fn default_thread_retention_interval_hours() -> u32 {
+    12
+}
+
 impl Default for DispatchSettings {
     fn default() -> Self {
         Self {
             usage: UsageLevel::Normal,
             usage_until_ms: None,
-            slots: 1,
+            global_slots: 1,
+            project_default_slots: default_project_slots(),
+            project_slot_overrides: BTreeMap::new(),
             host_concurrency: 1,
+            thread_retention_days: default_thread_retention_days(),
+            thread_retention_interval_hours: default_thread_retention_interval_hours(),
+            legacy_limits_imported: false,
             allowance_minutes: None,
             provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
             mode: DispatchMode::Running,
@@ -180,6 +208,15 @@ impl Default for DispatchSettings {
 }
 
 impl DispatchSettings {
+    /// Resolve the limit in force for a registered project.
+    #[must_use]
+    pub fn project_slots(&self, project_key: &str) -> u32 {
+        self.project_slot_overrides
+            .get(project_key)
+            .copied()
+            .unwrap_or(self.project_default_slots)
+    }
+
     #[must_use]
     pub fn effective_usage(&self, now_ms: u64) -> UsageLevel {
         match self.usage_until_ms {
@@ -197,9 +234,26 @@ impl SettingsValue for DispatchSettings {
 
     fn validate(&self) -> Result<(), DomainIssue> {
         check(
-            self.slots > 0 && self.host_concurrency == 1 && self.allowance_minutes != Some(0),
+            self.global_slots > 0
+                && self.host_concurrency == 1
+                && self.allowance_minutes != Some(0),
             "dispatch",
             "use positive slots and allowance. The host lane has one call slot",
+        )?;
+        check(
+            (1..=32).contains(&self.project_default_slots)
+                && self
+                    .project_slot_overrides
+                    .iter()
+                    .all(|(id, &slots)| key(id) && slots <= 64),
+            "projectSlots",
+            "use 1–32 default project slots and 0–64 per override",
+        )?;
+        check(
+            (1..=90).contains(&self.thread_retention_days)
+                && (1..=168).contains(&self.thread_retention_interval_hours),
+            "threadRetention",
+            "use 1–90 retention days and 1–168 hours between sweeps",
         )?;
         check(
             self.provider_limit_cooldown_seconds > 0,
@@ -244,15 +298,34 @@ const fn default_hung_tool_minutes() -> u32 {
     30
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSettings {
     pub name: String,
-    pub slots: u32,
-    #[serde(default)]
     pub archived: bool,
-    #[serde(default)]
     pub repositories: Vec<RepositorySettings>,
+}
+
+impl<'de> Deserialize<'de> for ProjectSettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SavedProject {
+            name: String,
+            #[serde(default, rename = "slots")]
+            _retired_slots: Option<serde::de::IgnoredAny>,
+            #[serde(default)]
+            archived: bool,
+            #[serde(default)]
+            repositories: Vec<RepositorySettings>,
+        }
+        let saved = SavedProject::deserialize(deserializer)?;
+        Ok(Self {
+            name: saved.name,
+            archived: saved.archived,
+            repositories: saved.repositories,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,9 +347,9 @@ impl SettingsValue for Projects {
         let mut planners = std::collections::BTreeSet::new();
         for (id, project) in &self.projects {
             check(
-                key(id) && text(&project.name) && project.slots > 0,
+                key(id) && text(&project.name),
                 "project",
-                "each project needs a stable ID, name and positive slot limit",
+                "each project needs a stable ID and name",
             )?;
             for repo in &project.repositories {
                 check(

@@ -445,7 +445,6 @@ fn register(
         id,
         ProjectSettings {
             name,
-            slots: 1,
             archived: false,
             repositories: vec![repository],
         },

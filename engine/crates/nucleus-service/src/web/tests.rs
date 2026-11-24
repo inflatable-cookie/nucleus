@@ -1396,7 +1396,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     let path = "/v1/settings/dispatch";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     let mut update = json!({"revision": original["revision"], "value": original["value"]});
-    update["value"]["slots"] = json!(0);
+    update["value"]["globalSlots"] = json!(0);
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
         StatusCode::BAD_REQUEST
@@ -1405,7 +1405,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
         json_body(get_as(&api, path, &BOARD_KEY).await).await,
         original
     );
-    update["value"]["slots"] = json!(3);
+    update["value"]["globalSlots"] = json!(3);
     assert_eq!(
         put_settings(&api, path, &PLANNER_KEY, &update)
             .await
@@ -1414,7 +1414,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     );
 
     let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
-    assert_eq!(saved["value"]["slots"], 3);
+    assert_eq!(saved["value"]["globalSlots"], 3);
     assert_ne!(saved["revision"], original["revision"]);
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
@@ -1428,7 +1428,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
             .dispatch
             .as_ref()
             .expect("published dispatch")
-            .slots,
+            .global_slots,
         3
     );
     assert!(
@@ -1557,7 +1557,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let state = service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
     assert!(state.planner_authority.is_empty());
-    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(2));
+    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(4));
     assert_eq!(
         reads.load(Ordering::Relaxed),
         1,
@@ -1941,7 +1941,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
         json_body(browser_request(&api, Method::GET, dispatch, Some(&operator), None).await).await;
     assert_eq!(starting["value"]["mode"], "running");
     let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
-    update["value"]["slots"] = json!(3);
+    update["value"]["globalSlots"] = json!(3);
     update["value"]["mode"] = json!("held");
     assert_eq!(
         browser_request(&api, Method::PUT, dispatch, Some(&planner), Some(&update))
@@ -1953,7 +1953,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
         browser_request(&api, Method::PUT, dispatch, Some(&operator), Some(&update)).await,
     )
     .await;
-    assert_eq!(saved["value"]["slots"], 3);
+    assert_eq!(saved["value"]["globalSlots"], 3);
     assert_eq!(saved["value"]["mode"], "held");
     assert_event(&mut events, &["event: settings"]).await;
     let admission = json!({"id":"board-task","reference":"D1","brief":"# Standalone task"});

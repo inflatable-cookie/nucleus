@@ -1,4 +1,5 @@
 import { errorText } from "./error-text";
+import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Icon } from "./shell";
@@ -242,6 +243,7 @@ function OpenedProject({
   onOpenProject?: (key: string) => void;
   r: ReturnType<typeof roles>;
 }) {
+  const features = useEngineFeatures();
   const project = entry.project;
   const saves = useProjectSaves(actions.refresh);
   // Fields stay, never blank, but take no edits while the project could not be re-read.
@@ -559,7 +561,7 @@ function OpenedProject({
           </Text>
         </View>
       )}
-      <View style={{ gap: space.xxs }}>
+      {features.engine === "typescript" && <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Slots" help={SLOTS_HELP} />
         <View style={{ flexDirection: "row" }}>
           <NumberStepper
@@ -575,7 +577,7 @@ function OpenedProject({
             onCommit={saves.flush}
           />
         </View>
-      </View>
+      </View>}
       <AgentsSection
         c={c}
         project={project}
