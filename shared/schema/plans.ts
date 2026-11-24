@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { laneKeySchema } from "../schema/task-primitives";
 import { planningTriageSchema } from "./triage";
+import { laneViewSchema } from "./lanes";
 
 /** Spec 041: `doneWhen` is one line saying what finishes the step; entries saved before it have none. */
 export const planEntrySchema = z.object({ lane: laneKeySchema, note: z.string().max(200).default(""), horizon: z.enum(["now", "next", "later"]).default("now"), doneWhen: z.string().max(300).regex(/^[^\r\n]*$/, "doneWhen is one line: no CR or LF (Spec 041, contract 008)").optional() }).strict();
@@ -22,6 +23,10 @@ export const projectPlanSchema = z.object({
 export type ProjectPlan = z.infer<typeof projectPlanSchema>;
 
 /** Batched board read includes the immutable saved membership alongside the current lane projection. */
-export const planningPlanSnapshotSchema = projectPlanSchema.extend({ savedEntries: planEntriesSchema, triage: planningTriageSchema.optional() }).strict();
+export const planningPlanSnapshotSchema = projectPlanSchema.extend({
+  savedEntries: planEntriesSchema,
+  triage: planningTriageSchema.optional(),
+  laneViews: z.array(laneViewSchema).optional(),
+}).strict();
 
 export type PlanningPlanSnapshot = z.infer<typeof planningPlanSnapshotSchema>;

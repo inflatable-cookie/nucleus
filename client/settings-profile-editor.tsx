@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRpc } from "./shell";
+import { useEngineFeatures } from "./engine-features";
 import * as api from "../shared/contracts";
 import {
   ActionButton,
@@ -200,6 +201,7 @@ export function ProfileRow({
   visibleProfileIds,
   usageRole,
   busy,
+  canEdit = true,
   editing,
   poolSave,
   actionStatus,
@@ -223,6 +225,7 @@ export function ProfileRow({
   visibleProfileIds: readonly string[];
   usageRole: UsageRole;
   busy: boolean;
+  canEdit?: boolean;
   editing: boolean;
   poolSave: (entry: PoolEntry) => Promise<void>;
   actionStatus: string;
@@ -232,9 +235,9 @@ export function ProfileRow({
   onRemove: () => Promise<void>;
   onChooseDirectory: (cwd: string) => void;
 }) {
-  const original: PoolEntry =
-    state?.pool.find((entry) => entry.profileId === profile.id) ??
-    defaultPoolEntry(profile);
+  const rust = useEngineFeatures().engine === "rust";
+  const storedEntry = state?.pool.find((entry) => entry.profileId === profile.id);
+  const original = storedEntry ?? (rust ? null : defaultPoolEntry(profile));
   const [entry, setEntry] = useState(original),
     [saveStatus, setSaveStatus] = useState("");
   const mounted = useRef(true),
@@ -248,7 +251,7 @@ export function ProfileRow({
       (status) => {
         if (mounted.current)
           setSaveStatus(
-            entryRef.current.group.trim() ? status : "Subscription is required",
+            entryRef.current?.group.trim() ? status : "Subscription is required",
           );
       },
     );
@@ -271,6 +274,7 @@ export function ProfileRow({
     };
   }, []);
   function change(patch: Partial<PoolEntry>, delay = 0) {
+    if (!entryRef.current) return;
     const next = { ...entryRef.current, ...patch };
     entryRef.current = next;
     setEntry(next);
@@ -290,7 +294,7 @@ export function ProfileRow({
           problem: "",
           supportedThinking: [] as string[],
         });
-  const status = state
+  const status = state && entry
     ? profileRowStatus(availability, entry, state)
     : { problem: "" };
   const usage = profileUsage(state, profile.id, visibleProfileIds, usageRole);
@@ -337,27 +341,33 @@ export function ProfileRow({
               label={`${profile.name}: ${attention.split("\n")[0]}`}
             />
           ) : null}
-          <Button
-            matchField
-            c={c}
-            text={entry.enabled ? "On" : "Off"}
-            selected={entry.enabled}
-            disabled={busy || !state}
-            label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`}
-            onPress={() => change({ enabled: !entry.enabled })}
-          />
-          <ActionButton
-            c={c}
-            action={editing ? "close" : "edit"}
-            label={`${editing ? "Close" : "Edit"} ${profile.name}`}
-            onPress={() => {
-              void saver.current!.flush();
-              onEdit();
-            }}
-          />
+          {entry && (
+            <Button
+              matchField
+              c={c}
+              text={entry.enabled ? "On" : "Off"}
+              selected={entry.enabled}
+              disabled={!canEdit || busy || !state || (rust && !storedEntry)}
+              label={canEdit
+                ? `${entry.enabled ? "Disable" : "Enable"} ${profile.name}`
+                : `${profile.name}: ${entry.enabled ? "On" : "Off"}`}
+              onPress={() => change({ enabled: !entry.enabled })}
+            />
+          )}
+          {canEdit && (
+            <ActionButton
+              c={c}
+              action={editing ? "close" : "edit"}
+              label={`${editing ? "Close" : "Edit"} ${profile.name}`}
+              onPress={() => {
+                void saver.current!.flush();
+                onEdit();
+              }}
+            />
+          )}
         </View>
       </HoverRow>
-      {editing && (
+      {canEdit && editing && (
         <ProfileEditor
           c={c}
           catalog={catalog}
@@ -371,7 +381,7 @@ export function ProfileRow({
           busy={busy}
           poolSaveStatus={saveStatus}
           actionStatus={actionStatus}
-          onChangePool={state ? change : undefined}
+          onChangePool={state && entry ? change : undefined}
           onFlushPool={() => void saver.current!.flush()}
           onCreated={onCreated}
           onDuplicate={onDuplicate}

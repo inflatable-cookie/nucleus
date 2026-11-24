@@ -714,7 +714,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
   const views = {
-    profiles: () => snap({ profiles: [], pausedGroups: [] }, "profiles-1"),
+    profiles: () => snap({
+      profiles: [{
+        name: "Fixture worker", group: "fixture team",
+        selection: { id: "fixture-worker", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default" },
+      }],
+      pausedGroups: ["fixture team"],
+    }, "profiles-1"),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
       settings: snap({ projects: { fixture: { name: "Fixture project", archived: false, repositories: [
@@ -751,11 +757,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       init?.signal?.addEventListener("abort", () => stream?.close(), { once: true });
       return new Response(body);
     }
+    if (path === "/api/engine/session")
+      return Response.json({ id: "operator-session", canEditSettings: true, planningProjects: null });
     if (path === "/api/engine/theme") return Response.json({ theme: null });
     if (path === "/api/engine/profiles/usage") {
       const empty = { counts: {}, groups: {}, sample: 0 };
+      const recorded = { counts: { "fixture-worker": 50 }, groups: { "fixture team": 50 }, sample: 50 };
       return Response.json({
-        recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {},
+        recent: recorded, worker: recorded, reviewer: empty,
+        totals: recorded.counts, groupTotals: recorded.groups, limitedGroups: {},
       });
     }
     if (path === "/api/engine/profiles/catalog")
@@ -805,6 +815,18 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   };
   const text = () => dom.window.document.body.textContent ?? "";
   dom.window.eval(`(() => { ${script} })()`);
+  const planningReads = () => requests.filter((path) => path.startsWith("/api/engine/planning/"));
+  await eventually(() => Boolean(selector("Needs you, 0")), "initial Needs you settles");
+  assert.ok(stream, "the board subscribed to engine changes");
+  assert.ok(planningReads().length > 0 && planningReads().every((path) => path.endsWith("/decisions")), "Needs you reads decisions only");
+  const beforeTaskActivity = planningReads().length;
+  const taskReads = () => requests.filter((path) => path === "/api/engine/tasks").length;
+  const beforeTaskRead = taskReads();
+  stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
+  await eventually(() => taskReads() > beforeTaskRead, "task activity refreshes task data");
+  assert.equal(planningReads().length, beforeTaskActivity, "task activity leaves decisions alone");
+  stream.enqueue(new TextEncoder().encode("event: decisions\ndata: {}\n\n"));
+  await eventually(() => planningReads().length === beforeTaskActivity + 1, "a decision change refreshes Needs you once");
   // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 2");
   await eventually(() => text().includes("Standalone task"), "task title renders");
@@ -834,7 +856,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
-  assert.ok(stream, "the board subscribed to engine changes");
   stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
   await click("Working, 1");
   await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
@@ -847,10 +868,22 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => writes.length === 1, "the hold is written to the Dispatch domain");
   assert.equal(writes[0]!.path, "/api/engine/settings/dispatch");
   assert.equal(writes[0]!.body.value.mode, "held");
+  const beforeSettings = planningReads().length;
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
   await eventually(() => text().includes("Usage level"), "the shared Limits section renders");
   assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
+  await click("Profiles");
+  await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "profile usage renders");
+  const toggle = selector("Disable Fixture worker");
+  assert.ok(toggle && toggle.getAttribute("aria-disabled") !== "true");
+  assert.ok(text().includes("Unavailable"), "the subscription pause renders");
+  assert.doesNotMatch(text(), /Reading subscriptions/);
+  const settingsReads = () => requests.filter((path) => path === "/api/engine/settings").length;
+  const beforeRefresh = settingsReads();
+  stream.enqueue(new TextEncoder().encode("event: refresh\ndata: {}\n\n"));
+  await eventually(() => settingsReads() > beforeRefresh, "the board refreshes Settings");
+  assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on refresh");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

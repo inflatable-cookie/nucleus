@@ -1,0 +1,1 @@
+The Rust board shows stored profile flags, subscription pauses and recorded usage in paired operator and planner sessions. Planning views load records within the session’s project scope, and Settings opens without planning requests.

@@ -145,7 +145,13 @@ export const allSettings = z.object({
   hosts: hostsView,
   storage: storageView,
 });
-export const browserSession = z.object({ canEditSettings: z.boolean() });
+const browserSession = z.object({
+  id: z.string(),
+  canEditSettings: z.boolean(),
+  // null is an unscoped controller; an empty list has no live project binding.
+  planningProjects: z.array(z.string()).nullable(),
+});
+export type RustBrowserSession = z.infer<typeof browserSession>;
 
 const cachedCatalog = z.object({
   providers: z.array(z.unknown()).nullable(),
@@ -160,6 +166,7 @@ const profileUsage = z.object({
   reviewer: usageWindow,
   totals: countMap,
   groupTotals: countMap,
+  limitedGroups: countMap.optional(),
 });
 export type RustCachedCatalog = z.infer<typeof cachedCatalog>;
 export type RustProfileUsage = z.infer<typeof profileUsage>;

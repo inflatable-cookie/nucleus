@@ -24,6 +24,7 @@ import {
   createPushInvalidator,
   createRustInvalidator,
   listenForRustChanges,
+  isRustHttpError,
 } from "./rust-board";
 import { createRustAdapter } from "./rust-adapter";
 import { boardThemeFromT3 } from "../../hosts/t3code/board-theme";
@@ -68,7 +69,20 @@ export function WebApp({
     () => adapter ?? createWebTransport(),
     [adapter],
   );
-  const query = useMemo(() => new QueryClient(), []);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const query = useMemo(
+    () => new QueryClient(rust ? {
+      defaultOptions: {
+        queries: {
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+          retry: (attempt, error) =>
+            !isRustHttpError(error, 401) && !isRustHttpError(error, 403) && attempt < 2,
+        },
+      },
+    } : undefined),
+    [rust, sessionEpoch],
+  );
   const invalidateRust = useMemo(() => createRustInvalidator(query), [query]);
   const context = useMemo(
     () => ({ transport, settings }),
@@ -104,17 +118,30 @@ export function WebApp({
   // The Rust engine pushes task and settings invalidations; every board read
   // goes through the adapter again, never by polling.
   useEffect(() => {
-    if (!rust) return;
+    if (!adapter) return;
     const controller = new AbortController();
     const invalidateBoard = createPushInvalidator(query);
+    const refreshBoard = () => {
+      if (!controller.signal.aborted)
+        invalidateBoard({ queryKey: ["nucleus"] });
+    };
     void listenForRustChanges(
       (id) => {
         invalidateRust(id);
-        invalidateBoard({ queryKey: ["nucleus"] });
+        if (id !== undefined) {
+          invalidateBoard({ queryKey: ["nucleus", "state"] });
+        }
       },
       controller.signal,
       {
-        settingsChanged: () => invalidateBoard({ queryKey: ["nucleus"] }),
+        settingsChanged: () => {
+          void adapter.refreshSession().then((changed) => {
+            if (controller.signal.aborted) return;
+            if (changed) setSessionEpoch((value) => value + 1);
+            else refreshBoard();
+          }).catch(refreshBoard);
+        },
+        decisionsChanged: () => invalidateBoard({ queryKey: ["nucleus", "decisions"] }),
         themeChanged: () => setThemeRevision((value) => value + 1),
         catalogChanged: () => {
           invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
@@ -133,7 +160,7 @@ export function WebApp({
       },
     );
     return () => controller.abort();
-  }, [rust, query, invalidateRust]);
+  }, [adapter, query, invalidateRust]);
   useEffect(() => {
     if (rust) return;
     const web = transport as ReturnType<typeof createWebTransport>;
@@ -186,7 +213,7 @@ export function WebApp({
     document.body.style.background = theme.colors.surface0;
   }, [appearance, theme]);
   return (
-    <QueryClientProvider client={query}>
+    <QueryClientProvider key={sessionEpoch} client={query}>
       <EngineFeaturesContext.Provider
         value={rust ? RUST_ENGINE_FEATURES : TYPESCRIPT_ENGINE_FEATURES}
       >

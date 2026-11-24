@@ -21,6 +21,7 @@ import { profileUsage } from "../client/settings-profile-helpers";
 import { nightlyProviders } from "./support/pool-shapes";
 import type {
   RustCachedCatalog,
+  RustBrowserSession,
   RustProfileUsage,
 } from "../client/web/rust-api";
 
@@ -32,6 +33,12 @@ import type {
  */
 
 function engine() {
+  let session: RustBrowserSession = {
+    id: "operator-session",
+    canEditSettings: true,
+    planningProjects: null,
+  };
+  const denied = new Set<string>();
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 2,
     projectSlotOverrides: { Orbit_Main: 3, lantern: 1 },
@@ -77,6 +84,7 @@ function engine() {
     assert.equal(new Headers(init?.headers).get("x-nucleus-board"), "1");
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     reads.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/session") return json(session);
     if (path === "/profiles/catalog") return json(catalog);
     if (path === "/profiles/usage") return json(usage);
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
@@ -105,11 +113,38 @@ function engine() {
       revisions[domain] = (revisions[domain] ?? 1) + 1;
     }
     if (domain) return json(views[domain]!());
-    if (/\/plan$/.test(path)) return json({ version: 0, lanes: [], documents: [], idle: true });
+    const [, project, collection] = /^\/planning\/([^/]+)\/(plan|items|decisions)$/.exec(path) ?? [];
+    if (project && (denied.has(project) ||
+      (session.planningProjects !== null && !session.planningProjects.includes(project)))) {
+      return Response.json({ error: "controller is not authorized for this project" }, { status: 403 });
+    }
+    if (collection === "plan") return json({
+      version: 1,
+      lanes: [{ key: "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
+      documents: [{
+        key: "delivery", version: 1, title: "Delivery", aim: "Ship the change",
+        document: "Fixture Markdown", status: "open",
+      }],
+      idle: false,
+    });
+    if (collection === "items") return json([{
+      id: `i-${project}`, kind: "lead", author: "planner", title: "An idea",
+      body: "Fixture idea", lanes: ["delivery"], state: "open",
+    }]);
+    if (collection === "decisions") return json([{
+      id: `d-${project}`, projectId: project, author: "planner",
+      question: "Which path should we take?", createdAtMs: 1_790_000_000_000,
+      options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }],
+      answer: null,
+    }]);
     return new Response(JSON.stringify({ error: { message: "no route" } }), { status: 404 });
   }) as typeof fetch;
   return {
-    fetcher, writes, reads, mode: () => dispatch.mode,
+    fetcher, writes, reads, denied,
+    planningReads: () => reads.filter((path) => path.startsWith("GET /planning/")),
+    setSession: (next: RustBrowserSession) => { session = next; },
+    setProfiles: (next: unknown, pausedGroups: string[]) => { profiles = { profiles: next, pausedGroups }; },
+    mode: () => dispatch.mode,
     setCatalog: (next: RustCachedCatalog) => { catalog = next; },
     setUsage: (next: RustProfileUsage) => { usage = next; },
   };
@@ -404,6 +439,166 @@ test("the shared usage strips project recorded zero and active role windows", as
   });
   assert.equal(active.assignments["profile:w"], 12);
   assert.equal(active.assignments.team, 16);
+});
+
+test("paired operator and planner Profiles show stored flags, subscriptions and usage", async (t) => {
+  const fake = engine();
+  fake.setProfiles([
+    { name: "Worker", group: "team", selection: {
+      id: "w", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default",
+    } },
+    { name: "Reserve", enabled: false, group: "reserve", selection: {
+      id: "r", provider: "codex", model: "m", effort: null, capability: "worker", weight: "default",
+    } },
+  ], ["team"]);
+  const worker = { counts: { w: 50 }, groups: { team: 50 }, sample: 50 };
+  fake.setUsage({
+    recent: worker, worker, reviewer: { counts: {}, groups: {}, sample: 0 },
+    totals: { w: 50 }, groupTotals: { team: 50 },
+    limitedGroups: { reserve: Date.now() + 3_600_000 },
+  });
+  useNativeStubs();
+  const { ProfilesPanel } = await import("../client/settings-profiles");
+  for (const canEditSettings of [true, false]) {
+    const adapter = createRustAdapter(createRustApi(fake.fetcher));
+    fake.setSession({
+      id: canEditSettings ? "operator-session" : "planner-session",
+      canEditSettings,
+      planningProjects: canEditSettings ? null : ["Orbit_Main"],
+    });
+    const state = await adapter.rpc(api.uiSnapshot, {});
+    assert.ok(!("unchanged" in state));
+    assert.equal(state.canEditSettings, canEditSettings);
+    assert.deepEqual(state.pool.map(({ enabled }) => enabled), [true, false]);
+    assert.deepEqual(state.availability.map(({ group, unavailable }) => [group, unavailable]),
+      [["team", true], ["reserve", true]]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const h = React.createElement;
+    const ui = mount(h(QueryClientProvider, { client, children: h(PluginRpcProvider, {
+      invoke: ((method: string, input: never) => {
+        switch (method) {
+          case "profile.list": return adapter.rpc(api.listNucleusProfiles, input);
+          case "profile.compatibility": return adapter.rpc(api.readProfileCompatibility, input);
+          case "profile.vocabulary": return adapter.rpc(api.readProfileVocabulary, input);
+          default: throw new Error(`Unexpected profile RPC ${method}`);
+        }
+      }) as never,
+      children: h(EngineFeaturesContext.Provider, {
+      value: RUST_ENGINE_FEATURES,
+      children: h(ProfilesPanel, {
+        c: new Proxy({}, { get: () => "#123" }) as never,
+        compact: false, inset: 0, state, repositories: [], busy: false,
+        savePool: async () => {}, savePoolList: async () => true, saveAvailability: async () => {},
+      }),
+    }) }) }));
+    t.after(() => { ui.update(h(React.Fragment)); client.clear(); });
+    assert.ok(ui.query("Worker, all roles: 50 of 50 recent assignments"));
+    assert.ok(ui.query("Reserve, all roles: 0 of 50 recent assignments"));
+    assert.doesNotMatch(ui.text(), /Reading subscriptions/);
+    assert.match(ui.text(), /Unavailable until/);
+    assert.equal(Boolean(ui.query("Edit Worker")), canEditSettings);
+    assert.equal(ui.get(canEditSettings ? "Disable Worker" : "Worker: On").props.disabled, !canEditSettings);
+    assert.equal(ui.get(canEditSettings ? "Enable Reserve" : "Reserve: Off").props.disabled, !canEditSettings);
+  }
+  assert.deepEqual(fake.planningReads(), []);
+});
+
+test("Rust board reads collections on demand across rerenders and event refreshes", async (t) => {
+  const fake = engine();
+  fake.setSession({ id: "planner-session", canEditSettings: false, planningProjects: ["Orbit_Main"] });
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  useNativeStubs();
+  const { useBoardState } = await import("../client/board-state");
+  const { useRecordQueries } = await import("../client/board/use-board-data");
+  const { useInboxBoard } = await import("../client/board/inbox-list");
+  const { createPushInvalidator } = await import("../client/web/rust-board");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invoke = (method: string, input: never) => {
+    switch (method) {
+      case "queue.ui-snapshot": return adapter.rpc(api.uiSnapshot, input);
+      case "queue.plans": return adapter.rpc(api.plans, input);
+      case "lead.board": return adapter.rpc(api.leadBoard, input);
+      case "decision.list": return adapter.rpc(api.decisionList, input);
+      default: throw new Error(`Unexpected board RPC ${method}`);
+    }
+  };
+  const h = React.createElement;
+  function Records({ view }: { view: "needs" | "planning" | "leads" | "queue" }) {
+    const { state, stateQuery } = useBoardState();
+    const records = useRecordQueries({
+      state, stateQuery, view, tab: view === "planning" ? view : "queue", scopeOpen: false,
+    });
+    const inbox = useInboxBoard({
+      state, selection: [], boardLeads: records.boardLeads, leadLinks: records.leadLinks,
+      decisions: records.decisionsQuery.data, hiddenQueued: 0, triageTag: null,
+    });
+    return h("result", {}, JSON.stringify({
+      projects: state?.projects.map(({ key }) => key),
+      needs: inbox.counts.needs,
+      decisions: records.decisionsQuery.data?.map(({ question }) => question),
+      leads: records.leadsQuery.data?.cards.length,
+      lanes: records.planQuery.data?.flatMap(({ laneViews }) => laneViews?.map(({ title }) => title) ?? []),
+    }));
+  }
+  const render = (view: Parameters<typeof Records>[0]["view"]) =>
+    h(QueryClientProvider, { client, children: h(PluginRpcProvider, {
+      invoke: invoke as never,
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES, children: h(Records, { view }),
+      }),
+    }) });
+  const ui = mount(render("needs"));
+  t.after(() => { ui.update(h(React.Fragment)); client.clear(); });
+  const wait = (pattern: RegExp) => waitFor(
+    () => pattern.test(ui.text()), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, pattern.source,
+  );
+  await wait(/p-orbit-main.*"needs":1.*Which path should we take/);
+  assert.deepEqual(fake.planningReads(), ["GET /planning/Orbit_Main/decisions"]);
+  ui.update(render("needs"));
+  await client.refetchQueries({ queryKey: ["nucleus", "state"] });
+  assert.equal(fake.planningReads().length, 1, "board revisions do not cascade to the list");
+
+  ui.update(render("queue"));
+  const push = createPushInvalidator(client);
+  push({ queryKey: ["nucleus"] });
+  await wait(/p-orbit-main/);
+  assert.equal(fake.planningReads().length, 1, "queue does not refresh hidden collections");
+  ui.update(render("planning"));
+  await wait(/"leads":1,"lanes":\["Delivery"\]/);
+  assert.deepEqual(fake.planningReads().slice(1).sort(), [
+    "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
+  ]);
+  ui.update(render("leads"));
+  assert.equal(fake.planningReads().length, 3, "Leads reuses the current items");
+
+  ui.update(render("needs"));
+  await waitFor(() => fake.planningReads().length === 4, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "stale decisions refresh");
+  assert.equal(await adapter.refreshSession(), false);
+  push({ queryKey: ["nucleus"] });
+  await waitFor(() => fake.planningReads().length === 5, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "reconnect refresh");
+  assert.deepEqual(fake.planningReads().slice(3), [
+    "GET /planning/Orbit_Main/decisions", "GET /planning/Orbit_Main/decisions",
+  ]);
+});
+
+test("a project refusal settles lists until the paired session changes", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  fake.denied.add("lantern");
+  const decisions = () => adapter.rpc(api.decisionList, { status: "open" });
+  assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main"]);
+  assert.deepEqual(fake.planningReads(), [
+    "GET /planning/Orbit_Main/decisions", "GET /planning/lantern/decisions",
+  ]);
+  fake.denied.clear();
+  assert.equal(await adapter.refreshSession(), false, "the same session reconnects");
+  await adapter.rpc(api.plans, {});
+  await adapter.rpc(api.leadBoard, {});
+  assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main"]);
+  assert.equal(fake.planningReads().filter((path) => path.includes("/lantern/")).length, 1);
+  fake.setSession({ id: "new-operator-session", canEditSettings: true, planningProjects: null });
+  assert.equal(await adapter.refreshSession(), true);
+  assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main", "d-lantern"]);
 });
 
 test("the paired Profiles panel adds, edits, and duplicates using the shared controls", async (t) => {

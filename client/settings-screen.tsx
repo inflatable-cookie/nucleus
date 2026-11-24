@@ -351,6 +351,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               compact={compact}
               inset={inset}
               state={state ?? null}
+              stateError={stateQuery.error}
               repositories={
                 Array.isArray(repositoriesQuery.data)
                   ? repositoriesQuery.data

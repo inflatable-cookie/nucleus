@@ -115,6 +115,7 @@ export const roleAssignmentUsageSchema = z.object({
 });
 
 export const stateSchema = z.object({
+  canEditSettings: z.boolean().optional(),
   prStates: z
     .record(z.string(), z.enum(["OPEN", "CLOSED", "MERGED"]))
     .default({}),

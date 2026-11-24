@@ -10,6 +10,7 @@ import {
   projectsView,
   storageView,
   type RustAllSettings,
+  type RustBrowserSession,
   type RustApi,
   type RustDispatch,
   type RustDispatchMode,
@@ -17,7 +18,12 @@ import {
   type RustProjects,
   type RustRepository,
 } from "./rust-api";
-import { boardProfile, boardProfileUsage, createRustProfiles } from "./rust-profiles";
+import {
+  boardProfile,
+  boardProfileUsage,
+  boardSubscriptionAvailability,
+  createRustProfiles,
+} from "./rust-profiles";
 import { createRustPlanning } from "./rust-planning";
 import { generatedProjectBadge } from "../../shared/t3/project-badge";
 
@@ -166,13 +172,45 @@ function capacityValues(
 export function createRustAdapter(rust: RustApi = createRustApi()) {
   let revision = 0;
   let keys = projectKeys([]);
-  const planning = createRustPlanning(rust, () => keys);
+  let currentSession: RustBrowserSession | undefined;
+  let sessionRead: Promise<RustBrowserSession> | undefined;
+  const planning = createRustPlanning(rust, settings, () => keys, session);
+
+  function loadSession() {
+    sessionRead ??= rust.session()
+      .then((next) => {
+        if (
+          currentSession?.id === next.id &&
+          currentSession.canEditSettings === next.canEditSettings &&
+          JSON.stringify(currentSession.planningProjects) === JSON.stringify(next.planningProjects)
+        ) return currentSession;
+        currentSession = next;
+        return next;
+      })
+      .finally(() => { sessionRead = undefined; });
+    return sessionRead;
+  }
+
+  function session() {
+    return sessionRead ?? (currentSession ? Promise.resolve(currentSession) : loadSession());
+  }
+
+  async function refreshSession() {
+    const previous = currentSession;
+    const next = await loadSession();
+    return previous !== undefined && previous !== next;
+  }
   const profilesAdapter = createRustProfiles(rust);
 
-  async function settings(): Promise<RustAllSettings> {
-    const all = await rust.settings();
-    keys = projectKeys(Object.keys(all.projects.settings.value.projects));
-    return all;
+  let settingsRead: Promise<RustAllSettings> | undefined;
+  function settings() {
+    settingsRead ??= rust.settings()
+      .then((all) => {
+        keys = projectKeys(Object.keys(all.projects.settings.value.projects));
+        return all;
+      })
+      .finally(() => { settingsRead = undefined; });
+    return settingsRead;
   }
 
   async function editDispatch(edit: (value: RustDispatch) => RustDispatch) {
@@ -208,10 +246,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   }
 
   async function snapshot(): Promise<api.UiBoard> {
-    const [all, tasks, profileUsage] = await Promise.all([
+    const [all, tasks, profileUsage, caller] = await Promise.all([
       settings(),
       rust.board.list(AbortSignal.timeout(30_000)),
       rust.profileUsage(),
+      session(),
     ]);
     const dispatch = all.dispatch.value;
     const backups = await rust.domain(storageView, "storage").catch(() => null);
@@ -220,11 +259,14 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       .sort()
       .at(-1);
     const profiles = all.profiles.value.profiles.map(boardProfile);
-    const rows = projectRows(all);
+    const rows = projectRows(all).filter(({ id }) =>
+      caller.planningProjects === null || caller.planningProjects.includes(id),
+    );
     revision += 1;
     return {
       revision,
       prStates: {},
+      canEditSettings: caller.canEditSettings,
       connected: all.hosts.active.status !== "unavailable",
       hostId: "t3",
       ...modeFlags(dispatch.mode),
@@ -259,15 +301,13 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       tasks: [],
       profiles: profiles.map((entry) => entry.view),
       pool: profiles.map((entry) => entry.pool),
-      availability: (all.profiles.value.pausedGroups ?? []).map((group) => ({
-        group,
-        unavailable: true,
-        reason: "Paused in Settings",
-        retryAt: null,
-      })),
+      availability: boardSubscriptionAvailability(
+        all.profiles.value.pausedGroups ?? [],
+        profileUsage.limitedGroups ?? {},
+      ),
       ...boardProfileUsage(profileUsage),
       queuedCounts: [],
-      lanes: await planning.laneViews(rows),
+      lanes: [],
       projects: rows
         .filter(({ project }) => !project.archived)
         .map(({ board }) => board),
@@ -625,6 +665,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       return contract.output.parse(await handler(parsed as never));
     },
     rust,
+    refreshSession,
   };
 }
 

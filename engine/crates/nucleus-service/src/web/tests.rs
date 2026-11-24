@@ -2425,6 +2425,20 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
         let listed = json_body(browser_request(api, Method::GET, path, cookie, None).await).await;
         assert_eq!(listed, json!([]), "{path}");
     }
+    let decision = json!({
+        "question": "Use the new layout?",
+        "options": [{"id": "yes", "label": "Use it"}, {"id": "no", "label": "Keep the current one"}],
+    });
+    let added = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/planning/local-fixture/decisions",
+        cookie,
+        Some(&decision),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    assert_event(events, &["event: decisions"]).await;
     let item = json!({"kind":"papercut","title":"Toast lingers","body":"It stays.","lanes":[]});
     let added = browser_request(
         api,
@@ -2436,6 +2450,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     .await;
     assert_eq!(added.status(), StatusCode::CREATED);
     assert_eq!(json_body(added).await["kind"], "papercut");
+    assert_event(events, &["event: settings"]).await;
     // The theme is a cache read; a fixture without a host config stream has none yet.
     let theme =
         json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await).await;
@@ -2456,7 +2471,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let window = json!({"counts":{},"groups":{},"sample":0});
     assert_eq!(
         json_body(usage).await,
-        json!({"recent":window,"worker":window,"reviewer":window,"totals":{},"groupTotals":{}})
+        json!({"recent":window,"worker":window,"reviewer":window,"totals":{},"groupTotals":{},"limitedGroups":{}})
     );
     let reassign = browser_request(
         api,
@@ -2521,12 +2536,15 @@ async fn assert_browser_origin(api: &Router, session: &str) {
 
 async fn pair_board(api: &Router, key: &[u8; 32]) -> String {
     let link = json_body(post_as(api, "/v1/board/link", key, &json!({})).await).await;
-    let token = link["url"]
-        .as_str()
-        .expect("pairing link")
+    let url = link["url"].as_str().expect("pairing link");
+    assert!(!url.ends_with(&hex::encode(key)));
+    pair_board_link(api, url).await
+}
+
+async fn pair_board_link(api: &Router, url: &str) -> String {
+    let token = url
         .strip_prefix("http://127.0.0.1:9/#token=")
         .expect("token in fragment");
-    assert_ne!(token, hex::encode(key));
     let pair = || {
         Request::builder()
             .method(Method::POST)

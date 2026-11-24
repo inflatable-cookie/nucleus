@@ -806,6 +806,92 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
     );
 }
 
+#[tokio::test]
+async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let project_id = |actor: &str| {
+        let state = registry.service.state.try_lock().unwrap();
+        state.live_planner_project(actor).unwrap().to_owned()
+    };
+    let alpha = project_id("alpha-planner");
+    let beta = project_id("beta-planner");
+    let assets = registry.home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let api = crate::router_with_board_and_t3_callers(
+        Arc::clone(&registry.service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture-operator".into(),
+            },
+        }],
+        &assets,
+        Some(T3_KEY),
+    )
+    .unwrap();
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let link = json_body(
+        caller_request(
+            &api,
+            Method::POST,
+            "/v1/board/link",
+            "alpha-planner",
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    let planner = pair_board_link(&api, link["url"].as_str().unwrap()).await;
+    let read = |path, cookie| browser_request(&api, Method::GET, path, Some(cookie), None);
+    let operator_view = json_body(read("/api/engine/session", &operator).await).await;
+    let planner_view = json_body(read("/api/engine/session", &planner).await).await;
+    assert_eq!(operator_view["canEditSettings"], true);
+    assert_eq!(operator_view["planningProjects"], Value::Null);
+    assert_eq!(planner_view["canEditSettings"], false);
+    assert_eq!(planner_view["planningProjects"], json!([alpha]));
+    assert_ne!(operator_view["id"], planner_view["id"]);
+    assert_eq!(
+        planner_view,
+        json_body(read("/api/engine/session", &planner).await).await
+    );
+    for collection in ["plan", "items", "decisions"] {
+        let allowed = format!("/api/engine/planning/{alpha}/{collection}");
+        let restricted = format!("/api/engine/planning/{beta}/{collection}");
+        assert_eq!(
+            browser_request(&api, Method::GET, &allowed, Some(&planner), None)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            browser_request(&api, Method::GET, &restricted, Some(&planner), None)
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            browser_request(&api, Method::GET, &restricted, Some(&operator), None)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+    }
+    for path in [
+        "/api/engine/settings/profiles",
+        "/api/engine/profiles/usage",
+    ] {
+        assert_eq!(
+            json_body(browser_request(&api, Method::GET, path, Some(&operator), None).await).await,
+            json_body(browser_request(&api, Method::GET, path, Some(&planner), None).await).await,
+        );
+    }
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
+}
+
 async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
     let service = &registry.service;
     let worktrees = service.worktrees().expect("synthetic worktree root");

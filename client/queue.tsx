@@ -203,7 +203,7 @@ export function MainSurface({
     null,
   );
   const { detailQuery, nextQuery } = useTaskDetail(selected);
-  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
+  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen, view });
   const {
     leadsQuery,
     decisionsQuery,
@@ -213,6 +213,7 @@ export function MainSurface({
     leadLinks,
   } = records;
   const {
+    lanes,
     planningProjects,
     planningLane,
     setPlanningLane,
@@ -271,6 +272,7 @@ export function MainSurface({
   const inbox = useInboxBoard({
     state,
     selection,
+    lanes,
     boardLeads,
     leadLinks,
     decisions: decisionsQuery.data,
@@ -324,7 +326,7 @@ export function MainSurface({
   };
 
   const laneName = (key: string) =>
-    (state?.lanes ?? []).find((lane) => lane.key === key)?.title ?? key;
+    lanes.find((lane) => lane.key === key)?.title ?? key;
   const task = detailQuery.data?.task;
   const inset = space.md;
   // The first failed board read, in plain words: which read failed and why.
@@ -462,6 +464,11 @@ export function MainSurface({
       view={view}
       counts={inbox.counts}
       loaded={Boolean(state)}
+      pendingCounts={features.engine === "rust" ? [
+        ...(!decisionsQuery.data ? ["needs" as const] : []),
+        ...(!planQuery.data ? ["planning" as const] : []),
+        ...(!leadsQuery.data ? ["leads" as const, "papercuts" as const] : []),
+      ] : undefined}
       rust={rustBoard ? { totals: Object.fromEntries(
         Object.entries(rustColumns ?? {}).map(([column, tasks]) => [column, tasks.length]),
       ) } : undefined}
@@ -555,13 +562,13 @@ export function MainSurface({
                 onStep={setPlanningStep}
                 selectedLane={planningLane}
                 onOpenLane={selectPlanningLane}
-                lanes={state?.lanes ?? []}
+                lanes={lanes}
                 projects={state?.projects ?? []}
                 projectActivity={state?.projectActivity ?? []}
                 selection={scope.projects}
                 plans={planQuery.data ?? []}
                 plansError={planMessage(planQuery.error)}
-                lanesLoading={!state && !stateQuery.error}
+                lanesLoading={planQuery.isLoading || (!state && !stateQuery.error)}
                 lanesError={planMessage(stateQuery.error)}
                 onRetryLanes={() => {
                   void stateQuery.refetch();
@@ -764,6 +771,7 @@ export function MainSurface({
                     } : undefined}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
+                    decisionsError={decisionsQuery.error}
                     queuedHidden={queuedHidden}
                     projectForRepository={projectForRepository}
                     selected={selected}

@@ -183,6 +183,7 @@ pub struct Service {
     changes: broadcast::Sender<TaskChange>,
     project_changes: watch::Sender<()>,
     settings_changes: watch::Sender<()>,
+    decision_changes: watch::Sender<()>,
     /// The environment's board theme inputs, cached from the host's config stream.
     theme: watch::Sender<Option<serde_json::Value>>,
     wake: Notify,
@@ -389,6 +390,7 @@ impl Service {
             changes,
             project_changes: watch::Sender::new(()),
             settings_changes: watch::channel(()).0,
+            decision_changes: watch::channel(()).0,
             theme: watch::channel(None).0,
             wake: Notify::new(),
             planner_wake: Notify::new(),
