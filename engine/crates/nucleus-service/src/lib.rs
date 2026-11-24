@@ -205,6 +205,7 @@ struct State {
     last_pass_calls: HostCalls,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
+    board_waits: BTreeMap<String, presentation::BoardWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
@@ -360,6 +361,7 @@ impl Service {
                 last_pass_calls: HostCalls::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                board_waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
@@ -851,7 +853,8 @@ impl Service {
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
-            if state.set_wait(id, None).is_some() {
+            let changed = state.observe_board_wait(&current.task, None)?;
+            if state.set_wait(id, None).is_some() || changed {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
@@ -911,7 +914,7 @@ impl Service {
             Some(profiles::GroupPause::Manual) => state.schedule.park(id),
             None => state.schedule.wake(id, due, priority),
         }
-        let state_changed = presentation::record_wait_state(&state, &row.task, wait)?;
+        let state_changed = state.observe_board_wait(&row.task, wait)?;
         let prior = state.set_wait(id, wait);
         if prior != wait {
             self.title_wake.notify_one();
@@ -953,7 +956,7 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
-        let state_changed = presentation::record_wait_state(state, &row.task, wait)?;
+        let state_changed = state.observe_board_wait(&row.task, wait)?;
         let prior = state.set_wait(id, wait);
         if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
@@ -1260,10 +1263,9 @@ impl Service {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
-        let labels = presentation::prerequisite_labels(task);
-        let version = state
-            .store
-            .save_brief_with_dependencies(prior, task, &audit, &ids, labels)?;
+        let version = state.edit_board_dependency(task, |store, clock| {
+            store.save_brief_with_dependencies(prior, task, &audit, &ids, Some(clock))
+        })?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1278,15 +1280,16 @@ impl Service {
     ) -> Result<i64, ServiceError> {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let allowance = state.allowance_transition(&prior.task, task, &audit.kind);
-        let board_state = presentation::committed_board_state(state, &prior.task, task)?;
+        let (board_wait, state_changed) = state.task_board_transition(&prior.task, task)?;
         let version = state.store.save_accounted(
             prior,
             task,
             &audit,
             subscription_group,
             allowance,
-            board_state.as_deref(),
+            state_changed,
         )?;
+        state.remember_board_wait(task, board_wait, state_changed);
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }

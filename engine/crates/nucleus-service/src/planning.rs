@@ -19,28 +19,21 @@ use crate::{
     schedule::Priority,
 };
 
-fn admission_state(
+fn admission_wait(
     state: &State,
-    task: &Task,
     prerequisites: &[String],
     usage_permission: bool,
-) -> Result<String, ServiceError> {
+) -> Result<Option<WaitReason>, ServiceError> {
     for id in prerequisites {
         if state
             .store
             .row(id)?
             .is_none_or(|row| row.task.phase() != nucleus_core::Phase::Done)
         {
-            return Ok(crate::titles::task_state_label(
-                task,
-                Some(WaitReason::Prerequisite),
-            ));
+            return Ok(Some(WaitReason::Prerequisite));
         }
     }
-    Ok(crate::titles::task_state_label(
-        task,
-        usage_permission.then_some(WaitReason::UsagePermission),
-    ))
+    Ok(usage_permission.then_some(WaitReason::UsagePermission))
 }
 
 #[derive(Deserialize)]
@@ -149,14 +142,15 @@ impl Service {
         admitted.detail = stamp(caller).actor.into();
         let prerequisites =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
-        let state_label = admission_state(&state, &task, &prerequisites, requested_permission)?;
+        let wait = admission_wait(&state, &prerequisites, requested_permission)?;
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
             affected_tests,
-            board_state: Some(&state_label),
+            record_board_entry: true,
         };
         let number = state.store.create_with_facts(&task, &admitted, facts)?;
+        state.admit_board_wait(&task, wait);
         if requested_permission {
             self.inbox_changed();
         }
@@ -239,12 +233,12 @@ impl Service {
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
         let prerequisites =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
-        let state_label = admission_state(&state, &task, &prerequisites, requested_permission)?;
+        let wait = admission_wait(&state, &prerequisites, requested_permission)?;
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
             affected_tests,
-            board_state: Some(&state_label),
+            record_board_entry: true,
         };
         let (_, number) = state.store.promote_item_with_facts(
             &source,
@@ -254,6 +248,7 @@ impl Service {
             stamp(caller),
             facts,
         )?;
+        state.admit_board_wait(&task, wait);
         if requested_permission {
             self.inbox_changed();
         }

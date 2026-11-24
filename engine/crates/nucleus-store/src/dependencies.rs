@@ -176,12 +176,11 @@ impl Store {
         version: i64,
         edit: DependencyEdit<'_>,
         event: &EventDraft,
-        labels: Option<DependencyBoardLabels>,
+        clock: DependencyClock<'_>,
     ) -> Result<i64, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let was_blocked = labels.is_some() && dependency_gate(&tx, id, false)?;
         let changed = tx.execute(
             "UPDATE tasks SET version = version + 1 WHERE id = ?1 AND version = ?2",
             params![id, version],
@@ -235,9 +234,7 @@ impl Store {
                 )?;
             }
         }
-        if let Some(labels) = labels {
-            record_board_gate(&tx, id, &labels, was_blocked, event.at)?;
-        }
+        record_board_gate(&tx, id, clock, event.at)?;
         append(&tx, id, event)?;
         tx.commit()?;
         Ok(version + 1)
@@ -270,30 +267,17 @@ pub(super) fn dependency_gate(
     )?)
 }
 
-/// Display labels to use when a task enters or leaves its prerequisite gate.
-pub struct DependencyBoardLabels {
-    pub ready: String,
-    pub blocked: String,
-}
+/// Reports the committed dependency gate to the service's label comparison.
+pub type DependencyClock<'a> = &'a mut dyn FnMut(bool) -> bool;
 
 pub(super) fn record_board_gate(
     connection: &Connection,
     id: &str,
-    labels: &DependencyBoardLabels,
-    was_blocked: bool,
+    clock: DependencyClock<'_>,
     at: i64,
 ) -> Result<(), StoreError> {
-    if dependency_gate(connection, id, false)? {
-        if !was_blocked {
-            board_state::record(connection, id, &labels.blocked, Some(at))?;
-        }
-    } else {
-        // Keep other active waits, such as capacity, on an unrelated edit.
-        connection.execute(
-            "UPDATE task_board_state SET label = ?2, since_ms = ?4
-             WHERE task_id = ?1 AND label = ?3",
-            params![id, labels.ready, labels.blocked, at],
-        )?;
+    if clock(dependency_gate(connection, id, false)?) {
+        board_state::record(connection, id, at)?;
     }
     Ok(())
 }

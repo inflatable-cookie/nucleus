@@ -2108,7 +2108,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
 }
 
 #[tokio::test]
-async fn board_state_age_survives_an_amendment_and_engine_restart() {
+async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let forge = || GitHub::new("unused-fixture-forge").unwrap();
     let (home, service) = fixture(forge());
     let assets = home.path().join("board");
@@ -2145,25 +2145,14 @@ async fn board_state_age_survives_an_amendment_and_engine_restart() {
     assert!(created.is_u64());
     assert_eq!(&queued["stateSinceMs"], created);
 
-    let row = service.task("age").await.unwrap();
-    let wait = Some(WaitReason::Capacity);
-    // A prior scheduler pass recorded this episode at a fixed time.
+    observe_task_wait(&service, WaitReason::Capacity).await;
     let since = 1_700_000_000_000_i64;
-    let label = crate::titles::task_state_label(&row.task, wait);
     service
         .state
         .lock()
         .await
         .store
-        .record_board_state("age", &label, Some(since))
-        .unwrap();
-    service
-        .schedule_result(
-            &row,
-            &Ok(Action::Wait(WaitReason::Capacity)),
-            crate::schedule::Priority::Wake,
-        )
-        .await
+        .record_board_entry("age", since)
         .unwrap();
     let capacity = read_paired_task(&api, list, &cookie).await[0].clone();
     assert_eq!(capacity["stateLabel"], "Waiting for capacity");
@@ -2189,17 +2178,49 @@ async fn board_state_age_survives_an_amendment_and_engine_restart() {
     drop(api);
     drop(service);
 
-    let api = setup(Arc::new(reopen_fixture(&settings, project, forge())));
+    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let api = setup(Arc::clone(&reopened));
+    observe_task_wait(&reopened, WaitReason::Capacity).await;
+    let recorded = reopened
+        .state
+        .lock()
+        .await
+        .store
+        .board_times("age")
+        .unwrap()
+        .0;
+    assert_eq!(
+        recorded,
+        u64::try_from(since).ok(),
+        "restart did not write a clock"
+    );
+
     for (path, array) in [(list, true), (detail, false), (next, false)] {
         let dto = read_paired_task(&api, path, &cookie).await;
         let view = if array { &dto[0] } else { &dto };
         assert_eq!(view["stateLabel"], "Waiting for capacity", "{path}");
-        assert_eq!(view["stateSinceMs"], since, "{path}");
+        assert!(
+            view["stateSinceMs"].is_null(),
+            "{path} has no verified entry"
+        );
     }
-    assert_eq!(
-        &read_paired_task(&api, detail, &cookie).await["createdAtMs"],
-        created
-    );
+    observe_task_wait(&reopened, WaitReason::ForgeUnknown).await;
+    let changed = read_paired_task(&api, detail, &cookie).await;
+    assert_eq!(changed["stateLabel"], "Waiting for GitHub");
+    assert!(changed["stateSinceMs"].as_i64().unwrap() > since);
+    assert_eq!(&changed["createdAtMs"], created);
+}
+
+async fn observe_task_wait(service: &Service, wait: WaitReason) {
+    let row = service.task("age").await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(wait)),
+            crate::schedule::Priority::Wake,
+        )
+        .await
+        .unwrap();
 }
 
 async fn read_paired_task(api: &Router, path: &str, cookie: &str) -> Value {

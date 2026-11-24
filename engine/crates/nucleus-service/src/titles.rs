@@ -193,8 +193,8 @@ impl Service {
             return;
         }
         let id = &task.identity().id;
-        let label = match presentation::board_state(task, state) {
-            Ok((label, _, _)) => label,
+        let label = match state.board_wait(task) {
+            Ok(wait) => task_state_label(task, wait.reason),
             Err(error) => {
                 eprintln!("{id}: {error}");
                 return;

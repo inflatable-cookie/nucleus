@@ -25,9 +25,8 @@ use rusqlite::{
 use serde_json::{Value, json};
 
 pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, AllowanceView};
-pub use board_state::BoardState;
 pub use dependencies::{
-    Dependencies, DependencyBoardLabels, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
+    Dependencies, DependencyClock, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
 };
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
@@ -124,9 +123,9 @@ pub struct Event {
     pub content: EventDraft,
 }
 
-struct AccountedUpdate<'a> {
+struct AccountedUpdate {
     allowance: AllowanceObservation,
-    board_state: Option<&'a str>,
+    board_state_changed: bool,
 }
 
 /// A committed fresh reviewer reservation that used the ordinary fallback.
@@ -176,7 +175,7 @@ pub struct TaskAdmissionFacts<'a> {
     pub prerequisites: &'a [String],
     pub usage_permission: Option<planning::UsagePermission<'a>>,
     pub affected_tests: bool,
-    pub board_state: Option<&'a str>,
+    pub record_board_entry: bool,
 }
 
 pub struct Store {
@@ -575,14 +574,14 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         prerequisites: &[String],
-        labels: Option<DependencyBoardLabels>,
+        clock: Option<DependencyClock<'_>>,
     ) -> Result<i64, StoreError> {
         self.save(
             expected,
             task,
             event,
             None,
-            Some((prerequisites, labels)),
+            Some((prerequisites, clock)),
             None,
         )
     }
@@ -614,11 +613,11 @@ impl Store {
         event: &EventDraft,
         group: Option<&str>,
         observation: AllowanceObservation,
-        board_state: Option<&str>,
+        board_state_changed: bool,
     ) -> Result<i64, StoreError> {
         let update = AccountedUpdate {
             allowance: observation,
-            board_state,
+            board_state_changed,
         };
         self.save(expected, task, event, group, None, Some(update))
     }
@@ -741,8 +740,8 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         group: Option<&str>,
-        prerequisites: Option<(&[String], Option<DependencyBoardLabels>)>,
-        accounted: Option<AccountedUpdate<'_>>,
+        prerequisites: Option<(&[String], Option<DependencyClock<'_>>)>,
+        accounted: Option<AccountedUpdate>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
@@ -758,18 +757,17 @@ impl Store {
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
         }
-        if let Some((prerequisites, labels)) = prerequisites {
+        if let Some((prerequisites, clock)) = prerequisites {
             let id = &task.identity().id;
-            let was_blocked = labels.is_some() && dependencies::dependency_gate(&tx, id, false)?;
             dependencies::initial_edges(&tx, id, prerequisites)?;
-            if let Some(labels) = labels {
-                dependencies::record_board_gate(&tx, id, &labels, was_blocked, event.at)?;
+            if let Some(clock) = clock {
+                dependencies::record_board_gate(&tx, id, clock, event.at)?;
             }
         }
         if let Some(update) = accounted {
             allowance::observe(&tx, task, update.allowance)?;
-            if let Some(label) = update.board_state {
-                board_state::record(&tx, &task.identity().id, label, Some(event.at))?;
+            if update.board_state_changed {
+                board_state::record(&tx, &task.identity().id, event.at)?;
             }
         }
         if task.phase() == Phase::Done {
@@ -969,8 +967,8 @@ fn admit(
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
-    if let Some(label) = facts.board_state {
-        board_state::record(tx, &identity.id, label, Some(event.at))?;
+    if facts.record_board_entry {
+        board_state::record(tx, &identity.id, event.at)?;
     }
     allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {

@@ -988,8 +988,7 @@ impl Summary {
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
         };
-        let (state_label, state_since_ms, created_at_ms) =
-            crate::presentation::board_state(task, state)?;
+        let (state_label, state_since_ms, created_at_ms) = state.board_state(task)?;
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),

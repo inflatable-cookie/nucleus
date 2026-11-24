@@ -3,9 +3,7 @@ use nucleus_hosts::{NoticeHost, NoticeWrite, T3};
 use nucleus_store::{Dependencies, DependencyEdit, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ControllerScope, Service, ServiceError, State, event, presentation, schedule::Priority,
-};
+use crate::{ControllerScope, Service, ServiceError, State, event, schedule::Priority};
 
 pub(super) fn checks_prerequisites(task: &Task) -> bool {
     !matches!(
@@ -451,10 +449,9 @@ impl Service {
             "prerequisites": ids,
             "reason": reason,
         }).to_string();
-        let labels = presentation::prerequisite_labels(task);
-        row.version = state
-            .store
-            .edit_dependencies(id, version, edit, &audit, labels)?;
+        row.version = state.edit_board_dependency(task, |store, clock| {
+            store.edit_dependencies(id, version, edit, &audit, clock)
+        })?;
         state.set_wait(id, None);
         self.desire_title(&state, task, row.number);
         self.wake_task(&mut state, id, row.version, Priority::Wake);
@@ -495,14 +492,9 @@ impl Service {
         drop(state);
         let _fence = self.effect(row).await?;
         let mut state = self.state.lock().await;
-        let labels = presentation::prerequisite_labels(&row.task);
-        let version = state.store.edit_dependencies(
-            id,
-            row.version,
-            DependencyEdit::ReleaseWait,
-            &audit,
-            labels,
-        )?;
+        let version = state.edit_board_dependency(&row.task, |store, clock| {
+            store.edit_dependencies(id, row.version, DependencyEdit::ReleaseWait, &audit, clock)
+        })?;
         self.desire_title(&state, &row.task, row.number);
         self.wake_task(&mut state, id, version, Priority::Wake);
         Ok(true)

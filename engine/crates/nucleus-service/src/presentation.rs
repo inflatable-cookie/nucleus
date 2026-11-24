@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::RunActivity;
-use nucleus_store::{DependencyBoardLabels, Event, EventDraft, Store, TaskRow};
+use nucleus_store::{DependencyClock, Event, EventDraft, Store, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -18,97 +18,142 @@ pub(super) struct ActivityAt {
     pub(super) activity: RunActivity,
 }
 
-impl ActivityAt {
-    fn current(&self, row: &TaskRow) -> Option<&RunActivity> {
-        let run = row.task.run()?;
-        (!run.revoked() && self.version == row.version && self.instance == run.launch().instance)
-            .then_some(&self.activity)
+#[derive(Clone, Copy)]
+pub(super) struct BoardWait {
+    pub(super) reason: Option<WaitReason>,
+    timed: bool,
+}
+
+impl BoardWait {
+    fn transition(self, prior: &Task, task: &Task, reason: Option<WaitReason>) -> (Self, bool) {
+        let changed =
+            titles::task_state_label(prior, self.reason) != titles::task_state_label(task, reason);
+        (
+            Self {
+                reason,
+                timed: self.timed || changed,
+            },
+            changed,
+        )
     }
 }
 
-pub(super) fn board_state(
-    task: &Task,
-    state: &State,
-) -> Result<(String, Option<u64>, Option<u64>), ServiceError> {
-    let record = state.store.board_state(&task.identity().id)?;
-    let label = record
-        .label
-        .unwrap_or_else(|| legacy_label(task, record.legacy_host_blocked));
-    Ok((label, record.since_ms, record.created_at_ms))
-}
-
-fn legacy_label(task: &Task, legacy_host_blocked: bool) -> String {
-    titles::task_state_label(
-        task,
-        legacy_host_blocked.then_some(WaitReason::HostObservationBlocked),
-    )
-}
-
-pub(super) fn record_wait_state(
-    state: &State,
-    task: &Task,
-    wait: Option<WaitReason>,
-) -> Result<bool, ServiceError> {
-    let id = &task.identity().id;
-    let label = titles::task_state_label(task, wait);
-    let previous = state.store.board_state(id)?;
-    if previous.label.as_deref() == Some(&label) {
-        return Ok(false);
-    }
-    let changed = previous.label.as_ref().map_or_else(
-        || label != legacy_label(task, previous.legacy_host_blocked),
-        |old| label != *old,
-    );
-    let since = if changed && (previous.label.is_some() || previous.legacy_host_blocked) {
-        Some(crate::now_ms())
-    } else {
-        // The first pass after upgrade may observe a wait already in progress.
-        previous.since_ms.filter(|_| !changed)
-    };
-    state.store.record_board_state(
-        id,
-        &label,
-        since.and_then(|value| i64::try_from(value).ok()),
-    )?;
-    Ok(changed)
-}
-
-pub(super) fn prerequisite_labels(task: &Task) -> Option<DependencyBoardLabels> {
-    checks_prerequisites(task).then(|| DependencyBoardLabels {
-        ready: titles::task_state_label(task, None),
-        blocked: titles::task_state_label(task, Some(WaitReason::Prerequisite)),
-    })
-}
-
-pub(super) fn committed_board_state(
-    state: &State,
-    prior: &Task,
-    task: &Task,
-) -> Result<Option<String>, ServiceError> {
-    fn run_basis(task: &Task) -> Option<(&str, bool, bool)> {
-        task.run().map(|run| {
-            (
-                run.launch().instance.as_str(),
-                run.revoked(),
-                run.report().is_some(),
-            )
+impl State {
+    pub(super) fn board_wait(&self, task: &Task) -> Result<BoardWait, StoreError> {
+        let id = &task.identity().id;
+        if let Some(wait) = self.board_waits.get(id) {
+            return Ok(*wait);
+        }
+        Ok(BoardWait {
+            reason: self.prerequisite_wait(task)?,
+            timed: false,
         })
     }
-    // A new role or phase invalidates waits observed for the previous work.
-    let label = titles::task_state_label(task, None);
-    if label == titles::task_state_label(prior, None)
-        && task.phase() == prior.phase()
-        && run_basis(task) == run_basis(prior)
-    {
-        return Ok(None);
+
+    fn prerequisite_wait(&self, task: &Task) -> Result<Option<WaitReason>, StoreError> {
+        Ok(
+            (checks_prerequisites(task) && self.store.dependency_blocked(&task.identity().id)?)
+                .then_some(WaitReason::Prerequisite),
+        )
     }
-    let label =
-        if checks_prerequisites(task) && state.store.dependency_blocked(&task.identity().id)? {
-            titles::task_state_label(task, Some(WaitReason::Prerequisite))
+
+    pub(super) fn admit_board_wait(&mut self, task: &Task, reason: Option<WaitReason>) {
+        self.board_waits.insert(
+            task.identity().id.clone(),
+            BoardWait {
+                reason,
+                timed: true,
+            },
+        );
+    }
+
+    pub(super) fn observe_board_wait(
+        &mut self,
+        task: &Task,
+        reason: Option<WaitReason>,
+    ) -> Result<bool, ServiceError> {
+        let id = &task.identity().id;
+        let before = self.board_wait(task)?;
+        let (mut after, changed) = before.transition(task, task, reason);
+        // A first observation supplies a comparison for later passes, not an entry time.
+        if !self.board_waits.contains_key(id) {
+            after.timed = false;
+        } else if changed {
+            self.store
+                .record_board_entry(id, i64::try_from(crate::now_ms()).unwrap_or(i64::MAX))?;
+        }
+        self.remember_board_wait(task, after, true);
+        Ok(changed)
+    }
+
+    pub(super) fn task_board_transition(
+        &self,
+        prior: &Task,
+        task: &Task,
+    ) -> Result<(BoardWait, bool), StoreError> {
+        let before = self.board_wait(prior)?;
+        let reason = if prior.phase() == task.phase()
+            && run_basis(prior) == run_basis(task)
+            && titles::task_state_label(prior, None) == titles::task_state_label(task, None)
+        {
+            before.reason
         } else {
-            label
+            self.prerequisite_wait(task)?
         };
-    Ok(Some(label))
+        Ok(before.transition(prior, task, reason))
+    }
+
+    pub(super) fn remember_board_wait(&mut self, task: &Task, wait: BoardWait, observed: bool) {
+        let id = &task.identity().id;
+        if task.phase().is_terminal() {
+            self.board_waits.remove(id);
+        } else if observed || self.board_waits.contains_key(id) {
+            self.board_waits.insert(id.clone(), wait);
+        }
+    }
+
+    pub(super) fn edit_board_dependency<T>(
+        &mut self,
+        task: &Task,
+        edit: impl FnOnce(&mut Store, DependencyClock<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let before = self.board_wait(task)?;
+        let mut after = before;
+        let mut changed = false;
+        let result = edit(&mut self.store, &mut |blocked| {
+            let reason = if blocked && checks_prerequisites(task) {
+                Some(WaitReason::Prerequisite)
+            } else {
+                before
+                    .reason
+                    .filter(|reason| *reason != WaitReason::Prerequisite)
+            };
+            (after, changed) = before.transition(task, task, reason);
+            changed
+        })?;
+        self.remember_board_wait(task, after, changed);
+        Ok(result)
+    }
+
+    pub(super) fn board_state(
+        &self,
+        task: &Task,
+    ) -> Result<(String, Option<u64>, Option<u64>), ServiceError> {
+        let wait = self.board_wait(task)?;
+        let (since, created) = self.store.board_times(&task.identity().id)?;
+        let since = since.filter(|_| wait.timed || task.phase().is_terminal());
+        Ok((titles::task_state_label(task, wait.reason), since, created))
+    }
+}
+
+fn run_basis(task: &Task) -> Option<(&str, bool, bool)> {
+    task.run().map(|run| {
+        (
+            run.launch().instance.as_str(),
+            run.revoked(),
+            run.report().is_some(),
+        )
+    })
 }
 
 #[derive(Serialize)]
@@ -144,7 +189,13 @@ impl RunView {
             review_head: launch.review_head.clone(),
             reported: run.report().is_some(),
             revoked: run.revoked(),
-            activity: activity.and_then(|seen| seen.current(row)).cloned(),
+            activity: activity
+                .filter(|seen| {
+                    !run.revoked()
+                        && seen.version == row.version
+                        && seen.instance == launch.instance
+                })
+                .map(|seen| seen.activity.clone()),
         })
     }
 }
@@ -287,8 +338,6 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
     }
     if !records.is_empty() {
         detail.insert("presentation".into(), json!(records));
-    }
-    if detail.contains_key("presentation") {
         audit.detail = Value::Object(detail).to_string();
     }
     audit

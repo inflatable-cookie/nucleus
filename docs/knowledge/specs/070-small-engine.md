@@ -540,10 +540,10 @@ share the label. A blocking hold supplies the label. A hold that lets the
 current turn finish adds an asterisk when the phase is shown. The engine
 records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads
-use the local store. Older rows recover entry from an unambiguous admission or
-terminal audit. A blocked host wait can also recover entry from the current
-version's matching audit and confirmed title. The first post-upgrade observation
-keeps the entry time unknown when the audit cannot identify the episode.
+use local task state and the recorded entry time. Older rows start showing an
+age after a recorded transition. The first scheduler observation after restart
+establishes the current wait without dating it. Finished tasks keep their
+recorded entry time.
 
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. Screens leave out
