@@ -714,19 +714,8 @@ impl Service {
             {
                 return Ok(ControlFlow::Break(WaitReason::HostUnknown));
             }
-            let mut prior = state.store.task_turn_command(
-                &identity.id,
-                "native_turn_intent",
-                row.version,
-                &session,
-            )?;
-            if let Some(command) = &prior
-                && state.store.task_turn_failed(&identity.id, command)?
-            {
-                prior = None;
-            }
             (
-                prior,
+                prior_preparation_command(&state, row, &session)?,
                 state
                     .waits
                     .get(&identity.id)
@@ -1492,6 +1481,23 @@ impl Service {
         self.save(row, updated, &audit).await?;
         Ok(action)
     }
+}
+
+fn prior_preparation_command(
+    state: &crate::State,
+    row: &TaskRow,
+    session: &str,
+) -> Result<Option<String>, ServiceError> {
+    let id = &row.task.identity().id;
+    let prior = state
+        .store
+        .task_turn_command(id, "native_turn_intent", row.version, session)?;
+    if let Some(command) = &prior
+        && state.store.task_turn_failed(id, command)?
+    {
+        return Ok(None);
+    }
+    Ok(prior)
 }
 
 fn freeze_launch(
