@@ -25,7 +25,7 @@ export const syntheticVolumeFixtures = {
   'test/backups-panel-ui.test.ts': ['example-volume'],
 };
 const imageExtension = /\.(?:png|jpe?g|gif|webp|avif|ico|bmp|tiff?|svg)$/i;
-const assetFolder = /^(?:docs\/assets|assets)\//;
+const assetFolder = /^(?:(?:docs|engine)\/)?assets\//;
 const machinePath = /(?<![\w./\\-])(?:file:\/\/(?:localhost)?\/?)?(?:\/(?:Users|Volumes|home|root|var\/root)\/[^\s\x00"'`<>;,)}\]]+|[a-z]:[\\/]+(?:Users|Documents and Settings)[\\/]+[^\s"'<>]+)/gi;
 
 class PublicationConfigError extends Error {}

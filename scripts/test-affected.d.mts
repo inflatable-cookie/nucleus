@@ -7,6 +7,7 @@ export function selectAffected(input: {
   changed: string[];
   files: Set<string>;
   sources: Map<string, string>;
+  testFiles?: Iterable<string>;
   max?: number;
 }): {
   tests: { file: string; reasons: string[] }[];
@@ -19,4 +20,5 @@ export function readRepository(base: string, head: string, paths?: string[] | nu
   changed: string[];
   files: Set<string>;
   sources: Map<string, string>;
+  testFiles: string[];
 };

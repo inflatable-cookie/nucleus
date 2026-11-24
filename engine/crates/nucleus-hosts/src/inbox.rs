@@ -174,6 +174,47 @@ impl T3 {
         lifecycle_write(&snapshot, action)
     }
 
+    /// Read the favicon configured on the fixed Rust Inbox project.
+    /// # Errors
+    /// Returns an error if the native project cannot be verified.
+    pub async fn inbox_favicon(
+        &self,
+        target: &InboxTarget<'_>,
+    ) -> Result<Option<String>, HostError> {
+        let shell = self.inbox_shell().await?;
+        Ok(owned_inbox_project(&shell, target.root)?
+            .and_then(|project| project["faviconPath"].as_str())
+            .map(str::to_owned))
+    }
+
+    /// Prepare a favicon update on the fixed Rust Inbox project when it differs.
+    /// # Errors
+    /// Returns an error if the project or its observed revision cannot be verified.
+    pub async fn prepare_inbox_favicon(
+        &self,
+        target: &InboxTarget<'_>,
+        desired: Option<&str>,
+    ) -> Result<Option<InboxWrite>, HostError> {
+        let shell = self.inbox_shell().await?;
+        let Some(project) = owned_inbox_project(&shell, target.root)? else {
+            return if desired.is_none() {
+                Ok(None)
+            } else {
+                Err(HostError::Binding)
+            };
+        };
+        if project["faviconPath"].as_str() == desired {
+            return Ok(None);
+        }
+        let revision = project["updatedAt"].as_str().ok_or(HostError::Protocol)?;
+        let action = if desired.is_some() { "set" } else { "clear" };
+        Ok(Some(InboxWrite::new(
+            "projects.mutate",
+            format!("nucleus-rust-inbox-favicon-{action}-{revision}"),
+            json!({"type":"project.update","projectId":PROJECT,"faviconPath":desired}),
+        )))
+    }
+
     async fn inbox_projection(&self, target: &InboxTarget<'_>) -> Result<Option<Value>, HostError> {
         let Some(snapshot) = self.inbox_thread(INBOX_THREAD, true).await? else {
             return Ok(None);
@@ -224,27 +265,12 @@ impl T3 {
         target: &InboxTarget<'_>,
         shell: &Value,
     ) -> Result<InboxWrite, HostError> {
-        let projects = shell["snapshot"]["projects"]
-            .as_array()
-            .ok_or(HostError::Protocol)?;
-        let mut found = projects.iter().filter(|project| project["id"] == PROJECT);
-        match found.next() {
-            None if !projects
-                .iter()
-                .any(|project| project["workspaceRoot"] == target.root) =>
-            {
-                return Ok(InboxWrite::new(
-                    "projects.mutate",
-                    "nucleus-rust-inbox-project".into(),
-                    json!({"type":"project.create","projectId":PROJECT,"title":TITLE,"workspaceRoot":target.root}),
-                ));
-            }
-            Some(project)
-                if project["workspaceRoot"] == target.root
-                    && found.next().is_none()
-                    && project["archivedAt"].is_null()
-                    && project["deletedAt"].is_null() => {}
-            _ => return Err(HostError::Binding),
+        if owned_inbox_project(shell, target.root)?.is_none() {
+            return Ok(InboxWrite::new(
+                "projects.mutate",
+                "nucleus-rust-inbox-project".into(),
+                json!({"type":"project.create","projectId":PROJECT,"title":TITLE,"workspaceRoot":target.root}),
+            ));
         }
         if !self.read_catalog().await?.supports_parent(target.provider) {
             return Err(HostError::Configuration);
@@ -274,6 +300,30 @@ impl T3 {
             Reply::Value(_) => Ok(()),
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
+    }
+}
+
+fn owned_inbox_project<'a>(shell: &'a Value, root: &str) -> Result<Option<&'a Value>, HostError> {
+    let projects = shell["snapshot"]["projects"]
+        .as_array()
+        .ok_or(HostError::Protocol)?;
+    let mut found = projects.iter().filter(|project| project["id"] == PROJECT);
+    match found.next() {
+        Some(project)
+            if project["workspaceRoot"] == root
+                && found.next().is_none()
+                && project["archivedAt"].is_null()
+                && project["deletedAt"].is_null() =>
+        {
+            Ok(Some(project))
+        }
+        None if !projects
+            .iter()
+            .any(|project| project["workspaceRoot"] == root) =>
+        {
+            Ok(None)
+        }
+        _ => Err(HostError::Binding),
     }
 }
 

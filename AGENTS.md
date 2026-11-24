@@ -25,21 +25,20 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 
 ## Commands
 
+- `effigy engine:fmt`, `effigy engine:check`, `effigy engine:clippy` and
+  `effigy engine:nextest` — the Rust engine's format, check, lint and test selectors.
 - Agents use the installed `nucleus` command from any directory (Tom, 2026-11-16); repository CLI files are internal.
-
 - `effigy tasks` — task inventory; `effigy test --plan` shows the test shape.
-- `effigy check` — typecheck and publication gate.
+- `effigy check` — TypeScript typecheck and publication gate.
 - `effigy qa:docs` — docs checks.
-- `effigy test:affected [base] [--run]` — the test files near the change
+- `effigy test:affected [base] [--run]` — active TypeScript tests near the change
   (against `origin/main` by default, at most 60; `--run` runs them).
-- `effigy qa` — the full local board: typecheck, docs checks, the parallel
-  suite and the serial wall-clock lane (`test:timing`), fast checks first.
-- Parallel unit runs allow each physical test file 120 seconds in total
-  (`--test-timeout` bounds the whole file, not each test); six files run at once
-  and each force-exits after its tests finish. Real hook and Git fixture
-  families split across shards to stay inside that budget (see
-  [orchestration contract](docs/knowledge/contracts/orchestration.md)). The
-  wall-clock timing lane gets 10 minutes per test.
+- `effigy qa` — the full milestone board, including the Rust workspace,
+  typecheck, docs and active TypeScript tests.
+
+The TypeScript engine is stopped. Rust reuses the board's TypeScript client
+and shared code, so their tests and typecheck stay active. See
+[Spec 070](docs/knowledge/specs/070-small-engine.md#rulings).
 
 Existing npm scripts stay package-native; do not add wrappers around Effigy.
 
@@ -108,26 +107,18 @@ guard, proof tuple or exception-specific control is never the fix.
 
 ## Validate
 
-Run `effigy check` once. Then, at the committed head, run the affected test files
-once with `effigy test:affected --run` (Tom, 2026-11-12). It selects the tests near
-the change: every `test/**/*.test.ts` that imports a changed file directly or through
-the test tree's own helpers and shard case files, plus any test that names a changed
-file's path, or reads one of its ancestor directories, as a string literal. The import
-walk never passes through production modules, and at most 60 files run, nearest first;
-the rest are printed as deferred to milestone QA, which runs the full suite (Tom,
-2026-11-18: "we need to avoid slamming the machine with concurrent large test runs").
-A deferred file is never a review finding. Run `effigy test:affected` without `--run`
-to see the list and each file's reason. Run `effigy qa:docs` if docs changed.
-Wall-clock oracles in the selection skip in the parallel lane and run in milestone
-QA's timing lane. Node test options ride after the files for a single file,
-e.g. `effigy test unit -- test/<file>.test.ts --test-skip-pattern=<pattern>`;
-the unit runner moves them ahead of the files. No full suites,
-no `effigy qa`, no Cargo builds (Tom, 2026-10-04). Those run in milestone QA
-on `main`: an ordinary report-only task pinned to one commit, per
-[milestone QA](docs/knowledge/contracts/milestone-qa.md), never a managed
-`project.qa.run` launch. A missing or failing affected-test run is a review
-finding; anything wider than the affected set never is.
-Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. Rerun a failing test file alone before believing it; use `effigy test:baseline <file>` for the `origin/main` baseline; UI changes are checked in
-the installed bundle in dark theme by the planner after the roll. The installed plugin
-runs from `main`, so a worker can't check its own PR's UI, and that check never blocks
-a worker or a review.
+For Rust changes, run `effigy engine:fmt` and scope `effigy engine:check`,
+`effigy engine:clippy` and `effigy engine:nextest` with `-p <crate>` for each
+affected crate. Run the selectors serially. Full workspace validation and
+`effigy qa` belong to [milestone QA](docs/knowledge/contracts/milestone-qa.md),
+an ordinary report-only task pinned to one published `main` commit.
+
+Run `effigy check` once and `effigy qa:docs` when docs change. At the committed
+head, run `effigy test:affected --run` once. It selects active TypeScript tests
+through imports, test helpers and literal paths. The closest 60 files run and
+the rest are deferred to milestone QA. Run it without `--run` to see the
+selection and reasons. A missing or failing affected run is a review finding.
+
+Use the printed failure summary to find failing files, then rerun each alone.
+Use `effigy test:baseline <file>` for the `origin/main` comparison. The planner
+checks UI changes in the installed bundle in dark theme after the roll.

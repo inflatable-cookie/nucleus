@@ -506,14 +506,17 @@ engine's observation of the pinned Rust Inbox. During the TS transition, a
 still-pinned TS Inbox defers Rust Inbox setup. Rerun install once that Inbox
 is retired. The Rust provider can already be ready at that point.
 
+Install publishes the bundled `nucleus-icon.svg` in the engine home and sets
+the fixed Rust Inbox project's `faviconPath` to that file.
+
 Status uses the runtime bearer for T3 readback and the control key for
 authenticated engine health. It reports configured Storage roots, the CLI
-version, the exact Rust provider and launcher, and native Inbox presence, pin
-and session health. Missing credentials or unavailable reads leave the
+version, the exact Rust provider and launcher, and native Inbox presence, pin,
+favicon path and session health. Missing credentials or unavailable reads leave the
 corresponding status unknown.
 
 Uninstall verifies the Rust registration and its local launcher, unpins and
-archives only the verified Rust Inbox, and removes `nucleus-rust`. It keeps
+archives the verified Rust Inbox, clears its project favicon, and removes `nucleus-rust`. It keeps
 the launcher, engine data and decisions. T3's remove operation takes only an
 instance ID, so keep the provider unchanged in T3 Settings during uninstall.
 The command checks the exact registration immediately before removal and
@@ -660,10 +663,9 @@ Milestone 4 removes the remaining TypeScript transition paths:
 
 - The per-repository pilot manifest compatibility and the TypeScript admission
   selector. The global no-new-work switch covers the drain.
-- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim sends
-  calls with a TS ticket or continuation binding, `helper`, and `worktree`
-  to the legacy CLI. Effigy worktree hooks still use `prepare`, `link`, and
-  `unlink`.
+- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim forwards
+  only `worktree` through the packaged launcher to `bin/worktree.mjs`.
+  Effigy worktree hooks still use `prepare`, `link`, and `unlink`.
 - The TypeScript Inbox bridge and board proxy.
 - The TypeScript Settings screens and their RPC wiring. The Rust-backed
   Settings screens become the only Settings surface.

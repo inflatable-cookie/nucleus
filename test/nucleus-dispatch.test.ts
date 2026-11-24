@@ -23,7 +23,10 @@ test('the cutover shim preserves Effigy worktree hook arguments and normal Rust 
     ['legacy', ['worktree', 'prepare', '/fixture checkout'], {}],
     ['legacy', ['worktree', 'link', '/fixture checkout'], {}],
     ['legacy', ['worktree', 'unlink', '/fixture checkout'], {}],
-    ['legacy', ['helper', 'report'], { NUCLEUS_CONTINUATION_TICKET: '' }],
+    ['rust', ['helper', 'report'], {}],
+    ['rust', ['plan.get'], { NUCLEUS_TICKET: '/fixture/ticket' }],
+    ['rust', ['plan.get'], { NUCLEUS_CONTINUATION_TICKET: '' }],
+    ['rust', ['plan.get'], { NUCLEUS_CONTINUATION_RUN_ID: 'previous-run' }],
     ['rust', ['plan.get'], {}],
   ] as const) {
     const result = spawnSync(shim, args, { env: { HOME: home, ...env }, encoding: 'utf8' });
