@@ -492,13 +492,15 @@ impl T3 {
                     custody.members.entry(id.into()).or_default();
                 }
             }
+            let parent_row = shell.and_then(|shell| shell.marker(&parent));
             Some((
-                managed && shell.and_then(|shell| shell.marker(&parent)).is_none(),
+                managed && parent_row.is_none(),
+                parent_row.is_some_and(|row| row_activity(&row) == RowChildren::Active),
                 custody.refresh(shell),
                 shell.and_then(|shell| custody.lost_closure(shell, &parent)),
             ))
         });
-        let Some((dormant, pending, lost)) = marker else {
+        let Some((dormant, parent_active, pending, lost)) = marker else {
             return Ok(ArchiveStep::Wait(ArchiveWait::Runtime));
         };
         if let Some(wait) = lost {
@@ -510,6 +512,9 @@ impl T3 {
             } else {
                 ArchiveWait::Child(thread)
             }));
+        }
+        if parent_active {
+            return Ok(ArchiveStep::Wait(ArchiveWait::ParentCustody));
         }
         for &id in retained {
             if id == parent {
@@ -583,10 +588,15 @@ impl T3 {
         for (id, member) in custody.members.iter_mut().filter(|(id, _)| **id != parent) {
             let observation = if member.closed.is_some() {
                 None
-            } else if self.rpc.uses_held_shell() && self.rpc.thread_row(id).is_none() {
-                unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
-                continue;
             } else {
+                let held = self.rpc.thread_row(id);
+                if held.is_none() && self.rpc.uses_held_shell() {
+                    unresolved.get_or_insert_with(|| ArchiveWait::Child(id.clone()));
+                    continue;
+                }
+                if held.is_some_and(|row| row_activity(&row) == RowChildren::Active) {
+                    return Ok(ArchiveStep::Wait(ArchiveWait::Child(id.clone())));
+                }
                 let (view, fence) = self
                     .observe_thread(binding, id, ThreadRead::Terminal)
                     .await?;

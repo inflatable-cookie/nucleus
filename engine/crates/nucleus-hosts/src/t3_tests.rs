@@ -379,6 +379,34 @@ async fn unlisted_legacy_worker_waits_for_held_closure_without_a_native_read() {
 }
 
 #[tokio::test]
+async fn archive_waits_for_a_held_active_parent_without_reading_it() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let host = T3::new("http://127.0.0.1:9/", "fixture-bearer").unwrap();
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":123,"threads":[{"id":parent,"status":"starting"}],"projects":[]
+        }}));
+    let mut custody = crate::ArchiveCustody::default();
+    for _ in 0..2 {
+        let crate::ArchiveStep::Wait(wait) = host
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD], &mut custody)
+            .await
+            .unwrap()
+        else {
+            panic!("the held parent is starting another run");
+        };
+        assert_eq!(
+            wait.note(Some(THREAD), None),
+            "Waiting to confirm the task thread is quiet before archiving."
+        );
+    }
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
 #[expect(
     clippy::too_many_lines,
     reason = "reuse the same archive receipt across restart and reopen controls"
@@ -595,11 +623,7 @@ async fn reopened_child_invalidates_archive_before_dispatch_and_after_restart() 
             }}));
     };
     let read = "orchestration.subscribeThread";
-    let (host, native) = server(vec![
-        (read, Response::ParentSnapshot(parent_view.clone())),
-        (read, Response::ParentSnapshot(child("old", false))),
-    ])
-    .await;
+    let (host, native) = server(vec![(read, Response::ParentSnapshot(parent_view.clone()))]).await;
     install(&host, child(THREAD, true), child("old", false), Value::Null);
     let mut custody = crate::ArchiveCustody::default();
     let provider = "fixture-acp";
@@ -636,14 +660,10 @@ async fn reopened_child_invalidates_archive_before_dispatch_and_after_restart() 
         host.write_verified_parent(*parent_archive).await,
         Err(crate::ParentSendError::NotSent(HostError::Deferred { .. }))
     ));
-    assert_eq!(native.await.unwrap().len(), 2);
+    assert_eq!(native.await.unwrap().len(), 1);
 
-    let (restarted, native) = server(vec![
-        (read, Response::ParentSnapshot(parent_view.clone())),
-        (read, Response::Snapshot(child(THREAD, false))),
-        (read, Response::ParentSnapshot(child("replacement", false))),
-    ])
-    .await;
+    let (restarted, native) =
+        server(vec![(read, Response::ParentSnapshot(parent_view.clone()))]).await;
     install(
         &restarted,
         child(THREAD, false),
@@ -667,8 +687,8 @@ async fn reopened_child_invalidates_archive_before_dispatch_and_after_restart() 
         crate::ArchiveStep::Wait(_)
     ));
     let seen = native.await.unwrap();
-    assert_thread_subscription(&seen[1], THREAD);
-    assert_thread_subscription(&seen[2], "replacement");
+    assert_eq!(seen.len(), 1, "held active children must not be polled");
+    assert_thread_subscription(&seen[0], &parent);
 }
 
 #[tokio::test]
@@ -2593,7 +2613,7 @@ async fn quiet_inbox_reuses_its_projection_and_held_project() {
         let (step, calls) =
             T3::count_pass_calls(Box::pin(host.prepare_inbox(&target, &pending))).await;
         assert!(
-            matches!(step, Ok(crate::InboxStep::Ready { forms, commands }) if forms.is_empty() && commands.is_empty())
+            matches!(step, Ok(crate::InboxStep::Ready { forms, commands, active_run: None }) if forms.is_empty() && commands.is_empty())
         );
         assert_eq!(calls.get("orchestration.subscribeThread"), expected);
         assert!(!calls.contains_key("orchestration.subscribeShell"));

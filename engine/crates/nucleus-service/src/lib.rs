@@ -578,7 +578,6 @@ impl Service {
             }
             return Ok(Action::Nothing);
         }
-        let id = &row.task.identity().id;
         if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
