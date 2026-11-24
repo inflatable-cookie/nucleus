@@ -108,7 +108,7 @@ struct Grant {
 }
 
 #[derive(Clone)]
-struct BrowserSession {
+pub(super) struct BrowserSession {
     id: [u8; 32],
     scope: ControllerScope,
     expires: Instant,
