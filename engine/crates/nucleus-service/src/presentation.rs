@@ -10,7 +10,6 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Forge, Head, Observed, Phase, Question, Report, Review, Role, Task, Verdict, WaitReason,
     acp::lifecycle::{Milestone, Outcome},
-    profiles::Provider,
 };
 use nucleus_hosts::RunActivity;
 use nucleus_store::{DependencyClock, Event, EventDraft, Store, StoreError, TaskRow};
@@ -110,9 +109,6 @@ pub(super) struct RunView {
     thread: String,
     instance: String,
     purpose: String,
-    thread_url: Option<String>,
-    provider: Option<Provider>,
-    model: Option<String>,
     reserved_at: u64,
     last_send_at: Option<u64>,
     review_head: Option<Head>,
@@ -132,9 +128,6 @@ impl RunView {
         Some(Self {
             role: launch.role,
             thread: launch.thread.clone(),
-            thread_url: nucleus_hosts::thread_link(&launch.thread),
-            provider: launch.profile().map(|profile| profile.provider),
-            model: launch.profile().map(|profile| profile.model.clone()),
             instance: launch.instance.clone(),
             purpose: purpose(&row.task, launch.role, review_round),
             reserved_at: launch.started_at,
@@ -142,15 +135,24 @@ impl RunView {
             review_head: launch.review_head.clone(),
             reported: run.report().is_some(),
             revoked: run.revoked(),
-            activity: activity
-                .filter(|seen| {
-                    !run.revoked()
-                        && seen.version == row.version
-                        && seen.instance == launch.instance
-                })
-                .map(|seen| seen.activity.clone()),
+            activity: run_activity(row, activity).cloned(),
         })
     }
+}
+
+pub(super) fn run_activity<'a>(
+    row: &TaskRow,
+    activity: Option<&'a ActivityAt>,
+) -> Option<&'a RunActivity> {
+    let run = row.task.run().filter(|run| !run.revoked())?;
+    activity
+        .filter(|seen| seen.version == row.version && seen.instance == run.launch().instance)
+        .map(|seen| &seen.activity)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TranscriptRequest<'a> {
+    pub(super) activity: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -211,7 +213,6 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
                 purpose: purpose(task, launch.role, round),
                 review_head: launch.review_head.clone(),
                 thread: Some(launch.thread.clone()),
-                thread_url: nucleus_hosts::thread_link(&launch.thread),
                 provider: launch.profile().map(|profile| profile.provider),
                 model: launch.profile().map(|profile| profile.model.clone()),
                 started_at_ms: run.last_send_at_ms(),

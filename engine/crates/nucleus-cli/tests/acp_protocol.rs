@@ -258,16 +258,22 @@ async fn view(
     {
         return (StatusCode::UNAUTHORIZED, Json(json!(null)));
     }
-    let run = if matches!(state, 0 | 3 | 5 | 7) {
-        Value::Null
+    let cards = if matches!(state, 0 | 5) {
+        Vec::new()
     } else {
-        let activity = if state == 2 {
-            json!({"label":"Running Rust tests","startedAt":null})
-        } else {
-            Value::Null
-        };
-        json!({"instance":INSTANCE,"role":"worker","purpose":"Write the fixture","lastSendAt":1,
-            "reported":state == 4,"activity":activity})
+        let outcome = (state == 3).then(|| {
+            json!({
+                "kind":"work","url":"https://github.com/example/fixture/pull/7",
+                "summary":"Fixed the fixture.","revision":false,
+            })
+        });
+        vec![json!({
+            "instance":INSTANCE,"role":"worker","purpose":"Write the fixture",
+            "provider":"codex","model":"fixture-model","threadUrl":"t3-thread://v1/thread:worker",
+            "startedAtMs":1_000,"elapsedMs":(state == 3).then_some(62_000),
+            "ended":matches!(state, 3 | 7),"outcome":outcome,
+            "activity":(state == 2).then_some("Running Rust tests"),
+        })]
     };
     let step_state = if state == 3 { "done" } else { "current" };
     let step_note = match state {
@@ -286,39 +292,11 @@ async fn view(
             "lifecycle":{"steps":[
                 {"key":"queued","label":"Queued","state":"done","tone":"success"},
                 {"key":"working","label":"Working","state":step_state,"note":step_note,"tone":"accent"}
-            ]},
-            "question":null,"run":run,
+            ],"transcript":{"cards":cards,"completedReviews":0,"merged":false,"externalAcceptances":[]}},
             "parentHold": (state == 0).then(|| legacy_parent_hold_prompt("fixture-hold")),
             "activeChild": matches!(state, 1 | 2 | 8)
         })),
     )
-}
-
-async fn history(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
-    if matches!(fixture.state.load(Ordering::Relaxed), 0 | 5) {
-        return Json(json!([]));
-    }
-    let mut history = vec![json!({"sequence":1,"presentation":[
-        {"kind":"run_started","instance":INSTANCE,"role":"worker","purpose":"Write the fixture",
-            "provider":"codex","model":"fixture-model","threadUrl":"t3-thread://v1/thread:worker",
-            "startedAtMs":1_000}
-    ]})];
-    if matches!(fixture.state.load(Ordering::Relaxed), 3 | 7) {
-        history.insert(
-            0,
-            json!({"sequence":3,"presentation":[{"kind":"run_ended","instance":INSTANCE}]}),
-        );
-    }
-    if fixture.state.load(Ordering::Relaxed) == 3 {
-        history.insert(
-            1,
-            json!({"sequence":2,"content":{"kind":"reported","at":63_000},
-            "presentation":[{"kind":"run_reported","instance":INSTANCE,"sentAtMs":1_000,
-                "outcome":{"kind":"work","url":"https://github.com/example/fixture/pull/7",
-                    "summary":"Fixed the fixture.","revision":false}}]}),
-        );
-    }
-    Json(json!(history))
 }
 
 async fn events(
@@ -359,7 +337,6 @@ async fn loopback() -> (
     });
     let api = Router::new()
         .route("/v1/tasks/fixture", get(view))
-        .route("/v1/tasks/fixture/history", get(history))
         .route("/v1/tasks/fixture/events", get(events))
         .route(
             "/v1/tasks/fixture/commands",

@@ -9,13 +9,8 @@ use std::{
 };
 
 use nucleus_core::{
-    Identity, Phase, PullRequest, Question, Role,
-    acp::{
-        InboxAnswer, InboxSnapshot, SessionBinding,
-        lifecycle::{Lifecycle, Milestone},
-        session_id,
-    },
-    profiles::Provider,
+    Identity, Phase, PullRequest,
+    acp::{InboxAnswer, InboxSnapshot, SessionBinding, lifecycle::Lifecycle, session_id},
 };
 use reqwest::{
     Client, Method, Response, StatusCode,
@@ -136,8 +131,6 @@ pub(crate) struct Detail {
     pub reference: Option<String>,
     pub phase: Phase,
     pub lifecycle: Lifecycle,
-    pub question: Option<Question>,
-    pub question_url: Option<String>,
     #[serde(default)]
     pub operator_inbox: bool,
     pub plan_scope_id: Option<String>,
@@ -146,7 +139,6 @@ pub(crate) struct Detail {
     pub active_child: bool,
     #[serde(default)]
     pub transcript_pending: bool,
-    pub run: Option<Run>,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
 }
@@ -154,39 +146,6 @@ pub(crate) struct Detail {
 #[derive(Deserialize)]
 pub(crate) struct Report {
     pub delivery: Option<nucleus_core::ReportDelivery>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Run {
-    pub instance: String,
-    pub role: Role,
-    pub purpose: String,
-    pub last_send_at: Option<u64>,
-    pub thread_url: Option<String>,
-    pub provider: Option<Provider>,
-    pub model: Option<String>,
-    pub activity: Option<Activity>,
-}
-
-#[derive(Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Activity {
-    pub label: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct Event {
-    pub sequence: i64,
-    pub content: Option<EventContent>,
-    #[serde(default)]
-    pub presentation: Vec<Milestone>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct EventContent {
-    pub at: u64,
-    pub kind: String,
 }
 
 impl ServiceClient {
@@ -247,25 +206,6 @@ impl ServiceClient {
             return Err(Failure::Binding);
         }
         Ok(detail)
-    }
-
-    pub(crate) async fn history(&self, after: i64) -> Result<Vec<Event>, Failure> {
-        let mut events = Vec::new();
-        let mut before = i64::MAX;
-        loop {
-            let page: Vec<Event> = self
-                .get(&format!("/history?limit=100&before={before}"))
-                .await?;
-            let next = page.last().map_or(after, |event| event.sequence);
-            let more = page.len() == 100 && next > after && next < before;
-            events.extend(page.into_iter().filter(|event| event.sequence > after));
-            if !more {
-                break;
-            }
-            before = next;
-        }
-        events.reverse();
-        Ok(events)
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Failure> {

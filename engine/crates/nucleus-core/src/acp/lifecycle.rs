@@ -12,19 +12,16 @@ pub struct Lifecycle {
     pub admitted_at_ms: Option<u64>,
     pub finished_at_ms: Option<u64>,
     pub review_round: Option<u64>,
-    pub completed_reviews: Option<u64>,
     pub worker: Option<Participant>,
     pub reviewer: Option<Participant>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<Transcript>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Participant {
     pub thread: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin_instance: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_url: Option<String>,
     pub provider: Option<Provider>,
     pub model: Option<String>,
 }
@@ -102,8 +99,6 @@ pub enum Milestone {
         #[serde(skip_serializing_if = "Option::is_none")]
         thread: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        thread_url: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         provider: Option<Provider>,
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
@@ -165,33 +160,31 @@ pub enum Outcome {
     },
 }
 
-/// A run starts at its first recorded send. Its report duration uses the send
-/// that received the report, including after a proven retry.
-#[derive(Debug, Default)]
-pub struct RunClock {
-    pub started_at_ms: Option<u64>,
-    sent_at_ms: Option<u64>,
-    elapsed_ms: Option<u64>,
+/// Role facts from the same audit as the lifecycle steps.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transcript {
+    pub cards: Vec<RoleCard>,
+    pub completed_reviews: u64,
+    pub merged: bool,
+    pub question: Option<Question>,
+    pub question_url: Option<String>,
+    pub question_owner: Option<String>,
+    pub external_acceptances: Vec<(i64, String)>,
 }
 
-impl RunClock {
-    pub fn sent(&mut self, at_ms: u64) {
-        if self.elapsed_ms.is_none() {
-            self.started_at_ms.get_or_insert(at_ms);
-            self.sent_at_ms = Some(at_ms);
-        }
-    }
-
-    pub fn reported(&mut self, at_ms: u64, sent_at_ms: Option<u64>) {
-        if self.elapsed_ms.is_none() {
-            self.elapsed_ms = sent_at_ms
-                .or(self.sent_at_ms)
-                .and_then(|sent| at_ms.checked_sub(sent));
-        }
-    }
-
-    #[must_use]
-    pub const fn elapsed_ms(&self) -> Option<u64> {
-        self.elapsed_ms
-    }
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleCard {
+    pub instance: String,
+    pub role: Role,
+    pub purpose: String,
+    pub thread_url: Option<String>,
+    pub provider: Option<Provider>,
+    pub model: Option<String>,
+    pub started_at_ms: Option<u64>,
+    pub elapsed_ms: Option<u64>,
+    pub ended: bool,
+    pub outcome: Option<Outcome>,
+    pub activity: Option<String>,
 }

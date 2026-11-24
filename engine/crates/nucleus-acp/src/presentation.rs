@@ -1,39 +1,23 @@
-use std::{collections::BTreeMap, fmt::Write as _, sync::LazyLock};
+use std::{collections::BTreeMap, fmt::Write as _};
 
-use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
-    Phase, PullRequest, Question, Repair, Review, Role, Verdict,
-    acp::lifecycle::{Milestone, Outcome, RunClock, StepState},
+    Phase, Question, Repair, Review, Role,
+    acp::lifecycle::{Outcome, RoleCard, StepState, Transcript},
     profiles::Provider,
 };
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
-use crate::client::{Activity, Detail, Event};
+use crate::client::Detail;
 
 #[derive(Default)]
 pub(crate) struct Presentation {
-    pub cursor: i64,
     pub prompt_seen: bool,
     plan: Option<Value>,
-    runs: BTreeMap<String, Tool>,
-    order: Vec<String>,
+    cards: BTreeMap<String, Card>,
     question: Option<Question>,
-    pull_request_url: Option<String>,
     finished: bool,
-    merged: bool,
-}
-
-struct Tool {
-    role: Role,
-    purpose: String,
-    clock: RunClock,
-    provider: Option<Provider>,
-    model: Option<String>,
-    thread_url: Option<String>,
-    ended: bool,
-    outcome: Option<Outcome>,
-    shown: Option<Card>,
+    last_acceptance: Option<i64>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -45,349 +29,129 @@ struct Card {
 }
 
 impl Presentation {
-    pub(crate) fn update(
-        &mut self,
-        detail: &Detail,
-        history: Vec<Event>,
-        structured: bool,
-        replay_cards: bool,
-    ) -> Vec<Value> {
+    pub(crate) fn update(&mut self, detail: &Detail, structured: bool, replay: bool) -> Vec<Value> {
         let mut updates = Vec::new();
-        let replay_cards = replay_cards && detail.plan_scope_id.is_some();
-        let attaching = self.cursor == 0 && !self.prompt_seen;
-        for event in history {
-            if event.sequence > self.cursor {
-                self.cursor = event.sequence;
-                self.apply(event, detail.pull_request.as_ref(), attaching, &mut updates);
-            }
-        }
-
+        let replay = replay && detail.plan_scope_id.is_some();
         if structured {
             let plan = plan(detail);
-            if replay_cards || self.plan.as_ref() != Some(&plan) {
-                updates.insert(0, plan.clone());
+            if replay || self.plan.as_ref() != Some(&plan) {
+                updates.push(plan.clone());
                 self.plan = Some(plan);
             }
         }
-
-        let active = detail.run.as_ref().filter(|run| run.last_send_at.is_some());
-        if let Some(run) = active {
-            let tool = self.start(&run.instance, run.role, &run.purpose);
-            tool.fill_participant(
-                run.provider,
-                run.model.as_deref(),
-                run.thread_url.as_deref(),
-            );
-            if let Some(sent) = run.last_send_at {
-                tool.clock.sent(sent);
+        let empty = Transcript::default();
+        let transcript = detail.lifecycle.transcript.as_ref().unwrap_or(&empty);
+        for run in &transcript.cards {
+            let answer = (transcript.question_owner.as_ref() == Some(&run.instance))
+                .then(|| answer_action(transcript, detail.operator_inbox));
+            let card = Card::from_run(run, answer.as_deref());
+            let previous = self.cards.get(&run.instance);
+            if !replay && previous == Some(&card) {
+                continue;
             }
-        }
-
-        for participant in [&detail.lifecycle.worker, &detail.lifecycle.reviewer]
-            .into_iter()
-            .flatten()
-        {
-            if let Some(tool) = participant
-                .origin_instance
-                .as_ref()
-                .and_then(|instance| self.runs.get_mut(instance))
+            if structured {
+                let kind = if previous.is_some() {
+                    "tool_call_update"
+                } else {
+                    "tool_call"
+                };
+                updates.push(card.update(&run.instance, kind));
+            } else if run.outcome.is_some()
+                && previous.is_none_or(|shown| shown.status == "in_progress")
+                && let Some(body) = &card.body
             {
-                // A retained binding may fill in the exact, original launch on old rows.
-                tool.fill_participant(
-                    participant.provider,
-                    participant.model.as_deref(),
-                    participant.thread_url.as_deref(),
-                );
+                updates.push(message(body));
             }
+            self.cards.insert(run.instance.clone(), card);
         }
-
-        // Only the most recent occurrence of the open question can still be answered.
-        let question_owner = detail.question.as_ref().and_then(|question| {
-            let summary = question_summary(question);
-            self.order.iter().rev().find(|&instance| {
-                matches!(&self.runs[instance].outcome, Some(Outcome::Question { question: asked })
-                    if question_summary(asked) == summary)
-            })
-        });
-        for instance in &self.order {
-            let tool = self.runs.get_mut(instance).expect("ordered run");
-            let activity = active
-                .filter(|run| run.instance == *instance)
-                .and_then(|run| run.activity.as_ref());
-            let answer = (question_owner == Some(instance)).then(|| answer_action(detail));
-            if let Some(update) = tool.render(
-                instance,
-                activity,
-                answer.as_deref(),
-                structured,
-                replay_cards,
-            ) {
-                updates.push(update);
-            }
-        }
-        if detail.question != self.question {
-            if question_owner.is_none()
-                && let Some(question) = &detail.question
+        if transcript.question != self.question {
+            if transcript.question_owner.is_none()
+                && let Some(question) = &transcript.question
             {
                 updates.push(message(&format!(
                     "{}\n\n{}",
                     question_summary(question),
-                    answer_action(detail)
+                    answer_action(transcript, detail.operator_inbox)
                 )));
             }
-            self.question.clone_from(&detail.question);
+            self.question.clone_from(&transcript.question);
         }
+        if let Some(last) = self.last_acceptance {
+            for (_, reason) in transcript
+                .external_acceptances
+                .iter()
+                .filter(|(sequence, _)| *sequence > last)
+            {
+                updates.push(message(&format!("External merge accepted. {reason}")));
+            }
+        }
+        self.last_acceptance = Some(
+            transcript
+                .external_acceptances
+                .last()
+                .map_or(0, |(sequence, _)| *sequence),
+        );
         if detail.phase.is_terminal() && !self.finished {
-            updates.push(message(&finish(detail, self.merged)));
+            updates.push(message(&finish(detail, transcript)));
             self.finished = true;
         }
         updates
     }
-
-    fn apply(
-        &mut self,
-        event: Event,
-        current_pr: Option<&PullRequest>,
-        attaching: bool,
-        updates: &mut Vec<Value>,
-    ) {
-        let at = event.content.as_ref().map(|content| content.at);
-        self.apply_legacy_clock(&event);
-        let mut ended = None;
-        for record in event.presentation {
-            match record {
-                Milestone::RunStarted {
-                    instance,
-                    role,
-                    purpose,
-                    provider,
-                    model,
-                    thread_url,
-                    started_at_ms,
-                    ..
-                } => {
-                    let tool = self.start(&instance, role, &purpose);
-                    tool.fill_participant(provider, model.as_deref(), thread_url.as_deref());
-                    if let Some(at) = started_at_ms.or(at) {
-                        tool.clock.sent(at);
-                    }
-                }
-                Milestone::RunReported {
-                    instance,
-                    sent_at_ms,
-                    outcome,
-                } => {
-                    if let Some(tool) = self.runs.get_mut(&instance) {
-                        tool.record_report(at, sent_at_ms, outcome);
-                    }
-                }
-                Milestone::RunEnded { instance } => {
-                    if let Some(tool) = self.runs.get_mut(&instance) {
-                        tool.ended = true;
-                        ended = Some(instance);
-                    }
-                }
-                Milestone::PullRequest { url } => {
-                    if let Some(tool) = ended.as_ref().and_then(|id| self.runs.get_mut(id))
-                        && tool.role == Role::Worker
-                    {
-                        tool.outcome.get_or_insert(Outcome::Work {
-                            url: url.clone(),
-                            summary: None,
-                            revision: false,
-                        });
-                    }
-                    self.pull_request_url = Some(url);
-                }
-                Milestone::Verdict {
-                    verdict:
-                        Verdict::Reviewed {
-                            head,
-                            decision,
-                            summary,
-                        },
-                } => {
-                    if let Some(tool) = ended.as_ref().and_then(|id| self.runs.get_mut(id))
-                        && tool.role == Role::Reviewer
-                    {
-                        tool.outcome.get_or_insert(Outcome::Review {
-                            decision,
-                            summary,
-                            finding_titles: Vec::new(),
-                            change_url: self
-                                .pull_request_url
-                                .as_deref()
-                                .or_else(|| {
-                                    current_pr
-                                        .filter(|pr| pr.head == head)
-                                        .map(|pr| pr.url.as_str())
-                                })
-                                .map(|url| format!("{}/commits/{head}", url.trim_end_matches('/'))),
-                        });
-                    }
-                }
-                Milestone::Verdict {
-                    verdict: Verdict::Accepted { acceptance, .. },
-                } => {
-                    if !attaching {
-                        updates.push(message(&format!(
-                            "External merge accepted. {}",
-                            acceptance.reason
-                        )));
-                    }
-                }
-                Milestone::Question { question } => {
-                    if let Some(tool) = ended.as_ref().and_then(|id| self.runs.get_mut(id)) {
-                        tool.outcome.get_or_insert(Outcome::Question { question });
-                    }
-                }
-                Milestone::Merged { .. } => self.merged = true,
-                Milestone::Finished { .. } => {}
-            }
-        }
-    }
-
-    fn apply_legacy_clock(&mut self, event: &Event) {
-        if let Some(instance) = self.order.last()
-            && let Some(tool) = self.runs.get_mut(instance)
-            && !tool.ended
-            && let Some(content) = &event.content
-            && event.presentation.is_empty()
-        {
-            match content.kind.as_str() {
-                "host_send" => tool.clock.sent(content.at),
-                "reported" => tool.clock.reported(content.at, None),
-                _ => {}
-            }
-        }
-    }
-
-    fn start(&mut self, instance: &str, role: Role, purpose: &str) -> &mut Tool {
-        self.runs.entry(instance.into()).or_insert_with(|| {
-            self.order.push(instance.into());
-            Tool {
-                role,
-                purpose: purpose.into(),
-                clock: RunClock::default(),
-                provider: None,
-                model: None,
-                thread_url: None,
-                ended: false,
-                outcome: None,
-                shown: None,
-            }
-        })
-    }
 }
 
-impl Tool {
-    fn record_report(&mut self, at: Option<u64>, sent_at_ms: u64, outcome: Option<Outcome>) {
-        if let Some(at) = at {
-            self.clock.reported(at, Some(sent_at_ms));
-        }
-        if let Some(outcome) = outcome {
-            self.outcome = Some(outcome);
-        }
-    }
-
-    fn fill_participant(
-        &mut self,
-        provider: Option<Provider>,
-        model: Option<&str>,
-        url: Option<&str>,
-    ) {
-        self.provider = self.provider.or(provider);
-        if self.model.is_none() {
-            self.model = model.map(str::to_owned);
-        }
-        if self.thread_url.is_none() {
-            self.thread_url = url.map(str::to_owned);
-        }
-    }
-
-    fn render(
-        &mut self,
-        instance: &str,
-        activity: Option<&Activity>,
-        answer: Option<&str>,
-        structured: bool,
-        replay: bool,
-    ) -> Option<Value> {
-        let role = match self.role {
+impl Card {
+    fn from_run(run: &RoleCard, answer: Option<&str>) -> Self {
+        let role = match run.role {
             Role::Worker => "Worker",
             Role::Reviewer => "Reviewer",
         };
         let mut title = role.to_owned();
-        if let Some(provider) = self.provider {
+        if let Some(provider) = run.provider {
             let _ = write!(title, " · {}", provider_label(provider));
         }
-        if let Some(model) = &self.model {
+        if let Some(model) = &run.model {
             let _ = write!(title, " / {model}");
         }
-        if let Some(start) = self.clock.started_at_ms.and_then(start_time) {
+        if let Some(start) = run.started_at_ms.and_then(start_time) {
             let _ = write!(title, " · {start}");
         }
-        let finished = self.ended || self.outcome.is_some();
-        if let Some(elapsed) = self.clock.elapsed_ms() {
+        let finished = run.ended || run.outcome.is_some();
+        if let Some(elapsed) = run.elapsed_ms {
             let _ = write!(title, " · {}", duration(elapsed));
         } else if finished {
             title.push_str(" · Duration unavailable");
         }
-        let status = match self.outcome {
+        let status = match run.outcome {
             Some(Outcome::Blocked { .. }) => "failed",
             _ if finished => "completed",
             _ => "in_progress",
         };
-        let link = self.thread_url.as_ref().map(|url| {
-            let role = role.to_ascii_lowercase();
-            format!("[Open {role}]({url})")
-        });
-        let body = match &self.outcome {
+        let link = run
+            .thread_url
+            .as_ref()
+            .map(|url| format!("[Open {}]({url})", role.to_ascii_lowercase()));
+        let body = match &run.outcome {
             Some(outcome) => Some(outcome_text(outcome, answer)),
-            None if !finished => Some(
-                activity.map_or_else(|| self.purpose.clone(), |activity| activity.label.clone()),
-            ),
+            None if !finished => Some(run.activity.as_deref().unwrap_or(&run.purpose).to_owned()),
             None => None,
         };
-        let card = Card {
+        Self {
             title,
             status,
             link,
             body,
-        };
-        if !replay && self.shown.as_ref() == Some(&card) {
-            return None;
         }
-        let update = if structured {
-            let kind = if self.shown.is_some() {
-                "tool_call_update"
-            } else {
-                "tool_call"
-            };
-            let content = card
-                .link
-                .iter()
-                .chain(card.body.iter())
-                .map(|text| {
-                    json!({
-                        "type":"content","content":{"type":"text","text":text}
-                    })
-                })
-                .collect::<Vec<_>>();
-            Some(json!({"sessionUpdate":kind,"toolCallId":instance,
-                "title":card.title,"kind":"other","status":card.status,"content":content}))
-        } else if self.outcome.is_some()
-            && self
-                .shown
-                .as_ref()
-                .is_none_or(|shown| shown.status == "in_progress")
-        {
-            card.body.as_deref().map(message)
-        } else {
-            None
-        };
-        self.shown = Some(card);
-        update
+    }
+
+    fn update(&self, instance: &str, kind: &str) -> Value {
+        let content: Vec<_> = self
+            .link
+            .iter()
+            .chain(self.body.iter())
+            .map(|text| json!({"type":"content","content":{"type":"text","text":text}}))
+            .collect();
+        json!({"sessionUpdate":kind,"toolCallId":instance,
+            "title":self.title,"kind":"other","status":self.status,"content":content})
     }
 }
 
@@ -455,9 +219,9 @@ fn outcome_text(outcome: &Outcome, answer: Option<&str>) -> String {
     }
 }
 
-fn finish(detail: &Detail, merged: bool) -> String {
+fn finish(detail: &Detail, transcript: &Transcript) -> String {
     let pr = detail.pull_request.as_ref().map(|pr| pr_link(&pr.url));
-    let mut text = match (detail.phase, merged, pr) {
+    let mut text = match (detail.phase, transcript.merged, pr) {
         (Phase::Cancelled, _, _) => "Task cancelled".into(),
         (_, true, Some(pr)) => format!("Merged {pr} and closed"),
         (_, true, None) => "Merged and closed".into(),
@@ -480,7 +244,8 @@ fn finish(detail: &Detail, merged: bool) -> String {
     {
         let _ = write!(text, " · {}", duration(elapsed));
     }
-    if let Some(rounds) = detail.lifecycle.completed_reviews {
+    let rounds = transcript.completed_reviews;
+    if rounds > 0 {
         let suffix = if rounds == 1 { "" } else { "s" };
         let _ = write!(text, " · {rounds} review round{suffix}");
     }
@@ -574,10 +339,8 @@ fn plan(detail: &Detail) -> Value {
 }
 
 fn question_summary(question: &Question) -> String {
-    static REDACTOR: LazyLock<Redactor> =
-        LazyLock::new(|| Redactor::new([], RedactionRules::common()));
     match question {
-        Question::Work { prompt, .. } => REDACTOR.redact(prompt).text.chars().take(320).collect(),
+        Question::Work { prompt, .. } => prompt.clone(),
         Question::Retry { role: Role::Worker } => "The worker could not finish.".into(),
         Question::Retry {
             role: Role::Reviewer,
@@ -599,10 +362,10 @@ fn question_summary(question: &Question) -> String {
     }
 }
 
-fn answer_action(detail: &Detail) -> String {
-    if let Some(url) = &detail.question_url {
+fn answer_action(transcript: &Transcript, operator_inbox: bool) -> String {
+    if let Some(url) = &transcript.question_url {
         format!("[Read the full question and answer in the planner thread]({url}).")
-    } else if detail.operator_inbox {
+    } else if operator_inbox {
         "Answer in the pinned Nucleus Inbox.".into()
     } else {
         "Answer in the task controls.".into()
@@ -619,20 +382,23 @@ mod tests {
 
     #[test]
     fn a_worker_card_names_missing_summary_and_timing() {
-        let mut presentation = Presentation::default();
-        let tool = presentation.start("fixture-run", Role::Worker, "Fixture work");
         for summary in [None, Some("  ".into())] {
-            tool.outcome = Some(Outcome::Work {
-                url: "https://github.com/example/fixture/pull/7".into(),
-                summary,
-                revision: false,
-            });
-            let card = tool.render("fixture-run", None, None, true, true).unwrap();
-            assert_eq!(card["title"], "Worker · Duration unavailable");
-            assert_eq!(card["status"], "completed");
+            let run: RoleCard = serde_json::from_value(json!({
+                "instance":"fixture-run","role":"worker","purpose":"Fixture work","ended":true,
+                "outcome":Outcome::Work {
+                    url: "https://github.com/example/fixture/pull/7".into(),
+                    summary, revision: false,
+                }
+            }))
+            .unwrap();
+            let card = Card::from_run(&run, None);
+            assert_eq!(card.title, "Worker · Duration unavailable");
+            assert_eq!(card.status, "completed");
             assert_eq!(
-                card["content"][0]["content"]["text"],
-                "Ready for review · [PR #7](https://github.com/example/fixture/pull/7)\n\nNo change summary supplied."
+                card.body.as_deref(),
+                Some(
+                    "Ready for review · [PR #7](https://github.com/example/fixture/pull/7)\n\nNo change summary supplied."
+                ),
             );
         }
     }

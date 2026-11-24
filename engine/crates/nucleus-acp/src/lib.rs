@@ -208,8 +208,8 @@ impl Agent {
                 client.inbox().await?;
                 Vec::new()
             } else {
-                let (detail, history) = attach(client).await?;
-                view.update(&detail, history, structured, false)
+                let detail = attach(client).await?;
+                view.update(&detail, structured, false)
             }
         } else {
             Vec::new()
@@ -308,26 +308,17 @@ impl Session {
     }
 }
 
-async fn attach(client: &ServiceClient) -> Result<(client::Detail, Vec<client::Event>), Failure> {
+async fn attach(client: &ServiceClient) -> Result<client::Detail, Failure> {
     for delay in [0, 1, 2, 4, 8, 15] {
         if delay > 0 {
             tokio::time::sleep(Duration::from_secs(delay)).await;
         }
-        match snapshot(client, 0).await {
+        match client.detail().await {
             Err(Failure::Unavailable) => {}
             result => return result,
         }
     }
     Err(Failure::Unavailable)
-}
-
-async fn snapshot(
-    client: &ServiceClient,
-    cursor: i64,
-) -> Result<(client::Detail, Vec<client::Event>), Failure> {
-    let detail = client.detail().await?;
-    let history = client.history(cursor).await?;
-    Ok((detail, history))
 }
 
 async fn task_prompt(
@@ -344,13 +335,12 @@ async fn task_prompt(
     if matches!(client.renew_task_reader(cwd, session), Ok(false)) {
         return Ok(());
     }
-    let cursor = view.lock().await.cursor;
-    let (detail, history) = snapshot(client, cursor).await?;
+    let detail = client.detail().await?;
     let hold = !detail.phase.is_terminal() && detail.parent_hold.as_deref() == Some(prompt);
     let updates = {
         let mut view = view.lock().await;
         let replay = !std::mem::replace(&mut view.prompt_seen, true);
-        view.update(&detail, history, structured, replay)
+        view.update(&detail, structured, replay)
     };
     for update in updates {
         notify(output, session, update);
@@ -364,17 +354,12 @@ async fn task_prompt(
             let mut stream = client.stream().await?;
             loop {
                 stream.next().await?;
-                let cursor = view.lock().await.cursor;
-                let (detail, history) = snapshot(client, cursor).await?;
+                let detail = client.detail().await?;
                 let hold = !detail.phase.is_terminal()
                     && (detail.parent_hold.as_deref() == Some(prompt)
                         || detail.active_child
                         || detail.transcript_pending);
-                for update in view
-                    .lock()
-                    .await
-                    .update(&detail, history, structured, false)
-                {
+                for update in view.lock().await.update(&detail, structured, false) {
                     notify(output, session, update);
                 }
                 if !hold {

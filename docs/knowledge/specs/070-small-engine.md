@@ -59,8 +59,9 @@ Later decisions carry their own attribution.
 6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3. Workers and reviewers are never top-level threads. They are child threads under the task's ACP session, as in the TypeScript engine. Tom, 2026-11-23: "when I said no worker or reviewer threads, I meant top-level.. it should work with the ACP the way the TS version does now". A person sees one row per task, and each run appears inside it as that session's `tool_call` (ruling 7).
 7. **The ACP session is written for a person.** Tom, 2026-11-23: "I would like the Nucleus ACP to be much more human friendly than it is now - provide actual useful feedback about the task as things happen, avoid too much noise, make it obvious what each sub agent is doing." The rules:
    - The lifecycle is one ACP `plan`. Code tasks show Queued, Working, Review (round N), Merge and Close. Report-only tasks show Queued, Working, Report ready and Done. Each step is pending, in progress or done. A wait shows as that step's status (for example, "Waiting for a review slot"). Waits are never messages.
-   - The engine projects the plan and task detail's progress strip from the
-     same task and local audit records. Applied reviewer verdicts determine the round.
+   - One lifecycle audit projects the plan, the task detail's progress strip
+     and the task session's role cards from the committed task and local records.
+     Applied reviewer verdicts determine the round.
      Role durations use the recorded send and report times. A reservation alone
      does not start the clock. The task retains its worker and reviewer bindings
      between runs.
@@ -78,6 +79,9 @@ Later decisions carry their own attribution.
    the role's outcome until answered. Waits update the plan once per episode.
    The finish records the merge or report, closure, elapsed time and review
    rounds. All of this comes from engine records without additional T3 reads.
+   Card updates reuse the run instance, and plan updates reuse the session plan.
+   Task transitions depend on the existing lifecycle facts independently of
+   presentation updates.
    When the engine has no recorded change summary, the worker outcome says
    so. If the recorded send and report times cannot establish a duration,
    the finished card says it is unavailable. Older cards show participant

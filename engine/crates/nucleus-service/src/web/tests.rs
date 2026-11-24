@@ -156,10 +156,8 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         post_json(&api, path, key, &json!({})).await,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(
-        get_as(&api, "/v1/tasks/task-one", key).await.status(),
-        StatusCode::OK
-    );
+    let read = json_body(get_as(&api, "/v1/tasks/task-one", key).await).await;
+    assert_eq!(read["lifecycle"]["transcript"]["cards"], json!([]));
     assert_eq!(
         post_json(
             &api,
@@ -413,6 +411,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     let list = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
     let lifecycle = &detail["lifecycle"];
     assert_eq!(list[0]["lifecycle"], *lifecycle);
+    assert!(lifecycle.get("transcript").is_none());
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
@@ -445,7 +444,6 @@ fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_
         json!([
             {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null,
                 "thread":thread,
-                "threadUrl":nucleus_hosts::thread_link(thread),
                 "startedAtMs":sent_at_ms - 2_000}
         ])
     );
@@ -2123,9 +2121,15 @@ async fn reopen_and_finish_review(
         let state = service.state.lock().await;
         for row in [done, &reopened] {
             let label = crate::titles::task_state_label(&row.task, None);
-            let lifecycle =
-                crate::presentation::task_lifecycle(&row.task, &state.store, &label, None, None)
-                    .expect("project current finish");
+            let lifecycle = crate::presentation::task_lifecycle(
+                &row.task,
+                &state.store,
+                &label,
+                None,
+                None,
+                None,
+            )
+            .expect("project current finish");
             assert_eq!(
                 lifecycle.finished_at_ms.is_some(),
                 row.task.phase().is_terminal()
