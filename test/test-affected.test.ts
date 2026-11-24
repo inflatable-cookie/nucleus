@@ -106,6 +106,19 @@ test('a changed test support module selects its importers and not other tests', 
   assert.deepEqual(selected(selectAffected({ changed: ['test/support/helper.ts'], files, sources })), ['test/uses-helper.test.ts']);
 });
 
+test('retired entries stay out of the affected set even when they share a changed fixture', () => {
+  const active = 'test/board.test.ts';
+  const retired = 'test/legacy.test.ts';
+  const fixture = 'test/support/fixture.ts';
+  const { files, sources } = tree({
+    [active]: "import './support/fixture';",
+    [retired]: "import './support/fixture';",
+    [fixture]: 'export {};',
+  });
+  const result = selectAffected({ changed: [fixture, retired], files, sources, testFiles: [active] });
+  assert.deepEqual(selected(result), [active]);
+});
+
 test('a shard case file is reached through its entry', () => {
   const { files, sources } = tree({
     'test/shard-1.test.ts': "require('./shard.cases');\n",

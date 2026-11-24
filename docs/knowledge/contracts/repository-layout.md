@@ -116,7 +116,7 @@ PRs without naming local paths or private projects in the public PR body.
 
 `effigy check` runs the package-native publication gate over tracked filenames and
 working-tree bytes. It rejects private vocabulary, absolute home or volume paths,
-and evidence artifacts (binary files, images outside `docs/assets/` or `assets/`,
+and evidence artifacts (binary files, images outside `docs/assets/`, `assets/` or `engine/assets/`,
 logs and HTML diffs). Exact synthetic fixture exceptions live in the gate; they
 never exempt private vocabulary. The ignored `.publication-denylist` supplies
 local private names, one literal name per line, case-insensitively. Copy

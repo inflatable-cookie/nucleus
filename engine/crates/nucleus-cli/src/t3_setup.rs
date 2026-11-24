@@ -29,6 +29,7 @@ use crate::{
 const INSTALL_BEARER: &str = "NUCLEUS_ENGINE_T3_INSTALL_BEARER";
 const LAUNCHER: &str = "nucleus-rust-acp";
 const MARKER: &str = "#!/bin/sh\n# nucleus-rust-acp-launcher-v1\n";
+const INBOX_ICON: &[u8] = include_bytes!("../../../assets/nucleus-icon.svg");
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -184,7 +185,12 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
                 .install(adopt)
                 .await
                 .map_err(|error| error.to_string())?;
-            reconcile_inbox(&host, &inbox, true).await?;
+            let favicon = storage.home().join("nucleus-icon.svg");
+            let mut staged = tempfile::NamedTempFile::new_in(storage.home())?;
+            staged.write_all(INBOX_ICON)?;
+            staged.as_file().sync_all()?;
+            staged.persist(&favicon)?;
+            reconcile_inbox(&host, &inbox, Some(path_string(&favicon)?)).await?;
             wait_for_inbox(endpoint, &key).await?;
             println!("Verified {NUCLEUS_RUST_PROVIDER} and the pinned Rust Inbox.");
         }
@@ -212,7 +218,7 @@ async fn uninstall(target: &Target, launcher: &Path, inbox: &InboxTarget<'_>) ->
         }
         _ => {}
     }
-    reconcile_inbox(&target.inbox()?, inbox, false).await?;
+    reconcile_inbox(&target.inbox()?, inbox, None).await?;
     provider
         .uninstall()
         .await
@@ -232,22 +238,25 @@ async fn verify_registration(provider: &ProviderSetup) -> Result<ProviderRegistr
     }
 }
 
-async fn reconcile_inbox(host: &T3, target: &InboxTarget<'_>, install: bool) -> Result<()> {
+async fn reconcile_inbox(host: &T3, target: &InboxTarget<'_>, favicon: Option<&str>) -> Result<()> {
     tokio::time::timeout(Duration::from_mins(1), async {
         let mut sent = BTreeSet::new();
         loop {
-            let step = if install {
+            let step = if favicon.is_some() {
                 host.prepare_inbox_install(target).await?
             } else {
                 host.prepare_inbox_retire(target).await?
             };
-            match step {
-                InboxLifecycle::Complete => return Ok(()),
-                InboxLifecycle::Write(write) => {
-                    if sent.insert(write.command_id().to_owned()) {
-                        host.write_inbox(write).await?;
-                    }
+            let write = match step {
+                InboxLifecycle::Complete => host.prepare_inbox_favicon(target, favicon).await?,
+                InboxLifecycle::Write(write) => Some(write),
+            };
+            if let Some(write) = write {
+                if sent.insert(write.command_id().to_owned()) {
+                    host.write_inbox(write).await?;
                 }
+            } else {
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -494,9 +503,18 @@ async fn status(
     key_file: Option<&Path>,
 ) -> Result<()> {
     let key = key_file.map_or_else(|| control_key(CONTROL_KEY), read_key_file);
-    let (observed, native_inbox, health) = tokio::join!(
+    let (observed, native_inbox, favicon, health) = tokio::join!(
         async { target?.provider(launcher, false).ok()?.observe().await.ok() },
         async { target?.inbox().ok()?.inbox_status(inbox).await.ok() },
+        async {
+            target?
+                .inbox()
+                .ok()?
+                .inbox_favicon(inbox)
+                .await
+                .ok()
+                .flatten()
+        },
         async {
             match &key {
                 Ok(key) => engine_health(endpoint, key)
@@ -522,6 +540,7 @@ async fn status(
         "engineHealth": engine_status,
         "inbox": {
             "threadId": INBOX_THREAD,
+            "faviconPath": favicon,
             "state": native_inbox,
             "present": native_inbox.map(|state| state != InboxStatus::Missing),
             "pinned": native_inbox.map(|state| state == InboxStatus::Pinned),

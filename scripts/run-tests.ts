@@ -1,10 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runnerFlags } from './test-runner-flags.mjs';
+import activeTests from './active-tests.json';
 import durations from './test-durations.json';
 import { durationReporterArgs, durationTablePath, failureSummaryPath, flushDurationTable, flushFailureSummary } from './duration-reporter.mjs';
 
@@ -89,9 +90,7 @@ export function testRunnerArgs(
 
 function run() {
   const require = createRequire(import.meta.url);
-  const availableFiles = readdirSync('test', { withFileTypes: true })
-    .filter(entry => entry.isFile())
-    .map(entry => entry.name);
+  const availableFiles = activeTests.map(file => file.slice('test/'.length));
   const { options, requestedFiles } = splitRunnerArgs(process.argv.slice(2));
   const files = selectTestFiles(requestedFiles, availableFiles);
   const installFiles = files.filter(file => /(?:^|\/)nucleus-install(?:-safety|-release)?\.test\.ts$/.test(file));

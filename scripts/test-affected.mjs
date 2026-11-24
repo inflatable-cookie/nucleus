@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { importEdges } from './check-folder-imports.mjs';
+import activeTests from './active-tests.json' with { type: 'json' };
 
 /** Trees whose code is parsed for import edges. Root entry files are listed separately. */
 const GRAPH_ROOTS = ['core', 'service', 'hosts', 'shared', 'client', 'bin', 'scripts', 'test'];
@@ -22,6 +23,7 @@ const ROOT_FILES = ['index.server.ts', 'index.client.tsx', 'mcp-report.mjs'];
 const CODE = /\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)$/;
 /** Tests the unit runner would run by default; the expensive benchmark is opt-in. */
 const EXCLUDED_TESTS = new Set(['test/store-compaction-bench.test.ts']);
+const ACTIVE_TESTS_PATH = 'scripts/active-tests.json';
 const TEST = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
 /** Emitted-JavaScript specifiers resolve to their TypeScript sources first. */
 const EMITTED = { '.js': ['.ts', '.tsx', '.d.ts'], '.jsx': ['.tsx'], '.mjs': ['.mts', '.d.mts'], '.cjs': ['.cts', '.d.cts'] };
@@ -72,10 +74,11 @@ export function resolveLocal(known, from, specifier) {
  * @param {string[]} input.changed repository-relative paths changed against the base
  * @param {Set<string>} input.files every path that exists at the ref
  * @param {Map<string, string>} input.sources text of each graph node (code under the roots)
+ * @param {Iterable<string>} [input.testFiles] test entries eligible to run
  * @param {number} [input.max] the most files to select (default MAX_AFFECTED)
  * @returns {{ tests: { file: string, reasons: string[] }[], deferred: { file: string, reasons: string[] }[], unmapped: string[], serial: string[] }}
  */
-export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) {
+export function selectAffected({ changed, files, sources, testFiles = files, max = MAX_AFFECTED }) {
   const known = new Set([...files, ...changed]);
   const importers = new Map();
   const imports = new Map();
@@ -91,9 +94,9 @@ export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) 
     imports.set(from, targets);
   }
 
-  const tests = [...files].filter(isTestFile).sort();
+  const tests = new Set([...testFiles].filter(path => isTestFile(path) && files.has(path)).sort());
   // A test's own text plus the test-tree helpers it reaches, where paths can be named.
-  const scope = new Map(tests.map(test => {
+  const scope = new Map([...tests].map(test => {
     const seen = new Set([test]);
     const queue = [test];
     while (queue.length) {
@@ -122,7 +125,7 @@ export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) 
   const unmapped = [];
 
   for (const path of changed) {
-    if (isTestFile(path) && files.has(path)) add(path, 'changed test', 'changed test');
+    if (tests.has(path)) add(path, 'changed test', 'changed test');
     let graphReached = false;
     for (const start of implementationsOf(path)) {
       // Breadth-first over importers, but only through the test tree (helpers and
@@ -136,7 +139,7 @@ export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) 
           if (via.has(importer) || !importer.startsWith('test/')) continue;
           via.set(importer, node);
           queue.push(importer);
-          if (isTestFile(importer) && files.has(importer)) {
+          if (tests.has(importer)) {
             graphReached = true;
             const chain = [importer];
             for (let next = via.get(importer); next; next = via.get(next)) chain.push(next);
@@ -221,8 +224,12 @@ export function readBlobs(ref, paths) {
 export function readRepository(base, head, paths = null) {
   const changed = paths ?? git(['diff', '-z', '--no-renames', '--name-only', `${base}...${head}`]).split('\0').filter(Boolean);
   const files = new Set(git(['ls-tree', '-r', '-z', '--name-only', head]).split('\0').filter(Boolean));
-  const nodes = [...files].filter(isGraphNode);
-  return { changed, files, sources: readBlobs(head, nodes) };
+  const testFiles = files.has(ACTIVE_TESTS_PATH)
+    ? JSON.parse(readBlobs(head, [ACTIVE_TESTS_PATH]).get(ACTIVE_TESTS_PATH))
+    : activeTests;
+  const runnable = new Set(testFiles);
+  const nodes = [...files].filter(path => isGraphNode(path) && (!isTestFile(path) || runnable.has(path)));
+  return { changed, files, sources: readBlobs(head, nodes), testFiles };
 }
 
 function main(argv) {
@@ -238,8 +245,9 @@ function main(argv) {
   }
   // --paths replaces the diff: measuring a named change's selection and run time.
   const paths = argv.find(arg => arg.startsWith('--paths='))?.slice('--paths='.length).split(',').filter(Boolean) ?? null;
-  const { changed, files, sources } = readRepository(base, head, paths);
-  const { tests, deferred, unmapped, serial } = selectAffected({ changed, files, sources });
+  const repository = readRepository(base, head, paths);
+  const { changed } = repository;
+  const { tests, deferred, unmapped, serial } = selectAffected(repository);
   const dirty = paths ? '' : git(['status', '--porcelain', '--untracked-files=no']).trim();
 
   console.log(`test:affected: ${changed.length} changed path(s) against ${mergeBase} (head ${head})`);
@@ -247,7 +255,7 @@ function main(argv) {
   for (const { file, reasons } of tests) console.log(`  ${file}  ← ${reasons[0]}`);
   console.log(`test:affected: ${tests.length} test file(s) affected`);
   if (deferred.length) console.log(`test:affected: ${deferred.length} more file(s) are past the ${MAX_AFFECTED}-file cap and deferred to milestone QA; this is not a finding`);
-  if (serial.length) console.log(`test:affected: ${serial.length} wall-clock file(s) skip in the parallel lane; milestone QA's timing lane runs them`);
+  if (serial.length) console.log(`test:affected: wall-clock cases in ${serial.length} selected file(s) require explicit test:timing runs`);
   if (unmapped.length) console.log(`test:affected: not in the import graph, so no test is selected for: ${unmapped.join(', ')}`);
   if (!run || !tests.length) return 0;
   const result = spawnSync('npm', ['test', '--', ...tests.map(test => test.file)], { stdio: 'inherit' });

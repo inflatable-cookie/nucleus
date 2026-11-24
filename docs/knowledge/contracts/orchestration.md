@@ -4141,6 +4141,10 @@ Client render tests share `test/support/board-shell.ts` for source and bundled
 renders. The render harness binds source imports; its `boardShellPlugin` routes
 bundled shell imports to the same host hooks and native stand-ins.
 
+- `scripts/active-tests.json` lists the TypeScript entries in milestone QA and
+  affected selection. Add new board and shared tests there. These tests may
+  reuse old engine fixtures. The retired engine suites and timing oracles
+  require an explicit file to run.
 - The affected-test selection (`scripts/test-affected.mjs`, `effigy test:affected`)
   reads the committed head only: changed paths come from `git diff --no-renames`
   against the merge base, and the graph from one `git ls-tree` plus one
@@ -4153,7 +4157,7 @@ bundled shell imports to the same host hooks and native stand-ins.
   path suffix of two or more segments as a string literal in its own source or in
   the `test/` helpers it reaches, or when it quotes any ancestor directory of the
   changed file as a whole literal (directory walkers recurse, so `client/` covers
-  `client/board/x.tsx`). A changed test file always
+  `client/board/x.tsx`). A changed active test file always
   runs. Paths outside the graph and the docs (`package.json`, `effigy.toml`,
   `tsconfig*.json`) are reported as unmapped, never expanded to a full suite.
   At most 60 files are selected, nearest first: a changed test, then direct

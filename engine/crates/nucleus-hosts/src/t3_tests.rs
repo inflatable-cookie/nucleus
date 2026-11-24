@@ -52,6 +52,7 @@ struct Request {
 enum Response {
     Snapshot(Value),
     ParentSnapshot(Value),
+    ShellSnapshot(Value),
     Success,
     Value(Value),
     Failure(Value),
@@ -118,6 +119,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 .expect("request envelope");
             assert_eq!(request.tag, tag);
             let id = &request.id;
+            let shell = matches!(&response, Response::ShellSnapshot(_));
             let thread = match &response {
                 Response::Snapshot(_) => Some(THREAD.to_owned()),
                 Response::ParentSnapshot(value) => Some(
@@ -129,7 +131,9 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 _ => None,
             };
             let reply = match response {
-                Response::Snapshot(value) | Response::ParentSnapshot(value) => json!({
+                Response::Snapshot(value)
+                | Response::ParentSnapshot(value)
+                | Response::ShellSnapshot(value) => json!({
                     "_tag": "Chunk", "requestId": id.parse::<u64>().expect("numeric request sequence"),
                     "values": [value, {"kind": "synchronized"}],
                 }),
@@ -147,7 +151,7 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                 .send(Message::Text(reply.to_string().into()))
                 .await
                 .expect("write reply");
-            if let Some(thread) = thread {
+            if thread.is_some() || shell {
                 for expected in ["Ack", "Interrupt"] {
                     let frame = socket
                         .next()
@@ -158,18 +162,112 @@ async fn server(steps: Vec<(&'static str, Response)>) -> (T3, JoinHandle<Vec<Req
                         .expect("control envelope");
                     assert_eq!(value, json!({"_tag":expected,"requestId":id}));
                 }
-                let payload: Value =
-                    serde_json::from_str(request.payload.get()).expect("subscribe body");
-                assert_eq!(
-                    payload,
-                    json!({"threadId":thread,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
-                );
+            }
+            if let Some(thread) = thread {
+                assert_thread_subscription(&request, &thread);
             }
             seen.push(request);
         }
         seen
     });
     (client, runner)
+}
+
+fn assert_thread_subscription(request: &Request, thread: &str) {
+    let payload: Value = serde_json::from_str(request.payload.get()).expect("subscribe body");
+    assert_eq!(
+        payload,
+        json!({"threadId":thread,"requestCompletionMarker":true,"acceptBoundedSnapshot":false})
+    );
+}
+
+#[tokio::test]
+async fn inbox_favicon_updates_only_the_fixed_project_and_uses_native_null_to_clear() {
+    use crate::{InboxTarget, NUCLEUS_RUST_PROVIDER, inbox::PROJECT};
+
+    let root = "/synthetic/rust-inbox";
+    let icon = "/synthetic/engine home/nucleus-icon.svg";
+    let initial = "2026-11-24T10:00:00Z";
+    let installed = "2026-11-24T10:01:00Z";
+    let cleared = "2026-11-24T10:02:00Z";
+    let snapshot = |favicon: Option<&str>, revision: &str| {
+        Response::ShellSnapshot(json!({"kind":"snapshot","snapshot":{"projects":[
+            {"id":"project:legacy-inbox","workspaceRoot":"/synthetic/legacy","faviconPath":"old.svg"},
+            {"id":PROJECT,"workspaceRoot":root,"faviconPath":favicon,"updatedAt":revision}
+        ]}}))
+    };
+    let (host, requests) = server(vec![
+        ("orchestration.subscribeShell", snapshot(None, initial)),
+        ("projects.mutate", Response::Success),
+        (
+            "orchestration.subscribeShell",
+            snapshot(Some(icon), installed),
+        ),
+        (
+            "orchestration.subscribeShell",
+            snapshot(Some(icon), installed),
+        ),
+        (
+            "orchestration.subscribeShell",
+            snapshot(Some(icon), installed),
+        ),
+        ("projects.mutate", Response::Success),
+        ("orchestration.subscribeShell", snapshot(None, cleared)),
+        ("orchestration.subscribeShell", snapshot(None, cleared)),
+    ])
+    .await;
+    let target = InboxTarget {
+        root,
+        provider: NUCLEUS_RUST_PROVIDER,
+    };
+    let write = host
+        .prepare_inbox_favicon(&target, Some(icon))
+        .await
+        .unwrap()
+        .unwrap();
+    let set = write.command_id().to_owned();
+    host.write_inbox(write).await.unwrap();
+    assert_eq!(
+        host.inbox_favicon(&target).await.unwrap().as_deref(),
+        Some(icon)
+    );
+    assert!(
+        host.prepare_inbox_favicon(&target, Some(icon))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let write = host
+        .prepare_inbox_favicon(&target, None)
+        .await
+        .unwrap()
+        .unwrap();
+    let clear = write.command_id().to_owned();
+    host.write_inbox(write).await.unwrap();
+    assert_eq!(host.inbox_favicon(&target).await.unwrap(), None);
+    let wrong = InboxTarget {
+        root: "/synthetic/legacy",
+        ..target
+    };
+    assert!(matches!(
+        host.prepare_inbox_favicon(&wrong, Some(icon)).await,
+        Err(HostError::Binding)
+    ));
+
+    let writes: Vec<Value> = requests
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.tag == "projects.mutate")
+        .map(|request| serde_json::from_str(request.payload.get()).unwrap())
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            json!({"type":"project.update","commandId":set,"projectId":PROJECT,"faviconPath":icon}),
+            json!({"type":"project.update","commandId":clear,"projectId":PROJECT,"faviconPath":null}),
+        ]
+    );
 }
 
 fn binding(path: &Path) -> Binding {

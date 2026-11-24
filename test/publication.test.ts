@@ -152,6 +152,7 @@ test('publication allows designated assets and exact synthetic artifacts without
   const root = fixture({
     'docs/assets/diagram.png': image,
     'assets/logo.png': image,
+    'engine/assets/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
     'test/fixtures/publication/synthetic.png': image,
     'test/fixtures/publication/synthetic.log': 'Synthetic output',
     'test/fixtures/publication/synthetic-diff.html': '<div class="diff">Synthetic change</div>',

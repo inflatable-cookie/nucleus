@@ -24,8 +24,8 @@ the delivery lane (Nucleus planner, 2026-11-24).
 
 Scope and selectors come from the repository, never from this file: read
 `effigy.toml` (`effigy tasks`, `effigy --json --plan <selector>`) and
-`AGENTS.md`. For this repository the milestone board is `check`, `qa:docs`,
-`qa:northstar`, `test` and `test:timing`.
+`AGENTS.md`. The Rust selectors cover the workspace. The TypeScript test slice
+covers the active entries in `scripts/active-tests.json`.
 
 ## Pin the revision
 
@@ -52,11 +52,14 @@ session can read. One slice per key, so a slice that never ran is visibly
 missing rather than folded into an aggregate:
 
 ```sh
+effigy --run-id "qa-<sha7>-engine-fmt" engine:fmt
+effigy --run-id "qa-<sha7>-engine-check" engine:check
+effigy --run-id "qa-<sha7>-engine-clippy" engine:clippy
 effigy --run-id "qa-<sha7>-check" check
 effigy --run-id "qa-<sha7>-docs" qa:docs
 effigy --run-id "qa-<sha7>-northstar" qa:northstar
+effigy --run-id "qa-<sha7>-engine-nextest" engine:nextest
 effigy --run-id "qa-<sha7>-test" test
-effigy --run-id "qa-<sha7>-timing" test:timing
 ```
 
 `effigy run status <key> --json` and `effigy run logs <key>` re-read a slice's

@@ -96,10 +96,19 @@ check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "ch
 "check:moves" = "node --import tsx scripts/check-moves.ts {args}"
 fmt = "node scripts/format-changed-typescript.mjs"
 "fmt:check" = "node scripts/format-changed-typescript.mjs --check"
-# Wall-clock oracles run alone after the parallel suite; see scripts/test-timing.mjs.
+# Archived TypeScript timing oracles can still be run by explicit file.
 "test:timing" = "npm run test:timing -- {args}"
 # Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.
-qa = [{ task = "check" }, { task = "qa:docs" }, { task = "qa:northstar" }, { task = "test" }, { task = "test:timing" }]
+qa = [
+  { task = "engine:fmt" },
+  { task = "engine:check" },
+  { task = "engine:clippy" },
+  { task = "check" },
+  { task = "qa:docs" },
+  { task = "qa:northstar" },
+  { task = "engine:nextest" },
+  { task = "test" },
+]
 # `--` preserves Effigy's passthrough; the runner places options before files.
 [test.suites.unit]
 run = "npm test --"

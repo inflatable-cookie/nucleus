@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import activeTests from "../scripts/active-tests.json";
 import {
   selectTestFiles,
   splitRunnerArgs,
@@ -28,6 +29,18 @@ import {
   selectTimingFiles,
 } from "../scripts/timing-source.mjs";
 import { TIMING_PREFIX, serialTestOptions } from "./support/timing";
+
+test("the default TypeScript suite retains the board and worktree hook coverage", () => {
+  const files = selectTestFiles([], activeTests.map(file => file.slice("test/".length)));
+  assert.equal(new Set(files).size, activeTests.length);
+  assert.ok(files.every(existsSync));
+  for (const retained of ["rust-board-adapter", "inbox-board", "board-card-ui", "worktree-command"]) {
+    assert.ok(files.includes(`test/${retained}.test.ts`));
+  }
+  for (const retired of ["active-passes", "main-channel", "t3-install", "nucleus-install"]) {
+    assert.ok(!files.includes(`test/${retired}.test.ts`));
+  }
+});
 
 test("npm test uses explicitly supplied files without expanding the suite", () => {
   assert.deepEqual(
