@@ -569,7 +569,7 @@ async fn save_dispatch(
                         != Some(DispatchMode::Stopped);
                 state.settings.dispatch = Some(saved.value.clone());
                 if stopping {
-                    service.wake_runs(&mut state)?;
+                    wake_runs(&mut state)?;
                 }
                 service.wake_settings_capacity(&mut state);
             }
@@ -662,17 +662,6 @@ impl Service {
         self.wake_settings_capacity(state);
     }
 
-    /// A global stop reaches every task that holds a run on its next pass.
-    fn wake_runs(&self, state: &mut crate::State) -> Result<(), ServiceError> {
-        let now = Instant::now();
-        for id in state.store.run_ids()? {
-            state
-                .schedule
-                .wake(&id, now, crate::schedule::Priority::Wake);
-        }
-        Ok(())
-    }
-
     fn wake_settings_capacity(&self, state: &mut crate::State) {
         let now = Instant::now();
         for id in state
@@ -686,4 +675,15 @@ impl Service {
         }
         self.wake.notify_one();
     }
+}
+
+/// A global stop reaches every task that holds a run on its next pass.
+fn wake_runs(state: &mut crate::State) -> Result<(), ServiceError> {
+    let now = Instant::now();
+    for id in state.store.run_ids()? {
+        state
+            .schedule
+            .wake(&id, now, crate::schedule::Priority::Wake);
+    }
+    Ok(())
 }

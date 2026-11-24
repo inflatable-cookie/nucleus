@@ -307,8 +307,12 @@ impl Rpc {
             .await
             .map_err(|_| HostError::Timeout)??;
         let mut connection = Connection { socket, next_id: 0 };
-        connection.send(json!({"_tag":"Request", "id":"1", "tag":"subscribeServerConfig", "headers":[],
-            "payload":{"environmentThemes":true,"workspaceSnapshotsOnDemand":true}})).await?;
+        connection
+            .send(
+                json!({"_tag":"Request", "id":"1", "tag":"subscribeServerConfig", "headers":[],
+            "payload":{"environmentThemes":true,"workspaceSnapshotsOnDemand":true}}),
+            )
+            .await?;
         let mut tracker = crate::theme::ThemeTracker::default();
         loop {
             let frames = time::timeout(Duration::from_mins(1), connection.frames())

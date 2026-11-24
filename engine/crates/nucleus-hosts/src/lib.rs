@@ -10,9 +10,9 @@ mod provider_setup;
 mod questions;
 mod rpc;
 mod runtime;
-mod theme;
 #[cfg(test)]
 mod t3_tests;
+mod theme;
 mod title_shell;
 
 use std::{

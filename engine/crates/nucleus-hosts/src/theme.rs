@@ -101,7 +101,8 @@ mod tests {
             tracker.snapshot(),
             json!({"settings": {"defaultTheme": "ocean", "defaultAppearance": "dark"}, "theme": null})
         );
-        let ocean = json!({"id": "ocean", "appearance": "dark", "canvas": "#001122", "accent": "#3366ff"});
+        let ocean =
+            json!({"id": "ocean", "appearance": "dark", "canvas": "#001122", "accent": "#3366ff"});
         assert!(tracker.apply(&json!({
             "version": 1, "type": "environmentThemesUpdated",
             "payload": {"themes": [{"id": "forest"}, ocean]}
@@ -115,6 +116,8 @@ mod tests {
             tracker.snapshot()["settings"],
             json!({"defaultTheme": "ocean", "defaultAppearance": "light"})
         );
-        assert!(!tracker.apply(&json!({"version": 1, "type": "keybindingsUpdated", "payload": {}})));
+        assert!(
+            !tracker.apply(&json!({"version": 1, "type": "keybindingsUpdated", "payload": {}}))
+        );
     }
 }

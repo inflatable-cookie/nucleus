@@ -157,17 +157,10 @@ impl Service {
             forge,
             workspace: seen(checkout.observe()),
         };
-        if task.run().is_some_and(|run| !run.revoked())
-            && self.dispatch_mode().await == DispatchMode::Stopped
+        // The operator's global stop settles a live run through stop custody too.
+        if task.run().is_some_and(nucleus_core::Run::revoked)
+            || (task.run().is_some() && self.dispatch_mode().await == DispatchMode::Stopped)
         {
-            // The operator's global stop revokes the run. Stop custody below
-            // settles it exactly as it does after a move.
-            let mut stopped = task.clone();
-            stopped.revoke_run();
-            let row = self.save(row, stopped, &event("run_stopped")).await?;
-            return self.stop_run(&row, &checkout, observation, host).await;
-        }
-        if task.run().is_some_and(nucleus_core::Run::revoked) {
             return self.stop_run(row, &checkout, observation, host).await;
         }
         if task.phase() == Phase::Reviewing
@@ -369,13 +362,6 @@ impl Service {
         via: Launch,
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
-        if !self
-            .dispatch_mode()
-            .await
-            .allows_launch(row.task.first_launch())
-        {
-            return Ok(Action::Wait(WaitReason::Capacity));
-        }
         let _fence = self.effect(row).await?;
         let task = &row.task;
         let identity = task.identity();
@@ -547,7 +533,10 @@ impl Service {
         if let Some(wait) = self.pause_prepared(row, &observation).await? {
             return Ok(wait);
         }
-        if !self.dispatch_mode().await.allows_launch(task.first_launch())
+        if !self
+            .dispatch_mode()
+            .await
+            .allows_launch(task.first_launch())
             || !self.launch_capacity(task.identity(), false).await?
         {
             return Ok(Action::Wait(WaitReason::Capacity));
@@ -752,6 +741,15 @@ impl Service {
         mut observation: Observation,
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
+        let stopped;
+        let row = if row.task.run().is_some_and(|run| !run.revoked()) {
+            let mut task = row.task.clone();
+            task.revoke_run();
+            stopped = self.save(row, task, &event("run_stopped")).await?;
+            &stopped
+        } else {
+            row
+        };
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
         let head = run.launch().review_head.as_ref();
