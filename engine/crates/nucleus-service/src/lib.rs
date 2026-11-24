@@ -155,6 +155,7 @@ pub struct Service {
 struct State {
     store: Store,
     settings: web::RuntimeSettings,
+    registry_mode: bool,
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
@@ -266,7 +267,6 @@ impl Service {
         if let Some(project) = &project {
             project.verify(&git)?;
         }
-        let runtime_settings = web::RuntimeSettings::open(settings)?;
         if !callback.ip().is_loopback()
             || callback.port() == 0
             || !report_command.is_absolute()
@@ -275,7 +275,9 @@ impl Service {
             return Err(ServiceError::Ticket);
         }
         let profile = storage.lock_profile()?;
+        let runtime_settings = web::RuntimeSettings::open(settings)?;
         let store = Store::open(&storage)?;
+        let registry_mode = project.is_none();
         let (changes, _) = broadcast::channel(64);
         Ok(Self {
             storage,
@@ -292,6 +294,7 @@ impl Service {
             state: Mutex::new(State {
                 store,
                 settings: runtime_settings,
+                registry_mode,
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),

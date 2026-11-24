@@ -8,29 +8,62 @@ use sha2::{Digest, Sha256};
 use super::{ImportError, has_table};
 use crate::planning::decode;
 
-pub(super) struct Reader<'a>(Option<Statement<'a>>);
+pub(super) struct Reader<'a> {
+    query: Option<Statement<'a>>,
+    field: &'static str,
+}
 
 impl<'a> Reader<'a> {
     pub(super) fn new(source: &'a Connection) -> Result<Self, ImportError> {
-        const FULL: &str =
-            "SELECT version, data, NULL, NULL, NULL FROM lead_versions WHERE leadId = ?1";
-        const DELTAS: &str = "SELECT version, data, baseVersion, bodyDigest, delta
-                              FROM lead_version_deltas WHERE leadId = ?1";
-        let sql = match (
-            has_table(source, "lead_versions")?,
-            has_table(source, "lead_version_deltas")?,
-        ) {
-            (true, true) => format!("{FULL} UNION ALL {DELTAS} ORDER BY version DESC"),
-            (true, false) => format!("{FULL} ORDER BY version DESC"),
-            (false, true) => format!("{DELTAS} ORDER BY version DESC"),
-            (false, false) => return Ok(Self(None)),
+        Self::for_tables(
+            source,
+            "lead_versions",
+            "lead_version_deltas",
+            "leadId",
+            "body",
+        )
+    }
+
+    pub(super) fn lane_documents(source: &'a Connection) -> Result<Self, ImportError> {
+        Self::for_tables(
+            source,
+            "lane_documents",
+            "lane_document_deltas",
+            "lane",
+            "text",
+        )
+    }
+
+    fn for_tables(
+        source: &'a Connection,
+        full: &str,
+        deltas: &str,
+        key: &str,
+        field: &'static str,
+    ) -> Result<Self, ImportError> {
+        let mut parts = Vec::new();
+        if has_table(source, full)? {
+            parts.push(format!(
+                "SELECT version, data, NULL, NULL, NULL FROM {full} WHERE {key} = ?1"
+            ));
+        }
+        if has_table(source, deltas)? {
+            parts.push(format!("SELECT version, data, baseVersion, bodyDigest, delta FROM {deltas} WHERE {key} = ?1"));
+        }
+        let query = if parts.is_empty() {
+            None
+        } else {
+            Some(source.prepare(&format!(
+                "{} ORDER BY version DESC",
+                parts.join(" UNION ALL ")
+            ))?)
         };
-        Ok(Self(Some(source.prepare(&sql)?)))
+        Ok(Self { query, field })
     }
 
     pub(super) fn read(&mut self, id: &str) -> Result<BTreeMap<u32, Value>, ImportError> {
         let mut output = BTreeMap::new();
-        let Some(query) = &mut self.0 else {
+        let Some(query) = &mut self.query else {
             return Ok(output);
         };
         let mut rows = query.query([id])?;
@@ -49,16 +82,16 @@ impl<'a> Reader<'a> {
             if let Some(base_version) = row.get::<_, Option<u32>>(2)? {
                 let base = output
                     .get(&base_version)
-                    .and_then(|value: &Value| value["body"].as_str());
+                    .and_then(|value: &Value| value[self.field].as_str());
                 let delta: Delta = decode(row, 4)?;
                 let expected: String = row.get(3)?;
                 let body = base
                     .and_then(|base| delta.apply(base, version, base_version))
                     .filter(|body| digest(body) == expected)
                     .ok_or_else(failure)?;
-                snapshot["body"] = Value::String(body);
+                snapshot[self.field] = Value::String(body);
             }
-            let body = snapshot["body"].as_str().ok_or_else(failure)?;
+            let body = snapshot[self.field].as_str().ok_or_else(failure)?;
             if let Some(recorded) = snapshot["digest"]
                 .as_str()
                 .filter(|digest| digest.starts_with("sha256:"))

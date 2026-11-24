@@ -159,6 +159,7 @@ impl Store {
             id,
             kind,
             author: stamp.actor.into(),
+            repositories: Vec::new(),
             task_links: Vec::new(),
             content,
             state: ItemState::Open,

@@ -37,6 +37,7 @@ impl RuntimeSettings {
             .as_ref()?
             .projects
             .iter()
+            .filter(|(_, project)| !project.archived)
             .find_map(|(id, project)| {
                 project
                     .repositories
@@ -423,9 +424,6 @@ pub(super) async fn reassign(
     input: Result<Json<Reassign>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     require_operator(&authority)?;
-    if api.service.project.is_none() {
-        return Err(ServiceError::Project.into());
-    }
     let Reassign {
         revision,
         origin,

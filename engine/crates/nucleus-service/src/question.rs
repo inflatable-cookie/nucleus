@@ -63,17 +63,17 @@ impl State {
         task: &Task,
         actor: &str,
     ) -> Result<(), ServiceError> {
-        if let Some((project, _, repo)) = self
-            .settings
-            .project_for_origin(&task.identity().repository)
-            && repo.base == task.identity().base
-            && repo.host_project.is_some()
-        {
-            return if self.live_planner_project(actor) == Some(project) {
-                Ok(())
-            } else {
-                Err(ServiceError::PlannerAuthorityRefused)
-            };
+        if self.registry_mode {
+            let authorized = self
+                .settings
+                .project_for_origin(&task.identity().repository)
+                .is_some_and(|(project, _, repo)| {
+                    repo.base == task.identity().base
+                        && self.live_planner_project(actor) == Some(project)
+                });
+            return authorized
+                .then_some(())
+                .ok_or(ServiceError::PlannerAuthorityRefused);
         }
         if bound_planner(task) != Some(actor) {
             return Err(ServiceError::PlannerAuthorityRefused);
@@ -121,13 +121,13 @@ impl Service {
                 }
                 NoticeState::Gone | NoticeState::Undelivered => None,
                 NoticeState::Absent | NoticeState::Queued => {
-                    let authorized = self.project.is_some()
-                        || self
-                            .state
-                            .lock()
-                            .await
-                            .live_planner_project(&delivery.thread)
-                            .is_some();
+                    let authorized = if self.project.is_some() {
+                        true
+                    } else {
+                        let state = self.state.lock().await;
+                        let route = self.resolve_project(&state, row.task.identity())?;
+                        state.live_planner_project(&delivery.thread) == route.project_id.as_deref()
+                    };
                     authorized.then_some(delivery)
                 }
             }
@@ -299,57 +299,48 @@ impl Service {
         route: &ProjectRoute,
     ) -> Result<Option<String>, ServiceError> {
         let origin = task.identity().origin_thread.as_deref();
-        let matches = |identity: &PlannerIdentity| {
-            identity.project_id == route.host_project
-                && !identity.is_child()
-                && identity.provider_instance_id.as_deref() != self.acp_provider()
-        };
-        if let Some(origin) = origin
-            && self
-                .host
-                .planner_identity(origin)
-                .await?
-                .as_ref()
-                .is_some_and(&matches)
-        {
+        let candidates = {
             let state = self.state.lock().await;
-            return Ok(
-                (state.live_planner_project(origin) == route.project_id.as_deref())
-                    .then(|| origin.into()),
-            );
-        }
-        let candidate = {
-            let state = self.state.lock().await;
-            state
+            let eligible = |proof: &&crate::enrollment::EnrolledPlanner| {
+                state.live_planner_project(&proof.identity.id) == route.project_id.as_deref()
+            };
+            let original = origin
+                .and_then(|id| state.enrolled_planners.get(id))
+                .filter(eligible);
+            let fallback = state
                 .enrolled_planners
                 .values()
-                .filter(|proof| {
-                    Some(proof.identity.id.as_str()) != origin && matches(&proof.identity)
+                .filter(eligible)
+                .filter(|proof| Some(proof.identity.id.as_str()) != origin)
+                .max_by_key(|proof| (proof.verified_at, proof.identity.id.as_str()));
+            [original, fallback]
+                .map(|proof| proof.map(|proof| (proof.identity.clone(), proof.verified_at)))
+        };
+        for (identity, verified_at) in candidates.into_iter().flatten() {
+            let actor = identity.id;
+            if self
+                .host
+                .planner_identity(&actor)
+                .await?
+                .as_ref()
+                .is_some_and(|current| {
+                    current.project_id == identity.project_id
+                        && !current.is_child()
+                        && current.provider_instance_id.as_deref() != self.acp_provider()
                 })
-                .max_by_key(|proof| (proof.verified_at, proof.identity.id.as_str()))
-                .map(|proof| (proof.identity.id.clone(), proof.verified_at))
-        };
-        let Some((actor, verified_at)) = candidate else {
-            return Ok(None);
-        };
-        if self
-            .host
-            .planner_identity(&actor)
-            .await?
-            .as_ref()
-            .is_some_and(matches)
-        {
-            return Ok(Some(actor));
-        }
-        let mut state = self.state.lock().await;
-        if state
-            .enrolled_planners
-            .get(&actor)
-            .is_some_and(|proof| proof.verified_at == verified_at)
-        {
-            state.enrolled_planners.remove(&actor);
-            self.project_changes.send_replace(());
-            self.settings_changes.send_replace(());
+            {
+                return Ok(Some(actor));
+            }
+            let mut state = self.state.lock().await;
+            if state
+                .enrolled_planners
+                .get(&actor)
+                .is_some_and(|proof| proof.verified_at == verified_at)
+            {
+                state.enrolled_planners.remove(&actor);
+                self.project_changes.send_replace(());
+                self.settings_changes.send_replace(());
+            }
         }
         Ok(None)
     }

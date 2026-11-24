@@ -558,3 +558,336 @@ fn legacy_planning_import_refuses_external_links_and_corrupt_history() {
     ));
     assert_eq!(fs::read_dir(scratch.path()).expect("scratch").count(), 2);
 }
+
+fn project_copy(root: &Path) -> (PathBuf, BTreeMap<String, String>) {
+    let path = legacy_copy(root);
+    let source = Connection::open(&path).expect("legacy fixture");
+    source.execute_batch(
+        "CREATE TABLE projects (key TEXT PRIMARY KEY, data TEXT);
+         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+         CREATE TABLE lanes (key TEXT PRIMARY KEY, data TEXT);
+         CREATE TABLE project_plans (project TEXT, version INTEGER, data TEXT);
+         CREATE TABLE lane_documents (lane TEXT, version INTEGER, data TEXT);
+         CREATE TABLE lane_document_deltas (lane TEXT, version INTEGER, baseVersion INTEGER, bodyDigest TEXT, data TEXT, delta TEXT);
+         INSERT INTO meta VALUES ('projectLimit', '4'), ('projectDispatchLimitOverrides', '{\"product\":7}');
+         INSERT INTO lane_documents SELECT 'ui', version, json_set(json_remove(data,'$.body'),'$.key','ui','$.text',data->>'body')
+           FROM lead_versions WHERE leadId = 'idea';
+         INSERT INTO lane_document_deltas SELECT 'ui', version, baseVersion, bodyDigest, json_set(data,'$.key','ui'), delta
+           FROM lead_version_deltas WHERE leadId = 'idea';",
+    ).expect("project and lane history schema");
+    let repositories = json!([
+        {"origin":"example/fixture","path":"/synthetic/repo"},
+        {"origin":"example/other","path":"/synthetic/other"},
+    ]);
+    let project = json!({"key":"product","name":"A product","repositories":repositories});
+    let lane = json!({
+        "key":"ui","title":"Design","aim":"Finish the board",
+        "status":"active","repositories":repositories,"updatedAt":DATE,
+    });
+    let plan = json!({
+        "project":"product","version":1,"entries":[{"lane":"ui","note":"Working","horizon":"next","doneWhen":"Board ships"}],
+        "author":"legacy-editor","createdAt":DATE,
+    });
+    let mut item_repos = repositories.as_array().expect("repositories").clone();
+    item_repos.push(json!({"origin":"example/historic","path":"/synthetic/old"}));
+    source
+        .execute(
+            "INSERT INTO projects VALUES ('product',?1)",
+            [project.to_string()],
+        )
+        .expect("project");
+    source
+        .execute("INSERT INTO lanes VALUES ('ui',?1)", [lane.to_string()])
+        .expect("lane");
+    source
+        .execute(
+            "INSERT INTO project_plans VALUES ('product',1,?1)",
+            [plan.to_string()],
+        )
+        .expect("plan");
+    source
+        .execute(
+            "UPDATE leads SET data = json_set(data, '$.repositories', json(?1)) WHERE id = 'idea'",
+            [Value::Array(item_repos).to_string()],
+        )
+        .expect("multi-project item");
+    let mapping = ["example/fixture", "example/other", "example/historic"]
+        .into_iter()
+        .map(|origin| (origin.to_owned(), registry::old_key(origin)))
+        .collect();
+    (path, mapping)
+}
+
+fn edit_prior_project_items(store: &mut Store, from: &str, other: &str) -> (ItemContent, i64) {
+    let mut edit = store
+        .item(from, "idea")
+        .expect("read source")
+        .expect("imported item")
+        .content;
+    edit.title = "Edited in the first repository".into();
+    store
+        .edit_item(from, "idea", edit.clone(), EDITED)
+        .expect("edit title");
+    let mut second_edit = store
+        .item(other, "idea")
+        .expect("read sibling")
+        .expect("imported item")
+        .content;
+    second_edit.body = "Edited in the second repository.".into();
+    store
+        .edit_item(other, "idea", second_edit, EDITED)
+        .expect("edit body");
+    let (_, number) = store
+        .promote_item(
+            &ItemSource {
+                project_id: from.into(),
+                item_id: "idea".into(),
+            },
+            &task("promotion", &edit.body),
+            &admitted(),
+            EDITED,
+        )
+        .expect("promote first copy");
+    (edit, number)
+}
+
+#[test]
+fn project_import_coalesces_compatible_edits_and_preserves_promotion_and_number() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (source, mapping) = project_copy(scratch.path());
+    let settings = profile(scratch.path());
+    let storage = settings.storage().expect("storage");
+    drop(Store::open(&storage).expect("initialize engine"));
+    apply_items(scratch.path(), &source, &mapping, &settings).expect("prior import");
+
+    let from = &mapping["example/fixture"];
+    let other = &mapping["example/other"];
+    let mut store = Store::open(&storage).expect("open before rekey");
+    let (edit, number) = edit_prior_project_items(&mut store, from, other);
+    drop(store);
+
+    let report = import_projects(scratch.path(), &source, Some(&settings)).expect("apply registry");
+    assert_eq!(
+        (
+            report.projects,
+            report.repositories,
+            report.rekeyed_items,
+            report.coalesced_items
+        ),
+        (1, 2, 4, 1)
+    );
+    let registry = settings
+        .read::<crate::Projects>()
+        .expect("project settings");
+    let product = &registry.value.projects["product"];
+    assert_eq!(
+        (&*product.name, product.slots, product.repositories.len()),
+        ("A product", 7, 2)
+    );
+    let historical = format!("legacy.{}", mapping["example/historic"]);
+    assert!(registry.value.projects[&historical].archived);
+
+    let mut store = Store::open(&storage).expect("open migrated engine");
+    let item = store
+        .item("product", "idea")
+        .expect("read")
+        .expect("rekeyed item");
+    assert_eq!(item.content.title, edit.title);
+    // Preserve the other copy's edit as well as the source of the first copy's task.
+    assert_eq!(item.content.body, "Edited in the second repository.");
+    assert_eq!(item.repositories, ["example/fixture", "example/other"]);
+    assert!(matches!(item.state, ItemState::Promoted { ref task_id } if task_id == "promotion"));
+    assert!(store.item(from, "idea").expect("old scope").is_none());
+    assert!(
+        store
+            .item(&historical, "idea")
+            .expect("old repository history")
+            .is_some()
+    );
+    assert_eq!(
+        store
+            .task_source("promotion")
+            .expect("task link")
+            .expect("source")
+            .project_id,
+        "product"
+    );
+    assert_eq!(
+        store
+            .row("promotion")
+            .expect("read task")
+            .expect("task")
+            .number,
+        Some(number)
+    );
+    let history = store
+        .planning_history("product", ItemRecord, "idea")
+        .expect("item history");
+    assert_eq!(history.iter().filter(|row| row.action == "edit").count(), 2);
+    assert_eq!(
+        store.plan("product").expect("plan").lanes[0].done_when,
+        "Board ships"
+    );
+    let lane = store
+        .lanes("product")
+        .expect("lane")
+        .pop()
+        .expect("lane record");
+    assert_eq!(lane.document.document, CURRENT);
+    let docs = store
+        .planning_history("product", crate::planning::RecordKind::Lane, "ui")
+        .expect("documents");
+    assert!(docs.iter().any(|entry| entry.snapshot["text"] == OLDER));
+
+    store
+        .edit_item("product", "idea", edit, EDITED)
+        .expect("edit after migration");
+    let after = store
+        .planning_history("product", ItemRecord, "idea")
+        .expect("post-migration history");
+    drop(store);
+    assert!(
+        import_projects(scratch.path(), &source, Some(&settings))
+            .expect("replay")
+            .already_applied
+    );
+    let store = Store::open(&storage).expect("open replay");
+    assert_eq!(
+        store
+            .planning_history("product", ItemRecord, "idea")
+            .expect("replayed history"),
+        after
+    );
+}
+
+#[test]
+fn project_import_refuses_divergent_edits_without_publishing_either_store() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (source, mapping) = project_copy(scratch.path());
+    let settings = profile(scratch.path());
+    let storage = settings.storage().expect("storage");
+    drop(Store::open(&storage).expect("initialize engine"));
+    apply_items(scratch.path(), &source, &mapping, &settings).expect("prior import");
+    let mut store = Store::open(&storage).expect("open before rekey");
+    for origin in ["example/fixture", "example/other"] {
+        let project = &mapping[origin];
+        let mut content = store
+            .item(project, "idea")
+            .expect("read")
+            .expect("existing item")
+            .content;
+        content.body = origin.into();
+        store
+            .edit_item(project, "idea", content, EDITED)
+            .expect("edit copy");
+    }
+    drop(store);
+    assert!(matches!(
+        import_projects(scratch.path(), &source, Some(&settings)),
+        Err(ImportError::ProjectConflict(conflict)) if conflict.contains("different body edits")
+    ));
+    assert!(
+        !settings
+            .read::<crate::Projects>()
+            .expect("settings")
+            .configured
+    );
+    let store = Store::open(&storage).expect("no pending journal");
+    assert!(store.items("product").expect("target").is_empty());
+    assert!(
+        store
+            .item(&mapping["example/fixture"], "idea")
+            .expect("source")
+            .is_some()
+    );
+}
+
+#[test]
+fn project_import_resumes_pending_settings_before_the_engine_reopens() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (source, mapping) = project_copy(scratch.path());
+    let settings = profile(scratch.path());
+    let storage = settings.storage().expect("storage");
+    let store = Store::open(&storage).expect("initialize engine");
+    let revision = settings
+        .read::<crate::Projects>()
+        .expect("registry")
+        .revision;
+    let pending = json!({
+        "revision": revision,
+        "registry": {"projects": {"product": {
+            "name": "Imported product", "slots": 7, "archived": true, "repositories": []
+        }}}
+    });
+    store
+        .connection
+        .execute(
+            "INSERT INTO legacy_project_import (singleton, pending) VALUES (1, ?1)",
+            [pending.to_string()],
+        )
+        .expect("durable pending publication");
+    drop(store);
+    assert!(matches!(
+        Store::open(&storage),
+        Err(StoreError::ProjectImportPending)
+    ));
+    assert!(matches!(
+        apply_items(scratch.path(), &source, &mapping, &settings),
+        Err(ImportError::Store(StoreError::ProjectImportPending))
+    ));
+
+    let result = import_projects(scratch.path(), &source, Some(&settings)).expect("resume");
+    assert!(result.resumed);
+    assert_eq!(
+        settings
+            .read::<crate::Projects>()
+            .expect("saved registry")
+            .value
+            .projects["product"]
+            .slots,
+        7
+    );
+    assert!(Store::open(&storage).is_ok());
+}
+
+#[test]
+fn project_import_preserves_an_explicit_rust_slot_limit() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (source, _) = project_copy(scratch.path());
+    let settings = profile(scratch.path());
+    let storage = settings.storage().expect("storage");
+    drop(Store::open(&storage).expect("initialize engine"));
+    let project_settings = || {
+        settings
+            .read::<crate::Projects>()
+            .expect("project settings")
+    };
+    settings
+        .edit(
+            &project_settings().revision,
+            |projects: &mut crate::Projects| {
+                projects.projects.insert(
+                    "product".into(),
+                    crate::ProjectSettings {
+                        name: "A product".into(),
+                        slots: 2,
+                        archived: false,
+                        repositories: Vec::new(),
+                    },
+                );
+                Ok(())
+            },
+        )
+        .expect("existing pilot override");
+
+    import_projects(scratch.path(), &source, Some(&settings)).expect("apply registry");
+    let applied = project_settings();
+    assert_eq!(applied.value.projects["product"].slots, 2);
+    assert_eq!(applied.value.projects["product"].repositories.len(), 2);
+    assert!(
+        import_projects(scratch.path(), &source, Some(&settings))
+            .expect("replay")
+            .already_applied
+    );
+    assert_eq!(project_settings().revision, applied.revision);
+}

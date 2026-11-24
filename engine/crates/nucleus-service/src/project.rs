@@ -126,7 +126,7 @@ pub(super) struct ProjectRoute {
     pub(super) checkout: PathBuf,
     pub(super) host_project: String,
     pub(super) slots: Option<u32>,
-    pub(super) repositories: Vec<(String, String)>,
+    pub(super) repositories: Vec<String>,
     pub(super) required_checks: Vec<String>,
 }
 
@@ -177,7 +177,7 @@ impl Service {
                 checkout: project.checkout.clone(),
                 host_project: project.host_project.clone(),
                 slots: state.settings.fixture_slots(project),
-                repositories: vec![(project.repository.clone(), project.base.clone())],
+                repositories: vec![project.repository.clone()],
                 required_checks: state.settings.fixture_checks(project),
             });
         }
@@ -194,8 +194,7 @@ impl Service {
             repositories: project
                 .repositories
                 .iter()
-                .filter(|repo| repo.host_project.is_some())
-                .map(|repo| (repo.origin.clone(), repo.base.clone()))
+                .map(|repo| repo.origin.clone())
                 .collect(),
             required_checks: repo.required_checks.clone(),
         })

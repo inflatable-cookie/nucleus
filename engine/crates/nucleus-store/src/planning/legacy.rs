@@ -1,6 +1,9 @@
 //! Offline import from a standalone TypeScript `SQLite` copy.
 
 mod profiles;
+mod project_records;
+mod registry;
+mod rekey;
 #[cfg(test)]
 mod tests;
 mod versions;
@@ -24,6 +27,9 @@ use super::{
 };
 use crate::{DATABASE_FILE, SettingsFile, StorageError, Store, StoreError, TaskNumberSeed};
 
+pub(crate) use registry::JOURNAL as PROJECT_IMPORT_JOURNAL;
+pub use registry::{ProjectImportReport, import_projects};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     #[error("the source must be a standalone SQLite copy inside the configured scratch root")]
@@ -32,13 +38,17 @@ pub enum ImportError {
     Schema,
     #[error("the copy does not contain legacy profiles or pool settings")]
     ProfilesSchema,
+    #[error("the copy does not contain the legacy project registry and planning tables")]
+    ProjectsSchema,
+    #[error("project import conflict: {0}")]
+    ProjectConflict(String),
     #[error("every repository needs a project mapping; missing {0}")]
     Repository(String),
     #[error("invalid repository mapping or legacy item {0}")]
     Item(String),
     #[error("legacy item {id} collides with existing planning data in project {project}")]
     Collision { project: String, id: String },
-    #[error("invalid history for legacy lead {id} at version {version}")]
+    #[error("invalid legacy history for {id} at version {version}")]
     History { id: String, version: u32 },
     #[error("invalid legacy task number range")]
     NumberSeed,
@@ -132,6 +142,7 @@ pub fn apply_items(
     connection.pragma_update(None, "foreign_keys", true)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     Store::prepare_schema(&tx, false)?;
+    Store::check_legacy_project_import(&tx)?;
     let mut report = copy_items(&source, &tx, &mapping)?;
     report.profiles = profiles::apply(&source, settings)?;
     tx.commit()?;
@@ -283,12 +294,22 @@ fn copy_items(
     target: &Transaction<'_>,
     mapping: &BTreeMap<String, &str>,
 ) -> Result<ImportReport, ImportError> {
+    let mut report = ImportReport::default();
+    walk_items(source, |id, fields, raw, revisions| {
+        copy_item(target, mapping, id, fields, raw, revisions, &mut report)
+    })?;
+    Ok(report)
+}
+
+fn walk_items(
+    source: &Connection,
+    mut copy: impl FnMut(&str, &LegacyItem, &Value, &BTreeMap<u32, Value>) -> Result<(), ImportError>,
+) -> Result<(), ImportError> {
     let leads = has_table(source, "leads")?;
     let papercuts = has_table(source, "papercuts")?;
     if !leads && !papercuts {
         return Err(ImportError::Schema);
     }
-    let mut report = ImportReport::default();
     if leads {
         let mut query = source.prepare("SELECT id, data FROM leads ORDER BY id")?;
         let rows = query.query_map([], legacy_row)?;
@@ -304,7 +325,7 @@ fn copy_items(
                 raw["body"] = snapshot["body"].clone();
             }
             let fields: LegacyItem = serde_json::from_value(raw.clone())?;
-            copy_item(target, mapping, &id, &fields, &raw, &revisions, &mut report)?;
+            copy(&id, &fields, &raw, &revisions)?;
         }
     }
     if papercuts {
@@ -318,18 +339,10 @@ fn copy_items(
         for row in rows {
             let (id, raw) = row?;
             let cut: LegacyPapercut = serde_json::from_value(raw.clone())?;
-            copy_item(
-                target,
-                mapping,
-                &id,
-                &cut.into_item(),
-                &raw,
-                &BTreeMap::new(),
-                &mut report,
-            )?;
+            copy(&id, &cut.into_item(), &raw, &BTreeMap::new())?;
         }
     }
-    Ok(report)
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -457,6 +470,35 @@ impl LegacyPapercut {
 }
 
 impl LegacyItem {
+    fn validate(&self, id: &str) -> Result<(), ImportError> {
+        if id != self.id
+            || !valid_key(id)
+            || self.repositories.is_empty()
+            || self.author.trim().is_empty()
+            || self.title.trim().is_empty()
+            || (matches!(self.state, LegacyState::Parked) && self.parked.is_none())
+        {
+            return Err(ImportError::Item(id.into()));
+        }
+        Ok(())
+    }
+
+    fn item(&self, task_links: Vec<String>) -> Item {
+        Item {
+            id: self.id.clone(),
+            kind: self.kind(),
+            author: self.author.clone(),
+            content: ItemContent {
+                title: self.title.clone(),
+                body: self.body.clone(),
+                lanes: self.lanes.clone(),
+            },
+            state: self.state(&task_links),
+            task_links,
+            repositories: Vec::new(),
+        }
+    }
+
     fn kind(&self) -> ItemKind {
         if self.papercut.is_some() || self.tags.iter().any(|tag| tag == "papercut") {
             ItemKind::Papercut
@@ -506,15 +548,7 @@ fn copy_item(
     revisions: &BTreeMap<u32, Value>,
     report: &mut ImportReport,
 ) -> Result<(), ImportError> {
-    if id != legacy.id
-        || !valid_key(id)
-        || legacy.repositories.is_empty()
-        || legacy.author.trim().is_empty()
-        || legacy.title.trim().is_empty()
-        || (matches!(legacy.state, LegacyState::Parked) && legacy.parked.is_none())
-    {
-        return Err(ImportError::Item(id.into()));
-    }
+    legacy.validate(id)?;
     let mut projects = BTreeSet::new();
     for repository in &legacy.repositories {
         let project = mapping
@@ -522,8 +556,6 @@ fn copy_item(
             .ok_or_else(|| ImportError::Repository(repository.origin.clone()))?;
         projects.insert(*project);
     }
-    let at_ms = date_ms(legacy.updated_at.as_deref().unwrap_or(&legacy.created_at))?;
-    let kind = legacy.kind();
     for project in projects {
         if already_imported(tx, project, id)? {
             report.skipped += 1;
@@ -543,55 +575,58 @@ fn copy_item(
             })
             .map(|target| target.reference.clone())
             .collect();
-        let item = Item {
-            id: id.into(),
-            kind,
-            author: legacy.author.clone(),
-            content: ItemContent {
-                title: legacy.title.clone(),
-                body: legacy.body.clone(),
-                lanes: legacy.lanes.clone(),
-            },
-            state: legacy.state(&task_links),
-            task_links,
-        };
-        for version in revisions.values() {
-            let author = version["author"].as_str().unwrap_or(&legacy.author);
-            let date = version["createdAt"].as_str().unwrap_or(&legacy.created_at);
-            record_history(
-                tx,
-                ItemRecord,
-                project,
-                id,
-                "legacy_version",
-                &version.to_string(),
-                WriteAt {
-                    actor: author,
-                    at_ms: date_ms(date)?,
-                },
-            )?;
-        }
-        let stamp = WriteAt {
-            actor: &legacy.author,
-            at_ms,
-        };
+        let item = legacy.item(task_links);
+        insert_imported_item(tx, project, legacy, &item, raw, revisions, report)?;
+    }
+    Ok(())
+}
+
+fn insert_imported_item(
+    tx: &Transaction<'_>,
+    project: &str,
+    legacy: &LegacyItem,
+    item: &Item,
+    raw: &Value,
+    revisions: &BTreeMap<u32, Value>,
+    report: &mut ImportReport,
+) -> Result<(), ImportError> {
+    let id = &item.id;
+    for version in revisions.values() {
+        let author = version["author"].as_str().unwrap_or(&legacy.author);
+        let date = version["createdAt"].as_str().unwrap_or(&legacy.created_at);
         record_history(
             tx,
             ItemRecord,
             project,
             id,
-            "legacy_snapshot",
-            &raw.to_string(),
-            stamp,
+            "legacy_version",
+            &version.to_string(),
+            WriteAt {
+                actor: author,
+                at_ms: date_ms(date)?,
+            },
         )?;
-        insert(tx, ItemRecord, project, id, "import", &item, stamp)?;
-        match kind {
-            ItemKind::Lead => report.leads += 1,
-            ItemKind::Papercut => report.papercuts += 1,
-        }
-        report.versions += revisions.len();
-        report.task_links += item.task_links.len();
     }
+    let stamp = WriteAt {
+        actor: &legacy.author,
+        at_ms: date_ms(legacy.updated_at.as_deref().unwrap_or(&legacy.created_at))?,
+    };
+    record_history(
+        tx,
+        ItemRecord,
+        project,
+        id,
+        "legacy_snapshot",
+        &raw.to_string(),
+        stamp,
+    )?;
+    insert(tx, ItemRecord, project, id, "import", item, stamp)?;
+    match item.kind {
+        ItemKind::Lead => report.leads += 1,
+        ItemKind::Papercut => report.papercuts += 1,
+    }
+    report.versions += revisions.len();
+    report.task_links += item.task_links.len();
     Ok(())
 }
 

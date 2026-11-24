@@ -46,9 +46,14 @@ pub(super) struct EnrolledPlanner {
 
 impl State {
     pub(crate) fn live_planner_project(&self, actor: &str) -> Option<&str> {
+        self.live_planner_route(actor).map(|(id, _)| id)
+    }
+
+    pub(super) fn live_planner_route(&self, actor: &str) -> Option<(&str, &RepositorySettings)> {
         let proof = self.enrolled_planners.get(actor)?;
         let (id, repository) = self.settings.planner_route(actor)?;
-        (repository.host_project.as_deref() == Some(&proof.identity.project_id)).then_some(id)
+        (repository.host_project.as_deref() == Some(&proof.identity.project_id))
+            .then_some((id, repository))
     }
 
     pub(super) fn invalidate_enrolled_planner(&mut self, hint: &ThreadHint) -> bool {
@@ -112,20 +117,36 @@ impl Service {
                 base: project.base.clone(),
             });
         }
-        let (id, origin) = if let Some(actor) = scope.actor() {
-            if state.live_planner_project(actor).is_none() {
+        let exact_checkout = |repo: &RepositorySettings| {
+            repo.host_project.as_ref().is_some_and(|host| {
+                self.host
+                    .cached_project(host)
+                    .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
+            })
+        };
+        let changed_checkout = || {
+            ServiceError::PlannerEnrollmentUnavailable(
+                "The registered T3 checkout changed or is unavailable. Retry shortly.",
+            )
+        };
+        let (id, repo) = if let Some(actor) = scope.actor() {
+            let Some((id, native)) = state.live_planner_route(actor) else {
                 return Err(self.request_enrollment(state, actor));
-            }
-            let (id, repo) = state
-                .settings
-                .planner_route(actor)
-                .ok_or(ServiceError::ControllerProject)?;
-            if project_id.is_some_and(|requested| requested != id)
-                || origin.is_some_and(|requested| !repo.origin.eq_ignore_ascii_case(requested))
-            {
+            };
+            if project_id.is_some_and(|requested| requested != id) {
                 return Err(ServiceError::ControllerProject);
             }
-            (id, repo.origin.as_str())
+            if !exact_checkout(native) {
+                return Err(changed_checkout());
+            }
+            let target = state
+                .settings
+                .repository(id, origin.unwrap_or(&native.origin))
+                .map_err(|_| ServiceError::ControllerProject)?;
+            if !std::ptr::eq(target, native) && !exact_checkout(target) {
+                return Err(changed_checkout());
+            }
+            (id, target)
         } else {
             let origin = origin
                 .or_else(|| state.settings.only_bound_repository(project_id?))
@@ -137,9 +158,8 @@ impl Service {
             if project_id.is_some_and(|requested| requested != id) {
                 return Err(ServiceError::Project);
             }
-            (id, origin)
+            (id, state.settings.repository(id, origin)?)
         };
-        let repo = state.settings.repository(id, origin)?;
         Ok(PlanningRepository {
             project_id: id.into(),
             repository: repo.origin.clone(),
@@ -390,15 +410,16 @@ fn register(
             .find(|existing| existing.origin.eq_ignore_ascii_case(&repository.origin))
         {
             if project.archived
-                || existing.path != repository.path
-                || existing.base != repository.base
-                || existing
-                    .host_project
-                    .as_ref()
-                    .is_some_and(|id| Some(id) != repository.host_project.as_ref())
+                || existing.host_project.as_ref().is_some_and(|id| {
+                    Some(id) != repository.host_project.as_ref()
+                        || existing.path != repository.path
+                        || existing.base != repository.base
+                })
             {
                 return Err(conflict());
             }
+            existing.path = repository.path;
+            existing.base = repository.base;
             existing.host_project = repository.host_project;
             existing.host_project_title = repository.host_project_title;
             if !existing.planner_threads.contains(&actor) {

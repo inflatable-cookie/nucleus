@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use nucleus_core::{Observation, Workspace};
 use nucleus_hosts::HostError;
@@ -61,10 +61,10 @@ impl Registry {
 }
 
 async fn registry() -> Registry {
-    registry_with_beta_repo(BETA_REPO).await
+    registry_with_options(BETA_REPO, false).await
 }
 
-async fn registry_with_beta_repo(beta_repo: &str) -> Registry {
+async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     let (home, legacy) = fixture(GitHub::new("fixture").expect("client"));
     let alpha_path = legacy.fixture().checkout.clone();
     let beta_path = alpha_path.with_file_name("second");
@@ -73,6 +73,9 @@ async fn registry_with_beta_repo(beta_repo: &str) -> Registry {
     set_default(&beta_path, "trunk");
     let settings = legacy.settings.clone();
     drop(legacy);
+    if imported {
+        seed_imported_container(&settings);
+    }
 
     let reads = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&reads);
@@ -157,6 +160,42 @@ async fn registry_with_beta_repo(beta_repo: &str) -> Registry {
         archived,
         native,
     }
+}
+
+fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
+    let projects = nucleus_store::Projects {
+        projects: BTreeMap::from([(
+            "product".into(),
+            nucleus_store::ProjectSettings {
+                name: "Imported product".into(),
+                slots: 1,
+                archived: false,
+                repositories: [ALPHA_REPO, BETA_REPO]
+                    .into_iter()
+                    .map(|origin| nucleus_store::RepositorySettings {
+                        origin: origin.into(),
+                        path: Path::new("/synthetic/legacy").into(),
+                        base: "main".into(),
+                        host_project: None,
+                        host_project_title: None,
+                        planner_threads: Vec::new(),
+                        required_checks: Vec::new(),
+                        hung_tool_minutes: 30,
+                    })
+                    .collect(),
+            },
+        )]),
+    };
+    let revision = settings
+        .read::<nucleus_store::Projects>()
+        .expect("project settings")
+        .revision;
+    settings
+        .edit(&revision, |value| {
+            *value = projects;
+            Ok(())
+        })
+        .expect("imported project container");
 }
 
 fn create_repository(path: &Path, base: &str, origin: &str) {
@@ -316,7 +355,7 @@ async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_re
 
 #[tokio::test]
 async fn public_task_references_follow_the_authenticated_project_scope() {
-    let registry = registry_with_beta_repo("example/nucleus-fixture").await;
+    let registry = registry_with_options("example/nucleus-fixture", false).await;
     let api = &registry.api;
     let alpha = "alpha-planner";
     let beta = "beta-planner";
@@ -411,6 +450,80 @@ async fn public_task_references_follow_the_authenticated_project_scope() {
             .contains("exactly one repository")
     );
     assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+async fn imported_container_scopes_commands_and_slots_across_exact_native_routes() {
+    let registry = registry_with_options(BETA_REPO, true).await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry.task("alpha-planner", "first").await;
+    let projects = json_body(get_as(&registry.api, PROJECTS, &BOARD_KEY).await).await;
+    let product = &projects["settings"]["value"]["projects"]["product"];
+    assert_eq!(product["name"], "Imported product");
+    assert_eq!(product["repositories"][0]["hostProject"], "alpha-native");
+    assert!(product["repositories"][1]["hostProject"].is_null());
+    assert_eq!(
+        submit(&registry.api, "alpha-planner", "unbound", Some(BETA_REPO))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    registry.enroll("beta-planner").await;
+    let beta = registry.task("beta-planner", "second").await;
+    assert_eq!(beta.identity().base, "trunk");
+    let projects = json_body(get_as(&registry.api, PROJECTS, &BOARD_KEY).await).await;
+    assert_eq!(
+        projects["verifiedPlanners"]["product"],
+        json!(["beta-planner", "alpha-planner"])
+    );
+    assert_eq!(
+        submit(
+            &registry.api,
+            "alpha-planner",
+            "explicit-member",
+            Some(BETA_REPO)
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+    let route = registry
+        .service
+        .project_for(alpha.identity())
+        .await
+        .expect("route");
+    let head = registry
+        .service
+        .verify_route(alpha.identity(), &route)
+        .await
+        .expect("exact head");
+    let mut running = alpha;
+    occupy_slot(&mut running, &head);
+    let first = registry.service.task("first").await.expect("first");
+    registry
+        .service
+        .save(&first, running, &event("fixture"))
+        .await
+        .expect("occupied slot");
+    assert!(
+        !registry
+            .service
+            .launch_capacity(beta.identity(), false)
+            .await
+            .expect("shared project limit")
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/tasks/second/commands",
+            "alpha-planner",
+            json!("cancel")
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
