@@ -1,0 +1,1 @@
+- Pin the Rust engine's Longhorn dependencies to the v0.6.0 release and align the store with rusqlite 0.41.

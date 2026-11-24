@@ -33,9 +33,8 @@ Cargo deny and the whole workspace run at milestone QA. The fixture exercises
 success, a stopped run, and readback after uncertain delivery before the
 planner's live check.
 
-Use `publish = false` for workspace packages. The Longhorn revision
-`049392e27f93d642839b82c28d217c1f353e569e` is an interim pin until `v0.6.0` is
-tagged. Crates using Longhorn require Rust 1.97.1.
+Use `publish = false` for workspace packages. The Longhorn crates are pinned to
+tag `v0.6.0` and require Rust 1.97.1.
 `longhorn-config` owns the versioned engine and Storage settings domains, atomic
 updates and config backups. `longhorn-storage-layout` resolves their roots and
 the separate engine data root. `longhorn-git-workspace` compares exact worktree
@@ -212,6 +211,8 @@ also check the open PR and clean checkout after native authorization.
   snapshot, on scheduler demand. Only notice routing after confirmed absence
   needs the complete candidate inventory. Request for T3: a single-thread shell
   RPC on the WebSocket contract so authority checks can skip the transcript.
+- Request for T3: project or thread filters for the shell subscription, so a
+  service can receive only events for the projects it runs.
 - A pass shares one bounded cwd census across checkout checks. The Mac adapter
   cross-checks cwd-only `lsof` against the local T3 user's PIDs, then checks open
   files recursively under the checkout and engine scratch. It holds both
