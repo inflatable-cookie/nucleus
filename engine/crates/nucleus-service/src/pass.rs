@@ -624,7 +624,7 @@ impl Service {
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            title: crate::titles::child_title(task, row.reference().as_ref(), role),
+            title: crate::titles::child_title(task, row.number, role),
             profile,
             via: &via,
             instance: &instance,
@@ -673,7 +673,7 @@ impl Service {
             .lock()
             .await
             .store
-            .claim_task_effect(id, &audit)?
+            .claim_task_effect(id, &audit, false)?
         {
             eprintln!(
                 "{id}: assignment exceeds the T3 message limit: {}",
@@ -716,13 +716,9 @@ impl Service {
             }
             (
                 prior_preparation_command(&state, row, &session)?,
-                state
-                    .waits
-                    .get(&identity.id)
-                    .map(|(reason, _)| *reason)
-                    .filter(|reason| {
-                        !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
-                    }),
+                state.wait_reason(&identity.id).filter(|reason| {
+                    !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
+                }),
             )
         };
         match self
@@ -2259,10 +2255,7 @@ mod tests {
         assert_eq!(service.forge_retry_secs.load(Ordering::Relaxed), 30);
         let state = service.state.lock().await;
         for id in ["first", "second"] {
-            assert_eq!(
-                state.waits.get(id).map(|(reason, _)| *reason),
-                Some(WaitReason::ForgeUnknown)
-            );
+            assert_eq!(state.wait_reason(id), Some(WaitReason::ForgeUnknown));
             assert!(
                 state
                     .schedule

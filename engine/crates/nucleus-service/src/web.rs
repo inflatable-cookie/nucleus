@@ -589,6 +589,7 @@ async fn detail(
         (None, false)
     };
     Ok(Json(Detail {
+        created_at_ms: summary.created_at_ms,
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
@@ -658,6 +659,8 @@ async fn next(
     Ok(Json(NextView {
         version: row.version,
         phase: summary.phase,
+        state_label: summary.state_label,
+        state_since_ms: summary.state_since_ms,
         wait: summary.wait,
         attention: summary.attention,
         next_check_at: summary.next_check_at,
@@ -955,6 +958,10 @@ struct Summary {
     reference: String,
     version: i64,
     phase: Phase,
+    state_label: String,
+    state_since_ms: Option<u64>,
+    #[serde(skip)]
+    created_at_ms: Option<u64>,
     wait: Option<WaitReason>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
@@ -975,11 +982,19 @@ impl Summary {
         let id = &task.identity().id;
         let dependency_status = DependencyStatus::read(state, row, scope)?;
         let dependency_edits = DependencyEdits::read(state, task, authority, &dependency_status);
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = state.wait_reason(id);
         let wait = if dependency_status.blocking && task.run().is_none() {
             Some(WaitReason::Prerequisite)
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
+        };
+        let (since, created_at_ms) = state.store.board_times(id)?;
+        let fixed = crate::titles::task_label_from_facts(task);
+        let state_since_ms =
+            since.filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
+        let state_label = match fixed {
+            Some(label) => label,
+            None => crate::titles::task_state_label(task, state.effective_wait(task)?),
         };
         let mut view = Self {
             identity: task.identity().clone(),
@@ -989,6 +1004,9 @@ impl Summary {
             version: row.version,
             phase: task.phase(),
             attention: state.task_attention(row)?,
+            state_label,
+            state_since_ms,
+            created_at_ms,
             next_check_at: None,
             wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
             {
@@ -1026,6 +1044,7 @@ impl Summary {
 struct Detail {
     #[serde(flatten)]
     summary: Summary,
+    created_at_ms: Option<u64>,
     brief: Brief,
     operator_inbox: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1073,6 +1092,8 @@ impl From<&ReportTask> for ReportView {
 struct NextView {
     version: i64,
     phase: Phase,
+    state_label: String,
+    state_since_ms: Option<u64>,
     wait: Option<WaitReason>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,

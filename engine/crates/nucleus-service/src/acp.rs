@@ -78,7 +78,7 @@ impl Service {
         if task.run().is_some() {
             return Ok((None, run_keeps_turn(state, row)));
         }
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = state.wait_reason(id);
         if task.question().is_some()
             || task.hold().is_some()
             || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown))
@@ -114,10 +114,13 @@ impl Service {
         .to_string();
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
-        let recorded = state.store.claim_task_effect(id, &intent)?;
+        let starting = matches!(kind, "native_turn_intent" | "native_turn_replay");
+        let wait = Some(WaitReason::Starting);
+        let entered = starting && state.wait_label_changed(&row.task, wait);
+        let recorded = state.store.claim_task_effect(id, &intent, entered)?;
         if recorded {
-            if matches!(kind, "native_turn_intent" | "native_turn_replay") {
-                state.set_wait(id, Some(WaitReason::Starting));
+            if starting {
+                state.apply_observed_wait(&row.task, wait, entered);
             } else if kind == "native_turn_failed" {
                 state.wake_capacity(tokio::time::Instant::now());
                 self.wake.notify_one();

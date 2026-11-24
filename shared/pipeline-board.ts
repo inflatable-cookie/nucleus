@@ -44,7 +44,12 @@ export function decisionAge(
   createdAt: string,
   now: number = Date.now(),
 ): string {
-  const minutes = Math.floor(Math.max(0, now - Date.parse(createdAt)) / 60_000);
+  return relativeAge(Date.parse(createdAt), now);
+}
+
+/** The same coarse age from epoch milliseconds, for records that carry numeric times. */
+export function relativeAge(atMs: number, now: number = Date.now()): string {
+  const minutes = Math.floor(Math.max(0, now - atMs) / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;

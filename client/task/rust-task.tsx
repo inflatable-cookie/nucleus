@@ -19,12 +19,13 @@ import { space } from "../design";
 import { errorText } from "../error-text";
 import { wallTimeBudgetBar } from "../../shared/task-detail-summary";
 import { BudgetBars, DetailField, TaskDetailTabs, type TaskDetailTab } from "./parts";
+import { relativeAge } from "../../shared/pipeline-board";
 import {
   postRustCommand,
   rustPhaseLabels,
   rustQuestionText,
   rustTaskLabel,
-  rustWaitText,
+  rustWaitDetail,
   useRustDetail,
   type RustCommand,
   type RustHistoryPage,
@@ -125,8 +126,8 @@ export function RustTaskDialog({
     ) ?? [];
   const toggle = (value: Section) =>
     setSection((current) => (current === value ? null : value));
-  const phaseView = commands ?? card;
-  const wait = phaseView ? rustWaitText(phaseView) : null;
+  const wait = detail ? rustWaitDetail(detail) : null;
+  const age = detail?.createdAtMs == null ? null : relativeAge(detail.createdAtMs);
 
   return (
     <Dialog
@@ -139,7 +140,13 @@ export function RustTaskDialog({
       closeLabel="Close task"
       onClose={onClose}
       backdropLabel="Close task"
-      eyebrow={card && <Text style={muted(c)}>{card.identity.repository}</Text>}
+      eyebrow={
+        card && (
+          <Text style={muted(c)}>
+            {age ? `${card.identity.repository} · ${age}` : card.identity.repository}
+          </Text>
+        )
+      }
     >
       {task.error && (
         <ReadError error={task.error} retry={() => void task.refetch()} c={c} />
@@ -157,7 +164,7 @@ export function RustTaskDialog({
             <>
               <DetailSection
                 c={c}
-                title={rustPhaseLabels[(phaseView ?? detail).phase]}
+                title={detail.stateLabel}
               >
                 {wait && <Text style={muted(c)}>{wait}</Text>}
                 {detail.hold?.reason && (

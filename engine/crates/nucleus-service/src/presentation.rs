@@ -3,17 +3,83 @@
 use std::sync::LazyLock;
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict};
+use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::RunActivity;
-use nucleus_store::{Event, EventDraft, Store, TaskRow};
+use nucleus_store::{DependencyClock, Event, EventDraft, Store, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+
+use crate::{State, dependencies::checks_prerequisites, titles};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct ActivityAt {
     pub(super) version: i64,
     pub(super) instance: String,
     pub(super) activity: RunActivity,
+}
+
+impl State {
+    pub(super) fn effective_wait(&self, task: &Task) -> Result<Option<WaitReason>, StoreError> {
+        match self.waits.get(&task.identity().id) {
+            Some(wait) => Ok(wait.reason),
+            None => self.prerequisite_wait(task),
+        }
+    }
+
+    fn prerequisite_wait(&self, task: &Task) -> Result<Option<WaitReason>, StoreError> {
+        Ok(
+            (checks_prerequisites(task) && self.store.dependency_blocked(&task.identity().id)?)
+                .then_some(WaitReason::Prerequisite),
+        )
+    }
+
+    pub(super) fn task_wait_transition(
+        &self,
+        prior: &Task,
+        task: &Task,
+    ) -> Result<(Option<WaitReason>, bool), StoreError> {
+        let before = self.effective_wait(prior)?;
+        let after = if prior.phase() == task.phase()
+            && run_basis(prior) == run_basis(task)
+            && titles::task_state_label(prior, None) == titles::task_state_label(task, None)
+        {
+            before
+        } else {
+            self.prerequisite_wait(task)?
+        };
+        Ok((
+            after,
+            titles::task_state_label(prior, before) != titles::task_state_label(task, after),
+        ))
+    }
+
+    pub(super) fn edit_board_dependency<T>(
+        &mut self,
+        task: &Task,
+        edit: impl FnOnce(&mut Store, DependencyClock<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let before = self.effective_wait(task)?;
+        let mut after = before;
+        let mut changed = false;
+        let result = edit(&mut self.store, &mut |blocked| {
+            after = if blocked && checks_prerequisites(task) {
+                Some(WaitReason::Prerequisite)
+            } else {
+                before.filter(|reason| *reason != WaitReason::Prerequisite)
+            };
+            changed =
+                titles::task_state_label(task, before) != titles::task_state_label(task, after);
+            changed
+        })?;
+        self.apply_task_wait(task, after, changed);
+        Ok(result)
+    }
+}
+
+fn run_basis(task: &Task) -> Option<&str> {
+    task.run()
+        .filter(|run| !run.revoked() && run.report().is_none())
+        .map(|run| run.launch().instance.as_str())
 }
 
 #[derive(Serialize)]

@@ -22,7 +22,7 @@ impl State {
             return Ok(TaskAttention::Finished);
         }
         let id = &task.identity().id;
-        let wait = self.waits.get(id).map(|(reason, _)| *reason);
+        let wait = self.wait_reason(id);
         if self.has_open_usage_decision(task)?
             || (task.question().is_some() && task.operator_decline().is_none())
             || matches!(

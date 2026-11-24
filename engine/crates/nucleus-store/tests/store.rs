@@ -86,10 +86,14 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
             "version":version,"session":"before-restart","command":"hold-3",
         })
         .to_string();
-        assert!(store.claim_task_effect("fixture", &receipt).expect("claim"));
+        assert!(
+            store
+                .claim_task_effect("fixture", &receipt, false)
+                .expect("claim")
+        );
         assert!(
             !store
-                .claim_task_effect("fixture", &receipt)
+                .claim_task_effect("fixture", &receipt, false)
                 .expect("duplicate")
         );
         version

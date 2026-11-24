@@ -78,6 +78,8 @@ const task = (
   nextCheckAt: null,
   question: null,
   hold: null,
+  stateLabel: phase[0]!.toUpperCase() + phase.slice(1),
+  stateSinceMs: null,
 });
 
 test("Rust task detail keeps Answer available alongside unknown command names", async (t) => {
@@ -117,6 +119,7 @@ test("Rust task detail keeps Answer available alongside unknown command names", 
       path,
       {
         ...current,
+        createdAtMs: 1_700_000_000_000,
         brief: { text: "Fixture brief", version: 1 },
         pullRequest: null,
         verdict: null,
@@ -286,6 +289,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         nextCheckAt: row.nextCheckAt,
         attention: row.attention,
         allowance: { usedMs: 180_000, limitMs: 3_600_000, exhausted: false },
+        stateLabel: row.stateLabel,
+        stateSinceMs: row.stateSinceMs,
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
@@ -331,6 +336,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     }
     json({
       ...row,
+      createdAtMs: 1_700_000_000_000,
       brief: { text: "Fixture brief", version: 1, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
@@ -662,6 +668,18 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
+  const now = 1_800_000_000_000;
+  dom.window.Date.now = () => now;
+  const held = {
+    ...task("held-task", "queued", "board-fixture#81"),
+    number: 81,
+    reference: "board-fixture#81",
+    title: "Held task",
+    wait: "hold",
+    hold: { reason: "Wait for the schema review. Then continue with the API." },
+    stateLabel: "Held by planner",
+    stateSinceMs: now - 3 * 3_600_000 - 60_000,
+  };
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
     projectSlotOverrides: {},
@@ -716,8 +734,18 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }
     if (path === "/api/engine/profiles/catalog")
       return Response.json({ providers: null, readAtMs: null, status: "pending" });
-    if (path === "/api/engine/tasks")
-      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }]);
+    if (path === "/api/engine/tasks") {
+      const card = {
+        ...task("board-task", taskPhase, "board-fixture#80"),
+        number: 80,
+        title: "Standalone task",
+        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : "Working*",
+        stateSinceMs: now - 12 * 60_000,
+        wait: taskPhase === "queued" ? "capacity" : "hold",
+        hold: taskPhase === "queued" ? null : { reason: "Wait before dispatching again." },
+      };
+      return Response.json([card, held]);
+    }
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
@@ -752,15 +780,36 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const text = () => dom.window.document.body.textContent ?? "";
   dom.window.eval(`(() => { ${script} })()`);
   // The shared navigation, header and project filter render from the Rust data.
-  await click("Queue, 1");
+  await click("Queue, 2");
   await eventually(() => text().includes("Standalone task"), "task title renders");
+  const header = (card: HTMLElement, state: string, age: string) => {
+    const ageText = [...card.querySelectorAll("div")].find(
+      (node) => node.childElementCount === 0 && node.textContent === age,
+    );
+    assert.ok(ageText?.parentElement, age);
+    assert.ok(ageText.parentElement.textContent?.endsWith(state + age));
+    return ageText.parentElement;
+  };
+  const heldCard = selector("#81, Held task")!;
+  assert.ok(heldCard, "the production list renders the numbered card");
+  const heldHeader = header(heldCard, "Held by planner", "3h ago");
+  assert.match(heldHeader.textContent ?? "", /^#81/);
+  assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
+  assert.match(heldCard.textContent ?? "", /Held taskWait for the schema review\./);
+  assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
+  const capacityCard = selector("#80, Standalone task")!;
+  header(capacityCard, "Waiting for capacity", "12m ago");
+  assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
   assert.ok(stream, "the board subscribed to engine changes");
   stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
   await click("Working, 1");
-  await eventually(() => text().includes("Standalone task"), "working view renders");
+  await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
+  const workingCard = selector("#80, Standalone task")!;
+  header(workingCard, "Working*", "12m ago");
+  assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");
   await click("Dispatch hold");

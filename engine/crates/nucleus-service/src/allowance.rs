@@ -88,7 +88,7 @@ impl State {
             || prior.hold() != task.hold()
             || prior.question() != task.question()
             || matches!(audit, "run_reserved" | "host_send");
-        let wait = self.waits.get(&task.identity().id).map(|(wait, _)| *wait);
+        let wait = self.wait_reason(&task.identity().id);
         self.allowance_observation(
             task,
             if changed_work { None } else { wait },

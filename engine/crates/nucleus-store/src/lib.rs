@@ -2,6 +2,7 @@
 
 mod allowance;
 mod barge;
+mod board_state;
 mod dependencies;
 mod inbox;
 mod numbers;
@@ -24,7 +25,9 @@ use rusqlite::{
 use serde_json::{Value, json};
 
 pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, AllowanceView};
-pub use dependencies::{Dependencies, DependencyEdit, PrerequisiteRelease, PrerequisiteWait};
+pub use dependencies::{
+    Dependencies, DependencyClock, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
+};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
 pub use settings::{
@@ -118,6 +121,11 @@ pub struct EventDraft {
 pub struct Event {
     pub sequence: i64,
     pub content: EventDraft,
+}
+
+struct AccountedUpdate {
+    allowance: AllowanceObservation,
+    board_state_changed: bool,
 }
 
 /// A committed fresh reviewer reservation that used the ordinary fallback.
@@ -277,6 +285,7 @@ impl Store {
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
+        tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
 
@@ -564,8 +573,16 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         prerequisites: &[String],
+        clock: Option<DependencyClock<'_>>,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None, Some(prerequisites), None)
+        self.save(
+            expected,
+            task,
+            event,
+            None,
+            Some((prerequisites, clock)),
+            None,
+        )
     }
 
     /// Commit a newly frozen profiled launch and charge its subscription group.
@@ -595,8 +612,13 @@ impl Store {
         event: &EventDraft,
         group: Option<&str>,
         observation: AllowanceObservation,
+        board_state_changed: bool,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, group, None, Some(observation))
+        let update = AccountedUpdate {
+            allowance: observation,
+            board_state_changed,
+        };
+        self.save(expected, task, event, group, None, Some(update))
     }
 
     /// Read Spec 053 counts for one candidate from the local engine database.
@@ -642,7 +664,12 @@ impl Store {
     ///
     /// # Errors
     /// Returns an error if the journal cannot be updated.
-    pub fn claim_task_effect(&mut self, id: &str, event: &EventDraft) -> Result<bool, StoreError> {
+    pub fn claim_task_effect(
+        &mut self,
+        id: &str,
+        event: &EventDraft,
+        entered: bool,
+    ) -> Result<bool, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -653,6 +680,9 @@ impl Store {
         )?;
         if !recorded {
             append(&tx, id, event)?;
+            if entered {
+                board_state::record(&tx, id, event.at)?;
+            }
         }
         tx.commit()?;
         Ok(!recorded)
@@ -717,8 +747,8 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         group: Option<&str>,
-        prerequisites: Option<&[String]>,
-        allowance_observation: Option<AllowanceObservation>,
+        prerequisites: Option<(&[String], Option<DependencyClock<'_>>)>,
+        accounted: Option<AccountedUpdate>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
@@ -734,11 +764,18 @@ impl Store {
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
         }
-        if let Some(prerequisites) = prerequisites {
-            dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
+        if let Some((prerequisites, clock)) = prerequisites {
+            let id = &task.identity().id;
+            dependencies::initial_edges(&tx, id, prerequisites)?;
+            if let Some(clock) = clock {
+                dependencies::record_board_gate(&tx, id, clock, event.at)?;
+            }
         }
-        if let Some(observation) = allowance_observation {
-            allowance::observe(&tx, task, observation)?;
+        if let Some(update) = accounted {
+            allowance::observe(&tx, task, update.allowance)?;
+            if update.board_state_changed {
+                board_state::record(&tx, &task.identity().id, event.at)?;
+            }
         }
         if task.phase() == Phase::Done {
             tx.execute(
@@ -937,6 +974,7 @@ fn admit(
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
+    board_state::record(tx, &identity.id, event.at)?;
     allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {
         dependencies::initial_edges(tx, &identity.id, facts.prerequisites)?;

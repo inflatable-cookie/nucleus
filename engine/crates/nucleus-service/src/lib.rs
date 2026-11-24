@@ -196,6 +196,13 @@ pub struct Service {
     _profile: OwnedFd,
 }
 
+struct TaskWait {
+    reason: Option<WaitReason>,
+    since: Instant,
+    // The stored timestamp belongs to this runtime's observed label.
+    timed: bool,
+}
+
 struct State {
     store: Store,
     allowance_clock: allowance::Clock,
@@ -204,7 +211,7 @@ struct State {
     schedule: Schedule,
     last_pass_calls: HostCalls,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
-    waits: BTreeMap<String, (WaitReason, Instant)>,
+    waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
@@ -544,12 +551,7 @@ impl Service {
             self.recheck_effect(row, WaitReason::Question).await;
         }
         let task = &row.task;
-        if !matches!(
-            task.phase(),
-            Phase::Done | Phase::Cancelled | Phase::Closing
-        ) && task.run().is_none()
-            && task.hold().is_none()
-            && task.question().is_none()
+        if dependencies::checks_prerequisites(task)
             && self.dependencies_blocked(row).await?
             && !self
                 .state
@@ -856,7 +858,7 @@ impl Service {
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
-            if state.set_wait(id, None).is_some() {
+            if state.observe_wait(&current.task, None)? {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
@@ -916,12 +918,10 @@ impl Service {
             Some(profiles::GroupPause::Manual) => state.schedule.park(id),
             None => state.schedule.wake(id, due, priority),
         }
-        let prior = state.set_wait(id, wait);
-        if prior != wait {
+        let changed = state.observe_wait(&row.task, wait)?;
+        self.desire_title(&state, &row.task, row.number);
+        if changed {
             self.title_wake.notify_one();
-        }
-        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
-        if prior != wait {
             self.publish(id, current.version);
         }
         Ok(())
@@ -957,18 +957,18 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
-        let prior = state.set_wait(id, wait);
-        if blocked && prior != wait {
+        let changed = state.observe_wait(&row.task, wait)?;
+        if blocked && changed {
             let mut audit = event("host_observation_blocked");
             audit.detail = serde_json::json!({"version": row.version,
                 "session": self.host.runtime_identity().map(|session| self.turn_failure_scope(&session)),
                 "reason": result.as_ref().err().map(ToString::to_string)}).to_string();
-            state.store.claim_task_effect(id, &audit)?;
+            state.store.claim_task_effect(id, &audit, false)?;
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
         }
-        if state.observe_task_allowance(&row.task, wait)? || prior != wait {
-            self.desire_title(state, &row.task, row.reference().as_ref(), wait);
+        if state.observe_task_allowance(&row.task, wait)? || changed {
+            self.desire_title(state, &row.task, row.number);
             self.title_wake.notify_one();
             self.publish(id, row.version);
         }
@@ -1263,9 +1263,9 @@ impl Service {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
-        let version = state
-            .store
-            .save_brief_with_dependencies(prior, task, &audit, &ids)?;
+        let version = state.edit_board_dependency(task, |store, clock| {
+            store.save_brief_with_dependencies(prior, task, &audit, &ids, Some(clock))
+        })?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1280,10 +1280,16 @@ impl Service {
     ) -> Result<i64, ServiceError> {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let allowance = state.allowance_transition(&prior.task, task, &audit.kind);
-        let version =
-            state
-                .store
-                .save_accounted(prior, task, &audit, subscription_group, allowance)?;
+        let (wait, state_changed) = state.task_wait_transition(&prior.task, task)?;
+        let version = state.store.save_accounted(
+            prior,
+            task,
+            &audit,
+            subscription_group,
+            allowance,
+            state_changed,
+        )?;
+        state.apply_task_wait(task, wait, state_changed);
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1305,7 +1311,6 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
         }
-        state.set_wait(id, None);
         if task
             .run()
             .is_none_or(|run| run.revoked() || run.report().is_some())
@@ -1314,7 +1319,7 @@ impl Service {
         {
             state.role_observations.remove(id);
         }
-        self.desire_title(state, task, prior.reference().as_ref(), None);
+        self.desire_title(state, task, prior.number);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
@@ -1450,9 +1455,7 @@ impl State {
         else {
             return false;
         };
-        self.waits
-            .get(id)
-            .is_some_and(|(wait, _)| *wait == WaitReason::Running)
+        self.wait_reason(id) == Some(WaitReason::Running)
             && self
                 .thread_tasks
                 .get(id)
@@ -1461,28 +1464,74 @@ impl State {
                 .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
     }
 
-    fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
-        if wait != Some(WaitReason::Capacity) {
+    fn wait_reason(&self, id: &str) -> Option<WaitReason> {
+        self.waits.get(id).and_then(|wait| wait.reason)
+    }
+
+    fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
+        if reason != Some(WaitReason::Capacity) {
             self.group_waits.remove(id);
         }
-        let prior = self.waits.get(id).map(|(reason, _)| *reason);
-        if prior == wait {
-            return prior;
+        let entry = self.waits.entry(id.into()).or_insert_with(|| TaskWait {
+            reason: None,
+            since: Instant::now(),
+            timed: false,
+        });
+        let prior = std::mem::replace(&mut entry.reason, reason);
+        if prior == reason {
+            return false;
         }
-        match wait {
-            Some(reason) => {
-                self.waits.insert(id.into(), (reason, Instant::now()));
-            }
-            None => {
-                self.waits.remove(id);
-            }
-        }
+        entry.since = Instant::now();
         if prior == Some(WaitReason::Capacity) {
             self.capacity_waiters.retain(|waiting| waiting != id);
-        } else if wait == Some(WaitReason::Capacity) {
+        } else if reason == Some(WaitReason::Capacity) {
             self.capacity_waiters.push_back(id.into());
         }
-        prior
+        true
+    }
+
+    fn observe_wait(
+        &mut self,
+        task: &Task,
+        reason: Option<WaitReason>,
+    ) -> Result<bool, StoreError> {
+        let id = &task.identity().id;
+        // The first pass after restart establishes a baseline for a volatile wait.
+        let entered = self.wait_label_changed(task, reason);
+        if entered {
+            self.store
+                .record_board_entry(id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+        }
+        Ok(self.apply_observed_wait(task, reason, entered))
+    }
+
+    fn wait_label_changed(&self, task: &Task, reason: Option<WaitReason>) -> bool {
+        self.waits.get(&task.identity().id).is_some_and(|wait| {
+            titles::task_state_label(task, wait.reason) != titles::task_state_label(task, reason)
+        })
+    }
+
+    fn apply_observed_wait(
+        &mut self,
+        task: &Task,
+        reason: Option<WaitReason>,
+        entered: bool,
+    ) -> bool {
+        let id = &task.identity().id;
+        if task.phase().is_terminal() && task.run().is_none() {
+            let changed = self.set_wait(id, None);
+            self.waits.remove(id);
+            return changed;
+        }
+        let changed = self.set_wait(id, reason);
+        self.waits.get_mut(id).expect("observed wait").timed |= entered;
+        changed
+    }
+
+    fn apply_task_wait(&mut self, task: &Task, reason: Option<WaitReason>, entered: bool) {
+        if entered || self.waits.contains_key(&task.identity().id) {
+            self.apply_observed_wait(task, reason, entered);
+        }
     }
 
     fn wake_capacity(&mut self, now: Instant) {

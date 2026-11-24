@@ -1,0 +1,1 @@
+- On the Rust engine, task cards and task detail show the engine's state label, the same wording as the native thread title, and cards show how long the task has been in that state.

@@ -52,6 +52,10 @@ const current = z.object({
   attention: z.enum(["finished", "attention", "active", "waiting"]),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
+  // The engine's one state wording, shared with the native thread title.
+  stateLabel: z.string(),
+  // When the state the label names began; the card's age counts from it.
+  stateSinceMs: timestamp.nullable(),
 });
 const summary = current.extend({
   title: z.string().optional(),
@@ -89,6 +93,7 @@ const allowance = z.object({
 });
 const detail = summary.extend({
   allowance: allowance.optional(),
+  createdAtMs: timestamp.nullable(),
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
@@ -476,35 +481,18 @@ export const rustPhaseLabels: Record<RustPhase, string> = {
   cancelled: "Cancelled",
 };
 
-const waits: Record<string, string> = {
-  hold: "On hold",
-  question: "Waiting for the planner",
-  host_unknown: "Waiting for the host",
-  host_observation_blocked: "Check the task in T3. Hold and release it to retry.",
-  operator_declined: "The operator declined. Move or cancel the task.",
-  starting: "Starting",
-  running: "Running",
-  idle_without_terminal_run: "Waiting for the host",
-  assignment_too_large: "Assignment exceeds the T3 message limit",
-  permission: "Waiting for permission",
-  usage_permission: "Low usage requires operator approval",
-  input: "Waiting for input",
-  retained_thread_busy: "Waiting for the previous turn",
-  stopping: "Stopping",
-  forge_unknown: "Waiting for GitHub",
-  workspace_unknown: "Checking the workspace",
-  checks_pending: "Waiting for checks",
-};
-
-export function rustWaitText({
-  wait,
-  phase,
-}: Pick<RustTask, "wait" | "phase">) {
-  if (wait === "capacity")
-    return phase === "reviewing"
-      ? "Waiting for a review slot"
-      : "Waiting for a work slot";
-  return wait ? (Object.hasOwn(waits, wait) ? waits[wait] : "Waiting") : null;
+/** Keep actionable guidance under the engine's state label. */
+export function rustWaitDetail({ wait }: Pick<RustTask, "wait">): string | null {
+  switch (wait) {
+    case "host_observation_blocked":
+      return "Open the task thread to check.";
+    case "operator_declined":
+      return "Move or cancel the task.";
+    case "assignment_too_large":
+      return "The assignment exceeds the T3 message limit.";
+    default:
+      return null;
+  }
 }
 
 const repairPrompts: Record<z.infer<typeof repair>, string> = {

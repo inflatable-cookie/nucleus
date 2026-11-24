@@ -588,8 +588,11 @@ test("032 a stale decision stays on the board, and the age label stays coarse", 
     true,
     "stale decisions are shown, never hidden",
   );
-  const { decisionAge } = await import("../shared/pipeline-board");
+  const { decisionAge, relativeAge } = await import("../shared/pipeline-board");
   const now = Date.parse("2026-09-29T12:00:00.000Z");
+  // The numeric form the Rust card uses reads the same instants as the TypeScript age.
+  for (const at of ["2026-09-29T11:59:01.000Z", "2026-09-29T11:00:00.001Z", "2026-09-29T11:00:00.000Z", "2026-09-28T12:00:00.000Z", "2026-09-30T00:00:00.000Z"])
+    assert.equal(relativeAge(Date.parse(at), now), decisionAge(at, now), at);
   assert.equal(decisionAge("2026-09-29T12:00:30.000Z", now), "just now");
   assert.equal(decisionAge("2026-09-29T11:30:00.000Z", now), "30m ago");
   assert.equal(decisionAge("2026-09-29T06:00:00.000Z", now), "6h ago");
