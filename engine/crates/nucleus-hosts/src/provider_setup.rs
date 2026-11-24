@@ -14,6 +14,7 @@ pub enum ProviderRegistration {
     Absent,
     /// Settings no longer contain the instance, but the runtime row remains.
     Removing,
+    Adoptable,
     Conflict,
     Registered,
     Ready,
@@ -25,6 +26,8 @@ pub enum ProviderSetupError {
     Host(#[from] HostError),
     #[error("the nucleus-rust provider does not match this profile's registration")]
     Conflict,
+    #[error("nucleus-rust uses another local launcher; pass --adopt to change it")]
+    AdoptionRequired,
     #[error("T3 did not confirm the provider change; run t3 status to inspect it")]
     Unconfirmed,
 }
@@ -72,14 +75,24 @@ impl ProviderSetup {
         registration(config, &self.instance).map_err(Into::into)
     }
 
-    /// Create the instance only if absent, and wait for T3's ACP probe.
+    /// Create an absent instance or explicitly adopt its existing local launcher.
     ///
     /// # Errors
     /// Returns an error on a conflict, unreadable config or unconfirmed readiness.
-    pub async fn install(&self) -> Result<(), ProviderSetupError> {
+    pub async fn install(&self, adopt: bool) -> Result<(), ProviderSetupError> {
         match self.observe().await? {
             ProviderRegistration::Ready => return Ok(()),
             ProviderRegistration::Conflict => return Err(ProviderSetupError::Conflict),
+            ProviderRegistration::Adoptable if !adopt => {
+                return Err(ProviderSetupError::AdoptionRequired);
+            }
+            ProviderRegistration::Adoptable => {
+                self.mutate(json!({
+                    "operation": "upsert", "instanceId": NUCLEUS_RUST_PROVIDER,
+                    "instance": self.instance,
+                }))
+                .await?;
+            }
             ProviderRegistration::Removing => return Err(ProviderSetupError::Unconfirmed),
             ProviderRegistration::Registered => {}
             ProviderRegistration::Absent => {
@@ -103,7 +116,9 @@ impl ProviderSetup {
             ProviderRegistration::Removing => {
                 return self.wait_for(ProviderRegistration::Absent).await;
             }
-            ProviderRegistration::Conflict => return Err(ProviderSetupError::Conflict),
+            ProviderRegistration::Conflict | ProviderRegistration::Adoptable => {
+                return Err(ProviderSetupError::Conflict);
+            }
             ProviderRegistration::Registered | ProviderRegistration::Ready => {}
         }
         // T3 has no compare-and-remove operation. An independent settings
@@ -135,8 +150,10 @@ impl ProviderSetup {
                 if observed == expected {
                     return Ok(());
                 }
-                if observed == ProviderRegistration::Conflict {
-                    return Err(ProviderSetupError::Conflict);
+                match observed {
+                    ProviderRegistration::Conflict => return Err(ProviderSetupError::Conflict),
+                    ProviderRegistration::Adoptable => return Err(ProviderSetupError::Unconfirmed),
+                    _ => {}
                 }
                 sleep(Duration::from_millis(500)).await;
             }
@@ -147,7 +164,7 @@ impl ProviderSetup {
 }
 
 fn registration(config: Value, instance: &Value) -> Result<ProviderRegistration, HostError> {
-    use ProviderRegistration::{Absent, Conflict, Ready, Registered, Removing};
+    use ProviderRegistration::{Absent, Adoptable, Conflict, Ready, Registered, Removing};
     let instances = config
         .pointer("/settings/providerInstances")
         .and_then(Value::as_object)
@@ -162,9 +179,25 @@ fn registration(config: Value, instance: &Value) -> Result<ProviderRegistration,
     let missing = saved.is_none();
     let row_missing = row.is_none();
     let exact_saved = saved == Some(instance);
+    let adoptable = exact_row
+        && !exact_saved
+        && saved.is_some_and(|saved| {
+            let Some(path) = saved["config"]["commandPath"].as_str() else {
+                return false;
+            };
+            if !std::path::Path::new(path).is_absolute() {
+                return false;
+            }
+            let mut with_launcher = instance.clone();
+            with_launcher["config"]["commandPath"] = json!(path);
+            saved == &with_launcher
+        });
     let catalog = ProfileCatalog::parse(config)?;
     if missing && exact_row {
         return Ok(if row_missing { Absent } else { Removing });
+    }
+    if adoptable {
+        return Ok(Adoptable);
     }
     if !exact_saved || !exact_row {
         return Ok(Conflict);

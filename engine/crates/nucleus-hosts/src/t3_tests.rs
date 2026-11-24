@@ -1264,7 +1264,7 @@ async fn a_promoted_steer_needs_delivery_of_its_own_provider_item() {
     server.await.expect("fixture trace");
 }
 
-const RUST_LAUNCHER: &str = "/synthetic/engine/t3-provider/nucleus-rust-acp";
+const RUST_LAUNCHER: &str = "/synthetic/engine/bin/nucleus-rust-acp";
 
 fn setup_instance(command_path: &str) -> Value {
     json!({
@@ -1316,8 +1316,8 @@ async fn rust_provider_create_and_remove_use_the_exact_id_and_read_back() {
     ])
     .await;
     let setup = ProviderSetup::new(t3.endpoint(), "fixture-key", RUST_LAUNCHER).expect("setup");
-    setup.install().await.expect("created and ready");
-    setup.install().await.expect("already ready");
+    setup.install(false).await.expect("created and ready");
+    setup.install(false).await.expect("already ready");
     setup.uninstall().await.expect("removed");
     setup.uninstall().await.expect("already absent");
 
@@ -1344,7 +1344,8 @@ async fn rust_provider_create_and_remove_use_the_exact_id_and_read_back() {
 #[tokio::test]
 async fn rust_provider_conflict_never_sends_a_mutation() {
     use crate::{ProviderSetup, ProviderSetupError};
-    let foreign = setup_instance("/synthetic/other/command");
+    let mut foreign = setup_instance("/synthetic/other/command");
+    foreign["displayName"] = json!("Unrelated ACP");
     let (t3, runner) = server(vec![
         (
             "server.getConfig",
@@ -1355,7 +1356,7 @@ async fn rust_provider_conflict_never_sends_a_mutation() {
     .await;
     let setup = ProviderSetup::new(t3.endpoint(), "fixture-key", RUST_LAUNCHER).expect("setup");
     assert!(matches!(
-        setup.install().await,
+        setup.install(false).await,
         Err(ProviderSetupError::Conflict)
     ));
     assert!(matches!(
@@ -1366,6 +1367,38 @@ async fn rust_provider_conflict_never_sends_a_mutation() {
 }
 
 #[tokio::test]
+async fn rust_provider_adoption_changes_only_its_local_command() {
+    use crate::{ProviderSetup, ProviderSetupError};
+    let prior = setup_instance("/synthetic/engine/previous/nucleus-rust-acp");
+    let expected = setup_instance(RUST_LAUNCHER);
+    let get = "server.getConfig";
+    let update = "server.updateSettings";
+    let (t3, runner) = server(vec![
+        (get, setup_config(Some(prior.clone()), true)),
+        (get, setup_config(Some(prior), true)),
+        (update, Response::Success),
+        (get, setup_config(Some(expected.clone()), true)),
+        (get, setup_config(Some(expected.clone()), true)),
+    ])
+    .await;
+    let setup = ProviderSetup::new(t3.endpoint(), "fixture-key", RUST_LAUNCHER).expect("setup");
+    assert!(matches!(
+        setup.install(false).await,
+        Err(ProviderSetupError::AdoptionRequired)
+    ));
+    setup.install(true).await.expect("adopted and ready");
+    setup.install(true).await.expect("already ready");
+    let requests = runner.await.expect("fixture trace");
+    let change: Value = serde_json::from_str(requests[2].payload.get()).expect("mutation");
+    assert_eq!(
+        change,
+        json!({"patch":{}, "providerInstanceMutation":{
+            "operation":"upsert", "instanceId":"nucleus-rust", "instance":expected
+        }})
+    );
+}
+
+#[tokio::test]
 async fn rust_provider_create_race_never_upserts_a_namesake() {
     use crate::{ProviderSetup, ProviderSetupError};
     let (t3, runner) = server(vec![
@@ -1373,13 +1406,13 @@ async fn rust_provider_create_race_never_upserts_a_namesake() {
         ("server.updateSettings", Response::Failure(json!([]))),
         (
             "server.getConfig",
-            setup_config(Some(setup_instance("/synthetic/conflict")), false),
+            setup_config(Some(json!({"driver":"codex"})), false),
         ),
     ])
     .await;
     let setup = ProviderSetup::new(t3.endpoint(), "fixture-key", RUST_LAUNCHER).expect("setup");
     assert!(matches!(
-        setup.install().await,
+        setup.install(false).await,
         Err(ProviderSetupError::Conflict)
     ));
     let requests = runner.await.expect("loopback RPC fixture");

@@ -109,6 +109,7 @@ pub struct VerifiedBackup {
 
 #[derive(Clone)]
 pub struct SettingsFile {
+    home: PathBuf,
     layout: ResolvedStorageLayout,
     store: Arc<ConfigStore>,
 }
@@ -160,6 +161,7 @@ impl SettingsFile {
         register::<Projects>(&mut store)?;
         register::<Hosts>(&mut store)?;
         Ok(Self {
+            home: base.to_path_buf(),
             layout,
             store: Arc::new(store),
         })
@@ -283,14 +285,14 @@ impl SettingsFile {
         if !settings.enabled {
             return Err(StorageError::Disabled);
         }
-        EngineStorage::resolve(&self.layout, &settings)
+        EngineStorage::resolve(&self.layout, &self.home, &settings)
     }
 
     /// Resolve configured roots for status, including when the engine is disabled.
     /// # Errors
     /// Returns an error if settings or the pinned volume cannot be verified.
     pub fn configured_storage(&self) -> Result<EngineStorage, StorageError> {
-        EngineStorage::resolve(&self.layout, &self.load()?)
+        EngineStorage::resolve(&self.layout, &self.home, &self.load()?)
     }
 }
 
@@ -328,6 +330,7 @@ fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<(), StorageErro
 }
 
 pub struct EngineStorage {
+    bin: StorageDirectory,
     database: StorageDirectory,
     work: StorageDirectory,
     scratch: StorageDirectory,
@@ -339,6 +342,7 @@ pub struct EngineStorage {
 impl EngineStorage {
     fn resolve(
         resolved: &ResolvedStorageLayout,
+        home: &Path,
         settings: &EngineSettings,
     ) -> Result<Self, StorageError> {
         let volume = settings.work_volume.as_ref();
@@ -359,6 +363,7 @@ impl EngineStorage {
             .clone()
             .unwrap_or_else(|| roots.log().to_path_buf());
         let storage = Self {
+            bin: directory(home.join("bin"))?,
             database: directory(resolved.durable_database_dir())?,
             work: directory(work)?,
             scratch: scratch_dir,
@@ -376,6 +381,7 @@ impl EngineStorage {
             storage.verify_optional(&directory(root.to_path_buf())?)?;
         }
         for path in [
+            &storage.bin,
             &storage.database,
             &storage.work,
             &storage.scratch,
@@ -399,6 +405,11 @@ impl EngineStorage {
             Ok(()) | Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => Ok(()),
             Err(error) => Err(error),
         }
+    }
+
+    #[must_use]
+    pub const fn bin(&self) -> &StorageDirectory {
+        &self.bin
     }
 
     #[must_use]
@@ -552,7 +563,7 @@ impl SettingsValue for EngineSettings {
     }
 
     fn verify_for_save(&self, file: &SettingsFile) -> Result<(), StorageError> {
-        EngineStorage::resolve(&file.layout, self).map(|_| ())
+        EngineStorage::resolve(&file.layout, &file.home, self).map(|_| ())
     }
 }
 
@@ -666,7 +677,7 @@ mod tests {
             ..EngineSettings::default()
         };
         assert!(matches!(
-            EngineStorage::resolve(&portable_layout(&home).expect("layout"), &settings),
+            EngineStorage::resolve(&portable_layout(&home).expect("layout"), &home, &settings),
             Err(StorageError::MissingVolume)
         ));
         assert!(!mount.exists());

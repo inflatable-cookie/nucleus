@@ -18,7 +18,6 @@ const PROMPT: &str = "Open the Nucleus Inbox.";
 pub struct InboxTarget<'a> {
     pub root: &'a str,
     pub provider: &'a str,
-    pub legacy: Option<&'a str>,
 }
 
 pub enum InboxStep {
@@ -34,7 +33,6 @@ pub enum InboxStep {
 
 pub enum InboxLifecycle {
     Complete,
-    LegacyPinned,
     Write(InboxWrite),
 }
 
@@ -78,9 +76,6 @@ impl T3 {
         target: &InboxTarget<'_>,
         pending: &BTreeSet<String>,
     ) -> Result<InboxStep, HostError> {
-        if self.legacy_inbox_pinned(target.legacy).await? == Some(true) {
-            return Ok(InboxStep::Wait);
-        }
         let Some(snapshot) = self.inbox_projection(target).await? else {
             return Ok(InboxStep::Wait);
         };
@@ -123,21 +118,15 @@ impl T3 {
         }
     }
 
-    /// Prepare one explicit install step after checking the legacy pin.
+    /// Prepare one explicit install step for the Rust Inbox.
     /// # Errors
     /// Returns an error if the project, provider or native thread cannot be verified.
     pub async fn prepare_inbox_install(
         &self,
         target: &InboxTarget<'_>,
     ) -> Result<InboxLifecycle, HostError> {
-        if self.legacy_inbox_pinned(target.legacy).await? == Some(true) {
-            return Ok(InboxLifecycle::LegacyPinned);
-        }
-        let shell = self.inbox_shell().await?;
-        if target.legacy.is_none() && pinned_legacy_in_shell(&shell)? {
-            return Ok(InboxLifecycle::LegacyPinned);
-        }
         let Some(snapshot) = self.inbox_projection(target).await? else {
+            let shell = self.inbox_shell().await?;
             return self
                 .prepare_inbox_launch(target, &shell)
                 .await
@@ -173,23 +162,6 @@ impl T3 {
             return Ok(InboxLifecycle::Complete);
         };
         lifecycle_write(&snapshot, action)
-    }
-
-    async fn legacy_inbox_pinned(&self, legacy: Option<&str>) -> Result<Option<bool>, HostError> {
-        let Some(legacy) = legacy else {
-            return Ok(None);
-        };
-        let Some(snapshot) = self.inbox_thread(legacy, true).await? else {
-            return Ok(Some(false));
-        };
-        let thread = inbox_thread(&snapshot);
-        if thread["id"] != legacy || thread["providerInstanceId"] != "nucleus" {
-            return Err(HostError::Binding);
-        }
-        if !thread["archivedAt"].is_null() || !thread["deletedAt"].is_null() {
-            return Ok(Some(false));
-        }
-        pinned(thread).map(Some)
     }
 
     async fn inbox_projection(&self, target: &InboxTarget<'_>) -> Result<Option<Value>, HostError> {
@@ -297,28 +269,6 @@ impl T3 {
 
 fn inbox_thread(snapshot: &Value) -> &Value {
     &snapshot["projection"]["thread"]
-}
-
-fn pinned_legacy_in_shell(shell: &Value) -> Result<bool, HostError> {
-    let projects = shell["snapshot"]["projects"]
-        .as_array()
-        .ok_or(HostError::Protocol)?;
-    let threads = shell["snapshot"]["threads"]
-        .as_array()
-        .ok_or(HostError::Protocol)?;
-    for thread in threads.iter().filter(|thread| {
-        thread["providerInstanceId"] == "nucleus"
-            && projects.iter().any(|project| {
-                project["id"] == thread["projectId"]
-                    && project["id"] != PROJECT
-                    && project["title"] == TITLE
-            })
-    }) {
-        if pinned(thread)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn lifecycle_write(snapshot: &Value, action: &str) -> Result<InboxLifecycle, HostError> {
