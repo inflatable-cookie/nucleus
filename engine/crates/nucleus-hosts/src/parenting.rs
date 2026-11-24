@@ -236,7 +236,7 @@ fn parent_row_matches(row: &Value, binding: &Binding, provider: &str) -> bool {
 fn parent_launch(
     binding: &Binding,
     provider: &str,
-    thread: String,
+    thread: &str,
     title: &str,
     start_line: &str,
 ) -> ParentWrite {
@@ -555,7 +555,7 @@ impl T3 {
             return Err(HostError::Configuration);
         }
         Ok(ParentStep::Write(parent_launch(
-            binding, provider, thread, title, start_line,
+            binding, provider, &thread, title, start_line,
         )))
     }
 
