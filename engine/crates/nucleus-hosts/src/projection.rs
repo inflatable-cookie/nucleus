@@ -341,6 +341,38 @@ impl Projection {
         ))
     }
 
+    pub(crate) fn owned_active_run(&self, message: &str) -> Option<&str> {
+        self.runs
+            .iter()
+            .find(|run| {
+                run.user_message_id.as_deref() == Some(message)
+                    && matches!(run.status, Status::Running | Status::Waiting)
+            })
+            .map(|run| run.id.as_str())
+    }
+
+    pub(crate) fn ended_run_for_message(&self, message: &str) -> Option<&str> {
+        self.runs
+            .iter()
+            .find(|run| {
+                run.user_message_id.as_deref() == Some(message)
+                    && run.status.run_state() == RunState::Ended
+            })
+            .map(|run| run.id.as_str())
+    }
+
+    pub(crate) fn ended_parent_message(&self, id: &str) -> Option<&str> {
+        self.runs
+            .iter()
+            .find(|run| run.id == id && run.status.run_state() == RunState::Ended)?
+            .user_message_id
+            .as_deref()
+    }
+
+    pub(crate) fn has_pending_turn(&self) -> bool {
+        self.runs.iter().any(|run| run.status.in_flight())
+    }
+
     pub(crate) fn turn_failed(&self, message_id: &str) -> bool {
         self.delivery(message_id).1.is_some_and(|run| {
             run.user_message_id.as_deref() == Some(message_id)
