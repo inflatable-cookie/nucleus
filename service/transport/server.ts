@@ -266,7 +266,10 @@ export class QueueService {
   /** One declared executor connection per host identity; the newest wins a reload. */
   private readonly hostExecutors = new Map<string, HostExecutorLink>();
   private draining = false;
-  private drained: Promise<void> | null = null;
+  private finishDrain!: (result: Promise<void>) => void;
+  private readonly drainCompletion = new Promise<void>((resolve) => {
+    this.finishDrain = resolve;
+  });
   private idleTimer: NodeJS.Timeout | null = null;
   private ownershipTimer: NodeJS.Timeout | null = null;
   private hostLifecycleTimer: NodeJS.Timeout | null = null;
@@ -1797,7 +1800,7 @@ export class QueueService {
       request.method,
     );
     const roll = drainInputSchema.safeParse(request.input ?? {}).data?.roll;
-    this.drained = (async () => {
+    this.finishDrain((async () => {
       // Drain to a durable safe point: stop new work and connections, drain the
       // persistence executor (which closes SQLite and releases its store work),
       // then release socket and identity. No uncertain effect is killed.
@@ -1832,7 +1835,7 @@ export class QueueService {
       // spawn starts as a standby for it. Idle drain and stop still drop it.
       if (!roll) this.removeOwnedIdentity();
       this.server = null;
-    })();
+    })());
   }
 
   private respond(
@@ -1917,10 +1920,7 @@ export class QueueService {
 
   /** Resolves once a requested drain has fully released socket, store and lease. */
   drainedPromise(): Promise<void> {
-    return (
-      this.drained ??
-      (this.draining ? new Promise(() => {}) : Promise.resolve())
-    );
+    return this.drainCompletion;
   }
 
   /** Stop the service from a test or supervisor; drain to a durable safe point. */
@@ -1928,7 +1928,7 @@ export class QueueService {
     if (!this.draining) {
       this.draining = true;
       onLoginSessionFault(null);
-      this.drained = (async () => {
+      this.finishDrain((async () => {
         await this.closeWebBoard();
         this.server?.close();
         this.idleTimer && clearInterval(this.idleTimer);
@@ -1949,9 +1949,9 @@ export class QueueService {
         if (this.boundSocket) rmSync(this.socketPath, { force: true });
         this.removeOwnedIdentity();
         this.server = null;
-      })();
+      })());
     }
-    await this.drained;
+    await this.drainCompletion;
   }
 
   private removeOwnedIdentity() {

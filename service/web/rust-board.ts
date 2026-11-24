@@ -1,4 +1,10 @@
-import type { ServerResponse } from "node:http";
+import {
+  Agent,
+  request,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import { text } from "node:stream/consumers";
 import { pipeline } from "node:stream/promises";
 
 export type RustBoardConfig = { url: string; key: string };
@@ -59,7 +65,12 @@ export function rustBoardRoute(
 export class RustBoardProxy {
   private readonly origin: string;
   private readonly authorization: string;
-  private readonly streams = new Map<ServerResponse, string>();
+  private readonly agent = new Agent({ keepAlive: true });
+  private readonly active = new Map<
+    ServerResponse,
+    { controller: AbortController; streamSession: string | null }
+  >();
+  private closed = false;
 
   constructor(config: RustBoardConfig) {
     const url = URL.parse(config.url);
@@ -83,9 +94,20 @@ export class RustBoardProxy {
   }
 
   closeStreams(keep: (session: string) => boolean = () => false) {
-    for (const [response, session] of this.streams) {
-      if (!keep(session)) response.destroy();
+    for (const [response, { controller, streamSession }] of this.active) {
+      if (streamSession === null || keep(streamSession)) continue;
+      controller.abort();
+      response.destroy();
     }
+  }
+
+  close() {
+    this.closed = true;
+    for (const [response, { controller }] of this.active) {
+      controller.abort();
+      response.destroy();
+    }
+    this.agent.destroy();
   }
 
   async forward({
@@ -101,7 +123,16 @@ export class RustBoardProxy {
     headers: Record<string, string>;
     body?: string;
   }) {
-    if (target.stream && this.streams.size >= 8) {
+    if (this.closed || response.destroyed) {
+      response.destroy();
+      return;
+    }
+    if (
+      target.stream &&
+      [...this.active.values()].filter(
+        ({ streamSession }) => streamSession !== null,
+      ).length >= 8
+    ) {
       response.writeHead(503, { ...headers, "retry-after": "3" }).end();
       return;
     }
@@ -110,25 +141,38 @@ export class RustBoardProxy {
     const close = () => controller.abort();
     const deadline = setTimeout(close, requestTimeoutMs);
     response.once("close", close);
-    if (target.stream) this.streams.set(response, session);
+    this.active.set(response, {
+      controller,
+      streamSession: target.stream ? session : null,
+    });
     try {
-      const upstream = await fetch(this.origin + target.path, {
-        method: target.method,
-        headers: {
-          authorization: this.authorization,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        body,
-        redirect: "error",
-        signal: controller.signal,
+      const upstream = await new Promise<IncomingMessage>((resolve, reject) => {
+        const outgoing = request(
+          this.origin + target.path,
+          {
+            agent: this.agent,
+            method: target.method,
+            headers: {
+              authorization: this.authorization,
+              ...(body === undefined
+                ? {}
+                : { "content-type": "application/json" }),
+            },
+            signal: controller.signal,
+          },
+          resolve,
+        );
+        outgoing.once("error", reject);
+        outgoing.end(body);
       });
+      const status = upstream.statusCode ?? 502;
+      if (status >= 300 && status < 400) throw new Error("Unexpected redirect");
 
       if (target.stream) {
-        const stream = upstream.body;
         if (
-          !upstream.ok ||
-          !stream ||
-          !upstream.headers.get("content-type")?.startsWith("text/event-stream")
+          status < 200 ||
+          status >= 300 ||
+          !upstream.headers["content-type"]?.startsWith("text/event-stream")
         ) {
           throw new Error("Invalid engine stream");
         }
@@ -139,30 +183,17 @@ export class RustBoardProxy {
           "content-type": "text/event-stream; charset=utf-8",
         });
         response.flushHeaders();
-        async function* chunks(body: ReadableStream<Uint8Array>) {
-          const reader = body.getReader();
-          try {
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) return;
-              yield value;
-            }
-          } finally {
-            reader.releaseLock();
-          }
-        }
-        await pipeline(chunks(stream), response, { signal: controller.signal });
+        await pipeline(upstream, response, { signal: controller.signal });
       } else {
-        const couldBePlannerRetry =
-          target.method === "POST" && upstream.status === 503;
-        if (upstream.status >= 500 && !couldBePlannerRetry) {
+        const couldBePlannerRetry = target.method === "POST" && status === 503;
+        if (status >= 500 && !couldBePlannerRetry) {
           throw new Error("Engine unavailable");
         }
-        const json = await upstream.text();
+        const json = await text(upstream);
         if (couldBePlannerRetry && json !== plannerAuthorityPending) {
           throw new Error("Engine unavailable");
         }
-        response.writeHead(upstream.status, {
+        response.writeHead(status, {
           ...headers,
           "content-type": "application/json; charset=utf-8",
         });
@@ -183,7 +214,7 @@ export class RustBoardProxy {
     } finally {
       clearTimeout(deadline);
       response.off("close", close);
-      this.streams.delete(response);
+      this.active.delete(response);
       controller.abort();
     }
   }

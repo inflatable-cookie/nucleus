@@ -767,9 +767,11 @@ proof lands with its task.
   case that starts a writer. A spawn opens the store the bridge already
   selected (`--data-dir`), the same argument MainChannel uses, so the child
   serves the store the bridge resolved.
-- Build replacement drains to a durable safe point, releases the socket, then
-  starts and verifies the new process, never killing uncertain effects. The
-  host-run scheduler socket is make-before-break: the new process binds a staged
+- Build replacement closes board streams and their upstream requests, stops
+  accepting Inbox bridge calls, and drains accepted work to a durable safe
+  point. The old process releases the socket and exits, allowing the standby to
+  take over. The host-run scheduler socket is make-before-break: the new process
+  binds a staged
   socket, proves it answers and renames it over `run/scheduler.sock`
   ([Spec 035](../specs/035-host-run-scheduler.md)). Backend digest changes
   coalesce to one roll 60 s after the last. A due roll waits up to 15 minutes

@@ -12,6 +12,7 @@ import { readPrivateKey } from "./rust-pilot";
 export interface RustInboxBridge {
   authorization(header: string | undefined): boolean;
   call(input: unknown): Promise<unknown>;
+  close(): void;
 }
 
 function digest(key: string): Buffer {
@@ -39,17 +40,24 @@ export function configuredRustInbox(
   } catch {
     throw new Error("The Rust Inbox bridge needs a valid owner-only key file.");
   }
+  let closed = false;
   return {
     authorization(header) {
       const bearer = header?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
-      return bearer !== undefined && timingSafeEqual(key, digest(bearer));
+      return (
+        !closed && bearer !== undefined && timingSafeEqual(key, digest(bearer))
+      );
     },
     async call(input) {
+      if (closed) throw new Error("The Rust Inbox bridge is closed.");
       const request = rustInboxRequest.parse(input);
       if (!request.id.startsWith(`${RUST_INBOX_PREFIX}${engine}:`)) {
         throw new Error("The decision belongs to another engine.");
       }
       return rustInboxReply.parse(await call(request));
+    },
+    close() {
+      closed = true;
     },
   };
 }

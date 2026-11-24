@@ -378,7 +378,8 @@ export class WebBoard {
 
   /** Stop publishing, end live streams and release the port. */
   async close(): Promise<void> {
-    this.options.rustBoard?.closeStreams();
+    this.options.rustBoard?.close();
+    this.options.rustInbox?.close();
     this.unsubscribe?.();
     this.unsubscribe = null;
     if (this.tokenTimer) clearInterval(this.tokenTimer);

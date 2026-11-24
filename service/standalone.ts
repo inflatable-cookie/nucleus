@@ -87,6 +87,7 @@ export async function runStandaloneService(
   process.on("SIGINT", () => drain("SIGINT"));
   process.on("uncaughtException", (error) => {
     console.error("Nucleus service uncaught exception:", error);
+    process.exitCode = 1;
     void service.stop().then(() => process.exit(1));
   });
   try {
@@ -103,6 +104,7 @@ export async function runStandaloneService(
     `Nucleus service ready on ${service["socketPath"]} pid ${process.pid} build ${service.buildId}`,
   );
   await service.drainedPromise();
+  process.exit();
 }
 
 function ignoreDetachedOutputEpipe(stream: NodeJS.WriteStream) {

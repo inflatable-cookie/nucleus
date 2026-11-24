@@ -1,0 +1,1 @@
+- Service rolls now close the Rust board and Inbox connections and exit after the durable drain, so an old process cannot strand its replacement.
