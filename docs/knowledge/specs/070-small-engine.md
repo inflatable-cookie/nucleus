@@ -110,6 +110,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
     - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust inbox session replaces the TypeScript Inbox as the one pinned thread.
 
+19. **Everything on Stash, nothing on the internal drive.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD".
+    - Every path the engine writes is configurable in the Storage domain and lives on the pinned external volume. That covers the database, Longhorn config and its backups, worktrees, scratch (including ACP session scratch and run tickets), logs, and temp files for every process the engine spawns (`TMPDIR`, `TMP` and `TEMP` point at scratch).
+    - The production layout is: home `/Volumes/Stash/nucleus-engine`, worktrees `/Volumes/Stash/worktrees/nucleus-engine`, scratch `/Volumes/Stash/scratch/nucleus-engine`. Cargo build output for installs goes under `/Volumes/Stash/builds`.
+    - If the pinned volume is absent or a configured root resolves off it, the engine refuses to start. It never falls back to the internal drive. A Barge worktree pool, when enabled, must also live on that volume.
+
 ## The model
 
 ### Stored state per task
