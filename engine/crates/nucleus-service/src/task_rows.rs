@@ -1,6 +1,6 @@
 //! Reconcile native visibility independently of dispatch and API reads.
 
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use nucleus_core::{Role, Task};
 use nucleus_hosts::{
@@ -42,11 +42,9 @@ fn plan_row(
         attention
     };
     let shown = visibility.snoozed_until_ms;
-    let cleared = receipt.as_ref().is_some_and(|receipt| {
-        receipt.clear_attempted_for.is_some()
-            && receipt.clear_attempted_for != shown
-            && receipt.outcome != SnoozeOutcome::Unknown
-    });
+    let cleared = receipt
+        .as_ref()
+        .is_some_and(|receipt| clear_observed(receipt, shown));
     if cleared && attention != TaskAttention::Waiting {
         return Plan::Forget;
     }
@@ -64,9 +62,6 @@ fn plan_row(
         if receipt.owns(shown)
             && let Some(until) = shown
         {
-            if receipt.clear_attempted_for == shown {
-                return Plan::Idle(None);
-            }
             receipt.clear_attempted_for = Some(until);
             return Plan::Write(RowChange::Unsnooze, receipt);
         }
@@ -125,6 +120,12 @@ fn plan_row(
     )
 }
 
+fn clear_observed(receipt: &RowSnooze, shown: Option<u64>) -> bool {
+    receipt.clear_attempted_for.is_some()
+        && receipt.clear_attempted_for != shown
+        && receipt.outcome != SnoozeOutcome::Unknown
+}
+
 fn confirm_snooze(receipt: &mut RowSnooze, shown: Option<u64>) -> bool {
     if receipt.outcome != SnoozeOutcome::Unknown || shown != Some(receipt.until_ms) {
         return false;
@@ -139,7 +140,10 @@ impl Service {
         &self,
         provider: &str,
         threads: &[String],
+        clear_retries: &mut BTreeMap<String, u64>,
     ) -> Result<Option<Duration>, ServiceError> {
+        let now = now_ms();
+        clear_retries.retain(|_, due| *due > now);
         let mut next = None;
         for thread in threads {
             let id = self
@@ -149,7 +153,9 @@ impl Service {
                 .store
                 .task_with_title_thread(thread)?;
             let Some(id) = id else { continue };
-            let due = match Box::pin(self.reconcile_task_row(&id, provider, thread)).await {
+            let due = match Box::pin(self.reconcile_task_row(&id, provider, thread, clear_retries))
+                .await
+            {
                 Ok(due) => due,
                 Err(error) => {
                     eprintln!("{thread}: {error}");
@@ -166,6 +172,7 @@ impl Service {
         id: &str,
         provider: &str,
         thread: &str,
+        clear_retries: &mut BTreeMap<String, u64>,
     ) -> Result<Option<u64>, ServiceError> {
         let retry = Some(now_ms() + RECHECK_MS);
         let fence = self.task_fence(id).await;
@@ -188,6 +195,11 @@ impl Service {
         };
         if let Plan::Idle(deadline) = plan {
             return Ok(deadline);
+        }
+        if let Some(&due) = clear_retries.get(id)
+            && matches!(plan, Plan::Write(RowChange::Unsnooze, _))
+        {
+            return Ok(Some(due));
         }
         let task = &row.task;
         let identity = task.identity();
@@ -213,7 +225,7 @@ impl Service {
         let Some(_permit) = self.dispatch_gate(task, destination).await? else {
             return Ok(retry);
         };
-        let (change, mut receipt) = {
+        let (change, receipt) = {
             let state = self.state.lock().await;
             if row_attention_for_effect(&state, &row)? != Some(attention) {
                 return Ok(retry);
@@ -229,7 +241,9 @@ impl Service {
                     return Ok(retry);
                 }
                 Plan::Write(change, receipt) => {
-                    state.store.save_row_snooze(id, thread, &receipt)?;
+                    if prior.as_ref() != Some(&receipt) {
+                        state.store.save_row_snooze(id, thread, &receipt)?;
+                    }
                     (change, receipt)
                 }
             }
@@ -240,25 +254,41 @@ impl Service {
             .host
             .write_row_visibility(&binding, &command, change, Some(&target), &roles, None)
             .await;
-        if let Err(ParentSendError::NotSent(error)) = result {
-            self.restore_row_snooze(id, thread, prior.as_ref()).await?;
-            return match error {
-                nucleus_hosts::HostError::RowChildBusy => Ok(retry),
-                _ => Err(error.into()),
-            };
-        } else if matches!(result, Ok(SendOutcome::Rejected))
-            && matches!(change, RowChange::SnoozeUntil(_))
-        {
-            receipt.outcome = SnoozeOutcome::Refused;
-            self.state
-                .lock()
-                .await
-                .store
-                .save_row_snooze(id, thread, &receipt)?;
+        if change == RowChange::Unsnooze && result.is_err() {
+            clear_retries.insert(id.into(), now_ms() + RECHECK_MS);
         }
-        result.map(|_| retry).map_err(|error| match error {
-            ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause.into(),
-        })
+        match result {
+            Err(ParentSendError::NotSent(error)) => {
+                self.restore_row_snooze(id, thread, prior.as_ref()).await?;
+                match error {
+                    nucleus_hosts::HostError::RowChildBusy => Ok(retry),
+                    _ => Err(error.into()),
+                }
+            }
+            Err(ParentSendError::Unknown(error)) => Err(error.into()),
+            Ok(outcome) => {
+                self.finish_visibility_write(id, thread, change, outcome, receipt)
+                    .await?;
+                Ok(retry.filter(|_| change != RowChange::Unsnooze))
+            }
+        }
+    }
+
+    async fn finish_visibility_write(
+        &self,
+        id: &str,
+        thread: &str,
+        change: RowChange,
+        outcome: SendOutcome,
+        mut receipt: RowSnooze,
+    ) -> Result<(), ServiceError> {
+        if change == RowChange::Unsnooze {
+            self.restore_row_snooze(id, thread, None).await?;
+        } else if outcome == SendOutcome::Rejected {
+            receipt.outcome = SnoozeOutcome::Refused;
+            self.restore_row_snooze(id, thread, Some(&receipt)).await?;
+        }
+        Ok(())
     }
 
     async fn restore_row_snooze(
@@ -273,6 +303,25 @@ impl Service {
             None => state.store.forget_row_snooze(id)?,
         }
         Ok(())
+    }
+
+    async fn snooze_for_delivery(
+        &self,
+        id: &str,
+        thread: &str,
+        visibility: RowVisibility,
+    ) -> Result<Option<RowSnooze>, ServiceError> {
+        let state = self.state.lock().await;
+        let receipt = state.store.row_snooze(id, thread)?;
+        if receipt
+            .as_ref()
+            .is_some_and(|prior| clear_observed(prior, visibility.snoozed_until_ms))
+            && self.host.row_visibility_hint(thread) == Some(visibility)
+        {
+            state.store.forget_row_snooze(id)?;
+            return Ok(None);
+        }
+        Ok(receipt)
     }
 
     pub(super) async fn claim_row_unsettle(
@@ -317,10 +366,10 @@ impl Service {
         let shown = visibility
             .snoozed_until_ms
             .filter(|&until| until > now_ms());
+        let receipt = self.snooze_for_delivery(id, &thread, visibility).await?;
         if !visibility.settled && shown.is_none() {
             return Ok(());
         }
-        let receipt = self.state.lock().await.store.row_snooze(id, &thread)?;
         let owned = receipt.filter(|receipt| receipt.owns(shown));
         if let Some(until) = shown
             && owned.is_none()
@@ -353,24 +402,20 @@ impl Service {
             }
             (command, None)
         } else {
-            let Some(prior) = owned.filter(|receipt| receipt.clear_attempted_for != shown) else {
-                return Err(self.parent_not_sent(format!(
-                    "unsnooze already attempted (revision {}, horizon {shown:?})",
-                    observed.sequence
-                )));
+            let Some(prior) = owned else {
+                return Err(self.parent_not_sent("the owned snooze is no longer visible"));
             };
             let mut receipt = prior.clone();
             confirm_snooze(&mut receipt, shown);
             receipt.clear_attempted_for = shown;
-            self.state
-                .lock()
-                .await
-                .store
-                .save_row_snooze(id, &thread, &receipt)?;
-            (
-                snooze_command(id, &thread, change, &receipt),
-                Some((prior, receipt)),
-            )
+            if receipt != prior {
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .save_row_snooze(id, &thread, &receipt)?;
+            }
+            (snooze_command(id, &thread, change, &receipt), Some(prior))
         };
         let result = self
             .host
@@ -384,7 +429,7 @@ impl Service {
             )
             .await;
         if let Err(ParentSendError::NotSent(error)) = result {
-            if let Some((prior, _)) = &cleared {
+            if let Some(prior) = &cleared {
                 self.restore_row_snooze(id, &thread, Some(prior)).await?;
             } else {
                 let mut refusal = event(UNSETTLE_NOT_SENT);
@@ -397,6 +442,15 @@ impl Service {
             }
             return Err(self.parent_not_sent(format!(
                 "{change:?} refused before send (prepared {observed:?}): {error}"
+            )));
+        }
+        if change == RowChange::Unsnooze && result.is_ok() {
+            self.restore_row_snooze(id, &thread, None).await?;
+        }
+        if change == RowChange::Unsnooze && matches!(result, Ok(SendOutcome::Rejected)) {
+            return Err(self.parent_not_sent(format!(
+                "T3 rejected clearing the snooze. Open the task thread and clear its snooze (revision {}, horizon {shown:?})",
+                observed.sequence
             )));
         }
         Err(self.parent_not_sent(format!(

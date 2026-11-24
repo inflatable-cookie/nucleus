@@ -1,6 +1,6 @@
 //! Native titles are an independent presentation effect.
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
@@ -245,6 +245,7 @@ impl Service {
                 Err(error) => eprintln!("{error}"),
             }
         }
+        let mut clear_retries = BTreeMap::new();
         loop {
             self.host.wait_for_requests().await;
             let threads = self.host.title_threads(provider);
@@ -268,7 +269,10 @@ impl Service {
                     Some(Duration::from_secs(5))
                 }
             };
-            let row_wait = match self.reconcile_task_rows(provider, &threads).await {
+            let row_wait = match self
+                .reconcile_task_rows(provider, &threads, &mut clear_retries)
+                .await
+            {
                 Ok(wait) => wait,
                 Err(error) => {
                     eprintln!("{error}");
