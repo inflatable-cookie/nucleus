@@ -17,7 +17,10 @@ One task per qualification. Its brief opts into report-only work
 (`queue.reportOnly: true`) and names the lane document the record belongs in
 (`queue.reportLane`), with that lane attached to the task (Spec 050). It gets no
 PR, no branch to merge and no reviewer. The worker's workspace is disposable, so
-nothing the record depends on may live there.
+nothing the record depends on may live there. The Rust engine grants the run
+ticket access to only the delivery lane. A brief without `queue.reportLane` can
+use its sole attached lane. If it attaches more than one, the planner must name
+the delivery lane (Nucleus planner, 2026-11-24).
 
 Scope and selectors come from the repository, never from this file: read
 `effigy.toml` (`effigy tasks`, `effigy --json --plan <selector>`) and
@@ -36,6 +39,11 @@ git rev-parse origin/main          # the SHA every slice below is recorded again
 
 Run from a clean checkout of that SHA (a detached worktree or fresh clone), not
 the registered checkout and not the repository's integration checkout.
+
+On the Rust engine, `task.add --planning-commit <sha>` checks the requested pin
+against the published integration tip. The registered repository must already
+have the commit available to Git. The worker's allocated checkout starts at the
+recorded pin.
 
 ## Run each slice under a durable run key
 
@@ -66,8 +74,13 @@ retained handle).
 Write each slice into the task's lane document with `lane.document.edit` as soon
 as it settles, sending the `version` you last read. The lane document is durable,
 versioned and digest-fenced, so a worker that dies mid-milestone leaves every
-finished slice behind and its successor re-runs only what is missing. Never
-report a scratch path as evidence that outlives the run.
+finished slice behind and its successor re-runs only what is missing. Keep
+evidence that outlives the run in the lane or runner logs.
+
+The Rust engine's worker prompt supplies the run-ticket forms of `lane.get`
+and `lane.put`. Read the document and its version, send the updated Markdown
+with that version, and keep the artifact returned by the edit. If another
+writer advances the lane, re-read it before applying the next slice.
 
 Each entry carries:
 
@@ -95,7 +108,10 @@ product or test regression at that SHA, naming the SHA, the slice and the log.
 Report `report_ready` with `artifact: {key, version, digest}` for the lane
 document version holding the record. The planner accepts it with `complete`, or
 returns it with `move to=work` and an instruction. A report-only task starts no
-reviewer and no blocker escalation.
+reviewer and no blocker escalation. On the Rust engine, task detail shows the
+delivered artifact and offers Complete and Return to work. Completion takes
+the exact delivered version even if the lane has since advanced. The engine
+archives the workspace after custody and Git publication checks pass.
 
 ## Legacy history and upgrades
 

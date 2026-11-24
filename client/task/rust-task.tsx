@@ -35,7 +35,7 @@ import {
   type RustVerdict,
 } from "../web/rust-board";
 
-type Section = "amend" | "hold" | "cancel" | null;
+type Section = "amend" | "hold" | "cancel" | "complete" | "move_work" | null;
 type CommandOutcome = Awaited<ReturnType<typeof postRustCommand>>;
 
 export function RustTaskDialog({
@@ -64,6 +64,7 @@ export function RustTaskDialog({
   const { task, next, history } = useRustDetail(id, tab === "activity");
   const detail = task.data;
   const card = detail ?? summary;
+  const delivery = detail?.report?.delivery;
   const commands =
     next.data &&
     detail?.version === next.data.version &&
@@ -162,6 +163,16 @@ export function RustTaskDialog({
                     {detail.hold.reason}
                   </Text>
                 )}
+                {delivery && (
+                  <Text selectable style={{ color: c.foreground }}>
+                    {delivery.summary} · {delivery.artifact.key} v{delivery.artifact.version}
+                  </Text>
+                )}
+                {detail.report?.failure && (
+                  <Text selectable style={{ color: c.foreground }}>
+                    {detail.report.failure}
+                  </Text>
+                )}
                 {detail.run && <RunActivity run={detail.run} c={c} />}
               </DetailSection>
               {visibleQuestion && (
@@ -200,6 +211,26 @@ export function RustTaskDialog({
                           );
                           if (move) run({ move: move.value });
                         }}
+                      />
+                    )}
+                    {offered("complete") && delivery && (
+                      <Button
+                        c={c}
+                        small
+                        text="Complete"
+                        selected={section === "complete"}
+                        disabled={busy}
+                        onPress={() => toggle("complete")}
+                      />
+                    )}
+                    {offered("move_work") && (
+                      <Button
+                        c={c}
+                        small
+                        text="Return to work"
+                        selected={section === "move_work"}
+                        disabled={busy}
+                        onPress={() => toggle("move_work")}
                       />
                     )}
                     {(offered("amend") || section === "amend") && (
@@ -242,6 +273,31 @@ export function RustTaskDialog({
                       />
                     )}
                   </View>
+                  {((section === "complete" && delivery && offered("complete")) ||
+                    (section === "move_work" && offered("move_work"))) && (
+                    <>
+                      <Field
+                        c={c}
+                        label={section === "complete" ? "Acceptance reason" : "Revision instruction"}
+                        value={reason}
+                        onChange={setReason}
+                        disabled={busy}
+                      />
+                      <Button
+                        c={c}
+                        small
+                        text={section === "complete" ? "Accept report" : "Send instruction"}
+                        disabled={busy || !reason.trim()}
+                        onPress={() => {
+                          if (section === "complete" && delivery) {
+                            run({ complete: { version: detail.version, artifact: delivery.artifact, reason: reason.trim() } });
+                          } else {
+                            run({ move_work: { instruction: reason.trim() } });
+                          }
+                        }}
+                      />
+                    </>
+                  )}
                   {section === "amend" && (
                     <BriefEditor detail={detail} c={c} submit={submit} />
                   )}

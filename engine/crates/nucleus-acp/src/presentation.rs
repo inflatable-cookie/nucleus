@@ -204,8 +204,8 @@ fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
     };
     let step = match phase {
         Phase::Queued | Phase::Cancelled => 0,
-        Phase::Working => 1,
-        Phase::Reviewing => 2,
+        Phase::Working | Phase::Blocked | Phase::Error => 1,
+        Phase::ReportReady | Phase::Reviewing => 2,
         Phase::Merging => 3,
         Phase::Closing | Phase::Done => 4,
     };
@@ -214,15 +214,39 @@ fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
     } else {
         reviews.max(1)
     };
-    let mut titles = [
+    let mut titles = vec![
         "Queued".into(),
         "Working".into(),
         format!("Review round {round}"),
         "Merge".into(),
         "Close".into(),
     ];
+    let step = if detail.report.is_some() {
+        titles = vec![
+            "Queued".into(),
+            "Working".into(),
+            "Report ready".into(),
+            "Done".into(),
+        ];
+        if phase == Phase::Done { 3 } else { step }
+    } else {
+        step
+    };
     if let Some(reference) = &detail.reference {
         titles[step] = format!("{reference} · {}", titles[step]);
+    }
+    if detail.phase == Phase::ReportReady
+        && let Some(delivery) = detail
+            .report
+            .as_ref()
+            .and_then(|report| report.delivery.as_ref())
+    {
+        use std::fmt::Write as _;
+        let _ = write!(
+            titles[step],
+            " · {} v{}",
+            delivery.artifact.key, delivery.artifact.version
+        );
     }
     if detail.phase == Phase::Cancelled {
         titles[step].push_str(" · cancelled");

@@ -11,6 +11,7 @@ mod presentation;
 mod profiles;
 mod project;
 mod question;
+mod report_only;
 mod schedule;
 #[cfg(test)]
 mod tests;
@@ -30,11 +31,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use enrollment::PlanningRepository;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
-    Action, Authority, Command, CommandError, Entry, Forge, Identity, Observation, Observed,
-    OperatorDecline, Phase, PullRequest, Report, Task, WaitReason,
+    Action, Authority, Command, CommandError, Forge, Identity, Observation, Observed,
+    OperatorDecline, Phase, Report, Task, WaitReason,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -77,6 +77,14 @@ pub enum ServiceError {
     TaskReferenceAmbiguous,
     #[error("bare task numbers require a project with exactly one repository. Use repo#N.")]
     TaskReferenceNeedsRepository,
+    #[error("{0}")]
+    ReportInput(String),
+    #[error("report completion is waiting for a verified idle worker")]
+    ReportWorkerBusy,
+    #[error("the report task branch has an open pull request")]
+    ReportOpenPullRequest,
+    #[error("the report checkout is preserved: {0}")]
+    ReportCheckout(&'static str),
     #[error("task input is invalid")]
     Input,
     #[error("answering an operator decision requires the operator binding")]
@@ -374,56 +382,20 @@ impl Service {
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<TaskRow, ServiceError> {
-        project::check_task_id(&id)?;
-        if reference.trim().is_empty() || brief.trim().is_empty() {
-            return Err(ServiceError::Input);
-        }
-        self.storage.database().verify()?;
-        let mut state = self.state.lock().await;
-        let route = self.planning_repository(&mut state, scope, None, repository)?;
-        let task = Self::admission_task(id, reference, brief, None, caller, route)?;
-        let number = state.store.create(&task, &event("admitted"))?;
-        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok(TaskRow {
-            task,
-            version: 1,
-            number: Some(number),
-        })
-    }
-
-    fn admission_task(
-        id: String,
-        reference: String,
-        brief: String,
-        review: Option<PullRequest>,
-        caller: &Authority,
-        route: PlanningRepository,
-    ) -> Result<Task, ServiceError> {
-        project::check_task_id(&id)?;
-        if reference.trim().is_empty() || brief.trim().is_empty() {
-            return Err(ServiceError::Input);
-        }
-        let identity = Identity {
-            id,
-            reference,
-            repository: route.repository,
-            base: route.base,
-            entry: if review.is_some() {
-                Entry::ReviewEntry
-            } else {
-                Entry::Brief
+        self.add_planned_task(
+            None,
+            planning::TaskAdmission {
+                id: Some(id),
+                reference: Some(reference),
+                repository: repository.map(str::to_owned),
+                brief,
+                review: None,
+                planning_commit: None,
             },
-            origin_thread: match caller {
-                Authority::Planner { actor } => Some(actor.clone()),
-                Authority::Operator { .. } => None,
-            },
-        };
-        if let Some(pr) = &review {
-            Branches::for_review_entry(&identity.repository, &identity.base)?
-                .target(&pr.url)
-                .map_err(|_| ServiceError::Input)?;
-        }
-        Ok(Task::new(identity, brief, review))
+            caller,
+            scope,
+        )
+        .await
     }
 
     /// Wait for a due task and process one bounded batch.
@@ -491,9 +463,12 @@ impl Service {
         {
             return Err(error);
         }
+        if row.task.phase() == Phase::ReportReady {
+            return self.notify_report_ready(row).await;
+        }
         if row.task.phase() == Phase::Done
             && row.task.run().is_none()
-            && self.acp_provider().is_some()
+            && (self.acp_provider().is_some() || row.task.report_task().is_some())
         {
             return self.archive_done(row).await;
         }
@@ -728,7 +703,7 @@ impl Service {
         };
         let mut state = self.state.lock().await;
         let current = self.lookup(&state, id)?;
-        let archive_due = self.acp_provider().is_some()
+        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
@@ -883,23 +858,47 @@ impl Service {
         }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
-        let explicit_move = matches!(command, Command::Move(_));
+        let explicit_move = matches!(command, Command::Move(_) | Command::MoveWork { .. });
+        let returned = matches!(command, Command::MoveWork { .. })
+            .then(|| {
+                prior
+                    .task
+                    .report_task()
+                    .and_then(|report| report.delivery.as_ref())
+            })
+            .flatten();
         let preflight = state.preflight(&mut task, authority, &observation, command);
         if matches!(preflight, Err(ServiceError::PlannerAuthorityUnknown)) {
             self.request_planner_check(&mut state, &prior.task);
         }
         match preflight? {
             Preflight::Ready => {
-                let version = if explicit_move || prior.task != task {
-                    let mut audit = event("command");
-                    if prior.task.phase() != task.phase()
-                        && matches!(
-                            task.phase(),
-                            nucleus_core::Phase::Closing | nucleus_core::Phase::Done
+                let mut audit = event("command");
+                if let Some(acceptance) = task
+                    .report_task()
+                    .and_then(|report| report.acceptance.as_ref())
+                    && prior.task.phase() != Phase::Done
+                    && task.phase() == Phase::Done
+                {
+                    state = self
+                        .fence_report_completion(
+                            state, &prior, acceptance, authority, session, scope,
                         )
-                    {
-                        presentation::note_merge(&mut audit, &observation.forge);
-                    }
+                        .await?;
+                    audit = event("report_only_completed");
+                    audit.detail = serde_json::json!({ "acceptance": acceptance }).to_string();
+                } else if let Some(delivery) = returned {
+                    audit = event("report_returned_to_work");
+                    audit.detail = serde_json::json!({
+                        "artifact": delivery.artifact, "summary": delivery.summary,
+                        "instruction": task.report_task().and_then(|report| report.instruction.as_deref()),
+                    }).to_string();
+                } else if prior.task.phase() != task.phase()
+                    && matches!(task.phase(), Phase::Closing | Phase::Done)
+                {
+                    presentation::note_merge(&mut audit, &observation.forge);
+                }
+                let version = if explicit_move || prior.task != task {
                     self.commit(&mut state, &prior, &task, &audit, None)?
                 } else {
                     prior.version
@@ -935,8 +934,24 @@ impl Service {
         report: Report,
     ) -> Result<(), ServiceError> {
         let _fence = self.fence(id).await;
-        let prior = self.task(id).await?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let prior = self.lookup(&state, id)?;
         let mut task = prior.task.clone();
+        if task.replay_report(instance, credential, &report)? {
+            return Ok(());
+        }
+        let current = task.authenticate_run(instance, credential)?;
+        if let Report::ReportReady(delivery) = &report
+            && current.report().is_none()
+        {
+            if delivery.summary.trim().is_empty() {
+                return Err(ServiceError::ReportInput(
+                    "report_ready requires a summary".into(),
+                ));
+            }
+            self.verify_report_artifact(&state, &task, &delivery.artifact, true)?;
+        }
         task.record_report(instance, credential, report)?;
         if let Some(Report::Work(pr)) = task.run().and_then(nucleus_core::Run::report) {
             let identity = task.identity();
@@ -947,7 +962,9 @@ impl Service {
             )?;
             branches.target(&pr.url).map_err(|_| ServiceError::Input)?;
         }
-        self.save(&prior, task, &event("reported")).await?;
+        if task != prior.task {
+            self.commit(&mut state, &prior, &task, &event("reported"), None)?;
+        }
         Ok(())
     }
 
@@ -1272,9 +1289,13 @@ impl Service {
 fn active(task: &Task) -> bool {
     !matches!(
         task.phase(),
-        nucleus_core::Phase::Done | nucleus_core::Phase::Cancelled
+        Phase::ReportReady | Phase::Blocked | Phase::Error | Phase::Done | Phase::Cancelled
     ) && task.operator_decline() != Some(OperatorDecline::Notified)
         || task.run().is_some()
+        || task.phase() == Phase::ReportReady
+            && task
+                .report_task()
+                .is_some_and(|report| !report.notice_attempted)
 }
 
 impl State {

@@ -1,17 +1,17 @@
 use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State, rejection::JsonRejection},
-    http::{StatusCode, request::Parts},
+    http::{HeaderMap, StatusCode, request::Parts},
     routing::{get, post, put},
 };
-use nucleus_core::Authority;
+use nucleus_core::{Authority, ReportArtifact};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent, ItemKind,
     ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan, RecordKind,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Api, ApiError, ControllerScope, Summary, body};
+use super::{Api, ApiError, ControllerScope, Summary, body, credential, run_api_error};
 use crate::{
     ServiceError,
     planning::{TaskAdmission, new_id, stamp},
@@ -30,6 +30,76 @@ pub(super) fn routes() -> Router<Api> {
         .nest("/v1/planning/{project}", project_routes())
         // A separate prefix keeps unqualified record paths out of the project namespace.
         .nest("/v1/planning-current", project_routes())
+}
+
+/// GET and PUT are bound to one run and its one durable delivery lane.
+pub(super) fn report_lane_routes() -> Router<Api> {
+    Router::new().route(
+        "/v1/runs/{task}/{instance}/lanes/{project}/{key}",
+        get(run_lane)
+            .put(put_run_lane)
+            .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
+    )
+}
+
+#[derive(Serialize)]
+struct ReportLane {
+    #[serde(flatten)]
+    lane: Lane,
+    artifact: ReportArtifact,
+}
+
+impl From<Lane> for ReportLane {
+    fn from(lane: Lane) -> Self {
+        Self {
+            artifact: lane.artifact(),
+            lane,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportLaneEdit {
+    version: u64,
+    document: String,
+}
+
+async fn run_lane(
+    State(api): State<Api>,
+    Path((task, instance, project, key)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ReportLane>, ApiError> {
+    let credential = credential(&headers)?;
+    let lane = api
+        .service
+        .report_lane(&task, &instance, &credential, &project, &key, None)
+        .await
+        .map_err(run_api_error)?;
+    Ok(Json(lane.into()))
+}
+
+async fn put_run_lane(
+    State(api): State<Api>,
+    Path((task, instance, project, key)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+    input: Result<Json<ReportLaneEdit>, JsonRejection>,
+) -> Result<Json<ReportLane>, ApiError> {
+    let credential = credential(&headers)?;
+    let input = body(input)?;
+    let lane = api
+        .service
+        .report_lane(
+            &task,
+            &instance,
+            &credential,
+            &project,
+            &key,
+            Some((input.version, input.document)),
+        )
+        .await
+        .map_err(run_api_error)?;
+    Ok(Json(lane.into()))
 }
 
 /// The controller API and the paired board mount the same planning handlers.

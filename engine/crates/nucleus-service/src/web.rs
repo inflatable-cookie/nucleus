@@ -20,7 +20,7 @@ use axum::{
 use futures_util::{Stream, stream};
 use nucleus_core::{
     Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
-    Report, Task, Verdict, WaitReason,
+    Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -213,6 +213,7 @@ fn routes(
     let mut routes = controller
         .merge(tasks)
         .merge(inbox::routes())
+        .merge(planning::report_lane_routes())
         .route("/v1/runs/{task}/{instance}/report", post(report));
     if let Some(board) = board {
         routes = routes.merge(board.routes(&api));
@@ -456,6 +457,17 @@ async fn bind_acp(
     ))
 }
 
+fn run_api_error(error: ServiceError) -> ApiError {
+    match error {
+        ServiceError::Missing
+        | ServiceError::Project
+        | ServiceError::Core(nucleus_core::CommandError::InvalidReportCredential) => {
+            ApiError::Unauthorized
+        }
+        error => error.into(),
+    }
+}
+
 async fn report(
     State(api): State<Api>,
     Path((task, instance)): Path<(String, String)>,
@@ -464,19 +476,11 @@ async fn report(
 ) -> Result<StatusCode, ApiError> {
     let credential = credential(&headers)?;
     let report = body(report)?;
-    match api
-        .service
+    api.service
         .report(&task, &instance, &credential, report)
         .await
-    {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(
-            ServiceError::Missing
-            | ServiceError::Project
-            | ServiceError::Core(nucleus_core::CommandError::InvalidReportCredential),
-        ) => Err(ApiError::Unauthorized),
-        Err(error) => Err(error.into()),
-    }
+        .map_err(run_api_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -548,6 +552,7 @@ async fn detail(
         source: state.store.task_source(&id).map_err(ServiceError::from)?,
         pull_request: task.pull_request().cloned(),
         verdict: task.verdict().cloned(),
+        report: task.report_task().map(ReportView::from),
         run,
     }))
 }
@@ -615,6 +620,32 @@ fn command_options(
         Ok(Preflight::Pending) => CommandReadiness::Pending,
         Err(_) => CommandReadiness::Unavailable,
     };
+    if matches!(
+        task.phase(),
+        Phase::ReportReady | Phase::Blocked | Phase::Error
+    ) {
+        commands.push((
+            "move_work",
+            Command::MoveWork {
+                instruction: "Return report to work".into(),
+            },
+        ));
+    }
+    if task.phase() == Phase::ReportReady
+        && let Some(delivery) = task
+            .report_task()
+            .and_then(|report| report.delivery.as_ref())
+    {
+        // The real command rechecks the caller's version, forge and participant custody.
+        commands.push((
+            "complete",
+            Command::Complete {
+                version: 0,
+                artifact: delivery.artifact.clone(),
+                reason: "Accept report".into(),
+            },
+        ));
+    }
     let moves = [
         Phase::Queued,
         Phase::Working,
@@ -633,7 +664,10 @@ fn command_options(
         })
         .chain(commands.into_iter().map(|(name, command)| CommandView {
             name,
-            preflight: check(command),
+            preflight: match check(command) {
+                CommandReadiness::Ready if name == "complete" => CommandReadiness::Pending,
+                availability => availability,
+            },
             phase: None,
         }))
         .collect()
@@ -851,7 +885,33 @@ struct Detail {
     source: Option<nucleus_store::planning::ItemSource>,
     pull_request: Option<PullRequest>,
     verdict: Option<Verdict>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<ReportView>,
     run: Option<RunView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportView {
+    project: String,
+    lane: String,
+    planning_base: nucleus_core::Head,
+    delivery: Option<ReportDelivery>,
+    failure: Option<String>,
+    acceptance: Option<ReportAcceptance>,
+}
+
+impl From<&ReportTask> for ReportView {
+    fn from(report: &ReportTask) -> Self {
+        Self {
+            project: report.project.clone(),
+            lane: report.lane.clone(),
+            planning_base: report.planning_base.clone(),
+            delivery: report.delivery.clone(),
+            failure: report.failure.clone(),
+            acceptance: report.acceptance.clone(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -929,6 +989,7 @@ impl IntoResponse for ApiError {
                         StatusCode::NOT_FOUND
                     }
                     ServiceError::Input
+                    | ServiceError::ReportInput(_)
                     | ServiceError::TaskReferenceAmbiguous
                     | ServiceError::TaskReferenceNeedsRepository
                     | ServiceError::Store(nucleus_store::StoreError::PlanningInput)
@@ -951,6 +1012,8 @@ impl IntoResponse for ApiError {
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
                     | ServiceError::EffectInProgress
+                    | ServiceError::ReportOpenPullRequest
+                    | ServiceError::ReportWorkerBusy
                     | ServiceError::Store(
                         nucleus_store::StoreError::StaleTask
                         | nucleus_store::StoreError::NumbersNeedSeed

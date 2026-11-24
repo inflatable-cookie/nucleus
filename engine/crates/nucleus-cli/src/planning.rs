@@ -5,6 +5,7 @@ use std::{
 };
 
 use clap::Subcommand;
+use nucleus_core::Head;
 use nucleus_store::planning::{
     DecisionOption, MAX_TEXT_BYTES, PlanLane,
     legacy::{self, ImportMode},
@@ -29,14 +30,24 @@ pub(super) enum Action {
         #[arg(required = true, num_args = 1..=2, hide = true)]
         args: Vec<String>,
     },
+    /// Read the report lane using the current run's ticket.
+    #[command(name = "lane.get")]
+    LaneGet {
+        project: String,
+        key: String,
+        #[arg(long)]
+        ticket: PathBuf,
+    },
     /// Create or edit a lane. Read its Markdown from stdin. Use version 0 to create.
     #[command(
         name = "lane.put",
-        override_usage = "nucleus lane.put [OPTIONS] [PROJECT] <KEY> <VERSION> <TITLE> <AIM>"
+        override_usage = "nucleus lane.put [PROJECT] <KEY> <VERSION> <TITLE> <AIM>\n       nucleus lane.put <PROJECT> <KEY> <VERSION> --ticket <PATH>"
     )]
     LanePut {
         #[arg(required = true, num_args = 1..=5, hide = true)]
         args: Vec<String>,
+        #[arg(long)]
+        ticket: Option<PathBuf>,
     },
     /// Set a lane's status. A closed lane requires a note.
     #[command(
@@ -119,6 +130,9 @@ pub(super) enum Action {
         /// Review an existing GitHub PR at its expected head.
         #[arg(long, num_args = 2, value_names = ["PR_URL", "HEAD"])]
         review: Vec<String>,
+        /// Match this exact published integration tip at report-only admission.
+        #[arg(long)]
+        planning_commit: Option<Head>,
     },
     /// List operator decisions.
     #[command(name = "decision.list")]
@@ -150,6 +164,57 @@ pub(super) enum Action {
 }
 
 impl Action {
+    pub(super) fn uses_ticket(&self) -> bool {
+        matches!(
+            self,
+            Self::LaneGet { .. }
+                | Self::LanePut {
+                    ticket: Some(_),
+                    ..
+                }
+        )
+    }
+
+    pub(super) async fn run_ticket(self) -> Result<()> {
+        let (method, project, key, ticket, body) = match self {
+            Self::LaneGet {
+                project,
+                key,
+                ticket,
+            } => (Method::GET, project, key, ticket, None),
+            Self::LanePut {
+                args,
+                ticket: Some(ticket),
+            } => {
+                let [project, key, version]: [String; 3] = args.try_into().map_err(|_| {
+                    "run-ticket lane.put requires PROJECT KEY VERSION and reads the Markdown from stdin"
+                })?;
+                let version = version.parse::<u64>()?;
+                (
+                    Method::PUT,
+                    project,
+                    key,
+                    ticket,
+                    Some(json!({"version": version, "document": stdin_text()?})),
+                )
+            }
+            _ => return Err("use an authenticated report ticket".into()),
+        };
+        let suffix = format!("lanes/{}/{}", segment(&project)?, segment(&key)?);
+        let response = super::run_ticket_request(&ticket, method, &suffix, body).await?;
+        let status = response.status();
+        let result: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(result["error"]
+                .as_str()
+                .unwrap_or("report lane operation failed")
+                .to_owned()
+                .into());
+        }
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        Ok(())
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "keep each CLI verb next to its complete wire request"
@@ -157,6 +222,7 @@ impl Action {
     pub(super) fn request(self) -> Result<(Method, String, Option<Value>)> {
         use Action as A;
         let (method, project, path, body) = match self {
+            A::LaneGet { .. } => return Err("use an authenticated report ticket".into()),
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
             A::PlanSet { args } => {
                 let (project, [version]) = project_and_args(args)?;
@@ -169,7 +235,7 @@ impl Action {
                     Some(json!({ "version": version, "lanes": lanes })),
                 )
             }
-            A::LanePut { args } => {
+            A::LanePut { args, .. } => {
                 let (project, [key, version, title, aim]) = project_and_args(args)?;
                 let version = version.parse::<u64>()?;
                 (
@@ -250,12 +316,14 @@ impl Action {
                 id,
                 reference,
                 review,
+                planning_commit,
             } => (
                 Method::POST,
                 project,
                 "tasks".into(),
                 Some(json!({
                     "id": id, "reference": reference, "repository": repository, "brief": stdin_text()?,
+                    "planningCommit": planning_commit,
                     "review": match review.as_slice() {
                         [url, head] => Some(json!({"url": url, "head": head})),
                         _ => None,
@@ -471,6 +539,17 @@ mod tests {
             assert_eq!(title, "Fix it");
             assert_eq!(lanes, ["interface"]);
         }
+    }
+
+    #[test]
+    fn report_only_lane_put_uses_a_ticket_without_controller_metadata() {
+        let input = ["nucleus", "lane.put", "project", "qa", "1"];
+        let worker = Cli::try_parse_from(input.into_iter().chain(["--ticket", "/scratch/ticket"]))
+            .expect("run-ticket edit");
+        assert!(matches!(worker.action, Action::Planning(action) if action.uses_ticket()));
+        let controller = Cli::try_parse_from(input.into_iter().chain(["QA", "Qualification"]))
+            .expect("controller edit");
+        assert!(matches!(controller.action, Action::Planning(action) if !action.uses_ticket()));
     }
 
     #[test]

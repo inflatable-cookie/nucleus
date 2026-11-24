@@ -409,7 +409,25 @@ fn parse_command(text: &str) -> Option<Command> {
     match verb {
         "cancel" if rest.is_empty() => Some(Command::Cancel),
         "release" if rest.is_empty() => Some(Command::Release),
+        "move" if rest.starts_with("work ") => Some(Command::MoveWork {
+            instruction: rest.strip_prefix("work ")?.trim().to_owned(),
+        }),
         "move" => serde_json::from_value(json!(rest)).ok().map(Command::Move),
+        "complete" => {
+            let (version, rest) = rest.split_once(' ')?;
+            let (key, rest) = rest.trim_start().split_once(' ')?;
+            let (artifact_version, rest) = rest.trim_start().split_once(' ')?;
+            let (digest, reason) = rest.trim_start().split_once(' ')?;
+            Some(Command::Complete {
+                version: version.parse().ok()?,
+                artifact: nucleus_core::ReportArtifact {
+                    key: key.into(),
+                    version: artifact_version.parse().ok()?,
+                    digest: digest.into(),
+                },
+                reason: reason.trim().into(),
+            })
+        }
         "hold" if !rest.is_empty() => Some(Command::Hold(rest.into())),
         "amend" if !rest.is_empty() => Some(Command::Amend(rest.into())),
         "answer" if rest == "retry" => Some(Command::Answer(Answer::Retry)),

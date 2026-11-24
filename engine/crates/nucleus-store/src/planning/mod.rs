@@ -66,6 +66,42 @@ impl Store {
         list(&self.connection, LaneRecord, project)
     }
 
+    /// Read one current lane by its project and key.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot read the lane.
+    pub fn lane(&self, project: &str, key: &str) -> Result<Option<Lane>, StoreError> {
+        read(&self.connection, LaneRecord, project, key)
+    }
+
+    /// Read the exact document version, including versions since superseded.
+    ///
+    /// # Errors
+    /// Returns an error when the supplied version or stored record cannot be read.
+    pub fn lane_version(
+        &self,
+        project: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<Option<Lane>, StoreError> {
+        if let Some(lane) = self
+            .lane(project, key)?
+            .filter(|lane| lane.version == version)
+        {
+            return Ok(Some(lane));
+        }
+        let Ok(version) = i64::try_from(version) else {
+            return Ok(None);
+        };
+        Ok(self.connection.query_row(
+            "SELECT snapshot FROM planning_history
+             WHERE project = ?1 AND kind = 'lane' AND id = ?2 AND json_extract(snapshot, '$.version') = ?3
+             ORDER BY sequence DESC LIMIT 1",
+            params![project, key, version],
+            |row| decode(row, 0),
+        ).optional()?)
+    }
+
     /// Write the lane document and its metadata at the expected version.
     ///
     /// # Errors

@@ -33,9 +33,10 @@ pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
+const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
-const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
+const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task";
 const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
@@ -59,6 +60,8 @@ pub enum StoreError {
     Storage(#[from] StorageError),
     #[error("unsupported engine database (application {application}, version {version})")]
     Incompatible { application: i32, version: i32 },
+    #[error("the report-task migration found a missing database reference")]
+    ReportMigrationReferences,
     #[error("task identity is immutable")]
     IdentityChanged,
     #[error("task changed since it was read")]
@@ -163,6 +166,9 @@ impl Store {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW | flags,
         )?;
         connection.busy_timeout(Duration::from_secs(5))?;
+        // Schema migration replaces the tasks parent table. Every caller
+        // enables enforcement again before doing any application writes.
+        connection.pragma_update(None, "foreign_keys", false)?;
         Ok(connection)
     }
 
@@ -176,6 +182,7 @@ impl Store {
                         row.get::<_, i64>(0)
                     })? == 0 =>
             {
+                tx.execute_batch(TASK_SCHEMA)?;
                 tx.execute_batch(include_str!("schema.sql"))?;
                 tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
                 tx.execute(ACP_SESSIONS, [])?;
@@ -212,6 +219,7 @@ impl Store {
                     tx.execute_batch(planning::SCHEMA)?;
                 }
                 tx.execute_batch(numbers::SCHEMA)?;
+                Self::migrate_report_tasks(tx)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -224,6 +232,31 @@ impl Store {
         // This independent table is additive to every supported task schema.
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
+        Ok(())
+    }
+
+    // Rebuild with the expanded phase constraint. Foreign keys are checked
+    // after the table has its original name again, inside the migration transaction.
+    fn migrate_report_tasks(tx: &Transaction<'_>) -> Result<(), StoreError> {
+        tx.execute_batch(&TASK_SCHEMA.replacen("CREATE TABLE tasks", "CREATE TABLE tasks_v10", 1))?;
+        let columns = TASK_COLUMNS
+            .strip_suffix(", report_task")
+            .expect("report task is the column added in schema ten");
+        tx.execute_batch(&format!(
+            "INSERT INTO tasks_v10 ({columns}, version) SELECT {columns}, version FROM tasks;
+             DROP TABLE tasks;
+             ALTER TABLE tasks_v10 RENAME TO tasks;
+             CREATE INDEX active_tasks ON tasks (id)
+                 WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL;"
+        ))?;
+        tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+        if tx
+            .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
+            .optional()?
+            .is_some()
+        {
+            return Err(StoreError::ReportMigrationReferences);
+        }
         Ok(())
     }
 
@@ -248,6 +281,8 @@ impl Store {
     pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
+             AND (run IS NOT NULL OR phase NOT IN ('report_ready','blocked','error')
+                  OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
              AND id > ?2
              UNION SELECT task_id FROM inbox_bindings WHERE task_id > ?2
@@ -636,8 +671,8 @@ fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> 
 fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         task: decode_task(row)?,
-        version: row.get(15)?,
-        number: row.get(16)?,
+        version: row.get(16)?,
+        number: row.get(17)?,
     })
 }
 
@@ -660,6 +695,7 @@ fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         "attempts": row.get::<_, u8>(11)?,
         "question": json_column(row, 12)?,
         "hold": json_column(row, 13)?,
+        "report_task": json_column(row, 15)?,
     });
     serde_json::from_value(value).map_err(|error| decode_error(0, error))
 }
@@ -688,10 +724,10 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
     let identity = task.identity();
     let snapshot = serde_json::to_value(task)?;
     let mut sql = format!(
-        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread)"
+        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task)"
     );
     if update {
-        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            version = tasks.version + 1");
+        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, version = tasks.version + 1");
     }
     let nullable_json = |key: &str| (!snapshot[key].is_null()).then(|| snapshot[key].to_string());
     tx.execute(
@@ -712,6 +748,7 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
             ":question": nullable_json("question"),
             ":hold": nullable_json("hold"),
             ":origin_thread": identity.origin_thread,
+            ":report_task": nullable_json("report_task"),
         },
     )?;
     Ok(())

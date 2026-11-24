@@ -161,6 +161,17 @@ struct MergeCommit {
 }
 
 impl GraphReply {
+    pub(crate) fn has_open_branch_pr(self) -> Result<bool, ForgeError> {
+        if !self.errors.is_empty() {
+            return Err(ForgeError::Incomplete);
+        }
+        let data = self.data.ok_or(ForgeError::Incomplete)?;
+        data.pointer("/repository/pullRequests/totalCount")
+            .and_then(serde_json::Value::as_u64)
+            .map(|count| count > 0)
+            .ok_or(ForgeError::Incomplete)
+    }
+
     pub(crate) fn rate_limited(&self) -> bool {
         self.errors
             .iter()

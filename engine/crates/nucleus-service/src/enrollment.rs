@@ -87,6 +87,7 @@ impl State {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub(crate) struct PlanningRepository {
     pub(crate) project_id: String,
     pub(crate) repository: String,

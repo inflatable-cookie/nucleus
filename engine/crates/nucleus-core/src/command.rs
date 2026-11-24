@@ -8,14 +8,23 @@ use crate::decision::{
 };
 use crate::model::{
     Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, HoldBy,
-    LaunchInputs, OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
+    LaunchInputs, OpenQuestion, Phase, PreparedLaunch, Question, Report, ReportAcceptance,
+    ReportArtifact, ReportReceipt, Role, Run, Task, Verdict,
 };
-use crate::profiles::ProfileLaunch;
+use crate::profiles::{BriefPolicy, ProfileLaunch};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Move(Phase),
+    MoveWork {
+        instruction: String,
+    },
+    Complete {
+        version: i64,
+        artifact: ReportArtifact,
+        reason: String,
+    },
     Answer(Answer),
     Cancel,
     Amend(String),
@@ -45,6 +54,10 @@ pub enum CommandError {
     InvalidReportCredential,
     ReportDoesNotMatch,
     ReportAlreadyReceived,
+    ReportPolicyChanged,
+    ReportOwnerAction,
+    ReportAcceptanceMismatch,
+    ReportInstructionRequired,
 }
 
 impl fmt::Display for CommandError {
@@ -66,6 +79,18 @@ impl fmt::Display for CommandError {
             }
             Self::ReportDoesNotMatch => "the report does not match the current role or review head",
             Self::ReportAlreadyReceived => "the run already sent a different report",
+            Self::ReportPolicyChanged => {
+                "amend cannot change report-only delivery or its attached lanes; resubmit"
+            }
+            Self::ReportOwnerAction => {
+                "use complete to accept the delivered report or move to work with an instruction"
+            }
+            Self::ReportAcceptanceMismatch => {
+                "complete requires a reason and the exact artifact delivered by this task"
+            }
+            Self::ReportInstructionRequired => {
+                "move to work requires a report revision instruction"
+            }
         })
     }
 }
@@ -120,6 +145,29 @@ impl Task {
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
         }
+        if let Some(state) = &mut self.report_state {
+            if let Some(report) = run
+                .filter(|run| {
+                    observation
+                        .current(&run.launch.instance)
+                        .is_some_and(RunState::ended)
+                })
+                .and_then(|run| run.report)
+            {
+                match report {
+                    Report::ReportReady(delivery) => state.delivery = Some(delivery),
+                    Report::Blocked(failure) | Report::Error(failure) => {
+                        state.failure = Some(failure.summary);
+                    }
+                    _ => {}
+                }
+            } else if phase == Phase::Blocked {
+                state.failure = Some("The worker did not deliver an authenticated report.".into());
+            }
+            self.phase = phase;
+            self.attempts = 0;
+            return;
+        }
         if let Some(pr) = observation.pr() {
             self.observe_pr(pr);
         }
@@ -152,6 +200,12 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
+        if let Some(state) = &mut self.report_state
+            && let Some(head) = run.report.as_ref().and_then(Report::source_head)
+            && !state.reported_heads.contains(head)
+        {
+            state.reported_heads.push(head.clone());
+        }
         if observation
             .current(&run.launch.instance)
             .is_some_and(RunState::ended)
@@ -393,30 +447,95 @@ impl Task {
         credential: &[u8; 32],
         report: Report,
     ) -> Result<(), CommandError> {
-        let digest: [u8; 32] = Sha256::digest(credential).into();
+        if self.replay_report(instance, credential, &report)? {
+            return Ok(());
+        }
+        let active = self.authenticate_run(instance, credential)?;
+        let role = active.launch.role;
+        if self.report_state.is_some() && active.last_send_at_ms.is_none() {
+            return Err(CommandError::InvalidReportCredential);
+        }
+        match (&report, role, self.report_state.as_ref()) {
+            (Report::Question { .. }, _, None)
+            | (Report::Work(_), Role::Worker, None)
+            | (Report::Blocked(_) | Report::Error(_), Role::Worker, Some(_)) => {}
+            (Report::ReportReady(delivery), Role::Worker, Some(state))
+                if delivery.artifact.key == state.lane => {}
+            (Report::Review { head, .. }, Role::Reviewer, None)
+                if self
+                    .run
+                    .as_ref()
+                    .and_then(|run| run.launch.review_head.as_ref())
+                    == Some(head) => {}
+            _ => return Err(CommandError::ReportDoesNotMatch),
+        }
         let run = self
             .run
             .as_mut()
+            .ok_or(CommandError::InvalidReportCredential)?;
+        match &run.report {
+            Some(prior) if prior != &report => Err(CommandError::ReportAlreadyReceived),
+            Some(_) => Ok(()),
+            None => {
+                if let Some(state) = &mut self.report_state {
+                    state.receipts.push(ReportReceipt {
+                        instance: instance.into(),
+                        credential: run.launch.credential.clone(),
+                        report: report.clone(),
+                    });
+                }
+                run.report = Some(report);
+                Ok(())
+            }
+        }
+    }
+
+    /// Check an already accepted callback without regranting lane or run authority.
+    ///
+    /// # Errors
+    /// Returns an error when an authenticated attempt conflicts with its receipt.
+    pub fn replay_report(
+        &self,
+        instance: &str,
+        credential: &[u8; 32],
+        report: &Report,
+    ) -> Result<bool, CommandError> {
+        let Some(receipt) = self.report_state.as_ref().and_then(|state| {
+            state
+                .receipts
+                .iter()
+                .find(|receipt| receipt.instance == instance)
+        }) else {
+            return Ok(false);
+        };
+        let digest: [u8; 32] = Sha256::digest(credential).into();
+        if !bool::from(receipt.credential.0.ct_eq(&digest)) {
+            return Err(CommandError::InvalidReportCredential);
+        }
+        if receipt.report != *report {
+            return Err(CommandError::ReportAlreadyReceived);
+        }
+        Ok(true)
+    }
+
+    /// Authenticate a bearer against the current unrevoked run, without granting owner authority.
+    ///
+    /// # Errors
+    /// Returns an error when the instance or bearer no longer matches.
+    pub fn authenticate_run(
+        &self,
+        instance: &str,
+        credential: &[u8; 32],
+    ) -> Result<&Run, CommandError> {
+        let digest: [u8; 32] = Sha256::digest(credential).into();
+        self.run
+            .as_ref()
             .filter(|run| {
                 !run.revoked
                     && run.launch.instance == instance
                     && bool::from(run.launch.credential.0.ct_eq(&digest))
             })
-            .ok_or(CommandError::InvalidReportCredential)?;
-        match (&report, run.launch.role) {
-            (Report::Question { .. }, _) | (Report::Work(_), Role::Worker) => {}
-            (Report::Review { head, .. }, Role::Reviewer)
-                if Some(head) == run.launch.review_head.as_ref() => {}
-            _ => return Err(CommandError::ReportDoesNotMatch),
-        }
-        match &run.report {
-            Some(prior) if prior != &report => Err(CommandError::ReportAlreadyReceived),
-            Some(_) => Ok(()),
-            None => {
-                run.report = Some(report);
-                Ok(())
-            }
-        }
+            .ok_or(CommandError::InvalidReportCredential)
     }
 
     /// Apply an authorized command. A revoked run stays bound until a later pass
@@ -435,6 +554,66 @@ impl Task {
             Command::Move(phase) => {
                 self.check_move(phase, observation)?;
                 self.move_to(phase);
+            }
+            Command::MoveWork { instruction } => {
+                let instruction = instruction.trim();
+                if instruction.is_empty() {
+                    return Err(CommandError::ReportInstructionRequired);
+                }
+                if !matches!(
+                    self.phase,
+                    Phase::Working | Phase::ReportReady | Phase::Blocked | Phase::Error
+                ) {
+                    return Err(CommandError::ReportOwnerAction);
+                }
+                let report = self
+                    .report_state
+                    .as_mut()
+                    .ok_or(CommandError::ReportOwnerAction)?;
+                report.delivery = None;
+                report.failure = None;
+                report.instruction = Some(instruction.to_owned());
+                self.move_to(Phase::Working);
+            }
+            Command::Complete {
+                version,
+                artifact,
+                reason,
+            } => {
+                let report = self
+                    .report_state
+                    .as_mut()
+                    .ok_or(CommandError::ReportOwnerAction)?;
+                let acceptance = ReportAcceptance {
+                    version,
+                    artifact,
+                    owner: Acceptance {
+                        authority: authority.clone(),
+                        reason: reason.trim().to_owned(),
+                    },
+                };
+                if self.phase == Phase::Done && report.acceptance.as_ref() == Some(&acceptance) {
+                    return Ok(());
+                }
+                if self.phase != Phase::ReportReady || self.run.is_some() || self.hold.is_some() {
+                    return Err(CommandError::ReportOwnerAction);
+                }
+                if acceptance.owner.reason.is_empty()
+                    || report
+                        .delivery
+                        .as_ref()
+                        .is_none_or(|delivery| delivery.artifact != acceptance.artifact)
+                {
+                    return Err(CommandError::ReportAcceptanceMismatch);
+                }
+                if !report.receipts.iter().any(|receipt| {
+                    matches!(&receipt.report, Report::ReportReady(delivery)
+                        if report.delivery.as_ref() == Some(delivery))
+                }) {
+                    return Err(CommandError::ReportAcceptanceMismatch);
+                }
+                report.acceptance = Some(acceptance);
+                self.move_to(Phase::Done);
             }
             Command::Cancel => self.move_to(Phase::Cancelled),
             Command::Answer(answer) => self.answer(answer, authority, observation)?,
@@ -483,6 +662,13 @@ impl Task {
     }
 
     fn check_move(&self, phase: Phase, observation: &Observation) -> Result<(), CommandError> {
+        if matches!(phase, Phase::ReportReady | Phase::Blocked | Phase::Error)
+            || (self.report_state.is_some()
+                && !(phase == Phase::Cancelled
+                    || (self.phase == Phase::Queued && phase == Phase::Working)))
+        {
+            return Err(CommandError::ReportOwnerAction);
+        }
         if !matches!(phase, Phase::Merging | Phase::Closing | Phase::Done) {
             return Ok(());
         }
@@ -497,6 +683,21 @@ impl Task {
     }
 
     fn amend(&mut self, text: String) -> Result<(), CommandError> {
+        let previous = BriefPolicy::parse(&self.brief.text).ok();
+        let next = BriefPolicy::parse(&text).ok();
+        let delivery = |policy: Option<&BriefPolicy>| {
+            policy
+                .map(|policy| (policy.report_only, policy.report_lane.clone()))
+                .unwrap_or_default()
+        };
+        if delivery(previous.as_ref()) != delivery(next.as_ref())
+            || (self.report_state.is_some()
+                && (next.is_none()
+                    || previous.as_ref().map(BriefPolicy::lanes)
+                        != next.as_ref().map(BriefPolicy::lanes)))
+        {
+            return Err(CommandError::ReportPolicyChanged);
+        }
         let version = self
             .brief
             .version
