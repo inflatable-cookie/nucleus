@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import { errorText as failureText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
@@ -367,6 +368,11 @@ function TaskSlots({
   retry: () => void;
   save: (values: api.CapacityAuthorityValues) => Promise<void>;
 }) {
+  const features = useEngineFeatures();
+  // Rust engine (Spec 070 rulings 8 and 21): the global slot limit is the only
+  // engine-wide limit; each project carries its own slots below.
+  const shown = (spec: LimitSpec) =>
+    features.advancedLimits || spec.key === "globalLimit";
   const [drafts, setDrafts] = useState<Partial<Record<CapacityKey, number>>>(
     {},
   );
@@ -450,18 +456,18 @@ function TaskSlots({
           <View
             style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
           >
-            {CAPACITY_FIELDS.filter((spec) => !spec.advanced).map((spec) =>
-              field(spec, values),
+            {CAPACITY_FIELDS.filter((spec) => !spec.advanced && shown(spec)).map(
+              (spec) => field(spec, values),
             )}
           </View>
-          <Disclosure
+          {features.advancedLimits && <Disclosure
             c={c}
             gapAbove
             label="Advanced limits"
             expanded={advancedOpen}
             onToggle={() => setAdvancedOpen((open) => !open)}
-          />
-          {advancedOpen && (
+          />}
+          {features.advancedLimits && advancedOpen && (
             <View
               style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
             >
@@ -501,6 +507,7 @@ function ProjectOverrides({
 }) {
   // Choosing a project creates its override at once with the per-project limit;
   // a failure to create it is shown here, beside the picker.
+  const features = useEngineFeatures();
   const [addStatus, setAddStatus] = useState("");
   // One create at a time: + and the picker wait for it, so a second pick can
   // never overwrite an edit made after the first (review #596).
@@ -542,11 +549,15 @@ function ProjectOverrides({
   return (
     <Section
       c={c}
-      title="Project overrides"
+      title={features.projectDefaultLimit ? "Project overrides" : "Project slots"}
       last
-      description="Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
+      description={
+        features.projectDefaultLimit
+          ? "Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
+          : "Each project's own slot limit, at least 1."
+      }
       action={
-        <DropdownSelect
+        features.projectDefaultLimit && <DropdownSelect
           compact
           label="Add project limit override"
           value=""
@@ -585,6 +596,7 @@ function ProjectOverrides({
             value={limit}
             canSave={Boolean(projectRecord)}
             pendingRemoval={pendingOverrideRemovals?.[projectKey]}
+            removable={features.projectDefaultLimit}
             save={(next) => saveProjectLimit({ projectKey, ...next })}
           />
         );
@@ -599,6 +611,7 @@ function ProjectLimitRow({
   value,
   canSave,
   pendingRemoval,
+  removable = true,
   save,
 }: {
   c: Colors;
@@ -606,6 +619,8 @@ function ProjectLimitRow({
   value: number;
   canSave: boolean;
   pendingRemoval?: PendingOverrideRemovalPhase;
+  /** False when the slot limit belongs to the project and cannot be removed. */
+  removable?: boolean;
   save: (patch: ProjectLimitPatch) => Promise<void>;
 }) {
   const [limit, setLimit] = useState(value);
@@ -700,13 +715,13 @@ function ProjectLimitRow({
           onChange={change}
           onCommit={() => void auto.saver.flush()}
         />
-        <ActionButton
+        {removable && <ActionButton
           c={c}
           action="remove"
           label={`Remove the ${projectName} override`}
           disabled={removing || confirming}
           onPress={() => setConfirming(true)}
-        />
+        />}
       </View>
       {!canSave && (
         <Text

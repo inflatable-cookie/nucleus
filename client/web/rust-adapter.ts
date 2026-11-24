@@ -126,31 +126,43 @@ export function boardProfile(profile: RustNamedProfile): {
 } {
   const { selection } = profile;
   const group = profile.group ?? selection.provider;
+  // Omitted roles allow both active roles; the coordinator role is retired (ruling 1).
+  const roles = (profile.roles ?? ["worker", "reviewer"]).filter(
+    (role): role is "worker" | "reviewer" => role !== "coordinator",
+  );
+  const scopes = (profile.scopes ?? []).filter(
+    (scope): scope is "general" | "mechanical" | "complex" =>
+      scope === "general" || scope === "mechanical" || scope === "complex",
+  );
   return {
     profile: {
       id: selection.id,
       name: profile.name,
       provider: selection.provider,
       model: selection.model,
+      ...(profile.modeId ? { modeId: profile.modeId } : {}),
       ...(selection.effort ? { thinkingOptionId: selection.effort } : {}),
-      notes: "",
+      ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
+      notes: profile.notes ?? "",
     },
     pool: {
       profileId: selection.id,
-      enabled: true,
+      enabled: profile.enabled ?? true,
       group,
-      roles: ["worker", "reviewer"],
+      roles: roles.length ? roles : ["worker", "reviewer"],
       capability: selection.capability,
       weight: selection.weight,
-      scopes: ["general"],
+      scopes: scopes.length ? scopes : ["general"],
     },
     view: {
       id: selection.id,
       name: profile.name,
       provider: selection.provider,
       model: selection.model,
+      ...(profile.modeId ? { modeId: profile.modeId } : {}),
       ...(selection.effort ? { thinkingOptionId: selection.effort } : {}),
-      notes: "",
+      ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
+      notes: profile.notes ?? "",
       // The engine checks each launch against the scheduler's catalogue read;
       // Settings never reads the host (ruling 11).
       available: true,
@@ -284,7 +296,12 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       globalLimit: dispatch.slots,
       projectLimit: dispatch.slots,
       usage: usageView(dispatch),
-      projectLimitOverrides: {},
+      // Every Rust project carries its own slot limit (ruling 8).
+      projectLimitOverrides: Object.fromEntries(
+        rows
+          .filter(({ project }) => !project.archived)
+          .map(({ board, project }) => [board.key, Math.min(64, project.slots)]),
+      ),
       projectCapacities: [],
       operationLimit: 64,
       operationBacklog: 0,
@@ -483,6 +500,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
             ? {
                 ...entry,
                 group: input.group,
+                enabled: input.enabled,
                 selection: {
                   ...entry.selection,
                   capability: input.capability ?? entry.selection.capability,

@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import React, { useState, useEffect, useMemo } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import {
@@ -180,6 +181,22 @@ export function MainSurface({
     ));
   }, [rustTasks.data, state?.projects, scope.projects]);
   const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
+  const features = useEngineFeatures();
+  // On the Rust engine every task is a Rust task. The project selector counts
+  // each project's open tasks through its hidden-count input, keyed by checkout.
+  const selectorCounts = useMemo(() => {
+    if (features.engine !== "rust" || !rustTasks.data) return state?.queuedCounts ?? [];
+    const counts = new Map<string, number>();
+    for (const task of rustTasks.data) {
+      if (task.phase === "done" || task.phase === "cancelled") continue;
+      const origin = normalizeRepositoryOrigin(task.identity.repository);
+      const repo = (state?.projects ?? [])
+        .flatMap((project) => project.repositories)
+        .find((candidate) => candidate.origin && normalizeRepositoryOrigin(candidate.origin) === origin);
+      if (repo?.path) counts.set(repo.path, (counts.get(repo.path) ?? 0) + 1);
+    }
+    return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
+  }, [features.engine, rustTasks.data, state?.projects, state?.queuedCounts]);
   // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
   const projectSelector = useProjectSelectorActions(() => stateQuery.refetch());
   const [removingProject, setRemovingProject] = useState<api.Project | null>(
@@ -456,7 +473,7 @@ export function MainSurface({
       projects={state?.projects ?? []}
       tasks={state?.tasks ?? []}
       leads={boardLeads}
-      queuedCounts={state?.queuedCounts ?? []}
+      queuedCounts={selectorCounts}
       projectActivity={state?.projectActivity ?? []}
       value={scope.projects}
       // The picker commits the selection it reports, and an empty pick
@@ -467,7 +484,8 @@ export function MainSurface({
       }
       projectActions={{
         ...projectSelector.actions,
-        remove: setRemovingProject,
+        // Rust engine (ruling 8): an archived toggle in Settings replaces removal.
+        ...(features.projectAgents ? { remove: setRemovingProject } : {}),
       }}
       onOpenChange={setScopeOpen}
       compact={narrow}

@@ -43,22 +43,37 @@ export const usage = z.enum(["low", "normal", "high", "extra_high", "maximum"]);
 export const dispatchMode = z.enum(["running", "held", "paused", "stopped"]);
 
 const integer = z.number().int().nonnegative();
-export const namedProfile = z.object({
-  name: z.string(),
-  selection: z.object({
-    id: z.string(),
-    provider: providers,
-    model: z.string(),
-    effort: efforts.nullable(),
-    capability: capabilities,
-    weight: weights,
-  }),
-  group: z.string().optional(),
-});
-const profiles = z.object({
-  profiles: z.array(namedProfile),
-  pausedGroups: z.array(z.string()).optional(),
-});
+// Settings writes send the whole domain value back, so every object the board
+// writes keeps the fields this client does not know (`loose`).
+export const namedProfile = z
+  .object({
+    name: z.string(),
+    selection: z
+      .object({
+        id: z.string(),
+        provider: providers,
+        model: z.string(),
+        effort: efforts.nullable(),
+        capability: capabilities,
+        weight: weights,
+      })
+      .loose(),
+    group: z.string().optional(),
+    enabled: z.boolean().optional(),
+    roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).optional(),
+    scopes: z.array(z.string()).optional(),
+    modeId: z.string().optional(),
+    featureValues: z.record(z.string(), z.unknown()).optional(),
+    notes: z.string().optional(),
+    unrated: z.boolean().optional(),
+  })
+  .loose();
+const profiles = z
+  .object({
+    profiles: z.array(namedProfile),
+    pausedGroups: z.array(z.string()).optional(),
+  })
+  .loose();
 const dispatch = z.object({
   usage,
   usageUntilMs: integer.nullable(),
@@ -67,7 +82,7 @@ const dispatch = z.object({
   allowanceMinutes: integer.nullable(),
   providerLimitCooldownSeconds: integer.optional(),
   mode: dispatchMode.default("running"),
-});
+}).loose();
 const repository = z.object({
   origin: z.string(),
   path: z.string(),
@@ -77,16 +92,16 @@ const repository = z.object({
   hostProject: z.string().optional(),
   hostProjectTitle: z.string().optional(),
   plannerThreads: z.array(z.string()).optional(),
-});
+}).loose();
 const project = z.object({
   name: z.string(),
   slots: integer,
   archived: z.boolean(),
   repositories: z.array(repository),
-});
-const projects = z.object({ projects: z.record(z.string(), project) });
-const host = z.object({ endpoint: z.string(), credentialRef: z.string() });
-const hosts = z.object({ t3: host.nullable() });
+}).loose();
+const projects = z.object({ projects: z.record(z.string(), project) }).loose();
+const host = z.object({ endpoint: z.string(), credentialRef: z.string() }).loose();
+const hosts = z.object({ t3: host.nullable() }).loose();
 const storage = z.object({
   enabled: z.boolean(),
   workVolume: z.object({ volumeId: z.string(), mount: z.string() }).nullable(),
@@ -94,7 +109,7 @@ const storage = z.object({
   scratchRoot: z.string().nullable(),
   logRoot: z.string().nullable(),
   retention: z.object({ keepNewest: integer, maxAgeDays: integer.nullable() }),
-});
+}).loose();
 
 function snapshot<T>(value: z.ZodType<T>) {
   return z.object({ value, revision: z.string(), configured: z.boolean() });

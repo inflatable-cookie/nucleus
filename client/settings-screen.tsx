@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import { errorText, errorText as failureText } from "./error-text";
 import { activeGroupLimit } from "../shared/pool";
 import { ProfilesPanel } from "./settings-profiles";
@@ -59,6 +60,7 @@ import { ProjectsSection } from "./projects-settings";
  */
 export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const c = theme.colors;
+  const features = useEngineFeatures();
   const [width, setWidth] = useState(0);
   // The layout follows the measured width of the Settings screen itself, never the
   // host's compact flag (task 923). The tabs are the same at every width
@@ -300,7 +302,13 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           c={c}
           label="Settings sections"
           nowrap
-          tabs={settingsViews.map((view) => ({
+          tabs={settingsViews
+            .filter(
+              (view) =>
+                (view.id !== "backups" || features.backupsTab) &&
+                (view.id !== "telemetry" || features.telemetry),
+            )
+            .map((view) => ({
             id: view.id,
             text: view.short,
             label: view.label,
@@ -331,8 +339,10 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               <Button
                 c={c}
                 small
-                text="Open Backups"
-                onPress={() => setSettingsTab("backups")}
+                text={features.backupsTab ? "Open Backups" : "Open Storage"}
+                onPress={() =>
+                  setSettingsTab(features.backupsTab ? "backups" : "storage")
+                }
               />
             </View>
           )}
