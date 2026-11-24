@@ -216,7 +216,7 @@ pub(super) fn forge_checks(head: &Head) -> Value {
     json!({"data":{"repository":{"pullRequest":{
         "headRefOid":head, "baseRefName":"main", "isDraft":false, "state":"OPEN",
         "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
-        "statusCheckRollup":{"state":"SUCCESS"},
+        "statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false},"nodes":[]}},
     }}}})
 }
 

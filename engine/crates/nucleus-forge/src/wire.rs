@@ -210,13 +210,14 @@ impl GraphReply {
         head: &Head,
         base: &str,
         required: &[String],
+        named: bool,
     ) -> Result<CheckState, ForgeError> {
         let checks: Checks = self.pull_request()?;
         verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
         if checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
-        Ok(checks.state(required))
+        Ok(checks.state(required, named))
     }
 
     pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
@@ -259,7 +260,7 @@ fn verify_graph_pull(
 }
 
 impl Checks {
-    fn required_state(&self, required: &[String]) -> CheckState {
+    fn required_state(&self, required: &[String], named: bool) -> CheckState {
         let Some(rollup) = &self.status_check_rollup else {
             return if required.is_empty() {
                 CheckState::Ready
@@ -268,10 +269,10 @@ impl Checks {
             };
         };
         let Some(contexts) = &rollup.contexts else {
-            return if required.is_empty() {
-                CheckState::Ready
-            } else {
+            return if named {
                 CheckState::Unknown
+            } else {
+                CheckState::Ready
             };
         };
         let mut results = BTreeMap::new();
@@ -320,7 +321,7 @@ impl Checks {
         CheckState::Ready
     }
 
-    fn state(&self, required: &[String]) -> CheckState {
+    fn state(&self, required: &[String], named: bool) -> CheckState {
         if self.is_draft {
             return CheckState::Blocked;
         }
@@ -330,7 +331,7 @@ impl Checks {
         if self.mergeable == "MERGEABLE" && self.merge_state_status == "BEHIND" {
             return CheckState::BaseMoved;
         }
-        let named = self.required_state(required);
+        let named = self.required_state(required, named);
         if matches!(named, CheckState::FailedRequired(_)) {
             return named;
         }

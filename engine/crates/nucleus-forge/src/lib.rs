@@ -491,10 +491,13 @@ impl GitHub {
     ) -> Result<Forge, ForgeError> {
         let pull = self.confirm_merge_commit(target, pull).await?;
         let checks = if !pull.merged && pull.state == PullState::Open {
-            self.query_pull(target, CHECKS_QUERY, merge).await?.checks(
+            let required = &target.branches.required_checks;
+            let named = merge || !required.is_empty();
+            self.query_pull(target, CHECKS_QUERY, named).await?.checks(
                 &pull.head.sha,
                 &target.branches.base,
-                &target.branches.required_checks,
+                required,
+                named,
             )?
         } else {
             CheckState::Unknown
@@ -529,8 +532,7 @@ impl GitHub {
             "number": target.number,
         });
         if query == CHECKS_QUERY {
-            variables["namedChecks"] =
-                json!(named_checks || !target.branches.required_checks.is_empty());
+            variables["namedChecks"] = json!(named_checks);
         }
         let response = self
             .client
