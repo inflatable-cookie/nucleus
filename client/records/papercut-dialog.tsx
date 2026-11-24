@@ -380,7 +380,7 @@ export function PapercutDialog({
                         setRecordNotice({
                           kind: "ok",
                           text: revisitAt
-                            ? "Parked; it returns to the list for its recheck."
+                            ? "Parked. It moves back to Open on its recheck date."
                             : "Parked.",
                         });
                       }, "record")

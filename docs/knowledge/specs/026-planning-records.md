@@ -1229,7 +1229,7 @@ leads and park the same way. The first use is a T3 board lead that waits on the 
   When `revisitAt` passes, the sweep unparks the lead once and writes one durable
   `lead_recheck` notice to the project's planner: "Parked lead <title> is due for a
   recheck: <reason>". The notice follows the ordinary project-planner delivery. The
-  lead returns to its list whether or not a planner is registered.
+  lead returns to the Open filter whether or not a planner is registered.
 - **Triage.** `defer` parks the record with its reason and revisit time. Triage has no
   separate defer state, and a parked record is never batched.
 - **Hold tag.** The `hold` tag is retired. On open, each lead still tagged `hold`
