@@ -129,6 +129,14 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - The task row shows `<State>: <reference> <brief title>`. The reference stands in for the task number until milestone 3. Worker children use `<reference>: <brief title>` and reviewer children use `<reference> review: <brief title>`. Strip a trailing `worker` and fit the title to the host's limit at a word boundary.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
+23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
+    - When a planner thread Nucleus doesn't know calls `task.add` or `item.promote`, the scheduler reads that one T3 thread, reads origin and default branch from its project root's checkout, records the project and repository, and mints the planner binding. The caller gets the ordinary retry response meanwhile. Later calls use the binding with no host I/O.
+    - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
+    - Projects settings edit slots, lanes and planners. They are never a precondition for dispatch, and there is no per-repository routing.
+    - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
+24. **Host setup commands.** Tom, 2026-11-24: "we'll need the `nucleus t3 install/uninstall/status` surface for setting up the ACP, etc".
+    - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.
+    - A later ADE gets the same three commands under its own name.
 
 ## The model
 
