@@ -153,11 +153,12 @@ schemas; `shared/schema/task-view.ts` owns the compact task-view schemas.
 proofs, workspace resolution, projects and repositories, lanes and plans,
 leads and papercuts, decisions and questions, settings and capacity, host runs
 and QA, and board state. `shared/rpc/` owns the matching domain RPC definitions
-and imports those schemas directly. `shared/contracts.ts` re-exports them for
-existing callers. Schema modules never import RPC modules; neither layer
-imports the contracts barrel, including type imports. Their import graph stays
-acyclic; `test/contracts-boundaries.test.ts` checks the direction, cycles,
-re-export identity and bridge import gate.
+and imports those schemas directly. `shared/contracts.ts` keeps its compatibility
+re-exports for existing callers. Values used only by direct domain consumers
+can stay in their owning modules. Schema modules never import RPC modules.
+Neither layer imports the contracts barrel, including type imports. Their import
+graph stays acyclic. `test/contracts-boundaries.test.ts` checks the direction,
+cycles, re-export identity and bridge import gate.
 
 ### Shells
 

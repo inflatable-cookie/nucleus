@@ -13,6 +13,7 @@ import {
 } from "@getpaseo/plugin/client/host";
 import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
 import { mount, useNativeStubs } from "./support/render";
+import { openPlanning, planningEntry } from "./support/inbox";
 
 useNativeStubs();
 
@@ -146,9 +147,10 @@ function unmount(ui: ReturnType<typeof mount>) {
   ui.update(h("View", null));
 }
 
-test("026-14c rendered: the panel resolves a workspace inside a project repository to that project and presets the selection", async () => {
+test("026-14c rendered: the panel resolves a workspace inside a project repository to that project and presets the selection", async (t) => {
   await ready();
   const ui = mount(panelTree(project, "/repo"));
+  t.after(() => unmount(ui));
   // The label starts at the raw project key and settles to the project's name once the board loads.
   await settle(
     () =>
@@ -171,7 +173,7 @@ test("026-14c rendered: the panel resolves a workspace inside a project reposito
   assert.equal(ui.query("Drafts"), undefined);
   for (const entry of [
     /^Needs you(, \d+)?$/,
-    /^Planning$/,
+    planningEntry,
     /^Leads(, \d+)?$/,
     /^Papercuts(, \d+)?$/,
     /^Queue(, \d+)?$/,
@@ -187,13 +189,12 @@ test("026-14c rendered: the panel resolves a workspace inside a project reposito
     0,
     "no Lanes navigation button and no board switch",
   );
-  ui.get(/^Planning$/).props.onPress();
+  openPlanning(ui);
   assert.ok(ui.get("Find lanes"), "Planning carries lane discovery now");
   assert.ok(
     ui.query(/^Projects, /),
     "the header project selector stays available on Planning",
   );
-  unmount(ui);
 });
 
 test("026-14c rendered: a workspace outside every project shows a plain message", async () => {

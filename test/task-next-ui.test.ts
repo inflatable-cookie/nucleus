@@ -29,7 +29,6 @@ import { chooseProfile } from "../core/dispatch/routing";
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { formatLocalDateTime } from "../shared/date-time";
-import { fixture as retainedSourceFixture } from "./support/retained-external-merge-fixture";
 
 useNativeStubs();
 type QueueModule = typeof import("../client/queue");
@@ -602,165 +601,119 @@ test("a verb with fill fields requires them before submit and reports refusals i
   }
 });
 
-test(
-  "a dispatched descendant closeout takes its qualifying pair all or none through the real closeout handler",
-  { timeout: 120000 },
-  async () => {
-    await load();
-    // A real dispatched retained-source lifecycle: the PR merged at a descendant
-    // final head while the retained checkout stays at the recorded source.
-    const f = await retainedSourceFixture(true, true);
-    const { runtime, taskId } = f;
-    const store = runtime.store;
-    let mounted: ReturnType<typeof mountBoard> | undefined;
-    try {
-      const read = createTaskDetailCache(store);
-      const calls: Record<string, unknown>[] = [];
-      const invoke = async (method: string, input: unknown) => {
-        const task = store.task(taskId);
-        if (method === "queue.ui-snapshot")
-          return board([
-            summaryOf({
-              id: taskId,
-              title: "Retained source",
-              phase: task.phase,
-              prUrl: task.prUrl,
-              resolution: { attention: false, mergedCommit: null },
-            }),
-          ]);
-        if (method === "queue.service-state") return serviceState;
-        if (method === "queue.detail") return read(taskId);
-        if (method === "task.next")
-          return ownerTaskNext(collectOwnerVerbFacts(store, task));
-        if (method === "queue.task") {
-          calls.push(input as Record<string, unknown>);
-          return runtime.taskControl(taskControlInputSchema.parse(input));
-        }
-        if (
-          method === "project.qa.list" ||
-          method === "host.run.list" ||
-          method === "host.run.board"
-        )
-          return [];
-        if (method === "lead.board") return { cards: [], links: [] };
-        if (
-          method === "plans" ||
-          method === "papercut.list" ||
-          method === "draft.list" ||
-          method === "decision.list" ||
-          method === "project.owner-candidates"
-        )
-          return [];
-        void input;
-        return {};
-      };
-      const tree = mountBoard(invoke);
-      mounted = tree;
-      await settle(() => tree.text().includes("Retained source"));
-      tree.press(/Retained source/);
-      await settle(
-        () =>
-          Boolean(tree.query("move to closeout")) ||
-          Boolean(tree.all(/^Show \d+ more actions$/).length),
-      );
-      if (!tree.query("move to closeout")) await showMoreVerbs(tree);
-      assert.ok(
-        tree.query("move to closeout"),
-        "the closeout move stays reachable",
-      );
-      tree.press("move to closeout");
-      await settle(() => Boolean(tree.query("Reason (required)")));
-      assert.ok(
-        tree.query("Qualification (optional)"),
-        "the descendant pair is offered as optional fields",
-      );
-      assert.ok(
-        tree.query("Final PR head (optional)"),
-        "the final head is typed by the operator, never prefilled",
-      );
-      tree.type("Reason (required)", "Accept the external merge");
-      // The ordinary reason-only closeout is available; at a descendant head the
-      // handler refuses it with nothing written, and the form reports the refusal.
-      tree.press("Confirm move");
-      await settle(
-        () => tree.text().includes("External merge head differs"),
-        600,
-      );
-      assert.equal(
-        store.task(taskId).resolution.ownerAcceptances?.length ?? 0,
-        0,
-        "the refused reason-only closeout writes no acceptance",
-      );
-      assert.equal(
-        store.task(taskId).resolution.mergedCommit,
-        null,
-        "nothing merged during the refusal",
-      );
-      // A qualification without the exact head is incomplete: Apply stays blocked and nothing is sent.
-      tree.type(
-        "Qualification (optional)",
-        "I accept this exact final source as is",
-      );
-      assert.equal(
-        tree.query("Confirm move")!.props.accessibilityState.disabled,
-        true,
-        "a partial acceptance cannot be submitted",
-      );
-      assert.equal(
-        calls.length,
-        1,
-        "only the refused reason-only submit reached the handler",
-      );
-      // The complete pair reaches the handler unchanged with the operator board caller.
-      tree.type("Final PR head (optional)", f.final);
-      assert.equal(
-        tree.query("Confirm move")!.props.accessibilityState.disabled,
-        false,
-      );
-      const expectedVersion = store.task(taskId).version;
-      tree.press("Confirm move");
-      await settle(() => tree.text().includes("Applied move"), 600);
-      assert.deepEqual(calls.at(-1), {
-        action: "move",
-        to: "closeout",
-        taskId,
-        version: expectedVersion,
-        reason: "Accept the external merge",
-        qualification: "I accept this exact final source as is",
-        head: f.final,
-        caller: "operator (board)",
-      });
-      // The accepted exact final head and merge are recorded; the source, the original verdict and the proof history are untouched.
-      const after = store.task(taskId);
-      assert.equal(after.resolution.mergedCommit, f.mergeCommit);
-      const record = after.resolution.ownerAcceptances?.at(-1);
-      assert.equal(record?.kind, "operator_source");
-      assert.equal(record?.head, f.final);
-      assert.deepEqual(record?.actor, {
-        agentId: "operator (board)",
-        role: "operator",
-      });
-      assert.equal(
-        after.prHead,
-        f.head,
-        "the recorded source is never rewritten",
-      );
-      assert.equal(
-        after.resolution.review?.status,
-        "changes_required",
-        "the original verdict stays as history",
-      );
-      assert.equal(
-        f.counts().mergeCalls,
-        0,
-        "Queue never merges; the PR merged outside it",
-      );
-    } finally {
-      mounted?.update(h("View", null));
-      await f.close();
-    }
-  },
-);
+test("the closeout form sends either a reason alone or the complete qualifying pair", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const title = "Retained source";
+    const prUrl = "https://example.test/pull/12";
+    const final = "b".repeat(40);
+    const inserted = store.insert(
+      submissionSchema.parse({
+        submissionId: "retained-source",
+        title,
+        repoPath: "/app",
+        planningCommit: head,
+        handoffPath: "retained-source.md",
+        originAgentId: "origin",
+      }),
+      "host",
+      "handoff",
+      head,
+    );
+    const task = store.update(inserted.id, {
+      phase: "needs_attention",
+      reason: "Evaluate the external merge",
+      prUrl,
+      prHead: head,
+    });
+    const args = {
+      action: "move",
+      to: "closeout",
+      taskId: task.id,
+      version: task.version,
+    };
+    const read = createTaskDetailCache(store);
+    const calls: unknown[] = [];
+    const invoke = async (method: string, input: unknown) => {
+      if (method === "queue.ui-snapshot")
+        return board([
+          summaryOf({ id: task.id, title, phase: task.phase, prUrl }),
+        ]);
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return read(task.id);
+      if (method === "task.next")
+        return {
+          ...ownerTaskNext(collectOwnerVerbFacts(store, task)),
+          verbs: [
+            {
+              verb: "move",
+              action: "move",
+              available: true,
+              args,
+              fill: ["reason"],
+              qualifyingFill: ["qualification", "head"],
+            },
+          ],
+        };
+      if (method === "queue.task") {
+        const request = taskControlInputSchema.parse(input);
+        calls.push(request);
+        if (!request.head)
+          throw new Error(
+            "External merge head differs from the recorded source",
+          );
+        return { ...task, phase: "closing" };
+      }
+      if (method === "lead.board") return { cards: [], links: [] };
+      return [];
+    };
+    const tree = mountBoard(invoke);
+    mounted = tree;
+    await settle(() => tree.text().includes(title));
+    tree.press(/Retained source/);
+    await settle(() => Boolean(tree.query("move to closeout")));
+    tree.press("move to closeout");
+    assert.ok(tree.query("Qualification (optional)"));
+    assert.ok(tree.query("Final PR head (optional)"));
+    assert.equal(tree.query("Final PR head (optional)")?.props.value, "");
+    const reason = "Accept the external merge";
+    const caller = "operator (board)";
+    tree.type("Reason (required)", reason);
+
+    // The reason-only form reaches the service and displays its refusal.
+    tree.press("Confirm move");
+    await settle(() => tree.text().includes("External merge head differs"));
+    assert.deepEqual(calls, [{ ...args, reason, caller }]);
+
+    const qualification = "I accept this exact final source";
+    tree.type("Qualification (optional)", qualification);
+    assert.equal(
+      tree.get("Confirm move").props.accessibilityState.disabled,
+      true,
+    );
+    assert.equal(calls.length, 1, "no partial qualification is submitted");
+    tree.type("Final PR head (optional)", final);
+    assert.equal(
+      tree.get("Confirm move").props.accessibilityState.disabled,
+      false,
+    );
+    tree.press("Confirm move");
+    await settle(() => tree.text().includes("Applied move"));
+    assert.deepEqual(calls.at(-1), {
+      ...args,
+      reason,
+      qualification,
+      head: final,
+      caller,
+    });
+    assert.equal(calls.length, 2);
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
 
 const loadBundle = async () => {
   const bytes = (

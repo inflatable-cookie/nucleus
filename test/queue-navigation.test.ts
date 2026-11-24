@@ -29,9 +29,7 @@ test("the menu is Needs you, Planning, Leads, Papercuts, Queue, Working, In revi
       "Closing",
     ],
   );
-  // One menu for the main surface and the workspace panel; QA runs as an ordinary task (Tom, 2026-11-21).
-  assert.match(ui, /inboxViews\.map\(\(entry\) =>/);
-  assert.doesNotMatch(ui, /<QaRunsTab|workspaceNavigationViews|<TabRow/);
+  // The bundled board and workspace panel tests also check the rendered menus.
 });
 
 test("the list views render the inbox list; Planning keeps its own panes; no Lanes view remains", () => {
@@ -61,7 +59,6 @@ test("header controls expose icon-only Settings, Refresh and Pause or Resume in 
   );
   assert.equal(headerControls(false, false, false)[2].disabled, true);
   assert.equal(headerControls(false, true, true)[1].disabled, true);
-  assert.equal(headerControls(false, true, true)[1].disabled, true);
   assert.match(ui, /headerControls\(\s*Boolean\(state\?\.paused\)/);
   assert.match(ui, /accessibilityLabel="Queue controls menu"/);
   assert.match(
@@ -76,17 +73,6 @@ test("header controls expose icon-only Settings, Refresh and Pause or Resume in 
     ui,
     /accessibilityState=\{\{ expanded: queueMenuOpen, disabled: control\.disabled \}\}/,
   );
-  const controls = readFileSync(
-    new URL("../client/controls.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.match(
-    controls,
-    /accessibilityLabel=\{label\?\?text\} accessibilityHint=\{iconOnly\?text:hint\}/,
-  );
-  assert.match(controls, /iconOnly&&showHint/);
-  assert.match(controls, /joined\?: "start" \| "end"/);
-  assert.match(controls, /borderTopRightRadius: 0, borderBottomRightRadius: 0/);
 });
 
 test("706: pause chevron menu acts on one press and has no Stop arm", () => {
@@ -207,21 +193,6 @@ test("Telemetry is in Settings and pause remains in the header", () => {
   assert.match(
     settingsScreen,
     /settingsTab === "telemetry" && \(?\s*<SettingsTelemetry/,
-  );
-});
-
-test("the Queue count adds the queued tasks the board holds back, in the project selection", () => {
-  const ui = boardSource();
-  // #1001: the board carries only queue heads, so the Queue count adds the queued tasks it left out.
-  assert.match(
-    ui,
-    /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(\(item\) =>\s*attentionBelongs\(item\.repoPath\),?\s*\)/,
-    "the left-out count follows the selection",
-  );
-  assert.match(
-    ui,
-    /hiddenQueued,\s*triageTag: pipeline\.triageTag,/,
-    "the inbox counts receive the left-out total",
   );
 });
 

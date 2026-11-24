@@ -104,14 +104,15 @@ const tabsOf = (ui: Awaited<ReturnType<typeof screen>>) =>
   );
 const SECTIONS = [
   "Dispatch limits",
-  "Hosts",
   "Profiles",
   "Projects",
+  "Hosts",
   "Backups",
+  "Storage",
   "Telemetry",
 ];
 
-test("one row of six tabs at every width, the same at a narrow host, the Paseo settings column and a wide page", async () => {
+test("one row of seven tabs at every width, the same at a narrow host, the Paseo settings column and a wide page", async (t) => {
   // nucleus#963: no dropdown and no rail; the host's compact flag changes nothing.
   for (const [width, compact] of [
     [390, true],
@@ -121,6 +122,7 @@ test("one row of six tabs at every width, the same at a narrow host, the Paseo s
     [900, true],
   ] as const) {
     const ui = await screen(width, invokeBoard, compact);
+    t.after(() => ui.update(h("View")));
     await settle(() => ui.text().includes("Usage level"));
     const row = ui.get("Settings sections") as Node;
     assert.equal(row.type, "View", `${width}: a plain row, no scroller`);
@@ -155,12 +157,12 @@ test("one row of six tabs at every width, the same at a narrow host, the Paseo s
       0,
       `${width}: no dialog for section navigation`,
     );
-    ui.update(h("View"));
   }
 });
 
-test("the tabs show the short labels and keep the full names for a screen reader", async () => {
+test("the tabs show the short labels and keep the full names for a screen reader", async (t) => {
   const ui = await screen(688, invokeBoard, true);
+  t.after(() => ui.update(h("View")));
   await settle(() => ui.text().includes("Usage level"));
   const shown = tabsOf(ui).map((tab) =>
     (function text(node: Node | string): string {
@@ -169,10 +171,11 @@ test("the tabs show the short labels and keep the full names for a screen reader
   );
   assert.deepEqual(shown, [
     "Limits",
-    "Hosts",
     "Profiles",
     "Projects",
+    "Hosts",
     "Backups",
+    "Storage",
     "Telemetry",
   ]);
   assert.equal(
@@ -180,7 +183,6 @@ test("the tabs show the short labels and keep the full names for a screen reader
     false,
     "no Subscriptions tab",
   );
-  ui.update(h("View"));
 });
 
 test("each tab opens its section and stays ticked; the content takes the full width", async () => {
