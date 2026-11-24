@@ -26,8 +26,8 @@ pub use settings::{
     SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
 };
 pub use settings_domains::{
-    DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings, Projects,
-    RepositorySettings, T3Settings,
+    DispatchMode, DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings,
+    Projects, RepositorySettings, T3Settings,
 };
 pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
@@ -249,6 +249,17 @@ impl Store {
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| row.get(0))?;
         Ok(ids.collect::<Result<_, _>>()?)
+    }
+
+    /// Read the IDs of tasks that hold a run.
+    /// # Errors
+    /// Returns an error if row custody cannot be read.
+    pub fn run_ids(&self) -> Result<Vec<String>, StoreError> {
+        let mut query = self
+            .connection
+            .prepare_cached("SELECT id FROM tasks WHERE run IS NOT NULL ORDER BY id")?;
+        let rows = query.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Count other tasks whose possibly sent run still holds a launch slot.

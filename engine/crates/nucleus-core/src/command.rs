@@ -458,6 +458,21 @@ impl Task {
         Ok(())
     }
 
+    /// Revoke the current run for the operator's global stop. The task keeps
+    /// its phase, attempts and question, and the scheduler settles the run
+    /// through the same stop custody as a move.
+    pub fn revoke_run(&mut self) {
+        if let Some(run) = &mut self.run {
+            run.revoked = true;
+        }
+    }
+
+    /// Whether the next launch would be this task's first.
+    #[must_use]
+    pub fn first_launch(&self) -> bool {
+        self.phase == Phase::Queued && self.threads.get(Role::Worker).is_none()
+    }
+
     fn move_to(&mut self, phase: Phase) {
         if let Some(run) = &mut self.run {
             run.revoked = true;

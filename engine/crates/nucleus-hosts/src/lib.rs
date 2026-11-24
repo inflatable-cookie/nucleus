@@ -10,6 +10,7 @@ mod provider_setup;
 mod questions;
 mod rpc;
 mod runtime;
+mod theme;
 #[cfg(test)]
 mod t3_tests;
 mod title_shell;
@@ -331,6 +332,17 @@ impl T3 {
             .await;
         self.titles.replace(None);
         result
+    }
+
+    /// Follow the environment's theme settings and published themes. The
+    /// cached value stays while the stream reconnects.
+    /// # Errors
+    /// Returns an error on disconnect or a malformed stream.
+    pub async fn watch_theme(
+        &self,
+        theme: &tokio::sync::watch::Sender<Option<Value>>,
+    ) -> Result<(), HostError> {
+        self.rpc.watch_theme(theme).await
     }
 
     async fn read_catalog(&self) -> Result<ProfileCatalog, HostError> {

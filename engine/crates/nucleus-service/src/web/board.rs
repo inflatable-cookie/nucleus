@@ -112,6 +112,7 @@ impl Board {
     pub(super) fn routes(self, api: &Api) -> Router<Api> {
         let board = Router::new()
             .route("/api/engine/session", get(session))
+            .route("/api/engine/theme", get(theme))
             .route("/api/engine/tasks", get(super::list).post(super::admit))
             .route("/api/engine/tasks/{id}", get(super::detail))
             .route("/api/engine/tasks/{id}/next", get(super::next))
@@ -121,7 +122,11 @@ impl Board {
             .route("/api/engine/settings", get(settings::all))
             .nest(
                 "/api/engine/planning/{project}",
-                super::planning::lane_routes(),
+                super::planning::project_routes(),
+            )
+            .route(
+                "/api/engine/settings/projects/reassign",
+                post(settings::reassign),
             )
             .route(
                 "/api/engine/settings/{domain}",
@@ -171,6 +176,12 @@ async fn javascript(Extension(board): Extension<Board>) -> impl IntoResponse {
 
 async fn session(Extension(authority): Extension<Authority>) -> Json<Value> {
     Json(json!({"canEditSettings": matches!(authority, Authority::Operator { .. })}))
+}
+
+/// The cached theme inputs. A board read never calls the host.
+async fn theme(State(api): State<Api>) -> Json<Value> {
+    let theme = api.service.theme.borrow().clone();
+    Json(json!({"theme": theme}))
 }
 
 async fn headers(request: Request, next: Next) -> Response {
@@ -361,9 +372,15 @@ async fn events(
             Some((Ok(Event::default().event("settings").data("{}")), changes))
         },
     );
+    let mut theme = api.service.theme.subscribe();
+    theme.mark_unchanged();
+    let theme = stream::unfold(theme, |mut changes| async {
+        changes.changed().await.ok()?;
+        Some((Ok(Event::default().event("theme").data("{}")), changes))
+    });
     let changes = stream::select(
         invalidation_events(api.service, None, session.scope),
-        settings,
+        stream::select(settings, theme),
     )
     .take_until(async move {
         let mut revoked = session.revoked;

@@ -14,7 +14,7 @@ use nucleus_hosts::{
     ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::TaskRow;
+use nucleus_store::{DispatchMode, TaskRow};
 use nucleus_work::Checkout;
 use tokio::sync::RwLockReadGuard;
 
@@ -157,6 +157,16 @@ impl Service {
             forge,
             workspace: seen(checkout.observe()),
         };
+        if task.run().is_some_and(|run| !run.revoked())
+            && self.dispatch_mode().await == DispatchMode::Stopped
+        {
+            // The operator's global stop revokes the run. Stop custody below
+            // settles it exactly as it does after a move.
+            let mut stopped = task.clone();
+            stopped.revoke_run();
+            let row = self.save(row, stopped, &event("run_stopped")).await?;
+            return self.stop_run(&row, &checkout, observation, host).await;
+        }
         if task.run().is_some_and(nucleus_core::Run::revoked) {
             return self.stop_run(row, &checkout, observation, host).await;
         }
@@ -359,6 +369,13 @@ impl Service {
         via: Launch,
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
+        if !self
+            .dispatch_mode()
+            .await
+            .allows_launch(row.task.first_launch())
+        {
+            return Ok(Action::Wait(WaitReason::Capacity));
+        }
         let _fence = self.effect(row).await?;
         let task = &row.task;
         let identity = task.identity();
@@ -530,7 +547,9 @@ impl Service {
         if let Some(wait) = self.pause_prepared(row, &observation).await? {
             return Ok(wait);
         }
-        if !self.launch_capacity(task.identity(), false).await? {
+        if !self.dispatch_mode().await.allows_launch(task.first_launch())
+            || !self.launch_capacity(task.identity(), false).await?
+        {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {

@@ -297,6 +297,52 @@ impl Rpc {
         }
     }
 
+    /// Follow the server config stream and publish the board theme inputs
+    /// whenever a config event changes them.
+    pub(crate) async fn watch_theme(
+        &self,
+        theme: &tokio::sync::watch::Sender<Option<Value>>,
+    ) -> Result<(), HostError> {
+        let socket = time::timeout(DEADLINE, self.connect())
+            .await
+            .map_err(|_| HostError::Timeout)??;
+        let mut connection = Connection { socket, next_id: 0 };
+        connection.send(json!({"_tag":"Request", "id":"1", "tag":"subscribeServerConfig", "headers":[],
+            "payload":{"environmentThemes":true,"workspaceSnapshotsOnDemand":true}})).await?;
+        let mut tracker = crate::theme::ThemeTracker::default();
+        loop {
+            let frames = time::timeout(Duration::from_mins(1), connection.frames())
+                .await
+                .map_err(|_| HostError::Timeout)??;
+            for frame in frames {
+                match frame["_tag"].as_str() {
+                    Some("Ping") => connection.send(json!({"_tag":"Pong"})).await?,
+                    Some("Pong") => {}
+                    Some("Chunk") if frame["requestId"] == "1" || frame["requestId"] == 1 => {
+                        connection
+                            .send(json!({"_tag":"Ack","requestId":"1"}))
+                            .await?;
+                        let mut changed = false;
+                        for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            changed |= tracker.apply(item);
+                        }
+                        if changed {
+                            let next = tracker.snapshot();
+                            theme.send_if_modified(|current| {
+                                let modified = current.as_ref() != Some(&next);
+                                if modified {
+                                    *current = Some(next);
+                                }
+                                modified
+                            });
+                        }
+                    }
+                    _ => return Err(HostError::Protocol),
+                }
+            }
+        }
+    }
+
     async fn connect(&self) -> Result<Socket, HostError> {
         #[derive(Deserialize)]
         struct Ticket {
