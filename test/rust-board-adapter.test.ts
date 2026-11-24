@@ -97,7 +97,7 @@ function engine() {
       assert.deepEqual(JSON.parse(String(init.body)), { digest: "confirmed-revision", reason: "Retired" });
       projects = { projects: { ...projects.projects } };
       Reflect.deleteProperty(projects.projects, "Orbit_Main");
-      return json({ project, removedAtMs: 1_790_000_000_000 });
+      return json({ repositories: project.repositories, removedAtMs: 1_790_000_000_000 });
     }
     if (path === "/settings/projects/reassign") {
       const body = JSON.parse(String(init?.body)) as { revision: string; origin: string; toProject: string };

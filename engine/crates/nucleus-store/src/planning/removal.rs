@@ -2,7 +2,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::settings_domains::RemovedProject;
+use crate::settings_domains::{RemovedProject, RemovedRepository};
 use crate::{
     ProjectSettings, Projects, SettingsFile, SettingsSnapshot, StorageError, Store, StoreError,
 };
@@ -48,9 +48,18 @@ impl Store {
         digest: &str,
         reason: String,
         removed_at_ms: u64,
-    ) -> Result<(SettingsSnapshot<Projects>, ProjectSettings), StoreError> {
+    ) -> Result<(SettingsSnapshot<Projects>, RemovedProject), StoreError> {
         let tx = self.planning_write()?;
-        let current = settings.read()?;
+        let current = settings.read::<Projects>()?;
+        if let Some(removed) = current.value.removed.get(project) {
+            if removed.digest != digest || removed.reason != reason {
+                return Err(StorageError::SettingsConflict.into());
+            }
+            let receipt = removed.clone();
+            clear_planning(&tx, project)?;
+            tx.commit()?;
+            return Ok((current, receipt));
+        }
         let confirmed = preview(&tx, &current, project)?;
         if !confirmed.tasks.is_empty() {
             return Err(StoreError::PlanningConflict);
@@ -59,31 +68,34 @@ impl Store {
             return Err(StorageError::SettingsConflict.into());
         }
         clear_planning(&tx, project)?;
+        let receipt = RemovedProject {
+            repositories: confirmed
+                .project
+                .repositories
+                .into_iter()
+                .map(|repo| RemovedRepository {
+                    origin: repo.origin,
+                    path: repo.path,
+                })
+                .collect(),
+            digest: digest.into(),
+            reason,
+            removed_at_ms,
+        };
         let (saved, _) = settings.edit(&current.revision, |registry: &mut Projects| {
-            let removed = registry
+            registry
                 .projects
                 .remove(project)
                 .ok_or(StorageError::SettingsConflict)?;
-            registry.removed.insert(
-                project.into(),
-                RemovedProject {
-                    origins: removed
-                        .repositories
-                        .into_iter()
-                        .map(|repo| repo.origin)
-                        .collect(),
-                    reason,
-                    removed_at_ms,
-                },
-            );
+            registry.removed.insert(project.into(), receipt.clone());
             Ok(())
         })?;
         // The registry commits first, so a restart can finish the SQLite deletion.
         tx.commit()?;
-        Ok((saved, confirmed.project))
+        Ok((saved, receipt))
     }
 
-    /// Finish deletion when the registry published before SQLite could commit.
+    /// Finish deletion when the registry published before `SQLite` could commit.
     ///
     /// # Errors
     /// Returns an error if planning cleanup cannot commit.

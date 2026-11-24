@@ -476,7 +476,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       const result = await rust.removeProject(keys.id(input.key), { digest: input.digest, reason: input.reason });
       return {
         key: input.key, reason: input.reason, removedAt: new Date(result.removedAtMs).toISOString(),
-        repositories: result.project.repositories.map(({ origin, path }) => ({ origin, path })),
+        repositories: result.repositories,
       } satisfies api.ProjectTombstone;
     },
     "rust.project.archive": async (input: { project: string; archived: boolean }) => {

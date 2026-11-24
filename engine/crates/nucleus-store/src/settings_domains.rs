@@ -329,7 +329,7 @@ impl<'de> Deserialize<'de> for ProjectSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Projects {
     pub projects: BTreeMap<String, ProjectSettings>,
-    /// Removed project IDs and their canonical repository origins.
+    /// Durable removals by project ID, including the repositories they retired.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub removed: BTreeMap<String, RemovedProject>,
 }
@@ -337,9 +337,17 @@ pub struct Projects {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemovedProject {
-    pub origins: Vec<String>,
+    pub repositories: Vec<RemovedRepository>,
+    pub digest: String,
     pub reason: String,
     pub removed_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovedRepository {
+    pub origin: String,
+    pub path: PathBuf,
 }
 
 impl Projects {
@@ -347,8 +355,8 @@ impl Projects {
     pub fn removed_origin(&self, origin: &str) -> bool {
         self.removed
             .values()
-            .flat_map(|project| &project.origins)
-            .any(|removed| removed.eq_ignore_ascii_case(origin))
+            .flat_map(|project| &project.repositories)
+            .any(|removed| removed.origin.eq_ignore_ascii_case(origin))
     }
 }
 

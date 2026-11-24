@@ -2222,16 +2222,13 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
         StatusCode::CONFLICT
     );
     let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirmation = confirm(&preview["digest"]);
+    let first = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let receipt = json_body(first).await;
     assert_eq!(
-        post_as(
-            &registry.api,
-            &removal,
-            &BOARD_KEY,
-            &confirm(&preview["digest"])
-        )
-        .await
-        .status(),
-        StatusCode::OK
+        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
+        receipt
     );
 
     {

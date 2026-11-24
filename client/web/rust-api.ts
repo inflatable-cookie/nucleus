@@ -299,7 +299,10 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         tasks: z.array(z.object({ taskId: z.string(), version: integer, label: z.string() })),
       }), `/settings/projects/${encodeURIComponent(id)}/removal`),
     removeProject: (id: string, input: { digest: string; reason: string }) =>
-      board.read(z.object({ project, removedAtMs: integer }),
+      board.read(z.object({
+        repositories: z.array(z.object({ origin: z.string(), path: z.string() })),
+        removedAtMs: integer,
+      }),
         `/settings/projects/${encodeURIComponent(id)}/removal`, json("POST", input)),
     theme: () => board.read(themeInputs, "/theme"),
     catalog: shareRead(() => board.read(cachedCatalog, "/profiles/catalog")),
