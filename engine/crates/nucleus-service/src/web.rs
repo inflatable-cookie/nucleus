@@ -997,7 +997,7 @@ impl Summary {
         let id = &task.identity().id;
         let dependency_status = DependencyStatus::read(state, row, scope)?;
         let dependency_edits = DependencyEdits::read(state, task, authority, &dependency_status);
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = state.wait_reason(id);
         let wait = if dependency_status.blocking && task.run().is_none() {
             Some(WaitReason::Prerequisite)
         } else {
@@ -1012,9 +1012,14 @@ impl Summary {
             phase: task.phase(),
             attention: state.task_attention(row)?,
             next_check_at: None,
-            wait_detail: state.host_checks.get(id).copied().filter(|_| {
-                !task.phase().is_terminal() && task.hold().is_none() && task.question().is_none()
-            }),
+            wait_detail: state
+                .wait_detail(id)
+                .map(crate::WaitDetail::message)
+                .filter(|_| {
+                    !task.phase().is_terminal()
+                        && task.hold().is_none()
+                        && task.question().is_none()
+                }),
             wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
             {
                 wait

@@ -982,12 +982,14 @@ impl T3Pass<'_> {
             return Ok(false);
         }
         // Observe the exact child again after proving its parent can no longer launch it.
+        // With no send intent, discarding the reservation cannot abandon child work.
         let (child, state) = self.host.delivery(run, wire, ThreadRead::Exact).await?;
         Ok(child.is_none()
             && state == RunState::ReadyToSend
-            && self
-                .quiet(&wire.binding, &run.launch().thread, None)
-                .await?)
+            && (run.last_send_at_ms().is_none()
+                || self
+                    .quiet(&wire.binding, &run.launch().thread, None)
+                    .await?))
     }
 
     async fn observe_rejected_archive(

@@ -197,10 +197,7 @@ impl Service {
                         .into_iter()
                         .filter(|row| self.task_scope(row.task.identity()).is_ok())
                     {
-                        let wait = state
-                            .waits
-                            .get(&row.task.identity().id)
-                            .map(|(reason, _)| *reason);
+                        let wait = state.wait_reason(&row.task.identity().id);
                         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
                     }
                 }
@@ -293,7 +290,7 @@ impl Service {
         let running = state
             .waits
             .values()
-            .filter(|(wait, _)| *wait == WaitReason::Running)
+            .filter(|wait| wait.reason == WaitReason::Running)
             .count();
         let mode = state
             .settings

@@ -203,6 +203,27 @@ pub struct Service {
     _profile: OwnedFd,
 }
 
+struct TaskWait {
+    reason: WaitReason,
+    since: Instant,
+    detail: Option<WaitDetail>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaitDetail {
+    BeforeSend,
+    Observation(&'static str),
+}
+
+impl WaitDetail {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::BeforeSend => "Checking the task thread before sending.",
+            Self::Observation(message) => message,
+        }
+    }
+}
+
 struct State {
     store: Store,
     allowance_clock: allowance::Clock,
@@ -211,8 +232,7 @@ struct State {
     schedule: Schedule,
     last_pass_calls: HostCalls,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
-    waits: BTreeMap<String, (WaitReason, Instant)>,
-    host_checks: BTreeMap<String, &'static str>,
+    waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
@@ -375,7 +395,6 @@ impl Service {
                 last_pass_calls: HostCalls::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
-                host_checks: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
@@ -892,8 +911,7 @@ impl Service {
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
-            let check_cleared = state.host_checks.remove(id).is_some();
-            if state.set_wait(id, None).is_some() || check_cleared {
+            if state.set_wait(id, None) {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
@@ -915,7 +933,6 @@ impl Service {
         if wait == Some(WaitReason::HostUnknown) {
             return self.schedule_host_observation(&mut state, row, result);
         }
-        let check_cleared = state.host_checks.remove(id).is_some();
         state.schedule.reset_host_backoff(id);
         if state.observe_task_allowance(&current.task, wait)? {
             self.publish(id, current.version);
@@ -957,9 +974,9 @@ impl Service {
             Some(profiles::GroupPause::Manual) => state.schedule.park(id),
             None => state.schedule.wake(id, due, priority),
         }
-        let prior = state.set_wait(id, wait);
+        let changed = state.set_wait(id, wait);
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
-        if prior != wait || check_cleared {
+        if changed {
             self.title_wake.notify_one();
             self.publish(id, current.version);
         }
@@ -975,40 +992,44 @@ impl Service {
         previous: Priority,
     ) -> bool {
         let id = &row.task.identity().id;
-        if let Err(ServiceError::ParentNotSent { retry_at, .. }) = result {
+        let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
+            || (wait == Some(WaitReason::HostUnknown)
+                && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                && row.task.run().is_some_and(|run| {
+                    !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
+                }));
+        let (wait, detail) = if before_send {
             let now = Instant::now();
+            let backoff = match result {
+                Err(ServiceError::ParentNotSent { retry_at, .. }) => *retry_at,
+                Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+                _ => None,
+            };
             state.schedule.reset_host_backoff(id);
             state.schedule.wake(
                 id,
-                retry_at.unwrap_or(now).max(now + T3_RETRY_DELAY),
+                backoff.unwrap_or(now).max(now + T3_RETRY_DELAY),
                 previous,
             );
-            state
-                .host_checks
-                .insert(id.clone(), "Checking the task thread before sending.");
-            self.desire_title(
-                state,
-                &row.task,
-                row.reference().as_ref(),
-                Some(WaitReason::HostUnknown),
-            );
-            self.title_wake.notify_one();
-            self.publish(id, row.version);
-            return true;
-        }
-        if wait == Some(WaitReason::HostObservationBlocked) {
+            (Some(WaitReason::HostUnknown), WaitDetail::BeforeSend)
+        } else if wait == Some(WaitReason::HostObservationBlocked) {
             state.schedule.block_host_observation(id);
-            state
-                .host_checks
-                .entry(id.clone())
-                .or_insert("Couldn’t verify the task thread. Open it to check.");
-            state.set_wait(id, Some(WaitReason::HostObservationBlocked));
+            if state.wait_reason(id) == wait {
+                return true;
+            }
+            (
+                wait,
+                WaitDetail::Observation("Couldn’t verify the task thread. Open it to check."),
+            )
+        } else {
+            return false;
+        };
+        if state.set_wait_detail(id, wait, Some(detail)) {
             self.desire_title(state, &row.task, row.reference().as_ref(), wait);
             self.title_wake.notify_one();
             self.publish(id, row.version);
-            return true;
         }
-        false
+        true
     }
 
     fn schedule_host_observation(
@@ -1065,8 +1086,8 @@ impl Service {
             (false, _, true, _) => "Checking whether the message reached the task thread.",
             (false, _, false, _) => "Checking the task thread.",
         };
-        let check_changed = state.host_checks.insert(id.clone(), cause) != Some(cause);
-        let prior = state.set_wait(id, wait);
+        let prior = state.wait_reason(id);
+        let changed = state.set_wait_detail(id, wait, Some(WaitDetail::Observation(cause)));
         if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
             audit.detail = serde_json::json!({"version": row.version,
@@ -1077,7 +1098,7 @@ impl Service {
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
         }
-        if state.observe_task_allowance(&row.task, wait)? || prior != wait || check_changed {
+        if state.observe_task_allowance(&row.task, wait)? || changed {
             self.desire_title(state, &row.task, row.reference().as_ref(), wait);
             self.title_wake.notify_one();
             self.publish(id, row.version);
@@ -1416,7 +1437,6 @@ impl Service {
             state.planner_authority.remove(id);
         }
         state.set_wait(id, None);
-        state.host_checks.remove(id);
         if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
                 != prior.task.run().map(|run| &run.launch().instance)
@@ -1559,9 +1579,7 @@ impl State {
         else {
             return false;
         };
-        self.waits
-            .get(id)
-            .is_some_and(|(wait, _)| *wait == WaitReason::Running)
+        self.wait_reason(id) == Some(WaitReason::Running)
             && self
                 .thread_tasks
                 .get(id)
@@ -1570,17 +1588,44 @@ impl State {
                 .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
     }
 
-    fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
+    fn wait_reason(&self, id: &str) -> Option<WaitReason> {
+        self.waits.get(id).map(|wait| wait.reason)
+    }
+
+    fn wait_detail(&self, id: &str) -> Option<WaitDetail> {
+        self.waits.get(id).and_then(|wait| wait.detail)
+    }
+
+    fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> bool {
+        self.set_wait_detail(id, wait, None)
+    }
+
+    fn set_wait_detail(
+        &mut self,
+        id: &str,
+        wait: Option<WaitReason>,
+        detail: Option<WaitDetail>,
+    ) -> bool {
         if wait != Some(WaitReason::Capacity) {
             self.group_waits.remove(id);
         }
-        let prior = self.waits.get(id).map(|(reason, _)| *reason);
+        let prior = self.wait_reason(id);
         if prior == wait {
-            return prior;
+            return self
+                .waits
+                .get_mut(id)
+                .is_some_and(|prior| std::mem::replace(&mut prior.detail, detail) != detail);
         }
         match wait {
             Some(reason) => {
-                self.waits.insert(id.into(), (reason, Instant::now()));
+                self.waits.insert(
+                    id.into(),
+                    TaskWait {
+                        reason,
+                        since: Instant::now(),
+                        detail,
+                    },
+                );
             }
             None => {
                 self.waits.remove(id);
@@ -1591,7 +1636,7 @@ impl State {
         } else if wait == Some(WaitReason::Capacity) {
             self.capacity_waiters.push_back(id.into());
         }
-        prior
+        true
     }
 
     fn wake_capacity(&mut self, now: Instant) {

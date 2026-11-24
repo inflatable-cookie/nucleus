@@ -601,6 +601,11 @@ fn missing_thread(thread: &str) -> Response {
 
 #[tokio::test]
 async fn an_expired_parent_and_absent_exact_child_settle_without_resending() {
+    expired_parent_with_absent_child(true).await;
+    expired_parent_with_absent_child(false).await;
+}
+
+async fn expired_parent_with_absent_child(sent: bool) {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let parent = crate::ParentRun {
@@ -610,7 +615,9 @@ async fn an_expired_parent_and_absent_exact_child_settle_without_resending() {
     };
     let (mut task, mut observation, instance) =
         reserve_with_parent(binding.clone(), Entry::Brief, Some(parent));
-    task.record_send(&instance, 1).expect("previous send");
+    if sent {
+        task.record_send(&instance, 1).expect("previous send");
+    }
     let run = task.run().expect("reservation");
     let child = &run.launch().thread;
     let read = "orchestration.subscribeThread";
@@ -623,10 +630,17 @@ async fn an_expired_parent_and_absent_exact_child_settle_without_resending() {
         (read, missing_thread(child)),
     ])
     .await;
-    let observed = quiet_pass(&client)
-        .observe_run(run, 2)
-        .await
-        .expect("fresh observations");
+    let observed = if sent {
+        quiet_pass(&client).observe_run(run, 2).await
+    } else {
+        // A reservation with no send intent must be discardable without a process census.
+        let pass = client.pass(checkout.path());
+        pass.evidence
+            .sent
+            .store(true, std::sync::atomic::Ordering::Release);
+        pass.observe_run(run, 2).await
+    }
+    .expect("fresh observations");
     assert_eq!(
         observed.host,
         Host::Current {

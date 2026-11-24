@@ -264,9 +264,9 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
     let state = api.service.state.lock().await;
     let now = Instant::now();
     let mut waits: Vec<_> = state.waits.iter().collect();
-    waits.sort_unstable_by_key(|(id, (_, since))| (*since, *id));
-    let oldest: Vec<_> = waits.into_iter().take(5).map(|(id, (reason, since))| {
-        json!({"taskId": id, "reason": reason, "seconds": now.saturating_duration_since(*since).as_secs()})
+    waits.sort_unstable_by_key(|(id, wait)| (wait.since, *id));
+    let oldest: Vec<_> = waits.into_iter().take(5).map(|(id, wait)| {
+        json!({"taskId": id, "reason": wait.reason, "seconds": now.saturating_duration_since(wait.since).as_secs()})
     }).collect();
     Json(json!({
         "engine": {
@@ -755,8 +755,8 @@ impl Service {
             .capacity_waiters
             .iter()
             .chain(state.group_waits.keys())
-            .chain(state.waits.iter().filter_map(|(id, (reason, _))| {
-                (*reason == nucleus_core::WaitReason::UsagePermission).then_some(id)
+            .chain(state.waits.iter().filter_map(|(id, wait)| {
+                (wait.reason == nucleus_core::WaitReason::UsagePermission).then_some(id)
             }))
         {
             state

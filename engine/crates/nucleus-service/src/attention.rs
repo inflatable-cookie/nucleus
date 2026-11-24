@@ -36,7 +36,7 @@ impl State {
             return Ok(TaskAttention::Finished);
         }
         let id = &task.identity().id;
-        let wait = self.waits.get(id).map(|(reason, _)| *reason);
+        let wait = self.wait_reason(id);
         if self.has_open_usage_decision(task)?
             || waiting_for_person(task, wait)
             || matches!(

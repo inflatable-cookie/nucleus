@@ -431,7 +431,7 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             .unwrap();
         {
             let mut state = service.state.lock().await;
-            assert_eq!(state.waits["worker"].0, WaitReason::HostUnknown);
+            assert_eq!(state.waits["worker"].reason, WaitReason::HostUnknown);
             let due = state.schedule.due("worker").expect("one decisive recheck");
             assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
             assert!(state.schedule.recover_host_observation("worker", due, None));
@@ -484,13 +484,15 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
         let mut state = service.state.lock().await;
         state.store.create(&task, &event("fixture")).unwrap();
         let row = service.lookup(&state, "unsent").unwrap();
-        state.set_wait("unsent", Some(WaitReason::Capacity));
+        state.schedule.block_host_observation("unsent");
+        state.set_wait("unsent", Some(WaitReason::HostObservationBlocked));
         row
     };
     let refused = Err(service.parent_not_sent("preflight custody revision no longer matches"));
-    for _ in 0..2 {
+    let before_role_send = Err(ServiceError::Host(HostError::Uncertain));
+    for result in [&refused, &before_role_send, &before_role_send] {
         service
-            .schedule_result(&row, &refused, Priority::Decision)
+            .schedule_result(&row, result, Priority::Decision)
             .await
             .unwrap();
         let mut state = service.state.lock().await;
@@ -501,7 +503,13 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             service.lookup(&state, "unsent").unwrap().version,
             row.version
         );
-        assert_eq!(state.waits["unsent"].0, WaitReason::Capacity);
+        assert_eq!(state.wait_reason("unsent"), Some(WaitReason::HostUnknown));
+        assert!(state.wait_detail("unsent") == Some(crate::WaitDetail::BeforeSend));
+        assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+        assert_eq!(
+            state.task_attention(&row).unwrap(),
+            crate::attention::TaskAttention::Attention
+        );
     }
     assert!(
         !service

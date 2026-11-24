@@ -69,8 +69,9 @@ impl Service {
     ) -> Result<(Option<String>, bool), ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = state.wait_reason(id);
         if task.phase().is_terminal()
+            || state.wait_detail(id) == Some(crate::WaitDetail::BeforeSend)
             || crate::attention::waiting_for_person(task, wait)
             || task.hold().is_some()
             || task.operator_decline().is_some()

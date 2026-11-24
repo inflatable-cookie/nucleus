@@ -264,6 +264,9 @@ Later decisions carry their own attribution.
     Title, settle and snooze changes preserve matching custody evidence.
     Delivery still checks current binding, requests, children, background
     work and row visibility, including ownership of any snooze it clears.
+    A pre-wire retry keeps the row visible and releases the ACP turn while
+    it waits. An exact terminal parent and an exact absent child let Nucleus
+    discard a delegation that has no send intent and prepare it again.
     On rollout, an old delivery fence with matching preflight refusal evidence
     reopens at the same version if no later or same-command send might have
     reached T3. An unresolved delivery fence survives restart for the same
