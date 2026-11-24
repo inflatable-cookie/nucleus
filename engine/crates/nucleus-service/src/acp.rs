@@ -440,6 +440,24 @@ impl Service {
         let provider = self.acp_provider().ok_or(ServiceError::AcpBinding)?;
         let identity = task.identity();
         let id = &identity.id;
+        let session = self
+            .host
+            .runtime_identity()
+            .ok_or(nucleus_hosts::HostError::Uncertain)?;
+        let kind = "acp_row_refresh_intent";
+        {
+            let state = self.state.lock().await;
+            if let Some(prior) = state
+                .store
+                .task_turn_command(id, kind, row.version, &session)?
+                && !state
+                    .store
+                    .task_turn_attempt(id, kind, row.version, &session, &prior)?
+                    .is_some_and(|(_, refused)| refused)
+            {
+                return Ok(false);
+            }
+        }
         let route = self.project_for(identity).await?;
         let work = self.worktrees()?;
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
@@ -466,24 +484,6 @@ impl Service {
             return Ok(false);
         };
         self.ensure_parent_reader(id, checkout.path()).await?;
-        let session = self
-            .host
-            .runtime_identity()
-            .ok_or(nucleus_hosts::HostError::Uncertain)?;
-        let kind = "acp_row_refresh_intent";
-        {
-            let state = self.state.lock().await;
-            if let Some(prior) = state
-                .store
-                .task_turn_command(id, kind, row.version, &session)?
-                && !state
-                    .store
-                    .task_turn_attempt(id, kind, row.version, &session, &prior)?
-                    .is_some_and(|(_, refused)| refused)
-            {
-                return Ok(false);
-            }
-        }
         self.deliver_parent(row, write, &session, Some(kind)).await
     }
 

@@ -441,7 +441,7 @@ impl T3 {
         commands: &[String],
     ) -> Result<bool, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self.thread(binding, &thread).await? else {
+        let Some(projection) = self.observe_parent(binding, &thread).await?.0 else {
             return Ok(false);
         };
         projection.require_parent_provider(provider)?;
