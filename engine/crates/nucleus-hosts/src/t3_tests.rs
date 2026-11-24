@@ -653,6 +653,71 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
     })
 }
 
+#[tokio::test]
+async fn missing_or_steered_history_does_not_prove_a_terminal_role_run() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let message = format!("{instance}-message");
+    let exact = snapshot(&binding, &instance, "completed", false);
+    let mut steered = exact.clone();
+    steered["projection"]["runs"][0]["userMessageId"] = json!("other-message");
+    steered["projection"]["messages"] = json!([{"id":message,"runId":NATIVE_RUN}]);
+    let mut truncated = exact.clone();
+    truncated["hasMoreHistory"] = json!(true);
+    truncated["historyCursor"] = json!("more");
+    truncated["projection"]["runs"] = json!([]);
+    let (client, server) = server(
+        [exact, steered, truncated]
+            .into_iter()
+            .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
+            .collect(),
+    )
+    .await;
+    let pass = quiet_pass(&client);
+    let run = task.run().unwrap();
+    let seen = |state| Host::Current {
+        instance: instance.clone(),
+        state,
+    };
+    assert_eq!(
+        pass.observe_run(run, 2).await.unwrap().host,
+        seen(RunState::Ended)
+    );
+    assert_eq!(
+        pass.observe_run(run, 3).await.unwrap().host,
+        seen(RunState::IdleWithoutTerminalRun)
+    );
+    assert!(matches!(
+        pass.observe_run(run, 4).await,
+        Err(HostError::Uncertain)
+    ));
+    server.await.unwrap();
+
+    let inputs = T3::prepare_report_reminder(
+        task.run().unwrap(),
+        &binding,
+        "reminder",
+        2,
+        "Report your earlier work.",
+    )
+    .unwrap();
+    let wire: Value = serde_json::from_str(&inputs.input).unwrap();
+    assert_eq!(inputs.thread, THREAD);
+    assert_eq!(
+        wire["selection"],
+        json!({"instanceId":"fixture-provider","model":"fixture-model"})
+    );
+    assert_eq!(wire["payload"]["commandId"], "reminder");
+    assert_eq!(wire["payload"]["messageId"], "reminder-message");
+    assert_eq!(wire["payload"]["modelSelection"], wire["selection"]);
+    assert_eq!(
+        wire["payload"]["dispatchMode"],
+        json!({"type":"queue_after_active"})
+    );
+    assert!(wire["payload"].get("freshContext").is_none());
+}
+
 fn absent() -> Response {
     missing_thread(THREAD)
 }
@@ -1813,7 +1878,7 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
         (RunState::Ended, None),
         (RunState::Ended, None),
         (RunState::Ended, None),
-        (RunState::Ended, None),
+        (RunState::IdleWithoutTerminalRun, None),
     ] {
         let seen = pass.observe_run(run, 2).await.expect("native observation");
         assert_eq!(

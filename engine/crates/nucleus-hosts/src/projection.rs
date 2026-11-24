@@ -617,6 +617,12 @@ impl Projection {
         Ok(run.status.run_state())
     }
 
+    pub(crate) fn has_exact_run(&self, message_id: &str) -> bool {
+        self.runs
+            .iter()
+            .any(|run| run.user_message_id.as_deref() == Some(message_id))
+    }
+
     pub(crate) fn has_delivery(&self, message_id: &str) -> bool {
         let (message, run) = self.delivery(message_id);
         message.is_some() || run.is_some()
@@ -752,9 +758,15 @@ impl Projection {
     fn delivery(&self, id: &str) -> (Option<&Message>, Option<&Run>) {
         let message = self.messages.iter().find(|message| message.id == id);
         let linked_id = message.and_then(|message| message.run_id.as_deref());
-        let run = self.runs.iter().find(|run| {
-            run.user_message_id.as_deref() == Some(id) || linked_id == Some(run.id.as_str())
-        });
+        let run = self
+            .runs
+            .iter()
+            .find(|run| run.user_message_id.as_deref() == Some(id))
+            .or_else(|| {
+                self.runs
+                    .iter()
+                    .find(|run| linked_id == Some(run.id.as_str()))
+            });
         (message, run)
     }
 

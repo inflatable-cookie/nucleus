@@ -951,6 +951,14 @@ impl TaskHost for T3Pass<'_> {
             RunState::Running
         } else if provider_limit.is_some() {
             RunState::UsageLimited
+        } else if state == RunState::Ended
+            && !thread
+                .as_ref()
+                .is_some_and(|thread| thread.has_exact_run(&message))
+        {
+            // A steer's linked turn can settle a report or a stop, but it
+            // cannot prove that the assignment ran without reporting.
+            RunState::IdleWithoutTerminalRun
         } else {
             state
         };
@@ -1022,9 +1030,9 @@ impl TaskHost for T3Pass<'_> {
             ThreadRead::Exact
         };
         let (thread, state) = self.host.delivery(run, &wire, policy).await?;
-        if !worker
-            && continuation
-            && run.launch().profile().is_some()
+        if continuation
+            && ((!worker && run.launch().profile().is_some())
+                || run.report_reminder_for().is_some())
             && !wire.selection.as_ref().is_some_and(|selection| {
                 thread
                     .as_ref()
