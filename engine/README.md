@@ -61,7 +61,7 @@ replaced during that interval can redirect allocation. The work root belongs
 to the operator on the single-user host. A follow-up will anchor the destination
 to a verified directory handle through the Git write.
 
-Run `nucleus-engine configure --enable` to enable the engine. The transition
+Run `nucleus configure --enable` to enable the engine. The transition
 home is `~/.nucleus/engine`. It contains the database, settings, backups, logs,
 keys and launchers. Use `--home` to keep using an explicit portable profile.
 
@@ -93,7 +93,7 @@ directories, collect each domain into the corresponding directory in the new
 home. Avoid moving roots that still hold active checkouts, sessions or report
 tickets. Keep their overrides through the move until those users settle.
 
-On the copied profile, run `nucleus-engine configure --enable
+On the copied profile, run `nucleus configure --enable
 --clear-legacy-volume`, with `--placement barge` if desired. Use `--reset-roots`
 to remove old overrides and pass any overrides to keep in the same command.
 Refresh the owner-only serve and ACP launchers for the new absolute paths and
@@ -371,15 +371,15 @@ also clears its binding.
 
 ## ACP task sessions
 
-`nucleus-acp` is a host-neutral, model-free ACP agent over stdio. Each task has
+`nucleus acp` serves the host-neutral, model-free ACP agent over stdio. Each task has
 one service-minted session with task-scoped credentials outside its Git checkout.
 The agent reads the same committed task view and current wait as the board.
 It follows task invalidations and sends the same typed commands as the CLI,
 including answers. A committed command wakes the task. The agent keeps its
 presentation cache in memory and has no access to the engine store.
 
-Use `nucleus-engine bind-acp <task>` with a controller credential. This returns
-the binding path and stable session ID. Start `nucleus-acp` with
+Use `nucleus bind-acp <task>` with a controller credential. This returns
+the binding path and stable session ID. Start `nucleus acp` with
 `NUCLEUS_ACP_SESSION` set to that file, or set `NUCLEUS_ACP_BINDINGS` to the
 binding directory so the agent finds the task by checkout. The service writes
 the binding outside the checkout with owner-only permissions. Worker and
@@ -424,17 +424,16 @@ The opening prompt establishes the session. The adapter can supply silent hold
 and ignore patterns. ACP cancellation releases the presentation turn. Task
 cancellation goes through the same command preflight as other clients.
 
-An ACP launcher can bring up the local service using
-`python3 ensure-local-service.py <port> <controller-key-file> <lock-file> <serve-launcher>`.
-Keep the serve launcher's log under its configured log root. The helper reuses
-a healthy loopback service.
-When the port is absent, it serializes startup and passes the lock to the
-detached engine for its lifetime. A later ACP start can recover the service
-after it exits. An unverified listener never triggers a second start.
+The ACP launcher calls `nucleus ensure` for the same profile and endpoint
+as `nucleus serve`. It reuses a healthy listener only when its controller
+credential and database path match. When the port is absent, it serializes
+startup and passes the lock to the detached engine. A later ACP launch can
+recover a stopped service. Keep the serve launcher's log under the configured
+log root.
 
 ### Set up T3
 
-`nucleus-engine t3 install` registers the Rust provider `nucleus-rust` in
+`nucleus t3 install` registers the Rust provider `nucleus-rust` in
 the local T3 environment. First enable the engine with `configure --enable`.
 Use the default engine home or pass the same `--home` to configure, serve and
 T3 setup. Set the T3 origin with `--t3` or the profile's Hosts setting. The
@@ -442,13 +441,13 @@ provider's launcher is `bin/nucleus-rust-acp` under the engine home. The startup
 lock lives beside `bin`.
 
 Prepare an owner-only executable serve launcher that sets
-`NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus-engine serve`
-with `acpProvider` set to `nucleus-rust` in the project file. Use the same
+`NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus serve`
+with `--acp-provider nucleus-rust`. Use the same
 loopback endpoint and the same controller key for serve and install. Supply
 the key in a separate owner-only file containing 64 lowercase hex digits.
 The serve launcher can load service credentials from private files and redirect
-logs under the Storage log root. Install requires Python 3 on the launcher
-PATH for the interim local startup helper.
+logs under the Storage log root. The installed provider uses the same binary
+for `ensure` and `acp`.
 
 Use `t3 auth session issue` to mint a short-lived session with
 `--scope providers:manage --scope orchestration:read` and supply its bearer as
@@ -461,13 +460,12 @@ sessions. The generated launcher does not store the management bearer.
 [T3 RPC scopes](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/auth/RpcAuthorization.ts#L268-L283)
 
 ```sh
-nucleus-engine t3 install --t3 http://127.0.0.1:3773 \
+nucleus t3 install --t3 http://127.0.0.1:3773 \
   --control-key-file /absolute/path/controller.key \
-  --serve-launcher /absolute/path/serve-engine \
-  --acp-command /absolute/path/nucleus-acp
-nucleus-engine t3 status --t3 http://127.0.0.1:3773 \
+  --serve-launcher /absolute/path/serve-engine
+nucleus t3 status --t3 http://127.0.0.1:3773 \
   --control-key-file /absolute/path/controller.key
-nucleus-engine t3 uninstall --t3 http://127.0.0.1:3773
+nucleus t3 uninstall --t3 http://127.0.0.1:3773
 ```
 
 Use `install --adopt` to take over an existing local `nucleus-rust`
@@ -496,12 +494,12 @@ The command checks the exact registration immediately before removal and
 reads it back afterward.
 [T3 provider mutation contract](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/contracts/src/providerInstance.ts#L85-L101)
 For offline setup flag details, run
-`nucleus-engine t3 --help`.
+`nucleus t3 --help`.
 
 Keep host execution and parenting separate. The engine uses its host interface
 to prepare a launch, observe a run and stop it. A host's parenting adapter
 ensures the session is open and creates or continues the role's child there.
-T3 runs `nucleus-acp` in the session thread. It holds or re-enters that thread,
+T3 runs `nucleus acp` in the session thread. It holds or re-enters that thread,
 reads its live run and root node, and sends `delegated_task.request` with the
 bound launch identity. The adapter reuses each role's retained child and settles
 its completion delivery with `delegated_task.completion-delivery.dispose`.
@@ -523,7 +521,7 @@ when the receipt follows its latest transition into Done. Reopening and
 finishing the task schedules a new archive pass. Archival never settles a task
 thread.
 
-Pass the registered T3 ACP provider for the Rust `nucleus-acp` binary to
+Pass the registered T3 ACP provider for the Rust `nucleus acp` agent to
 `serve --acp-provider`. A legacy serve file supplies it as `acpProvider`.
 Configure the provider's
 `NUCLEUS_ACP_BINDINGS` to the service's binding directory. The scheduler supplies
@@ -571,12 +569,12 @@ controller. Paired browsers receive only the capability flag and talk to
 same-origin task routes. Those routes forward the task reads, commands and
 event stream; planning and other legacy features keep their existing routes.
 
-On the standalone Rust board, `nucleus-engine ui` pairs a new browser once.
+On the standalone Rust board, `nucleus ui` pairs a new browser once.
 A paired browser can reopen the plain loopback URL after a service restart.
 Sessions expire after 30 idle days and renew at most once per day. The private
 `web-sessions.json` beside the engine database holds token digests and expiry
 times. An operator can revoke all browser sessions and pending links with
-`nucleus-engine ui --revoke`.
+`nucleus ui --revoke`.
 
 The TypeScript service reads an owner-only `rust-engine-pilot.json` beside its
 own settings at startup. Set `"drain": true` to send all new work to Rust.
@@ -587,7 +585,7 @@ owner-only keys, and `inboxEngine` to the engine's Inbox namespace. The Rust
 service needs the same Inbox key file and namespace.
 
 After the global switch, fresh TypeScript admissions direct the planner to
-`nucleus-engine task.add`.
+`nucleus task.add`.
 Already accepted TypeScript operations and existing tasks keep their original
 engine. The same board shows both engines' task rows. If the Rust service is
 unavailable, its board section can retry while the TypeScript board stays usable.
@@ -612,7 +610,7 @@ stable. The loopback task view shows the public reference separately from the
 identity used by runs and callbacks.
 
 
-The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
+The fixture uses the `nucleus` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
 that profile, a project file for the authorized fixture, and the local T3
 endpoint. Set the control key, T3 bearer and GitHub token in the environment.
@@ -636,7 +634,8 @@ Milestone 4 removes the remaining TypeScript transition paths:
 
 - The per-repository pilot manifest compatibility and the TypeScript admission
   selector. The global no-new-work switch covers the drain.
-- The Python startup helper once `nucleus ensure` owns startup.
+- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim sends
+  calls with a TS ticket or continuation binding, and `helper`, to the legacy CLI.
 - The TypeScript Inbox bridge and board proxy.
 - The TypeScript Settings screens and their RPC wiring. The Rust-backed
   Settings screens become the only Settings surface.
@@ -718,7 +717,7 @@ Start one Rust service with `serve --acp-provider <provider-id>`. Give the
 service and installed CLI the same machine-local
 `NUCLEUS_ENGINE_T3_CALLER_KEY`, a 32-byte hex key distinct from the operator
 key. The CLI takes the caller from T3's environment. The planner runs
-`nucleus-engine task.add` or `nucleus-engine item.promote <id>` from its T3 thread.
+`nucleus task.add` or `nucleus item.promote <id>` from its T3 thread.
 
 On first contact the request queues a scheduler check and returns a retry
 message. The scheduler reads the exact active top-level thread, uses the registered
@@ -772,7 +771,7 @@ in Rust to the TypeScript board's `http://127.0.0.1:<port>` origin. The key work
 only on the bridge route.
 
 Set `NUCLEUS_RUST_NATIVE_INBOX=1` to use the Rust Inbox, and install its pin with
-`nucleus-engine t3 install`. Both Inbox threads may be pinned during cutover.
+`nucleus t3 install`. Both Inbox threads may be pinned during cutover.
 Rust routes new operator questions to the Rust Inbox and leaves the TypeScript
 Inbox in place for TypeScript decisions. The planner retires the TypeScript
 Inbox manually after its open decisions have drained.

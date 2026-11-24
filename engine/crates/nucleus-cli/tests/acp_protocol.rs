@@ -38,7 +38,8 @@ struct AgentIo {
 
 impl AgentIo {
     fn spawn(path: Option<&Path>, cwd: Option<&Path>) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nucleus-acp"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nucleus"));
+        command.arg("acp");
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

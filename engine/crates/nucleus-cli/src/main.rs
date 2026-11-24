@@ -1,3 +1,4 @@
+mod ensure;
 mod planning;
 mod t3_setup;
 
@@ -7,6 +8,7 @@ use std::{
     fs::File,
     io::{self, Read},
     net::SocketAddr,
+    os::fd::AsFd,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -40,7 +42,7 @@ const FIXTURE_ORIGIN_KEY: &str = "NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY";
 const T3_CALLER_KEY: &str = "NUCLEUS_ENGINE_T3_CALLER_KEY";
 
 #[derive(Parser)]
-#[command(about = "Run the isolated Nucleus task engine")]
+#[command(name = "nucleus", about = "Run the Nucleus task engine")]
 struct Cli {
     /// The local engine API address for task commands.
     #[arg(long, default_value = "127.0.0.1:4319", global = true)]
@@ -51,6 +53,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Serve the Nucleus ACP agent on stdio.
+    Acp,
+    /// Start the local engine if a verified instance is not running.
+    Ensure(ensure::Args),
     /// Enable the engine and optionally set its storage placement and overrides.
     Configure(Configure),
     /// Serve the engine for the configured projects.
@@ -215,6 +221,8 @@ enum Placement {
 async fn main() -> Result<()> {
     let Cli { endpoint, action } = Cli::parse();
     match action {
+        Action::Acp => Ok(nucleus_acp::run().await?),
+        Action::Ensure(args) => ensure::run(endpoint, args).await,
         Action::Configure(args) => configure(args),
         Action::Serve {
             home,
@@ -474,14 +482,19 @@ fn private_file(path: &Path) -> Result<Option<File>> {
         Err(rustix::io::Errno::NOENT) => return Ok(None),
         result => result?,
     };
-    let metadata = fstat(&fd)?;
+    require_private_file(&fd)?;
+    Ok(Some(File::from(fd)))
+}
+
+fn require_private_file(file: impl AsFd) -> Result<()> {
+    let metadata = fstat(file)?;
     if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile
         || metadata.st_uid != geteuid().as_raw()
         || Mode::from_raw_mode(metadata.st_mode).intersects(Mode::RWXG | Mode::RWXO)
     {
         return Err("expected an owner-only regular file".into());
     }
-    Ok(Some(File::from(fd)))
+    Ok(())
 }
 
 async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {

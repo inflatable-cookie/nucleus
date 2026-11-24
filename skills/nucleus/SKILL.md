@@ -5,6 +5,19 @@ description: Read and write Nucleus planning records (plan.get, plan.set, lanes,
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
 
+## Rust engine on T3
+
+From a T3 planner thread, use `nucleus task.add` with the approved brief on
+stdin or `nucleus item.promote <item-id>`. On first contact, Nucleus verifies
+the caller's checkout and asks for a retry. For an existing task, use the
+public reference from the board, for example `nucleus next 'repo#42'`.
+Use `nucleus --help` and the command's `--help` for its exact inputs.
+Never answer Inbox requests or operator decisions. They belong to Tom.
+
+For work still draining on the TypeScript engine, follow the run's supplied
+command and ticket. The installed shim sends bound TS calls to
+`nucleus-legacy`, which also exposes the legacy commands described below.
+
 New Nucleus worker, reviewer and coordinator sessions expose `nucleus_report`,
 `ask` and `tell` through MCP (`nucleus ask` and `nucleus tell` on a host without an MCP binding,
 with the run's ticket on stdin). Report with the exact run ID in the current instructions. A reviewer
