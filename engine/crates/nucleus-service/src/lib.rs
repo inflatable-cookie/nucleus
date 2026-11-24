@@ -1061,6 +1061,9 @@ impl Service {
                     .run()
                     .is_some_and(|run| run.last_send_at_ms().is_some()));
         let cause = match (blocked, reported, delivery_pending, result) {
+            (_, _, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
+                process_check_detail(*failure, blocked)
+            }
             (true, true, _, _) => {
                 "Couldn’t verify that the reporting role finished. Open its thread to check."
             }
@@ -1541,6 +1544,37 @@ impl Service {
             task_id: id.into(),
             version,
         });
+    }
+}
+
+fn process_check_detail(
+    failure: nucleus_hosts::ProcessEvidenceFailure,
+    blocked: bool,
+) -> &'static str {
+    use nucleus_hosts::ProcessEvidenceFailure;
+    match (failure, blocked) {
+        (ProcessEvidenceFailure::Timeout, false) => {
+            "The local process check timed out. Checking again."
+        }
+        (ProcessEvidenceFailure::Timeout, true) => {
+            "The local process check timed out. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Truncated, false) => {
+            "The local process listing was cut short. Checking again."
+        }
+        (ProcessEvidenceFailure::Truncated, true) => {
+            "The local process listing was cut short. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Scope, false) => {
+            "Couldn’t verify the checkout and scratch paths. Checking again."
+        }
+        (ProcessEvidenceFailure::Scope, true) => {
+            "Couldn’t verify the checkout and scratch paths. Open the task thread to check."
+        }
+        (ProcessEvidenceFailure::Incomplete, false) => "Checking whether the checkout is idle.",
+        (ProcessEvidenceFailure::Incomplete, true) => {
+            "Couldn’t verify that the checkout is idle. Open the task thread to check."
+        }
     }
 }
 

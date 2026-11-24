@@ -44,6 +44,7 @@ use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunSta
 pub use parenting::{
     ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite, parent_thread,
 };
+pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};
 use projection::Projection;
 pub use projection::RunActivity;
@@ -126,8 +127,8 @@ pub enum HostError {
     },
     #[error("the held shell could not confirm all recorded role children are quiet")]
     RowChildBusy,
-    #[error("the local process census could not confirm workspace custody")]
-    ProcessCoverage,
+    #[error("the local process census could not confirm workspace custody: {0}")]
+    ProcessCoverage(ProcessEvidenceFailure),
     #[error("the frozen assignment exceeds T3's 120,000-character input limit")]
     AssignmentLimit,
     #[error("a process still occupies the task checkout or run scratch directory")]
@@ -649,7 +650,7 @@ impl T3Pass<'_> {
             })
             .await
             .as_ref()
-            .map_err(|_| HostError::ProcessCoverage)?;
+            .map_err(|&error| process::coverage_error(error))?;
         let checkout = Path::new(&binding.worktree_path);
         let mut runtime = inventory.standing_pids(thread);
         for sibling in self
@@ -670,13 +671,15 @@ impl T3Pass<'_> {
             Some(scratch) => inventory
                 .activity_for(checkout, self.run_scratch.as_deref(), scratch, &runtime)
                 .await
-                .map_err(|_| HostError::ProcessCoverage)?,
+                .map_err(process::coverage_error)?,
             None => inventory.activity(checkout, &runtime)?,
         };
         match activity {
             Activity::Busy => Ok(false),
             Activity::Quiet => Ok(true),
-            Activity::Unknown => Err(HostError::ProcessCoverage),
+            Activity::Unknown => Err(HostError::ProcessCoverage(
+                ProcessEvidenceFailure::Incomplete,
+            )),
         }
     }
 }

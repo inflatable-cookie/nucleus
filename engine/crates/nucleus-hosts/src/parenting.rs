@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::{
     Binding, HostError, ProfileCatalog, RowObservation, RowVisibility, T3, clock_ms, message_id,
     projection::ParentCustody,
-    rpc::{Read, Reply},
+    rpc::Reply,
     task_row::ThreadVisibility,
     thread_snapshots::{ShellCustody, ThreadRead},
 };

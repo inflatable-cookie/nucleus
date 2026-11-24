@@ -13,7 +13,7 @@ use std::{
 
 use futures_util::future::try_join3;
 use rustix::{
-    fs::{FileType, Mode, OFlags, open, stat},
+    fs::{FileType, Mode, OFlags, Stat, fstat, open, stat},
     io::Errno,
     process::{Pid, geteuid, test_kill_process},
 };
@@ -33,6 +33,27 @@ use crate::{
 
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_OUTPUT: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum ProcessEvidenceFailure {
+    #[error("the census timed out")]
+    Timeout,
+    #[error("the census exceeded its output limit")]
+    Truncated,
+    #[error("the mount or directory witness could not be verified")]
+    Scope,
+    #[error("the process listing was incomplete")]
+    Incomplete,
+}
+
+pub(crate) const fn coverage_error(error: HostError) -> HostError {
+    HostError::ProcessCoverage(match error {
+        HostError::ProcessCoverage(reason) => reason,
+        HostError::Timeout => ProcessEvidenceFailure::Timeout,
+        HostError::Binding => ProcessEvidenceFailure::Scope,
+        _ => ProcessEvidenceFailure::Incomplete,
+    })
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum Activity {
@@ -300,13 +321,17 @@ impl Inventory {
         temporary: &Path,
         runtime: &HashSet<u32>,
     ) -> Result<Activity, HostError> {
+        let cwd = self.activity(checkout, runtime)?;
+        if matches!(cwd, Activity::Busy) {
+            return Ok(Activity::Busy);
+        }
         match (
-            self.activity(checkout, runtime)?,
+            cwd,
             run_scratch.map_or(Ok(Activity::Quiet), |path| self.activity(path, runtime))?,
         ) {
-            (Activity::Busy, _) | (_, Activity::Busy) => return Ok(Activity::Busy),
+            (_, Activity::Busy) => return Ok(Activity::Busy),
             (Activity::Unknown, _) | (_, Activity::Unknown) => return Ok(Activity::Unknown),
-            (Activity::Quiet, Activity::Quiet) => {}
+            _ => {}
         }
         let mut scoped = self.scoped.lock().await;
         let key = (checkout.to_path_buf(), run_scratch.map(Path::to_path_buf));
@@ -434,7 +459,7 @@ impl<'a> Witness<'a> {
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|_| HostError::Uncertain)?;
+        .map_err(|_| HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))?;
         Ok(Self { path, fd })
     }
 }
@@ -448,22 +473,65 @@ async fn scoped_activity(
     if let Some(path) = run_scratch.filter(|path| *path != checkout) {
         witnesses.push(Witness::open(path)?);
     }
-    let mut args = vec![OsStr::new("-P"), OsStr::new("--")];
-    args.extend(witnesses.iter().map(|witness| witness.path.as_os_str()));
-    let listed = read_listing("/bin/df", &args, Some(temporary)).await?;
-    let mounts = mount_points(&listed).ok_or(HostError::Uncertain)?;
+    let mounts = scoped_mounts(&witnesses, temporary).await?;
     let mut args: Vec<&OsStr> = ["-n", "-P", "-F0pfn", "+f", "--"]
         .into_iter()
         .map(OsStr::new)
         .collect();
-    args.extend(mounts);
+    args.extend(mounts.iter().map(|(mount, _)| mount.as_os_str()));
     let listing = read_listing("/usr/sbin/lsof", &args, Some(temporary)).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
-    Ok(scoped_listing(&listing, &witnesses))
+    if mounts != scoped_mounts(&witnesses, temporary).await? {
+        return Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope));
+    }
+    scoped_listing(&listing, &witnesses)
+        .map(Some)
+        .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
 }
 
-fn mount_points(listed: &Listing) -> Option<HashSet<&OsStr>> {
+fn identity(metadata: Stat) -> (i128, u64) {
+    (i128::from(metadata.st_dev), metadata.st_ino)
+}
+
+async fn scoped_mounts(
+    witnesses: &[Witness<'_>],
+    temporary: &Path,
+) -> Result<HashSet<(PathBuf, i128)>, HostError> {
+    let listed = read_listing("/bin/df", &["-P"], Some(temporary)).await?;
+    select_mounts(&listed, witnesses)
+        .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
+}
+
+fn select_mounts(listed: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<(PathBuf, i128)>> {
+    let roots = witnesses
+        .iter()
+        .map(|witness| {
+            let open = identity(fstat(&witness.fd).ok()?);
+            (identity(stat(witness.path).ok()?) == open).then_some(open)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut selected = HashSet::new();
+    for mount in mount_points(listed)? {
+        let device = identity(stat(mount).ok()?).0;
+        // APFS also exposes some volumes at a second path. Compare ancestor
+        // identities so a nested mount below either spelling stays in scope.
+        if roots.iter().any(|root| root.0 == device)
+            || mount
+                .ancestors()
+                .skip(1)
+                .any(|path| stat(path).is_ok_and(|metadata| roots.contains(&identity(metadata))))
+        {
+            selected.insert((mount.to_path_buf(), device));
+        }
+    }
+    roots
+        .iter()
+        .all(|root| selected.iter().any(|(_, device)| *device == root.0))
+        .then_some(selected)
+}
+
+fn mount_points(listed: &Listing) -> Option<Vec<&Path>> {
     if listed.exit != Some(0) {
         return None;
     }
@@ -474,14 +542,25 @@ fn mount_points(listed: &Listing) -> Option<HashSet<&OsStr>> {
     lines
         .skip(1)
         .map(|mut line| {
-            for _ in 0..5 {
+            // The filesystem label can contain spaces. The percentage column
+            // precedes the complete mount path, which may contain spaces too.
+            loop {
                 let end = line.iter().position(u8::is_ascii_whitespace)?;
+                let word = &line[..end];
                 line = line[end..].trim_ascii_start();
+                if word
+                    .strip_suffix(b"%")
+                    .is_some_and(|value| !value.is_empty() && value.iter().all(u8::is_ascii_digit))
+                {
+                    break;
+                }
             }
-            let path = OsStr::from_bytes(line);
-            Path::new(path).is_absolute().then_some(path)
+            // df display escapes are ambiguous. An unrepresentable mount
+            // cannot provide negative evidence.
+            let path = Path::new(OsStr::from_bytes(line));
+            (path.is_absolute() && !line.contains(&b'\\')).then_some(path)
         })
-        .collect::<Option<HashSet<_>>>()
+        .collect::<Option<Vec<_>>>()
         .filter(|mounts| !mounts.is_empty())
 }
 
@@ -592,7 +671,12 @@ async fn read_listing(
     )
     .await
     .map_err(|_| HostError::Timeout)?
-    .map_err(|_| HostError::Uncertain)?;
+    .map_err(|error| match error.kind() {
+        io::ErrorKind::FileTooLarge => {
+            HostError::ProcessCoverage(ProcessEvidenceFailure::Truncated)
+        }
+        _ => HostError::Uncertain,
+    })?;
     if stderr.is_empty() {
         Ok(Listing {
             exit: status.code(),
@@ -608,7 +692,8 @@ async fn bounded(reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let count = reader.take(MAX_OUTPUT + 1).read_to_end(&mut bytes).await?;
     if u64::try_from(count).unwrap_or(u64::MAX) > MAX_OUTPUT {
-        return Err(io::Error::other(
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
             "process listing exceeded the output limit",
         ));
     }
@@ -757,13 +842,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scopes_distinguish_closed_descendants_from_nested_open_files() {
+    async fn a_large_checkout_distinguishes_closed_files_from_a_nested_open_file() {
         let checkout = tempfile::tempdir().expect("checkout");
         let scratch = tempfile::tempdir().expect("scratch");
         let checkout = checkout.path().canonicalize().expect("canonical checkout");
         let scratch = scratch.path().canonicalize().expect("canonical scratch");
         let nested = checkout.join("nested");
         std::fs::create_dir(&nested).expect("nested directory");
+        for index in 0..80_001 {
+            std::fs::File::create(nested.join(format!("closed-{index}"))).expect("closed file");
+        }
         let path = nested.join("tool-file");
         std::fs::File::create(&path).expect("file initially closed");
         assert!(matches!(
@@ -776,6 +864,29 @@ mod tests {
             Ok(Some(pids)) if pids.contains(&std::process::id())
         ));
         drop(held);
+    }
+
+    #[tokio::test]
+    async fn positive_cwd_evidence_wins_when_open_file_coverage_is_truncated() {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let checkout = checkout.path().canonicalize().expect("canonical checkout");
+        let mut inventory = Inventory::cwd_fixture(&checkout);
+        inventory.scoped.get_mut().insert(
+            (checkout.clone(), None),
+            Err(HostError::ProcessCoverage(
+                ProcessEvidenceFailure::Truncated,
+            )),
+        );
+        assert!(matches!(
+            inventory
+                .activity_for(&checkout, None, &checkout, &HashSet::new())
+                .await,
+            Ok(Activity::Busy)
+        ));
+        assert!(matches!(
+            bounded(tokio::io::repeat(0)).await.unwrap_err().kind(),
+            io::ErrorKind::FileTooLarge
+        ));
     }
 
     #[tokio::test]
