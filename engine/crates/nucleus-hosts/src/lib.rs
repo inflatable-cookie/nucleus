@@ -339,7 +339,7 @@ pub trait TaskHost: Send + Sync {
         thread: &str,
     ) -> impl Future<Output = Result<Host, HostError>> + Send;
 
-    fn observe_retained_worker(
+    fn observe_retained_role(
         &self,
         binding: &Binding,
         thread: &str,
@@ -867,20 +867,22 @@ impl TaskHost for T3Pass<'_> {
             .host
             .read_thread(binding, thread, ThreadRead::Observation)
             .await?;
-        let state = if self.quiet(binding, thread, projection.as_ref()).await? {
-            projection
-                .as_ref()
-                .map_or(Ok(RetainedThread::Gone), Projection::retained)?
-        } else {
-            RetainedThread::Busy
-        };
+        let retained = projection
+            .as_ref()
+            .map_or(Ok(RetainedThread::Gone), Projection::retained)?;
+        let state =
+            if retained == RetainedThread::Busy || !self.quiet(binding, thread, None).await? {
+                RetainedThread::Busy
+            } else {
+                retained
+            };
         Ok(Host::Retained {
             thread: thread.into(),
             state,
         })
     }
 
-    async fn observe_retained_worker(
+    async fn observe_retained_role(
         &self,
         binding: &Binding,
         thread: &str,
@@ -889,12 +891,10 @@ impl TaskHost for T3Pass<'_> {
             .host
             .read_thread(binding, thread, ThreadRead::Observation)
             .await?;
-        let state = if projection.as_ref().is_some_and(|view| !view.deleted()) {
-            RetainedThread::QueueableWorker
-        } else if self.quiet(binding, thread, projection.as_ref()).await? {
-            RetainedThread::Gone
+        let state = if projection.is_some_and(|view| !view.deleted()) {
+            RetainedThread::Queueable
         } else {
-            RetainedThread::Busy
+            RetainedThread::Gone
         };
         Ok(Host::Retained {
             thread: thread.into(),
@@ -930,14 +930,16 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::Uncertain);
         }
+        let quiet = !matches!(state, RunState::Ended | RunState::Gone)
+            || self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?;
         let message = wire.message_id(&run.launch().instance);
-        if state == RunState::Ended
+        if quiet
+            && state == RunState::Ended
             && thread
                 .as_ref()
                 .is_some_and(|thread| thread.rejected_assignment(&message))
-            && self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
         {
             return Ok(assignment_rejected(run));
         }
@@ -945,11 +947,7 @@ impl TaskHost for T3Pass<'_> {
             .as_ref()
             .filter(|_| state == RunState::Ended)
             .and_then(|thread| thread.provider_limit(&message));
-        let state = if matches!(state, RunState::Ended | RunState::Gone)
-            && !self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
-        {
+        let state = if !quiet {
             RunState::Running
         } else if provider_limit.is_some() {
             RunState::UsageLimited

@@ -2005,7 +2005,7 @@ fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, Strin
     let instance = task.next_launch_instance().unwrap();
     observation.host = Observed::Known(Host::Retained {
         thread: THREAD.into(),
-        state: RetainedThread::QueueableWorker,
+        state: RetainedThread::Queueable,
     });
     let profile = RoleProfile {
         instance_id: "fixture-provider".into(),
@@ -2062,12 +2062,10 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
         }}));
     let pass = host.pass(checkout.path());
     assert_eq!(
-        pass.observe_retained_worker(&binding, THREAD)
-            .await
-            .unwrap(),
+        pass.observe_retained_role(&binding, THREAD).await.unwrap(),
         Host::Retained {
             thread: THREAD.into(),
-            state: RetainedThread::QueueableWorker,
+            state: RetainedThread::Queueable,
         }
     );
     let mut refused = task.clone();
@@ -2135,11 +2133,22 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
             "orchestration.subscribeThread",
             Response::Snapshot(window.clone()),
         ),
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(window.clone()),
+        ),
         ("orchestration.subscribeThread", Response::Snapshot(window)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
     .await;
     let pass = host.pass(checkout.path());
+    assert_eq!(
+        pass.observe_retained_role(&binding, THREAD).await.unwrap(),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::Queueable,
+        }
+    );
     assert_eq!(
         pass.observe_run(task.run().unwrap(), 5).await.unwrap().host,
         Host::Current {

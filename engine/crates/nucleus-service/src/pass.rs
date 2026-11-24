@@ -1769,12 +1769,8 @@ async fn read_retained(
         _ => return Ok(Observed::Unknown),
     };
     match task.threads().get(role) {
-        Some(thread) if role == Role::Worker => host
-            .observe_retained_worker(binding, thread)
-            .await
-            .map(Observed::Known),
         Some(thread) => host
-            .observe_retained(binding, thread)
+            .observe_retained_role(binding, thread)
             .await
             .map(Observed::Known),
         None => Ok(Observed::Unknown),
