@@ -89,8 +89,9 @@ export function boardItem(
     preview: item.body.slice(0, PREVIEW),
     repositories: repositories(project),
     lanes: item.lanes,
-    tags: [],
-    papercutArea: item.kind === "papercut" ? "" : null,
+    // The board tells papercuts from leads by tag (Spec 070: one surface, a type).
+    tags: item.kind === "papercut" ? ["papercut"] : [],
+    papercutArea: null,
     state: "open",
     version: 1,
     check: null,
@@ -158,6 +159,107 @@ export function boardDecision(
   } as api.DecisionView;
 }
 
+
+const RUST_ONLY = "Not part of the Rust engine (Spec 070 planning model).";
+
+/** A Rust item as the board's lead record. Both kinds keep their names (ruling 12). */
+export function boardLeadRecord(item: RustItem, project: RustProject) {
+  const repos = repositories(project);
+  const base = project.repositories[0]?.base ?? "main";
+  return {
+    id: item.id,
+    title: item.title,
+    body: item.body,
+    repositories: repos,
+    lanes: item.lanes,
+    tags: item.kind === "papercut" ? ["papercut"] : [],
+    papercut: null,
+    closure: null,
+    author: item.author || "Nucleus",
+    state:
+      item.state === "promoted"
+        ? ("promoted" as const)
+        : item.state === "dropped"
+          ? ("dropped" as const)
+          : ("open" as const),
+    version: 1,
+    check: null,
+    checkOperationId: null,
+    approval: null,
+    baseBranch: base,
+    dropReason: item.state === "dropped" ? (item.reason ?? null) : null,
+    reopens: [],
+    parked:
+      item.state === "parked"
+        ? { reason: item.reason || "Parked", revisitAt: item.revisitAt ?? null, by: item.author || "Nucleus", at: "" }
+        : null,
+    recheck: null,
+    targets:
+      item.state === "promoted" && item.taskId
+        ? [{ kind: "task" as const, repository: repos[0]?.origin ?? null, reference: item.taskId, at: "" }]
+        : [],
+    source: null,
+    createdAt: "",
+    updatedAt: "",
+    closedAt: null,
+  };
+}
+
+function leadDetail(item: RustItem, project: RustProject) {
+  const open = item.state === "open";
+  return {
+    ...boardLeadRecord(item, project),
+    actions: {
+      check: RUST_ONLY,
+      approve: RUST_ONLY,
+      drop: open || item.state === "parked" ? null : "Only an open item can be dropped.",
+      reopen: RUST_ONLY,
+      park: open ? null : "Only an open item can be parked.",
+      unpark: RUST_ONLY,
+      promoteTo: RUST_ONLY,
+      promote: repositories(project).map((repo) => ({
+        origin: repo.origin,
+        reason: open ? null : "Only an open item can be promoted.",
+      })),
+    },
+    versions: [],
+    promotedTaskId: item.state === "promoted" ? (item.taskId ?? null) : null,
+  };
+}
+
+function boardPapercut(item: RustItem, project: RustProject) {
+  const repo = repositories(project)[0]!;
+  return {
+    id: item.id,
+    repository: repo,
+    area: null,
+    title: item.title,
+    happened: item.body,
+    impact: "",
+    fix: null,
+    filedBy: item.author || "Nucleus",
+    filedAt: "",
+    state:
+      item.state === "promoted"
+        ? ("promoted" as const)
+        : item.state === "dropped"
+          ? ("closed" as const)
+          : ("open" as const),
+    version: 1,
+    taskId: item.state === "promoted" ? (item.taskId ?? null) : null,
+    closedReason: item.state === "dropped" ? ("deprecated" as const) : null,
+    draftId: null,
+    note: item.state === "dropped" ? (item.reason ?? null) : null,
+    closedAt: null,
+    source: null,
+    lanes: item.lanes,
+    parked:
+      item.state === "parked"
+        ? { reason: item.reason || "Parked", revisitAt: item.revisitAt ?? null, by: item.author || "Nucleus", at: "" }
+        : null,
+  };
+}
+
 export function createRustPlanning(rust: RustApi, keys: () => Keys) {
   async function projects(): Promise<ProjectRow[]> {
     const view = await rust.settings();
@@ -199,6 +301,20 @@ export function createRustPlanning(rust: RustApi, keys: () => Keys) {
       if (decision) return { row, decision };
     }
     throw new Error(`Decision ${id} is not in any project.`);
+  }
+
+  async function itemOwner(id: string) {
+    for (const row of await projects()) {
+      const item = (await rust.items(row.id)).find((entry) => entry.id === id);
+      if (item) return { row, item };
+    }
+    throw new Error(`${id} is not in any project.`);
+  }
+
+  async function promote(input: { id: string }) {
+    const { row } = await itemOwner(input.id);
+    const task = await rust.promoteItem(row.id, input.id);
+    return { taskId: task.identity.id, reference: String((task as { identity: { reference?: string } }).identity.reference ?? task.identity.id) };
   }
 
   async function laneViews(rows: ProjectRow[]): Promise<api.LaneView[]> {
@@ -356,6 +472,31 @@ export function createRustPlanning(rust: RustApi, keys: () => Keys) {
         note: input.note || null,
       });
       return boardDecision(saved, row.board.key, row.project);
+    },
+    "lead.get": async (input: { id: string }) => {
+      const { row, item } = await itemOwner(input.id);
+      return leadDetail(item, row.project);
+    },
+    "papercut.get": async (input: { id: string }) => {
+      const { row, item } = await itemOwner(input.id);
+      return boardPapercut(item, row.project);
+    },
+    "lead.promote-task": promote,
+    "papercut.promote-task": promote,
+    "lead.park": async (input: { id: string; reason: string; revisitAt?: string | null }) => {
+      const { row } = await itemOwner(input.id);
+      const item = await rust.parkItem(row.id, input.id, { reason: input.reason, revisitAt: input.revisitAt ?? null });
+      return boardLeadRecord(item, row.project);
+    },
+    "lead.drop": async (input: { id: string; reason: string }) => {
+      const { row } = await itemOwner(input.id);
+      const item = await rust.dropItem(row.id, input.id, input.reason);
+      return boardLeadRecord(item, row.project);
+    },
+    "papercut.close": async (input: { id: string; note?: string }) => {
+      const { row } = await itemOwner(input.id);
+      const item = await rust.dropItem(row.id, input.id, input.note || null);
+      return boardPapercut(item, row.project);
     },
   };
 

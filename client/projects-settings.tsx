@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import { errorText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -243,6 +244,7 @@ export function ProjectsSection({
   /** The opened project's writes; without them rows do not open. */
   edit?: ProjectEditActions;
 }) {
+  const features = useEngineFeatures();
   const [view, setView] = useState<"list" | "project">("list");
   const [opened, setOpened] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -327,13 +329,14 @@ export function ProjectsSection({
               color={r.warning}
             />
           )}
-          <ActionButton
+          {/* Rust engine (Spec 070 ruling 23): projects register on a planner's first dispatch. */}
+          {features.projectAgents && <ActionButton
             c={c}
             action="add"
             label="Add project"
             disabled={!data}
             onPress={() => setAdding(true)}
-          />
+          />}
         </View>
         {!data && query.isPending && (
           <Text style={muted(c)}>Loading projects…</Text>

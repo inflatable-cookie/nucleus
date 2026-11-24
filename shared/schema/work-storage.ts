@@ -18,6 +18,8 @@ export const workStoragePathsSchema = z
     custodianRoot: z.string().min(1).optional(),
     /** The Rust engine only: its log directory (Spec 070 ruling 19). */
     logRoot: z.string().min(1).optional(),
+    /** The Rust engine only: install and build output. */
+    buildsRoot: z.string().min(1).optional(),
   })
   .strict();
 
@@ -41,6 +43,10 @@ export const workStorageStateSchema = z
     scratchRoot: z.string().min(1),
     custodianRoot: z.string().min(1).optional(),
     logRoot: z.string().min(1).optional(),
+    buildsRoot: z.string().min(1).optional(),
+    /** The Rust engine only: its durable home and whether work sits in a Barge pool. */
+    home: z.string().min(1).optional(),
+    placement: z.enum(["internal", "barge"]).optional(),
     /** The Rust engine only: where its database lives. */
     databaseRoot: z.string().min(1).optional(),
     /** Null when the engine resolves platform defaults itself and does not report them. */
@@ -60,6 +66,7 @@ export const workStorageStateSchema = z
         scratchRoot: z.string().min(1).nullable().optional(),
         custodianRoot: z.string().min(1).nullable().optional(),
         logRoot: z.string().min(1).nullable().optional(),
+        buildsRoot: z.string().min(1).nullable().optional(),
       })
       .strict(),
     retired: workStorageRetiredSchema.nullable(),
@@ -100,6 +107,7 @@ export const workStorageInputSchema = z
     scratchRoot: z.string().min(1).nullable().optional(),
     custodianRoot: z.string().min(1).nullable().optional(),
     logRoot: z.string().min(1).nullable().optional(),
+    buildsRoot: z.string().min(1).nullable().optional(),
   })
   .strict();
 

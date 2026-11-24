@@ -104,7 +104,10 @@ const host = z.object({ endpoint: z.string(), credentialRef: z.string() }).loose
 const hosts = z.object({ t3: host.nullable() }).loose();
 const storage = z.object({
   enabled: z.boolean(),
-  workVolume: z.object({ volumeId: z.string(), mount: z.string() }).nullable(),
+  // Ruling 19 (2026-11-24): an opt-in Barge placement replaces the pinned volume.
+  workVolume: z.object({ volumeId: z.string(), mount: z.string() }).nullable().optional(),
+  placement: z.enum(["internal", "barge"]).optional(),
+  buildsRoot: z.string().nullable().optional(),
   workRoot: z.string().nullable(),
   scratchRoot: z.string().nullable(),
   logRoot: z.string().nullable(),
@@ -136,7 +139,17 @@ export const storageView = z.object({
     backupRoot: z.string(),
     scratchRoot: z.string(),
     logRoot: z.string(),
-  }),
+    home: z.string().optional(),
+    placement: z.enum(["internal", "barge"]).optional(),
+    buildsRoot: z.string().optional(),
+    bargePaths: z
+      .object({
+        worktrees: z.string().optional(),
+        scratch: z.string().optional(),
+        builds: z.string().optional(),
+      })
+      .optional(),
+  }).loose(),
   backups: z
     .object({
       complete: z.boolean(),

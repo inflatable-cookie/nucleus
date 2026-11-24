@@ -421,3 +421,34 @@ pub(super) fn check(test: bool, code: &str, message: &str) -> Result<(), DomainI
         Err(DomainIssue::new(code, message))
     }
 }
+
+#[cfg(test)]
+mod dispatch_mode_tests {
+    use super::{DispatchMode, DispatchSettings};
+
+    #[test]
+    fn dispatch_mode_gates_first_launches_and_every_launch() {
+        assert!(DispatchMode::Running.allows_launch(true));
+        assert!(!DispatchMode::Held.allows_launch(true));
+        assert!(DispatchMode::Held.allows_launch(false));
+        for mode in [DispatchMode::Paused, DispatchMode::Stopped] {
+            assert!(!mode.allows_launch(true) && !mode.allows_launch(false));
+        }
+    }
+
+    #[test]
+    fn a_saved_domain_without_a_mode_reads_as_running() {
+        let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
+            "usage": "normal", "usageUntilMs": null, "slots": 2,
+            "hostConcurrency": 1, "allowanceMinutes": null
+        }))
+        .expect("dispatch settings");
+        assert_eq!(saved.mode, DispatchMode::Running);
+        let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
+            "usage": "normal", "usageUntilMs": null, "slots": 2,
+            "hostConcurrency": 1, "allowanceMinutes": null, "mode": "stopped"
+        }))
+        .expect("dispatch settings");
+        assert_eq!(stopped.mode, DispatchMode::Stopped);
+    }
+}

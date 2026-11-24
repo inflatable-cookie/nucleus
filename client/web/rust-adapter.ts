@@ -21,6 +21,7 @@ import {
   type RustRepository,
 } from "./rust-api";
 import { createRustPlanning } from "./rust-planning";
+import { generatedProjectBadge } from "../../shared/t3/project-badge";
 
 /**
  * The board's data adapter for the Rust engine (Spec 070, ruling 4). It sits
@@ -338,7 +339,16 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       projectActivity: [],
       pendingSubmissions: [],
       projectBadges: undefined,
-      repositoryBadges: undefined,
+      // The saved T3 project title gives each repository the shared generated badge.
+      repositoryBadges: Object.fromEntries(
+        rows.flatMap(({ project }) =>
+          project.repositories.flatMap((repo) =>
+            repo.hostProjectTitle
+              ? [[repo.path, generatedProjectBadge(repo.hostProjectTitle)]]
+              : [],
+          ),
+        ),
+      ),
     } as api.UiBoard;
   }
 
@@ -644,6 +654,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       workRoot?: string | null;
       scratchRoot?: string | null;
       logRoot?: string | null;
+      buildsRoot?: string | null;
     }) => {
       const current = await rust.domain(storageView, "storage");
       await rust.saveDomain(storageView, "storage", current.settings.revision, {
@@ -651,6 +662,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         ...(input.workRoot !== undefined ? { workRoot: input.workRoot } : {}),
         ...(input.scratchRoot !== undefined ? { scratchRoot: input.scratchRoot } : {}),
         ...(input.logRoot !== undefined ? { logRoot: input.logRoot } : {}),
+        ...(input.buildsRoot !== undefined ? { buildsRoot: input.buildsRoot } : {}),
       });
       return storageState();
     },
@@ -663,7 +675,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     return {
       workRoot: active.workRoot,
       workVolumeId: stored.value.workVolume?.volumeId ?? null,
-      worktreesRoot: active.workRoot,
+      worktreesRoot: active.bargePaths?.worktrees ?? active.workRoot,
+      ...(active.buildsRoot ? { buildsRoot: active.buildsRoot } : {}),
+      ...(active.placement ? { placement: active.placement } : {}),
+      ...(active.home ? { home: active.home } : {}),
       backupRoot: active.backupRoot,
       scratchRoot: active.scratchRoot,
       logRoot: active.logRoot,
@@ -673,6 +688,9 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         workRoot: stored.value.workRoot,
         scratchRoot: stored.value.scratchRoot,
         logRoot: stored.value.logRoot,
+        ...(stored.value.buildsRoot !== undefined
+          ? { buildsRoot: stored.value.buildsRoot }
+          : {}),
       },
       retired: null,
       retainedRoots: [],

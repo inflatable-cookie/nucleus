@@ -349,8 +349,30 @@ or use `web/engine` from a packaged runtime. Pass that directory to
 at `/settings` on the engine's loopback listener. The browser subscribes to task
 and Settings changes on that listener, regardless of whether the TypeScript
 service is running. The TypeScript transition board still proxies Rust task views.
-Projects in Settings edits lane and plan records through the Rust planning API,
-with the same version checks as the CLI.
+
+The standalone board is the TypeScript web board itself: the same navigation,
+cards, task dialog, Inbox list, planning screens and Settings sections. One
+client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
+board contracts from the paired API, so there is no second set of screens.
+The paired API mounts the same planning handlers as the controller API (plans,
+lanes, items, decisions) and the repository reassign action. Screens leave out
+controls for machinery these rulings retire; `client/engine-features.ts` names
+the ruling behind each one. Settings writes send the whole domain value back
+and keep fields the client does not know.
+
+The board's Pause, Dispatch hold and Stop controls write the Dispatch domain's
+`mode` (`running`, `held`, `paused` or `stopped`), which only Settings writes
+change. The scheduler reads it from the in-memory read model: `held` starts no
+task's first run, `paused` starts no run, and `stopped` also revokes each live
+run so the ordinary stop custody settles it. A gated launch waits as Capacity.
+Running again relaunches the work; no task carries a hold for it.
+
+The board theme follows the host's settings and published themes. The scheduler's
+host watcher keeps T3's `subscribeServerConfig` stream open, applies only its
+`snapshot`, `settingsUpdated` and `environmentThemesUpdated` events, and caches
+the result. `GET /api/engine/theme` reads the cache and never calls the host. A
+change emits a `theme` event, and the client resolves the palette with the
+TypeScript host's own conversion.
 
 `nucleus-engine ui` prints a two-minute, one-use link for the authenticated
 controller. Pairing consumes the token and issues an eight-hour HttpOnly session

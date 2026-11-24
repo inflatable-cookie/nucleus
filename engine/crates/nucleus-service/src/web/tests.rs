@@ -1934,8 +1934,10 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     assert_event(&mut events, &["event: refresh"]).await;
     let starting =
         json_body(browser_request(&api, Method::GET, dispatch, Some(&operator), None).await).await;
+    assert_eq!(starting["value"]["mode"], "running");
     let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
     update["value"]["slots"] = json!(3);
+    update["value"]["mode"] = json!("held");
     assert_eq!(
         browser_request(&api, Method::PUT, dispatch, Some(&planner), Some(&update))
             .await
@@ -1947,6 +1949,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     )
     .await;
     assert_eq!(saved["value"]["slots"], 3);
+    assert_eq!(saved["value"]["mode"], "held");
     assert_event(&mut events, &["event: settings"]).await;
     let admission = json!({"id":"board-task","reference":"D1","brief":"# Standalone task"});
     let response =
@@ -2077,18 +2080,39 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let updated = json_body(browser_request(api, Method::GET, plan, cookie, None).await).await;
     assert_eq!(updated["lanes"][0]["key"], "board");
     assert_eq!(updated["documents"][0]["document"], "## Steps");
-    assert_eq!(
-        browser_request(
-            api,
-            Method::GET,
-            "/api/engine/planning/local-fixture/decisions",
-            cookie,
-            None
-        )
-        .await
-        .status(),
-        StatusCode::NOT_FOUND
-    );
+    // The paired board mounts the same planning handlers as the controller API.
+    for path in [
+        "/api/engine/planning/local-fixture/decisions",
+        "/api/engine/planning/local-fixture/items",
+    ] {
+        let listed = json_body(browser_request(api, Method::GET, path, cookie, None).await).await;
+        assert_eq!(listed, json!([]), "{path}");
+    }
+    let item = json!({"kind":"papercut","title":"Toast lingers","body":"It stays.","lanes":[]});
+    let added = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/planning/local-fixture/items",
+        cookie,
+        Some(&item),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    assert_eq!(json_body(added).await["kind"], "papercut");
+    // The theme is a cache read; a fixture without a host config stream has none yet.
+    let theme =
+        json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await)
+            .await;
+    assert_eq!(theme, json!({"theme": null}));
+    let reassign = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/settings/projects/reassign",
+        cookie,
+        Some(&json!({})),
+    )
+    .await;
+    assert_ne!(reassign.status(), StatusCode::NOT_FOUND);
 }
 
 async fn assert_board_assets(api: &Router) {

@@ -44,13 +44,6 @@ const defaults: Record<BoardAppearance, BoardTheme> = {
 
 const responseSchema = z.object({ theme: boardThemeSnapshotSchema.nullable() });
 
-export const engineBoardTheme: BoardTheme = {
-  colors: {
-    ...defaults.dark.colors,
-    surfaceNavigation: defaults.dark.colors.surface0,
-  },
-};
-
 /** The TypeScript service's board theme read. */
 async function readServiceTheme(
   signal: AbortSignal,

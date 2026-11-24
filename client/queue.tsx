@@ -755,6 +755,12 @@ export function MainSurface({
                         const origin = normalizeRepositoryOrigin(identity.repository);
                         return projectForRepository(identity.repository, origin)?.name ?? origin ?? identity.repository;
                       },
+                      projectBadge: ({ identity }) => {
+                        const origin = normalizeRepositoryOrigin(identity.repository);
+                        const repo = projectForRepository(identity.repository, origin)?.repositories
+                          .find((candidate) => candidate.origin && normalizeRepositoryOrigin(candidate.origin) === origin);
+                        return (repo?.path && state?.repositoryBadges?.[repo.path]) || null;
+                      },
                     } : undefined}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}

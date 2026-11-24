@@ -61,6 +61,12 @@ const CLASSES: readonly StorageClass[] = [
     noun: "Logs",
     help: "The engine's service and run logs.",
   },
+  {
+    field: "buildsRoot",
+    setting: "buildsRoot",
+    noun: "Build output",
+    help: "Install and build output the engine writes.",
+  },
 ];
 
 /** The classes this engine reports. An engine without a class leaves it out. */
@@ -293,6 +299,20 @@ export function StoragePanel({
               </Text>
             )}
           </View>
+          {(state.placement || state.home) && (
+            <Text style={muted(c)} accessibilityLabel="Placement">
+              {[
+                state.placement
+                  ? state.placement === "barge"
+                    ? "Placement: Barge pool"
+                    : "Placement: internal"
+                  : null,
+                state.home ? `home ${state.home}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          )}
           {state.backups && (
             <Text style={muted(c)} accessibilityLabel="Backups">
               {[
