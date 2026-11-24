@@ -59,6 +59,24 @@ export async function requestRollback() {
 
 /** Opt-in only. All Git/build work is off the RPC path, serial and low priority. */
 /**
+ * The version folder a live roll owner runs from, if its heartbeat names one
+ * (nucleus#1566). Version retention must never prune it: a long-lived owner
+ * keeps its working directory (and its mapped code) there, and a removed
+ * folder breaks every child process it spawns afterwards. A dead or corrupt
+ * heartbeat names nothing, so a stale version is pruned normally.
+ */
+export async function liveRollOwnerRoot(dataDir = dataHome()) {
+  let claim;
+  try { claim = JSON.parse(await readFile(join(dataDir, 'queue-roll-owner.json'), 'utf8')); }
+  catch { return null; }
+  if (!claim || typeof claim.pid !== 'number' || typeof claim.root !== 'string') return null;
+  try { process.kill(claim.pid, 0); }
+  catch (error) { if (error?.code === 'ESRCH') return null; }
+  try { return await realpath(claim.root); }
+  catch { return null; }
+}
+
+/**
  * Keep the given versions and one other. A link is left alone: an older thread's
  * launch path may resolve through it to the current version.
  */
@@ -214,6 +232,9 @@ export class MainChannel {
     }
     // Keep current, previous and one other version. Never touch development links.
     const keep = new Set(await Promise.all(['current', 'previous'].map(n => realpath(join(installBase(), n)).catch(() => ''))));
+    // Never prune the version a live roll owner runs from (nucleus#1566).
+    const liveOwner = await liveRollOwnerRoot().catch(() => null);
+    if (liveOwner) keep.add(liveOwner);
     const versions = join(installBase(), 'versions');
     await pruneVersions(versions, keep);
   }

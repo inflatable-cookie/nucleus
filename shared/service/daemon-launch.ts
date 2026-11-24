@@ -190,8 +190,11 @@ export function ensureDetachedDaemon(
     ];
     logFd = openSync(join(options.dataDir, options.logFile), "a", 0o600);
     const spawnProcess = options.spawnProcess ?? spawn;
+    // An installed daemon outlives rolls on the stable data home, never the
+    // version folder retention prunes (nucleus#1566). A checkout is never
+    // pruned and must stay the cwd so `--import tsx` resolves.
     child = spawnProcess(command, args, {
-      cwd: options.root,
+      cwd: installed ? options.dataDir : options.root,
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: { ...env, QUEUE_LOGIN_SESSION: currentLoginSession(env) },

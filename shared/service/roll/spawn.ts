@@ -724,7 +724,11 @@ export class ServiceSpawner {
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],
             env,
-            cwd: sourcePath,
+            // An installed service outlives rolls on the stable data home,
+            // never the version folder retention prunes (nucleus#1566). A
+            // checkout is never pruned and must stay the cwd so `--import
+            // tsx` resolves.
+            cwd: installed ? this.core.dataDir : sourcePath,
           },
         );
       }
