@@ -209,7 +209,7 @@ export function MainSurface({
     null,
   );
   const { detailQuery, nextQuery } = useTaskDetail(selected);
-  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen, view });
+  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
   const {
     leadsQuery,
     decisionsQuery,

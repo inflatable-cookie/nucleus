@@ -711,6 +711,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let pausedGroups = ["fixture team"];
   let usageCount = 49;
   let resetAt: number | undefined;
+  let decisionOpen = true;
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
   const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
@@ -864,7 +865,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       return Response.json(views[domain]());
     }
     if (path === "/api/engine/planning/fixture/plan")
-      return Response.json({ version: 0, lanes: [], documents: [], idle: true });
+      return Response.json({
+        version: 1, idle: false,
+        lanes: [{ key: "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
+        documents: [{ key: "delivery", version: 1, title: "Delivery", aim: "Ship the fixture", document: "", status: "open" }],
+      });
     if (path === "/api/engine/planning/fixture/items") return Response.json([
       leadItem("unbound", longLead, "example/board-fixture"),
       { ...leadItem("parked-lead", parkedLead, boundRepository), state: "parked", reason: parkReason },
@@ -875,7 +880,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       { ...leadItem("second-cut", secondCut, boundRepository), kind: "papercut" },
     ]);
     if (path === "/api/engine/planning/fixture/decisions")
-      return Response.json([]);
+      return Response.json(decisionOpen ? [{
+        id: "fixture-decision", projectId: "fixture", author: "Fixture planner",
+        question: "Which route should we take?", createdAtMs: now,
+        options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }], answer: null,
+      }] : []);
     assert.fail("Unexpected standalone route " + path);
   };
   Object.assign(dom.window, {
@@ -904,10 +913,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   dom.window.eval(`(() => { ${script} })()`);
   const planningReads = () => requests.filter((path) => path.startsWith("/api/engine/planning/"));
-  await eventually(() => Boolean(selector("Needs you, 0")), "initial Needs you settles");
+  const menuCounts = ["Planning, 1 open lanes", "Leads, 3", "Papercuts, 2", "Needs you, 1"];
+  await eventually(() => menuCounts.every((label) => Boolean(selector(label))),
+    "planning and decision counts settle before any navigation");
   assert.ok(stream, "the board subscribed to engine changes");
-  assert.ok(planningReads().length > 0 && planningReads().every((path) => path.endsWith("/decisions")), "Needs you reads decisions only");
-  const beforeTaskActivity = planningReads().length;
+  const initialPlanningReads = ["decisions", "items", "plan"].map((key) => `/api/engine/planning/fixture/${key}`);
+  assert.deepEqual(planningReads().sort(), initialPlanningReads, "one store read per collection in scope");
   const taskReads = () => count("/tasks");
   // Let the startup resync settle before observing the steady-state window.
   await wait(150);
@@ -923,11 +934,16 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     routes.map((route, i) => [route, idleReads[i]]),
   )));
   assert.deepEqual(idleReads, [0, 0, 0, 0]);
-  assert.equal(planningReads().length, beforeTaskActivity, "task activity leaves decisions alone");
-  stream.enqueue(new TextEncoder().encode("event: decisions\ndata: {}\n\n"));
-  await eventually(() => planningReads().length === beforeTaskActivity + 1, "a decision change refreshes Needs you once");
+  assert.deepEqual(planningReads().sort(), initialPlanningReads, "idle and task activity make no collection reads");
   // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 2");
+  decisionOpen = false;
+  emit("decisions");
+  await eventually(() => Boolean(selector("Needs you, 0")), "a decision change updates the menu outside Needs you");
+  assert.deepEqual(planningReads().slice(3), [initialPlanningReads[0]]);
+  emit("planning");
+  await eventually(() => planningReads().length >= 6, "a planning change refreshes plans and items");
+  assert.deepEqual(planningReads().slice(4).sort(), initialPlanningReads.slice(1));
   await eventually(() => text().includes("Standalone task"), "task title renders");
   const header = (card: HTMLElement, state: string, age: string) => {
     const ageText = [...card.querySelectorAll("div")].find(
@@ -1049,8 +1065,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   emit("settings");
   await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
 
-  await click("Leads");
-  await eventually(() => Boolean(selector("Leads, 3")), "the Leads view shows all fixtures");
+  const beforeLeads = planningReads().length;
+  await click("Leads, 3");
+  await eventually(() => Boolean(selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`)),
+    "the Leads view uses the loaded items");
+  assert.equal(planningReads().length, beforeLeads, "opening Leads makes no collection reads");
   const triageTitles = (view: string, kind: string) => {
     const list = selector(view + " list");
     assert.ok(list);
