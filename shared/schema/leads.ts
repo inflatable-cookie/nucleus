@@ -299,8 +299,9 @@ export const boardLeadSchema = z
         })
         .strict(),
     ),
-    /** When the lead was raised: the row's age (nucleus#1515). */
+    /** Recorded timestamps for the card's age. */
     createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
     /** Nucleus#1543: parked leads leave the to-do list; the card shows the reason and the recheck date. */
     parked: z
       .object({ reason: z.string(), revisitAt: z.string().nullable() })

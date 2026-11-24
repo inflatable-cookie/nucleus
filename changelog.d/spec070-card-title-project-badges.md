@@ -1,0 +1,1 @@
+Board cards use the T3 sidebar's title colours, show the full title and status cause on hover, and show the most relevant recorded age. Project badges show up on tasks, leads, and papercuts before the project connects to T3.

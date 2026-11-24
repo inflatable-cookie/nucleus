@@ -294,15 +294,15 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         .map(({ board }) => board),
       pendingSubmissions: [],
       projectBadges: undefined,
-      // The saved T3 project title gives each repository the shared generated badge.
+      // A saved T3 title refines the generated Nucleus project badge once bound.
       repositoryBadges: Object.fromEntries(
-        rows.flatMap(({ project }) =>
-          project.repositories.flatMap((repo) =>
-            repo.hostProjectTitle
-              ? [[repo.path, generatedProjectBadge(repo.hostProjectTitle)]]
-              : [],
-          ),
-        ),
+        rows.flatMap(({ project, board }) => {
+          const fallback = generatedProjectBadge(board.name.trim() || board.key);
+          return project.repositories.map((repo) => [
+            repo.path,
+            repo.hostProjectTitle?.trim() ? generatedProjectBadge(repo.hostProjectTitle) : fallback,
+          ]);
+        }),
       ),
     } as api.UiBoard;
   }

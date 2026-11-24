@@ -228,6 +228,7 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
             .create(&task("fixture", "fixture"), &event("admitted"))
             .expect("admit");
         let mut receipt = event("native_turn_failed");
+        receipt.at += 1;
         receipt.detail = serde_json::json!({
             "version":version,"session":"before-restart","command":"hold-3",
         })
@@ -241,7 +242,10 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
             sequence
         );
         let entered_at = u64::try_from(receipt.at).unwrap();
-        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
+        let times = store.board_times("fixture").unwrap();
+        assert_eq!(times.since, Some(entered_at));
+        assert_eq!(times.admitted, Some(entered_at - 1));
+        assert_eq!(times.latest_event, Some(entered_at));
         receipt.at += 1;
         assert_eq!(
             store
@@ -249,7 +253,10 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
                 .expect("duplicate"),
             None
         );
-        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
+        assert_eq!(
+            store.board_times("fixture").unwrap().since,
+            Some(entered_at)
+        );
         version
     };
     let store = Store::open(&storage).expect("reopen");

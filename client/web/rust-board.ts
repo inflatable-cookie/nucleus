@@ -56,7 +56,7 @@ const current = z.object({
   question: question.nullable(),
   // The engine's one state wording, shared with the native thread title.
   stateLabel: z.string(),
-  // When the state the label names began; the card's age counts from it.
+  // When the state the label names began, if the engine can verify it.
   stateSinceMs: timestamp.nullable(),
 });
 const participant = z.object({
@@ -84,6 +84,7 @@ const lifecycle = z.object({
 });
 const summary = current.extend({
   lifecycle,
+  latestEventAtMs: timestamp.nullish(),
   title: z.string().optional(),
   number: z.number().int().positive().nullish(),
   reference: z.string().optional(),

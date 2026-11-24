@@ -2,6 +2,7 @@ use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, request::Parts},
+    response::{IntoResponse, Response},
     routing::{get, post, put},
 };
 use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
@@ -271,15 +272,23 @@ async fn lane_status(
 async fn items(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
+    session: Option<Extension<super::board::BrowserSession>>,
     ProjectSelector { project }: ProjectSelector,
-) -> Result<Json<Vec<Item>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
-    Ok(Json(
-        state.store.items(&project).map_err(ServiceError::from)?,
-    ))
+    let store = &state.store;
+    if session.is_some() {
+        let items = store
+            .items_with_times(&project)
+            .map_err(ServiceError::from)?;
+        Ok(Json(items).into_response())
+    } else {
+        let items = store.items(&project).map_err(ServiceError::from)?;
+        Ok(Json(items).into_response())
+    }
 }
 
 #[derive(Deserialize)]

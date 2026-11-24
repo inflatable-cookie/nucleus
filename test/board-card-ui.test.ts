@@ -438,36 +438,19 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
     const tree = mounted;
     await settle(
       () =>
-        tree.text().includes("Parser written; tests are next") &&
+        Boolean(tree.query(/Parser written; tests are next/)) &&
         tree.text().includes("Dispatch held"),
     );
 
-    // What is happening, and who moves it next (the body of each card).
-    assert.match(
-      tree.text(),
-      /Workspace archive failed: EBUSY: resource busy/,
-      "the failed archive is the next action",
-    );
-    assert.ok(
-      tree
-        .text()
-        .includes("Needs attention · Operator decides whether to restart"),
-      "the row's one status line says the state and the one detail that moves it next",
-    );
+    assert.ok(tree.query(/Workspace archive failed: EBUSY: resource busy/));
+    assert.doesNotMatch(tree.text(), /Workspace archive failed|Operator decides whether to restart/);
     assert.ok(
       !tree.text().includes("operator_needed") &&
         !tree.text().includes("next: restart, route"),
       "technical stop mechanics stay off the card",
     );
-    assert.match(
-      tree.text(),
-      /Waiting · for QA capacity · position 2/,
-      "a queued heavy run names its place",
-    );
-    assert.ok(
-      tree.text().includes("Parser written; tests are next"),
-      "a card reads its latest report",
-    );
+    assert.ok(tree.query(/Waiting · for QA capacity · position 2/));
+    assert.doesNotMatch(tree.text(), /Parser written; tests are next/);
     // Holds keep their own distinct chips, and the hold age comes from the summary's since field.
     assert.ok(
       tree.text().includes("Dispatch held"),
@@ -515,7 +498,7 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
       "no expander row holds them back (nucleus#1532)",
     );
 
-    // Long content: the full title stays in the accessible label, and the visible title is capped at two lines.
+    // The full title stays in the accessible label.
     assert.ok(
       tree.query(new RegExp(`^App, ${LONG_TITLE.slice(0, 40)}`)),
       "the accessible label names the whole task",
@@ -565,8 +548,8 @@ test("the card lays out the same content at a narrow and a wide board", async ()
       const tree = mounted;
       await settle(
         () =>
-          tree.text().includes("Parser written; tests are next") &&
-          tree.text().includes("Workspace archive failed"),
+          Boolean(tree.query(/Parser written; tests are next/)) &&
+          Boolean(tree.query(/Workspace archive failed/)),
       );
       const label = compact ? "narrow" : "wide";
       const card = tree.query(/^App, Board cards keep the title/);
@@ -581,11 +564,7 @@ test("the card lays out the same content at a narrow and a wide board", async ()
         /Dispatch held/,
         `the ${label} card keeps the hold chip`,
       );
-      assert.match(
-        tree.text(),
-        /Workspace archive failed: EBUSY/,
-        `the ${label} card keeps the error next action`,
-      );
+      assert.ok(tree.query(/Workspace archive failed: EBUSY/), `the ${label} card keeps the error accessible`);
     }
   } finally {
     mounted?.update(h("View", null));
@@ -654,7 +633,7 @@ test("a T3Code task row names the host in its accessible label, not on the row",
   }
 });
 
-test("a queued hold previews its first sentence and keeps the complete reason accessible", async () => {
+test("a queued hold shows its state and keeps the complete reason accessible", async () => {
   await load();
   const store = new Store(":memory:");
   try {
@@ -681,18 +660,8 @@ test("a queued hold previews its first sentence and keeps the complete reason ac
       }),
     );
     try {
-      assert.ok(
-        ui
-          .text()
-          .includes(
-            "Dispatch held · by a planner thread: The planner needs to record the source ruling.",
-          ),
-        `the status line names the hold and previews its first sentence: ${ui.text()}`,
-      );
-      assert.ok(
-        !ui.text().includes("The task can start after that decision."),
-        "the card keeps its preview to the first sentence",
-      );
+      assert.match(ui.text(), /Dispatch held/);
+      assert.doesNotMatch(ui.text(), /record the source ruling|start after that decision/);
       const label = ui
         .all(/.*/)
         .find((node) =>
@@ -864,19 +833,12 @@ test("waits, holds and progress stops use operator words in visible and accessib
         compact,
       );
       const tree = mounted;
-      await settle(() => tree.text().includes("After #874"));
-      assert.ok(
-        tree
-          .text()
-          .includes(
-            "After #874 · Machine ports move out of the Paseo adapter · Changes · +1 more",
-          ),
-      );
+      await settle(() => Boolean(tree.query(/After #874/)));
+      assert.doesNotMatch(tree.text(), /After #874|Reviewer continuing from checkpoint 2/);
       assert.ok(!tree.text().includes("84aa4e89"));
-      assert.ok(tree.text().includes("Reviewer continuing from checkpoint 2"));
       assert.ok(!tree.text().includes("Stopped just now"));
-      assert.ok(tree.text().includes("Dispatch held · by App planner"));
-      assert.ok(tree.text().includes("Held · Merge held by App planner"));
+      assert.ok(tree.query(/Dispatch held · by App planner/));
+      assert.ok(tree.query(/Held · Merge held by App planner/));
       // The age sits at the end of the row's meta line (nucleus#1515).
       assert.match(tree.text(), /\d+d ago/);
       assert.ok(
@@ -1068,7 +1030,7 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
         "card labels contain no UUID or digest",
       );
       assert.ok(
-        tree.text().includes("Waiting on App planner · blocker escalation"),
+        tree.query(/Waiting on App planner · blocker escalation/),
       );
       assert.ok(tree.text().includes("Waiting on you"));
 
@@ -1197,7 +1159,7 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
   }
 });
 
-test("a long shell command card shows only its recorded elapsed time", async () => {
+test("a long shell command card keeps elapsed time accessible and the command private", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1219,8 +1181,8 @@ test("a long shell command card shows only its recorded elapsed time", async () 
         compact,
       );
       const tree = mounted;
-      await settle(() => tree.text().includes("Long shell command"));
-      assert.match(tree.text(), /Long shell command · 26m/);
+      await settle(() => Boolean(tree.query(/Long shell command/)));
+      assert.doesNotMatch(tree.text(), /Long shell command/);
       const label = tree.query(/^App, long-command,/)?.props
         .accessibilityLabel as string;
       assert.match(label, /Long shell command · 26m/);
@@ -1281,18 +1243,12 @@ test("the Queue list shows its held-back page loading, then a retry row when the
   }
 });
 
-test("the card keeps two-line titles, drops the repository and phase chips, and moves lanes to the task view", () => {
+test("the card drops the repository and phase chips and moves lanes to the task view", () => {
   const ui = boardSource();
   const start = ui.indexOf("function TaskCard(");
   const end = ui.indexOf("\n});\n", start);
   const card = ui.slice(start, end);
-  // The row's title is capped at two lines (nucleus#1515), and the meta line carries the
-  // short number, never the multi-repo reference.
-  const shared = ui.slice(
-    ui.indexOf("export const BoardCard"),
-    ui.indexOf("\n});\n", ui.indexOf("export const BoardCard")),
-  );
-  assert.match(shared, /<Text\b[^>]*numberOfLines=\{2\}[^>]*>\s*\{title\}\s*<\/Text>/);
+  // The meta line carries the short number.
   assert.match(card, /taskNumberLabel\(task, false\)/);
   assert.doesNotMatch(card, /repoChip|phaseChip|laneChips|profile\?\.name/);
   // The board call site passes only what the card still uses.
@@ -1346,7 +1302,7 @@ const triagePapercuts = (count: number) =>
     }),
   );
 
-test("a long papercut and a long lead render as three-line rows: kind and project, a two-line title, one status line", async () => {
+test("a long papercut and a long lead render as three-line rows with a one-line title", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1365,22 +1321,22 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => tree.text().includes("Checked · awaiting approval"));
+    await settle(() => Boolean(tree.query(/Checked · awaiting approval/)));
     const text = tree.text();
     assert.ok(
       tree.query(/^Papercut: A papercut whose title runs well past/),
       "the papercut row keeps its full title in its accessible label",
     );
-    assert.match(text, /Open · board/, "a papercut states its area");
+    assert.ok(tree.query(/Open · board/), "a papercut names its area accessibly");
     assert.ok(
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
     // Each row: the project on line 1 (a single-kind view drops the kind word),
-    // the title in up to two lines, then the one status line (nucleus#1515).
+    // the title on its own line, then the status line.
     for (const [title, view, kind, icon, status] of [
-      [LONG_CUT, "Papercuts", "Papercut", "Scissors", "Open · board"],
-      [LONG_TITLE, "Leads", "Lead", "Lightbulb", "Checked · awaiting approval"],
+      [LONG_CUT, "Papercuts", "Papercut", "Scissors", "Open"],
+      [LONG_TITLE, "Leads", "Lead", "Lightbulb", "Checked"],
     ] as const) {
       openView(tree, view);
       const rowNode = tree.raw.query(new RegExp(`^${kind}: `)) as HostNode;
@@ -1425,8 +1381,8 @@ test("a long papercut and a long lead render as three-line rows: kind and projec
         .map((node) => node.props.numberOfLines);
       assert.deepEqual(
         lines,
-        [2],
-        `the title "${title.slice(0, 24)}…" is up to two lines`,
+        [1],
+        `the title "${title.slice(0, 24)}…" is one line`,
       );
     }
   } finally {
@@ -2764,10 +2720,10 @@ test("a task row keeps one status line and no host identity, while the detail ke
     const row = tree.all(/, host-waiting,/)[0];
     assert.ok(row, "the task row is on the board");
     const text = nodeText(row as HostNode);
-    assert.equal(text.match(/on the host/g)?.length, 1, "the wait reads once");
+    assert.doesNotMatch(text, /on the host/);
     assert.match(
       text,
-      /Waiting\s+· on the host/,
+      /Waiting\s*$/,
       `the status line names the wait: ${text}`,
     );
     assert.doesNotMatch(
@@ -2828,7 +2784,7 @@ test("a task row keeps one status line and no host identity, while the detail ke
   }
 });
 
-test("a host-waiting task keeps an owner-facing stop's detail in its one row line", async () => {
+test("a host-waiting task keeps an owner-facing stop accessible", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2844,7 +2800,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
     );
     const tree = mounted;
     await settle(() =>
-      tree.text().includes("Operator decides whether to restart"),
+      Boolean(tree.query(/Operator decides whether to restart/)),
     );
     openView(tree, "Needs you");
     const row = tree.raw
@@ -2854,33 +2810,19 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
       );
     assert.ok(row, "the stopped task's row is on the board");
     const text = nodeText(row as HostNode);
+    assert.doesNotMatch(text, /Operator decides whether to restart/);
+    assert.match(String(row.props.accessibilityLabel), /Operator decides whether to restart/);
     assert.match(
       text,
-      /Operator decides whether to restart/,
-      "the owner-facing stop keeps its detail",
-    );
-    assert.match(
-      text,
-      /Needs attention\s+· Operator decides whether to restart · waiting on the host/,
-      `and the host wait is still named: ${text}`,
+      /Needs attention\s*$/,
+      `the row names the state: ${text}`,
     );
     assert.doesNotMatch(
       text,
       /T3Code host/,
       "the host identity stays off the row",
     );
-    // Both facts ride the row's single status line, not two lines.
-    const status = tree.raw
-      .ofType("Text")
-      .find((node) =>
-        nodeText(node).includes("Operator decides whether to restart"),
-      );
-    assert.ok(status, "the detail is drawn");
-    assert.match(
-      nodeText(status as HostNode),
-      /waiting on the host/,
-      "the row's one line carries the stop and the wait",
-    );
+    assert.match(String(row.props.accessibilityLabel), /waiting on the host/i);
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -3247,7 +3189,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       assert.match(
         nodeText(plain),
         new RegExp(
-          `^\\s*${number(normal.id)}\\s+App\\s+just now\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
+          `^\\s*${number(normal.id)}\\s+App\\s+just now\\s+plain-working\\s+Working\\s*$`,
         ),
         "a normal task is three lines and shows no flags",
       );
@@ -3264,7 +3206,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       assert.ok(pr, "the row frame holds the button and its flags");
       assert.match(
         nodeText(pr),
-        /In review\s+· Reviewer reading the diff\s+#39\s*$/,
+        /In review\s+#39\s*$/,
         "the PR rides as the one flag",
       );
       assert.ok(
@@ -3460,7 +3402,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     // A host wait wins the status line, so the dispatch hold stays visible as a flag.
     tree.query(/^App, held-and-away,/);
     const away = rowFrame(tree.raw, /^App, held-and-away,/)!;
-    assert.match(nodeText(away), /Waiting\s+· on the host/);
+    assert.match(nodeText(away), /Waiting/);
     assert.match(
       nodeText(away),
       /Dispatch held\s*$/,
@@ -3485,7 +3427,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     );
     assert.match(
       nodeText(lead),
-      /^\s*AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s+· brief needs revising\s*$/,
+      /^\s*AP\s+App\s+\d+d ago\s+Rechecked lead\s+Checks failed\s*$/,
     );
 
     // A decision from a T3-matched repository draws that project's badge.
@@ -3505,7 +3447,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     const fenced = rowFrame(tree.raw, /^App, fenced-working,/)!;
     assert.match(
       nodeText(fenced),
-      /Working\s+· Dispatch held was discussed with the planner\s+Dispatch held\s*$/,
+      /Working\s+Dispatch held\s*$/,
       "the status is Working, so the dispatch fence stays a flag",
     );
 

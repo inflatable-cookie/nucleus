@@ -2468,7 +2468,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
         .store
         .board_times("age")
         .unwrap()
-        .0;
+        .since;
     assert_eq!(
         recorded,
         u64::try_from(since).ok(),
@@ -2514,12 +2514,14 @@ async fn operator_hold_keeps_its_state_entry_across_restart() {
     let before = json_body(get_as(&api, path, &BOARD_KEY).await).await;
     assert_eq!(before["stateLabel"], "Waiting on Tom");
     assert!(before["stateSinceMs"].is_u64());
+    assert!(before["latestEventAtMs"].is_u64());
     drop(api);
 
     let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
     let after = json_body(get_as(&settings_api(&reopened), path, &BOARD_KEY).await).await;
     assert_eq!(after["stateLabel"], before["stateLabel"]);
     assert_eq!(after["stateSinceMs"], before["stateSinceMs"]);
+    assert_eq!(after["latestEventAtMs"], before["latestEventAtMs"]);
 }
 
 async fn observe_task_wait(service: &Service, wait: WaitReason) {
@@ -2670,18 +2672,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     .await;
     assert_eq!(added.status(), StatusCode::CREATED);
     assert_event(events, &["event: decisions"]).await;
-    let item = json!({"kind":"papercut","title":"Toast lingers","body":"It stays.","lanes":[]});
-    let added = browser_request(
-        api,
-        Method::POST,
-        "/api/engine/planning/local-fixture/items",
-        cookie,
-        Some(&item),
-    )
-    .await;
-    assert_eq!(added.status(), StatusCode::CREATED);
-    assert_eq!(json_body(added).await["kind"], "papercut");
-    assert_event(events, &["event: planning"]).await;
+    assert_browser_item(api, cookie, events).await;
     // The theme is a cache read; a fixture without a host config stream has none yet.
     let theme =
         json_body(browser_request(api, Method::GET, "/api/engine/theme", cookie, None).await).await;
@@ -2713,6 +2704,36 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     )
     .await;
     assert_ne!(reassign.status(), StatusCode::NOT_FOUND);
+}
+
+async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut BodyDataStream) {
+    let item = json!({"kind":"papercut","title":"Toast lingers","body":"It stays.","lanes":[]});
+    let added = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/planning/local-fixture/items",
+        cookie,
+        Some(&item),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    assert_eq!(json_body(added).await["kind"], "papercut");
+    assert_event(events, &["event: planning"]).await;
+    let listed = json_body(
+        browser_request(
+            api,
+            Method::GET,
+            "/api/engine/planning/local-fixture/items",
+            cookie,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let item = &listed[0];
+    assert_eq!(item["title"], "Toast lingers");
+    assert!(item["createdAtMs"].is_i64());
+    assert_eq!(item["updatedAtMs"], item["createdAtMs"]);
 }
 
 async fn assert_board_assets(api: &Router) {

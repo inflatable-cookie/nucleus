@@ -137,7 +137,8 @@ export function RustTaskDialog({
       c={c}
       wide
       inline={inline}
-      title={card ? rustTaskLabel(card) : id}
+      title={card ? [rustTaskLabel(card), detail?.title || card.title].filter(Boolean).join(" · ") : id}
+      wrapTitle
       label="Task detail"
       bodyLabel="Task"
       closeLabel="Close task"

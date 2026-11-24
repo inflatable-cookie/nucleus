@@ -2079,6 +2079,7 @@ export const sectionCard = (c: Colors): ViewStyle => ({
 export function Dialog({
   c,
   title,
+  wrapTitle = false,
   label,
   closeLabel,
   closeDisabled = false,
@@ -2093,6 +2094,7 @@ export function Dialog({
 }: {
   c: Colors;
   title: string;
+  wrapTitle?: boolean;
   /** The frame's accessible name. */ label: string;
   closeLabel: string;
   closeDisabled?: boolean;
@@ -2135,7 +2137,7 @@ export function Dialog({
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text
                   accessibilityRole="header"
-                  numberOfLines={2}
+                  numberOfLines={wrapTitle ? undefined : 2}
                   style={{
                     color: r.foreground,
                     fontSize: type.section.fontSize,

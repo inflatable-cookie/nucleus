@@ -35,7 +35,7 @@ import {
   row,
   type Colors,
 } from "../controls";
-import { holdReasonPreview, projectName } from "./text";
+import { projectName } from "./text";
 import { useTick } from "../use-tick";
 import { relativeAge } from "../../shared/pipeline-board";
 import {
@@ -292,8 +292,7 @@ export type InboxListProps = {
     retry: () => void;
     selected: string | null;
     onSelect: (id: string) => void;
-    projectName: (task: RustTask) => string;
-    projectBadge?: (task: RustTask) => ProjectBadge | null;
+    project: (task: RustTask) => { name: string; key?: string; badge: ProjectBadge | null };
   };
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
@@ -506,30 +505,22 @@ export function InboxList({
     const projectLabel = (repoPath: string, origin?: string | null) =>
       projectForRepository(repoPath, origin)?.name;
     switch (card.kind) {
-      case "decision":
+      case "decision": {
+        const asking = card.value.askedBy.project;
+        const project = asking && projectForRepository(asking.path, asking.origin);
         return (
           <DecisionCard
             key={key}
             decision={card.value}
-            projectBadge={
-              card.value.askedBy.project
-                ? (state?.repositoryBadges?.[card.value.askedBy.project.path] ??
-                  null)
-                : null
-            }
-            projectLabel={
-              card.value.askedBy.project
-                ? projectLabel(
-                    card.value.askedBy.project.path,
-                    card.value.askedBy.project.origin,
-                  )
-                : undefined
-            }
+            projectBadge={asking ? (state?.repositoryBadges?.[asking.path] ?? null) : null}
+            projectLabel={project?.name}
+            projectKey={project?.key}
             c={c}
             selected={openDecisionId === card.id}
             onPress={() => onSelectDecision(card.id)}
           />
         );
+      }
       case "raised":
         return (
           <HoldPromptCard
@@ -875,6 +866,9 @@ export function InboxList({
 
 const rustPageSize = 25;
 
+const rustCardAgeAt = (task: RustTask) =>
+  task.stateSinceMs ?? task.latestEventAtMs ?? task.lifecycle.admittedAtMs;
+
 export function RustListRows({ c, rust, view }: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
@@ -884,22 +878,24 @@ export function RustListRows({ c, rust, view }: {
   const tasks = rust.tasks ?? [];
   const remaining = tasks.length - limit;
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
-  useTick(tasks.some((task) => task.stateSinceMs !== null) ? 30_000 : null);
+  useTick(tasks.some((task) => rustCardAgeAt(task) !== null) ? 30_000 : null);
   return <>
     {tasks.slice(0, limit).map((task) => {
       // The task number alone, as on TypeScript cards; the project shows beside it.
       const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
-      const detail = task.hold ? holdReasonPreview(task.hold.reason) : rustWaitDetail(task);
+      const detail = task.hold?.reason ?? rustWaitDetail(task);
+      const ageAt = rustCardAgeAt(task);
+      const project = rust.project(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
-        project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
+        project={<CardProject c={c} name={project.name} projectKey={project.key} badge={project.badge} />}
         status={{
           tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
           state: task.stateLabel, detail: question ? null : detail,
         }}
-        age={task.stateSinceMs === null ? null : relativeAge(task.stateSinceMs)}
+        age={ageAt === null ? null : relativeAge(ageAt)}
         progress={<RustTaskProgress progress={task.lifecycle} c={c} compact barsOnly />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}

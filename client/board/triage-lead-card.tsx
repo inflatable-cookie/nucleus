@@ -10,15 +10,17 @@ import {
   triageKind,
   triageStatus,
 } from "../../shared/pipeline-board";
-import type { ProjectBadge } from "../../shared/t3/project-badge";
+import { generatedProjectBadge, type ProjectBadge } from "../../shared/t3/project-badge";
 import { Icon } from "../shell";
 import { BoardCard, ProjectBadgeMark, statusLabel } from "./cards";
-import { muted, type Colors } from "../controls";
-import { type as typeScale } from "../design";
+import { type Colors } from "../controls";
+import { cardLabelColor, type as typeScale } from "../design";
+import { useEngineFeatures } from "../engine-features";
 
 type Project = UiQueueState["projects"][number];
 
-export interface LeadProjectEntry {
+interface LeadProjectEntry {
+  readonly id: string;
   readonly name: string;
   readonly badge: ProjectBadge | null;
 }
@@ -32,38 +34,38 @@ function sameProjectBadge(
 
 /**
  * Resolve each unique project name on a lead or papercut card and its unambiguous T3 badge.
- * Grouping by project name preserves the existing display names and order; a project group
- * shows a badge only when every repository in that group agrees on one T3 badge, avoiding any
- * choice by repository order (nucleus#1490).
+ * A group keeps a T3 refinement when its repositories agree. A known Rust
+ * project can always draw its own generated badge, regardless of repo order.
  */
 export function leadProjectEntries(
   repositories: BoardLead["repositories"],
   projectForRepository: (
     repoPath: string,
     origin?: string | null,
-  ) => Pick<Project, "name"> | undefined,
+  ) => (Pick<Project, "name"> & Partial<Pick<Project, "key">>) | undefined,
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>,
+  generateFallback = false,
 ): LeadProjectEntry[] {
-  const groups = new Map<string, BoardLead["repositories"]>();
+  const groups = new Map<string, { name: string; key?: string; repos: BoardLead["repositories"] }>();
   for (const repo of repositories) {
     // The project's name, not its repository's: a project can be named differently from its repository (Tom, 2026-11-07).
-    const name =
-      projectForRepository(repo.path, repo.origin)?.name ??
-      repo.origin.split("/").at(-1) ??
-      repo.origin;
-    const list = groups.get(name) ?? [];
-    list.push(repo);
-    groups.set(name, list);
+    const project = projectForRepository(repo.path, repo.origin);
+    const name = project?.name || project?.key || (repo.origin.split("/").at(-1) ?? repo.origin);
+    const key = project?.key;
+    const groupId = key ? `project:${key}` : `name:${name}`;
+    const group = groups.get(groupId) ?? { name, key, repos: [] };
+    group.repos.push(repo);
+    groups.set(groupId, group);
   }
   const out: LeadProjectEntry[] = [];
-  for (const [name, repos] of groups) {
+  for (const [id, { name, key, repos }] of groups) {
     const badges = repos.map((repo) => repositoryBadges?.[repo.path] ?? null);
     const first = badges[0] ?? null;
     const badge =
       first && badges.every((candidate) => sameProjectBadge(candidate, first))
         ? first
-        : null;
-    out.push({ name, badge });
+        : generateFallback && key ? generatedProjectBadge(name.trim() || key) : null;
+    out.push({ id, name, badge });
   }
   return out;
 }
@@ -82,24 +84,26 @@ export function LeadProjectEyebrow({
   projectForRepository: (
     repoPath: string,
     origin?: string | null,
-  ) => Pick<Project, "name"> | undefined;
+  ) => (Pick<Project, "name"> & Partial<Pick<Project, "key">>) | undefined;
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   c: Colors;
 }) {
+  const { engine } = useEngineFeatures();
   const entries = leadProjectEntries(
     repositories,
     projectForRepository,
     repositoryBadges,
+    engine === "rust",
   );
   const labelStyle = {
-    ...muted(c),
+    color: cardLabelColor(c),
     fontSize: typeScale.metadata.fontSize,
     flexShrink: 1,
   } as const;
   if (entries.every((entry) => entry.badge === null)) {
     return (
       <>
-        <Icon name="Folder" size={12} color={c.foregroundMuted} />
+        <Icon name="Folder" size={12} color={labelStyle.color} />
         <Text numberOfLines={1} ellipsizeMode="tail" style={labelStyle}>
           {entries.map((entry) => entry.name).join(", ")}
         </Text>
@@ -113,11 +117,11 @@ export function LeadProjectEyebrow({
   return (
     <>
       {shown.map((entry, index) => (
-        <React.Fragment key={entry.name}>
+        <React.Fragment key={entry.id}>
           {entry.badge ? (
             <ProjectBadgeMark badge={entry.badge} c={c} />
           ) : (
-            <Icon name="Folder" size={12} color={c.foregroundMuted} />
+            <Icon name="Folder" size={12} color={labelStyle.color} />
           )}
           <Text numberOfLines={1} ellipsizeMode="tail" style={labelStyle}>
             {index < shown.length - 1 ? `${entry.name},` : entry.name}
@@ -152,7 +156,7 @@ export function TriageLeadCard({
   projectForRepository?: (
     repoPath: string,
     origin?: string | null,
-  ) => Pick<Project, "name"> | undefined;
+  ) => (Pick<Project, "name"> & Partial<Pick<Project, "key">>) | undefined;
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   selected: boolean;
   c: Colors;
@@ -166,6 +170,7 @@ export function TriageLeadCard({
 }) {
   const kind = triageKind(lead);
   const status = triageStatus(lead);
+  const ageAt = lead.updatedAt || lead.createdAt;
   const kindWord = kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead";
   return (
     <BoardCard
@@ -181,7 +186,7 @@ export function TriageLeadCard({
           c={c}
         />
       }
-      age={lead.createdAt ? decisionAge(lead.createdAt) : null}
+      age={ageAt ? decisionAge(ageAt) : null}
       title={lead.title}
       status={status}
       selected={selected}

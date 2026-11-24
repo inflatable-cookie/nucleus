@@ -9,7 +9,6 @@ import type {
 import type { LaneView } from "./contracts";
 import { effectiveSelection } from "./project-scope";
 import { taskAttention } from "./task-attention";
-import { parkedCheckLabel } from "./parking";
 
 /** Spec 026 Board columns as of 87555f7: Attention sits before Queued so it is
  * visible without scrolling when the view opens. Spec 032 adds the Decisions
@@ -93,12 +92,12 @@ export type TriageStatus = {
 export function triageStatus(lead: BoardLead): TriageStatus {
   if (lead.state === "promoted")
     return { tone: "success", state: "Promoted", detail: null };
-  // Nucleus#1543: a parked lead names its reason and its recheck; a due one names the reason it was parked for.
+  // A parked card keeps its reason in the status hint and detail.
   if (lead.parked)
     return {
       tone: "muted",
-      state: lead.parked.reason,
-      detail: parkedCheckLabel(lead.parked.revisitAt),
+      state: "Parked",
+      detail: lead.parked.reason,
     };
   if (lead.recheck)
     return {

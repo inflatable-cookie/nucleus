@@ -21,6 +21,7 @@ export interface BoardTheme {
     readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
+    readonly foregroundLabel?: string;
     readonly accent: string;
     readonly accentForeground: string;
     readonly statusSuccess: string;
