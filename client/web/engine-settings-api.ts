@@ -69,6 +69,7 @@ const repository = z.object({
   requiredChecks: z.array(z.string()),
   hungToolMinutes: integer,
   hostProject: z.string().optional(),
+  hostProjectTitle: z.string().optional(),
 });
 const project = z.object({
   name: z.string(),
@@ -101,6 +102,7 @@ export const dispatchView = snapshot(dispatch).transform((settings) => ({
 export const projectsView = z.object({
   settings: snapshot(projects),
   resolvedPlanners: z.record(z.string(), z.string().nullable()),
+  verifiedPlanners: z.record(z.string(), z.array(z.string())).optional(),
 });
 export const hostsView = z.object({
   settings: snapshot(hosts),

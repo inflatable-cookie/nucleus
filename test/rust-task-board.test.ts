@@ -616,6 +616,7 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
           },
         },
         resolvedPlanners: { fixture: "fixture-planner" },
+        verifiedPlanners: { fixture: ["fixture-planner", "second-planner"] },
       });
     }
     if (path === "/api/engine/planning/fixture/plan") {
@@ -696,6 +697,10 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
   });
   await click("Projects");
   await click("Fixture project");
+  await eventually(
+    () => text().includes("fixture-planner, second-planner"),
+    "the verified planners are displayed",
+  );
   await click("Lanes");
   await click("Board lane");
   await click("Horizon, Now");

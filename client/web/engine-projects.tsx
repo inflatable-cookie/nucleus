@@ -66,8 +66,12 @@ export function EngineProjects({
             />
             <SettingValue
               c={c}
-              label="Planner"
-              value={view.resolvedPlanners[id] ?? "Unresolved"}
+              label="Planners"
+              value={
+                (view.verifiedPlanners?.[id]?.join(", ") ??
+                  view.resolvedPlanners[id]) ||
+                "Unresolved"
+              }
             />
             <EditToggle
               c={c}
