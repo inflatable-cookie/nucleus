@@ -231,6 +231,7 @@ test("a live profile row is one line at narrow and wide sizes, with no By reques
       }),
     ],
     recentAssignments: { "profile:worker-1": 2 },
+    recentAssignmentSample: 2,
     assignments: { "profile:worker-1": 7 },
   });
   for (const compact of [false, true]) {
@@ -262,8 +263,12 @@ test("a live profile row is one line at narrow and wide sizes, with no By reques
       rowChildren(name)
         .filter((child) => child !== name)
         .map((child) => child.props.accessibilityLabel),
-      [`Disable ${longName}`, `Edit ${longName}`],
-      "On/Off and Edit share one line with the name",
+      [
+        `${longName}, all roles: 2 of 2 recent assignments`,
+        `Disable ${longName}`,
+        `Edit ${longName}`,
+      ],
+      "usage, On/Off and Edit share one line with the name",
     );
     assert.equal(
       ui.query(`Remove ${longName}`),
@@ -1100,27 +1105,22 @@ test("Spec 052: the usage slider lives under Dispatch limits, and saves a level 
     // A long note or "Not saved" reason wraps below; it never squeezes the title (review #599).
     // A long title wraps inside its group rather than overflowing the section on a narrow layout (857 review evidence).
     assert.equal(
-      header!.props.style.flexShrink,
+      header.props.style.flexShrink,
       1,
       `${title} wraps instead of overflowing`,
     );
     assert.equal(
-      header!.props.numberOfLines,
+      header.props.numberOfLines,
       undefined,
       `${title} is never truncated`,
     );
-    assert.ok(header!.props.style.minWidth >= 120);
+    assert.ok(header.props.style.minWidth >= 120);
+    const views = ui.ofType("View");
+    const titleGroup = views.find((node) => node.children.includes(header));
+    assert.ok(titleGroup, `${title} title group`);
+    const headerRow = views.find((node) => node.children.includes(titleGroup));
+    assert.equal(headerRow?.props.style.flexWrap, "wrap", `${title} row wraps`);
   }
-  assert.ok(
-    ui
-      .ofType("View")
-      .filter(
-        (node) =>
-          node.props.style?.flexWrap === "wrap" &&
-          node.props.style?.columnGap === 12,
-      ).length >= 4,
-    "every section header row wraps",
-  );
   ui.press("Usage Maximum");
   await settle(() =>
     /medium and high on Heavyweight, very high on Frontier/.test(
@@ -1293,7 +1293,7 @@ test("Spec 052: a usage expiry projected while the end-time picker is open keeps
   assert.match(ui.text(), /In 1 week/, "the picker stays open");
   assert.match(
     ui.get("Usage level help").props.accessibilityHint,
-    /Frontier profiles need permission/,
+    /High and very-high complexity start on Heavyweight\. Frontier profiles require an explicit request/,
     "the edited level draft survives",
   );
   unmount(ui);
@@ -1495,7 +1495,7 @@ test("Spec 052: a profile row shows a status only for a problem; a frontier prof
       );
       assert.match(
         ui.get("Capability help").props.accessibilityHint,
-        /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/,
+        /Frontier requires a request at Low, Normal and High\. Heavyweight does too at Low and Normal unless the task starts or climbs there/,
       );
       assert.match(
         ui.get("Weight help").props.accessibilityHint,
@@ -1815,11 +1815,12 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
     assert.deepEqual(
       rowLabels,
       [
+        "Paused oracle, all roles: 0 of 0 recent assignments",
         "Paused oracle: Subscription paused",
         "Disable Paused oracle",
         "Edit Paused oracle",
       ],
-      "the warning, then On/Off and Edit",
+      "usage, then the warning, On/Off and Edit",
     );
     node.props.onHoverIn();
     await settle(() => ui.text().includes("Subscription paused"));
@@ -2182,7 +2183,7 @@ test("Weight and Capability are sliders with the chosen value beside the label, 
     );
     assert.match(
       ui.get("Capability help").props.accessibilityHint,
-      /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/,
+      /Frontier requires a request at Low, Normal and High\. Heavyweight does too at Low and Normal unless the task starts or climbs there/,
     );
     ui.press("Weight: fewest assignments");
     await waitFor(

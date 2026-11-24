@@ -1888,6 +1888,23 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
     const tree = mounted;
     // Ten queued tasks in all: four shipped cards and six held back by the snapshot.
     await settle(() => Boolean(tree.query("Queue, 10")));
+    tree.raw.press(/^Projects, /);
+    tree.raw.press(/^Project App,/);
+    assert.ok(
+      tree.raw.get("Queue, 6"),
+      "App includes its four held-back tasks",
+    );
+    tree.raw.press(/^Projects, /);
+    tree.raw.press(/^Project Other,/);
+    assert.ok(
+      tree.raw.get("Queue, 4"),
+      "Other includes its two held-back tasks",
+    );
+    tree.raw.press(/^Projects, /);
+    tree.raw.press("Clear project selection");
+    tree.raw.press("Projects, All projects");
+    assert.ok(tree.raw.get("Queue, 10"));
+    assert.equal(reads.length, 0, "menu totals do not require a queue page");
     openView(tree, "Queue");
     // A list that scrolls waits for the scroll: the pane is shorter than its content.
     const list = listScroll(tree);

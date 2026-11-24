@@ -30,14 +30,13 @@ test('detail no family names is the declared tail, not a silent default', () => 
   assert.deepEqual(taskStopClassification('').reason, 'operator_needed');
 });
 
-test('a recorded stop is a wait or a hold by its own typed reason, with its detail only for an older row', () => {
+test('a recorded stop is a wait or a hold by its typed reason even if its detail suggests otherwise', () => {
   const record = taskStopRecord('capacity', 'Waiting for a project slot…', null, at);
   assert.equal(recordedStopIsWait(record), true);
   assert.equal(recordedStopIsHeld(record), false);
-  // A row whose reason was typed before its sentence changed keeps both answers.
-  assert.equal(recordedStopIsWait(taskStopRecord('operator_needed', 'Origin author thread 0b355fd4 active turn', null, at)), true);
+  assert.equal(recordedStopIsWait(taskStopRecord('operator_needed', 'Origin author thread 0b355fd4 active turn', null, at)), false);
   assert.equal(recordedStopIsHeld(taskStopRecord('held', 'a sentence that names no hold', null, at)), true);
-  assert.equal(recordedStopIsHeld(taskStopRecord('operator_needed', 'Merge held by operator: receipt pending', null, at)), true);
+  assert.equal(recordedStopIsHeld(taskStopRecord('operator_needed', 'Merge held by operator: receipt pending', null, at)), false);
   assert.equal(recordedStopIsWait(taskStopRecord('operator_needed', 'Needs a decision', null, at)), false);
 });
 

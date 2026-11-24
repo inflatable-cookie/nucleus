@@ -23,6 +23,15 @@ test('queue actions precede the slot table and run list in a viewport-constraine
       act: async () => {}, error: '', onDismissError: () => {}, readError: null,
       staleRead: null, inset: 12, settingsOpener: null, filter: null, children: null,
     }) }) }));
+    const pause = ui.get('Pause and drain');
+    assert.equal(pause.props.accessibilityHint, 'Pause and drain');
+    assert.equal(pause.props.style.borderTopRightRadius, 0);
+    assert.equal(pause.props.style.borderBottomRightRadius, 0);
+    assert.doesNotMatch(ui.text(), /Pause and drain/, 'the button displays only its icon');
+    pause.props.onHoverIn();
+    assert.match(ui.text(), /Pause and drain/, 'hover reveals the icon button label');
+    ui.get('Pause and drain').props.onHoverOut();
+    assert.doesNotMatch(ui.text(), /Pause and drain/, 'leaving the button hides the label');
     ui.press('Queue controls menu');
     const menu = ui.get('Queue controls');
     const children = menu.children.filter((node): node is HostNode => typeof node !== 'string');

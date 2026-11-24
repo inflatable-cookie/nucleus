@@ -526,9 +526,8 @@ export function taskStopClassification(
 }
 
 /**
- * Whether a recorded stop is a wait. Its own typed reason decides; its detail is
- * classified too, for a row whose reason and sentence were written by an older
- * path. One owner answers this so no surface re-reads the sentence itself.
+ * Whether a recorded stop is a wait. The typed reason decides, including for
+ * older rows that carry a reason. The detail stays display text.
  */
 export function recordedStopIsWait(
   record: Pick<TaskStopRecord, "reason">,

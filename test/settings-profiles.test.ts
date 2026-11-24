@@ -1313,11 +1313,11 @@ test("the dispatch row and sliders wait for the board: absent while it loads or 
     assert.equal(
       ui.query("Profile dispatch row"),
       undefined,
-      "no Subscription or Weight while the board loads",
+      "no Subscription while the board loads",
     );
     assert.equal(
-      ui.query("Cost value"),
-      undefined,
+      ui.all(/^(Weight|Capability) slider,/).length,
+      0,
       "no sliders while the board loads",
     );
     assert.ok(
@@ -1341,11 +1341,14 @@ test("the dispatch row and sliders wait for the board: absent while it loads or 
     } as never);
     await settle(() => Boolean(ui.query("Profile dispatch row")));
     assert.equal(
-      ui.get("Weight for Imported Sol").props.value,
-      "3",
+      ui.get("Weight slider, Most").props.accessibilityValue.now,
+      4,
       "the stored weight shows once the board arrives",
     );
-    assert.equal(ui.get("Cost value").children.join(""), "Unset");
+    assert.equal(
+      ui.get("Capability slider, not set").props.accessibilityValue.text,
+      "Not set",
+    );
   } finally {
     ui.update(h("View", null));
   }
@@ -1359,7 +1362,7 @@ test("the dispatch row and sliders wait for the board: absent while it loads or 
       undefined,
       "a failed board read shows no dispatch fields to edit",
     );
-    assert.equal(failed.query("Cost value"), undefined);
+    assert.equal(failed.all(/^(Weight|Capability) slider,/).length, 0);
   } finally {
     failed.update(h("View", null));
   }
@@ -1476,9 +1479,9 @@ test("host option values read as plain words", async () => {
   assert.equal(settings.plainWords("GPT-5 high", "gpt-5-high"), "GPT-5 high");
 });
 
-test("a Profiles card shows Name, Subscription, Weight, Provider and Model at one control height with one caption size, wide and narrow", async () => {
+test("a Profiles card uses shared field heights, slider targets and captions at wide and narrow widths", async () => {
   await load();
-  const { control, caption } = await import("../client/design");
+  const { control, caption, touchTarget } = await import("../client/design");
   const state = fixture();
   const tree = h(QueryClientProvider, {
     client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -1529,17 +1532,34 @@ test("a Profiles card shows Name, Subscription, Weight, Provider and Model at on
       const heights = {
         name: ui.get("Name").props.style.minHeight,
         subscription: ui.get("Subscription").props.style.minHeight,
-        decrease: ui.get("Decrease weight for Imported Sol").props.style
-          .minHeight,
-        weight: ui.get("Weight for Imported Sol").props.style.height,
-        increase: ui.get("Increase weight for Imported Sol").props.style
-          .minHeight,
         provider: trigger("Provider").props.style.minHeight,
         model: trigger("Model").props.style.minHeight,
       };
       for (const [field, height] of Object.entries(heights))
         assert.equal(height, control.height, `${field} at ${width} points`);
-      for (const text of ["Subscription", "Weight", "Provider", "Model"]) {
+      for (const name of ["Weight slider, Most", "Capability slider, not set"]) {
+        const slider = ui.get(name);
+        assert.equal(
+          slider.props.style.height,
+          touchTarget,
+          `${name} at ${width} points`,
+        );
+        const column = ui.ofType("View").findLast(
+          (node) => node.props.style?.flex === 1 && labelsIn(node).includes(name),
+        );
+        assert.equal(
+          column?.props.style.minWidth,
+          width === 358 ? "100%" : 0,
+          `${name} column at ${width} points`,
+        );
+      }
+      for (const text of [
+        "Subscription",
+        "Weight",
+        "Capability",
+        "Provider",
+        "Model",
+      ]) {
         const style = (ui.ofType("Text") as Node[]).find(
           (node) => node.children.join("") === text,
         )?.props.style;
@@ -1555,13 +1575,7 @@ test("a Profiles card shows Name, Subscription, Weight, Provider and Model at on
         control.text.fontSize,
       );
     }
-    // At the phone width Subscription and Weight each take a full row; By request is retired.
-    const row = ui.get("Profile dispatch row") as Node;
-    const cells = row.children.filter(
-      (cell): cell is Node => typeof cell !== "string",
-    );
-    assert.equal(cells[0].props.style.minWidth, "100%");
-    assert.equal(cells[1].props.style.minWidth, "100%");
+    assert.ok(labelsIn(ui.get("Profile dispatch row")).includes("Subscription"));
     assert.equal(ui.query("Selection by request"), undefined);
   } finally {
     ui.update(h("View", null));

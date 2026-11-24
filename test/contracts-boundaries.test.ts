@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkBridgeImports } from '../scripts/check-bridge-imports.mjs';
 import ts from 'typescript';
@@ -74,10 +74,24 @@ test('domain modules form an acyclic graph with schemas below RPC definitions', 
   for (const path of graph.keys()) visit(path, []);
 });
 
-test('contracts preserves every domain schema and RPC value as a re-export', async () => {
+// Domain modules can export implementation values for their direct consumers.
+// The compatibility barrel has never exposed these particular values.
+const domainOnlyExports = new Map<string, readonly string[]>([
+  ['schema/resolution-warnings.ts', ['PLANNER_ONLY_WARNINGS']],
+  ['schema/triage.ts', ['planningTriageSchema', 'triageRecordItemSchema']],
+  ['schema/work-storage.ts', ['workStorageInputSchema', 'workStoragePathsSchema', 'workStorageRetiredSchema', 'workStorageStateSchema']],
+]);
+
+test('contracts preserves the domain re-exports and keeps direct-only values in their modules', async () => {
   for (const path of [...files(resolve(root, 'schema')), ...files(resolve(root, 'rpc'))]) {
     const domain = await import(pathToFileURL(path).href);
+    const domainOnly = domainOnlyExports.get(relative(root, path)) ?? [];
+    for (const name of domainOnly) {
+      assert.ok(Object.hasOwn(domain, name), `${path}: ${name} is no longer a domain export`);
+      assert.ok(!Object.hasOwn(contracts, name), `${path}: ${name} is a direct-only export`);
+    }
     for (const [name, value] of Object.entries(domain)) {
+      if (domainOnly.includes(name)) continue;
       assert.equal(contracts[name as keyof typeof contracts], value, `${path}: ${name} must remain a re-export`);
     }
   }
