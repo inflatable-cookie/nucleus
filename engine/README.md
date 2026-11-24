@@ -503,8 +503,8 @@ Remove inside the editor.
 
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
-| Profiles | `config/profiles.json` | Name, optional subscription group, and canonical selection with stable ID, capability, weight, provider, model and effort. |
-| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, one host call slot and one optional allowance in minutes. |
+| Profiles | `config/profiles.json` | Name, optional subscription group, canonical selection with stable ID, capability, weight, provider, model and effort, and the operator's `pausedGroups` list. |
+| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, one host call slot, one optional allowance in minutes and `providerLimitCooldownSeconds` (default 300). |
 | Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
 | Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
@@ -549,10 +549,14 @@ An empty or unreadable history leaves selection to the configured weights. A
 failed usage write rolls back the charge while leaving the launch available.
 Configured profiles use one T3 catalog read per pass for due launch decisions.
 A profile's optional `group` names its subscription. Unset groups use the
-resolved T3 provider instance ID. The scheduler freezes the profile and native
-request together, using the retained worker's model to require an independent
-reviewer. An unavailable profile leaves the task waiting. Fixture serve files
-without a Profiles domain keep their static worker and reviewer settings.
+resolved T3 provider instance ID. The scheduler freezes the group, profile
+and native request together, using the retained worker's model to require an
+independent reviewer. An unavailable profile leaves the task waiting.
+Provider usage pauses follow [Spec 070](../docs/knowledge/specs/070-small-engine.md#rulings).
+The T3 adapter reads the exact run's structured
+[`error.failure` item](https://github.com/pingdotgg/t3code/blob/1368854828e259fe6e9539239b36dbf71b50301c/packages/contracts/src/orchestrationV2.ts).
+Fixture serve files without a Profiles domain keep their static worker and
+reviewer settings.
 
 ## Milestone 1 proof
 

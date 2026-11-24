@@ -71,6 +71,42 @@ fn observation() -> Observation {
 }
 
 #[test]
+fn provider_pauses_survive_reopen_and_expire_at_the_deadline() {
+    let home = tempfile::tempdir().expect("fixture volume");
+    let storage = fixture_storage(home.path());
+    {
+        let store = Store::open(&storage).expect("open before pause");
+        store
+            .record_provider_pause("shared", 5_000, 1_000)
+            .expect("first limit");
+        store
+            .record_provider_pause("shared", 6_000, 2_000)
+            .expect("later deadline");
+        store
+            .record_provider_pause("shared", 5_500, 3_000)
+            .expect("shorter deadline");
+        store
+            .record_provider_pause("stale", 4_000, 4_000)
+            .expect("expired input");
+    }
+    let store = Store::open(&storage).expect("reopen after limits");
+    assert_eq!(
+        store.active_provider_pauses(5_999).expect("still paused"),
+        [("shared".into(), 6_000)].into()
+    );
+    assert!(
+        store
+            .active_provider_pauses(6_000)
+            .expect("at deadline")
+            .is_empty()
+    );
+    assert_eq!(
+        store.provider_pause("shared", 6_000).expect("expired"),
+        None
+    );
+}
+
+#[test]
 fn a_stale_writer_cannot_change_state_or_append_history() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());

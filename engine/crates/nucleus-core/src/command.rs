@@ -128,7 +128,11 @@ impl Task {
             decision,
             summary,
         }) = run
-            .filter(|run| observation.current(&run.launch.instance) == Some(RunState::Ended))
+            .filter(|run| {
+                observation
+                    .current(&run.launch.instance)
+                    .is_some_and(RunState::ended)
+            })
             .and_then(|run| run.report)
         {
             if self.pr.as_ref().is_some_and(|pr| pr.head == head) {
@@ -148,7 +152,10 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
-        if observation.current(&run.launch.instance) == Some(RunState::Ended) {
+        if observation
+            .current(&run.launch.instance)
+            .is_some_and(RunState::ended)
+        {
             self.threads.bind(&run.launch);
         }
         Some(run)
@@ -199,7 +206,7 @@ impl Task {
         inputs: LaunchInputs,
         seed: &[u8; 32],
     ) -> Result<CallbackCredential, CommandError> {
-        self.reserve(observation, inputs, seed, None)
+        self.reserve(observation, inputs, seed, None, None)
     }
 
     /// Freeze the selected profile with the adapter's prepared wire. The same
@@ -214,7 +221,22 @@ impl Task {
         seed: &[u8; 32],
         intent: ProfileLaunch,
     ) -> Result<CallbackCredential, CommandError> {
-        self.reserve(observation, inputs, seed, Some(intent))
+        self.reserve(observation, inputs, seed, Some(intent), None)
+    }
+
+    /// Freeze the subscription charged by this reservation with its native inputs.
+    ///
+    /// # Errors
+    /// Returns an error if the launch no longer applies or IDs are exhausted.
+    pub fn reserve_grouped_launch(
+        &mut self,
+        observation: &Observation,
+        inputs: LaunchInputs,
+        seed: &[u8; 32],
+        intent: Option<ProfileLaunch>,
+        group: String,
+    ) -> Result<CallbackCredential, CommandError> {
+        self.reserve(observation, inputs, seed, intent, Some(group))
     }
 
     fn reserve(
@@ -223,6 +245,7 @@ impl Task {
         inputs: LaunchInputs,
         seed: &[u8; 32],
         intent: Option<ProfileLaunch>,
+        subscription_group: Option<String>,
     ) -> Result<CallbackCredential, CommandError> {
         let Action::Launch { role, via } = decide(self, observation) else {
             return Err(CommandError::LaunchNoLongerApplies);
@@ -277,6 +300,7 @@ impl Task {
                 input: inputs.input,
                 review_head,
                 profile,
+                subscription_group,
             },
             report: None,
             revoked: false,
@@ -284,6 +308,20 @@ impl Task {
             rejected_awaiting_archive: false,
         });
         Ok(bearer)
+    }
+
+    /// Retire a proven unsent reservation so another subscription can be selected.
+    pub fn discard_paused_reservation(&mut self, observation: &Observation) -> bool {
+        let unsent = self.run.as_ref().is_some_and(|run| {
+            !run.revoked
+                && run.last_send_at_ms.is_none()
+                && run.report.is_none()
+                && observation.current(&run.launch.instance) == Some(RunState::ReadyToSend)
+        });
+        if unsent {
+            self.run = None;
+        }
+        unsent
     }
 
     /// Obtain the ID the next reservation will use so the caller can freeze its wire.

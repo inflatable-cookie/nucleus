@@ -34,7 +34,8 @@ An agent can't get a task stuck in a way that `move` can't undo.
 
 ## Rulings
 
-Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
+Tom approved the original rulings on 2026-11-23 ("Approve, let's get this working.").
+Later decisions carry their own attribution.
 
 1. **The recovery coordinator role is retired.** Code handles mechanical faults. This
    replaces the AGENTS.md product rule "one retained recovery thread handles
@@ -138,6 +139,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.
     - Install also creates the pinned Nucleus Inbox session (ruling 18) if it's missing, or adopts the existing one, so a fresh install has its Inbox with no further steps. Uninstall unpins and archives it; decisions stay in the store. Status reports the Inbox thread. Tom, 2026-11-24: "The install/uninstall surface should also set up / tear down the pinned inbox thread, right?"
     - A later ADE gets the same three commands under its own name.
+25. **Subscription groups pause on confirmed provider limits** (planner decision, 2026-11-24).
+    - The adapter requires a failed native run started by the reservation's message and a usage-limit classification on its latest failed root error. An active run, an earlier or nested error, unstructured text and an unknown read cannot establish a limit.
+    - The scheduler excludes the run's subscription group until the provider reset or, when the provider gives no usable reset, the configured cooldown from the failure time. The deadline survives an engine restart and expires automatically.
+    - Profiles settings can also pause a group until an operator edits the setting. Both pauses apply across roles and projects. An otherwise eligible task waits for Capacity until its earliest eligible reset or a settings change.
+    - A run that ends on a confirmed limit without a report releases its slot without charging a failed attempt or opening a question. Existing send receipts and verified replay rules still apply.
 
 ## The model
 

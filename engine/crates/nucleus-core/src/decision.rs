@@ -48,6 +48,8 @@ pub enum RunState {
     Input,
     /// The exact native turn associated with this reservation is terminal.
     Ended,
+    /// The exact native turn ended on a provider usage limit.
+    UsageLimited,
     /// A previously confirmed run or thread disappeared on an authoritative read.
     Gone,
     /// A checked receipt or a proven pre-send failure confirms that the exact
@@ -59,8 +61,12 @@ impl RunState {
     pub(crate) const fn quiescent(self) -> bool {
         matches!(
             self,
-            Self::ReadyToSend | Self::Ended | Self::Gone | Self::Rejected
+            Self::ReadyToSend | Self::Ended | Self::UsageLimited | Self::Gone | Self::Rejected
         )
+    }
+
+    pub(crate) const fn ended(self) -> bool {
+        matches!(self, Self::Ended | Self::UsageLimited)
     }
 }
 
@@ -254,7 +260,10 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
-            Some(RunState::Ended) => settled(task, observation, role, run.report.as_ref()),
+            Some(RunState::UsageLimited) if run.report.is_none() => Signal::Stopped(task.phase),
+            Some(RunState::Ended | RunState::UsageLimited) => {
+                settled(task, observation, role, run.report.as_ref())
+            }
             Some(RunState::Gone | RunState::Rejected) => settled(task, observation, role, None),
         };
     }

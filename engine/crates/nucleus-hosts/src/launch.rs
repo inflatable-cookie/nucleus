@@ -222,6 +222,26 @@ impl Wire {
     }
 }
 
+/// Read the provider instance frozen in a T3 reservation.
+///
+/// # Errors
+/// Returns an error if the reservation is not a valid T3 request.
+pub fn launch_provider_instance(run: &Run) -> Result<Option<String>, HostError> {
+    let wire = Wire::read(run)?;
+    let selection = if wire.method == Method::Continue {
+        wire.selection
+    } else {
+        let payload: Value =
+            serde_json::from_str(wire.payload.get()).map_err(|_| HostError::Configuration)?;
+        payload.get("modelSelection").cloned()
+    };
+    Ok(selection
+        .as_ref()
+        .and_then(|selection| selection["instanceId"].as_str())
+        .filter(|instance| !instance.is_empty())
+        .map(str::to_owned))
+}
+
 pub(crate) fn delegated_child(instance: &str) -> String {
     format!("thread:delegated-task:{instance}")
 }

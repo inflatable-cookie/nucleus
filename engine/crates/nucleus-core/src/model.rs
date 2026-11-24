@@ -385,12 +385,19 @@ pub struct PreparedLaunch {
     pub review_head: Option<Head>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) profile: Option<BoundProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) subscription_group: Option<String>,
 }
 
 impl PreparedLaunch {
     #[must_use]
     pub fn profile(&self) -> Option<&Profile> {
         self.profile.as_ref().map(|bound| &bound.selected)
+    }
+
+    #[must_use]
+    pub fn subscription_group(&self) -> Option<&str> {
+        self.subscription_group.as_deref()
     }
 }
 

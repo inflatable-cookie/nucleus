@@ -104,6 +104,10 @@ impl Schedule {
         self.tasks.entry(id.into()).or_default().wake(due, priority);
     }
 
+    pub(crate) fn park(&mut self, id: &str) {
+        self.tasks.entry(id.into()).or_default();
+    }
+
     pub(crate) fn retry_task(
         &mut self,
         id: &str,

@@ -431,6 +431,21 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
 pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {
+    native_fixture_with_traffic(response, None).await
+}
+
+#[derive(Default)]
+pub(super) struct NativeTraffic {
+    pub(super) received: AtomicUsize,
+    pub(super) sent: AtomicUsize,
+    pub(super) received_frames: AtomicUsize,
+    pub(super) frame_received: Notify,
+}
+
+pub(super) async fn native_fixture_with_traffic(
+    response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
+    traffic: Option<Arc<NativeTraffic>>,
+) -> (T3, tokio::task::JoinHandle<()>) {
     let app = Router::new()
         .route(
             "/api/auth/websocket-ticket/rpc",
@@ -441,12 +456,19 @@ pub(super) async fn native_fixture(
             get(move |upgrade: WebSocketUpgrade| async move {
                 upgrade.on_upgrade(move |mut ws| async move {
                     while let Some(Ok(Message::Text(frame))) = ws.recv().await {
+                        if let Some(traffic) = &traffic {
+                            traffic.received.fetch_add(frame.len(), Ordering::Relaxed);
+                            traffic.received_frames.fetch_add(1, Ordering::Relaxed);
+                            traffic.frame_received.notify_one();
+                        }
                         let req: Value = serde_json::from_str(&frame).expect("Effect request");
                         if req["_tag"] == "Request" {
-                            let reply = response(&req);
-                            ws.send(Message::Text(reply.to_string().into()))
-                                .await
-                                .expect("reply");
+                            let reply = response(&req).to_string();
+                            let bytes = reply.len();
+                            ws.send(Message::Text(reply.into())).await.expect("reply");
+                            if let Some(traffic) = &traffic {
+                                traffic.sent.fetch_add(bytes, Ordering::Relaxed);
+                            }
                         }
                     }
                 })
