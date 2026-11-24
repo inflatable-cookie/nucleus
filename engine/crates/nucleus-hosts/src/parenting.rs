@@ -17,7 +17,7 @@ use crate::{
     Binding, HostError, ProfileCatalog, RowChildren, RowObservation, RowVisibility, T3, clock_ms,
     message_id,
     projection::{ParentCustody, Projection, Subagent},
-    rpc::{Read, Reply, ThreadFence},
+    rpc::{Read, Reply, ThreadFence, closed_row},
     task_row::ThreadVisibility,
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, row_activity},
 };
@@ -48,6 +48,20 @@ pub struct ParentAttempt<'a> {
 pub enum ParentSendError {
     NotSent(HostError),
     Unknown(HostError),
+}
+
+/// Next housekeeping action for the known threads of a Done task.
+pub enum DoneArchive {
+    Finished,
+    Write(ArchiveWrite),
+    Wait(String),
+}
+
+/// A listed, idle thread at the revision that authorized its archival.
+pub struct ArchiveWrite {
+    thread: String,
+    command: String,
+    marker: Arc<Value>,
 }
 
 /// Closeout evidence journaled for one completed task binding.
@@ -413,6 +427,34 @@ pub fn parent_thread(checkout: &Path) -> String {
 }
 
 impl T3 {
+    /// Run checkout retirement while the synchronized shell lists no active or unknown writers.
+    ///
+    /// # Errors
+    /// Returns an error if the shell lost synchronization or a listed thread is not quiet.
+    pub fn retire_with_quiet_shell<T>(
+        &self,
+        parent: &str,
+        roles: &[&str],
+        retire: impl FnOnce() -> T,
+    ) -> Result<T, HostError> {
+        self.rpc.with_shell(|shell| {
+            let shell = shell.ok_or(HostError::Uncertain)?;
+            let quiet = roles
+                .iter()
+                .copied()
+                .chain(shell.children(parent))
+                .all(|id| {
+                    shell.marker(id).is_none_or(|row| {
+                        !row["deletedAt"].is_null() || row_activity(&row) == RowChildren::Quiet
+                    })
+                });
+            if !quiet {
+                return Err(HostError::RowChildBusy);
+            }
+            Ok(retire())
+        })
+    }
+
     /// Prepare a refresh of an existing, idle, unarchived task row.
     ///
     /// # Errors
@@ -451,6 +493,93 @@ impl T3 {
                 "dispatchMode":{"type":"queue_after_active"},
             }),
         }))
+    }
+
+    /// Choose an idle, unarchived thread from the synchronized shell.
+    ///
+    /// # Errors
+    /// Returns an error if a listed destination belongs to another checkout.
+    pub fn prepare_archive(
+        &self,
+        binding: &Binding,
+        reviewer: Option<&str>,
+        worker: Option<&str>,
+    ) -> Result<DoneArchive, HostError> {
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        self.rpc.with_shell(|shell| {
+            let Some(shell) = shell else {
+                return Ok(DoneArchive::Wait("Waiting for T3 to synchronize.".into()));
+            };
+            let mut wait = None;
+            for (role, thread) in [
+                ("reviewer", reviewer),
+                ("worker", worker),
+                ("task", Some(parent.as_str())),
+            ] {
+                let Some(thread) = thread else { continue };
+                let Some(marker) = shell.marker(thread).filter(|row| !closed_row(row)) else {
+                    continue;
+                };
+                if marker["projectId"] != binding.project_id
+                    || marker["worktreePath"] != binding.worktree_path
+                    || marker["branch"] != binding.branch
+                {
+                    return Err(HostError::Binding);
+                }
+                let reason = match row_activity(&marker) {
+                    RowChildren::Active => format!("The {role} thread is still active in T3."),
+                    RowChildren::Quiet => {
+                        let updated = marker["updatedAt"].as_str().ok_or(HostError::Uncertain)?;
+                        return Ok(DoneArchive::Write(ArchiveWrite {
+                            thread: thread.into(),
+                            command: format!("{thread}-archive-{updated}"),
+                            marker,
+                        }));
+                    }
+                    RowChildren::Unknown => {
+                        format!("Waiting for T3 to show the {role} thread is idle.")
+                    }
+                };
+                wait.get_or_insert(reason);
+            }
+            Ok(wait.map_or(DoneArchive::Finished, DoneArchive::Wait))
+        })
+    }
+
+    /// Archive the prepared thread if its held row still matches at the wire.
+    ///
+    /// # Errors
+    /// Returns an error if T3 refuses the command or delivery is uncertain.
+    pub async fn write_archive(&self, write: ArchiveWrite) -> Result<bool, HostError> {
+        let same_row = || {
+            self.rpc
+                .thread_row(&write.thread)
+                .is_some_and(|current| Arc::ptr_eq(&current, &write.marker))
+        };
+        if !same_row() {
+            return Ok(false);
+        }
+        let mut sent = false;
+        let reply = self
+            .rpc
+            .call_guarded(
+                "orchestration.dispatchCommand",
+                json!({
+                    "type": "thread.archive",
+                    "threadId": write.thread,
+                    "commandId": write.command,
+                }),
+                Read::Background,
+                || {
+                    sent = same_row();
+                    Ok(sent)
+                },
+            )
+            .await?;
+        match reply {
+            Reply::Value(_) => Ok(sent),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
     }
 
     /// Retire children before the parent and retain proven terminal evidence.
@@ -1112,4 +1241,22 @@ fn dispose_completion(
             }),
         })
     })
+}
+
+impl crate::T3Pass<'_> {
+    /// Check native and local process activity before removing a checkout.
+    ///
+    /// # Errors
+    /// Returns an error if the host or process evidence is incomplete.
+    pub async fn retirement_idle(
+        &self,
+        binding: &Binding,
+        thread: &str,
+    ) -> Result<bool, HostError> {
+        let projection = self
+            .host
+            .read_thread(binding, thread, ThreadRead::Listed)
+            .await?;
+        self.quiet(binding, thread, projection.as_ref()).await
+    }
 }

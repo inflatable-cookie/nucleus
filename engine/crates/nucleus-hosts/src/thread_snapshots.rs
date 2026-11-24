@@ -14,6 +14,7 @@ pub(crate) enum ThreadRead {
     Observation,
     Exact,
     Inbox,
+    Listed,
     Terminal,
 }
 
