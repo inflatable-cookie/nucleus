@@ -4,6 +4,12 @@ import { useTick } from "../use-tick";
 import type { RustLifecycle } from "../web/rust-board";
 import { ProgressStrip } from "./progress-strip";
 
+const stepStatus = {
+  todo: "not started",
+  current: "in progress",
+  done: "complete",
+};
+
 function duration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -30,7 +36,16 @@ export function RustTaskProgress({
   );
   const now = Date.now();
   const steps = progress.steps.map(
-    ({ key, label, state, tone, elapsedMs, activeSinceMs, roundLabel }) => {
+    ({
+      key,
+      label,
+      state,
+      tone,
+      note,
+      elapsedMs,
+      activeSinceMs,
+      roundLabel,
+    }) => {
       const time =
         key === "queued" && progress.admittedAtMs !== null
           ? new Date(progress.admittedAtMs).toLocaleTimeString([], {
@@ -51,6 +66,16 @@ export function RustTaskProgress({
         state,
         tone,
         sub: [roundLabel, time].filter(Boolean).join(" · "),
+        hint: barsOnly
+          ? [
+              label,
+              roundLabel?.toLowerCase(),
+              note,
+              time ?? (!note ? stepStatus[state] : null),
+            ]
+              .filter(Boolean)
+              .join(" · ")
+          : undefined,
       };
     },
   );

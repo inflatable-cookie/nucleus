@@ -222,11 +222,9 @@ export function activityStatus(activity: TaskActivity): CardStatus {
 export function StatusLine({
   status,
   c,
-  compact = false,
 }: {
   status: CardStatus;
   c: Colors;
-  compact?: boolean;
 }) {
   const color = toneColor(status.tone, c);
   return (
@@ -253,7 +251,7 @@ export function StatusLine({
         numberOfLines={1}
         ellipsizeMode="tail"
         style={{
-          flex: compact ? undefined : 1,
+          flex: 1,
           minWidth: 0,
           fontSize: typeScale.metadata.fontSize,
           lineHeight: typeScale.metadata.lineHeight,
@@ -293,7 +291,6 @@ export const BoardCard = React.memo(function BoardCard({
   age,
   title,
   status,
-  statusInHeader = false,
   progress,
   flags,
   actions,
@@ -319,8 +316,6 @@ export const BoardCard = React.memo(function BoardCard({
   /** The record's own title, drawn as written (the caller sanitizes operational titles). */
   title: string;
   status?: CardStatus | null;
-  /** Put the state beside the age and leave any detail under the title. */
-  statusInHeader?: boolean;
   /** The task timeline bars below the card body. */
   progress?: React.ReactNode;
   /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
@@ -333,8 +328,7 @@ export const BoardCard = React.memo(function BoardCard({
   actions?: React.ReactNode;
 }) {
   const variant = React.useContext(BoardCardVariantContext);
-  const headerStatus = statusInHeader ? status : null;
-  const hasMeta = Boolean(meta || project || age || headerStatus);
+  const hasMeta = Boolean(meta || project || age);
   const content = (
     <View
       pointerEvents="box-none"
@@ -381,11 +375,6 @@ export const BoardCard = React.memo(function BoardCard({
             </View>
           ) : null}
           <View style={{ flex: 1 }} />
-          {headerStatus && (
-            <View style={{ minWidth: 0, flexShrink: 1 }}>
-              <StatusLine c={c} status={{ ...headerStatus, detail: null }} compact />
-            </View>
-          )}
           {age ? (
             <Text
               numberOfLines={1}
@@ -405,19 +394,15 @@ export const BoardCard = React.memo(function BoardCard({
         pointerEvents="none"
         numberOfLines={2}
         style={{
-          color: c.foreground,
-          fontWeight: "600",
+          color: selected ? c.foreground : c.foregroundMuted,
+          fontWeight: "400",
           fontSize: typeScale.body.fontSize,
           lineHeight: typeScale.body.lineHeight,
         }}
       >
         {title}
       </Text>
-      {headerStatus?.detail ? (
-        <Text pointerEvents="none" numberOfLines={1} style={muted(c)}>
-          {plainCardText(headerStatus.detail)}
-        </Text>
-      ) : status && !headerStatus ? (
+      {status ? (
         <View pointerEvents="none">
           <StatusLine status={status} c={c} />
         </View>
@@ -506,7 +491,7 @@ export const BoardCard = React.memo(function BoardCard({
           </View>
         )}
         {progress && (
-          <View style={{ paddingHorizontal: space.md, paddingBottom: space.sm }}>
+          <View style={{ paddingLeft: space.md + actionInset, paddingRight: space.md, paddingBottom: space.sm }}>
             {progress}
           </View>
         )}
@@ -547,7 +532,7 @@ export const BoardCard = React.memo(function BoardCard({
           {actions}
         </View>
       )}
-      {progress}
+      {progress && <View style={{ paddingLeft: actionInset }}>{progress}</View>}
     </View>
   );
 });

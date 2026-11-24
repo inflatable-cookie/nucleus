@@ -173,6 +173,7 @@ export const taskDetail = {
   timelineDot: 9,
   timelineLine: 1,
   stepBarHeight: 4,
+  compactStepBarHeight: 2,
   stepBarRadius: 2,
   budgetBarHeight: 5,
   severityWidth: 34,

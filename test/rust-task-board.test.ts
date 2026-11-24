@@ -809,8 +809,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         hold: taskPhase === "queued" || workerRunning ? null : { reason: "Wait before dispatching again." },
       };
       if (taskPhase === "working") {
-        card.lifecycle.steps = card.lifecycle.steps.map((step) =>
-          step.key === "working" ? { ...step, activeSinceMs: now } : step);
+        card.lifecycle.steps = card.lifecycle.steps.map((step) => {
+          if (step.key === "working") return { ...step, activeSinceMs: now };
+          if (step.key === "review") return { ...step, elapsedMs: 430_000 };
+          return step;
+        });
       }
       if (path === "/api/engine/tasks/board-task") {
         return Response.json({
@@ -894,7 +897,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       (node) => node.childElementCount === 0 && node.textContent === age,
     );
     assert.ok(ageText?.parentElement, age);
-    assert.ok(ageText.parentElement.textContent?.endsWith(state + age));
+    assert.equal(ageText.parentElement.lastElementChild, ageText);
+    assert.ok(!ageText.parentElement.textContent?.includes(state));
     return ageText.parentElement;
   };
   const heldCard = selector("#81, Held task")!;
@@ -902,7 +906,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const heldHeader = header(heldCard, "Held by planner", "3h ago");
   assert.match(heldHeader.textContent ?? "", /^#81/);
   assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
-  assert.match(heldCard.textContent ?? "", /Held taskWait for the schema review\./);
+  assert.match(heldCard.textContent ?? "", /Held taskHeld by planner · Wait for the schema review\./);
   assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
   const capacityCard = selector("#80, Standalone task")!;
   header(capacityCard, "Waiting for capacity", "12m ago");
@@ -916,6 +920,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
   const workingCard = selector("#80, Standalone task")!;
   header(workingCard, "Working*", "12m ago");
+  const title = [...workingCard.querySelectorAll("div")].find(
+    (node) => node.childElementCount === 0 && node.textContent === "Standalone task",
+  );
+  assert.ok(title);
+  const style = (element: Element) => dom.window.getComputedStyle(element);
+  assert.equal(style(title).fontWeight, "400");
+  assert.equal(style(title).color, "rgb(165, 172, 184)");
+  assert.equal(title.nextElementSibling?.textContent, "Working* · Wait before dispatching again.");
   assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
   assert.deepEqual(routes.map((route, i) => count(route) - beforeTransition[i]!), [1, 0, 0, 0]);
   const cardStrip = workingCard.parentElement?.querySelector('[role="img"][aria-label^="Progress:"]');
@@ -927,13 +939,32 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(workingCard.parentElement?.lastElementChild?.contains(cardStrip), "the strip is at the bottom of the card");
   assert.equal(cardStrip.children.length, 5, "one bar per code task step");
   assert.equal(cardStrip.textContent, "", "card bars have no visible text");
-  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2\)/);
+  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2 · 7m 10s\)/);
+  const footer = cardStrip.parentElement!;
+  const body = workingCard.firstElementChild!;
+  const tile = body.firstElementChild!;
+  const leftPadding = (element: Element) => Number.parseFloat(style(element).paddingLeft) || 0;
+  assert.equal(leftPadding(footer), leftPadding(workingCard) + Number.parseFloat(style(tile).width) + Number.parseFloat(style(body).gap));
+  assert.equal(Number.parseFloat(style(footer).paddingRight) || 0, Number.parseFloat(style(workingCard).paddingRight) || 0);
+  for (const segment of cardStrip.children)
+    assert.equal(style(segment.firstElementChild!).height, "2px");
+
+  const tooltip = () => dom.window.document.querySelector('[role="tooltip"]');
+  for (const [index, text] of [[1, "Working · 13m 51s"], [2, "Review · round 2 · 7m 10s"], [3, "Merge · not started"]] as const) {
+    const segment = cardStrip.children[index]!;
+    segment.dispatchEvent(new dom.window.PointerEvent("pointerenter", { pointerType: "mouse" }));
+    await eventually(() => tooltip()?.textContent === text, "hover shows " + text);
+    segment.dispatchEvent(new dom.window.PointerEvent("pointerleave", { pointerType: "mouse" }));
+    await eventually(() => !tooltip(), "leaving the segment dismisses the tooltip");
+  }
 
   await click("#80, Standalone task");
   const detailProgress = () => selector("Task detail")?.querySelector('[aria-label^="Progress:"]');
   await eventually(() => Boolean(detailProgress()?.textContent?.includes("13m 51s")),
     "the selected task displays its run duration in the timeline");
   const fullStrip = detailProgress()!;
+  assert.equal(style(title).fontWeight, "400");
+  assert.equal(style(title).color, "rgb(241, 243, 245)");
   assert.match(fullStrip.textContent ?? "", /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/);
   const colours = (strip: Element) => Array.from(strip.children, (step) => {
     assert.ok(step.firstElementChild);
@@ -953,7 +984,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.deepEqual(routes.map((route, i) => count(route) - beforeDetail[i]!), [0, 0, 0, 0]);
   workerRunning = true;
   emit("invalidate", { taskId: "board-task", version: 10 });
-  await eventually(() => Boolean(selector("#80, Standalone task")?.textContent?.includes("Working12m ago")),
+  await eventually(() => Boolean(selector("#80, Standalone task")?.textContent?.endsWith("Standalone taskWorking")),
     "the task list shows the running worker");
   const beforePause = taskReads();
   dispatch = { ...dispatch, mode: "paused" };

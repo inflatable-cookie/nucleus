@@ -1,8 +1,10 @@
-import { Text, View } from "react-native";
-import type { Colors } from "../controls";
+import { useRef, useState, type ReactNode } from "react";
+import { Pressable, Text, View } from "react-native";
+import { popover, type Colors } from "../controls";
+import { Popover } from "../popover";
 import type { ProgressStep } from "../../shared/task-detail-view";
 import { detailToneColor } from "./task-header";
-import { roles, space, taskDetail, type as typeScale } from "../design";
+import { roles, space, taskDetail, radius, type as typeScale } from "../design";
 
 /**
  * The task lifecycle as a strip of steps.
@@ -16,7 +18,10 @@ export function ProgressStrip({
   barsOnly = false,
   c,
 }: {
-  steps: readonly (Omit<ProgressStep, "key"> & { key: string })[];
+  steps: readonly (Omit<ProgressStep, "key"> & {
+    key: string;
+    hint?: string;
+  })[];
   compact: boolean;
   subLines?: 1 | 2;
   barsOnly?: boolean;
@@ -41,6 +46,24 @@ export function ProgressStrip({
             : step.state === "current"
               ? detailToneColor(step.tone, c)
               : r.raised;
+        const bar = (
+          <View
+            style={{
+              height: barsOnly
+                ? taskDetail.compactStepBarHeight
+                : taskDetail.stepBarHeight,
+              borderRadius: taskDetail.stepBarRadius,
+              backgroundColor: barColor,
+            }}
+          />
+        );
+        if (barsOnly && step.hint) {
+          return (
+            <StepHint key={step.key} c={c} text={step.hint}>
+              {bar}
+            </StepHint>
+          );
+        }
         return (
           <View
             key={step.key}
@@ -55,13 +78,7 @@ export function ProgressStrip({
               gap: space.xxs,
             }}
           >
-            <View
-              style={{
-                height: taskDetail.stepBarHeight,
-                borderRadius: taskDetail.stepBarRadius,
-                backgroundColor: barColor,
-              }}
-            />
+            {bar}
             {!barsOnly && (
               <>
                 <Text
@@ -94,5 +111,47 @@ export function ProgressStrip({
         );
       })}
     </View>
+  );
+}
+
+/** The strip has one accessible summary. Hover reveals one step without adding tab stops. */
+function StepHint({
+  c,
+  text,
+  children,
+}: {
+  c: Colors;
+  text: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<View | null>(null);
+  return (
+    <Pressable
+      ref={anchor}
+      tabIndex={-1}
+      onHoverIn={() => setOpen(true)}
+      onHoverOut={() => setOpen(false)}
+      style={{ flex: 1, minWidth: 0, paddingVertical: space.xxs }}
+    >
+      {children}
+      {open && (
+        <Popover anchor={anchor} pointerEvents="none" maxWidth={260}>
+          <View
+            role="tooltip"
+            style={{
+              ...popover(c),
+              paddingHorizontal: space.xs,
+              paddingVertical: space.xxs,
+              borderRadius: radius.control,
+            }}
+          >
+            <Text style={{ ...typeScale.metadata, color: roles(c).foreground }}>
+              {text}
+            </Text>
+          </View>
+        </Popover>
+      )}
+    </Pressable>
   );
 }

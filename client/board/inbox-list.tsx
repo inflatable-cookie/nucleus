@@ -895,7 +895,6 @@ export function RustListRows({ c, rust, view }: {
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
-        statusInHeader
         status={{
           tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
           state: task.stateLabel, detail: question ? null : detail,
