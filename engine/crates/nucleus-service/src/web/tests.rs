@@ -1395,6 +1395,8 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     }
     let path = "/v1/settings/dispatch";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(original["value"]["globalSlots"], 32);
+    assert_eq!(original["value"]["projectDefaultSlots"], 5);
     let mut update = json!({"revision": original["revision"], "value": original["value"]});
     update["value"]["globalSlots"] = json!(0);
     assert_eq!(

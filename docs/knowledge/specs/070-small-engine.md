@@ -73,7 +73,7 @@ Later decisions carry their own attribution.
 
    **Limits (Tom, 2026-11-24).** Dispatch owns the global limit, per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. A run needs room under both ceilings, counting the project's member repositories together. A first worker checkout also needs room under twice the effective project limit. Review entry and existing work continue through their own gates. Concurrent host calls stays fixed at one under ruling 11.
 
-   `limits.import` reads the five capacity and retention meta keys from a fenced TypeScript copy. Applying it under the stopped profile lock removes old Projects slot fields and publishes the imported limits in Dispatch once. Projects without an imported override, including the Barge pilot, inherit the per-project default. Later edits survive replay.
+   Fresh installs start at 32 global slots and 5 per project, matching the TypeScript defaults. `limits.import` reads the five capacity and retention meta keys from a fenced TypeScript copy. Applying it under the stopped profile lock removes old Projects slot fields and publishes the imported limits in Dispatch once. Projects without an imported override, including the Barge pilot, inherit the per-project default. Later edits survive replay.
 
    Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Ruling 5 retires Default host. The import carries retention settings ahead of the scheduler pruning change.
 
