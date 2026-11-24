@@ -359,15 +359,15 @@ fn one_line(text: &str, limit: usize) -> String {
         .join(" ")
 }
 
-pub(super) fn role_start_line(task: &Task, store: &Store) -> Result<String, StoreError> {
-    Ok(match task.phase() {
-        Phase::Reviewing => {
-            let round = lifecycle::Audit::read(store, task)?.next_review_round();
-            format!("Starting reviewer round {round}")
-        }
+pub(super) fn role_start_line(task: &Task, store: &Store) -> String {
+    match task.phase() {
+        Phase::Reviewing => lifecycle::Audit::read(store, task).map_or_else(
+            |_| "Starting review".into(),
+            |audit| format!("Starting reviewer round {}", audit.next_review_round()),
+        ),
         Phase::Working if is_revision(task) => "Starting revisions".into(),
         _ => "Starting work".into(),
-    })
+    }
 }
 
 fn purpose(task: &Task, role: Role, review_round: Option<u64>) -> String {

@@ -775,7 +775,7 @@ impl Service {
                 state.wait_reason(&identity.id).filter(|reason| {
                     !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
                 }),
-                crate::presentation::role_start_line(task, &state.store)?,
+                crate::presentation::role_start_line(task, &state.store),
             )
         };
         match self
