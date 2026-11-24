@@ -62,6 +62,8 @@ pub struct Item {
     pub id: String,
     pub kind: ItemKind,
     pub author: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_links: Vec<String>,
     #[serde(flatten)]
     pub content: ItemContent,
     #[serde(flatten)]
@@ -122,7 +124,7 @@ pub struct Decision {
     pub answer: Option<DecisionAnswer>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<DecisionTarget>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub withdrawn: bool,
 }
 
@@ -177,7 +179,7 @@ pub enum RecordKind {
 pub struct History {
     pub sequence: i64,
     pub actor: String,
-    pub at_ms: u64,
+    pub at_ms: i64,
     pub action: String,
     pub snapshot: Value,
 }
@@ -186,8 +188,4 @@ pub struct History {
 pub struct WriteAt<'a> {
     pub actor: &'a str,
     pub at_ms: u64,
-}
-
-const fn is_false(value: &bool) -> bool {
-    !*value
 }

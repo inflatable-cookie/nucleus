@@ -69,7 +69,7 @@ impl Store {
     ) -> Result<Decision, StoreError> {
         let tx = self.planning_write()?;
         let mut decision: Decision = required(&tx, DecisionRecord, project, id)?;
-        if decision.withdrawn {
+        if decision.withdrawn || (decision.task.is_some() && decision.answer.is_some()) {
             return Err(StoreError::PlanningConflict);
         }
         if !decision
@@ -135,7 +135,7 @@ impl Store {
             if decision.task.as_ref() != Some(target) {
                 return Err(StoreError::PlanningConflict);
             }
-            if !decision.withdrawn {
+            if !decision.withdrawn && decision.answer.is_none() {
                 decision.withdrawn = true;
                 save(
                     &tx,

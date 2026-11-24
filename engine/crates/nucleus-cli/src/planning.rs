@@ -1,11 +1,19 @@
-use std::io;
+use std::{
+    collections::BTreeMap,
+    env, io,
+    path::{Path, PathBuf},
+};
 
 use clap::Subcommand;
-use nucleus_store::planning::{DecisionOption, PlanLane, valid_key};
+use nucleus_store::planning::{
+    DecisionOption, MAX_TEXT_BYTES, PlanLane,
+    legacy::{self, ImportMode},
+    valid_key,
+};
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use super::{Result, from_reader, stdin_text};
+use super::{Result, read_with_limit};
 
 #[derive(Subcommand)]
 pub(super) enum Action {
@@ -112,12 +120,16 @@ pub(super) enum Action {
 }
 
 impl Action {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep each CLI verb next to its complete wire request"
+    )]
     pub(super) fn request(self) -> Result<(Method, String, Option<Value>)> {
         use Action as A;
         let (method, project, path, body) = match self {
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
             A::PlanSet { project, version } => {
-                let lanes: Vec<PlanLane> = from_reader(io::stdin().lock())?;
+                let lanes: Vec<PlanLane> = serde_json::from_str(&stdin_text()?)?;
                 (
                     Method::PUT,
                     project,
@@ -248,6 +260,14 @@ impl Action {
     }
 }
 
+fn stdin_text() -> Result<String> {
+    let limit = u64::try_from(MAX_TEXT_BYTES)?;
+    Ok(String::from_utf8(read_with_limit(
+        io::stdin().lock(),
+        limit,
+    )?)?)
+}
+
 fn segment(value: &str) -> Result<&str> {
     if valid_key(value) {
         Ok(value)
@@ -265,4 +285,33 @@ fn decision_option(value: &str) -> std::result::Result<DecisionOption, String> {
         id: id.into(),
         label: label.into(),
     })
+}
+
+pub(super) fn repository_mapping(input: &str) -> std::result::Result<(String, String), String> {
+    let (repository, project) = input.split_once('=').ok_or("expected owner/repo=project")?;
+    Ok((repository.into(), project.into()))
+}
+
+pub(super) fn import_items(
+    source: &Path,
+    repositories: Vec<(String, String)>,
+    keep: bool,
+) -> Result<()> {
+    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
+        .map(PathBuf::from)
+        .ok_or("set NUCLEUS_SCRATCH_ROOT to the configured scratch root")?;
+    let mut mapping = BTreeMap::new();
+    for (repository, project) in repositories {
+        if mapping.insert(repository, project).is_some() {
+            return Err("supply only one project per legacy repository".into());
+        }
+    }
+    let mode = if keep {
+        ImportMode::Keep
+    } else {
+        ImportMode::Rehearse
+    };
+    let report = legacy::import_items(&scratch, source, &mapping, mode)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }

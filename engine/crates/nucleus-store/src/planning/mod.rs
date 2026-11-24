@@ -1,6 +1,7 @@
 //! Project-scoped planning records and their append-only history.
 
 mod decisions;
+pub mod legacy;
 mod model;
 
 use std::collections::BTreeSet;
@@ -12,6 +13,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::{EventDraft, Store, StoreError, append, decode_error, persist};
 
 pub use model::*;
+
+/// Space for legacy Markdown even when every character uses four UTF-8 bytes.
+pub const MAX_TEXT_BYTES: usize = 4_000_000;
 
 pub(super) const SCHEMA: &str = include_str!("schema.sql");
 
@@ -74,7 +78,11 @@ impl Store {
         document: LaneDocument,
         stamp: WriteAt<'_>,
     ) -> Result<Lane, StoreError> {
-        if !valid_key(key) || document.title.trim().is_empty() || document.aim.trim().is_empty() {
+        if !valid_key(key)
+            || document.title.trim().is_empty()
+            || document.aim.trim().is_empty()
+            || document.document.len() > MAX_TEXT_BYTES
+        {
             return Err(StoreError::PlanningInput);
         }
         let tx = self.planning_write()?;
@@ -151,6 +159,7 @@ impl Store {
             id,
             kind,
             author: stamp.actor.into(),
+            task_links: Vec::new(),
             content,
             state: ItemState::Open,
         };
@@ -197,7 +206,12 @@ impl Store {
         };
         let tx = self.planning_write()?;
         let mut item: Item = required(&tx, ItemRecord, project, id)?;
-        if matches!(item.state, ItemState::Promoted { .. }) {
+        if matches!(item.state, ItemState::Promoted { .. })
+            || matches!(
+                (&item.state, &state),
+                (ItemState::Dropped { .. }, ItemState::Parked { .. })
+            )
+        {
             return Err(StoreError::PlanningConflict);
         }
         item.state = state;
@@ -400,9 +414,10 @@ fn record_history(
     snapshot: &str,
     stamp: WriteAt<'_>,
 ) -> Result<(), StoreError> {
+    let at_ms = i64::try_from(stamp.at_ms).map_err(|_| StoreError::PlanningInput)?;
     tx.execute(
         "INSERT INTO planning_history (project, kind, id, actor, at_ms, action, snapshot) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![project, kind.as_str(), id, stamp.actor, stamp.at_ms, action, snapshot],
+        params![project, kind.as_str(), id, stamp.actor, at_ms, action, snapshot],
     )?;
     Ok(())
 }
@@ -424,6 +439,7 @@ fn next_version(current: u64, expected: u64) -> Result<u64, StoreError> {
 
 fn validate_item(content: &ItemContent) -> Result<(), StoreError> {
     if content.title.trim().is_empty()
+        || content.body.len() > MAX_TEXT_BYTES
         || !content.lanes.iter().all(|key| valid_key(key))
         || content.lanes.iter().collect::<BTreeSet<_>>().len() != content.lanes.len()
     {

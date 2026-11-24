@@ -1,13 +1,13 @@
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection},
     http::StatusCode,
     routing::{get, post, put},
 };
 use nucleus_core::Authority;
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent, ItemKind,
-    ItemState, Lane, LaneDisposition, LaneDocument, Plan, RecordKind,
+    ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan, RecordKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,9 @@ pub(super) fn routes() -> Router<Api> {
             .route("/tasks", post(add_task))
             .route("/decisions", get(decisions).post(add_decision))
             .route("/decisions/{id}/answer", post(answer_decision))
-            .route("/history/{kind}/{id}", get(history)),
+            .route("/history/{kind}/{id}", get(history))
+            // A JSON string can use six bytes to escape one input byte.
+            .layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024)),
     )
 }
 

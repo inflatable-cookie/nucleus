@@ -8,7 +8,7 @@ mod titles;
 mod usage;
 mod volume;
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use nucleus_core::{Phase, Role, Task, profiles::RotationCounts};
 use rusqlite::{
@@ -118,8 +118,12 @@ impl Store {
     pub fn open(storage: &EngineStorage) -> Result<Self, StoreError> {
         let directory = storage.database();
         directory.ensure()?;
+        Self::open_database(&directory.path().join(DATABASE_FILE))
+    }
+
+    fn open_database(path: &Path) -> Result<Self, StoreError> {
         let mut connection = Connection::open_with_flags(
-            directory.path().join(DATABASE_FILE),
+            path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,

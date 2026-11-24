@@ -2,7 +2,8 @@ use nucleus_core::{Authority, Task, profiles::BriefPolicy};
 use nucleus_store::{
     StoreError, TaskRow,
     planning::{
-        Decision, DecisionAnswerInput, DecisionInput, ItemSource, ItemState, WriteAt, valid_key,
+        Decision, DecisionAnswerInput, DecisionInput, ItemSource, ItemState, MAX_TEXT_BYTES,
+        WriteAt, valid_key,
     },
 };
 use serde::Deserialize;
@@ -182,6 +183,9 @@ pub(crate) fn new_id(prefix: &str) -> Result<String, ServiceError> {
 }
 
 fn check_brief(brief: &str) -> Result<(), ServiceError> {
+    if brief.len() > MAX_TEXT_BYTES {
+        return Err(ServiceError::Input);
+    }
     BriefPolicy::parse(brief).map_err(|_| ServiceError::Input)?;
     Ok(())
 }

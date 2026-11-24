@@ -1,0 +1,474 @@
+//! Offline import from a standalone TypeScript `SQLite` copy into Rust scratch.
+
+#[cfg(test)]
+mod tests;
+mod versions;
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
+
+use rusqlite::{Connection, OpenFlags, Transaction};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use url::Url;
+
+use super::{
+    Item, ItemContent, ItemKind, ItemRecord, ItemState, WriteAt, decode, record_history, save,
+    valid_key,
+};
+use crate::{DATABASE_FILE, Store, StoreError};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ImportError {
+    #[error("the source must be a standalone SQLite copy inside the configured scratch root")]
+    Source,
+    #[error("the copy does not contain a legacy planning table")]
+    Schema,
+    #[error("every repository needs a project mapping; missing {0}")]
+    Repository(String),
+    #[error("invalid repository mapping or legacy item {0}")]
+    Item(String),
+    #[error("invalid history for legacy lead {id} at version {version}")]
+    History { id: String, version: u32 },
+    #[error("invalid legacy timestamp {0}")]
+    Timestamp(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ImportMode {
+    Rehearse,
+    Keep,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub leads: usize,
+    pub papercuts: usize,
+    pub versions: usize,
+    pub task_links: usize,
+    pub database: Option<PathBuf>,
+}
+
+/// Read an immutable TS backup and run the item import in a fresh scratch database.
+/// Rehearsal rolls back the same transaction a kept import commits.
+///
+/// # Errors
+/// Returns an error for an unsafe path, unmapped repository, or unreadable source or destination.
+pub fn import_items(
+    scratch: &Path,
+    source: &Path,
+    repositories: &BTreeMap<String, String>,
+    mode: ImportMode,
+) -> Result<ImportReport, ImportError> {
+    if !scratch.is_absolute() || repositories.is_empty() {
+        return Err(ImportError::Source);
+    }
+    let scratch = scratch.canonicalize()?;
+    let source = open_copy(&scratch, source)?;
+    let mut mapping = BTreeMap::new();
+    for (repository, project) in repositories {
+        let valid_origin = repository
+            .split_once('/')
+            .is_some_and(|(owner, name)| valid_key(owner) && valid_key(name));
+        if !valid_origin
+            || !valid_key(project)
+            || mapping
+                .insert(repository.to_ascii_lowercase(), project.as_str())
+                .is_some()
+        {
+            return Err(ImportError::Item(repository.clone()));
+        }
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("nucleus-planning-import-")
+        .tempdir_in(scratch)?;
+    let database = directory.path().join(DATABASE_FILE);
+    let mut store = Store::open_database(&database)?;
+    let tx = store.planning_write()?;
+    let mut report = copy_items(&source, &tx, &mapping)?;
+    match mode {
+        ImportMode::Rehearse => tx.rollback()?,
+        ImportMode::Keep => {
+            tx.commit()?;
+            drop(store);
+            report.database = Some(directory.keep().join(DATABASE_FILE));
+        }
+    }
+    Ok(report)
+}
+
+fn open_copy(scratch: &Path, path: &Path) -> Result<Connection, ImportError> {
+    let path = path.canonicalize()?;
+    if !path.starts_with(scratch) {
+        return Err(ImportError::Source);
+    }
+    let metadata = path.metadata()?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(ImportError::Source);
+    }
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        match fs::symlink_metadata(sidecar) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+            Ok(_) => return Err(ImportError::Source),
+        }
+    }
+    let mut url = Url::from_file_path(path).map_err(|()| ImportError::Source)?;
+    url.query_pairs_mut().append_pair("immutable", "1");
+    let source = Connection::open_with_flags(
+        url.as_str(),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    source.pragma_update(None, "trusted_schema", false)?;
+    Ok(source)
+}
+
+fn copy_items(
+    source: &Connection,
+    target: &Transaction<'_>,
+    mapping: &BTreeMap<String, &str>,
+) -> Result<ImportReport, ImportError> {
+    let leads = has_table(source, "leads")?;
+    let papercuts = has_table(source, "papercuts")?;
+    if !leads && !papercuts {
+        return Err(ImportError::Schema);
+    }
+    let mut report = ImportReport::default();
+    if leads {
+        let mut query = source.prepare("SELECT id, data FROM leads ORDER BY id")?;
+        let rows = query.query_map([], legacy_row)?;
+        let mut history = versions::Reader::new(source)?;
+        for row in rows {
+            let (id, mut raw) = row?;
+            let revisions = history.read(&id)?;
+            if raw["body"].is_null()
+                && let Some(version) = raw["version"].as_u64()
+                && let Ok(version) = u32::try_from(version)
+                && let Some(snapshot) = revisions.get(&version)
+            {
+                raw["body"] = snapshot["body"].clone();
+            }
+            let fields: LegacyItem = serde_json::from_value(raw.clone())?;
+            copy_item(target, mapping, &id, &fields, &raw, &revisions, &mut report)?;
+        }
+    }
+    if papercuts {
+        let statement = if leads {
+            "SELECT id, data FROM papercuts WHERE NOT EXISTS (SELECT 1 FROM leads WHERE leads.id = papercuts.id) ORDER BY id"
+        } else {
+            "SELECT id, data FROM papercuts ORDER BY id"
+        };
+        let mut query = source.prepare(statement)?;
+        let rows = query.query_map([], legacy_row)?;
+        for row in rows {
+            let (id, raw) = row?;
+            let cut: LegacyPapercut = serde_json::from_value(raw.clone())?;
+            copy_item(
+                target,
+                mapping,
+                &id,
+                &cut.into_item(),
+                &raw,
+                &BTreeMap::new(),
+                &mut report,
+            )?;
+        }
+    }
+    Ok(report)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyItem {
+    id: String,
+    title: String,
+    body: String,
+    author: String,
+    repositories: Vec<Repository>,
+    #[serde(default)]
+    lanes: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    papercut: Option<Value>,
+    state: LegacyState,
+    parked: Option<Park>,
+    drop_reason: Option<String>,
+    closure: Option<Closure>,
+    #[serde(default)]
+    targets: Vec<Target>,
+    created_at: String,
+    updated_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Repository {
+    origin: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyState {
+    Open,
+    Parked,
+    Dropped,
+    Closed,
+    Promoted,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Park {
+    reason: String,
+    revisit_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Closure {
+    reason: String,
+    note: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Target {
+    kind: String,
+    repository: Option<String>,
+    reference: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyPapercut {
+    id: String,
+    title: String,
+    repository: Repository,
+    area: Option<String>,
+    happened: String,
+    impact: String,
+    fix: Option<String>,
+    filed_by: String,
+    filed_at: String,
+    state: LegacyState,
+    parked: Option<Park>,
+    #[serde(default)]
+    lanes: Vec<String>,
+    task_id: Option<String>,
+    closed_reason: Option<String>,
+    note: Option<String>,
+    closed_at: Option<String>,
+}
+
+impl LegacyPapercut {
+    fn into_item(self) -> LegacyItem {
+        let body = [
+            self.area.map(|area| format!("Area\n\n{area}")),
+            Some(format!("What happened\n\n{}", self.happened)),
+            Some(format!("Impact\n\n{}", self.impact)),
+            self.fix.map(|fix| format!("Suggested fix\n\n{fix}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+        let targets = self
+            .task_id
+            .map(|reference| Target {
+                kind: "task".into(),
+                repository: Some(self.repository.origin.clone()),
+                reference,
+            })
+            .into_iter()
+            .collect();
+        LegacyItem {
+            id: self.id,
+            title: self.title,
+            body,
+            author: self.filed_by,
+            repositories: vec![self.repository],
+            lanes: self.lanes,
+            tags: vec!["papercut".into()],
+            papercut: None,
+            state: self.state,
+            parked: self.parked,
+            drop_reason: None,
+            closure: self.closed_reason.map(|reason| Closure {
+                reason,
+                note: self.note,
+            }),
+            targets,
+            created_at: self.filed_at,
+            updated_at: self.closed_at,
+        }
+    }
+}
+
+impl LegacyItem {
+    fn kind(&self) -> ItemKind {
+        if self.papercut.is_some() || self.tags.iter().any(|tag| tag == "papercut") {
+            ItemKind::Papercut
+        } else {
+            ItemKind::Lead
+        }
+    }
+
+    fn state(&self, task_links: &[String]) -> ItemState {
+        match self.state {
+            LegacyState::Open | LegacyState::Parked => {
+                self.parked
+                    .as_ref()
+                    .map_or(ItemState::Open, |park| ItemState::Parked {
+                        reason: park.reason.clone(),
+                        revisit_at: park.revisit_at.clone(),
+                    })
+            }
+            LegacyState::Promoted => task_links.first().map_or_else(
+                || ItemState::Dropped {
+                    reason: Some("Legacy promotion has no task in this project.".into()),
+                },
+                |id| ItemState::Promoted {
+                    task_id: id.clone(),
+                },
+            ),
+            LegacyState::Closed | LegacyState::Dropped => ItemState::Dropped {
+                reason: self.drop_reason.clone().or_else(|| {
+                    self.closure.as_ref().map(|closure| {
+                        closure
+                            .note
+                            .clone()
+                            .unwrap_or_else(|| closure.reason.clone())
+                    })
+                }),
+            },
+        }
+    }
+}
+
+fn copy_item(
+    tx: &Transaction<'_>,
+    mapping: &BTreeMap<String, &str>,
+    id: &str,
+    legacy: &LegacyItem,
+    raw: &Value,
+    revisions: &BTreeMap<u32, Value>,
+    report: &mut ImportReport,
+) -> Result<(), ImportError> {
+    if id != legacy.id
+        || !valid_key(id)
+        || legacy.repositories.is_empty()
+        || legacy.author.trim().is_empty()
+        || legacy.title.trim().is_empty()
+        || (matches!(legacy.state, LegacyState::Parked) && legacy.parked.is_none())
+    {
+        return Err(ImportError::Item(id.into()));
+    }
+    let mut projects = BTreeSet::new();
+    for repository in &legacy.repositories {
+        let project = mapping
+            .get(&repository.origin.to_ascii_lowercase())
+            .ok_or_else(|| ImportError::Repository(repository.origin.clone()))?;
+        projects.insert(*project);
+    }
+    let at_ms = date_ms(legacy.updated_at.as_deref().unwrap_or(&legacy.created_at))?;
+    let kind = legacy.kind();
+    for project in projects {
+        let mut seen = BTreeSet::new();
+        let task_links: Vec<_> = legacy
+            .targets
+            .iter()
+            .filter(|target| {
+                target.kind == "task"
+                    && !target.reference.trim().is_empty()
+                    && target.repository.as_ref().is_none_or(|repository| {
+                        mapping.get(&repository.to_ascii_lowercase()) == Some(&project)
+                    })
+                    && seen.insert(&target.reference)
+            })
+            .map(|target| target.reference.clone())
+            .collect();
+        let item = Item {
+            id: id.into(),
+            kind,
+            author: legacy.author.clone(),
+            content: ItemContent {
+                title: legacy.title.clone(),
+                body: legacy.body.clone(),
+                lanes: legacy.lanes.clone(),
+            },
+            state: legacy.state(&task_links),
+            task_links,
+        };
+        for version in revisions.values() {
+            let author = version["author"].as_str().unwrap_or(&legacy.author);
+            let date = version["createdAt"].as_str().unwrap_or(&legacy.created_at);
+            record_history(
+                tx,
+                ItemRecord,
+                project,
+                id,
+                "legacy_version",
+                &version.to_string(),
+                WriteAt {
+                    actor: author,
+                    at_ms: date_ms(date)?,
+                },
+            )?;
+        }
+        let stamp = WriteAt {
+            actor: &legacy.author,
+            at_ms,
+        };
+        record_history(
+            tx,
+            ItemRecord,
+            project,
+            id,
+            "legacy_snapshot",
+            &raw.to_string(),
+            stamp,
+        )?;
+        save(tx, ItemRecord, project, id, "import", &item, stamp)?;
+        match kind {
+            ItemKind::Lead => report.leads += 1,
+            ItemKind::Papercut => report.papercuts += 1,
+        }
+        report.versions += revisions.len();
+        report.task_links += item.task_links.len();
+    }
+    Ok(())
+}
+
+fn date_ms(date: &str) -> Result<u64, ImportError> {
+    OffsetDateTime::parse(date, &Rfc3339)
+        .ok()
+        .and_then(|date| u64::try_from(date.unix_timestamp_nanos() / 1_000_000).ok())
+        .ok_or_else(|| ImportError::Timestamp(date.into()))
+}
+
+fn legacy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, Value)> {
+    Ok((row.get(0)?, decode(row, 1)?))
+}
+
+fn has_table(source: &Connection, name: &str) -> rusqlite::Result<bool> {
+    source.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+        [name],
+        |row| row.get(0),
+    )
+}
