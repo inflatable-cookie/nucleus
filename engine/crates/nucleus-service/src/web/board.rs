@@ -431,20 +431,22 @@ async fn events(
     State(api): State<Api>,
     Extension(session): Extension<BrowserSession>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let settings = stream::unfold(
-        api.service.settings_changes.subscribe(),
-        |mut changes| async {
-            changes.changed().await.ok()?;
-            Some((Ok(Event::default().event("settings").data("{}")), changes))
-        },
-    );
-    let decisions = stream::unfold(
-        api.service.decision_changes.subscribe(),
-        |mut changes| async {
-            changes.changed().await.ok()?;
-            Some((Ok(Event::default().event("decisions").data("{}")), changes))
-        },
-    );
+    let changes = [
+        ("settings", &api.service.settings_changes),
+        ("storage", &api.service.storage_changes),
+        ("planning", &api.service.planning_changes),
+        ("decisions", &api.service.decision_changes),
+        ("profile-usage", &api.service.profile_usage_changes),
+    ];
+    let changes = stream::select_all(changes.map(|(name, sender)| {
+        Box::pin(stream::unfold(
+            sender.subscribe(),
+            move |mut changes| async move {
+                changes.changed().await.ok()?;
+                Some((Ok(Event::default().event(name).data("{}")), changes))
+            },
+        ))
+    }));
     let mut theme = api.service.theme.subscribe();
     theme.mark_unchanged();
     let theme = stream::unfold(theme, |mut changes| async {
@@ -457,10 +459,7 @@ async fn events(
     });
     let changes = stream::select(
         invalidation_events(api.service, None, session.scope),
-        stream::select(
-            stream::select(settings, decisions),
-            stream::select(theme, catalog),
-        ),
+        stream::select(changes, stream::select(theme, catalog)),
     )
     .take_until(async move {
         let mut revoked = session.revoked;

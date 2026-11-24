@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineRpc } from "../shared/rpc";
+import { uiStateSchema } from "../shared/schema/state";
 
 /**
  * Board contracts only the Rust engine answers (Spec 070 ruling 8).
@@ -13,3 +14,17 @@ export const rustProjectArchive = defineRpc({
   input: z.object({ project: z.string().min(1), archived: z.boolean() }).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
 });
+
+
+export const rustProfileUsage = defineRpc({
+  name: "rust.profile-usage",
+  input: z.object({}).strict(),
+  output: uiStateSchema.pick({
+    availability: true,
+    assignments: true,
+    recentAssignments: true,
+    recentAssignmentSample: true,
+    recentAssignmentRoles: true,
+  }),
+});
+export const RUST_PROFILE_USAGE_KEY = ["nucleus", "rust-profile-usage"] as const;

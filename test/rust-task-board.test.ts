@@ -707,8 +707,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
+  let workerRunning = false;
   const now = 1_800_000_000_000;
-  dom.window.Date.now = () => now;
+  let clock = now;
+  dom.window.Date.now = () => clock;
+  let operator = true;
+  let pausedGroups = ["fixture team"];
+  let usageCount = 49;
+  let resetAt: number | undefined;
   const held = {
     ...task("held-task", "queued", "board-fixture#81"),
     number: 81,
@@ -725,6 +731,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     providerLimitCooldownSeconds: 300, mode: "running",
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let closeStream: (() => void) | undefined;
   const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
   const views = {
     profiles: () => snap({
@@ -732,7 +739,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         name: "Fixture worker", group: "fixture team",
         selection: { id: "fixture-worker", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default" },
       }],
-      pausedGroups: ["fixture team"],
+      pausedGroups,
     }, "profiles-1"),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
@@ -764,35 +771,61 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           stream = controller;
+          let closed = false;
+          closeStream = () => {
+            if (closed) return;
+            closed = true;
+            controller.close();
+          };
+          init?.signal?.addEventListener("abort", closeStream, { once: true });
           controller.enqueue(new TextEncoder().encode("event: refresh\ndata: {}\n\n"));
         },
       });
-      init?.signal?.addEventListener("abort", () => stream?.close(), { once: true });
-      return new Response(body);
+        return new Response(body);
     }
     if (path === "/api/engine/session")
-      return Response.json({ id: "operator-session", canEditSettings: true, planningProjects: null });
+      return Response.json({
+        id: operator ? "operator-session" : "planner-session",
+        canEditSettings: operator,
+        planningProjects: operator ? null : ["fixture"],
+      });
     if (path === "/api/engine/theme") return Response.json({ theme: null });
     if (path === "/api/engine/profiles/usage") {
       const empty = { counts: {}, groups: {}, sample: 0 };
-      const recorded = { counts: { "fixture-worker": 50 }, groups: { "fixture team": 50 }, sample: 50 };
+      const counts = { "fixture-worker": usageCount };
+      const groups = { "fixture team": usageCount };
+      const recorded = { counts, groups, sample: Math.min(50, usageCount) };
       return Response.json({
         recent: recorded, worker: recorded, reviewer: empty,
-        totals: recorded.counts, groupTotals: recorded.groups, limitedGroups: {},
+        totals: counts, groupTotals: groups,
+        limitedGroups: resetAt ? { "fixture team": resetAt } : {},
       });
     }
     if (path === "/api/engine/profiles/catalog")
       return Response.json({ providers: null, readAtMs: null, status: "pending" });
-    if (path === "/api/engine/tasks") {
+    if (path.startsWith("/api/engine/tasks")) {
       const card = {
         ...task("board-task", taskPhase, "board-fixture#80"),
         number: 80,
         title: "Standalone task",
-        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : "Working*",
+        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
         stateSinceMs: now - 12 * 60_000,
-        wait: taskPhase === "queued" ? "capacity" : "hold",
-        hold: taskPhase === "queued" ? null : { reason: "Wait before dispatching again." },
+        wait: taskPhase === "queued" ? "capacity" : workerRunning ? "running" : "hold",
+        hold: taskPhase === "queued" || workerRunning ? null : { reason: "Wait before dispatching again." },
       };
+      if (taskPhase === "working") {
+        card.lifecycle.steps = card.lifecycle.steps.map((step) =>
+          step.key === "working" ? { ...step, activeSinceMs: now } : step);
+      }
+      if (path === "/api/engine/tasks/board-task") {
+        return Response.json({
+          ...card, createdAtMs: now, brief: { text: "Fixture brief", version: 1 },
+          pullRequest: null, verdict: null, run: null,
+        });
+      }
+      if (path === "/api/engine/tasks/board-task/next")
+        return Response.json({ ...card, commands: [] });
+      assert.equal(path, "/api/engine/tasks");
       return Response.json([card, held]);
     }
     if (path === "/api/engine/settings")
@@ -803,6 +836,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         const body = JSON.parse(String(init.body));
         writes.push({ path, body });
         if (domain === "dispatch") dispatch = body.value;
+        if (domain === "profiles") pausedGroups = body.value.pausedGroups;
+        stream?.enqueue(new TextEncoder().encode("event: settings\ndata: {}\n\n"));
       }
       return Response.json(views[domain]());
     }
@@ -827,16 +862,32 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     selector(label)?.click();
   };
   const text = () => dom.window.document.body.textContent ?? "";
+  const count = (route: string) => requests.filter((path) => path === "/api/engine" + route).length;
+  const emit = (event: string, value: object = {}) => stream!.enqueue(
+    new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`),
+  );
+  const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   dom.window.eval(`(() => { ${script} })()`);
   const planningReads = () => requests.filter((path) => path.startsWith("/api/engine/planning/"));
   await eventually(() => Boolean(selector("Needs you, 0")), "initial Needs you settles");
   assert.ok(stream, "the board subscribed to engine changes");
   assert.ok(planningReads().length > 0 && planningReads().every((path) => path.endsWith("/decisions")), "Needs you reads decisions only");
   const beforeTaskActivity = planningReads().length;
-  const taskReads = () => requests.filter((path) => path === "/api/engine/tasks").length;
-  const beforeTaskRead = taskReads();
-  stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
-  await eventually(() => taskReads() > beforeTaskRead, "task activity refreshes task data");
+  const taskReads = () => count("/tasks");
+  // Let the startup resync settle before observing the steady-state window.
+  await wait(150);
+  const routes = ["/tasks", "/profiles/usage", "/settings", "/settings/storage"];
+  const beforeIdle = routes.map(count);
+  assert.deepEqual(beforeIdle, [1, 0, 1, 0], "entry reads the task list and board settings once");
+  for (let i = 0; i < 5; i++) {
+    emit("invalidate", { taskId: "board-task", version: 8, detailOnly: true });
+    await wait(1000);
+  }
+  const idleReads = routes.map((route, i) => count(route) - beforeIdle[i]!);
+  t.diagnostic("5s idle with detail events: " + JSON.stringify(Object.fromEntries(
+    routes.map((route, i) => [route, idleReads[i]]),
+  )));
+  assert.deepEqual(idleReads, [0, 0, 0, 0]);
   assert.equal(planningReads().length, beforeTaskActivity, "task activity leaves decisions alone");
   stream.enqueue(new TextEncoder().encode("event: decisions\ndata: {}\n\n"));
   await eventually(() => planningReads().length === beforeTaskActivity + 1, "a decision change refreshes Needs you once");
@@ -869,12 +920,39 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
-  stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
+  const beforeTransition = routes.map(count);
+  emit("invalidate", { taskId: "board-task", version: 9 });
   await click("Working, 1");
   await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
   const workingCard = selector("#80, Standalone task")!;
   header(workingCard, "Working*", "12m ago");
   assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeTransition[i]!), [1, 0, 0, 0]);
+  await click("#80, Standalone task");
+  await eventually(() => text().includes("13m 51s"), "the selected task displays its run duration");
+  const beforeClock = requests.length;
+  clock += 2000;
+  await eventually(() => text().includes("13m 53s"), "run duration ticks locally");
+  assert.equal(requests.length, beforeClock);
+
+  const beforeDetail = routes.map(count);
+  const detailReads = count("/tasks/board-task");
+  emit("invalidate", { taskId: "board-task", version: 9, detailOnly: true });
+  await eventually(() => count("/tasks/board-task") === detailReads + 1, "detail changes refresh the open task");
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeDetail[i]!), [0, 0, 0, 0]);
+  workerRunning = true;
+  emit("invalidate", { taskId: "board-task", version: 10 });
+  await eventually(() => Boolean(selector("#80, Standalone task")?.textContent?.includes("Working12m ago")),
+    "the task list shows the running worker");
+  const beforePause = taskReads();
+  dispatch = { ...dispatch, mode: "paused" };
+  emit("settings");
+  await eventually(() => Boolean(selector("Draining · 1 active · 0 unconfirmed")), "the paused header keeps the live worker count");
+  assert.equal(taskReads(), beforePause, "pausing reuses the loaded task list");
+  dispatch = { ...dispatch, mode: "running" };
+  emit("settings");
+  await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
+
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");
   await click("Dispatch hold");
@@ -888,15 +966,36 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
   await click("Profiles");
-  await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "profile usage renders");
+  await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
   const toggle = selector("Disable Fixture worker");
   assert.ok(toggle && toggle.getAttribute("aria-disabled") !== "true");
   assert.ok(text().includes("Unavailable"), "the subscription pause renders");
   assert.doesNotMatch(text(), /Reading subscriptions/);
-  const settingsReads = () => requests.filter((path) => path === "/api/engine/settings").length;
-  const beforeRefresh = settingsReads();
-  stream.enqueue(new TextEncoder().encode("event: refresh\ndata: {}\n\n"));
-  await eventually(() => settingsReads() > beforeRefresh, "the board refreshes Settings");
-  assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on refresh");
+  await click("Reset fixture team");
+  await eventually(() => pausedGroups.length === 0 && !selector("Reset fixture team"), "manual subscription reset renders");
+  const beforeUsage = routes.map(count);
+  usageCount = 50;
+  resetAt = now + 60_000;
+  emit("profile-usage");
+  await eventually(() => text().includes("Unavailable until"), "runtime subscription pause renders");
+  assert.ok(selector("Fixture worker, all roles: 50 of 50 recent assignments"));
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeUsage[i]!), [0, 1, 0, 0]);
+
+  const beforeReconnect = routes.map(count);
+  assert.ok(closeStream);
+  closeStream();
+  await eventually(() => count("/events") === 2 && count("/profiles/usage") > beforeReconnect[1]!,
+    "a reconnected stream refreshes visible Settings", 5500);
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeReconnect[i]!), [0, 1, 1, 1]);
+  assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on reconnect");
+
+  operator = false;
+  emit("refresh");
+  await eventually(() => !selector("Disable Fixture worker"), "a new planner session clears operator controls");
+  await click("Profiles");
+  await eventually(() => Boolean(selector("Fixture worker: On")), "the scoped planner sees the stored profile");
+  assert.equal(selector("Fixture worker: On")?.getAttribute("aria-disabled"), "true");
+  await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
+  assert.equal(planningReads().length, beforeSettings);
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

@@ -101,7 +101,7 @@ impl Service {
                     at_ms: now_ms(),
                 },
             )?;
-            self.settings_changes.send_replace(());
+            self.planning_changes.send_replace(());
         }
         Ok(lane)
     }

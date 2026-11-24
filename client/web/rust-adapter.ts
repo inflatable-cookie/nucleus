@@ -49,17 +49,6 @@ export class RustUnsupported extends Error {
 const iso = (ms: number | null | undefined) =>
   ms == null ? null : new Date(ms).toISOString();
 
-/** Waits that mean a run is live on the host. */
-const EXECUTING = new Set([
-  "starting",
-  "running",
-  "permission",
-  "input",
-  "idle_without_terminal_run",
-  "assignment_too_large",
-  "retained_thread_busy",
-]);
-
 const PROJECT_KEY = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /**
@@ -246,18 +235,8 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   }
 
   async function snapshot(): Promise<api.UiBoard> {
-    const [all, tasks, profileUsage, caller] = await Promise.all([
-      settings(),
-      rust.board.list(AbortSignal.timeout(30_000)),
-      rust.profileUsage(),
-      session(),
-    ]);
+    const [all, caller] = await Promise.all([settings(), session()]);
     const dispatch = all.dispatch.value;
-    const backups = await rust.domain(storageView, "storage").catch(() => null);
-    const newest = backups?.backups?.verified
-      .map((backup) => backup.createdAt)
-      .sort()
-      .at(-1);
     const profiles = all.profiles.value.profiles.map(boardProfile);
     const rows = projectRows(all).filter(({ id }) =>
       caller.planningProjects === null || caller.planningProjects.includes(id),
@@ -274,7 +253,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       boundRuns: [],
       error: "",
       quiet: false,
-      activeWorkers: tasks.filter((task) => task.wait === "running").length,
+      activeWorkers: 0,
       unsettled: 0,
       stoppedThreads: 0,
       resumedThreads: 0,
@@ -291,41 +270,28 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       operationLimit: 64,
       operationBacklog: 0,
       operations: [],
-      backup: {
-        newestSnapshotAt: newest ?? null,
-        localError:
-          backups?.backups && backups.backups.issues > 0
-            ? "Some backups could not be verified."
-            : null,
-      },
+      backup: { newestSnapshotAt: null, localError: null },
       tasks: [],
       profiles: profiles.map((entry) => entry.view),
       pool: profiles.map((entry) => entry.pool),
       availability: boardSubscriptionAvailability(
         all.profiles.value.pausedGroups ?? [],
-        profileUsage.limitedGroups ?? {},
+        {},
       ),
-      ...boardProfileUsage(profileUsage),
+      assignments: {},
+      recentAssignments: {},
+      recentAssignmentSample: 0,
+      recentAssignmentRoles: {
+        worker: { counts: {}, sample: 0 },
+        reviewer: { counts: {}, sample: 0 },
+        coordinator: { counts: {}, sample: 0 },
+      },
+      projectActivity: [],
       queuedCounts: [],
       lanes: [],
       projects: rows
         .filter(({ project }) => !project.archived)
         .map(({ board }) => board),
-      // A task with a live run is executing work as of this read. The engine's
-      // summaries carry no history times yet, so idle tasks add no activity.
-      projectActivity: rows.map(({ board, project }) => {
-        const origins = new Set(project.repositories.map((repo) => repo.origin.toLowerCase()));
-        const at = new Date().toISOString();
-        const items = tasks
-          .filter(
-            (task) =>
-              origins.has(task.identity.repository.toLowerCase()) &&
-              task.wait !== null &&
-              EXECUTING.has(task.wait),
-          )
-          .map((task) => ({ id: task.identity.id, at, executing: true }));
-        return { key: board.key, items, lastAt: items.length ? at : null };
-      }),
       pendingSubmissions: [],
       projectBadges: undefined,
       // The saved T3 project title gives each repository the shared generated badge.
@@ -383,6 +349,13 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
 
   const handlers: Record<string, Handler> = {
     "queue.ui-snapshot": snapshot,
+    "rust.profile-usage": async () => {
+      const usage = await rust.profileUsage();
+      return {
+        ...boardProfileUsage(usage),
+        availability: boardSubscriptionAvailability([], usage.limitedGroups ?? {}),
+      };
+    },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
       return { effective: capacityValues(dispatch.value), changes: [] };
@@ -613,7 +586,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   };
 
   async function storageState() {
-    const storage = await rust.domain(storageView, "storage");
+    const storage = await rust.storage();
     const { active, settings: stored } = storage;
     return {
       workRoot: active.workRoot,

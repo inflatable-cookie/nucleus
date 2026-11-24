@@ -200,6 +200,7 @@ export function ProfileRow({
   state,
   visibleProfileIds,
   usageRole,
+  usageReady = true,
   busy,
   canEdit = true,
   editing,
@@ -224,6 +225,7 @@ export function ProfileRow({
   state: UiQueueState | null;
   visibleProfileIds: readonly string[];
   usageRole: UsageRole;
+  usageReady?: boolean;
   busy: boolean;
   canEdit?: boolean;
   editing: boolean;
@@ -297,7 +299,7 @@ export function ProfileRow({
   const status = state && entry
     ? profileRowStatus(availability, entry, state)
     : { problem: "" };
-  const usage = profileUsage(state, profile.id, visibleProfileIds, usageRole);
+  const usage = profileUsage(usageReady ? state : null, profile.id, visibleProfileIds, usageRole);
   const hostNote = hostCompatibilityNote(compatibility, profile.id);
   const attention = status.problem
     ? `${status.problem}${hostNote ? `\n${hostNote}` : ""}`

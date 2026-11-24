@@ -200,7 +200,7 @@ impl Service {
             state
                 .store
                 .observe_allowance(task, observation, Some(&automatic_extension()))?;
-            self.publish(&task.identity().id, row.version);
+            self.publish_detail(&task.identity().id, row.version);
             return Ok(None);
         }
         let mut question = task.clone();

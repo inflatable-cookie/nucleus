@@ -35,12 +35,21 @@ export function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | 
  * restart with nothing left to act on, so it never earns a pill. Stopped
  * threads still do.
  */
-export function headerStatePills(state: UiQueueState | undefined): Array<{ label: string; tone: "warning" | "neutral" }> {
+export function headerStatePills(
+  state: UiQueueState | undefined,
+  activeWorkers = state?.activeWorkers ?? null,
+): Array<{ label: string; tone: "warning" | "neutral" }> {
   if (!state) return [];
   if (!state.connected) return [{ label: "Connecting to the queue backend…", tone: "neutral" }];
   const pills: Array<{ label: string; tone: "warning" | "neutral" }> = [];
-  if (state.paused)
-    pills.push({ label: state.quiet ? "Paused · managed threads are idle" : `Draining · ${state.activeWorkers} active · ${state.unsettled} unconfirmed`, tone: "warning" });
+  if (state.paused) {
+    const label = state.quiet
+      ? "Paused · managed threads are idle"
+      : activeWorkers === null
+        ? "Draining"
+        : `Draining · ${activeWorkers} active · ${state.unsettled} unconfirmed`;
+    pills.push({ label, tone: "warning" });
+  }
   if (state.dispatchHeld) pills.push({ label: "Dispatch held", tone: "warning" });
   if (state.stoppedThreads) pills.push({ label: state.paused ? `${state.stoppedThreads} stopped` : `${state.stoppedThreads} waiting to resume`, tone: "warning" });
   if (state.operationBacklog) pills.push({ label: `${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`, tone: "neutral" });
@@ -72,6 +81,8 @@ export type BoardHeaderProps = {
   /** The workspace board's project name; the main surface passes none. */
   workspaceName?: string;
   state: UiQueueState | undefined;
+  /** Rust derives this from the existing task list. Null means the list has yet to load. */
+  activeWorkers?: number | null;
   refetchState: () => Promise<unknown>;
   busy: boolean;
   act: BoardAct;
@@ -98,7 +109,7 @@ export type BoardHeaderProps = {
  * the header alone. The body renders between the header and the outside-press
  * layer, which covers the whole surface.
  */
-export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, error, onDismissError, readError, staleRead, inset, settingsOpener, filter, onMenu, children }: BoardHeaderProps) {
+export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchState, busy, act, error, onDismissError, readError, staleRead, inset, settingsOpener, filter, onMenu, children }: BoardHeaderProps) {
   const workspacePanel = workspaceName !== undefined;
   const { height: viewportHeight } = useWindowDimensions();
   const setQueue = useRpc(api.queueControl);
@@ -123,7 +134,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
   const features = useEngineFeatures();
   const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false, enabled: features.serviceNotices });
-  const pills = headerStatePills(state);
+  const pills = headerStatePills(state, activeWorkers);
   const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
   const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
   const hasAlerts = Boolean(error || readError) || Boolean(staleRead);

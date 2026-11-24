@@ -255,6 +255,14 @@ export type SettingsDomain =
   | "hosts"
   | "storage";
 
+function shareRead<T>(read: () => Promise<T>) {
+  let pending: Promise<T> | undefined;
+  return () => {
+    pending ??= read().finally(() => { pending = undefined; });
+    return pending;
+  };
+}
+
 export function createRustApi(fetcher: typeof fetch = fetch) {
   const board = createRustBoardTransport(fetcher);
   const json = (method: string, body: unknown) => ({
@@ -284,7 +292,9 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         json("POST", { revision, origin, toProject }),
       ),
     theme: () => board.read(themeInputs, "/theme"),
-    catalog: () => board.read(cachedCatalog, "/profiles/catalog"),
+    catalog: shareRead(() => board.read(cachedCatalog, "/profiles/catalog")),
+    storage: shareRead(() => board.read(storageView, "/settings/storage")),
+    storedProfiles: shareRead(() => board.read(profilesSnapshot, "/settings/profiles")),
     profileUsage: () => board.read(profileUsage, "/profiles/usage"),
     plan: (project: string) => board.read(planView, planning(project, "/plan")),
     setPlan: (project: string, value: RustPlan) =>

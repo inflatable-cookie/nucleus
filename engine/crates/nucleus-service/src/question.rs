@@ -101,7 +101,6 @@ impl Service {
         self.wake.notify_one();
         self.tell_wake.notify_one();
         self.project_changes.send_replace(());
-        self.settings_changes.send_replace(());
     }
 
     pub(super) async fn planner_notice_target(
