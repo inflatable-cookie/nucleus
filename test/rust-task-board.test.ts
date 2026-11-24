@@ -735,6 +735,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let decisionOpen = true;
   let projectArchived = false;
   let projectRemoved = false;
+  let removalWrites = 0;
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
   const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
@@ -885,7 +886,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       }
       const body = JSON.parse(String(init.body));
       assert.deepEqual(body, { digest: "confirmed-project-revision", reason: "Fixture retired" });
-      writes.push({ path, body });
+      removalWrites += 1;
       projectRemoved = true;
       return Response.json({
         repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
@@ -1337,7 +1338,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Delete project Fixture project");
   await eventually(() => projectRemoved && !selector("Remove Fixture project dialog"),
     "the board parsed the durable removal receipt and closed the dialog");
-  assert.equal(writes.filter(({ path }) => path.endsWith("/removal")).length, 1);
+  assert.equal(removalWrites, 1);
   if (!selector("Project selector")) await click("Projects, All projects");
   await eventually(() => text().includes("No projects yet."), "the removed project is absent from the refreshed selector");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
