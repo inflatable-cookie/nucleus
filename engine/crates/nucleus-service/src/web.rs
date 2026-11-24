@@ -887,6 +887,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::Settings(
                         nucleus_store::StorageError::InvalidSettings(_)
                         | nucleus_store::StorageError::MissingVolume
+                        | nucleus_store::StorageError::BargePlacement { .. }
                         | nucleus_store::StorageError::OutsideVolume
                         | nucleus_store::StorageError::Layout
                         | nucleus_store::StorageError::ConfinedDirectory(_),

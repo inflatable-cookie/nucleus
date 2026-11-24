@@ -36,6 +36,8 @@ pub enum StorageError {
     MissingVolume,
     #[error("the pinned, writable work volume is unavailable")]
     VolumeUnavailable,
+    #[error("Barge could not place {class}: {reason}")]
+    BargePlacement { class: &'static str, reason: String },
     #[error("the storage path is outside the pinned volume")]
     OutsideVolume,
     #[error("the engine storage layout is invalid")]
@@ -60,11 +62,35 @@ pub enum StorageError {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineSettings {
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub work_volume: Option<PinnedVolume>,
+    #[serde(skip_serializing_if = "StoragePlacement::is_internal")]
+    pub placement: StoragePlacement,
     pub work_root: Option<PathBuf>,
     pub scratch_root: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builds_root: Option<PathBuf>,
     pub log_root: Option<PathBuf>,
     pub retention: RetentionSettings,
+}
+
+/// Selects the defaults for expendable engine storage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoragePlacement {
+    #[default]
+    Internal,
+    Barge,
+}
+
+impl StoragePlacement {
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "Serde passes skip predicates a reference"
+    )]
+    fn is_internal(&self) -> bool {
+        *self == Self::Internal
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,32 +150,47 @@ impl SettingsFile {
         if !home.is_absolute() || home.canonicalize()? != home || !home.is_dir() {
             return Err(StorageError::Layout);
         }
+        if default_home().is_ok_and(|default| default == home) {
+            return Self::open_default();
+        }
         Self::with_layout(portable_layout(home)?, home)
     }
 
-    /// Open the platform-native engine profile using Longhorn's directory facts.
+    /// Open the internal transition home, with platform defaults for expendable files.
     ///
     /// # Errors
     /// Returns an error for missing platform facts or inaccessible directories.
     pub fn open_default() -> Result<Self, StorageError> {
-        Self::open_native(native_platform_directory_facts().map_err(|_| StorageError::Layout)?)
+        Self::open_account(
+            &default_home()?,
+            native_platform_directory_facts().map_err(|_| StorageError::Layout)?,
+        )
     }
 
-    fn open_native(facts: PlatformDirectoryFacts) -> Result<Self, StorageError> {
-        let runtime = facts
+    fn open_account(home: &Path, facts: PlatformDirectoryFacts) -> Result<Self, StorageError> {
+        let cache = facts
             .get(PlatformDirectoryFact::Cache)
             .ok_or(StorageError::Layout)?
+            .join(APP_ID);
+        let work = facts
+            .get(PlatformDirectoryFact::State)
+            .ok_or(StorageError::Layout)?
             .join(APP_ID)
-            .join("runtime");
+            .join("workspaces");
         let layout = resolve_storage_layout(
             &StorageLayoutRequest::new(identity()?, facts)
-                .with_profile(StorageProfile::PlatformNativeV1)
-                .with_overrides(StorageLayoutOverrides::new().with(RootKind::Runtime, runtime)),
+                .with_profile(StorageProfile::PortableV1)
+                .with_portable_root(home)
+                .with_overrides(
+                    StorageLayoutOverrides::new()
+                        .with(RootKind::Workspace, work)
+                        .with(RootKind::Runtime, cache.join("runtime"))
+                        .with(RootKind::Cache, cache),
+                ),
         )
         .map_err(|_| StorageError::Layout)?;
-        let coordination = layout.storage_roots().state().to_path_buf();
-        StorageDirectory::native(coordination.clone())?.ensure()?;
-        Self::with_layout(layout, &coordination)
+        StorageDirectory::native(home.to_path_buf())?.ensure()?;
+        Self::with_layout(layout, home)
     }
 
     fn with_layout(layout: ResolvedStorageLayout, base: &Path) -> Result<Self, StorageError> {
@@ -330,13 +371,28 @@ fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<(), StorageErro
 }
 
 pub struct EngineStorage {
+    home: PathBuf,
+    placement: StoragePlacement,
+    barge_paths: BargePaths,
     bin: StorageDirectory,
     database: StorageDirectory,
     work: StorageDirectory,
     scratch: StorageDirectory,
+    builds: StorageDirectory,
     backup: StorageDirectory,
     log: StorageDirectory,
     mount: Option<OwnedFd>,
+}
+
+/// Class paths used by the running engine. Explicit overrides bypass their class.
+#[derive(Debug, Default, Serialize)]
+pub struct BargePaths {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktrees: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scratch: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    builds: Option<PathBuf>,
 }
 
 impl EngineStorage {
@@ -345,16 +401,48 @@ impl EngineStorage {
         home: &Path,
         settings: &EngineSettings,
     ) -> Result<Self, StorageError> {
+        Self::resolve_with(resolved, home, settings, crate::barge::class_path)
+    }
+
+    fn resolve_with(
+        resolved: &ResolvedStorageLayout,
+        home: &Path,
+        settings: &EngineSettings,
+        class_path: impl Fn(&'static str) -> Result<PathBuf, StorageError>,
+    ) -> Result<Self, StorageError> {
         let volume = settings.work_volume.as_ref();
         let roots = resolved.storage_roots();
-        let work = settings
-            .work_root
-            .clone()
-            .or_else(|| roots.workspace().map(Path::to_path_buf))
-            .unwrap_or_else(|| roots.state().join("work"));
+        let mut barge_paths = BargePaths::default();
+        if settings.placement == StoragePlacement::Barge {
+            if volume.is_some() {
+                return Err(StorageError::InvalidSettings(
+                    "migrate the legacy volume profile before enabling Barge placement".into(),
+                ));
+            }
+            for (class, explicit, path) in [
+                ("worktrees", &settings.work_root, &mut barge_paths.worktrees),
+                ("scratch", &settings.scratch_root, &mut barge_paths.scratch),
+                ("builds", &settings.builds_root, &mut barge_paths.builds),
+            ] {
+                if explicit.is_none() {
+                    *path = Some(class_path(class)?);
+                }
+            }
+        }
         let scratch = scratch_path(resolved, settings);
         let directory = |path| storage_dir(volume, path, &scratch);
-        let scratch_dir = directory(scratch.clone())?;
+        let class_directory = |class, path: &Option<PathBuf>, default| match path {
+            Some(path) => StorageDirectory::barge(path.clone()).map_err(|error| {
+                StorageError::BargePlacement {
+                    class,
+                    reason: format!(
+                        "class directory for {} is unavailable ({error})",
+                        path.display()
+                    ),
+                }
+            }),
+            None => directory(default),
+        };
         let mount = volume
             .map(|volume| volume.open_mount(Some(&scratch)))
             .transpose()?;
@@ -362,13 +450,29 @@ impl EngineStorage {
             .log_root
             .clone()
             .unwrap_or_else(|| roots.log().to_path_buf());
+        let work = settings.work_root.clone().unwrap_or_else(|| {
+            roots
+                .workspace()
+                .map_or_else(|| roots.state().join("work"), Path::to_path_buf)
+        });
+        let builds = settings.builds_root.clone().unwrap_or_else(|| {
+            if roots.cache().starts_with(home) {
+                scratch.join("cargo-target")
+            } else {
+                roots.cache().join("builds")
+            }
+        });
         let storage = Self {
+            home: home.to_path_buf(),
+            placement: settings.placement,
             bin: directory(home.join("bin"))?,
             database: directory(resolved.durable_database_dir())?,
-            work: directory(work)?,
-            scratch: scratch_dir,
+            work: class_directory("worktrees", &barge_paths.worktrees, work)?,
+            scratch: class_directory("scratch", &barge_paths.scratch, scratch.clone())?,
+            builds: class_directory("builds", &barge_paths.builds, builds)?,
             backup: directory(roots.backup().to_path_buf())?,
             log: directory(log)?,
+            barge_paths,
             mount,
         };
         for root in [
@@ -385,12 +489,31 @@ impl EngineStorage {
             &storage.database,
             &storage.work,
             &storage.scratch,
+            &storage.builds,
             &storage.backup,
             &storage.log,
         ] {
             storage.verify_optional(path)?;
         }
         Ok(storage)
+    }
+
+    /// The profile home used for durable state.
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// The placement mode selected at engine startup.
+    #[must_use]
+    pub const fn placement(&self) -> StoragePlacement {
+        self.placement
+    }
+
+    /// The Barge classes used by the running engine.
+    #[must_use]
+    pub const fn barge_paths(&self) -> &BargePaths {
+        &self.barge_paths
     }
 
     fn verify(&self, directory: &StorageDirectory) -> Result<(), StorageError> {
@@ -444,6 +567,12 @@ impl EngineStorage {
         &self.scratch
     }
 
+    /// The root for Cargo output and other expendable builds.
+    #[must_use]
+    pub const fn builds(&self) -> &StorageDirectory {
+        &self.builds
+    }
+
     #[must_use]
     pub const fn backup(&self) -> &StorageDirectory {
         &self.backup
@@ -492,6 +621,13 @@ impl EngineStorage {
 
 fn identity() -> Result<StorageIdentity, StorageError> {
     StorageIdentity::new(APP_ID).map_err(|_| StorageError::Layout)
+}
+
+fn default_home() -> Result<PathBuf, StorageError> {
+    std::env::home_dir()
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".nucleus/engine"))
+        .ok_or(StorageError::Layout)
 }
 
 fn storage_dir(
@@ -684,17 +820,18 @@ mod tests {
     }
 
     #[test]
-    fn native_profile_can_open_without_a_volume_or_runtime_environment() {
+    fn default_profile_keeps_durable_storage_under_home_without_barge() {
         let temporary = tempfile::tempdir().expect("fixture home");
         let root = temporary.path().canonicalize().expect("canonical home");
         for platform in [TargetPlatform::MacOs, TargetPlatform::Linux] {
+            let home = root.join(format!("{platform:?}")).join(".nucleus/engine");
             let facts = PlatformDirectoryFacts::new(platform)
                 .with(PlatformDirectoryFact::Config, root.join("config"))
                 .with(PlatformDirectoryFact::Data, root.join("data"))
                 .with(PlatformDirectoryFact::State, root.join("state"))
                 .with(PlatformDirectoryFact::Cache, root.join("cache"))
                 .with(PlatformDirectoryFact::Log, root.join("log"));
-            let settings = SettingsFile::open_native(facts).expect("platform roots");
+            let settings = SettingsFile::open_account(&home, facts).expect("platform roots");
             settings
                 .save(&EngineSettings {
                     enabled: true,
@@ -704,9 +841,49 @@ mod tests {
             let storage = settings.storage().expect("no volume is required");
             assert!(storage.scratch().path().starts_with(root.join("cache")));
             assert!(storage.work().path().starts_with(root.join("state")));
-            assert!(storage.log().path().starts_with(root.join("log")));
-            assert!(storage.database().path().starts_with(root.join("data")));
+            assert!(storage.builds().path().starts_with(root.join("cache")));
+            assert!(storage.log().path().starts_with(&home));
+            assert!(storage.backup().path().starts_with(&home));
+            assert!(storage.bin().path().starts_with(&home));
+            assert!(storage.database().path().starts_with(&home));
+            assert!(home.join("state/engine.json").is_file());
             crate::Store::open(&storage).expect("open native database");
         }
+    }
+
+    #[test]
+    fn a_resolved_barge_class_does_not_write_to_a_replacement_directory() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let root = temporary.path().canonicalize().expect("canonical home");
+        let home = root.join("engine");
+        let classes = root.join("volume");
+        std::fs::create_dir_all(classes.join("worktrees")).expect("class directory");
+        std::fs::create_dir_all(classes.join("scratch")).expect("class directory");
+        let settings = EngineSettings {
+            enabled: true,
+            placement: StoragePlacement::Barge,
+            builds_root: Some(home.join("my-builds")),
+            ..EngineSettings::default()
+        };
+        let storage = EngineStorage::resolve_with(
+            &portable_layout(&home).expect("layout"),
+            &home,
+            &settings,
+            |class| Ok(classes.join(class).join("nucleus")),
+        )
+        .expect("resolve classes and the explicit override");
+        assert_eq!(storage.builds().path(), home.join("my-builds"));
+        assert_eq!(storage.work().path(), classes.join("worktrees/nucleus"));
+        storage
+            .work()
+            .ensure()
+            .expect("create project beneath the class");
+        std::fs::rename(classes.join("worktrees"), classes.join("offline")).expect("lose class");
+        std::fs::create_dir(classes.join("worktrees")).expect("replacement class directory");
+        assert!(matches!(
+            storage.work().ensure(),
+            Err(StorageError::VolumeUnavailable)
+        ));
+        assert!(!storage.work().path().exists());
     }
 }

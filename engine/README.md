@@ -61,17 +61,53 @@ replaced during that interval can redirect allocation. The work root belongs
 to the operator on the single-user host. A follow-up will anchor the destination
 to a verified directory handle through the Git write.
 
-Run `nucleus-engine configure --enable` to enable the engine with Longhorn's
-platform directories. Use `--home` for a portable profile with its own
-`state/engine.json`. Both profiles support explicit work, scratch and log roots.
-To opt into an external volume, select its mount with `--volume` and put every
-engine root there. The engine checks the volume ID and refuses missing,
-off-volume or symlinked roots before creating storage.
+Run `nucleus-engine configure --enable` to enable the engine. The transition
+home is `~/.nucleus/engine`. It contains the database, settings, backups, logs,
+keys and launchers. Use `--home` to keep using an explicit portable profile.
+
+Worktrees, scratch and builds use platform defaults in the default profile.
+Select Barge in Storage or run `configure --enable --placement barge` to use
+Barge's `worktrees`, `scratch` and `builds` classes. The engine asks
+`barge --json path <class> --project nucleus` on its own `PATH`. It requires the
+class directory to exist on its registered volume and can create the `nucleus`
+child. Startup refuses a missing class or volume, including a Barge response
+that reports an absent-volume fallback. Explicit worktree, scratch, build and
+log overrides take precedence. Placement and root changes apply on restart.
+Settings and `t3 status` show the active roots. Use the reported builds root
+when selecting install output, such as the `engine:board-build` destination.
 
 The registered project checkout still anchors Git and retains its Git objects.
 The engine creates task checkouts under its work root and sets `TMPDIR`, `TMP` and
 `TEMP` for local commands. The task launch tells the role to keep command
-temporary files and Cargo build output under the configured scratch root.
+temporary files under scratch and Cargo output under builds.
+
+### Move an existing engine home
+
+Keep the current `--home` until the move is ready. The engine still reads and
+enforces an existing `workVolume` pin. An offline copy to the new home must
+clear that pin explicitly, after stopping the service and quiescing ACP sessions.
+Keep a restorable source and copy the durable state together, including SQLite
+sidecars if present, all configuration domains, backups, and private key files.
+Preserve the original permissions. If the old profile used separate platform
+directories, collect each domain into the corresponding directory in the new
+home. Avoid moving roots that still hold active checkouts, sessions or report
+tickets. Keep their overrides through the move until those users settle.
+
+On the copied profile, run `nucleus-engine configure --enable
+--clear-legacy-volume`, with `--placement barge` if desired. Use `--reset-roots`
+to remove old overrides and pass any overrides to keep in the same command.
+Refresh the owner-only serve and ACP launchers for the new absolute paths and
+scratch root. Verify the database and settings under the new home, then verify
+the exact provider launcher and the pinned Inbox before reopening dispatch.
+Keep the original profile and launcher available for rollback.
+
+The native T3 Inbox verifies its existing project against the absolute
+`<databaseRoot>/acp-inbox` path. Moving the database requires a separately
+authorized rebind of that T3 project, with its fixed project and thread IDs
+intact. The ACP session ID also changes with the path. `t3 install --adopt`
+can update the provider launcher and still refuses an Inbox whose project
+points to the old root. Verify the Inbox session on the new binding as part of
+the cutover.
 
 ## State and decisions
 
@@ -400,11 +436,10 @@ after it exits. An unverified listener never triggers a second start.
 
 `nucleus-engine t3 install` registers the Rust provider `nucleus-rust` in
 the local T3 environment. First enable the engine with `configure --enable`.
-Use the platform Storage defaults or pass the same `--home` to configure,
-serve and T3 setup. Set the T3 origin with `--t3` or the profile's Hosts
-setting. The provider's launcher is `bin/nucleus-rust-acp` under the engine
-home, or under the platform state directory for a native profile. The startup
-lock lives beside `bin`. A configured volume pin applies to both.
+Use the default engine home or pass the same `--home` to configure, serve and
+T3 setup. Set the T3 origin with `--t3` or the profile's Hosts setting. The
+provider's launcher is `bin/nucleus-rust-acp` under the engine home. The startup
+lock lives beside `bin`.
 
 Prepare an owner-only executable serve launcher that sets
 `NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus-engine serve`

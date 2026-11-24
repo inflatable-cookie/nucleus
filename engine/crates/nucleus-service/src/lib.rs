@@ -249,6 +249,7 @@ impl Service {
     ) -> Result<Self, ServiceError> {
         let storage = settings.storage()?;
         storage.scratch().ensure()?;
+        storage.builds().ensure()?;
         storage.log().ensure()?;
         let git = project::LocalGit(storage.scratch().path().into());
         if let Some(project) = &project {

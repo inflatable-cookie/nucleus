@@ -1,0 +1,1 @@
+The Rust engine defaults to `~/.nucleus/engine` for durable state. Storage can use Barge for worktrees, scratch, and builds and shows the active paths. The engine refuses to start if a selected Barge volume is absent.

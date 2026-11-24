@@ -69,13 +69,18 @@ pub(crate) fn clear(scratch: &StorageDirectory, run: &Run) {
     }
 }
 
+pub(crate) struct PromptPaths<'a> {
+    pub command: &'a Path,
+    pub ticket: &'a Path,
+    pub builds: &'a Path,
+}
+
 pub(crate) fn prompt(
     task: &Task,
     role: Role,
     review_head: Option<&str>,
     branch: &str,
-    report_command: &Path,
-    ticket: &Path,
+    paths: &PromptPaths<'_>,
     profile: Option<&ProfileLaunch>,
 ) -> String {
     let assignment = match role {
@@ -97,20 +102,20 @@ pub(crate) fn prompt(
         }
     };
     let question = r#"{"question":{"prompt":"QUESTION","options":["OPTION"]}}"#;
-    let storage = ticket.parent().and_then(Path::parent).map_or_else(
+    let storage = paths.ticket.parent().and_then(Path::parent).map_or_else(
         String::new,
         |scratch| {
             format!(
                 " Set TMPDIR, TMP and TEMP to `{}` for commands. Set CARGO_TARGET_DIR to `{}` for Cargo.",
                 scratch.display(),
-                scratch.join("cargo-target").display(),
+                paths.builds.display(),
             )
         },
     );
     let mut prompt = format!(
         "{assignment}\n\nUse this task's checkout and repository only.{storage} Send {report} on stdin to the local CLI at {} with arguments `report --ticket` and ticket path {}. If you need a planning decision, send {question}. Keep the ticket contents private.\n\nBrief\n\n{}",
-        report_command.display(),
-        ticket.display(),
+        paths.command.display(),
+        paths.ticket.display(),
         task.brief().text
     );
     if let Some(profile) = profile
