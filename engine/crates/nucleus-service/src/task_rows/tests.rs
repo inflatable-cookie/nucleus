@@ -565,6 +565,41 @@ async fn no_new_snooze_from_reservation_through_send() {
 }
 
 #[tokio::test]
+async fn a_reserved_role_waiting_for_capacity_keeps_one_snooze() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    let run = worker.run().unwrap().launch();
+    fixture.child(&run.thread, false);
+    let row = create_visibility_row(&fixture, &worker).await;
+    service
+        .observe_role_state(
+            &row,
+            &Observed::Known(Host::Current {
+                instance: run.instance.clone(),
+                state: RunState::ReadyToSend,
+            }),
+        )
+        .await
+        .unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let card = fixture.board_task().await;
+    assert_eq!(card["stateLabel"], "Waiting for capacity");
+    assert_eq!(card["attention"], "waiting");
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.observed_snooze().await;
+}
+
+#[tokio::test]
 async fn native_rows_follow_dependency_wait_run_and_question() {
     let pending = pending_task();
     let fixture = Fixture::new(&pending).await;

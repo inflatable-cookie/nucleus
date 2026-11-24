@@ -1,1 +1,1 @@
-A task that has received its authenticated role report no longer offers checking the reporting thread as a recovery action.
+A quiet task waiting for capacity stays snoozed even when its next role is reserved. An authenticated role report advances without a thread-check prompt.

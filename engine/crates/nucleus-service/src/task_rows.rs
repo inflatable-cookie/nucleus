@@ -533,7 +533,13 @@ fn row_attention_for_effect(
 ) -> Result<Option<TaskAttention>, ServiceError> {
     let attention = state.task_attention(row)?;
     let task = &row.task;
-    let about_to_send = task.hold().is_none()
+    let id = &task.identity().id;
+    let starting = matches!(
+        (state.wait_reason(id), state.wait_detail(id)),
+        (None | Some(WaitReason::Starting), _) | (Some(WaitReason::HostUnknown), None)
+    );
+    let about_to_send = starting
+        && task.hold().is_none()
         && task.run().is_some_and(|run| {
             !run.revoked()
                 && run.report().is_none()
@@ -541,11 +547,9 @@ fn row_attention_for_effect(
                     || state.role_observation(task) == Some(RunState::ReadyToSend))
         });
     let showing_delivery = matches!(
-        state.wait_detail(&task.identity().id),
+        state.wait_detail(id),
         Some(WaitDetail::ShowingForDelivery(_) | WaitDetail::ConfirmingDelivery(_))
-    ) && state
-        .schedule
-        .effect_ready(&task.identity().id, tokio::time::Instant::now());
+    ) && state.schedule.effect_ready(id, tokio::time::Instant::now());
     if attention == TaskAttention::Waiting && (about_to_send || showing_delivery) {
         return Ok(Some(TaskAttention::Active));
     }
