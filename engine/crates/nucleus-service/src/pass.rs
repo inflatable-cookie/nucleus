@@ -774,35 +774,54 @@ impl Service {
                 Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
             }
             ParentStep::Write(write) => {
-                let Some(_permit) = self
-                    .dispatch_gate(
-                        task,
-                        DispatchTarget::Run {
-                            frozen: write.binding(),
-                            checkout,
-                            launch: false,
-                        },
-                    )
-                    .await?
-                else {
-                    return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
-                };
-                self.ensure_parent_reader(&identity.id, checkout.path())
-                    .await?;
-                let command = write.command_id().ok_or(ServiceError::Input)?;
-                let (scope, kind) = if prior_turn.as_deref() == Some(command) {
-                    (&failed_scope, "native_turn_replay")
-                } else {
-                    (&session, "native_turn_intent")
-                };
-                let intent = write.starts_turn().then_some(kind);
-                if !self.deliver_parent(row, write, scope, intent).await? {
-                    return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain));
-                }
-                self.recheck_effect(row, WaitReason::HostUnknown).await;
-                Ok(ControlFlow::Break(WaitReason::Starting))
+                self.send_run_parent(row, checkout, write, &session, prior_turn.as_deref())
+                    .await
             }
         }
+    }
+
+    async fn send_run_parent(
+        &self,
+        row: &TaskRow,
+        checkout: &Checkout<'_>,
+        write: nucleus_hosts::ParentWrite,
+        session: &str,
+        prior_turn: Option<&str>,
+    ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
+        let Some(_permit) = self
+            .dispatch_gate(
+                &row.task,
+                DispatchTarget::Run {
+                    frozen: write.binding(),
+                    checkout,
+                    launch: false,
+                },
+            )
+            .await?
+        else {
+            return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
+        };
+        self.ensure_parent_reader(&row.task.identity().id, checkout.path())
+            .await?;
+        let command = write.command_id().ok_or(ServiceError::Input)?;
+        let (scope, kind) = if prior_turn == Some(command) {
+            (self.turn_failure_scope(session), "native_turn_replay")
+        } else {
+            (session.to_owned(), "native_turn_intent")
+        };
+        let intent = write.starts_turn().then_some(kind);
+        let command = command.to_owned();
+        match self.deliver_parent(row, write, &scope, intent).await {
+            Ok(true) => {}
+            Ok(false) => return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain)),
+            Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
+                self.record_failed_parent_turn(row, session, &command).await?;
+                return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
+            }
+            Err(error) => return Err(error),
+        }
+        self.recheck_effect(row, WaitReason::HostUnknown).await;
+        Ok(ControlFlow::Break(WaitReason::Starting))
     }
 
     async fn prompt_context(

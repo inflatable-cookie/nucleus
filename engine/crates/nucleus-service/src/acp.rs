@@ -120,12 +120,22 @@ impl Service {
         };
         let identity = row.task.identity();
         let id = &identity.id;
-        let pending =
-            self.state
-                .lock()
-                .await
-                .store
-                .task_delivery_fence(id, row.version, &runtime)?;
+        let pending = {
+            let state = self.state.lock().await;
+            let pending = state.store.task_delivery_fence(id, row.version, &runtime)?;
+            if let Some([command]) = pending.as_deref()
+                && nucleus_hosts::is_pinned_parent_hold(command)
+                && state
+                    .store
+                    .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
+                    .as_ref()
+                    == Some(command)
+            {
+                // The launch owner can reconcile its current frozen hold directly.
+                return Ok(false);
+            }
+            pending
+        };
         let Some(commands) = pending else {
             return Ok(false);
         };
@@ -198,6 +208,12 @@ impl Service {
                 .task_turn_attempt(id, kind, row.version, session, command)?
             {
                 Some((sequence, true)) => Some(sequence),
+                Some((sequence, false))
+                    if kind == "native_turn_replay"
+                        && nucleus_hosts::is_pinned_parent_hold(command) =>
+                {
+                    return Ok(Some(sequence));
+                }
                 Some((_, false)) => return Ok(None),
                 None => None,
             };
@@ -266,6 +282,7 @@ impl Service {
         };
         match self.host.write_verified_parent(write).await {
             Ok(()) => Ok(true),
+            Err(nucleus_hosts::ParentSendError::Rejected) => Err(nucleus_hosts::HostError::ParentHoldRejected.into()),
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
                 Err(ServiceError::ParentDeliveryUnknown(error))
             }

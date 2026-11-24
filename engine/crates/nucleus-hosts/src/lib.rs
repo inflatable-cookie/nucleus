@@ -44,7 +44,7 @@ use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
     ArchiveWrite, DoneArchive, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite,
-    parent_thread,
+    is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -107,6 +107,8 @@ pub enum HostError {
     Binding,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
+    #[error("T3 rejected the pinned parent hold")]
+    ParentHoldRejected,
     #[error(
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]

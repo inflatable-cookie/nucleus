@@ -143,8 +143,10 @@ Later decisions carry their own attribution.
    Workspace custody also needs a quiet local process census. Delivery follows
    the matching native run or the command receipt. A missing timeline item
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
-   the exact frozen command ID, so an idle parent hold or continuation can
-   reconcile an ambiguous send under that ID. Delegated launch absence still
+   the exact frozen command ID, so a parent hold pinned to the ACP provider and
+   model can queue while busy and reconcile an ambiguous send under that ID.
+   Older parent holds and unpinned continuations still require an idle thread.
+   Delegated launch absence still
    requires an exact terminal parent run and an authoritative child absence.
    Done thread housekeeping follows ruling 34 after checkout removal. The
    synchronized shell supplies the known task, reviewer and worker rows and

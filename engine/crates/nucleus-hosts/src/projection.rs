@@ -574,6 +574,10 @@ impl Projection {
         self.thread.archived_at.is_some()
     }
 
+    pub(crate) const fn deleted(&self) -> bool {
+        self.thread.deleted_at.is_some()
+    }
+
     pub(crate) fn archived_in_shell(&self) -> bool {
         self.archived() && self.shell_closed == Some(RetainedThread::Idle)
     }

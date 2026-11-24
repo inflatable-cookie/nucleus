@@ -1095,9 +1095,27 @@ impl Service {
                     .filter(|&remaining| remaining > 0)
                     .map(|remaining| now + Duration::from_millis(remaining))
             });
-        let blocked = state
-            .schedule
-            .recover_host_observation(id, now, deferred.max(reply_due));
+        let queue_replay = if row.task.run().is_none()
+            && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+            && let Some(runtime) = self.host.runtime_identity()
+        {
+            state
+                .store
+                .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
+                .as_deref()
+                .is_some_and(nucleus_hosts::is_pinned_parent_hold)
+        } else {
+            false
+        };
+        let blocked = if queue_replay {
+            let due = (now + T3_RETRY_DELAY).max(deferred.unwrap_or(now));
+            state.schedule.wake(id, due, Priority::Effect);
+            false
+        } else {
+            state
+                .schedule
+                .recover_host_observation(id, now, deferred.max(reply_due))
+        };
         let wait = Some(if blocked {
             WaitReason::HostObservationBlocked
         } else {
