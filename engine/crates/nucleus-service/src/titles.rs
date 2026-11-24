@@ -115,6 +115,7 @@ fn wait_label(wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
         Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
         Some(WaitReason::ChecksPending) => "Waiting for checks",
+        Some(WaitReason::ChecksUnreported) => "Waiting for required checks to report",
         Some(WaitReason::AssignmentTooLarge) => "Assignment too large",
         Some(WaitReason::Starting) => "Starting",
         _ => return None,

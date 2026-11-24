@@ -153,6 +153,7 @@ pub enum WaitReason {
     ForgeUnknown,
     WorkspaceUnknown,
     ChecksPending,
+    ChecksUnreported,
     Prerequisite,
     Capacity,
     AssignmentTooLarge,
@@ -464,9 +465,13 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
                 ..
             }) => Signal::Wait(WaitReason::ForgeUnknown),
             Observed::Known(Forge::Open {
-                checks: CheckState::Pending | CheckState::Unreported,
+                checks: CheckState::Pending,
                 ..
             }) => Signal::Wait(WaitReason::ChecksPending),
+            Observed::Known(Forge::Open {
+                checks: CheckState::Unreported,
+                ..
+            }) => Signal::Wait(WaitReason::ChecksUnreported),
             Observed::Known(Forge::Open {
                 pr,
                 checks: CheckState::Ready,
