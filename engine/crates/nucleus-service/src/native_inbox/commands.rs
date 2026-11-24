@@ -1,14 +1,12 @@
-use std::{sync::atomic::Ordering, time::Duration};
+use std::sync::atomic::Ordering;
 
 use nucleus_hosts::InboxOperatorMessage;
-use tokio::time::timeout;
 
 use crate::{Service, ServiceError, now_ms};
 
 use super::NativeInbox;
 
 const REPLY_CAPACITY: usize = 64;
-const PREVIEW_DEADLINE: Duration = Duration::from_secs(20);
 
 impl Service {
     pub(super) async fn serve_inbox_commands(
@@ -58,21 +56,21 @@ impl Service {
     async fn show_inbox_board(&self, inbox: &NativeInbox, typed: bool) {
         let board_url = format!("http://{}/", self.callback);
         let reply = if let Some(board) = self.board.get() {
-            let opened = timeout(
-                PREVIEW_DEADLINE,
-                self.host
-                    .preview_inbox_board(&board_url, || board.inbox_link(self.callback)),
-            )
-            .await;
-            if opened.is_ok_and(|result| result.is_ok()) {
-                if !typed {
-                    return;
-                }
-                format!("Board at {board_url}")
-            } else {
-                format!(
-                    "Could not open the board. Please type ui again to retry.\nBoard at {board_url}"
-                )
+            let result = self
+                .host
+                .preview_inbox_board(&board_url, || board.inbox_link(self.callback))
+                .await;
+            if let Err(error) = &result {
+                eprintln!("Nucleus Inbox board: {error}");
+            }
+            if !typed {
+                return;
+            }
+            match result {
+                Ok(()) => format!("Board at {board_url}"),
+                Err(error) => format!(
+                    "Could not open the board ({error}). Please type ui again to retry.\nBoard at {board_url}"
+                ),
             }
         } else {
             "The local board is unavailable. Please type ui again to retry.".into()

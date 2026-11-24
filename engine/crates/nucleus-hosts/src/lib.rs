@@ -32,8 +32,8 @@ use std::{
 pub use assignment::{T3_ASSIGNMENT_LIMIT, assignment_units};
 pub use catalog::{ProfileCatalog, ProfileOffer};
 pub use inbox::{
-    INBOX_THREAD, InboxLifecycle, InboxOperatorMessage, InboxStatus, InboxStep, InboxTarget,
-    InboxWrite,
+    INBOX_THREAD, InboxLifecycle, InboxOperatorMessage, InboxPreviewError, InboxStatus, InboxStep,
+    InboxTarget, InboxWrite,
 };
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_diagnostic,

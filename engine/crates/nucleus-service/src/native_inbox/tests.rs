@@ -25,10 +25,12 @@ async fn an_inbox_ui_attempt_is_claimed_once_and_the_reply_is_consumed() {
         id: "synthetic-typed-message".into(),
         text: "ui".into(),
     }];
-    service
-        .serve_inbox_commands(inbox, &messages)
-        .await
-        .unwrap();
+    let (control, overlapping) = tokio::join!(
+        service.serve_inbox_commands(inbox, &messages),
+        service.serve_inbox_commands(inbox, &messages),
+    );
+    control.unwrap();
+    overlapping.unwrap();
     assert!(
         service
             .inbox_snapshot(&inbox.credential)
@@ -121,9 +123,9 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     assert!(
         service.take_inbox_replies(&inbox.credential).unwrap()
             == [format!(
-                "Could not open the board. Please type ui again to retry.\nBoard at {board_url}"
+                "Could not open the board (preview.open: missing preview:operate scope). Please type ui again to retry.\nBoard at {board_url}"
             )],
-        "the reply must contain only the plain board address and retry instruction"
+        "the reply must contain the safe failure kind and plain board address"
     );
 
     inbox.host_stream_ended(Ok(()));
@@ -221,7 +223,7 @@ fn preview_response(
                 json!({"threadId":INBOX_THREAD,"tabId":payload["tabId"]})
             );
             trace.calls.push(event);
-            Some(success(request, &Value::Null))
+            Some(json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success"}}))
         }
         "preview.open" => {
             assert_eq!(payload["threadId"], INBOX_THREAD);
@@ -234,9 +236,13 @@ fn preview_response(
             assert!(token.is_some_and(|token| token.len() == 64));
             trace.calls.push("open");
             assert!(trace.links.insert(url.to_owned()), "the link must be fresh");
-            if trace.links.len() == 2 {
+            if trace.links.len() <= 3 {
                 return Some(json!({"_tag":"Exit","requestId":request["id"],"exit":{
-                    "_tag":"Failure","cause":[{"_tag":"Fail","error":{"message":format!("could not open {url}")}}]
+                    "_tag":"Failure","cause":[{"_tag":"Fail","error":{
+                        "_tag":"EnvironmentAuthorizationError",
+                        "requiredScope":"orchestration:operate","requiredPermission":"preview:operate",
+                        "message":format!("could not open {url}")
+                    }}]
                 }}));
             }
             Some(success(

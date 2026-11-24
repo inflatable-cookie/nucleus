@@ -1254,12 +1254,26 @@ inbox. Each write has its own command identity by title and a title generation, 
 title that returns to an earlier value is written again rather than replayed. The
 project name stays "Nucleus Inbox".
 
-The service mints a fresh one-time board link for `preview.open` on the inbox
+The service mints a fresh one-time board link for `preview.open` on the Inbox
 thread. It sends the link only in that WebSocket call, never in an ACP prompt,
-thread reply or intent log. A new host connection opens the pane again after T3 or the service
-restarts; an uncertain open is not blindly repeated on the same connection.
-`nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
-install rotates that bearer.
+thread reply or intent log.
+
+Rust `nucleus t3 install` accepts an externally provisioned T3 runtime bearer.
+Issue it with `orchestration:read`, `orchestration:operate` and `preview:operate`.
+For an existing install with the earlier two-scope bearer, replace the runtime
+credential through its owner-only reference before restarting the Rust service.
+Provider installation uses a separate credential. The Inbox's board session
+uses operator scope. A planner's CLI board session retains its planner scope.
+
+The Rust scheduler claims each exact operator `ui` message ID before opening,
+then queues one terminal result for ACP to consume once. A later message ID can
+open again. Automatic opens on startup or reconnect can log a failure and never
+enqueue an ACP reply. The list, same-origin closes and fresh server open share
+a 20-second budget. Failure reports name the failed stage and a fixed native
+error kind. A scope refusal reports `preview.open: missing preview:operate scope`.
+
+The following TypeScript adapter behavior documents the earlier implementation.
+Its installer issues and rotates its own scoped runtime bearer.
 
 Typing exact `ui` in the pinned Nucleus inbox shows the board in that thread's
 browser pane and answers with one short result (Tom, 2026-11-19; bounded and

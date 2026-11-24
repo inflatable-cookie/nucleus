@@ -13,6 +13,8 @@ use crate::{
 
 mod preview;
 
+pub use preview::InboxPreviewError;
+
 pub const INBOX_THREAD: &str = "thread:nucleus-rust-inbox";
 pub(crate) const PROJECT: &str = "project:nucleus-rust-inbox";
 const TITLE: &str = "Nucleus Inbox";
