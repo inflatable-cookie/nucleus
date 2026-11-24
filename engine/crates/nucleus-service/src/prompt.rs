@@ -318,13 +318,15 @@ impl Prompt<'_> {
             Role::Reviewer => {
                 // The launcher already requires an observed open PR for a review.
                 let head = self.pr.map_or("FULL_SHA", |pr| pr.head.as_str());
-                let example = serde_json::json!({"review": {
-                    "head": head, "decision": "approve", "summary": "FULL_FINDINGS",
-                }});
-                let _ = writeln!(
-                    text,
-                    "Review result: {example} (use `changes` for required revisions)."
-                );
+                for (label, decision) in [
+                    ("Approve", Review::Approve),
+                    ("Request changes", Review::Changes),
+                ] {
+                    let example = serde_json::json!({"review": {
+                        "head": head, "decision": decision, "summary": "FULL_FINDINGS",
+                    }});
+                    let _ = writeln!(text, "{label}: {example}");
+                }
             }
         }
         text.push_str(
@@ -515,10 +517,19 @@ mod tests {
         assert!(text.contains("Never read the\nworker's private transcript."));
         assert!(!text.contains("### Worker"));
         assert!(!text.contains("Ready for review:"));
-        assert!(matches!(
-            serde_json::from_str::<Report>(&example(&text, "Review result: ")).unwrap(),
-            Report::Review { head, decision: Review::Approve, .. } if head == pr.head,
-        ));
+        for (label, expected) in [
+            ("Approve: ", Review::Approve),
+            ("Request changes: ", Review::Changes),
+        ] {
+            let payload = text
+                .lines()
+                .find_map(|line| line.strip_prefix(label))
+                .expect("rendered review example");
+            assert!(matches!(
+                serde_json::from_str::<Report>(payload).unwrap(),
+                Report::Review { head, decision, .. } if head == pr.head && decision == expected,
+            ));
+        }
     }
 
     #[test]
