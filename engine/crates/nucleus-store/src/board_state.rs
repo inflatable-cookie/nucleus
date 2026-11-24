@@ -8,7 +8,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_board_state (
 ) STRICT";
 
 impl Store {
-    /// Read state entry, admission and latest event times for the board.
+    /// Read state entry, admission and latest work event times for the board.
     ///
     /// # Errors
     /// Returns an error if the timestamps cannot be read.
@@ -16,7 +16,25 @@ impl Store {
         let mut query = self.connection.prepare_cached(
             "SELECT (SELECT since_ms FROM task_board_state WHERE task_id = ?1),
                     (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence LIMIT 1),
-                    (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence DESC LIMIT 1)",
+                    (SELECT at FROM events WHERE task_id = ?1
+                       AND kind NOT IN (
+                         'question_delivery', 'operator_decline_notified', 'provider_limit',
+                         'delegated_parent_ended', 'paused_reservation_released',
+                         'host_send_not_sent', 'report_ready_planner_unavailable',
+                         'native_row_unsettle', 'role_threads_archived', 'role_archive_progress'
+                       )
+                       AND kind NOT GLOB 'closed_checkout_*'
+                       AND kind NOT GLOB 'host_observation_*'
+                       AND kind NOT GLOB 'native_turn_*'
+                       AND kind NOT GLOB '*_observed'
+                       AND kind NOT GLOB '*_notice_*'
+                       AND kind NOT GLOB 'acp_row_refresh_*'
+                       AND kind NOT GLOB '*wait_*'
+                       AND kind NOT GLOB '*prune*'
+                       AND kind NOT GLOB '*title_*'
+                       AND kind NOT GLOB '*snooze*'
+                       AND kind NOT GLOB 'telemetry_*'
+                     ORDER BY sequence DESC LIMIT 1)",
         )?;
         Ok(query.query_row([id], |row| {
             let time = |column| {

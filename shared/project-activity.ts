@@ -182,3 +182,50 @@ export function projectDormantByActivity(
 ): boolean {
   return !projectActive(activity, nowMs);
 }
+
+type ItemInfo = {
+  repositories: ActivityRepository[];
+  at: string | null;
+  executing: boolean;
+};
+
+/** Joins tasks and leads into items. Info lives on each root and merges as members join: repositories, newest activity and executing state. */
+export function activityItems() {
+  const parent = new Map<string, string>();
+  const info = new Map<string, ItemInfo>();
+
+  function root(key: string): string {
+    if (!parent.has(key)) {
+      parent.set(key, key);
+      info.set(key, { repositories: [], at: null, executing: false });
+    }
+    let id = key;
+    while (parent.get(id) !== id) id = parent.get(id)!;
+    for (let walk = key; walk !== id;) {
+      const next = parent.get(walk)!;
+      parent.set(walk, id);
+      walk = next;
+    }
+    return id;
+  }
+
+  function add(key: string, value: ItemInfo) {
+    const target = info.get(root(key))!;
+    for (const repo of value.repositories) {
+      if (!target.repositories.some(known => known.origin === repo.origin && known.path === repo.path))
+        target.repositories.push(repo);
+    }
+    if (value.at && (!target.at || value.at > target.at)) target.at = value.at;
+    target.executing ||= value.executing;
+  }
+
+  function join(a: string, b: string) {
+    const left = root(a), right = root(b);
+    if (left === right) return;
+    add(left, info.get(right)!);
+    parent.set(right, left);
+    info.delete(right);
+  }
+
+  return { add, join, components: () => info };
+}

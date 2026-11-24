@@ -276,6 +276,10 @@ export const leadBoard = defineRpc({
     .object({
       cards: z.array(boardLeadSchema),
       links: z.array(boardLeadLinkSchema),
+      // The Rust adapter derives these from the planning items it already read.
+      activity: z.array(z.object({
+        project: z.string(), id: z.string(), at: z.string().nullable(), taskIds: z.array(z.string()),
+      })).optional(),
     })
     .strict(),
 });

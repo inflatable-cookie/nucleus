@@ -37,6 +37,7 @@ import {
   type Colors,
 } from "./controls";
 import {
+  cardTitleColor,
   control,
   space,
   radius,
@@ -746,12 +747,8 @@ export function ProjectSelector({
                   )
                 : null;
               // Hidden until hover, focus or an open panel on a hover pointer; it keeps its place either way.
-              const revealed =
-                compact ||
-                !fine ||
-                hovered === project.key ||
-                focused === project.key ||
-                mine;
+              const interacting = hovered === project.key || focused === project.key || mine;
+              const revealed = compact || !fine || interacting;
               const reveal = {
                 onHoverIn: () => setHovered(project.key),
                 onHoverOut: () =>
@@ -771,7 +768,7 @@ export function ProjectSelector({
                     borderRadius: radius.control,
                     backgroundColor: project.checked
                       ? selectedFill
-                      : mine || hovered === project.key || focused === project.key
+                      : interacting
                         ? hoverFill
                         : "transparent",
                     overflow: "hidden",
@@ -818,8 +815,8 @@ export function ProjectSelector({
                         <Text
                           numberOfLines={1}
                           style={{
-                            color: c.foreground,
-                            fontWeight: "600",
+                            color: cardTitleColor(c, project.checked || interacting),
+                            fontWeight: "400",
                             fontSize: typeScale.body.fontSize,
                             lineHeight: typeScale.body.lineHeight,
                             flex: 1,

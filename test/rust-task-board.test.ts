@@ -8,6 +8,7 @@ import { JSDOM } from "jsdom";
 import { profilesSnapshot } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
+  rustProjectActivity,
   rustWaitDetail,
   type RustCommand,
   type RustTask,
@@ -15,6 +16,8 @@ import {
 import { WebBoard } from "../service/web/web-board";
 import { RustBoardProxy } from "../service/web/rust-board";
 import { uiBoardSchema } from "../shared/contracts";
+import { projectActive, PROJECT_ACTIVITY_WINDOW_MS } from "../shared/project-activity";
+import { projectSchema } from "../shared/schema/projects";
 import { inboxListWidth } from "../shared/inbox-board";
 import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 
@@ -96,6 +99,24 @@ const task = (
   hold: null,
   stateLabel: phase[0]!.toUpperCase() + phase.slice(1),
   stateSinceMs: null,
+});
+
+test("project activity counts distinct recent tasks and linked planning items", () => {
+  const repo = { origin: repository, path: "/fixture" };
+  const project = projectSchema.parse({ key: "app", name: "App", repositories: [repo], primary: repo });
+  const now = Date.UTC(2026, 10, 24);
+  const cutoff = now - PROJECT_ACTIVITY_WINDOW_MS;
+  const running = { ...task("one", "working"), latestEventAtMs: cutoff - 1 };
+  const done = { ...task("two", "done"), latestEventAtMs: now - 1 };
+  const lead = { project: "app", id: "lead", at: new Date(now).toISOString(), taskIds: [] };
+  const active = (tasks: RustTask[], leads: Parameters<typeof rustProjectActivity>[2]) =>
+    projectActive(rustProjectActivity([project], tasks, leads)[0], now);
+  assert.equal(active([running], []), false);
+  assert.equal(active([running, done], []), true);
+  assert.equal(active([running], [lead]), true);
+  assert.equal(active([running], [{ ...lead, taskIds: ["one"] }]), false);
+  assert.equal(active([running, done], [{ ...lead, taskIds: ["one", "two"] }]), false);
+  assert.equal(active([running, { ...done, latestEventAtMs: cutoff }], []), false);
 });
 
 test("Rust task status names the check and only shows a time while it is scheduled", () => {
@@ -1196,6 +1217,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const picker = selector("Project selector")!.parentElement!;
   const project = projectRow()!;
   const frame = project.parentElement!.parentElement!;
+  const name = [...project.querySelectorAll("*")].find(
+    node => node.childElementCount === 0 && node.textContent === "Fixture project",
+  );
+  assert.ok(name);
+  const activeName = "rgb(245, 245, 245)";
+  assert.equal(style(name).color, "rgba(245, 245, 245, 0.75)");
+  assert.equal(style(name).fontWeight, "400");
   const popoverFill = style(picker).backgroundColor;
   assert.equal(popoverFill, "rgb(17, 17, 17)");
   assert.equal(style(picker).borderTopColor, "rgba(245, 245, 245, 0.08)");
@@ -1204,19 +1232,23 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   pointer(project, "pointerenter");
   const hover = "rgba(245, 245, 245, 0.06)";
   await eventually(() => style(frame).backgroundColor === hover, "hover uses the popover tint");
+  assert.equal(style(name).color, activeName);
   pointer(project, "pointerleave");
   project.focus();
   await eventually(() => style(frame).backgroundColor === hover, "focus uses the popover tint");
+  assert.equal(style(name).color, activeName);
   project.blur();
   project.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }));
   const selected = "rgba(245, 245, 245, 0.1)";
   await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
+  assert.equal(style(name).color, activeName);
   await click("Clear project selection");
   await click("Project actions for Fixture project");
   const actions = selector("Actions for Fixture project")!;
   const archive = selector("Archive Fixture project")!;
   assert.ok(archive && frame.contains(actions));
   assert.equal(style(frame).backgroundColor, hover, "open row and panel share a single tinted frame");
+  assert.equal(style(name).color, activeName);
   assert.equal(style(actions).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(style(archive).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(selector("Remove Fixture project from Nucleus"), null);

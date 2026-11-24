@@ -129,7 +129,11 @@ function engine() {
     });
     if (collection === "items") return json([{
       id: `i-${project}`, kind: "lead", author: "planner", title: "An idea",
-      body: "Fixture idea", lanes: ["delivery"], state: "open",
+      body: "Fixture idea", lanes: ["delivery"], state: "open", createdAtMs: 10,
+    }, {
+      id: "promoted", kind: "papercut", author: "planner", title: "Fixed", body: "",
+      lanes: [], state: "promoted", taskId: "finished", taskLinks: ["finished"],
+      createdAtMs: 100, updatedAtMs: 200,
     }]);
     if (collection === "decisions") return json([{
       id: `d-${project}`, projectId: project, author: "planner",
@@ -587,7 +591,12 @@ test("a project refusal settles lists until the paired session changes", async (
   fake.denied.clear();
   assert.equal(await adapter.refreshSession(), false, "the same session reconnects");
   await adapter.rpc(api.plans, {});
-  await adapter.rpc(api.leadBoard, {});
+  const leads = await adapter.rpc(api.leadBoard, {});
+  assert.deepEqual(leads.cards.map(card => card.id), ["i-Orbit_Main"]);
+  assert.deepEqual(leads.activity?.map(({ id, at, taskIds }) => [id, at, taskIds]), [
+    ["i-Orbit_Main", new Date(10).toISOString(), []],
+    ["promoted", new Date(200).toISOString(), ["finished"]],
+  ]);
   assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main"]);
   assert.equal(fake.planningReads().filter((path) => path.includes("/lantern/")).length, 1);
   fake.setSession({ id: "new-operator-session", canEditSettings: true, planningProjects: null });
