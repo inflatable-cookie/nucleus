@@ -629,8 +629,9 @@ impl Service {
             return Ok(Action::Wait(WaitReason::AssignmentTooLarge));
         }
         let binding = route.binding(checkout)?;
+        let continuing_worker = role == Role::Worker && matches!(via, Launch::Continue { .. });
         let parent = match self
-            .prepare_run_parent(row, checkout, &binding, host)
+            .prepare_run_parent(row, checkout, &binding, host, continuing_worker)
             .await?
         {
             ControlFlow::Continue(parent) => parent,
@@ -639,6 +640,7 @@ impl Service {
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
+            reuse_parent: continuing_worker && self.acp_provider().is_some(),
             title: crate::titles::child_title(task, row.number, role),
             profile,
             via: &via,
@@ -705,8 +707,9 @@ impl Service {
         checkout: &Checkout<'_>,
         binding: &Binding,
         host: &impl TaskHost,
+        continuing_worker: bool,
     ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
-        let Some(provider) = self.acp_provider() else {
+        let Some(provider) = self.acp_provider().filter(|_| !continuing_worker) else {
             return Ok(ControlFlow::Continue(None));
         };
         let task = &row.task;
@@ -967,6 +970,21 @@ impl Service {
         {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
+        if let Some(run) = task.run()
+            && nucleus_hosts::unpinned_worker_continuation(run)
+        {
+            let mut updated = task.clone();
+            if updated.discard_paused_reservation(&observation) {
+                let _fence = self.effect(row).await?;
+                let mut audit = event("host_send_not_sent");
+                audit.detail = serde_json::json!({
+                    "command": run.launch().instance, "reason": "continuation provider was not pinned",
+                }).to_string();
+                self.save(row, updated, &audit).await?;
+                ticket::clear(self.storage.scratch(), run);
+                return Ok(Action::Nothing);
+            }
+        }
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
             observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
@@ -1112,7 +1130,7 @@ impl Service {
             eprintln!("{}: {error}", task.identity().id);
         }
         let result = match host.send(dispatch).await {
-            Err(error @ HostError::Deferred { .. }) => {
+            Err(error @ (HostError::Deferred { .. } | HostError::WorkerBindingChanged)) => {
                 let mut audit = event("host_send_not_sent");
                 audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
                 self.save(&sent, row.task.clone(), &audit).await?;
@@ -1607,6 +1625,10 @@ async fn read_retained(
         _ => return Ok(Observed::Unknown),
     };
     match task.threads().get(role) {
+        Some(thread) if role == Role::Worker => host
+            .observe_retained_worker(binding, thread)
+            .await
+            .map(Observed::Known),
         Some(thread) => host
             .observe_retained(binding, thread)
             .await

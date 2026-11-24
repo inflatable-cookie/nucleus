@@ -83,7 +83,16 @@ struct Run {
     user_message_id: Option<String>,
     root_node_id: Option<String>,
     provider_instance_id: Option<String>,
+    model_selection: Option<RunSelection>,
+    started_at: Option<String>,
     completed_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunSelection {
+    instance_id: String,
+    model: String,
 }
 
 #[derive(Deserialize)]
@@ -512,10 +521,15 @@ impl Projection {
         })
     }
 
+    pub(crate) const fn deleted(&self) -> bool {
+        self.thread.deleted_at.is_some()
+    }
+
     pub(crate) fn run(
         &self,
         message_id: &str,
         replayable_continuation: bool,
+        queueable_worker: bool,
     ) -> Result<RunState, HostError> {
         if self.shell_closed == Some(RetainedThread::Busy) {
             return Err(HostError::Uncertain);
@@ -533,8 +547,9 @@ impl Projection {
             }
             // T3's dispatchWithReceiptEffect looks up commandId before applying
             // message.dispatch. Reuse the frozen wire, even when history is paged.
-            if (self.windowed && !replayable_continuation)
-                || self.retained()? != RetainedThread::Idle
+            if !queueable_worker
+                && ((self.windowed && !replayable_continuation)
+                    || self.retained()? != RetainedThread::Idle)
             {
                 return Err(HostError::Uncertain);
             }
@@ -625,6 +640,20 @@ impl Projection {
                             })
                     })
         })
+    }
+
+    pub(crate) fn run_routing(&self, message_id: &str) -> Option<crate::RunRouting> {
+        let run = self.delivery(message_id).1?;
+        if run.user_message_id.as_deref() != Some(message_id) || run.started_at.is_none() {
+            return None;
+        }
+        let selected = run.model_selection.as_ref()?;
+        let provider = run.provider_instance_id.as_ref()?;
+        (provider == &selected.instance_id && !provider.is_empty() && !selected.model.is_empty())
+            .then(|| crate::RunRouting {
+                provider: provider.clone(),
+                model: selected.model.clone(),
+            })
     }
 
     pub(crate) fn provider_limit(&self, message_id: &str) -> Option<ProviderLimit> {

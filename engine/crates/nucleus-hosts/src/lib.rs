@@ -83,6 +83,7 @@ pub const T3_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1
 pub struct LaunchRequest<'a> {
     pub binding: Binding,
     pub parent: Option<ParentRun>,
+    pub reuse_parent: bool,
     pub via: &'a Launch,
     pub profile: &'a RoleProfile,
     pub title: String,
@@ -105,6 +106,8 @@ pub enum HostError {
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
     Binding,
+    #[error("the retained worker binding changed before the send")]
+    WorkerBindingChanged,
     #[error("the host observation or mutation outcome is unknown")]
     Uncertain,
     #[error("T3 rejected the pinned parent hold")]
@@ -217,6 +220,7 @@ pub struct ReplayAuthorization {
 pub struct RunDispatch {
     instance: String,
     wire: Wire,
+    worker_continuation: bool,
 }
 
 impl ReplayAuthorization {
@@ -262,10 +266,13 @@ impl ReplayAuthorization {
         {
             return Err(HostError::Binding);
         }
+        let worker_continuation =
+            run.launch().role == Role::Worker && self.wire.method == Method::Continue;
         task.record_send(&self.instance, clock_ms()?)
             .map_err(|_| HostError::Binding)?;
         Ok(RunDispatch {
             instance: self.instance,
+            worker_continuation,
             wire: self.wire,
         })
     }
@@ -277,6 +284,14 @@ pub struct RunObservation {
     pub host: Host,
     pub activity: Option<RunActivity>,
     pub provider_limit: Option<ProviderLimit>,
+    pub routing: Option<RunRouting>,
+}
+
+/// Provider and model recorded on the exact native run after it started.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RunRouting {
+    pub provider: String,
+    pub model: String,
 }
 
 /// Terminal usage-limit evidence for the exact native run.
@@ -302,6 +317,14 @@ pub trait TaskHost: Send + Sync {
         binding: &Binding,
         thread: &str,
     ) -> impl Future<Output = Result<Host, HostError>> + Send;
+
+    fn observe_retained_worker(
+        &self,
+        binding: &Binding,
+        thread: &str,
+    ) -> impl Future<Output = Result<Host, HostError>> + Send {
+        self.observe_retained(binding, thread)
+    }
 
     fn observe_run(
         &self,
@@ -618,11 +641,49 @@ impl T3 {
             Some(thread) => thread.run(
                 &wire.message_id(&launch.instance),
                 wire.method == Method::Continue,
+                run.launch().role == Role::Worker && wire.method == Method::Continue,
             )?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
         };
         Ok((thread, state))
+    }
+
+    fn verify_worker_target(&self, wire: &Wire) -> Result<(), HostError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct WorkerTarget<'a> {
+            thread_id: &'a str,
+        }
+        let target: WorkerTarget<'_> = serde_json::from_str(wire.payload.get())
+            .map_err(|_| HostError::WorkerBindingChanged)?;
+        let row = self
+            .rpc
+            .thread_row(target.thread_id)
+            .ok_or(HostError::WorkerBindingChanged)?;
+        let parent = wire.parent.as_deref();
+        let lineage = &row["lineage"];
+        let selected = wire
+            .selection
+            .as_ref()
+            .ok_or(HostError::WorkerBindingChanged)?;
+        if row["projectId"] != wire.binding.project_id
+            || row["worktreePath"] != wire.binding.worktree_path
+            || row["branch"] != wire.binding.branch
+            || !row["archivedAt"].is_null()
+            || !row["deletedAt"].is_null()
+            || row["providerInstanceId"] != selected["instanceId"]
+            || row["modelSelection"]["instanceId"] != selected["instanceId"]
+            || row["modelSelection"]["model"] != selected["model"]
+            || parent.is_some_and(|parent| {
+                lineage["parentThreadId"] != parent
+                    || lineage["rootThreadId"] != parent
+                    || lineage["relationshipToParent"] != "subagent"
+            })
+        {
+            return Err(HostError::WorkerBindingChanged);
+        }
+        Ok(())
     }
 
     async fn thread_command(&self, payload: Value) -> Result<(), HostError> {
@@ -728,7 +789,15 @@ impl TaskHost for T3Pass<'_> {
     }
 
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError> {
-        let parent = request.parent.as_ref().map(|parent| parent.thread.clone());
+        let parent = request
+            .parent
+            .as_ref()
+            .map(|parent| parent.thread.clone())
+            .or_else(|| {
+                request
+                    .reuse_parent
+                    .then(|| parent_thread(Path::new(&request.binding.worktree_path)))
+            });
         let (dispatch, thread) = match request.via {
             Launch::Create if let Some(parent) = request.parent => (
                 Dispatch::Delegate {
@@ -779,6 +848,28 @@ impl TaskHost for T3Pass<'_> {
         })
     }
 
+    async fn observe_retained_worker(
+        &self,
+        binding: &Binding,
+        thread: &str,
+    ) -> Result<Host, HostError> {
+        let projection = self
+            .host
+            .read_thread(binding, thread, ThreadRead::Observation)
+            .await?;
+        let state = if projection.as_ref().is_some_and(|view| !view.deleted()) {
+            RetainedThread::QueueableWorker
+        } else if self.quiet(binding, thread, projection.as_ref()).await? {
+            RetainedThread::Gone
+        } else {
+            RetainedThread::Busy
+        };
+        Ok(Host::Retained {
+            thread: thread.into(),
+            state,
+        })
+    }
+
     async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<RunObservation, HostError> {
         if run.revoked() {
             return Err(HostError::Binding);
@@ -796,9 +887,16 @@ impl TaskHost for T3Pass<'_> {
                 host: current(run, RunState::ParentEnded),
                 activity: None,
                 provider_limit: None,
+                routing: None,
             });
         }
-        if state == RunState::ReadyToSend && awaiting_reply(run, now_ms) {
+        if state == RunState::ReadyToSend
+            && (awaiting_reply(run, now_ms)
+                || (wire.method == Method::Continue
+                    && !wire.pinned
+                    && run.launch().role == Role::Worker
+                    && run.last_send_at_ms().is_some()))
+        {
             return Err(HostError::Uncertain);
         }
         let message = wire.message_id(&run.launch().instance);
@@ -827,11 +925,15 @@ impl TaskHost for T3Pass<'_> {
         } else {
             state
         };
+        let routing = thread
+            .as_ref()
+            .and_then(|thread| thread.run_routing(&message));
         let activity = thread.and_then(|thread| thread.activity(&message));
         Ok(RunObservation {
             host: current(run, state),
             activity,
             provider_limit,
+            routing,
         })
     }
 
@@ -846,7 +948,12 @@ impl TaskHost for T3Pass<'_> {
         if wire.assignment_too_large() {
             return Err(HostError::AssignmentLimit);
         }
-        let parent_row = if let Some(parent) = &wire.parent {
+        let worker_continuation =
+            run.launch().role == Role::Worker && wire.method == Method::Continue;
+        if worker_continuation && (!wire.pinned || run.revoked()) {
+            return Err(HostError::Uncertain);
+        }
+        let parent_row = if !worker_continuation && let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
@@ -865,7 +972,12 @@ impl TaskHost for T3Pass<'_> {
         } else {
             None
         };
-        let (thread, state) = self.host.delivery(run, &wire, ThreadRead::Exact).await?;
+        let policy = if worker_continuation {
+            ThreadRead::Observation
+        } else {
+            ThreadRead::Exact
+        };
+        let (thread, state) = self.host.delivery(run, &wire, policy).await?;
         if wire.method == Method::Continue
             && run.launch().profile().is_some()
             && !wire.selection.as_ref().is_some_and(|selection| {
@@ -879,13 +991,15 @@ impl TaskHost for T3Pass<'_> {
         if state != RunState::ReadyToSend {
             return Err(HostError::Uncertain);
         }
-        if !self
-            .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-            .await?
+        if !worker_continuation
+            && !self
+                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
+                .await?
         {
             return Err(HostError::WorkspaceBusy);
         }
-        let wake = if wire.method == Method::Continue
+        let wake = if !worker_continuation
+            && wire.method == Method::Continue
             && let Some(projection) = &thread
             && let Some(observed) = projection.row_observation()?
         {
@@ -931,7 +1045,12 @@ impl TaskHost for T3Pass<'_> {
         let reply = self
             .host
             .rpc
-            .call(wire.method.rpc(), wire.payload.as_ref(), Read::One)
+            .call_guarded(wire.method.rpc(), wire.payload.as_ref(), Read::One, || {
+                if dispatch.worker_continuation && self.host.rpc.uses_held_shell() {
+                    self.host.verify_worker_target(&wire)?;
+                }
+                Ok(true)
+            })
             .await;
         match &reply {
             Ok(Reply::Failure(cause)) => eprintln!(
@@ -992,6 +1111,11 @@ impl TaskHost for T3Pass<'_> {
             return Ok(StopProgress::Settled(current(run, RunState::ParentEnded)));
         }
         match state {
+            RunState::ReadyToSend
+                if run.launch().role == Role::Worker && wire.method == Method::Continue =>
+            {
+                Ok(StopProgress::Waiting)
+            }
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
             RunState::Ended | RunState::Gone
                 if self
@@ -1094,6 +1218,7 @@ fn assignment_rejected(run: &Run) -> RunObservation {
         host: current(run, RunState::AssignmentRejected),
         activity: None,
         provider_limit: None,
+        routing: None,
     }
 }
 

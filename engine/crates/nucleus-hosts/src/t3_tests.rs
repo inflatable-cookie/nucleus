@@ -798,6 +798,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         .prepare_launch(crate::LaunchRequest {
             binding,
             parent: Some(parent),
+            reuse_parent: false,
             via: &nucleus_core::Launch::Create,
             profile: &profile,
             instance: "task-fixture-run-1",
@@ -1792,6 +1793,130 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
     assert_eq!(message["commandId"], instance);
     assert_eq!(message["threadId"], THREAD);
     assert_eq!(message["messageId"], format!("{instance}-message"));
+}
+
+fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, String) {
+    let (mut task, mut observation, original) = reserve_entry(binding.clone(), Entry::Brief);
+    task.record_send(&original, 2).unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance: original,
+        state: RunState::Ended,
+    });
+    let _ = task.reconcile(&observation);
+    assert!(task.run().is_none());
+    let instance = task.next_launch_instance().unwrap();
+    observation.host = Observed::Known(Host::Retained {
+        thread: THREAD.into(),
+        state: RetainedThread::QueueableWorker,
+    });
+    let profile = RoleProfile {
+        instance_id: "fixture-provider".into(),
+        model: "fixture-model".into(),
+        runtime_mode: "full-access".into(),
+        options: Vec::new(),
+    };
+    let mut inputs = RunRequest {
+        parent: None,
+        binding: binding.clone(),
+        dispatch: Dispatch::Continue {
+            profile: Some(profile),
+        },
+        text: "Retained worker".into(),
+    }
+    .inputs(&instance, THREAD.into(), 3)
+    .unwrap();
+    if !pinned {
+        let mut legacy: Value = serde_json::from_str(&inputs.input).unwrap();
+        legacy["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("modelSelection");
+        inputs.input = legacy.to_string();
+    }
+    task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
+    (task, instance)
+}
+
+#[tokio::test]
+async fn pinned_worker_queues_while_busy_and_snoozed_without_workspace_custody() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, instance) = reserved_worker_continuation(&binding, true);
+    let mut busy = snapshot(&binding, "other-message", "running", false);
+    busy["projection"]["thread"]["providerInstanceId"] = json!("fixture-provider");
+    busy["projection"]["thread"]["modelSelection"] =
+        json!({"instanceId":"fixture-provider","model":"fixture-model"});
+    busy["projection"]["thread"]["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
+    busy["projection"]["thread"]["settledOverride"] = json!("settled");
+    let (host, native) = server(vec![
+        ("orchestration.subscribeThread", Response::Snapshot(busy)),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
+    let requests = native.await.unwrap();
+    let wire: Value = serde_json::from_str(requests[1].payload.get()).unwrap();
+    assert_eq!(wire["commandId"], instance);
+    assert_eq!(
+        wire["modelSelection"],
+        json!({"instanceId":"fixture-provider","model":"fixture-model"})
+    );
+    assert_eq!(wire["dispatchMode"]["type"], "queue_after_active");
+}
+
+#[tokio::test]
+async fn old_worker_wire_observes_a_delivered_mismatch_but_never_replays_it() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, instance) = reserved_worker_continuation(&binding, false);
+    task.record_send(&instance, 4).unwrap();
+    let mut absent = snapshot(&binding, "other-message", "running", false);
+    absent["hasMoreHistory"] = json!(true);
+    absent["historyCursor"] = json!("older-work");
+    let mut delivered = snapshot(&binding, &instance, "running", false);
+    delivered["projection"]["runs"][0]["startedAt"] = json!("2026-11-24T17:11:15Z");
+    delivered["projection"]["runs"][0]["providerInstanceId"] = json!("observed-provider");
+    delivered["projection"]["runs"][0]["modelSelection"] =
+        json!({"instanceId":"observed-provider","model":"observed-model"});
+    let (host, native) = server(vec![
+        ("orchestration.subscribeThread", Response::Snapshot(absent)),
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(delivered),
+        ),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    let run = task.run().unwrap();
+    assert!(crate::unpinned_worker_continuation(run));
+    assert!(matches!(
+        pass.observe_run(run, crate::LATE_REPLY_MS + 5).await,
+        Err(HostError::Uncertain)
+    ));
+    assert!(matches!(
+        pass.authorize_send(run).await,
+        Err(HostError::Uncertain)
+    ));
+    let observed = pass
+        .observe_run(run, crate::LATE_REPLY_MS + 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        observed.host,
+        Host::Current {
+            instance,
+            state: RunState::Running
+        }
+    );
+    assert_eq!(
+        observed.routing,
+        Some(crate::RunRouting {
+            provider: "observed-provider".into(),
+            model: "observed-model".into()
+        })
+    );
+    assert_eq!(native.await.unwrap().len(), 2);
 }
 
 fn replay_script(

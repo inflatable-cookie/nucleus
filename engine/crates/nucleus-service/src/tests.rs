@@ -322,6 +322,7 @@ impl TaskHost for Due {
             },
             activity: None,
             provider_limit: None,
+            routing: None,
         })
     }
 
