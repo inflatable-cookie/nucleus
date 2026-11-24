@@ -49,6 +49,7 @@ const current = z.object({
   version: revision,
   phase,
   wait: z.string().nullable(),
+  attention: z.enum(["finished", "attention", "active", "waiting"]),
   nextCheckAt: timestamp.nullable(),
   question: question.nullable(),
 });
@@ -122,7 +123,10 @@ const next = current.extend({
     z.union([
       z.object({ name: z.literal("move"), phase, preflight: readiness }),
       z.object({
-        name: z.enum(["answer", "cancel", "amend", "hold", "release", "complete", "move_work"]),
+        name: z.enum([
+          "answer", "cancel", "amend", "hold", "release", "complete", "move_work",
+          "set_dependencies", "set_prerequisite_wait",
+        ]),
         preflight: readiness,
       }),
     ]),
@@ -431,8 +435,9 @@ export function groupRustTasks(
   };
   for (const task of tasks) {
     const column = rustColumns[task.phase];
-    columns[column].push(task);
-    if (column !== "history" && column !== "needs" && task.question) columns.needs.push(task);
+    if (task.attention === "attention") columns.needs.push(task);
+    if (column !== "needs") columns[column].push(task);
+    else if (task.attention !== "attention") columns.working.push(task);
   }
   return columns;
 }

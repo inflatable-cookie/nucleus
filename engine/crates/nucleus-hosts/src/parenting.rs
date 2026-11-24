@@ -7,7 +7,7 @@ use nucleus_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, T3, message_id,
+    Binding, HostError, ProfileCatalog, RowObservation, T3, clock_ms, message_id,
     rpc::{Read, Reply},
 };
 
@@ -43,6 +43,7 @@ pub struct ParentWrite {
     rpc: &'static str,
     payload: Value,
     idle_at: Option<(String, u64)>,
+    delivery: Option<RowObservation>,
 }
 
 impl ParentWrite {
@@ -54,6 +55,20 @@ impl ParentWrite {
     #[must_use]
     pub fn command_id(&self) -> Option<&str> {
         self.payload["commandId"].as_str()
+    }
+
+    /// The current row state a prepared message would deliver over.
+    #[must_use]
+    pub const fn delivery_row(&self) -> Option<RowObservation> {
+        self.delivery
+    }
+
+    /// Replace stale idle evidence after a visibility-only wake.
+    pub fn after_row_wake(&mut self, row: RowObservation) {
+        if let Some((_, sequence)) = &mut self.idle_at {
+            *sequence = row.sequence;
+            self.delivery = Some(row);
+        }
     }
 
     #[must_use]
@@ -92,6 +107,7 @@ impl T3 {
             binding: binding.clone(),
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
+            delivery: projection.row_observation()?,
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -152,6 +168,7 @@ impl T3 {
                     binding: binding.clone(),
                     rpc: "orchestration.dispatchCommand",
                     idle_at: None,
+                    delivery: None,
                     payload: json!({
                         "type":"delegated_task.completion-delivery.dispose",
                         "commandId":format!("{}-dispose", child.id),
@@ -238,6 +255,7 @@ impl T3 {
                     binding: binding.clone(),
                     rpc: "orchestration.dispatchCommand",
                     idle_at: Some((thread.clone(), sequence)),
+                    delivery: None,
                     payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
                 }));
             }
@@ -246,6 +264,7 @@ impl T3 {
                 binding: binding.clone(),
                 rpc: "orchestration.dispatchCommand",
                 idle_at: Some((thread.clone(), sequence)),
+                delivery: projection.row_observation()?,
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
                     "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
@@ -266,6 +285,7 @@ impl T3 {
             binding: binding.clone(),
             rpc: "orchestration.launchThread",
             idle_at: None,
+            delivery: None,
             payload: json!({
                 "commandId":command, "threadId":thread, "projectId":binding.project_id,
                 "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
@@ -289,6 +309,18 @@ impl T3 {
             if fresh.sequence() != *sequence || fresh.retained()? != RetainedThread::Idle {
                 return Err(HostError::Uncertain);
             }
+            let now = clock_ms()?;
+            if write.delivery.is_some()
+                && fresh.row_observation()?.is_none_or(|fresh| {
+                    fresh.visibility.settled
+                        || fresh
+                            .visibility
+                            .snoozed_until_ms
+                            .is_some_and(|until| until > now)
+                })
+            {
+                return Err(HostError::Uncertain);
+            }
         }
         match self.rpc.call(write.rpc, write.payload, Read::One).await? {
             Reply::Value(_) => Ok(()),
@@ -302,6 +334,7 @@ fn archive(binding: &Binding, thread: &str, sequence: u64) -> ParentWrite {
         binding: binding.clone(),
         rpc: "orchestration.dispatchCommand",
         idle_at: Some((thread.into(), sequence)),
+        delivery: None,
         payload: json!({"type":"thread.archive", "threadId":thread, "commandId":format!("{thread}-archive-{sequence}")}),
     }
 }

@@ -68,12 +68,25 @@ impl Store {
     /// # Errors
     /// Returns a database error if the gate cannot be read.
     pub fn dependency_blocked(&self, id: &str) -> Result<bool, StoreError> {
+        self.dependency_gate(id, false)
+    }
+
+    /// Whether a blocking dependency needs an owner edit before work can proceed.
+    ///
+    /// # Errors
+    /// Returns a database error if the gate cannot be read.
+    pub fn dependency_needs_edit(&self, id: &str) -> Result<bool, StoreError> {
+        self.dependency_gate(id, true)
+    }
+
+    fn dependency_gate(&self, id: &str, needs_edit: bool) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
             "SELECT EXISTS (
                 SELECT 1 FROM task_dependencies d
                 LEFT JOIN tasks p ON p.id = d.prerequisite_id
                 JOIN tasks t ON t.id = d.task_id
-                WHERE d.task_id = ?1 AND coalesce(p.phase, '') != 'done'
+                WHERE d.task_id = ?1 AND CASE ?2 WHEN 0 THEN coalesce(p.phase, '') != 'done'
+                                      ELSE p.phase IS NULL OR p.phase = 'cancelled' END
                 AND CASE d.after_dispatch
                     WHEN 0 THEN json_extract(t.threads, '$.worker') IS NULL
                             AND json_extract(t.threads, '$.reviewer') IS NULL
@@ -83,7 +96,7 @@ impl Store {
                     )
                 END
             )",
-            [id],
+            params![id, needs_edit],
             |row| row.get(0),
         )?)
     }

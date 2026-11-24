@@ -106,6 +106,24 @@ impl Service {
         Ok(recorded)
     }
 
+    pub(super) async fn record_failed_parent_turn(
+        &self,
+        row: &TaskRow,
+        session: &str,
+        command: &str,
+    ) -> Result<(), ServiceError> {
+        if self
+            .record_native_turn(row, "native_turn_failed", session, command)
+            .await?
+        {
+            let id = &row.task.identity().id;
+            eprintln!(
+                "{id}: T3 parent turn failed ({command}); waiting for a task or session change"
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn queue_acp_refresh(&self, id: &str) -> Result<bool, ServiceError> {
         let mut state = self.state.lock().await;
         let row = self.lookup(&state, id)?;
@@ -135,7 +153,7 @@ impl Service {
         let work = self.worktrees()?;
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
         let binding = route.binding(&checkout)?;
-        let Some(write) = self.host.prepare_parent_refresh(&binding, provider).await? else {
+        let Some(mut write) = self.host.prepare_parent_refresh(&binding, provider).await? else {
             return Ok(false);
         };
         let Some(_permit) = self
@@ -151,6 +169,18 @@ impl Service {
         else {
             return Ok(false);
         };
+        match self.wake_parent_delivery(row, provider, &mut write).await {
+            Ok(true) => {}
+            result => {
+                let mut state = self.state.lock().await;
+                if self.lookup(&state, id)?.version == row.version {
+                    state.acp_refresh_requests.insert(id.into(), row.version);
+                }
+                return Err(result
+                    .err()
+                    .unwrap_or_else(|| nucleus_hosts::HostError::Uncertain.into()));
+            }
+        }
         self.ensure_parent_reader(id, checkout.path()).await?;
         let session = self
             .host

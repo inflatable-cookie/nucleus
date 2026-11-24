@@ -2,6 +2,7 @@
 
 mod acp;
 mod allowance;
+mod attention;
 mod dependencies;
 mod enrollment;
 mod inbox;
@@ -17,6 +18,7 @@ mod question;
 mod report_only;
 mod schedule;
 mod scratch;
+mod task_rows;
 mod tell;
 #[cfg(test)]
 mod tests;
@@ -201,6 +203,7 @@ struct State {
     schedule: Schedule,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
+    role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: VecDeque<String>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
@@ -344,6 +347,7 @@ impl Service {
                 schedule: Schedule::new(),
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
                 group_waits: BTreeMap::new(),
@@ -793,8 +797,15 @@ impl Service {
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !state.store.archive_confirmed(id)?;
-        if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
-            state.set_wait(id, None);
+        if !archive_due
+            && !active(&current.task)
+            && !state.forge_requested.contains(id)
+            && state.acp_refresh_requests.get(id) != Some(&current.version)
+        {
+            if state.set_wait(id, None).is_some() {
+                self.title_wake.notify_one();
+                self.publish(id, current.version);
+            }
             state.schedule.reset_host_backoff(id);
             return Ok(());
         }
@@ -845,7 +856,7 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
-        if (prior == Some(WaitReason::Running)) != (wait == Some(WaitReason::Running)) {
+        if prior != wait {
             self.title_wake.notify_one();
         }
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
@@ -1185,8 +1196,14 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
         }
-        if state.set_wait(id, None) == Some(WaitReason::Running) {
-            self.title_wake.notify_one();
+        state.set_wait(id, None);
+        if task
+            .run()
+            .is_none_or(|run| run.revoked() || run.report().is_some())
+            || task.run().map(|run| &run.launch().instance)
+                != prior.task.run().map(|run| &run.launch().instance)
+        {
+            state.role_observations.remove(id);
         }
         self.desire_title(state, task, prior.reference().as_ref(), None);
         state.schedule.reset_host_backoff(id);
@@ -1283,6 +1300,7 @@ impl Service {
 
     fn wake_task(&self, state: &mut State, id: &str, version: i64, priority: Priority) {
         state.schedule.wake(id, Instant::now(), priority);
+        self.title_wake.notify_one();
         self.wake.notify_one();
         self.publish(id, version);
     }
