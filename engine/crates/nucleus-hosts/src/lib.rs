@@ -282,6 +282,7 @@ impl ReplayAuthorization {
             || run.launch().instance != self.instance
             || run.launch().input != self.input
             || run.revoked() != self.revoked
+            || (!run.revoked() && run.report().is_some())
             || run.last_send_at_ms() != self.prior_send
         {
             return Err(HostError::Binding);
@@ -661,12 +662,6 @@ impl T3 {
                 // This only permits unarchiving. A send still needs a live exact read.
                 RunState::ReadyToSend
             }
-            Some(thread)
-                if thread.archived_in_shell() && run.report().is_some() && !run.revoked() =>
-            {
-                // An archive alone cannot identify the outcome of the reported run.
-                return Err(HostError::Uncertain);
-            }
             Some(thread) => thread.run(
                 &wire.message_id(&launch.instance),
                 wire.method == Method::Continue,
@@ -909,7 +904,7 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn observe_run(&self, run: &Run, now_ms: u64) -> Result<RunObservation, HostError> {
-        if run.revoked() {
+        if run.revoked() || run.report().is_some() {
             return Err(HostError::Binding);
         }
         let wire = Wire::read(run)?;
@@ -991,7 +986,10 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
-        if run.rejected_awaiting_archive() || (run.revoked() && run.last_send_at_ms().is_none()) {
+        if run.rejected_awaiting_archive()
+            || (run.revoked() && run.last_send_at_ms().is_none())
+            || (!run.revoked() && run.report().is_some())
+        {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
@@ -999,9 +997,8 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::AssignmentLimit);
         }
         let continuation = wire.method == Method::Continue;
-        let role = run.launch().role;
-        let worker_continuation = continuation && role == Role::Worker;
-        if (worker_continuation && (!wire.pinned || run.revoked() || run.report().is_some()))
+        let worker_continuation = continuation && run.launch().role == Role::Worker;
+        if (worker_continuation && (!wire.pinned || run.revoked()))
             || (!worker_continuation && awaiting_reply(run, clock_ms()?))
         {
             return Err(HostError::Uncertain);
@@ -1046,7 +1043,7 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         if !worker_continuation
-            && (run.revoked() || role != Role::Reviewer || continuation)
+            && (run.revoked() || continuation)
             && !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
                 .await?
