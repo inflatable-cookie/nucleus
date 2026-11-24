@@ -348,12 +348,12 @@ impl Checks {
         ) {
             (_, _, Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED"), _) => CheckState::Blocked,
             _ if named != CheckState::Ready => named,
-            (_, _, _, Some("ERROR" | "FAILURE")) => CheckState::Blocked,
             (_, _, _, Some("PENDING" | "EXPECTED")) => CheckState::Pending,
             ("MERGEABLE", "CLEAN", None | Some("APPROVED"), None | Some("SUCCESS")) => {
                 CheckState::Ready
             }
-            (_, "BEHIND" | "BLOCKED" | "DRAFT" | "UNSTABLE", _, _) => CheckState::Blocked,
+            (_, _, _, Some("ERROR" | "FAILURE"))
+            | (_, "BEHIND" | "BLOCKED" | "DRAFT" | "UNSTABLE", _, _) => CheckState::Blocked,
             _ => CheckState::Unknown,
         }
     }

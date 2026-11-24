@@ -469,7 +469,7 @@ impl GitHub {
     /// Read the check names GitHub marks required for a task due to merge.
     ///
     /// # Errors
-    /// Returns the same evidence and transport errors as [Self::observe].
+    /// Returns the same evidence and transport errors as [`Self::observe`].
     pub async fn observe_for_merge(&self, target: &PullTarget) -> Result<Forge, ForgeError> {
         self.observe_with_checks(target, true).await
     }
