@@ -169,6 +169,36 @@ fn assert_imported_profiles(before: &Profiles, first: &Profiles) {
 }
 
 #[test]
+fn legacy_profiles_only_uses_the_service_lock_without_opening_the_database() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let source = scratch.path().join("profiles-copy.sqlite");
+    add_profile_meta(
+        &source,
+        json!([legacy_profile("seed")]),
+        json!([legacy_pool("seed")]),
+    );
+    let bytes = fs::read(&source).expect("source");
+    let settings = profile(scratch.path());
+    let storage = settings.storage().expect("storage");
+    let lock = storage.lock_profile().expect("running");
+    let database = storage.database().path().join(DATABASE_FILE);
+    fs::write(&database, b"opaque fixture").expect("unopened database");
+    assert!(matches!(
+        apply_profiles(scratch.path(), &source, &settings),
+        Err(ImportError::Storage(StorageError::ProfileLock))
+    ));
+    assert!(!settings.read::<Profiles>().expect("locked").configured);
+    drop(lock);
+
+    let report = apply_profiles(scratch.path(), &source, &settings).expect("profiles only");
+    let report = serde_json::to_value(report).expect("report");
+    assert_eq!(report["profiles"]["added"], 1);
+    assert_eq!(report["database"], Value::Null);
+    assert_eq!(fs::read(&database).expect("database"), b"opaque fixture");
+    assert_eq!(fs::read(&source).expect("source"), bytes);
+}
+
+#[test]
 fn legacy_profiles_enrich_exact_seeds_and_replay_without_clobbering_edits() {
     let scratch = tempfile::tempdir().expect("scratch");
     let source = legacy_copy(scratch.path());

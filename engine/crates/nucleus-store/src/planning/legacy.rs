@@ -30,6 +30,8 @@ pub enum ImportError {
     Source,
     #[error("the copy does not contain a legacy planning table")]
     Schema,
+    #[error("the copy does not contain legacy profiles or pool settings")]
+    ProfilesSchema,
     #[error("every repository needs a project mapping; missing {0}")]
     Repository(String),
     #[error("invalid repository mapping or legacy item {0}")]
@@ -135,6 +137,26 @@ pub fn apply_items(
     tx.commit()?;
     report.database = Some(database);
     Ok(report)
+}
+
+/// Apply only Profiles through the stopped engine's service lock.
+///
+/// # Errors
+/// Returns an error for an unsafe copy, missing profile metadata, running
+/// service or unreadable settings.
+pub fn apply_profiles(
+    scratch: &Path,
+    source: &Path,
+    settings: &SettingsFile,
+) -> Result<ImportReport, ImportError> {
+    let source = open_copy(&scratch_root(scratch)?, source)?;
+    let storage = settings.storage()?;
+    let _lock = storage.lock_profile()?;
+    let profiles = profiles::apply(&source, settings)?.ok_or(ImportError::ProfilesSchema)?;
+    Ok(ImportReport {
+        profiles: Some(profiles),
+        ..ImportReport::default()
+    })
 }
 
 fn scratch_root(scratch: &Path) -> Result<PathBuf, ImportError> {

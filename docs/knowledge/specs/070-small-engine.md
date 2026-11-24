@@ -413,7 +413,10 @@ that have no destination and shows the retained notes, scopes, coordinator
 membership and feature options. Resolve reported conflicts and unmapped rows
 before using the imported pool. Settings publish after planning validation and
 before the SQLite commit. If either publication fails, rerunning the same
-backup reconciles the two stores.
+backup reconciles the two stores. Before the drain, use
+`item.import <copy> --apply <PROFILE_HOME> --profiles-only` to apply profiles
+without a repository mapping or opening the planning database. Use the combined
+apply on the fresh global snapshot after the drain.
 
 Older Rust Profiles JSON still allows both roles and enables profiles by
 default. Dispatch checks the imported enabled flag and role list for each new
