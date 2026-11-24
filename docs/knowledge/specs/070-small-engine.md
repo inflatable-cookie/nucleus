@@ -116,6 +116,11 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - An external volume is an opt-in Storage setting. When it's set, every root must resolve onto that pinned volume. If the volume is absent or a root resolves off it, the engine refuses to start rather than falling back to the internal drive. A Barge worktree pool, when enabled, follows the same rule.
     - Tom's machine opts in. On the selected volume, use `nucleus-engine` for home, `worktrees/nucleus-engine` for worktrees, `scratch/nucleus-engine` for scratch, and `builds` for install output. Set those paths before the first real project goes live.
     - The rule covers the engine's own roots. A project's registered checkout and its Git common directory belong to the project and stay where the operator keeps them, as with the TypeScript engine's Stash worktrees today. Git's small per-worktree metadata and the task's commit objects land in that common directory. The bulk (worktree files, build output, dependencies, scratch, logs and the database) stays on the configured roots. The engine never makes its own clone of a project to satisfy this (planner decision, 2026-11-24).
+20. **One binary.** Tom, 2026-11-24: "The single binary is perfect yes".
+    - The engine ships as one `nucleus` binary with subcommands: `serve` runs the service, `acp` runs the stdio ACP agent, `ensure` starts the service when it isn't healthy, and the other subcommands are the CLI.
+    - `serve` can name its process `nucleusd` so the daemon is recognisable in process lists. There's no second binary.
+    - The CLI, the ACP agent and the service then share one build and can't drift apart.
+    - Milestone 3 does the fold. The pilot's `nucleus-engine` and `nucleus-acp` binaries and the Python startup helper are interim. When `ensure` moves into the binary, the service opens its storage before binding its port, so a caller sees only "refused" or "healthy".
 
 ## The model
 
@@ -232,7 +237,7 @@ A Cargo workspace inside this repository, at `engine/`:
 | `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
 | `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands. A thin client of the service (ruling 6). |
 | `nucleus-service` | The pass loop, the JSON API for the board and the ACP agent, and callbacks. |
-| `nucleus-cli` | The `nucleus` command. |
+| `nucleus-cli` | The single `nucleus` binary: `serve`, `acp`, `ensure` and the CLI verbs (ruling 20). |
 
 Reuse, to be confirmed by the build when it reads their contracts:
 
