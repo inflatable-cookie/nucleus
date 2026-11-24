@@ -200,6 +200,9 @@ Every action is idempotent:
   exact head. A reservation that no longer fits proceeds to reconciliation
   without charging a failed attempt. A failed attempt counts only when the
   required head observation is known.
+- Cleanliness checks include tracked files and non-ignored untracked files.
+  Fresh evidence of a clean checkout at the exact open PR head resolves an
+  existing workspace mismatch question at that head.
 - If the head moved while delivery was uncertain, reconciliation can replay the
   old request after revoking its credential. It stops the exact turn and archives
   the thread before clearing the run. The old review cannot report a verdict.
@@ -226,7 +229,9 @@ There are only two:
 1. **Merging needs an exact-head `approve` verdict, or a recorded acceptance of that
    head.** The task's planner can accept an externally merged, unreviewed `brief`
    task (Tom, 2026-11-23). For a `review_entry`, only the operator can accept it.
-2. **A worktree with uncommitted work is never deleted.**
+2. **A worktree with uncommitted work is never deleted.** Tracked changes and
+   non-ignored untracked files keep the worktree. Git-ignored output goes with
+   the worktree when unforced removal succeeds.
 
 ## Engine shape
 

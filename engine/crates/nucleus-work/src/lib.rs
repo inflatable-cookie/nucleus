@@ -140,7 +140,6 @@ impl Checkout<'_> {
                 "status",
                 "--porcelain=v1",
                 "--untracked-files=all",
-                "--ignored=matching",
                 "--ignore-submodules=none",
             ],
         )?;

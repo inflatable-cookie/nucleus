@@ -666,6 +666,45 @@ fn an_authenticated_question_updates_the_brief_and_a_hold_survives_amendment() {
 }
 
 #[test]
+fn a_repaired_checkout_resolves_its_question_at_the_same_head() {
+    let mut task = task(Entry::ReviewEntry);
+    let ready = open('a', CheckState::Ready);
+    let dirty = Observation {
+        workspace: Observed::Known(Workspace::Dirty),
+        ..ready.clone()
+    };
+    assert_eq!(
+        task.reconcile(&dirty),
+        Action::Ask(Question::Repair(Repair::WorkspaceHeadMismatch))
+    );
+    for unknown in [
+        Observation {
+            forge: Observed::Unknown,
+            ..ready.clone()
+        },
+        Observation {
+            workspace: Observed::Unknown,
+            ..ready.clone()
+        },
+        Observation {
+            workspace: Observed::Known(Workspace::Clean(sha('b'))),
+            ..ready.clone()
+        },
+    ] {
+        assert_eq!(task.reconcile(&unknown), Action::Wait(WaitReason::Question));
+    }
+    assert_eq!(task.reconcile(&ready), Action::Advance(Phase::Reviewing));
+    assert_eq!(task.question(), None);
+    assert_eq!(
+        decide(&task, &ready),
+        Action::Launch {
+            role: Role::Reviewer,
+            via: Launch::Create
+        }
+    );
+}
+
+#[test]
 fn review_handoff_checks_workspace_and_credential_binding() {
     let mut task = task(Entry::ReviewEntry);
     let open = open('a', CheckState::Ready);

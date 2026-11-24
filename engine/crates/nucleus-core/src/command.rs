@@ -113,6 +113,9 @@ impl Task {
     }
 
     fn advance(&mut self, phase: Phase, observation: &Observation) {
+        if observation.repairs_workspace(self) {
+            self.question = None;
+        }
         let run = self.settle_run(observation);
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
