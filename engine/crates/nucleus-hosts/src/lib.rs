@@ -43,8 +43,8 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ArchiveCustody, ArchiveStep, ParentAttempt, ParentRun, ParentSendError, ParentStep,
-    ParentWrite, parent_thread,
+    ArchiveCustody, ArchiveReceipt, ArchiveStep, ParentAttempt, ParentRun, ParentSendError,
+    ParentStep, ParentWrite, parent_thread,
 };
 pub use process::ProcessEvidenceFailure;
 use process::{Activity, Inventory};

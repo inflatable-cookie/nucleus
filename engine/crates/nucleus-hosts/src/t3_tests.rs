@@ -379,6 +379,105 @@ async fn unlisted_legacy_worker_waits_for_held_closure_without_a_native_read() {
 }
 
 #[tokio::test]
+async fn archive_restart_requires_the_exact_receipt_and_reopen_vetoes_it() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent_id = crate::parent_thread(checkout.path());
+    let parent = parent_snapshot(&binding, "completed", false);
+    let mut child = snapshot(&binding, "worker", "completed", false);
+    child["projection"]["thread"]["parentThreadId"] = json!(parent_id);
+    let shell_row = |snapshot: &Value| {
+        let mut row = snapshot["projection"]["thread"].clone();
+        row["status"] = json!("completed");
+        row["latestRunId"] = json!(NATIVE_RUN);
+        row["pendingBackgroundTasks"] = json!([]);
+        row
+    };
+    let read = "orchestration.subscribeThread";
+    let (host, native) = server(vec![
+        (read, Response::ParentSnapshot(parent.clone())),
+        (read, Response::Snapshot(child.clone())),
+        (
+            "orchestration.dispatchCommand",
+            Response::Value(json!({"sequence":17})),
+        ),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16,"threads":[shell_row(&parent),shell_row(&child)],"projects":[]
+        }}));
+    let mut custody = crate::ArchiveCustody::default();
+    let crate::ArchiveStep::Write(write) = host
+        .prepare_parent_archive(&binding, "fixture-acp", &[THREAD], &mut custody)
+        .await
+        .unwrap()
+    else {
+        panic!("live worker is eligible for archive");
+    };
+    let without_receipt = serde_json::to_value(&custody).unwrap();
+    let receipt = host.write_parent_receipt(*write).await.unwrap().unwrap();
+    custody.record_archive(receipt).unwrap();
+    let with_receipt = serde_json::to_value(&custody).unwrap();
+
+    let (step, calls) = T3::count_pass_calls(Box::pin(host.prepare_parent_archive(
+        &binding,
+        "fixture-acp",
+        &[THREAD],
+        &mut custody,
+    )))
+    .await;
+    assert!(matches!(step, Ok(crate::ArchiveStep::Wait(_))));
+    assert!(
+        calls.is_empty(),
+        "the held live predecessor still needs confirmation"
+    );
+    assert_eq!(native.await.unwrap().len(), 3);
+
+    for (saved, accepted) in [(without_receipt, false), (with_receipt, true)] {
+        let (host, native) = server(vec![(read, Response::ParentSnapshot(parent.clone()))]).await;
+        host.rpc.use_held_shell();
+        host.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":17,"threads":[shell_row(&parent)],"projects":[]
+            }}));
+        let mut restored = serde_json::from_value(saved).unwrap();
+        let step = host
+            .prepare_parent_archive(&binding, "fixture-acp", &[THREAD], &mut restored)
+            .await
+            .unwrap();
+        if accepted {
+            let crate::ArchiveStep::Write(write) = step else {
+                panic!("accepted worker archive should allow the parent");
+            };
+            let mut reopened = shell_row(&child);
+            reopened["status"] = json!("running");
+            host.rpc
+                .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":reopened}));
+            assert!(matches!(
+                host.write_verified_parent(*write).await,
+                Err(crate::ParentSendError::NotSent(HostError::Deferred { .. }))
+            ));
+        } else {
+            let crate::ArchiveStep::Wait(wait) = step else {
+                panic!("an omitted worker without a receipt must hold");
+            };
+            assert_eq!(
+                wait.note(Some(THREAD), None),
+                "Waiting to confirm the worker thread is closed."
+            );
+        }
+        assert_eq!(native.await.unwrap().len(), 1);
+        assert!(
+            !host
+                .host_calls()
+                .contains_key("threadReads.archivedOrDeleted")
+        );
+    }
+}
+
+#[tokio::test]
 async fn cold_archived_parent_reads_only_its_unresolved_live_child() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -1233,8 +1332,8 @@ async fn archival_finds_displaced_children_and_confirms_both_from_shell() {
         (read, Response::ParentSnapshot(parent.clone())),
         (read, Response::Snapshot(child("running"))),
         (read, Response::Snapshot(child("completed"))),
-        (write, Response::Success),
-        (write, Response::Success),
+        (write, Response::Value(json!({"sequence":17}))),
+        (write, Response::Value(json!({"sequence":17}))),
     ])
     .await;
     let row = |snapshot: &Value, archived: bool| {
@@ -1362,8 +1461,8 @@ async fn bounded_finished_worker_is_idle_and_archives_with_its_parent() {
     let (host, native) = server(vec![
         (read, Response::Snapshot(worker.clone())),
         (read, Response::ParentSnapshot(parent_view.clone())),
-        (write, Response::Success),
-        (write, Response::Success),
+        (write, Response::Value(json!({"sequence":17}))),
+        (write, Response::Value(json!({"sequence":17}))),
     ])
     .await;
     let shell_row = |view: &Value| {

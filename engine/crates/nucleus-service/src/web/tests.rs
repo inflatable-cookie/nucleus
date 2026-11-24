@@ -2187,15 +2187,17 @@ async fn archive_roster_fixture(
         let root = project_root.clone();
         move |host: &T3| {
             let writes = writes.lock().unwrap();
-            let threads = [parent.as_str(), child.as_str(), "thread:reviewer"].map(|id| {
+            let threads: Vec<_> = [parent.as_str(), child.as_str(), "thread:reviewer"]
+                .into_iter()
+                .filter(|id| !writes.iter().any(|archived| archived == id))
+                .map(|id| {
                 json!({"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
                     "parentThreadId":(id != parent).then_some(&parent),
                     "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
                     "status":"idle","latestRunId":null,"pendingBackgroundTasks":[],
                     "activeRunId":null,"pendingRuntimeRequest":null,
-                    "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z"),
-                    "archivedAt":writes.iter().any(|archived| archived == id).then_some("2026-11-23T16:10:00Z")})
-            });
+                    "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z")})
+            }).collect();
             host.fixture_project_shell(
                 &json!({"snapshotSequence":16 + writes.len(),
                 "projects":[{"id":"local-fixture","workspaceRoot":root}],"threads":threads}),
@@ -2208,8 +2210,9 @@ async fn archive_roster_fixture(
             let payload = &request["payload"];
             assert_eq!(payload["type"], "thread.archive");
             let target = payload["threadId"].as_str().expect("archive destination");
-            writes.lock().expect("archive log").push(target.into());
-            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{}}});
+            let mut archived = writes.lock().expect("archive log");
+            archived.push(target.into());
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":16 + archived.len()}}});
         }
         let mut snapshot = json!({"kind":"snapshot","snapshotSequence":16});
         match request["tag"].as_str() {
@@ -2232,6 +2235,7 @@ async fn archive_roster_fixture(
         }
         json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
     }).await;
+    host.use_held_shell();
     (host, parent_id, archived, publish_row, native)
 }
 

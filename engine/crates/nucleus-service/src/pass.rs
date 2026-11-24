@@ -136,14 +136,7 @@ impl Service {
         };
         let _fence = self.effect(row).await?;
         if custody != prior_custody {
-            let mut progress = event("role_archive_progress");
-            progress.detail =
-                serde_json::to_string(&custody).map_err(nucleus_store::StoreError::from)?;
-            self.state
-                .lock()
-                .await
-                .store
-                .record_task_effect(id, &progress)?;
+            self.record_archive_progress(id, &custody).await?;
         }
         let uses_report_checkout = row.task.report_task().is_some();
         match archive? {
@@ -196,11 +189,33 @@ impl Service {
                 if uses_report_checkout {
                     self.report_archive_head(row, &checkout).await?;
                 }
-                self.deliver_parent(row, *write, "archive", None).await?;
+                if let crate::acp::ParentEffect::Archived(receipt) = self
+                    .deliver_parent_effect(row, *write, "archive", None)
+                    .await?
+                {
+                    custody.record_archive(receipt)?;
+                    self.record_archive_progress(id, &custody).await?;
+                }
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
         }
+    }
+
+    async fn record_archive_progress(
+        &self,
+        id: &str,
+        custody: &ArchiveCustody,
+    ) -> Result<(), ServiceError> {
+        let mut progress = event("role_archive_progress");
+        progress.detail =
+            serde_json::to_string(custody).map_err(nucleus_store::StoreError::from)?;
+        self.state
+            .lock()
+            .await
+            .store
+            .record_task_effect(id, &progress)?;
+        Ok(())
     }
 
     #[expect(
