@@ -72,7 +72,12 @@ const CLASSES: readonly StorageClass[] = [
 
 /** The classes this engine reports. An engine without a class leaves it out. */
 const classesOf = (state: WorkStorageState) =>
-  CLASSES.filter((item) => state[item.field] !== undefined);
+  CLASSES.filter(
+    (item) =>
+      state[item.field] !== undefined &&
+      // The Rust engine's work root is its worktree root: one row, not two.
+      !(state.home && item.field === "worktreesRoot" && state.worktreesRoot === state.workRoot),
+  );
 
 /** A class the engine reports but does not let Settings change. */
 const fixed = (state: WorkStorageState, item: StorageClass) =>
@@ -247,7 +252,7 @@ export function StoragePanel({
         <>
           <Field
             c={c}
-            label="Work root"
+            label={state.home ? "Worktrees" : "Work root"}
             value={workRoot}
             onChange={(value) => {
               setWorkRoot(value);
@@ -256,7 +261,11 @@ export function StoragePanel({
             placeholder={state.workRoot}
             disabled={saving}
             invalid={failure.includes("workRoot")}
-            detail={`The volume mount every other path sits inside · in force now: ${state.workRoot}`}
+            detail={
+              state.home
+                ? `In force: ${state.workRoot}`
+                : `The volume mount every other path sits inside · in force now: ${state.workRoot}`
+            }
           />
           {classesOf(state).map((item) => {
             const stored = state.overrides[item.field];
