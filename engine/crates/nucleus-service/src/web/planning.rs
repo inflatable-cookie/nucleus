@@ -17,6 +17,9 @@ use crate::{
     planning::{TaskAdmission, new_id, stamp},
 };
 
+// A JSON string can use six bytes to escape one input byte.
+const PLANNING_BODY_LIMIT: usize = 6 * MAX_TEXT_BYTES + 64 * 1024;
+
 pub(super) fn routes() -> Router<Api> {
     Router::new().nest(
         "/v1/planning/{project}",
@@ -30,8 +33,7 @@ pub(super) fn routes() -> Router<Api> {
             .route("/decisions", get(decisions).post(add_decision))
             .route("/decisions/{id}/answer", post(answer_decision))
             .route("/history/{kind}/{id}", get(history))
-            // A JSON string can use six bytes to escape one input byte.
-            .layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024)),
+            .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
     )
 }
 
@@ -40,7 +42,7 @@ pub(super) fn lane_routes() -> Router<Api> {
         .route("/plan", get(plan).put(set_plan))
         .route("/lanes/{key}", put(put_lane))
         .route("/lanes/{key}/status", post(lane_status))
-        .layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024))
+        .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT))
 }
 
 #[derive(Serialize)]
@@ -100,7 +102,13 @@ async fn put_lane(
     let mut state = api.service.planning_state(&project).await?;
     let saved = state
         .store
-        .put_lane(&project, &key, input.version, input.document, stamp(&caller))
+        .put_lane(
+            &project,
+            &key,
+            input.version,
+            input.document,
+            stamp(&caller),
+        )
         .map_err(ServiceError::from)?;
     api.service.settings_changes.send_replace(());
     Ok(Json(saved))

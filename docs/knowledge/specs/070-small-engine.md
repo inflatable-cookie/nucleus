@@ -328,6 +328,8 @@ or use `web/engine` from a packaged runtime. Pass that directory to
 at `/settings` on the engine's loopback listener. The browser subscribes to task
 and Settings changes on that listener, regardless of whether the TypeScript
 service is running. The TypeScript transition board still proxies Rust task views.
+Projects in Settings edits lane and plan records through the Rust planning API,
+with the same version checks as the CLI.
 
 `nucleus-engine ui` prints a two-minute, one-use link for the authenticated
 controller. Pairing consumes the token and issues an eight-hour HttpOnly session

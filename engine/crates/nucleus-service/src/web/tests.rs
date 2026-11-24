@@ -1936,6 +1936,47 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
         json_body(get_as(&api, "/v1/tasks/board-task", &BOARD_KEY).await).await["wait"],
         "hold"
     );
+    assert_browser_lanes(&api, &operator, &mut events).await;
+}
+
+async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyDataStream) {
+    let plan = "/api/engine/planning/local-fixture/plan";
+    let lane = "/api/engine/planning/local-fixture/lanes/board";
+    let cookie = Some(session);
+    let initial = json_body(browser_request(api, Method::GET, plan, cookie, None).await).await;
+    assert_eq!(initial["version"], 0);
+    let document =
+        json!({"title":"Board","aim":"Finish Settings","document":"## Steps","version":0});
+    let saved =
+        json_body(browser_request(api, Method::PUT, lane, cookie, Some(&document)).await).await;
+    assert_eq!(saved["version"], 1);
+    assert_event(events, &["event: settings"]).await;
+    assert_eq!(
+        browser_request(api, Method::PUT, lane, cookie, Some(&document))
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let update = json!({"version":0,"lanes":[{"key":"board","horizon":"now","doneWhen":"Tools work","statusNote":"Ready"}]});
+    let saved =
+        json_body(browser_request(api, Method::PUT, plan, cookie, Some(&update)).await).await;
+    assert_eq!(saved["version"], 1);
+    assert_event(events, &["event: settings"]).await;
+    let updated = json_body(browser_request(api, Method::GET, plan, cookie, None).await).await;
+    assert_eq!(updated["lanes"][0]["key"], "board");
+    assert_eq!(updated["documents"][0]["document"], "## Steps");
+    assert_eq!(
+        browser_request(
+            api,
+            Method::GET,
+            "/api/engine/planning/local-fixture/decisions",
+            cookie,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
 }
 
 async fn assert_board_assets(api: &Router) {
