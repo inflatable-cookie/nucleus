@@ -10,6 +10,12 @@ CREATE TABLE inbox_bindings (
   head TEXT NOT NULL
 ) STRICT";
 
+pub(super) const COMMAND_RECEIPTS: &str = "
+CREATE TABLE IF NOT EXISTS inbox_command_receipts (
+  message_id TEXT PRIMARY KEY,
+  attempted_at_ms INTEGER NOT NULL
+) STRICT";
+
 /// An outbox binding survives a lost response or a task moving on.
 pub struct InboxBinding {
     pub task_version: i64,
@@ -18,6 +24,22 @@ pub struct InboxBinding {
 }
 
 impl Store {
+    /// Record the attempt before an Inbox message can cause a side effect.
+    ///
+    /// # Errors
+    /// Returns an error when the receipt cannot be persisted.
+    pub fn claim_inbox_message(
+        &mut self,
+        message_id: &str,
+        at_ms: i64,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.execute(
+            "INSERT INTO inbox_command_receipts (message_id, attempted_at_ms) VALUES (?1, ?2)
+             ON CONFLICT(message_id) DO NOTHING",
+            params![message_id, at_ms],
+        )? == 1)
+    }
+
     /// Read the exact decision the scheduler may have sent.
     /// # Errors
     /// Returns an error if the binding cannot be read.

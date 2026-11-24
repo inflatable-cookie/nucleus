@@ -16,6 +16,44 @@ const PROJECT: &str = "project:nucleus-rust-inbox";
 const PROVIDER: &str = "fixture-acp";
 
 #[tokio::test]
+async fn an_inbox_ui_attempt_is_claimed_once_and_the_reply_is_consumed() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
+    let inbox = service.native_inbox.as_ref().unwrap();
+    inbox.set_observation(Observation::Pinned(BTreeSet::new()));
+    let messages = [nucleus_hosts::InboxOperatorMessage {
+        id: "synthetic-typed-message".into(),
+        text: "ui".into(),
+    }];
+    service
+        .serve_inbox_commands(inbox, &messages)
+        .await
+        .unwrap();
+    assert!(
+        service
+            .inbox_snapshot(&inbox.credential)
+            .await
+            .unwrap()
+            .replies_ready
+    );
+    assert!(service.take_inbox_replies(&[0; 32]).is_err());
+    assert_eq!(
+        service.take_inbox_replies(&inbox.credential).unwrap(),
+        ["The local board is unavailable."]
+    );
+    service
+        .serve_inbox_commands(inbox, &messages)
+        .await
+        .unwrap();
+    assert!(
+        service
+            .take_inbox_replies(&inbox.credential)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn low_usage_permission_survives_task_edits_and_preserves_independent_holds() {
     use nucleus_core::{Command, profiles::UsageLevel};
 

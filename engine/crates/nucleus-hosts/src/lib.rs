@@ -26,7 +26,10 @@ use std::{
 };
 
 pub use catalog::{ProfileCatalog, ProfileOffer};
-pub use inbox::{INBOX_THREAD, InboxLifecycle, InboxStatus, InboxStep, InboxTarget, InboxWrite};
+pub use inbox::{
+    INBOX_THREAD, InboxLifecycle, InboxOperatorMessage, InboxStatus, InboxStep, InboxTarget,
+    InboxWrite,
+};
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_diagnostic,
     launch_provider_instance,

@@ -268,6 +268,7 @@ impl Store {
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
+        tx.execute(inbox::COMMAND_RECEIPTS, [])?;
         tx.execute_batch(allowance::SCHEMA)?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;

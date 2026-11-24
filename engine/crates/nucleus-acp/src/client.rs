@@ -275,6 +275,17 @@ impl ServiceClient {
         self.get("").await
     }
 
+    pub(crate) async fn take_inbox_replies(&self) -> Result<Vec<String>, Failure> {
+        let response = accepted(
+            self.request(Method::POST, "/replies", &self.auth)
+                .timeout(DEADLINE)
+                .send()
+                .await,
+        )
+        .await?;
+        serde_json::from_slice(&body(response).await?).map_err(|_| Failure::Unavailable)
+    }
+
     pub(crate) async fn answer(&self, answer: &InboxAnswer) -> Result<(), Failure> {
         let response = self
             .request(Method::POST, "/answer", &self.auth)

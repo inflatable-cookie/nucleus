@@ -28,7 +28,17 @@ pub enum InboxStep {
     /// The Inbox is pinned and idle, with no live cards.
     Wake(InboxWrite),
     /// Pending forms already visible on the current native turn.
-    Ready(BTreeSet<String>),
+    Ready {
+        forms: BTreeSet<String>,
+        commands: Vec<InboxOperatorMessage>,
+    },
+}
+
+/// A direct UI message on a live or queued run of the exact pinned Inbox.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InboxOperatorMessage {
+    pub id: String,
+    pub text: String,
 }
 
 pub enum InboxLifecycle {
@@ -309,12 +319,6 @@ fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, 
     let items = projection["turnItems"]
         .as_array()
         .ok_or(HostError::Protocol)?;
-    let live = |run: &Value| {
-        matches!(
-            run["status"].as_str(),
-            Some("preparing" | "queued" | "starting" | "running" | "waiting")
-        )
-    };
     let mut present = BTreeSet::new();
     for request in requests
         .iter()
@@ -339,7 +343,7 @@ fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, 
         if request["responseCapability"]["type"] == "live"
             && runs
                 .iter()
-                .any(|run| live(run) && run["id"] == item["runId"])
+                .any(|run| live_run(run) && run["id"] == item["runId"])
             && pending.contains(field)
             && present.insert(field.to_owned())
         {
@@ -353,7 +357,7 @@ fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, 
             }),
         )));
     }
-    if !pending.is_empty() && !runs.iter().any(live) {
+    if !pending.is_empty() && !runs.iter().any(live_run) {
         let sequence = snapshot["snapshotSequence"]
             .as_u64()
             .ok_or(HostError::Protocol)?;
@@ -368,5 +372,85 @@ fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, 
             }),
         )));
     }
-    Ok(InboxStep::Ready(present))
+    Ok(InboxStep::Ready {
+        forms: present,
+        commands: operator_messages(&projection["messages"], runs),
+    })
+}
+
+fn live_run(run: &Value) -> bool {
+    matches!(
+        run["status"].as_str(),
+        Some("preparing" | "queued" | "starting" | "running" | "waiting")
+    )
+}
+
+fn operator_messages(messages: &Value, runs: &[Value]) -> Vec<InboxOperatorMessage> {
+    messages
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|message| {
+            message["threadId"] == INBOX_THREAD
+                && message["role"] == "user"
+                && message["createdBy"] == "user"
+                && message["creationSource"] == "web"
+                && message["senderThreadId"].is_null()
+                && message["linkedSender"].is_null()
+                && message["runId"].is_string()
+                && runs
+                    .iter()
+                    .any(|run| live_run(run) && run["id"] == message["runId"])
+        })
+        .filter_map(|message| {
+            Some(InboxOperatorMessage {
+                id: message["id"].as_str()?.to_owned(),
+                text: message["text"].as_str()?.to_owned(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_direct_live_operator_messages_can_reach_the_inbox_parser() {
+        let runs = [
+            json!({"id": "queued", "status": "queued"}),
+            json!({"id": "complete", "status": "completed"}),
+        ];
+        let original = json!({
+            "threadId": INBOX_THREAD,
+            "id": "operator-message",
+            "runId": "queued",
+            "role": "user",
+            "createdBy": "user",
+            "creationSource": "web",
+            "text": "ui",
+        });
+        let mut records = vec![original.clone()];
+        for (field, value) in [
+            ("createdBy", json!("agent")),
+            ("creationSource", json!("mcp")),
+            ("senderThreadId", json!("agent")),
+            ("linkedSender", json!({"threadId": "relayed"})),
+            ("runId", json!("complete")),
+            ("threadId", json!("a-different-thread")),
+        ] {
+            let mut message = original.clone();
+            message["id"] = json!(field);
+            message[field] = value;
+            records.push(message);
+        }
+        let commands = operator_messages(&json!(records), &runs);
+        assert_eq!(
+            commands,
+            [InboxOperatorMessage {
+                id: "operator-message".into(),
+                text: "ui".into(),
+            }]
+        );
+    }
 }

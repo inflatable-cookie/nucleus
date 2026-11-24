@@ -1,9 +1,12 @@
 //! Native operator forms are a projection of ordinary planning decisions.
 
+mod commands;
+
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     env,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use nucleus_core::{
@@ -36,6 +39,7 @@ pub(super) struct NativeInbox {
     pub(super) root: String,
     observed: watch::Sender<Observation>,
     reconcile: Notify,
+    replies: Mutex<VecDeque<String>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -80,6 +84,7 @@ impl NativeInbox {
                 .map_err(|_| ServiceError::AcpBinding)?,
             observed: watch::channel(Observation::Unknown).0,
             reconcile: Notify::new(),
+            replies: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -148,6 +153,7 @@ impl Service {
         if *observed == Observation::Inactive {
             return Ok(InboxSnapshot {
                 pending: Vec::new(),
+                replies_ready: false,
             });
         }
         let decisions = pending(&state, self)?;
@@ -172,6 +178,7 @@ impl Service {
                     }
                 })
                 .collect(),
+            replies_ready: inbox.replies.lock().is_ok_and(|replies| !replies.is_empty()),
         })
     }
 
@@ -256,7 +263,10 @@ impl Service {
         };
         match self.host.prepare_inbox(target, &fields).await? {
             InboxStep::Wait => inbox.set_observation(Observation::Inactive),
-            InboxStep::Ready(present) => inbox.set_observation(Observation::Pinned(present)),
+            InboxStep::Ready { forms, commands } => {
+                inbox.set_observation(Observation::Pinned(forms));
+                self.serve_inbox_commands(inbox, &commands).await?;
+            }
             InboxStep::Write(write) => {
                 self.storage.database().verify()?;
                 self.host.write_inbox(write).await?;

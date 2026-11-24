@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     fs, io,
+    net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -78,11 +79,15 @@ pub fn router_with_board_and_t3_callers(
         })),
         revocations: watch::channel(()).0,
     };
+    service
+        .board
+        .set(board.clone())
+        .map_err(|_| io::Error::other("the board is already configured"))?;
     Ok(routes(service, controllers, Some(board), t3_caller_key))
 }
 
 #[derive(Clone)]
-pub(super) struct Board {
+pub(crate) struct Board {
     html: Bytes,
     app: Bytes,
     grants: Arc<Mutex<Grants>>,
@@ -109,6 +114,41 @@ struct BrowserSession {
 }
 
 impl Board {
+    pub(crate) fn inbox_link(&self, endpoint: SocketAddr) -> Option<String> {
+        self.link(
+            endpoint,
+            Authority::Operator {
+                actor: "operator via T3 Inbox (attested)".into(),
+            },
+            ControllerScope::default(),
+        )
+        .ok()
+    }
+
+    fn link(
+        &self,
+        endpoint: SocketAddr,
+        authority: Authority,
+        scope: ControllerScope,
+    ) -> Result<String, ApiError> {
+        let key = random_key()?;
+        let now = Instant::now();
+        let mut grants = self.grants.lock().map_err(|_| ApiError::BoardUnavailable)?;
+        grants.links.retain(|_, grant| grant.expires > now);
+        if grants.links.len() >= MAX_GRANTS {
+            return Err(ApiError::BoardUnavailable);
+        }
+        grants.links.insert(
+            key,
+            Grant {
+                authority,
+                scope,
+                expires: now + LINK_TTL,
+            },
+        );
+        Ok(format!("http://{endpoint}/#token={}", hex::encode(key)))
+    }
+
     pub(super) fn routes(self, api: &Api) -> Router<Api> {
         let board = Router::new()
             .route("/api/engine/session", get(session))
@@ -210,26 +250,8 @@ async fn issue(
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
 ) -> Result<Json<Value>, ApiError> {
-    let key = random_key()?;
-    let now = Instant::now();
-    let mut grants = board
-        .grants
-        .lock()
-        .map_err(|_| ApiError::BoardUnavailable)?;
-    grants.links.retain(|_, grant| grant.expires > now);
-    if grants.links.len() >= MAX_GRANTS {
-        return Err(ApiError::BoardUnavailable);
-    }
-    grants.links.insert(
-        key,
-        Grant {
-            authority,
-            scope,
-            expires: now + LINK_TTL,
-        },
-    );
     Ok(Json(json!({
-        "url": format!("http://{}/#token={}", api.service.callback, hex::encode(key))
+        "url": board.link(api.service.callback, authority, scope)?
     })))
 }
 
