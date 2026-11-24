@@ -2087,6 +2087,8 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     let listed =
         json_body(browser_request(&api, Method::GET, tasks, Some(&operator), None).await).await;
     assert_eq!(listed[0]["phase"], "queued");
+    assert_eq!(listed[0]["stateLabel"], "Queued");
+    assert!(listed[0]["stateSinceMs"].is_u64());
     assert_eq!(listed[0]["title"], "Standalone task");
     let hold = json!({"hold":"Wait for the fixture"});
     let response = browser_request(
@@ -2098,6 +2100,10 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
+    let held = json_body(response).await;
+    assert_eq!(held["phase"], "queued");
+    assert_eq!(held["stateLabel"], "Waiting on Tom");
+    assert!(held["stateSinceMs"].is_u64());
     assert_event(&mut events, &["event: invalidate", "board-task"]).await;
     assert_eq!(
         json_body(get_as(&api, "/v1/tasks/board-task", &BOARD_KEY).await).await["wait"],

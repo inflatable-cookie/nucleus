@@ -589,6 +589,7 @@ async fn detail(
         (None, false)
     };
     Ok(Json(Detail {
+        created_at_ms: summary.created_at_ms,
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
@@ -658,6 +659,8 @@ async fn next(
     Ok(Json(NextView {
         version: row.version,
         phase: summary.phase,
+        state_label: summary.state_label,
+        state_since_ms: summary.state_since_ms,
         wait: summary.wait,
         attention: summary.attention,
         next_check_at: summary.next_check_at,
@@ -955,6 +958,10 @@ struct Summary {
     reference: String,
     version: i64,
     phase: Phase,
+    state_label: String,
+    state_since_ms: Option<u64>,
+    #[serde(skip)]
+    created_at_ms: Option<u64>,
     wait: Option<WaitReason>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
@@ -981,6 +988,7 @@ impl Summary {
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
         };
+        let (state_since_ms, created_at_ms) = crate::presentation::state_times(row, state, wait)?;
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -989,6 +997,9 @@ impl Summary {
             version: row.version,
             phase: task.phase(),
             attention: state.task_attention(row)?,
+            state_label: crate::titles::task_state_label(task, wait),
+            state_since_ms,
+            created_at_ms,
             next_check_at: None,
             wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
             {
@@ -1026,6 +1037,7 @@ impl Summary {
 struct Detail {
     #[serde(flatten)]
     summary: Summary,
+    created_at_ms: Option<u64>,
     brief: Brief,
     operator_inbox: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1073,6 +1085,8 @@ impl From<&ReportTask> for ReportView {
 struct NextView {
     version: i64,
     phase: Phase,
+    state_label: String,
+    state_since_ms: Option<u64>,
     wait: Option<WaitReason>,
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,

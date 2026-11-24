@@ -93,7 +93,7 @@ const allowance = z.object({
 });
 const detail = summary.extend({
   allowance: allowance.optional(),
-  createdAtMs: timestamp,
+  createdAtMs: timestamp.nullable(),
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),

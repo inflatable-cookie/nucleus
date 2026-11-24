@@ -3,17 +3,58 @@
 use std::sync::LazyLock;
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict};
+use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Run, Task, Verdict, WaitReason};
 use nucleus_hosts::RunActivity;
 use nucleus_store::{Event, EventDraft, Store, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+
+use crate::{ServiceError, State, now_ms};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct ActivityAt {
     pub(super) version: i64,
     pub(super) instance: String,
     pub(super) activity: RunActivity,
+}
+
+impl ActivityAt {
+    fn current(&self, row: &TaskRow) -> Option<&RunActivity> {
+        let run = row.task.run()?;
+        (!run.revoked() && self.version == row.version && self.instance == run.launch().instance)
+            .then_some(&self.activity)
+    }
+}
+
+pub(super) fn state_times(
+    row: &TaskRow,
+    state: &State,
+    wait: Option<WaitReason>,
+) -> Result<(Option<u64>, Option<u64>), ServiceError> {
+    let id = &row.task.identity().id;
+    let audit = state.store.task_times(
+        id,
+        row.task.hold().is_some(),
+        row.task.run().is_some_and(Run::revoked),
+    )?;
+    let activity = state.activity.get(id).and_then(|seen| seen.current(row));
+    let waiting = state
+        .waits
+        .get(id)
+        .filter(|(reason, _)| {
+            Some(*reason) == wait && !matches!(reason, WaitReason::Running | WaitReason::Hold)
+        })
+        .map(|(_, since)| {
+            now_ms().saturating_sub(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX))
+        });
+    // TaskCard's since chain prefers the active turn, then stop, wait and hold.
+    let since = activity
+        .and_then(|activity| activity.started_at)
+        .or(audit.stopping)
+        .or(waiting)
+        .or(audit.held)
+        .or(audit.updated);
+    Ok((since, audit.created))
 }
 
 #[derive(Serialize)]
@@ -49,13 +90,7 @@ impl RunView {
             review_head: launch.review_head.clone(),
             reported: run.report().is_some(),
             revoked: run.revoked(),
-            activity: activity
-                .filter(|seen| {
-                    !run.revoked()
-                        && seen.version == row.version
-                        && seen.instance == launch.instance
-                })
-                .map(|seen| seen.activity.clone()),
+            activity: activity.and_then(|seen| seen.current(row)).cloned(),
         })
     }
 }
@@ -196,8 +231,19 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
             phase: task.phase(),
         });
     }
+    let started_hold = task.hold().is_some() && task.hold() != prior.hold();
+    let started_stop =
+        task.run().is_some_and(Run::revoked) && !prior.run().is_some_and(Run::revoked);
+    if started_hold {
+        detail.insert("holdStarted".into(), json!(true));
+    }
+    if started_stop {
+        detail.insert("stopStarted".into(), json!(true));
+    }
     if !records.is_empty() {
         detail.insert("presentation".into(), json!(records));
+    }
+    if started_hold || started_stop || detail.contains_key("presentation") {
         audit.detail = Value::Object(detail).to_string();
     }
     audit

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use nucleus_core::{HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
+use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
 use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
 
@@ -20,6 +20,12 @@ pub(super) fn child_title(task: &Task, reference: &str, role: Role) -> String {
 }
 
 fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> String {
+    let label = task_state_label(task, wait);
+    fit(&format!("{label}: {label_reference} {}", brief(task)))
+}
+
+// The compact taskTitleStateLabel rule serves both native titles and the board.
+pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String {
     let phase = match task.phase() {
         Phase::Queued => "Queued",
         Phase::Working
@@ -43,42 +49,58 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
         Phase::Done => "Done",
         Phase::Cancelled => "Cancelled",
     };
-    let label = if task.phase().is_terminal() {
+    let has_live_run = task
+        .run()
+        .is_some_and(|run| !run.revoked() && run.last_send_at_ms().is_some());
+    if task.phase().is_terminal() {
         phase.into()
     } else if task.operator_question().is_some() && task.operator_decline().is_none() {
         "Waiting on Tom".into()
-    } else if let Some(hold) = task.hold() {
-        if task
-            .run()
-            .is_some_and(|run| !run.revoked() && run.last_send_at_ms().is_some())
-        {
-            format!("{phase}*")
-        } else if let Some(target) = reference(&hold.reason) {
-            format!("Waiting on {target}")
-        } else {
-            match (task.phase(), hold.by) {
-                (Phase::Merging, Some(HoldBy::Operator)) => "Merge held by Tom",
-                (Phase::Merging, Some(HoldBy::Planner)) => "Merge held by planner",
-                (Phase::Merging, None) => "Merge held",
-                (_, Some(HoldBy::Operator)) => "Waiting on Tom",
-                (_, Some(HoldBy::Planner)) => "Held by planner",
-                (_, None) => "Held",
-            }
-            .into()
-        }
+    } else if let Some(hold) = task.hold().filter(|_| !has_live_run) {
+        held_label(task.phase(), hold)
+    } else if let Some(label) = wait_label(task, wait) {
+        label.into()
+    } else if task.hold().is_some() {
+        format!("{phase}*")
     } else {
-        match wait {
-            Some(WaitReason::Capacity) => "Waiting for capacity",
-            Some(WaitReason::Prerequisite) => "Waiting for prerequisites",
-            Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => {
-                "Waiting on Nucleus"
-            }
-            Some(WaitReason::HostObservationBlocked) => "Blocked on T3",
-            _ => phase,
+        phase.into()
+    }
+}
+
+fn held_label(phase: Phase, hold: &Hold) -> String {
+    if let Some(target) = reference(&hold.reason) {
+        return format!("Waiting on {target}");
+    }
+    match (phase, hold.by) {
+        (Phase::Merging, Some(HoldBy::Operator)) => "Merge held by Tom",
+        (Phase::Merging, Some(HoldBy::Planner)) => "Merge held by planner",
+        (Phase::Merging, None) => "Merge held",
+        (_, Some(HoldBy::Operator)) => "Waiting on Tom",
+        (_, Some(HoldBy::Planner)) => "Held by planner",
+        (_, None) => "Held",
+    }
+    .into()
+}
+
+fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
+    Some(match wait {
+        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "Stopping",
+        _ if task.operator_decline().is_none() && task.question().is_some() => {
+            "Waiting for the planner"
         }
-        .into()
-    };
-    fit(&format!("{label}: {label_reference} {}", brief(task)))
+        Some(WaitReason::Capacity) => "Waiting for capacity",
+        Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
+        Some(WaitReason::HostObservationBlocked) => "Blocked on T3",
+        Some(WaitReason::UsagePermission) => "Waiting on Tom",
+        Some(WaitReason::HostUnknown | WaitReason::IdleWithoutTerminalRun) => "Waiting on Nucleus",
+        Some(WaitReason::Permission) => "Waiting for permission",
+        Some(WaitReason::Input) => "Waiting for input",
+        Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
+        Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
+        Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
+        Some(WaitReason::ChecksPending) => "Waiting for checks",
+        _ => return None,
+    })
 }
 
 pub(super) fn brief(task: &Task) -> String {

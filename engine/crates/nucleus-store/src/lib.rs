@@ -120,6 +120,13 @@ pub struct Event {
     pub content: EventDraft,
 }
 
+pub struct TaskTimes {
+    pub created: Option<u64>,
+    pub updated: Option<u64>,
+    pub held: Option<u64>,
+    pub stopping: Option<u64>,
+}
+
 /// A committed fresh reviewer reservation that used the ordinary fallback.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -835,6 +842,40 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Read display timestamps from the task audit.
+    /// # Errors
+    /// Returns an error if the audit cannot be read.
+    pub fn task_times(
+        &self,
+        id: &str,
+        held: bool,
+        stopping: bool,
+    ) -> Result<TaskTimes, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT
+                (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence LIMIT 1),
+                (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence DESC LIMIT 1),
+                (SELECT at FROM events WHERE task_id = ?1 AND ?2
+                   AND json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.holdStarted') = 1
+                   ORDER BY sequence DESC LIMIT 1),
+                (SELECT at FROM events WHERE task_id = ?1 AND ?3
+                   AND json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.stopStarted') = 1
+                   ORDER BY sequence DESC LIMIT 1)",
+        )?;
+        Ok(query.query_row(params![id, held, stopping], |row| {
+            let time = |index| {
+                row.get::<_, Option<i64>>(index)
+                    .map(|value| value.and_then(|at| u64::try_from(at).ok()))
+            };
+            Ok(TaskTimes {
+                created: time(0)?,
+                updated: time(1)?,
+                held: time(2)?,
+                stopping: time(3)?,
+            })
+        })?)
     }
 
     /// Read the fallback receipts written with fresh reviewer reservations.

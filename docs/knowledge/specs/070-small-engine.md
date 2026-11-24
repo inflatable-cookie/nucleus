@@ -403,6 +403,13 @@ prerequisite references and any released wait as context.
 The board skips unrecognized `next` command names and logs a browser console
 warning once per name. It validates the readiness of each recognized command.
 
+Board state labels use the same rule as native task titles. A blocking hold
+replaces the phase label, and a non-blocking hold can add an asterisk. Card age
+uses the active turn start, stop, wait or hold time, then the latest task audit
+time. Before the engine recorded hold and stop transitions, age falls back to
+the audit when no better evidence is available.
+
+
 | Command | Effect |
 |---|---|
 | `move to=<phase>` | Ends any live run (revokes its credential, stops its turn), clears `attempts` and `question`, and sets the phase. Always applies, apart from the two gates. |

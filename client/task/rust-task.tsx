@@ -128,6 +128,7 @@ export function RustTaskDialog({
     setSection((current) => (current === value ? null : value));
   const phaseView = commands ?? card;
   const wait = phaseView ? rustWaitDetail(phaseView) : null;
+  const age = detail?.createdAtMs == null ? null : relativeAge(detail.createdAtMs);
 
   return (
     <Dialog
@@ -143,9 +144,7 @@ export function RustTaskDialog({
       eyebrow={
         card && (
           <Text style={muted(c)}>
-            {detail
-              ? `${card.identity.repository} · ${relativeAge(detail.createdAtMs)}`
-              : card.identity.repository}
+            {age ? `${card.identity.repository} · ${age}` : card.identity.repository}
           </Text>
         )
       }
