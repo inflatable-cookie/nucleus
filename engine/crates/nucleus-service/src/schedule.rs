@@ -129,6 +129,12 @@ impl Schedule {
         self.tasks.insert(id.into(), Pending::default());
     }
 
+    pub(crate) fn resume_on_host_evidence(&mut self, id: &str) {
+        if self.host_retry.get(id) == Some(&HostRecovery::Blocked) {
+            self.host_retry.remove(id);
+        }
+    }
+
     pub(crate) fn recover_host_observation(
         &mut self,
         id: &str,

@@ -684,6 +684,10 @@ impl Service {
         Ok(true)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the parent proof, intent and send in order"
+    )]
     async fn prepare_run_parent(
         &self,
         row: &TaskRow,
@@ -2387,7 +2391,7 @@ mod tests {
                 std::fs::write(checkout.path().join("local-edit.txt"), "local changes")
                     .expect("edit after observation");
             }
-            let host = Due(std::sync::atomic::AtomicUsize::new(0));
+            let host = Due(std::sync::atomic::AtomicUsize::new(0), None);
             service
                 .state
                 .lock()

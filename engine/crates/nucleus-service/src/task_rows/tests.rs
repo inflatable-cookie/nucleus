@@ -163,6 +163,55 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
+    let pending = pending_task();
+    let fixture = Fixture::new(&pending).await;
+    let service = &fixture.service;
+    let (mut task, credential, mut observation) =
+        reservation(ID, Entry::Brief, &service.fixture().start);
+    let run = task.run().unwrap().launch();
+    let (child, instance) = (run.thread.clone(), run.instance.clone());
+    task.record_send(&instance, 1).unwrap();
+    let pr = nucleus_core::PullRequest {
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
+        head: service.fixture().start.clone(),
+    };
+    task.record_report(&instance, credential.as_bytes(), Report::Work(pr.clone()))
+        .unwrap();
+    observation.host = observed(RunState::Ended);
+    observation.forge = Observed::Known(nucleus_core::Forge::Open {
+        pr,
+        checks: nucleus_core::CheckState::Ready,
+    });
+    task.reconcile(&observation);
+    assert!(task.run().is_none());
+    assert_eq!(task.phase(), nucleus_core::Phase::Reviewing);
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.desire_title(&state, &task, ID, None);
+        service.track(&mut state, &task);
+    }
+    let mut row = json!({"id":child, "status":"completed", "activeRunId":null,
+        "pendingRuntimeRequest":null, "pendingBackgroundTasks":[{"taskId":"monitor"}]});
+    service
+        .host
+        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1, "projects":[], "threads":[row]
+        }}));
+    fixture.sync().await;
+    assert!(fixture.commands().is_empty());
+    row["pendingBackgroundTasks"] = json!([]);
+    let delta = json!({"kind":"thread.updated","sequence":2,"thread":row});
+    service.host.fixture_held_shell(&delta);
+    service
+        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&delta).unwrap())
+        .await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+}
+
+#[tokio::test]
 async fn native_rows_follow_dependency_wait_run_and_question() {
     let pending = pending_task();
     let dependency = Task::new(

@@ -141,7 +141,6 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
 
     inbox.host_stream_ended(Ok(()));
     inbox.host_synchronized("replacement runtime".into());
-    inbox.host_synchronized("replacement runtime".into());
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 4);
 

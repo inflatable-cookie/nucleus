@@ -33,34 +33,60 @@ pub(super) struct WriteAccess {
     pub controller: [u8; 32],
 }
 
+pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
+    let run = row.task.run()?;
+    Some(
+        run.last_send_at_ms()
+            .unwrap_or(run.launch().started_at)
+            .saturating_add(nucleus_hosts::LATE_REPLY_MS),
+    )
+}
+
 fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
     let task = &row.task;
     let Some(run) = task.run() else {
         return false;
     };
-    if run.last_send_at_ms().is_none() {
-        return !run.revoked();
-    }
-    // Wait reasons describe when the scheduler can make progress. Only a
-    // positive observation of this exact role can show the child has ended.
-    !state
+    let observed = state
         .role_observations
         .get(&task.identity().id)
-        .is_some_and(|(instance, observed)| {
-            instance == &run.launch().instance
-                && matches!(
-                    observed,
-                    RunState::Ended
-                        | RunState::UsageLimited
-                        | RunState::ParentEnded
-                        | RunState::AssignmentRejected
-                        | RunState::Gone
-                        | RunState::Rejected
-                )
-        })
+        .filter(|(instance, _)| instance == &run.launch().instance)
+        .map(|(_, observed)| *observed);
+    match observed {
+        Some(RunState::Running) => true,
+        None
+        | Some(RunState::ReadyToSend | RunState::Starting | RunState::IdleWithoutTerminalRun) => {
+            !run.revoked() && run_hold_deadline(row).is_some_and(|until| until > crate::now_ms())
+        }
+        _ => false,
+    }
 }
 
 impl Service {
+    pub(super) fn arm_parent_hold_deadline(&self, state: &mut State, row: &TaskRow) {
+        let Some(delay) =
+            run_hold_deadline(row).and_then(|until| until.checked_sub(crate::now_ms()))
+        else {
+            return;
+        };
+        if self.acp_provider().is_none() {
+            return;
+        }
+        let id = &row.task.identity().id;
+        if state.parent_hold_timers.insert(id.clone(), row.version) == Some(row.version) {
+            return;
+        }
+        let sender = self.changes.clone();
+        let change = crate::TaskChange {
+            task_id: id.clone(),
+            version: row.version,
+        };
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            let _ = sender.send(change);
+        });
+    }
+
     pub(super) fn turn_failure_scope(&self, session: &str) -> String {
         format!("{session}/{}", self.turn_epoch)
     }
@@ -72,17 +98,30 @@ impl Service {
     ) -> Result<(Option<String>, bool), ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        if task.phase().is_terminal() {
+        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        if task.phase().is_terminal()
+            || task.question().is_some()
+            || task.hold().is_some()
+            || task.operator_question().is_some()
+            || matches!(
+                wait,
+                Some(
+                    WaitReason::Hold
+                        | WaitReason::Question
+                        | WaitReason::OperatorDeclined
+                        | WaitReason::Permission
+                        | WaitReason::Input
+                        | WaitReason::UsagePermission
+                        | WaitReason::HostObservationBlocked
+                )
+            )
+        {
             return Ok((None, false));
         }
         if task.run().is_some() {
             return Ok((None, run_keeps_turn(state, row)));
         }
-        let wait = state.waits.get(id).map(|(reason, _)| *reason);
-        if task.question().is_some()
-            || task.hold().is_some()
-            || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown))
-        {
+        if !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)) {
             return Ok((None, false));
         }
         let Some(session) = self.host.runtime_identity() else {
@@ -273,6 +312,25 @@ impl Service {
             crate::schedule::Priority::Effect,
         );
         Ok(true)
+    }
+
+    pub(super) async fn refresh_acp_if_requested(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let refresh = {
+            let mut state = self.state.lock().await;
+            state.planner_notice_waiters.remove(id);
+            state.acp_refresh_requests.remove(id) == Some(row.version)
+        };
+        if refresh && let Err(error) = self.refresh_acp_parent(row).await {
+            if matches!(error, ServiceError::ParentNotSent { .. }) {
+                let mut state = self.state.lock().await;
+                if self.lookup(&state, id)?.version == row.version {
+                    state.acp_refresh_requests.insert(id.into(), row.version);
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(super) async fn refresh_acp_parent(&self, row: &TaskRow) -> Result<bool, ServiceError> {

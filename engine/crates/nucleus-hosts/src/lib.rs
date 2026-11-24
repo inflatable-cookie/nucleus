@@ -106,6 +106,8 @@ pub enum HostError {
     ParentSnoozed { until: u64, revision: u64 },
     #[error("parent message could not open the transport before send: {cause}")]
     ParentConnection { cause: &'static str },
+    #[error("the held shell could not confirm all recorded role children are quiet")]
+    RowChildBusy,
     #[error("the local process census could not confirm workspace custody")]
     ProcessCoverage,
     #[error("the frozen assignment exceeds T3's 120,000-character input limit")]

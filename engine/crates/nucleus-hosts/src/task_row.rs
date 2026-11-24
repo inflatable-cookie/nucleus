@@ -59,6 +59,18 @@ pub enum RowChange {
 }
 
 impl T3 {
+    /// The held shell positively shows every recorded role child quiet.
+    #[must_use]
+    pub fn role_children_quiet(&self, roles: &[&str]) -> bool {
+        self.rpc.role_children_quiet(roles)
+    }
+
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn fixture_held_shell(&self, item: &serde_json::Value) {
+        self.rpc.fixture_shell(item);
+    }
+
     /// Read the exact root, provider and visibility of a task's parent.
     ///
     /// # Errors
@@ -92,6 +104,7 @@ impl T3 {
         command: &str,
         change: RowChange,
         shell: Option<&TitleTarget>,
+        quiet_roles: &[&str],
     ) -> Result<SendOutcome, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let kind = match change {
@@ -115,6 +128,11 @@ impl T3 {
         let reply = self
             .rpc
             .call_guarded("orchestration.dispatchCommand", payload, Read::One, || {
+                if matches!(change, RowChange::SnoozeUntil(_))
+                    && !self.role_children_quiet(quiet_roles)
+                {
+                    return Err(HostError::RowChildBusy);
+                }
                 if shell.is_some_and(|target| {
                     !target.matches_current_visibility(self) || target.thread() != thread
                 }) || (hint.is_some() && self.row_visibility_hint(&thread) != hint)

@@ -120,6 +120,22 @@ impl ThreadSnapshots {
         self.rows.get(id).cloned()
     }
 
+    pub(crate) fn roles_quiet(&self, roles: &[&str]) -> bool {
+        roles.iter().all(|role| {
+            self.rows.get(*role).is_some_and(|row| {
+                row.get("activeRunId").is_some_and(Value::is_null)
+                    && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
+                    && row["pendingBackgroundTasks"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty)
+                    && matches!(
+                        row["status"].as_str(),
+                        Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
+                    )
+            })
+        })
+    }
+
     pub(crate) fn background_row(&self, id: &str, revision: u64) -> Option<(Arc<Value>, bool)> {
         let same_revision = self.row_revisions.get(id).map_or_else(
             || {

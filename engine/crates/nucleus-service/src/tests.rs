@@ -123,6 +123,15 @@ pub(super) fn reservation(
     entry: Entry,
     head: &Head,
 ) -> (Task, CallbackCredential, Observation) {
+    reservation_at(id, entry, head, 1)
+}
+
+pub(super) fn reservation_at(
+    id: &str,
+    entry: Entry,
+    head: &Head,
+    started_at: u64,
+) -> (Task, CallbackCredential, Observation) {
     let pr = PullRequest {
         url: PR.into(),
         head: head.clone(),
@@ -158,7 +167,7 @@ pub(super) fn reservation(
             LaunchInputs {
                 scratch: None,
                 thread: format!("thread:{id}"),
-                started_at: 1,
+                started_at,
                 input: "fixture-only wire".into(),
             },
             &[3; 32],
@@ -217,7 +226,10 @@ pub(super) async fn serve_forge(app: Router) -> (GitHub, tokio::task::JoinHandle
     (client, server)
 }
 
-pub(super) struct Due(pub(super) AtomicUsize);
+pub(super) struct Due(
+    pub(super) AtomicUsize,
+    pub(super) Option<nucleus_core::RunState>,
+);
 
 impl TaskHost for Due {
     async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
@@ -234,8 +246,15 @@ impl TaskHost for Due {
     async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
-    async fn observe_run(&self, _: &Run, _: u64) -> Result<RunObservation, HostError> {
-        unreachable!("only revoked runs are exercised")
+    async fn observe_run(&self, run: &Run, _: u64) -> Result<RunObservation, HostError> {
+        Ok(RunObservation {
+            host: Host::Current {
+                instance: run.launch().instance.clone(),
+                state: self.1.ok_or(HostError::Uncertain)?,
+            },
+            activity: None,
+            provider_limit: None,
+        })
     }
 
     async fn authorize_send(&self, _: &Run) -> Result<ReplayAuthorization, HostError> {
@@ -354,6 +373,82 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         Workspace::Absent
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() {
+    for question in [false, true] {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let head = service.fixture().start.clone();
+        let (forge, _, server) = forge_fixture(&head).await;
+        service.forge = forge;
+        let (mut task, credential, _) = reservation("worker", Entry::Brief, &head);
+        let instance = task.run().unwrap().launch().instance.clone();
+        task.record_send(&instance, 1).unwrap();
+        let report = if question {
+            nucleus_core::Report::Question {
+                prompt: "Choose the scope".into(),
+                options: vec!["Small".into(), "Large".into()],
+            }
+        } else {
+            nucleus_core::Report::Work(PullRequest {
+                url: PR.into(),
+                head,
+            })
+        };
+        task.record_report(&instance, credential.as_bytes(), report)
+            .unwrap();
+        let row = {
+            let mut state = service.state.lock().await;
+            let version = state.store.create(&task, &event("fixture")).unwrap();
+            let mut blocked = event("host_observation_blocked");
+            blocked.detail = serde_json::json!({
+                "version": version, "deliveryPending": true,
+                "session": format!("{}/previous-engine", service.host.runtime_identity().unwrap()),
+            })
+            .to_string();
+            state.store.claim_task_effect("worker", &blocked).unwrap();
+            service.lookup(&state, "worker").unwrap()
+        };
+        let unknown = Due(AtomicUsize::new(0), None);
+        let result = service.advance_due_task(&row, &unknown).await;
+        assert!(matches!(
+            result,
+            Err(ServiceError::Host(HostError::Uncertain))
+        ));
+        service
+            .schedule_result(&row, &result, Priority::Effect)
+            .await
+            .unwrap();
+        {
+            let state = service.state.lock().await;
+            assert_eq!(state.waits["worker"].0, WaitReason::HostUnknown);
+            assert!(state.schedule.due("worker").is_some());
+            assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+        }
+        let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
+        let result = service.advance_due_task(&row, &ended).await.unwrap();
+        let next = service.task("worker").await.unwrap();
+        if question {
+            assert!(matches!(
+                result,
+                Action::Ask(nucleus_core::Question::Work { .. })
+            ));
+            assert!(matches!(
+                next.task.question(),
+                Some(nucleus_core::Question::Work { .. })
+            ));
+        } else {
+            assert_eq!(result, Action::Advance(Phase::Reviewing));
+            assert_eq!(next.task.phase(), Phase::Reviewing);
+        }
+        assert!(next.task.run().is_none());
+        assert_eq!(
+            unknown.0.load(Ordering::Relaxed) + ended.0.load(Ordering::Relaxed),
+            0
+        );
+        server.abort();
+    }
 }
 
 #[tokio::test]

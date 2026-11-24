@@ -2,6 +2,7 @@
 
 use std::{path::Path, time::Duration};
 
+use nucleus_core::{Role, Task};
 use nucleus_hosts::{ParentWrite, RowChange, RowObservation, RowVisibility, SendOutcome};
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -131,6 +132,8 @@ impl Service {
                 let receipt = state.store.row_snooze(&id, thread)?;
                 match plan_row(attention, hint, receipt, now) {
                     Plan::Idle(deadline) => next = earliest(next, deadline),
+                    Plan::Write(RowChange::SnoozeUntil(_), _)
+                        if !self.host.role_children_quiet(&visibility_roles(&row.task)) => {}
                     _ => jobs.push((row, thread)),
                 }
             }
@@ -182,29 +185,42 @@ impl Service {
         let Some(observed) = self.host.observe_task_row(&binding, provider).await? else {
             return Ok(());
         };
-        let (change, mut receipt) = {
+        let roles = visibility_roles(task);
+        let (change, mut receipt, prior) = {
             let state = self.state.lock().await;
             let Some(attention) = row_attention_for_effect(&state, row)? else {
                 return Ok(());
             };
-            let receipt = state.store.row_snooze(id, thread)?;
-            match plan_row(attention, observed.visibility, receipt, now_ms()) {
+            let prior = state.store.row_snooze(id, thread)?;
+            match plan_row(attention, observed.visibility, prior.clone(), now_ms()) {
                 Plan::Idle(_) => return Ok(()),
                 Plan::Forget => return Ok(state.store.forget_row_snooze(id)?),
                 Plan::Record(receipt) => {
                     return Ok(state.store.save_row_snooze(id, thread, &receipt)?);
                 }
                 Plan::Write(change, receipt) => {
+                    if matches!(change, RowChange::SnoozeUntil(_))
+                        && !self.host.role_children_quiet(&roles)
+                    {
+                        return Ok(());
+                    }
                     state.store.save_row_snooze(id, thread, &receipt)?;
-                    (change, receipt)
+                    (change, receipt, prior)
                 }
             }
         };
         let command = snooze_command(id, thread, change, &receipt);
         let result = self
             .host
-            .write_row_visibility(&binding, &command, change, Some(&target))
+            .write_row_visibility(&binding, &command, change, Some(&target), &roles)
             .await;
+        if matches!(result, Err(nucleus_hosts::HostError::RowChildBusy)) {
+            let state = self.state.lock().await;
+            return Ok(match prior {
+                Some(prior) => state.store.save_row_snooze(id, thread, &prior)?,
+                None => state.store.forget_row_snooze(id)?,
+            });
+        }
         if matches!(result, Ok(SendOutcome::Rejected))
             && matches!(change, RowChange::SnoozeUntil(_))
         {
@@ -262,6 +278,10 @@ impl Service {
 
     /// Wake an exact task parent before an already authorized native message.
     /// The caller holds the task and project fences. Readback gates delivery.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the visibility claims and their readback in order"
+    )]
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,
@@ -356,7 +376,7 @@ impl Service {
             };
             let result = self
                 .host
-                .write_row_visibility(binding, &command, change, None)
+                .write_row_visibility(binding, &command, change, None, &[])
                 .await;
             let fresh = self
                 .host
@@ -399,6 +419,14 @@ impl Service {
         write.after_row_wake(observed);
         Ok(())
     }
+}
+
+pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
+    [Role::Worker, Role::Reviewer]
+        .into_iter()
+        .filter_map(|role| task.threads().get(role))
+        .chain(task.run().map(|run| run.launch().thread.as_str()))
+        .collect()
 }
 
 fn row_attention_for_effect(
