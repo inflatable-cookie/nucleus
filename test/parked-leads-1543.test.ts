@@ -19,7 +19,7 @@ import {
   inboxSections,
   leadsCards,
   papercutCards,
-  parkedCards,
+  triageCards,
 } from "../shared/inbox-board";
 import { planningLaneLeads } from "../shared/project-scope";
 import { projectPlanningCounts } from "../shared/planning-tab";
@@ -113,7 +113,7 @@ function setup() {
 const cardIds = (cards: { id: string }[]) =>
   cards.map((card) => card.id).sort();
 
-test("1543-1 a parked lead leaves the list and every count, and unparking returns it", () => {
+test("1543-1 a parked lead stays in the list and leaves open counts", () => {
   const f = setup();
   try {
     const a = f.add("Open the T3 Inbox board in the maximized right panel");
@@ -137,22 +137,22 @@ test("1543-1 a parked lead leaves the list and every count, and unparking return
     assert.equal(inboxCounts(board).leads, 1, "the menu count leaves it out");
     assert.equal(
       inboxSections(board, "leads")[0].cards.length,
-      1,
-      "the list header count leaves it out",
+      2,
+      "the All list keeps the parked lead inline",
     );
     assert.deepEqual(
-      cardIds(parkedCards(board, "leads")),
+      cardIds(triageCards(board, "leads", "Parked")),
       [a.id],
-      "it shows under Parked",
+      "the Parked filter isolates it",
     );
-    const parkedCard = parkedCards(board, "leads")[0].value as BoardLead;
+    const parkedCard = triageCards(board, "leads", "Parked")[0].value as BoardLead;
     assert.equal(parkedCard.parked?.reason, "Waits on a T3 capability");
     assert.equal(
       triageStatus(parkedCard).state,
-      "Waits on a T3 capability",
-      "an expanded parked card shows its reason",
+      "Parked",
+      "the visible state is Parked",
     );
-    assert.match(triageStatus(parkedCard).detail ?? "", /^check again /);
+    assert.equal(triageStatus(parkedCard).detail, "Waits on a T3 capability");
 
     const unparked = f.leads.unpark({ id: a.id, version: a.version });
     assert.equal(unparked.parked, null);
@@ -162,7 +162,7 @@ test("1543-1 a parked lead leaves the list and every count, and unparking return
       2,
       "unparking returns it to the count",
     );
-    assert.deepEqual(parkedCards(board, "leads"), []);
+    assert.deepEqual(triageCards(board, "leads", "Parked"), []);
     assert.throws(
       () => f.leads.unpark({ id: a.id, version: a.version }),
       /not parked/,
@@ -541,7 +541,7 @@ test("1543-7 a papercut parks like a lead, and closing it unparks it", () => {
       [],
       "the parked papercut is not on the list",
     );
-    assert.deepEqual(cardIds(parkedCards(board, "papercuts")), [cut.id]);
+    assert.deepEqual(cardIds(triageCards(board, "papercuts", "Parked")), [cut.id]);
     assert.equal(current.state, "open");
 
     f.cuts.close({ id: cut.id, reason: "completed", note: "fixed" });

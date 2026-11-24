@@ -714,6 +714,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
   const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
+  const parkReason = "Paused until the dependency ships.";
+  const parkedLead = "Parked lead between open leads";
+  const parkedCut = "Parked papercut between open papercuts";
+  const secondCut = "A second open papercut";
   const leadItem = (id: string, title: string, origin: string) => ({
     id, title, repositories: [origin], kind: "lead", author: "Fixture planner",
     body: "Fixture body", lanes: [], state: "open",
@@ -863,9 +867,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       return Response.json({ version: 0, lanes: [], documents: [], idle: true });
     if (path === "/api/engine/planning/fixture/items") return Response.json([
       leadItem("unbound", longLead, "example/board-fixture"),
+      { ...leadItem("parked-lead", parkedLead, boundRepository), state: "parked", reason: parkReason },
       leadItem("bound", "Lead with a saved T3 title", boundRepository),
       { ...leadItem("mixed", "Lead spanning mixed bindings", boundRepository), repositories: [boundRepository, "example/board-fixture"] },
       { ...leadItem("cut", papercut, "example/board-fixture"), kind: "papercut", updatedAtMs: null },
+      { ...leadItem("parked-cut", parkedCut, boundRepository), kind: "papercut", state: "parked", reason: parkReason },
+      { ...leadItem("second-cut", secondCut, boundRepository), kind: "papercut" },
     ]);
     if (path === "/api/engine/planning/fixture/decisions")
       return Response.json([]);
@@ -1044,6 +1051,27 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
 
   await click("Leads");
   await eventually(() => Boolean(selector("Leads, 3")), "the Leads view shows all fixtures");
+  const triageTitles = (view: string, kind: string) => {
+    const list = selector(view + " list");
+    assert.ok(list);
+    return [...list.querySelectorAll(`[role="button"][aria-label^="${kind}: "]`)]
+      .map((card) => card.querySelector("[title]")?.getAttribute("title"));
+  };
+  const expectParked = (kind: string, title: string, openLabel: string) => {
+    const parked = selector(`${kind}: ${title}, Status: Parked · ${parkReason}`);
+    const open = selector(openLabel);
+    assert.ok(parked && open);
+    const body = parked.firstElementChild!;
+    assert.equal(style(body).filter, "grayscale(1)");
+    assert.equal(style(body).opacity, "0.75");
+    assert.notEqual(style(open.firstElementChild!).filter, "grayscale(1)");
+    assert.equal(parked.querySelector(`[title="${parkReason}"]`)?.textContent, "Parked");
+    assert.doesNotMatch(parked.textContent ?? "", /Paused until/);
+  };
+  const filterState = async (name: string, from: string, to: string) => {
+    await click(`Filter ${name} by state, ${from}`);
+    await click(`Filter ${name} by state: ${to}`);
+  };
   const expectLeadBadge = (title: string, badgeTitle: string) => {
     const card = selector(`Lead: ${title}, Status: Unchecked · awaiting a check`);
     assert.ok(card, title);
@@ -1061,13 +1089,38 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   expectLeadBadge(longLead, "Fixture project");
   expectLeadBadge("Lead with a saved T3 title", boundTitle);
   expectLeadBadge("Lead spanning mixed bindings", "Fixture project");
+  const leadOrder = triageTitles("Leads", "Lead");
+  assert.deepEqual(leadOrder.slice(0, 3), [longLead, parkedLead, "Lead with a saved T3 title"]);
+  expectParked("Lead", parkedLead, `Lead: ${longLead}, Status: Unchecked · awaiting a check`);
+  const beforeFilters = planningReads().length;
+  await filterState("leads", "All", "Open");
+  await eventually(() => !triageTitles("Leads", "Lead").includes(parkedLead), "open leads exclude parked");
+  assert.deepEqual(triageTitles("Leads", "Lead"), leadOrder.filter((name) => name !== parkedLead));
+  await filterState("leads", "Open", "Parked");
+  await eventually(() => triageTitles("Leads", "Lead").length === 1, "parked leads filter settles");
+  assert.deepEqual(triageTitles("Leads", "Lead"), [parkedLead]);
+  await filterState("leads", "Parked", "All");
+  await eventually(() => triageTitles("Leads", "Lead").length === leadOrder.length, "all leads restored");
+  assert.equal(planningReads().length, beforeFilters, "state filters do not read the API");
+  await click(`Lead: ${parkedLead}, Status: Parked · ${parkReason}`);
+  await eventually(() => selector("Parked lead")?.textContent?.includes(parkReason) ?? false,
+    "the parked lead detail shows the reason");
   await click(`Lead: ${longLead}, Status: Unchecked · awaiting a check`);
   await eventually(() => selector("Lead detail")?.querySelector('[role="heading"]')?.textContent === longLead,
     "the entire lead title is shown in detail");
   const leadHeading = selector("Lead detail")!.querySelector('[role="heading"]')!;
   assert.notEqual(style(leadHeading).whiteSpace, "nowrap");
   assert.equal(style(leadHeading).getPropertyValue("-webkit-line-clamp"), "");
-  await click("Papercuts, 1");
+  await click("Papercuts, 2");
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 3, "all papercuts shown");
+  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [papercut, parkedCut, secondCut]);
+  expectParked("Papercut", parkedCut, `Papercut: ${papercut}, Status: Open`);
+  await filterState("papercuts", "All", "Parked");
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 1, "parked papercuts filter settles");
+  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [parkedCut]);
+  await filterState("papercuts", "Parked", "Open");
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 2, "open papercuts filter settles");
+  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [papercut, secondCut]);
   const cutCard = selector(`Papercut: ${papercut}, Status: Open`);
   assert.ok(cutCard);
   header(cutCard, "Open", "4h ago");

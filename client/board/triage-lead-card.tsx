@@ -190,6 +190,7 @@ export function TriageLeadCard({
       title={lead.title}
       status={status}
       selected={selected}
+      parked={Boolean(lead.parked)}
       onPress={() =>
         kind === "papercut" ? onSelectPapercut(lead.id) : onSelectLead(lead.id)
       }

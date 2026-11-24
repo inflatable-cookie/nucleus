@@ -1220,15 +1220,16 @@ leads and park the same way. The first use is a T3 board lead that waits on the 
   read, so a stale call is refused. Parking changes no content: the content version,
   check and approval stay as they were. A re-park replaces the record. A park needs an
   open lead and a future revisit time.
-- **Leaving the list.** Parked leads and papercuts leave the Leads and Papercuts
-  lists, the menu and list counts, the planning tab's open-lead counts, lane drain
-  checks and triage batches. Each list ends with a collapsed "Parked (N)" row; expanded,
-  a card shows its reason and "check again <date>" in place of the status line.
+- **Board** (Tom, 2026-11-24). Parked leads and papercuts stay in their usual
+  list order with dimmed text and grayscale marks. Both lists default to All
+  and offer Open and Parked filters. Parked is the status, with the reason on
+  hover and in detail. The menu and planning tab still count open work; lane
+  drain checks and triage batches exclude parked records.
 - **Unparking.** An edit, a promotion (question, knowledge or task) or a drop unparks.
   When `revisitAt` passes, the sweep unparks the lead once and writes one durable
   `lead_recheck` notice to the project's planner: "Parked lead <title> is due for a
   recheck: <reason>". The notice follows the ordinary project-planner delivery. The
-  lead returns to its list whether or not a planner is registered.
+  lead returns to the Open filter whether or not a planner is registered.
 - **Triage.** `defer` parks the record with its reason and revisit time. Triage has no
   separate defer state, and a parked record is never batched.
 - **Hold tag.** The `hold` tag is retired. On open, each lead still tagged `hold`
