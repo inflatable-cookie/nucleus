@@ -41,7 +41,7 @@ pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String 
     }
 }
 
-fn phase_label(task: &Task) -> &'static str {
+pub(super) fn phase_label(task: &Task) -> &'static str {
     match task.phase() {
         Phase::Queued => "Queued",
         Phase::Working
