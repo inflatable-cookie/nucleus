@@ -22,10 +22,12 @@ use crate::{
     Service, ServiceError, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
     project::{ProjectRoute, linked_checkout},
+    prompt::Prompt,
     ticket,
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
+const RUN_SCRATCH: &str = "run-scratch";
 
 pub(super) enum DispatchTarget<'a> {
     Run {
@@ -448,30 +450,25 @@ impl Service {
             observation.workspace = workspace;
         }
         let instance = task.next_launch_instance()?;
-        let head = if role == Role::Reviewer {
-            match &observation.forge {
-                Observed::Known(Forge::Open { pr, .. }) => Some(pr.head.as_str()),
-                _ => return Ok(Action::Wait(WaitReason::ForgeUnknown)),
-            }
-        } else {
-            None
+        let pr = match &observation.forge {
+            Observed::Known(Forge::Open { pr, .. }) => Some(pr),
+            _ if role == Role::Reviewer => return Ok(Action::Wait(WaitReason::ForgeUnknown)),
+            _ => task.pull_request(),
+        };
+        let checkout_head = match &observation.workspace {
+            Observed::Known(Workspace::Clean(head)) => Some(head),
+            _ => None,
         };
         let ticket_path = ticket::path(self.storage.scratch(), &instance);
-        if ticket_path.starts_with(checkout.path()) {
+        let scratch = self
+            .storage
+            .scratch()
+            .path()
+            .join(RUN_SCRATCH)
+            .join(&instance);
+        if ticket_path.starts_with(checkout.path()) || scratch.starts_with(checkout.path()) {
             return Err(ServiceError::Ticket);
         }
-        let text = ticket::prompt(
-            task,
-            role,
-            head,
-            checkout.branch(),
-            &ticket::PromptPaths {
-                command: &self.report_command,
-                ticket: &ticket_path,
-                builds: self.storage.builds().path(),
-            },
-            selection.map(|selected| &selected.intent),
-        );
         let binding = route.binding(checkout)?;
         let parent = if let Some(provider) = self.acp_provider() {
             if !self.launch_capacity(identity, false).await? {
@@ -516,6 +513,32 @@ impl Service {
             None
         };
         let profile = self.launch_profile(role, selection)?;
+        let discovered_skill = if selection.is_some() {
+            host.profile_catalog()
+                .await?
+                .discovered_skill(&profile.instance_id, "nucleus")
+        } else {
+            None
+        };
+        let lanes = self.prompt_lanes(task, &route).await?;
+        let text = Prompt {
+            row,
+            role,
+            via: &via,
+            replaced_thread: selection.and_then(|selected| selected.intent.replaced_thread()),
+            instance: &instance,
+            checkout: checkout.path(),
+            scratch: &scratch,
+            branch: checkout.branch(),
+            checkout_head,
+            pr,
+            discovered_skill,
+            model: &profile.model,
+            lanes: &lanes,
+            command: &self.report_command,
+            ticket: &ticket_path,
+        }
+        .render();
         let inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
@@ -532,6 +555,43 @@ impl Service {
             .await
     }
 
+    async fn prompt_lanes(
+        &self,
+        task: &Task,
+        route: &ProjectRoute,
+    ) -> Result<Vec<nucleus_store::planning::Lane>, ServiceError> {
+        let Some(project) = &route.project_id else {
+            return Ok(Vec::new());
+        };
+        let state = self.state.lock().await;
+        let mut keys = if let Some(report) = task.report_task() {
+            vec![report.lane.clone()]
+        } else {
+            nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
+                .map_err(nucleus_core::profiles::ProfileLaunchError::Brief)?
+                .lanes()
+                .to_vec()
+        };
+        if task.report_task().is_none()
+            && let Some(source) = state.store.task_source(&task.identity().id)?
+            && source.project_id == *project
+            && let Some(item) = state.store.item(project, &source.item_id)?
+        {
+            for key in item.content.lanes {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        let mut lanes = Vec::new();
+        for key in keys {
+            if let Some(lane) = state.store.lane(project, &key)? {
+                lanes.push(lane);
+            }
+        }
+        Ok(lanes)
+    }
+
     async fn persist_reservation(
         &self,
         row: &TaskRow,
@@ -542,6 +602,9 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
         self.storage.database().verify()?;
+        self.storage
+            .scratch()
+            .ensure_child(&Path::new(RUN_SCRATCH).join(&run.launch().instance))?;
         ticket::prepare(
             self.storage.scratch(),
             updated,

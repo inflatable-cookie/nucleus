@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use nucleus_core::profiles::{Effort, Profile, Provider};
 use serde_json::{Value, json};
@@ -58,6 +58,21 @@ impl ProfileCatalog {
     #[must_use]
     pub fn supports(&self, profile: &RoleProfile) -> bool {
         self.0.iter().any(|provider| available(provider, profile))
+    }
+
+    /// A skill this exact provider instance advertises as available to its agents.
+    #[must_use]
+    pub fn discovered_skill(&self, instance: &str, name: &str) -> Option<&Path> {
+        let provider = self
+            .0
+            .iter()
+            .find(|provider| provider["instanceId"] == instance && provider["enabled"] == true)?;
+        let mut matches = provider["skills"].as_array()?.iter().filter(|skill| {
+            skill["name"] == name && skill["enabled"] == true && skill["userInvocationOnly"] != true
+        });
+        let path = Path::new(matches.next()?["path"].as_str()?);
+        (matches.next().is_none() && path.is_absolute() && path.ends_with("SKILL.md"))
+            .then_some(path)
     }
 
     pub(super) fn supports_parent(&self, instance: &str) -> bool {

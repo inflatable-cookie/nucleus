@@ -80,17 +80,21 @@ fn task_title(task: &Task, label_reference: &str, wait: Option<WaitReason>) -> S
 }
 
 pub(super) fn brief(task: &Task) -> String {
+    let flat = brief_title(task);
+    flat.rsplit_once(' ')
+        .filter(|(_, last)| last.eq_ignore_ascii_case("worker"))
+        .map_or(flat.as_str(), |(title, _)| title)
+        .to_owned()
+}
+
+pub(super) fn brief_title(task: &Task) -> String {
     let text = task
         .brief()
         .declared_title()
         .filter(|title| !title.trim().is_empty())
         .or_else(|| presentation::brief_title(&task.brief().text).map(str::to_owned))
         .unwrap_or_else(|| "Task".into());
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    flat.rsplit_once(' ')
-        .filter(|(_, last)| last.eq_ignore_ascii_case("worker"))
-        .map_or(flat.as_str(), |(title, _)| title)
-        .to_owned()
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn reference(reason: &str) -> Option<&str> {
