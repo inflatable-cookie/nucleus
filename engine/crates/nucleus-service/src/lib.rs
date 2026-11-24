@@ -1920,7 +1920,7 @@ impl Service {
             .chain(threads.iter().map(String::as_str))
         {
             let tracked = tracked.entry(thread.to_owned()).or_default();
-            tracked.role = current_role == Some(thread.as_str()) || roles.contains(&thread);
+            tracked.role = current_role == Some(thread) || roles.contains(&thread);
             tracked.due = threads.iter().any(|due| due == thread);
         }
     }
