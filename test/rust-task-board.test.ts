@@ -80,6 +80,77 @@ const task = (
   hold: null,
 });
 
+test("Rust task detail keeps Answer available alongside unknown command names", async (t) => {
+  const id = "fixture";
+  const path = `/api/engine/tasks/${id}`;
+  const question = {
+    work: {
+      prompt: "Which approach should the worker use?",
+      options: ["Recommended:|Keep the current approach", "Try a new approach"],
+    },
+  };
+  const current = {
+    ...task(id, "working"),
+    attention: "attention",
+    wait: "question",
+    question,
+  };
+  const commands = [
+    { name: "move", phase: "working", preflight: "ready" },
+    { name: "answer", preflight: "ready" },
+    { name: "set_dependencies", preflight: "unavailable" },
+    { name: "set_prerequisite_wait", preflight: "ready" },
+  ];
+  const unknownCommand = { name: "future_task_action", preflight: "ready" };
+  const history = [
+    {
+      sequence: 3,
+      content: { at: 1_700_000_000_000 },
+      presentation: [
+        { kind: "run_ended", instance: "finished" },
+        { kind: "question", question },
+      ],
+    },
+  ];
+  const responses = new Map<string, unknown>([
+    [
+      path,
+      {
+        ...current,
+        brief: { text: "Fixture brief", version: 1 },
+        pullRequest: null,
+        verdict: null,
+        run: null,
+      },
+    ],
+    [
+      path + "/next",
+      { ...current, commands: [unknownCommand, ...commands, unknownCommand] },
+    ],
+    [path + "/history?limit=30", history],
+  ]);
+  const transport = createRustBoardTransport(async (url) => {
+    assert.ok(typeof url === "string" && responses.has(url));
+    return Response.json(responses.get(url));
+  });
+  const { signal } = new AbortController();
+  assert.deepEqual((await transport.detail(id, signal)).question, question);
+  assert.deepEqual(await transport.history(id, undefined, signal), history);
+  const warn = t.mock.method(console, "warn", (..._args: unknown[]) => {});
+  const next = await transport.next(id, signal);
+  assert.deepEqual(next.question, question);
+  assert.deepEqual(next.commands, commands);
+  assert.deepEqual((await transport.next(id, signal)).commands, commands);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.ok(warn.mock.calls[0]?.arguments.includes(unknownCommand.name));
+
+  responses.set(path + "/next", {
+    ...current,
+    commands: [{ name: "answer", preflight: "invalid" }],
+  });
+  await assert.rejects(transport.next(id, signal), /invalid response/);
+});
+
 async function eventually(
   check: () => boolean,
   message: string,
@@ -223,7 +294,12 @@ test("the paired Board tracks Rust task changes and uses the next command contra
           { name: "hold", preflight: "ready" },
           { name: "set_dependencies", preflight: "unavailable" },
           { name: "set_prerequisite_wait", preflight: "unavailable" },
-          ...(row.question ? [{ name: "answer", preflight: "ready" }] : []),
+          ...(row.question
+            ? [
+                { name: "future_board_action", preflight: "ready" },
+                { name: "answer", preflight: "ready" },
+              ]
+            : []),
         ],
       });
       return;
