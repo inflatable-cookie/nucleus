@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use nucleus_core::{CallbackCredential, Head, Observation, Role, Workspace};
+use nucleus_hosts::HostError;
 
 use super::{planning::put_as, *};
 use crate::tests::{git, native_fixture};
@@ -418,11 +419,46 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     );
     let next = git(root, &["rev-parse", "HEAD"]).parse().expect("new head");
     *fixture.published.lock().expect("remote refs") = Some(next);
+    let parent = nucleus_hosts::parent_thread(&fixture.checkout);
+    let host = &fixture.service.host;
+    {
+        let state = fixture.service.state.lock().await;
+        assert_eq!(
+            state.store.archive_due_ids(None, 10, false).unwrap(),
+            [TASK]
+        );
+    }
+    let before = host.host_calls();
+    assert!(matches!(
+        fixture.service.archive_done(&done).await,
+        Err(ServiceError::Host(HostError::Uncertain))
+    ));
+    assert!(fixture.checkout.exists());
+    for status in ["running", "unknown"] {
+        host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,"projects":[],"threads":[
+                {"id":"delegated-child","parentThreadId":parent,"status":status}
+            ]
+        }}));
+        assert!(matches!(
+            fixture.service.archive_done(&done).await,
+            Err(ServiceError::Host(HostError::RowChildBusy))
+        ));
+        assert!(fixture.checkout.exists());
+    }
+    host.fixture_held_shell(
+        &json!({"kind":"thread.removed","sequence":2,"threadId":"delegated-child"}),
+    );
     assert_eq!(
         fixture.service.archive_done(&done).await.expect("closeout"),
         Action::Nothing
     );
     assert!(!fixture.checkout.exists());
+    assert_eq!(
+        host.host_calls(),
+        before,
+        "retirement must not read omitted rows"
+    );
 }
 
 struct ReportFixture {

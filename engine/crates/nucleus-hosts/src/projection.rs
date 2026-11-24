@@ -108,17 +108,8 @@ struct ProviderThread {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Subagent {
-    pub id: String,
-    pub child_thread_id: Option<String>,
-    pub origin: String,
+struct Subagent {
     status: Option<String>,
-    pub completion_delivery: Option<CompletionDelivery>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CompletionDelivery {
-    pub state: String,
 }
 
 #[derive(Deserialize)]
@@ -393,20 +384,6 @@ impl Projection {
             && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
     }
 
-    pub(crate) fn matches_roster_run(&self, run: &str, shell: &Value) -> bool {
-        self.matches_shell_revision(shell)
-            && if run.is_empty() {
-                self.runs.is_empty()
-            } else {
-                self.terminal_run(run)
-            }
-    }
-
-    pub(crate) fn subagents(&self) -> Result<&[Subagent], HostError> {
-        // The history bounds apply to timeline items, not the delegation roster.
-        self.subagents.as_deref().ok_or(HostError::Uncertain)
-    }
-
     pub(crate) fn use_shell_background(&mut self, row: &Value, same_revision: bool) {
         let shell = ShellCustody(row);
         // T3 derives this summary from the full projection for a settled run.
@@ -595,16 +572,6 @@ impl Projection {
 
     pub(crate) const fn archived(&self) -> bool {
         self.thread.archived_at.is_some()
-    }
-
-    pub(crate) fn archive_marker(&self) -> Option<(String, Option<String>)> {
-        if self.thread.deleted_at.is_some() {
-            return None;
-        }
-        Some((
-            self.thread.archived_at.clone()?,
-            self.thread.updated_at.clone(),
-        ))
     }
 
     pub(crate) fn archived_in_shell(&self) -> bool {

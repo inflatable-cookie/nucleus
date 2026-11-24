@@ -1443,7 +1443,7 @@ async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
 }
 
 #[tokio::test]
-async fn later_history_never_reopens_a_confirmed_native_archive() {
+async fn unlisted_done_threads_make_no_native_reads_after_restart() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
     let (host, native) = crate::tests::native_fixture(|_| {
         panic!("an archived task must not read T3 again");
@@ -1453,6 +1453,11 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
+    service
+        .host
+        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,"projects":[],"threads":[]
+        }}));
     let service = Arc::new(service);
     let api = settings_api(&service);
     service
@@ -1471,7 +1476,7 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
         assert_eq!(
             state
                 .store
-                .archive_due_ids(None, 8)
+                .archive_due_ids(None, 8, true)
                 .expect("pending archive"),
             ["reviewer"]
         );
@@ -1481,22 +1486,9 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
                 .save_row(&row, &row.task, &event(kind))
                 .expect("append history");
         }
-        assert!(
-            state
-                .store
-                .archive_due_ids(None, 8)
-                .expect("restart scan")
-                .is_empty()
-        );
-        assert!(
-            state
-                .store
-                .archive_confirmed("reviewer")
-                .expect("existing receipt")
-        );
         seed_cancelled_notice(&service, &mut state, &row.task);
     }
-    // Consume the already queued Done wake as well as excluding it on restart.
+    // A cold held shell resolves the already archived or absent threads.
     let outcomes = service.pass().await.expect("queued pass");
     assert_eq!(outcomes.len(), 2);
     assert!(
@@ -1519,7 +1511,7 @@ async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (done, _) = fixture_at_done(&service).await;
     let id = &done.task.identity().id;
-    let cause = "T3 reconnected during archive and can no longer confirm closure. Unarchive the reviewer thread (fixture-reviewer-thread) in T3 to resume closeout.";
+    let cause = "The reviewer thread is still active in T3.";
     service
         .schedule_result(
             &done,
@@ -2013,7 +2005,7 @@ async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -
 }
 
 #[tokio::test]
-async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
+async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let (mut first, merged) = fixture_at_done(&service).await;
@@ -2023,45 +2015,23 @@ async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
             .store
             .save_row(&first, &first.task, &event("role_threads_archived"))
             .expect("first receipt");
-        assert!(
-            state
-                .store
-                .archive_confirmed("reviewer")
-                .expect("first Done is archived")
-        );
     }
     let second = reopen_and_finish_review(&service, &first, &merged).await;
-    {
-        let state = service.state.lock().await;
-        assert!(
-            !state
-                .store
-                .archive_confirmed("reviewer")
-                .expect("awaits new receipt")
-        );
-        assert_eq!(
-            state
-                .store
-                .archive_due_ids(None, 10)
-                .expect("restart archive scan"),
-            ["reviewer"]
-        );
-    }
     let child = second
         .task
         .threads()
         .get(nucleus_core::Role::Reviewer)
         .expect("new child");
-    let (host, parent, archived, publish, native) = archive_roster_fixture(&service, child).await;
+    let (host, parent, archived, publish, native) = archive_shell_fixture(&service, child).await;
     service.host = host;
     for _ in 0..2 {
-        publish(&service.host);
+        publish(&service.host, None);
         assert!(matches!(
             service.archive_done(&second).await.expect("archive effect"),
             Action::Wait(WaitReason::Stopping)
         ));
     }
-    publish(&service.host);
+    publish(&service.host, None);
     assert!(matches!(
         service
             .archive_done(&second)
@@ -2073,19 +2043,17 @@ async fn a_reopened_task_archives_its_new_child_after_the_next_done() {
         *archived.lock().expect("archive writes"),
         [child, parent.as_str()]
     );
-    let state = service.state.lock().await;
-    assert!(
-        state
-            .store
-            .archive_confirmed("reviewer")
-            .expect("new Done is archived")
-    );
-    assert!(
-        state
-            .store
-            .archive_due_ids(None, 10)
-            .expect("post-close restart")
-            .is_empty()
+    publish(&service.host, Some(child));
+    assert!(matches!(
+        service
+            .archive_done(&second)
+            .await
+            .expect("archive reopened child"),
+        Action::Wait(WaitReason::Stopping)
+    ));
+    assert_eq!(
+        *archived.lock().expect("archive writes"),
+        [child, parent.as_str(), child]
     );
     native.abort();
 }
@@ -2186,14 +2154,14 @@ async fn reopen_and_finish_review(
         .expect("second Done")
 }
 
-async fn archive_roster_fixture(
+async fn archive_shell_fixture(
     service: &Service,
     new_child: &str,
 ) -> (
     T3,
     String,
     Arc<std::sync::Mutex<Vec<String>>>,
-    impl Fn(&T3) + use<>,
+    impl Fn(&T3, Option<&str>) + use<>,
     tokio::task::JoinHandle<()>,
 ) {
     let worktrees = service.worktrees().expect("worktree scope");
@@ -2217,17 +2185,17 @@ async fn archive_roster_fixture(
         let (path, branch, parent) = (path.clone(), branch.clone(), parent.clone());
         let child = child.clone();
         let root = project_root.clone();
-        move |host: &T3| {
+        move |host: &T3, reopened: Option<&str>| {
             let writes = writes.lock().unwrap();
             let threads: Vec<_> = [parent.as_str(), child.as_str(), "thread:reviewer"]
                 .into_iter()
-                .filter(|id| !writes.iter().any(|archived| archived == id))
+                .filter(|id| reopened == Some(id) || !writes.iter().any(|archived| archived == id))
                 .map(|id| {
                 json!({"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
                     "parentThreadId":(id != parent).then_some(&parent),
                     "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
                     "status":"idle","latestRunId":null,"pendingBackgroundTasks":[],
-                    "activeRunId":null,"pendingRuntimeRequest":null,
+                    "updatedAt":if reopened == Some(id) {"2026-11-23T15:01:00Z"} else {"2026-11-23T15:00:00Z"},"activeRunId":null,"pendingRuntimeRequest":null,
                     "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z")})
             }).collect();
             host.fixture_project_shell(
@@ -2246,26 +2214,7 @@ async fn archive_roster_fixture(
             archived.push(target.into());
             return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":16 + archived.len()}}});
         }
-        let mut snapshot = json!({"kind":"snapshot","snapshotSequence":16});
-        match request["tag"].as_str() {
-            Some("orchestration.subscribeShell") => snapshot["snapshot"] = json!({"projects":[{"id":"local-fixture","workspaceRoot":project_root}]}),
-            Some("orchestration.subscribeThread") => {
-                let id = request["payload"]["threadId"].as_str().expect("thread ID");
-                let is_parent = id == parent;
-                assert!(!writes.lock().expect("archive log").iter().any(|value| value == id),
-                    "archived thread should be resolved from the shell");
-                snapshot["projection"] = json!({
-                    "thread":{"id":id,"projectId":"local-fixture","worktreePath":path,"branch":branch,
-                        "parentThreadId":(!is_parent).then_some(&parent),
-                        "providerInstanceId":"fixture-acp","modelSelection":{"instanceId":"fixture-acp","model":"nucleus"},
-                        "deletedAt":(id=="thread:reviewer").then_some("2026-11-23T16:00:00Z")},
-                    "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],
-                    "subagents":[{"id":"new-child","childThreadId":child,"origin":"app_owned"}]
-                });
-            }
-            _ => panic!("unexpected archive read"),
-        }
-        json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
+        panic!("unexpected archive read: {}", request["tag"]);
     }).await;
     host.use_held_shell();
     (host, parent_id, archived, publish_row, native)

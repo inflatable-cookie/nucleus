@@ -12,9 +12,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveCustody, ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest,
-    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, TaskHost, launch_diagnostic,
+    Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest, NoticeAuthorization,
+    NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost,
+    launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -66,10 +66,6 @@ pub(super) enum DispatchTarget<'a> {
         checkout: &'a Checkout<'a>,
         launch: bool,
     },
-    Archive {
-        frozen: &'a Binding,
-        checkout: &'a Checkout<'a>,
-    },
     Presentation {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
@@ -93,133 +89,82 @@ impl Service {
         ))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep the custody journal and retirement behind the same version fence"
-    )]
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
-        let provider = self.acp_provider();
-        if provider.is_none() && row.task.report_task().is_none() {
+        let task = &row.task;
+        let parenting = self.acp_provider().is_some();
+        if task.hold().is_some() || (!parenting && task.report_task().is_none()) {
             return Ok(Action::Nothing);
         }
-        let identity = row.task.identity();
-        let route = self.project_for(identity).await?;
-        let id = &identity.id;
-        let mut custody = {
-            let state = self.state.lock().await;
-            if state.store.archive_confirmed(id)? {
-                return Ok(Action::Nothing);
-            }
-            state
-                .store
-                .archive_progress(id)?
-                .map(|progress| serde_json::from_str::<ArchiveCustody>(&progress))
-                .transpose()
-                .map_err(nucleus_store::StoreError::from)?
-                .unwrap_or_default()
-        };
-        let prior_custody = custody.clone();
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, id)?;
-        let scope = route.binding(&checkout)?;
-        let retained: Vec<_> = [Role::Worker, Role::Reviewer]
-            .into_iter()
-            .filter_map(|role| row.task.threads().get(role))
-            .collect();
-        let archive = match provider {
-            Some(provider) => {
-                self.host
-                    .prepare_parent_archive(&scope, provider, &retained, &mut custody)
-                    .await
-            }
-            None => Ok(ArchiveStep::Finished),
-        };
+        let identity = task.identity();
         let _fence = self.effect(row).await?;
-        if custody != prior_custody {
-            self.record_archive_progress(id, &custody).await?;
-        }
-        let uses_report_checkout = row.task.report_task().is_some();
-        match archive? {
-            ArchiveStep::Finished => {
-                let _projects = self.project_writes.read().await;
-                let route = self.project_for(identity).await?;
-                if self.checkout_binding(identity, &route, &checkout)? != scope {
-                    return Err(HostError::Binding.into());
-                }
-                let head = if uses_report_checkout {
-                    Some(self.report_archive_head(row, &checkout).await?)
-                } else {
-                    None
-                };
-                let mut state = self.state.lock().await;
-                custody
-                    .finish(&self.host, || {
-                        if let Some(head) = head {
-                            Self::retire_report_checkout(&checkout, head.as_ref())?;
-                        }
-                        self.commit(
-                            &mut state,
-                            row,
-                            &row.task,
-                            &event("role_threads_archived"),
-                            None,
-                        )?;
-                        Ok(Action::Nothing)
-                    })
-                    .unwrap_or_else(|| {
-                        Err(ServiceError::ArchiveEvidence(
-                            "T3 changed the task or child threads. Checking archive custody again."
-                                .into(),
-                        ))
-                    })
+        let _projects = self.project_writes.read().await;
+        let route = self.project_for(identity).await?;
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let binding = self.checkout_binding(identity, &route, &checkout)?;
+        let reviewer = task.threads().get(Role::Reviewer);
+        let worker = task.threads().get(Role::Worker);
+        if checkout.observe()? != Workspace::Absent {
+            if task.report_task().is_none() {
+                return Err(ServiceError::ArchiveEvidence(
+                    "Waiting for the retained task checkout to be removed.".into(),
+                ));
             }
-            ArchiveStep::Wait(wait) => Err(ServiceError::ArchiveEvidence(wait.note(
-                row.task.threads().get(Role::Worker),
-                row.task.threads().get(Role::Reviewer),
-            ))),
-            ArchiveStep::Write(write) => {
-                let Some(_permit) = self
-                    .dispatch_gate(
-                        &row.task,
-                        DispatchTarget::Archive {
-                            frozen: write.binding(),
-                            checkout: &checkout,
-                        },
-                    )
-                    .await?
-                else {
-                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
-                };
-                if uses_report_checkout {
-                    self.report_archive_head(row, &checkout).await?;
-                }
-                if let crate::acp::ParentEffect::Archived(receipt) = self
-                    .deliver_parent_effect(row, *write, "archive", None)
-                    .await?
+            let head = self.report_archive_head(row, &checkout).await?;
+            let parent = nucleus_hosts::parent_thread(checkout.path());
+            #[cfg(test)]
+            let host = self.host.fixture_pass();
+            #[cfg(not(test))]
+            let host = self.host.pass(self.storage.scratch().path());
+            for (role, thread) in [
+                ("reviewer", reviewer),
+                ("worker", worker),
+                ("task", Some(parent.as_str())),
+            ] {
+                if let Some(thread) = thread
+                    && !host.retirement_idle(&binding, thread).await?
                 {
-                    custody.record_archive(*receipt)?;
-                    self.record_archive_progress(id, &custody).await?;
+                    return Err(ServiceError::ArchiveEvidence(format!(
+                        "Waiting for the {role} thread and checkout to be idle before removal."
+                    )));
+                }
+            }
+            let roles: Vec<_> = [reviewer, worker, Some(parent.as_str())]
+                .into_iter()
+                .flatten()
+                .collect();
+            let state = self.state.lock().await;
+            if state
+                .settings
+                .dispatch
+                .as_ref()
+                .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
+            {
+                return Err(ServiceError::ReportCheckout("archival is paused"));
+            }
+            self.host.retire_with_quiet_shell(&parent, &roles, || {
+                Self::retire_report_checkout(&checkout, head.as_ref())
+            })??;
+        }
+        let step = if parenting {
+            self.host.prepare_archive(&binding, reviewer, worker)?
+        } else {
+            DoneArchive::Finished
+        };
+        match step {
+            DoneArchive::Finished => Ok(Action::Nothing),
+            DoneArchive::Wait(cause) => Err(ServiceError::ArchiveEvidence(cause)),
+            DoneArchive::Write(write) => {
+                self.check_project_route(identity, &route).await?;
+                if !self.host.write_archive(write).await? {
+                    return Err(ServiceError::ArchiveEvidence(
+                        "The T3 thread changed before archiving. Checking again.".into(),
+                    ));
                 }
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 Ok(Action::Wait(WaitReason::Stopping))
             }
         }
-    }
-
-    async fn record_archive_progress(
-        &self,
-        id: &str,
-        custody: &ArchiveCustody,
-    ) -> Result<(), ServiceError> {
-        let mut progress = event("role_archive_progress");
-        progress.detail =
-            serde_json::to_string(custody).map_err(nucleus_store::StoreError::from)?;
-        self.state
-            .lock()
-            .await
-            .store
-            .record_task_effect(id, &progress)?;
-        Ok(())
     }
 
     #[expect(
@@ -1190,7 +1135,6 @@ impl Service {
             DispatchTarget::Run {
                 frozen, checkout, ..
             }
-            | DispatchTarget::Archive { frozen, checkout }
             | DispatchTarget::Presentation { frozen, checkout }
                 if **frozen != self.checkout_binding(identity, &route, checkout)? =>
             {
@@ -1204,7 +1148,7 @@ impl Service {
                 DispatchTarget::Run { launch, .. } => task
                     .run()
                     .is_none_or(|run| *launch && run.last_send_at_ms().is_none()),
-                DispatchTarget::Archive { .. } | DispatchTarget::Presentation { .. } => false,
+                DispatchTarget::Presentation { .. } => false,
             }
         {
             return Ok(None);
@@ -1219,15 +1163,6 @@ impl Service {
                 self.verify_route(identity, &route).await?;
                 let present = checkout.observe()? != Workspace::Absent;
                 (present || task.phase().is_terminal()).then_some(false)
-            }
-            DispatchTarget::Archive { checkout, .. } => {
-                if task.phase() != Phase::Done {
-                    return Err(HostError::Binding.into());
-                }
-                // Closeout can have already retired the clean checkout. Still
-                // verify its derived destination and pinned worktree root.
-                checkout.observe()?;
-                Some(false)
             }
             DispatchTarget::Run {
                 checkout, launch, ..

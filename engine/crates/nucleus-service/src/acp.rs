@@ -57,12 +57,6 @@ fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
     }
 }
 
-pub(super) enum ParentEffect {
-    AlreadyClaimed,
-    Sent,
-    Archived(Box<nucleus_hosts::ArchiveReceipt>),
-}
-
 impl Service {
     pub(super) fn turn_failure_scope(&self, session: &str) -> String {
         format!("{session}/{}", self.turn_epoch)
@@ -227,22 +221,10 @@ impl Service {
     pub(super) async fn deliver_parent(
         &self,
         row: &TaskRow,
-        write: nucleus_hosts::ParentWrite,
-        session: &str,
-        intent_kind: Option<&str>,
-    ) -> Result<bool, ServiceError> {
-        self.deliver_parent_effect(row, write, session, intent_kind)
-            .await
-            .map(|effect| !matches!(effect, ParentEffect::AlreadyClaimed))
-    }
-
-    pub(super) async fn deliver_parent_effect(
-        &self,
-        row: &TaskRow,
         mut write: nucleus_hosts::ParentWrite,
         session: &str,
         intent_kind: Option<&str>,
-    ) -> Result<ParentEffect, ServiceError> {
+    ) -> Result<bool, ServiceError> {
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let message = write.starts_turn();
         if let Err(error) = self.wake_parent_delivery(row, &write).await {
@@ -276,15 +258,14 @@ impl Service {
                 .claim_parent_intent(row, kind, session, &command, prompt)
                 .await?
             else {
-                return Ok(ParentEffect::AlreadyClaimed);
+                return Ok(false);
             };
             Some(attempt)
         } else {
             None
         };
         match self.host.write_verified_parent(write).await {
-            Ok(Some(receipt)) => Ok(ParentEffect::Archived(Box::new(receipt))),
-            Ok(None) => Ok(ParentEffect::Sent),
+            Ok(()) => Ok(true),
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
                 Err(ServiceError::ParentDeliveryUnknown(error))
             }
