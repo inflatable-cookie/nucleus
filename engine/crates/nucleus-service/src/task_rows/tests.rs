@@ -178,7 +178,10 @@ async fn a_reported_child_monitor_keeps_the_parent_visible_until_shell_quiet() {
     };
     task.record_report(&instance, credential.as_bytes(), Report::Work(pr.clone()))
         .unwrap();
-    observation.host = observed(RunState::Ended);
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
     observation.forge = Observed::Known(nucleus_core::Forge::Open {
         pr,
         checks: nucleus_core::CheckState::Ready,

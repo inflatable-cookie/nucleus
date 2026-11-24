@@ -219,10 +219,11 @@ impl Service {
             .await;
         if matches!(result, Err(nucleus_hosts::HostError::RowChildBusy)) {
             let state = self.state.lock().await;
-            return Ok(match prior {
+            match prior {
                 Some(prior) => state.store.save_row_snooze(id, thread, &prior)?,
                 None => state.store.forget_row_snooze(id)?,
-            });
+            }
+            return Ok(());
         }
         if matches!(result, Ok(SendOutcome::Rejected))
             && matches!(change, RowChange::SnoozeUntil(_))

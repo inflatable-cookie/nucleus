@@ -965,11 +965,9 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
-        if prior != wait || check_cleared {
-            self.title_wake.notify_one();
-        }
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
         if prior != wait || check_cleared {
+            self.title_wake.notify_one();
             self.publish(id, current.version);
         }
         Ok(())
@@ -1012,7 +1010,7 @@ impl Service {
                 .entry(id.clone())
                 .or_insert("Couldn’t verify the task thread. Open it to check.");
             state.set_wait(id, Some(WaitReason::HostObservationBlocked));
-            self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
+            self.desire_title(state, &row.task, row.reference().as_ref(), wait);
             self.title_wake.notify_one();
             self.publish(id, row.version);
             return true;
@@ -1644,15 +1642,13 @@ impl Service {
             state.parent_hold_timers.remove(id);
             return;
         }
-        if self.acp_provider().is_some() {
-            state.row_roles.insert(
-                id.clone(),
-                task_rows::visibility_roles(task)
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect(),
-            );
-        }
+        state.row_roles.insert(
+            id.clone(),
+            task_rows::visibility_roles(task)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
         let thread = task
             .run()
             .map(|run| run.launch().thread.as_str())
