@@ -142,6 +142,8 @@ pub(crate) struct Run {
     pub role: Role,
     pub purpose: String,
     pub last_send_at: Option<u64>,
+    #[serde(default)]
+    pub reported: bool,
     pub activity: Option<Activity>,
 }
 

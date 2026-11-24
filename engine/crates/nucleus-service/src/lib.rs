@@ -395,12 +395,16 @@ impl Service {
         } = &mut *state;
         let now = Instant::now();
         for (id, threads) in thread_tasks {
-            if let Some(prior) = threads.get_mut(&hint.thread)
-                && prior.as_ref() != Some(&hint)
-            {
-                *prior = Some(hint.clone());
-                schedule.wake(id, now, Priority::Decision);
-                self.wake.notify_one();
+            if let Some(prior) = threads.get_mut(&hint.thread) {
+                let backed_off = schedule.reset_host_backoff(id);
+                if prior.as_ref() != Some(&hint) {
+                    *prior = Some(hint.clone());
+                    schedule.wake(id, now, Priority::Decision);
+                    self.wake.notify_one();
+                } else if backed_off {
+                    schedule.wake(id, now + T3_RETRY_DELAY, Priority::Decision);
+                    self.wake.notify_one();
+                }
             }
         }
     }
@@ -469,6 +473,7 @@ impl Service {
             && !state.store.archive_confirmed(id)?;
         if !archive_due && !active(&current.task) && !state.forge_requested.contains(id) {
             state.set_wait(id, None);
+            state.schedule.reset_host_backoff(id);
             return Ok(());
         }
         if current.version != row.version {
@@ -478,12 +483,10 @@ impl Service {
             return Ok(());
         }
         let now = Instant::now();
-        let (delay, priority) = schedule::retry(wait);
+        let (delay, priority) = state.schedule.retry_task(id, wait);
         let due = match result {
-            Err(
-                ServiceError::Host(HostError::Deferred { until })
-                | ServiceError::InboxUnavailable { until },
-            ) => *until,
+            Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
+            Err(ServiceError::InboxUnavailable { until }) => *until,
             _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
             _ => now + delay,
         };
@@ -745,6 +748,7 @@ impl Service {
         };
         self.track(state, task);
         state.set_wait(id, None);
+        state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);

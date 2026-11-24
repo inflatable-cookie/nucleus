@@ -140,18 +140,19 @@ async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
     let run = if state == 3 {
         Value::Null
     } else {
-        let activity = if state == 1 {
-            Value::Null
-        } else {
+        let activity = if state == 2 {
             json!({"label":"Running Rust tests","startedAt":null})
+        } else {
+            Value::Null
         };
-        json!({"instance":INSTANCE,"role":"worker","purpose":"Write the fixture","lastSendAt":1,"activity":activity})
+        json!({"instance":INSTANCE,"role":"worker","purpose":"Write the fixture","lastSendAt":1,
+            "reported":state == 4,"activity":activity})
     };
     Json(json!({
         "version":1,
         "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
         "phase": if state == 3 { "cancelled" } else { "working" },
-        "wait":null,"question":null,"run":run
+        "wait": if state == 4 { Some("host_unknown") } else { None },"question":null,"run":run
     }))
 }
 
@@ -273,8 +274,16 @@ async fn stdio_rebuilds_and_updates_the_exact_run_from_invalidations() {
     tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
         .await
         .expect("subscribe");
+    fixture.state.store(4, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
+    let waiting = agent.update("plan").await;
+    assert_eq!(
+        waiting["entries"][1]["content"],
+        "Working · waiting to confirm the worker is idle"
+    );
     fixture.state.store(2, Ordering::Relaxed);
     let _ = fixture.changes.send(());
+    agent.update("plan").await;
     let changed = agent.update("tool_call_update").await;
     assert_eq!(changed["toolCallId"], INSTANCE);
     assert_eq!(
