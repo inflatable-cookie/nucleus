@@ -219,6 +219,8 @@ struct TaskWait {
 #[derive(PartialEq, Eq)]
 enum WaitDetail {
     BeforeSend(&'static str),
+    ShowingForDelivery(&'static str),
+    ConfirmingDelivery(&'static str),
     Observation(&'static str),
     Archive(String),
 }
@@ -1005,17 +1007,22 @@ impl Service {
                 state.store.claim_task_effect(id, &audit, false)?;
             }
         }
+        let showing = matches!(
+            state.wait_detail(id),
+            Some(WaitDetail::ShowingForDelivery(_))
+        );
         let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
             || (wait == Some(WaitReason::HostUnknown)
-                && match row.task.run() {
-                    None => matches!(result, Err(ServiceError::Host(_))),
-                    Some(run) => {
-                        !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-                            && !run.revoked()
-                            && run.last_send_at_ms().is_none()
-                            && run.report().is_none()
-                    }
-                });
+                && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                && (showing
+                    || match row.task.run() {
+                        None => matches!(result, Err(ServiceError::Host(_))),
+                        Some(run) => {
+                            !run.revoked()
+                                && run.last_send_at_ms().is_none()
+                                && run.report().is_none()
+                        }
+                    }));
         let (wait, detail) = if before_send {
             let now = Instant::now();
             let backoff = match result {
@@ -1035,7 +1042,12 @@ impl Service {
                 }
                 _ => "Checking the task thread before sending.",
             };
-            (Some(WaitReason::HostUnknown), WaitDetail::BeforeSend(cause))
+            let detail = if showing {
+                WaitDetail::ShowingForDelivery(cause)
+            } else {
+                WaitDetail::BeforeSend(cause)
+            };
+            (Some(WaitReason::HostUnknown), detail)
         } else if wait == Some(WaitReason::HostObservationBlocked) {
             state.schedule.block_host_observation(id);
             if state.wait_reason(id) == wait {
@@ -1114,8 +1126,12 @@ impl Service {
             (false, _, false, _) => "Checking the task thread.",
         };
         let prior = state.wait_reason(id);
-        let changed =
-            state.observe_wait_detail(&row.task, wait, Some(WaitDetail::Observation(cause)))?;
+        let detail = if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
+            WaitDetail::ConfirmingDelivery(cause)
+        } else {
+            WaitDetail::Observation(cause)
+        };
+        let changed = state.observe_wait_detail(&row.task, wait, Some(detail))?;
         if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
             audit.detail = serde_json::json!({"version": row.version,

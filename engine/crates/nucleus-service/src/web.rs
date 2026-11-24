@@ -1061,6 +1061,8 @@ impl Summary {
             }
             match state.wait_detail(id)? {
                 crate::WaitDetail::BeforeSend(message)
+                | crate::WaitDetail::ShowingForDelivery(message)
+                | crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
                 crate::WaitDetail::Archive(_) => None,
             }
