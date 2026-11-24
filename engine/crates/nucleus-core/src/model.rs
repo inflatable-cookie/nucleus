@@ -230,6 +230,15 @@ pub(crate) struct OpenQuestion {
     pub(crate) question: Question,
     #[serde(default)]
     pub(crate) delivery: Option<QuestionDelivery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operator_decline: Option<OperatorDecline>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorDecline {
+    NoticePending,
+    Notified,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -486,6 +495,13 @@ impl TryFrom<StoredTask> for Task {
         if stored.attempts > 3 {
             return Err("stored attempt count exceeds the retry limit");
         }
+        if stored.question.as_ref().is_some_and(|open| {
+            open.operator_decline.is_some()
+                && (stored.identity.entry != Entry::ReviewEntry
+                    || !matches!(&open.question, Question::Accept { head } if open.head.as_ref() == Some(head)))
+        }) {
+            return Err("stored operator decline does not match its acceptance question");
+        }
         if stored.run.as_ref().is_some_and(|run| {
             let role = run.launch.role;
             (!run.revoked && stored.phase.role() != Some(role))
@@ -582,6 +598,44 @@ impl Task {
     #[must_use]
     pub fn question(&self) -> Option<&Question> {
         self.question.as_ref().map(|open| &open.question)
+    }
+
+    #[must_use]
+    pub fn operator_question(&self) -> Option<&Head> {
+        match self.question()? {
+            Question::Accept { head } if self.identity.entry == Entry::ReviewEntry => Some(head),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn operator_decline(&self) -> Option<OperatorDecline> {
+        self.question.as_ref()?.operator_decline
+    }
+
+    /// Record a decline on the currently open operator question.
+    pub fn decline_operator_question(&mut self, head: &Head) -> bool {
+        if self.operator_question() != Some(head) || self.operator_decline().is_some() {
+            return false;
+        }
+        let Some(open) = &mut self.question else {
+            return false;
+        };
+        open.operator_decline = Some(OperatorDecline::NoticePending);
+        open.delivery = None;
+        true
+    }
+
+    /// Mark the planner notice delivered, leaving the task parked on the decline.
+    pub fn notify_operator_decline(&mut self) -> bool {
+        let Some(open) = &mut self.question else {
+            return false;
+        };
+        if open.operator_decline != Some(OperatorDecline::NoticePending) {
+            return false;
+        }
+        open.operator_decline = Some(OperatorDecline::Notified);
+        true
     }
 
     #[must_use]

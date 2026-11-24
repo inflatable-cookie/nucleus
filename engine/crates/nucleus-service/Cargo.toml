@@ -17,7 +17,8 @@ nucleus-forge = { path = "../nucleus-forge" }
 nucleus-hosts = { path = "../nucleus-hosts" }
 nucleus-store = { path = "../nucleus-store" }
 nucleus-work = { path = "../nucleus-work" }
-rustix = { version = "1", features = ["fs"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

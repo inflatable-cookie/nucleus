@@ -7,6 +7,10 @@ import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import { UNKNOWN_ASKER_LABEL } from "../../shared/decision-project";
 import type { Store } from "../store/store";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import {
+  RUST_INBOX_PREFIX, RUST_INBOX_ACCEPT, RUST_INBOX_DECLINE,
+  type RustInboxRequest, type RustInboxReply,
+} from "../../shared/rust-inbox";
 
 /** Where Nucleus placed a decision's project: the caller's run, their planner or agent scope, or linked records. */
 export type DecisionPlacingScope = "run" | "planner" | "agent" | "links" | "operator";
@@ -175,11 +179,58 @@ export class Decisions {
 
   get(input: { id: string }): DecisionView { return this.view(this.store.decision(input.id)); }
 
+  /** Invoked only by the dedicated bridge route. A withdrawal also fences an
+   * earlier ensure whose response was lost before the task changed. */
+  rustInbox(input: RustInboxRequest): RustInboxReply {
+    const question = `Accept the external merge for ${input.reference} at ${input.head}?`;
+    const askedBy = "Nucleus Rust";
+    const project = { origin: `https://github.com/${input.repository}`, path: "" };
+    return this.store.transaction(() => {
+      const decision = this.store.findDecision(input.id) ?? this.add({
+        question, askedBy, project,
+        choices: [
+          { label: RUST_INBOX_ACCEPT, consequence: "Continue closeout for this exact merged head." },
+          { label: RUST_INBOX_DECLINE, consequence: "Leave the task waiting for its planner." },
+        ],
+        recommended: RUST_INBOX_ACCEPT,
+      }, input.id);
+      if (decision.askedBy.agentId !== askedBy || decision.question !== question ||
+          normalizeRepositoryOrigin(decision.askedBy.project?.origin ?? "") !== normalizeRepositoryOrigin(project.origin)) {
+        throw new Error("The Rust Inbox decision no longer matches its request.");
+      }
+      if (input.operation === "withdraw") {
+        if (decision.status === "open") {
+          this.withdrawInTransaction({
+            id: decision.id,
+            version: decision.version,
+            reason: "The Rust task moved past this question.",
+            withdrawnBy: askedBy,
+          });
+        }
+        return { state: "withdrawn" };
+      }
+      if (decision.status === "open") return { state: "pending" };
+      if (decision.status !== "answered") return { state: "withdrawn" };
+      const answer = decision.answer;
+      if (!answer || answer.relayed || !isT3OperatorIdentity(answer.answeredBy)) {
+        throw new Error("The decision needs an authenticated Inbox answer.");
+      }
+      return answer.text === RUST_INBOX_ACCEPT
+        ? { state: "accepted", actor: answer.answeredBy, reason: answer.note.trim() || RUST_INBOX_ACCEPT }
+        : { state: "declined" };
+    });
+  }
+
   list(query: { status?: Decision["status"]; asker?: string; project?: string; task?: string; lead?: string; papercut?: string }): DecisionView[] {
     return this.store.listDecisions(query).map(decision => this.view(decision));
   }
 
   answer(input: { id: string; version: number; answer: string; answeredBy: string; relayed: boolean; note: string; overtakes?: string[] }, authority?: { trustedT3: true }): DecisionView {
+    const rustInbox = input.id.startsWith(RUST_INBOX_PREFIX);
+    if (rustInbox && (!authority?.trustedT3 || !isT3OperatorIdentity(input.answeredBy) || input.relayed ||
+        (input.answer !== RUST_INBOX_ACCEPT && input.answer !== RUST_INBOX_DECLINE))) {
+      throw new Error("Answer this Rust decision in the pinned Inbox.");
+    }
     if (isT3OperatorIdentity(input.answeredBy) && !authority?.trustedT3) throw new Error("T3 operator identity requires an authenticated T3 session");
     const relayed = input.relayed;
     if (relayed && (input.answeredBy === "operator" || input.answeredBy === "operator (board)" || isT3OperatorIdentity(input.answeredBy)))
@@ -200,7 +251,7 @@ export class Decisions {
         updatedAt: now(),
         // The asker relaying the operator's answer already has it; notifying its own thread
         // only spent a turn (Tom, 2026-09-29).
-        delivery: relayed && input.answeredBy === current.askedBy.agentId ? null
+        delivery: rustInbox || (relayed && input.answeredBy === current.askedBy.agentId) ? null
           : { version: next, status: "pending", noticeId: decisionNoticeId(current.id, next), agentId: current.askedBy.agentId,
             text: decisionNoticeText({ ...current, answer, version: next }), error: "", attempts: 0, deliveredAt: null },
         versions: [...current.versions, this.snapshot({ ...current, answer, status: "answered" }, input.answeredBy, now(), next)] });

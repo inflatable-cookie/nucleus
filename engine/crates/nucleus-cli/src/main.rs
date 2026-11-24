@@ -237,14 +237,17 @@ async fn serve(
         });
     }
     let tcp = TcpListener::bind(endpoint).await?;
-    let service = Arc::new(Service::open(
-        &settings,
-        project,
-        host,
-        forge,
-        tcp.local_addr()?,
-        env::current_exe()?.canonicalize()?,
-    )?);
+    let service = Arc::new(
+        Service::open(
+            &settings,
+            project,
+            host,
+            forge,
+            tcp.local_addr()?,
+            env::current_exe()?.canonicalize()?,
+        )?
+        .with_inbox_from_env()?,
+    );
     let api = router(Arc::clone(&service), controllers);
     let watch = Arc::clone(&service);
     let watcher = tokio::spawn(async move {

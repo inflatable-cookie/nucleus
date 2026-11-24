@@ -259,6 +259,7 @@ fn wait_text(detail: &Detail) -> Option<&'static str> {
         "permission" => "waiting for permission",
         "forge_unknown" => "waiting for GitHub",
         "host_unknown" | "idle_without_terminal_run" => "waiting for the host",
+        "operator_declined" => "operator declined. Move or cancel the task",
         "stopping" => "waiting for the run to finish",
         "workspace_unknown" => "checking the workspace",
         "retained_thread_busy" => "waiting for the previous turn",

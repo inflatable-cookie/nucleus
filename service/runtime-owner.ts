@@ -1890,6 +1890,9 @@ export class QueueRuntime {
   addDecision(input: Parameters<Decisions["add"]>[0]) {
     return this.questions.addDecision(input);
   }
+  rustInboxDecision(input: Parameters<Decisions["rustInbox"]>[0]) {
+    return this.questions.rustInboxDecision(input);
+  }
   backfillDecisions(input: { dryRun?: boolean }) {
     return this.questions.backfillDecisions(input);
   }

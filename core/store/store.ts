@@ -1927,6 +1927,9 @@ export class Store {
   decision(id: string): Decision {
     return this.planningStore.decision(id);
   }
+  findDecision(id: string): Decision | undefined {
+    return this.planningStore.findDecision(id);
+  }
   updateDecision(record: Decision): Decision {
     return this.planningStore.updateDecision(record);
   }

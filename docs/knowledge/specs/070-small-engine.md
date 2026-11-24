@@ -131,7 +131,7 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
 | `pr` | URL and head SHA. |
 | `verdict` | The reviewer's verdict at a given head: `approve` or `changes`, with its summary. A verdict at any other head is history. Step-up requires an applied changes verdict at the current head with a review launch sequence newer than the climb recorded on the worker binding. |
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
-| `question` | At most one open question to the task's planner, with its options and the head it was asked at. Observing a new head clears it. |
+| `question` | At most one open question, with its options and the head it was asked at. The planner answers work questions. The operator answers review-entry acceptance in the pinned Inbox. A decline parks the task and notifies its planner once. Observing a new head clears the question. |
 | `hold` | An optional operator or planner hold, with its reason. |
 
 Anything else is observed, never stored as a record that something must clear.
