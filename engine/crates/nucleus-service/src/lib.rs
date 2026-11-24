@@ -376,7 +376,10 @@ impl Service {
         }
         let profile = storage.lock_profile()?;
         let runtime_settings = web::RuntimeSettings::open(settings)?;
-        let store = Store::open(&storage)?;
+        let mut store = Store::open(&storage)?;
+        if let Some(projects) = &runtime_settings.projects {
+            store.clean_removed_projects(projects)?;
+        }
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         let registry_mode = project.is_none();
         if project
@@ -2064,12 +2067,24 @@ impl State {
             Authority::Planner { actor } => self.check_planner_authority(task, actor),
             Authority::Operator { .. } => Ok(()),
         };
+        let was_terminal = task.phase().is_terminal();
         let ready = match task.command(command, actor, observation) {
             Ok(()) if !awaiting_planner => Preflight::Ready,
             Ok(()) | Err(CommandError::HeadUnverified) => Preflight::Pending,
             Err(error) => return Err(error.into()),
         };
         authority?;
+        if was_terminal
+            && !task.phase().is_terminal()
+            && self.settings.projects.as_ref().is_some_and(|projects| {
+                projects.removed_origin(&task.identity().repository)
+                    || task
+                        .report_task()
+                        .is_some_and(|report| projects.removed.contains_key(&report.project))
+            })
+        {
+            return Err(ServiceError::Project);
+        }
         Ok(ready)
     }
 }

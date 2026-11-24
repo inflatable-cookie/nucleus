@@ -345,6 +345,7 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
                     .collect(),
             },
         )]),
+        ..Default::default()
     };
     let revision = settings
         .read::<nucleus_store::Projects>()
@@ -2124,4 +2125,200 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
             beta_allowed
         );
     }
+}
+
+#[tokio::test]
+async fn project_removal_rechecks_open_work_and_operator_authority() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let projects = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let id = projects.value.projects.keys().next().unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(preview["tasks"], json!([]));
+    let confirm = json!({"digest":preview["digest"], "reason":"Retired fixture"});
+    for method in [Method::GET, Method::POST] {
+        assert_eq!(
+            caller_request(
+                &registry.api,
+                method,
+                &removal,
+                "alpha-planner",
+                confirm.clone()
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    registry.task("alpha-planner", "removal-blocker").await;
+    let reply = post_as(&registry.api, &removal, &BOARD_KEY, &confirm).await;
+    assert_eq!(reply.status(), StatusCode::CONFLICT);
+    assert!(
+        json_body(reply).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("open tasks")
+    );
+    let blocked = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(blocked["tasks"][0]["taskId"], "removal-blocker");
+    assert!(
+        registry
+            .service
+            .settings
+            .read::<nucleus_store::Projects>()
+            .unwrap()
+            .value
+            .projects
+            .contains_key(id)
+    );
+}
+
+#[tokio::test]
+async fn project_removal_deletes_planning_and_preserves_finished_repository_history() {
+    use nucleus_store::planning::RecordKind;
+
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let snapshot = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let id = snapshot.value.projects.keys().next().unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    registry.task("alpha-planner", "finished-removal").await;
+    {
+        let mut state = registry.service.state.lock().await;
+        let row = state.store.row("finished-removal").unwrap().unwrap();
+        let mut snapshot = serde_json::to_value(&row.task).unwrap();
+        snapshot["phase"] = json!("done");
+        state
+            .store
+            .save(
+                &row,
+                serde_json::from_value(snapshot).unwrap(),
+                &event("fixture_finished"),
+            )
+            .unwrap();
+    }
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirm = |digest: &Value| json!({"digest":digest, "reason":"Retired fixture"});
+    seed_removal_planning(&registry, id).await;
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &removal,
+            &BOARD_KEY,
+            &confirm(&preview["digest"])
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &removal,
+            &BOARD_KEY,
+            &confirm(&preview["digest"])
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    {
+        let state = registry.service.state.lock().await;
+        assert_eq!(state.store.plan(id).unwrap().version, 0);
+        assert!(state.store.lanes(id).unwrap().is_empty());
+        assert!(state.store.items(id).unwrap().is_empty());
+        assert!(state.store.decisions(id, false).unwrap().is_empty());
+        assert!(
+            state
+                .store
+                .planning_history(id, RecordKind::Lane, "release")
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let task =
+        json_body(get_as(&registry.api, "/v1/tasks/finished-removal", &BOARD_KEY).await).await;
+    assert_eq!(task["phase"], "done");
+    assert_eq!(task["identity"]["repository"], ALPHA_REPO);
+    assert_eq!(
+        get_as(
+            &registry.api,
+            "/v1/tasks/finished-removal/history",
+            &BOARD_KEY
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let registry = registry.reopen();
+    registry.enroll("alpha-planner").await;
+    assert!(
+        !registry
+            .service
+            .settings
+            .read::<nucleus_store::Projects>()
+            .unwrap()
+            .value
+            .projects
+            .contains_key(id)
+    );
+    assert!(matches!(
+        registry
+            .service
+            .command(
+                "finished-removal",
+                &Authority::Operator {
+                    actor: "fixture".into()
+                },
+                Command::Move(Phase::Working)
+            )
+            .await,
+        Err(ServiceError::Project)
+    ));
+}
+
+async fn seed_removal_planning(registry: &Registry, id: &str) {
+    let lane = format!("/v1/planning/{id}/lanes/release");
+    let plan = format!("/v1/planning/{id}/plan");
+    let items = format!("/v1/planning/{id}/items");
+    let decisions = format!("/v1/planning/{id}/decisions");
+
+    assert_eq!(
+        planning::put_as(&registry.api, &lane, &BOARD_KEY,
+            &json!({"version":0,"title":"Release","aim":"Verify release","document":"Fixture notes"})).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            &plan,
+            &BOARD_KEY,
+            &json!({"version":0,"lanes":[{"key":"release","horizon":"now","doneWhen":"Released"}]})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_as(&registry.api, &items, &BOARD_KEY,
+            &json!({"kind":"papercut","title":"Fixture item","body":"Use the test","lanes":["release"]})).await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        post_as(&registry.api, &decisions, &BOARD_KEY,
+            &json!({"question":"Ship?","options":[{"id":"yes","label":"Ship"},{"id":"no","label":"Wait"}]})).await.status(),
+        StatusCode::CREATED
+    );
 }

@@ -7,7 +7,8 @@ use axum::{
 use nucleus_core::Authority;
 use nucleus_store::{
     DispatchMode, DispatchSettings, EngineSettings, Hosts, Profiles, ProjectSettings, Projects,
-    RepositorySettings, SettingsFile, SettingsSnapshot, SettingsValue, StorageError,
+    RepositorySettings, SettingsFile, SettingsSnapshot, SettingsValue, StorageError, StoreError,
+    planning::ProjectRemoval,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -376,6 +377,8 @@ async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -
         resolved.insert(id.clone(), json!(planners.first()));
         verified.insert(id.clone(), json!(planners));
     }
+    let mut settings = settings;
+    settings.value.removed.clear();
     json!({"settings": settings, "resolvedPlanners": resolved, "verifiedPlanners": verified})
 }
 
@@ -455,7 +458,7 @@ pub(super) async fn put(
                 let legacy = service.project.is_some();
                 save_projects(&service, revision, move |current| {
                     if legacy {
-                        *current = value;
+                        current.projects = value.projects;
                         Ok(())
                     } else {
                         edit_project_details(current, value)
@@ -529,6 +532,104 @@ pub(super) async fn reassign(
         .await
         .map_err(|_| ServiceError::Input)??,
     ))
+}
+
+pub(super) async fn preview_project_removal(
+    State(api): State<Api>,
+    Path(project): Path<String>,
+    Extension(authority): Extension<Authority>,
+) -> Result<Json<ProjectRemoval>, ApiError> {
+    require_operator(&authority)?;
+    let service = &api.service;
+    if service.project.is_some() {
+        return Err(ServiceError::Project.into());
+    }
+    service
+        .storage
+        .database()
+        .verify()
+        .map_err(ServiceError::from)?;
+    let state = service.state.lock().await;
+    let preview = state
+        .store
+        .project_removal_preview(&service.settings, &project)
+        .map_err(removal_error)?;
+    Ok(Json(preview))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ConfirmRemoval {
+    digest: String,
+    reason: String,
+}
+
+pub(super) async fn remove_project(
+    State(api): State<Api>,
+    Path(project): Path<String>,
+    Extension(authority): Extension<Authority>,
+    input: Result<Json<ConfirmRemoval>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    require_operator(&authority)?;
+    let ConfirmRemoval { digest, reason } = body(input)?;
+    let reason = reason.trim().to_owned();
+    let service = api.service;
+    if service.project.is_some() || reason.is_empty() || reason.chars().count() > 4000 {
+        return Err(ApiError::Invalid);
+    }
+    task::spawn(async move {
+        let _projects = service.project_writes.write().await;
+        service
+            .storage
+            .database()
+            .verify()
+            .map_err(ServiceError::from)?;
+        let mut state = service.state.lock().await;
+        let removed_at_ms = crate::now_ms();
+        let result =
+            state
+                .store
+                .remove_project(&service.settings, &project, &digest, reason, removed_at_ms);
+        match result {
+            Ok((saved, removed)) => {
+                state.settings.projects = Some(saved.value);
+                service.project_settings_changed(&mut state);
+                Ok(Json(
+                    json!({"project": removed, "removedAtMs": removed_at_ms}),
+                ))
+            }
+            Err(error) => {
+                // A publication error or failed SQLite commit can leave a durable tombstone.
+                // Refresh routing under the same fence before allowing another admission.
+                if matches!(error, StoreError::Storage(_) | StoreError::Sqlite(_)) {
+                    let registry = service.settings.read::<Projects>();
+                    state.settings.projects = Some(
+                        registry
+                            .as_ref()
+                            .map_or_else(|_| Projects::default(), |saved| saved.value.clone()),
+                    );
+                    service.project_settings_changed(&mut state);
+                    if let Ok(saved) = registry {
+                        state
+                            .store
+                            .clean_removed_projects(&saved.value)
+                            .map_err(removal_error)?;
+                    }
+                }
+                Err(removal_error(error))
+            }
+        }
+    })
+    .await
+    .map_err(|_| ServiceError::Input)?
+}
+
+fn removal_error(error: StoreError) -> ApiError {
+    match error {
+        StoreError::PlanningConflict => ApiError::ProjectOpenTasks,
+        StoreError::Storage(error) => error.into(),
+        error => ServiceError::from(error).into(),
+    }
 }
 
 fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), StorageError> {

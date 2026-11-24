@@ -205,6 +205,10 @@ fn routes(
         )
         .route("/v1/settings/projects/reassign", post(settings::reassign))
         .route(
+            "/v1/settings/projects/{project}/removal",
+            get(settings::preview_project_removal).post(settings::remove_project),
+        )
+        .route(
             "/v1/settings/profiles/pauses/{group}",
             put(settings::pause_group),
         )
@@ -1207,6 +1211,7 @@ enum ApiError {
     Address,
     Invalid,
     SettingsOperator,
+    ProjectOpenTasks,
     BoardUnavailable,
     BoardOperator,
     Service(ServiceError),
@@ -1236,6 +1241,10 @@ impl IntoResponse for ApiError {
             Self::SettingsOperator => (
                 StatusCode::FORBIDDEN,
                 "settings writes require an operator".into(),
+            ),
+            Self::ProjectOpenTasks => (
+                StatusCode::CONFLICT,
+                "Finish or cancel the project's open tasks before removing it.".into(),
             ),
             Self::BoardUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "board unavailable".into()),
             Self::BoardOperator => (
