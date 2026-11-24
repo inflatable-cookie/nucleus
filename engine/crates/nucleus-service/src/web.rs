@@ -709,7 +709,7 @@ fn command_options(
         && !(inbox_enabled && task.operator_question().is_some())
     {
         let answer = match question {
-            Question::Work { .. } | Question::Repair(_) => Answer::Work(String::new()),
+            Question::Work { .. } | Question::Repair(_) => Answer::Work("Continue work".into()),
             Question::Retry { .. } => Answer::Retry,
             Question::Allowance { .. } => Answer::Extend,
             Question::Accept { head } => Answer::Accept {
@@ -764,7 +764,13 @@ fn command_options(
         .into_iter()
         .map(|phase| CommandView {
             name: "move",
-            preflight: check(Command::Move(phase)),
+            preflight: check(if phase == Phase::Working && task.report_task().is_none() {
+                Command::MoveWork {
+                    instruction: "Continue work".into(),
+                }
+            } else {
+                Command::Move(phase)
+            }),
             phase: Some(phase),
         })
         .chain(commands.into_iter().map(|(name, command)| CommandView {

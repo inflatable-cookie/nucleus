@@ -373,7 +373,12 @@ impl Service {
         match target {
             Some(target) => {
                 let target = target.with_required_checks(route.required_checks);
-                let forge = capture_forge(self, self.forge.observe(&target).await)?;
+                let observed = if task.phase() == Phase::Merging && task.verdict().is_some() {
+                    self.forge.observe_for_merge(&target).await
+                } else {
+                    self.forge.observe(&target).await
+                };
+                let forge = capture_forge(self, observed)?;
                 Ok((forge, Some(target)))
             }
             None => Ok((Forge::Absent, None)),
@@ -498,6 +503,9 @@ impl Service {
             {
                 "delegated_parent_ended"
             }
+            Action::Advance(Phase::Working) if row.task.phase() == Phase::Merging => {
+                "merge_returned_to_work"
+            }
             Action::Advance(Phase::ReportReady) => "report_ready",
             Action::Advance(Phase::Blocked | Phase::Error) => "report_only_worker_returned",
             Action::Advance(_) => "phase_reconciled",
@@ -509,6 +517,13 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
+        if kind == "merge_returned_to_work" {
+            audit.detail = serde_json::json!({
+                "instruction": updated.work_instruction(),
+                "priorVerdict": row.task.verdict(),
+            })
+            .to_string();
+        }
         if matches!(kind, "delegated_parent_ended" | "assignment_input_rejected")
             && let Some(run) = row.task.run()
         {
@@ -1388,7 +1403,10 @@ impl Service {
         }
         observation.forge = observed;
         if let MergeWrite::Refused { .. } = attempt.write
-            && let Observed::Known(Forge::Open { checks, .. }) = &mut observation.forge
+            && let Observed::Known(Forge::Open {
+                checks: checks @ CheckState::Ready,
+                ..
+            }) = &mut observation.forge
         {
             *checks = CheckState::Blocked;
         }
