@@ -71,7 +71,10 @@ impl Service {
         let id = &task.identity().id;
         let wait = state.wait_reason(id);
         if task.phase().is_terminal()
-            || state.wait_detail(id) == Some(crate::WaitDetail::BeforeSend)
+            || matches!(
+                state.wait_detail(id),
+                Some(crate::WaitDetail::BeforeSend(_))
+            )
             || crate::attention::waiting_for_person(task, wait)
             || task.hold().is_some()
             || task.operator_decline().is_some()
@@ -105,6 +108,49 @@ impl Service {
             return Ok((None, false));
         }
         Ok((command.as_deref().map(parent_hold_prompt), false))
+    }
+
+    pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
+        let Some(runtime) = self.host.runtime_identity() else {
+            return Ok(false);
+        };
+        let identity = row.task.identity();
+        let id = &identity.id;
+        let pending =
+            self.state
+                .lock()
+                .await
+                .store
+                .task_delivery_fence(id, row.version, &runtime)?;
+        let Some(commands) = pending else {
+            return Ok(false);
+        };
+        let Some(provider) = self.acp_provider().filter(|_| !commands.is_empty()) else {
+            return Ok(true);
+        };
+        let _fence = self.effect(row).await?;
+        let route = self.project_for(identity).await?;
+        let work = self.worktrees()?;
+        let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
+        let binding = route.binding(&checkout)?;
+        if !matches!(
+            self.host
+                .parent_deliveries_observed(&binding, provider, &commands)
+                .await,
+            Ok(true)
+        ) || self.host.runtime_identity().as_deref() != Some(runtime.as_str())
+        {
+            return Ok(true);
+        }
+        let mut state = self.state.lock().await;
+        for command in commands {
+            let mut audit = event("native_turn_observed");
+            audit.detail =
+                serde_json::json!({"version":row.version,"session":runtime,"command":command})
+                    .to_string();
+            state.store.claim_task_effect(id, &audit, false)?;
+        }
+        Ok(false)
     }
 
     pub(super) async fn record_native_turn(

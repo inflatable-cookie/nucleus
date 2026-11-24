@@ -243,6 +243,26 @@ impl T3 {
         }
     }
 
+    /// Read positive delivery evidence for the exact frozen parent messages.
+    ///
+    /// # Errors
+    /// Returns an error when the native projection or binding cannot be read.
+    pub async fn parent_deliveries_observed(
+        &self,
+        binding: &Binding,
+        provider: &str,
+        commands: &[String],
+    ) -> Result<bool, HostError> {
+        let thread = parent_thread(Path::new(&binding.worktree_path));
+        let Some(projection) = self.thread(binding, &thread).await? else {
+            return Ok(false);
+        };
+        projection.require_parent_provider(provider)?;
+        Ok(commands
+            .iter()
+            .all(|command| projection.has_delivery(&message_id(command))))
+    }
+
     /// Read the parent, or prepare one guarded write to establish its held turn.
     /// A missing root or uncertain projection waits for another pass.
     /// # Errors

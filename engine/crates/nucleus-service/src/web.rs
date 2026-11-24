@@ -1044,8 +1044,8 @@ impl Summary {
                 .then(|| state.wait_detail(id))
                 .flatten()
                 .map(|detail| match detail {
-                    crate::WaitDetail::BeforeSend => "Checking the task thread before sending.",
-                    crate::WaitDetail::Observation(message) => message,
+                    crate::WaitDetail::BeforeSend(message)
+                    | crate::WaitDetail::Observation(message) => message,
                 });
         let mut view = Self {
             identity: task.identity().clone(),

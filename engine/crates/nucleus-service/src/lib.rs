@@ -213,7 +213,7 @@ struct TaskWait {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WaitDetail {
-    BeforeSend,
+    BeforeSend(&'static str),
     Observation(&'static str),
 }
 
@@ -555,17 +555,11 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
-        let id = &row.task.identity().id;
+        if !row.task.phase().is_terminal()
+            && row.task.run().is_none()
+            && self.parent_delivery_fenced(row).await?
         {
-            let state = self.state.lock().await;
-            if row.task.run().is_none()
-                && let Some(runtime) = self.host.runtime_identity()
-                && state
-                    .store
-                    .task_delivery_blocked(id, row.version, &runtime)?
-            {
-                return Ok(Action::Wait(WaitReason::HostObservationBlocked));
-            }
+            return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
         self.refresh_acp_if_requested(row).await?;
         if self.reconcile_prerequisites(row).await? {
@@ -774,11 +768,11 @@ impl Service {
                 let prior = tracked.seen.as_ref().map(|seen| &seen.hint);
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
-                    if tracked.due && hint.has_delivery_change(prior) {
-                        schedule.resume_on_host_evidence(id);
-                    }
                 }
                 if tracked.due && prior != Some(&hint) {
+                    if hint.has_delivery_change(prior) {
+                        schedule.resume_on_host_evidence(id);
+                    }
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
@@ -983,10 +977,15 @@ impl Service {
         let id = &row.task.identity().id;
         let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
             || (wait == Some(WaitReason::HostUnknown)
-                && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-                && row.task.run().is_some_and(|run| {
-                    !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
-                }));
+                && match row.task.run() {
+                    None => matches!(result, Err(ServiceError::Host(_))),
+                    Some(run) => {
+                        !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+                            && !run.revoked()
+                            && run.last_send_at_ms().is_none()
+                            && run.report().is_none()
+                    }
+                });
         let (wait, detail) = if before_send {
             let now = Instant::now();
             let backoff = match result {
@@ -1000,7 +999,13 @@ impl Service {
                 backoff.unwrap_or(now).max(now + T3_RETRY_DELAY),
                 previous,
             );
-            (Some(WaitReason::HostUnknown), WaitDetail::BeforeSend)
+            let cause = match result {
+                Err(ServiceError::Host(HostError::ProcessCoverage(failure))) => {
+                    process_check_detail(*failure, false)
+                }
+                _ => "Checking the task thread before sending.",
+            };
+            (Some(WaitReason::HostUnknown), WaitDetail::BeforeSend(cause))
         } else if wait == Some(WaitReason::HostObservationBlocked) {
             state.schedule.block_host_observation(id);
             if state.wait_reason(id) == wait {

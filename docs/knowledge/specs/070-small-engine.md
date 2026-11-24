@@ -278,10 +278,12 @@ Later decisions carry their own attribution.
     A pre-wire retry keeps the row visible and releases the ACP turn while
     it waits. An exact terminal parent and an exact absent child let Nucleus
     discard a delegation that has no send intent and prepare it again.
-    On rollout, an old delivery fence with matching preflight refusal evidence
-    reopens at the same version if no later or same-command send might have
-    reached T3. An unresolved delivery fence survives restart for the same
-    task version and T3 runtime.
+    A delivery fence protects an unresolved Nucleus send at the same task
+    version and T3 runtime. A legacy generic block with no matching attempt
+    does not park a runless task. A known pre-wire refusal or positive
+    native readback of the exact frozen message lets the normal scheduler
+    replan. A bounded view that omits the message cannot clear an uncertain
+    send. Readback of a fenced attempt never sends a message.
 
     The planner ruled on 2026-11-24 that a human wait or a typed custody block
     releases the ACP parent. A verified running role or a launch inside its
