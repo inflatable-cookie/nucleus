@@ -61,6 +61,8 @@ function engine() {
       { origin: "example/lantern", path: "/work/lantern", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     ] },
   } };
+  let removalReceipt: { repositories: Array<{ origin: string; path: string }>; removedAtMs: number } | undefined;
+  let loseRemovalReply = false;
   let catalog: RustCachedCatalog = { providers: null, readAtMs: null, status: "pending" };
   const empty = { counts: {}, groups: {}, sample: 0 };
   let usage: RustProfileUsage = { recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {} };
@@ -95,9 +97,16 @@ function engine() {
         return json({ project, digest: "confirmed-revision", tasks: [] });
       }
       assert.deepEqual(JSON.parse(String(init.body)), { digest: "confirmed-revision", reason: "Retired" });
-      projects = { projects: { ...projects.projects } };
-      Reflect.deleteProperty(projects.projects, "Orbit_Main");
-      return json({ repositories: project.repositories, removedAtMs: 1_790_000_000_000 });
+      if (!removalReceipt) {
+        projects = { projects: { ...projects.projects } };
+        Reflect.deleteProperty(projects.projects, "Orbit_Main");
+        removalReceipt = {
+          repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
+          removedAtMs: 1_790_000_000_000,
+        };
+        if (loseRemovalReply) throw new TypeError("removal reply lost");
+      }
+      return json(removalReceipt);
     }
     if (path === "/settings/projects/reassign") {
       const body = JSON.parse(String(init?.body)) as { revision: string; origin: string; toProject: string };
@@ -155,6 +164,7 @@ function engine() {
   }) as typeof fetch;
   return {
     fetcher, writes, reads, denied,
+    loseNextRemovalReply: () => { loseRemovalReply = true; },
     planningReads: () => reads.filter((path) => path.startsWith("GET /planning/")),
     setSession: (next: RustBrowserSession) => { session = next; },
     setProfiles: (next: unknown, pausedGroups: string[]) => { profiles = { profiles: next, pausedGroups }; },
@@ -264,14 +274,24 @@ test("the Rust adapter ports project removal through one native resource", async
   const preview = await adapter.rpc(api.projectManagementPreview, { key });
   assert.equal(preview.project.name, "Orbit");
   assert.deepEqual(preview.tasks, []);
-  const removed = await adapter.rpc(api.projectManage, {
-    key, version: preview.project.version, digest: preview.digest, reason: "Retired",
-  });
-  assert.equal(removed.key, key);
+  const confirmation = { key, version: preview.project.version, digest: preview.digest, reason: "Retired" };
+  fake.loseNextRemovalReply();
+  await assert.rejects(adapter.rpc(api.projectManage, confirmation), /removal reply lost/);
   const board = await adapter.rpc(api.uiSnapshot, {});
   assert.ok(!("unchanged" in board) && !board.projects.some((project) => project.key === key));
-  assert.deepEqual(fake.reads.filter((read) => read.endsWith("/removal")),
-    ["GET /settings/projects/Orbit_Main/removal", "POST /settings/projects/Orbit_Main/removal"]);
+  const removed = await adapter.rpc(api.projectManage, confirmation);
+  assert.deepEqual(removed, {
+    key, reason: "Retired", removedAt: new Date(1_790_000_000_000).toISOString(),
+    repositories: [
+      { origin: "example/orbit", path: "/work/orbit" },
+      { origin: "example/orbit-docs", path: "/work/orbit-docs" },
+    ],
+  });
+  assert.deepEqual(fake.reads.filter((read) => read.endsWith("/removal")), [
+    "GET /settings/projects/Orbit_Main/removal",
+    "POST /settings/projects/Orbit_Main/removal",
+    "POST /settings/projects/Orbit_Main/removal",
+  ]);
 });
 
 test("moving a repository in the shared Projects editor reassigns it in the engine", async () => {

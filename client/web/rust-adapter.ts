@@ -161,6 +161,7 @@ function capacityValues(
 export function createRustAdapter(rust: RustApi = createRustApi()) {
   let revision = 0;
   let keys = projectKeys([]);
+  const removalPreviews = new Map<string, { id: string; digest: string }>();
   let currentSession: RustBrowserSession | undefined;
   let sessionRead: Promise<RustBrowserSession> | undefined;
   const planning = createRustPlanning(rust, settings, () => keys, session);
@@ -462,9 +463,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "project.management-preview": async (input: { key: string; target?: string }) => {
       if (input.target) throw new RustUnsupported("Project reassignment preview");
-      const { project, digest, tasks } = await rust.previewProjectRemoval(keys.id(input.key));
+      const id = keys.id(input.key);
+      const { project, digest, tasks } = await rust.previewProjectRemoval(id);
       const current = boardProject(input.key, project);
       if (!current) throw new Error("The project has no repository for this board.");
+      removalPreviews.set(input.key, { id, digest });
       return {
         project: current, target: null, digest, cancellation: null,
         tasks: tasks.map(({ taskId, version }) => ({ taskId, version })),
@@ -473,7 +476,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "project.manage-remove": async (input: api.ProjectManageInput) => {
       if (input.target || input.cancellationOperationId) throw new RustUnsupported("Project cancellation or reassignment");
-      const result = await rust.removeProject(keys.id(input.key), { digest: input.digest, reason: input.reason });
+      // A settings refresh can drop the alias after an accepted deletion with a lost reply.
+      const preview = removalPreviews.get(input.key);
+      const id = preview?.digest === input.digest ? preview.id : keys.id(input.key);
+      const result = await rust.removeProject(id, { digest: input.digest, reason: input.reason });
       return {
         key: input.key, reason: input.reason, removedAt: new Date(result.removedAtMs).toISOString(),
         repositories: result.repositories,
