@@ -35,7 +35,7 @@ class LocalServiceTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
-    def launch_fixture(self, status):
+    def launch_fixture(self, status, ready_after=0.6):
         worker = self.root / "worker.py"
         worker.write_text(f"""
 import os
@@ -50,8 +50,9 @@ class Handler(BaseHTTPRequestHandler):
 
 with open({str(self.marker)!r}, "a") as marker:
     marker.write(str(os.getpid()) + "\\n")
-time.sleep(0.6)
-HTTPServer(("127.0.0.1", {self.port}), Handler).serve_forever()
+server = HTTPServer(("127.0.0.1", {self.port}), Handler)
+time.sleep({ready_after})
+server.serve_forever()
 """)
         launcher = self.root / "serve"
         launcher.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(worker))}\n")
@@ -62,7 +63,7 @@ HTTPServer(("127.0.0.1", {self.port}), Handler).serve_forever()
         return [sys.executable, HELPER, str(self.port), self.key, self.root / "serve.lock", launcher]
 
     def test_concurrent_sessions_start_one_service_and_restart_after_exit(self):
-        command = self.command(self.launch_fixture(200))
+        command = self.command(self.launch_fixture(200, ready_after=1.6))
         with subprocess.Popen(command, stdout=subprocess.PIPE) as first:
             second = subprocess.run(command, capture_output=True, timeout=10, check=True)
             self.assertEqual(first.communicate(timeout=10), (b"", None))
