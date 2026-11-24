@@ -3,6 +3,7 @@
 mod acp;
 mod inbox;
 mod pass;
+mod planning;
 mod presentation;
 mod profiles;
 mod project;
@@ -56,6 +57,8 @@ pub enum ServiceError {
     Missing,
     #[error("task input is invalid")]
     Input,
+    #[error("answering an operator decision requires the operator binding")]
+    DecisionOperator,
     #[error("the question is assigned to a different planner")]
     QuestionPlanner,
     #[error("planner authority is not yet known. Retry shortly.")]
@@ -252,6 +255,24 @@ impl Service {
         brief: String,
         caller: &Authority,
     ) -> Result<Task, ServiceError> {
+        let task = self.brief_task(id, reference, brief, caller)?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        if state.settings.fixture_slots(&self.project).is_none() {
+            return Err(ServiceError::Project);
+        }
+        state.store.create(&task, &event("admitted"))?;
+        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
+        Ok(task)
+    }
+
+    fn brief_task(
+        &self,
+        id: String,
+        reference: String,
+        brief: String,
+        caller: &Authority,
+    ) -> Result<Task, ServiceError> {
         let identity = Identity {
             id,
             reference,
@@ -267,15 +288,7 @@ impl Service {
         if identity.reference.trim().is_empty() || brief.trim().is_empty() {
             return Err(ServiceError::Input);
         }
-        self.storage.database().verify()?;
-        let task = Task::new(identity, brief, None);
-        let mut state = self.state.lock().await;
-        if state.settings.fixture_slots(&self.project).is_none() {
-            return Err(ServiceError::Project);
-        }
-        state.store.create(&task, &event("admitted"))?;
-        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok(task)
+        Ok(Task::new(identity, brief, None))
     }
 
     /// Wait for a due task and process one bounded batch.

@@ -69,6 +69,18 @@ impl RuntimeSettings {
         self.projects.is_some()
     }
 
+    pub(crate) fn planning_project_id<'a>(&'a self, binding: &'a Project) -> &'a str {
+        self.fixture_project(binding)
+            .map_or(binding.host_project.as_str(), |(id, _, _)| id)
+    }
+
+    pub(crate) fn knows_planning_project(&self, binding: &Project, project: &str) -> bool {
+        match &self.projects {
+            Some(registry) => registry.projects.contains_key(project),
+            None => binding.host_project == project,
+        }
+    }
+
     pub(crate) fn fixture_checks(&self, fixture: &Project) -> Vec<String> {
         self.fixture_project(fixture)
             .map_or_else(Vec::new, |(_, _, repo)| repo.required_checks.clone())

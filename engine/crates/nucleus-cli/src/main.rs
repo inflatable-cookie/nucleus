@@ -1,3 +1,5 @@
+mod planning;
+
 use std::{
     env,
     error::Error,
@@ -74,6 +76,20 @@ enum Action {
         /// Give the fixture origin thread its own planner credential.
         #[arg(long)]
         fixture_origin_thread: Option<String>,
+    },
+    #[command(flatten)]
+    Planning(planning::Action),
+    /// Rehearse a TypeScript `SQLite` copy import into Rust scratch.
+    #[command(name = "item.import")]
+    ImportItems {
+        /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
+        source: PathBuf,
+        /// Map a legacy owner/repo to a Rust project ID.
+        #[arg(long = "repository", required = true, value_parser = planning::repository_mapping)]
+        repositories: Vec<(String, String)>,
+        /// Keep the resulting scratch database. The default rolls back after rehearsal.
+        #[arg(long)]
+        keep: bool,
     },
     /// Admit a fixture task. Read the brief from stdin.
     Admit { id: String, reference: String },
@@ -180,6 +196,11 @@ async fn main() -> Result<()> {
             .await
         }
         Action::Report { ticket } => report(&ticket).await,
+        Action::ImportItems {
+            source,
+            repositories,
+            keep,
+        } => planning::import_items(&source, repositories, keep),
         other => control(endpoint, other).await,
     }
 }
@@ -347,6 +368,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     loopback(endpoint)?;
     let key = control_key(CONTROL_KEY)?;
     let (method, path, body) = match action {
+        A::Planning(action) => action.request()?,
         A::Admit { id, reference } => (
             Method::POST,
             "/v1/tasks".into(),
@@ -470,9 +492,13 @@ fn from_reader<T: DeserializeOwned>(source: impl Read) -> Result<T> {
 }
 
 fn read(source: impl Read) -> Result<Vec<u8>> {
+    read_with_limit(source, MAX_INPUT)
+}
+
+fn read_with_limit(source: impl Read, limit: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    source.take(MAX_INPUT + 1).read_to_end(&mut bytes)?;
-    if u64::try_from(bytes.len())? > MAX_INPUT {
+    source.take(limit + 1).read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len())? > limit {
         return Err("input exceeds the size limit".into());
     }
     Ok(bytes)

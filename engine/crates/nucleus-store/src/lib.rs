@@ -1,13 +1,14 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod inbox;
+pub mod planning;
 mod settings;
 mod settings_domains;
 mod titles;
 mod usage;
 mod volume;
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use nucleus_core::{Phase, Role, Task, profiles::RotationCounts};
 use rusqlite::{
@@ -29,7 +30,7 @@ pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
@@ -58,6 +59,12 @@ pub enum StoreError {
     IdentityChanged,
     #[error("task changed since it was read")]
     StaleTask,
+    #[error("planning record was not found")]
+    PlanningMissing,
+    #[error("planning input is invalid")]
+    PlanningInput,
+    #[error("planning record conflicts with the current state")]
+    PlanningConflict,
     #[error("profile assignment requires a new frozen launch")]
     NoProfileLaunch,
     #[error("could not encode task state")]
@@ -111,8 +118,12 @@ impl Store {
     pub fn open(storage: &EngineStorage) -> Result<Self, StoreError> {
         let directory = storage.database();
         directory.ensure()?;
+        Self::open_database(&directory.path().join(DATABASE_FILE))
+    }
+
+    fn open_database(path: &Path) -> Result<Self, StoreError> {
         let mut connection = Connection::open_with_flags(
-            directory.path().join(DATABASE_FILE),
+            path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -133,11 +144,12 @@ impl Store {
                 tx.execute_batch(usage::SCHEMA)?;
                 tx.execute(inbox::SCHEMA, [])?;
                 tx.execute(titles::SCHEMA, [])?;
+                tx.execute_batch(planning::SCHEMA)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1..=6) => {
+            (APPLICATION_ID, 1..SCHEMA_VERSION) => {
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -154,7 +166,10 @@ impl Store {
                 if version < 6 {
                     tx.execute(inbox::SCHEMA, [])?;
                 }
-                tx.execute(titles::SCHEMA, [])?;
+                if version < 7 {
+                    tx.execute(titles::SCHEMA, [])?;
+                }
+                tx.execute_batch(planning::SCHEMA)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {

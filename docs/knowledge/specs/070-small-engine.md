@@ -329,7 +329,25 @@ Planning is plain record-keeping in the Rust service. It never calls a host (rul
 - **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
 - **Triage and milestone QA records are not ported** (ruling 12).
 
-The import maps leads and papercuts to items by kind, carries open, parked and dropped states with their history, and links promoted ones to their tasks.
+The Rust engine keeps these records by project in schema 8. The loopback
+API is under `/v1/planning/{project}`. `plan.get` returns the order and lane
+documents. Use version zero for a new plan or lane and the returned version
+for the next edit. `lane.status` updates the disposition independently.
+`item.list` and `decision.list` read the current records. An operator binding
+answers decisions. A decision that belongs to a task question accepts one
+answer for the bound task version, then wakes the ordinary answer path.
+
+`task.add` reads a brief from stdin. `item.promote` admits the current item
+body and commits the task, source link and item history together. If promotion
+is retried, it returns the task already admitted from that item.
+
+The offline `item.import <copy> --repository owner/repo=project` command maps
+legacy leads and papercuts to items. Repeat `--repository` for each origin in
+the copy. Set `NUCLEUS_SCRATCH_ROOT` to the configured scratch volume and put
+a standalone SQLite backup there. The importer opens it read-only, verifies
+the rebuilt lead history, and retains dispositions and task links. By default
+it rehearses and rolls back. `--keep` saves a new Rust database in scratch
+and prints its path. The importer only reads planning item tables.
 
 ## Out of scope until milestone 3
 

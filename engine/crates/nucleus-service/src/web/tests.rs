@@ -19,6 +19,9 @@ use crate::{
     tests::{REPOSITORY, fixture, forge_pull, reservation, serve_forge},
 };
 
+#[path = "tests/planning.rs"]
+mod planning;
+
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 const BOARD_KEY: [u8; 32] = [2; 32];
 const PLANNER_KEY: [u8; 32] = [5; 32];
