@@ -210,6 +210,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         wait: row.wait,
         question: row.question,
         nextCheckAt: row.nextCheckAt,
+        allowance: { usedMs: 180_000, limitMs: 3_600_000, exhausted: false },
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
@@ -362,6 +363,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   // The card shows the task number alone; the project shows beside it.
   await click("#81");
   await eventually(() => text().includes(activity), "initial activity");
+  await eventually(() => text().includes("3m / 1h"), "task allowance");
   const beforeList = reads("/v1/tasks");
   const beforeDetail = reads("/v1/tasks/running");
   const beforeNext = reads("/v1/tasks/running/next");
@@ -580,8 +582,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let taskPhase: RustTask["phase"] = "queued";
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
-    projectSlotOverrides: {}, hostConcurrency: 1,
-    allowanceMinutes: null, providerLimitCooldownSeconds: 300, mode: "running",
+    projectSlotOverrides: {},
+    providerLimitCooldownSeconds: 300, mode: "running",
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
@@ -678,6 +680,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
   await eventually(() => text().includes("Usage level"), "the shared Limits section renders");
+  assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

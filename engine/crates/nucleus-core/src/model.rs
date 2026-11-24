@@ -256,6 +256,10 @@ pub enum Question {
     Accept {
         head: Head,
     },
+    Allowance {
+        used_ms: u64,
+        limit_ms: u64,
+    },
     Repair(Repair),
 }
 
@@ -795,6 +799,42 @@ impl Task {
     #[must_use]
     pub fn question(&self) -> Option<&Question> {
         self.question.as_ref().map(|open| &open.question)
+    }
+
+    /// Open the planner's question before another run can start.
+    pub fn ask_allowance(&mut self, used_ms: u64, limit_ms: u64) -> bool {
+        if self.phase.is_terminal()
+            || self.hold.is_some()
+            || self.question.is_some()
+            || self
+                .run
+                .as_ref()
+                .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_some())
+        {
+            return false;
+        }
+        self.question = Some(OpenQuestion {
+            head: self.pr.as_ref().map(|pr| pr.head.clone()),
+            question: Question::Allowance { used_ms, limit_ms },
+            delivery: None,
+            operator_decline: None,
+        });
+        true
+    }
+
+    /// Clear the allowance question after its measured stop no longer applies.
+    pub fn clear_allowance_question(&mut self) -> bool {
+        if !matches!(self.question(), Some(Question::Allowance { .. })) {
+            return false;
+        }
+        self.question = None;
+        true
+    }
+
+    /// Whether the task has ever reserved a run.
+    #[must_use]
+    pub const fn has_reserved_run(&self) -> bool {
+        self.threads.launch_sequence > 0
     }
 
     #[must_use]

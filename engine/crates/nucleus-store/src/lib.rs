@@ -1,5 +1,6 @@
 //! The Rust engine's independent `SQLite` database.
 
+mod allowance;
 mod barge;
 mod dependencies;
 mod inbox;
@@ -21,6 +22,7 @@ use rusqlite::{
 };
 use serde_json::{Value, json};
 
+pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, AllowanceView};
 pub use dependencies::{Dependencies, DependencyEdit, PrerequisiteRelease, PrerequisiteWait};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
@@ -92,6 +94,8 @@ pub enum StoreError {
     NumberOverlap,
     #[error("the repository task number counter is exhausted")]
     NumberExhausted,
+    #[error("the task allowance is no longer exhausted")]
+    AllowanceNotExhausted,
     #[error("profile assignment requires a new frozen launch")]
     NoProfileLaunch,
     #[error("could not encode task state")]
@@ -159,6 +163,7 @@ pub enum ThreadProvenance {
 pub struct TaskAdmissionFacts<'a> {
     pub prerequisites: &'a [String],
     pub usage_permission: Option<planning::UsagePermission<'a>>,
+    pub affected_tests: bool,
 }
 
 pub struct Store {
@@ -263,6 +268,7 @@ impl Store {
         tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
+        tx.execute_batch(allowance::SCHEMA)?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
@@ -520,7 +526,7 @@ impl Store {
         task: &Task,
         event: &EventDraft,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None, None)
+        self.save(expected, task, event, None, None, None)
     }
 
     /// Amend a queued brief and replace its resolved dependency list together.
@@ -534,7 +540,7 @@ impl Store {
         event: &EventDraft,
         prerequisites: &[String],
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None, Some(prerequisites))
+        self.save(expected, task, event, None, Some(prerequisites), None)
     }
 
     /// Commit a newly frozen profiled launch and charge its subscription group.
@@ -550,7 +556,22 @@ impl Store {
         event: &EventDraft,
         group: &str,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, Some(group), None)
+        self.save(expected, task, event, Some(group), None, None)
+    }
+
+    /// Save the task and account for the lifecycle transition atomically.
+    ///
+    /// # Errors
+    /// Returns an error on a stale task row, invalid allowance extension or database failure.
+    pub fn save_accounted(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        group: Option<&str>,
+        observation: AllowanceObservation,
+    ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, group, None, Some(observation))
     }
 
     /// Read Spec 053 counts for one candidate from the local engine database.
@@ -607,6 +628,7 @@ impl Store {
         event: &EventDraft,
         group: Option<&str>,
         prerequisites: Option<&[String]>,
+        allowance_observation: Option<AllowanceObservation>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
@@ -621,6 +643,9 @@ impl Store {
         persist(&tx, task, true)?;
         if let Some(prerequisites) = prerequisites {
             dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
+        }
+        if let Some(observation) = allowance_observation {
+            allowance::observe(&tx, task, observation)?;
         }
         if task.phase() == Phase::Done {
             tx.execute(
@@ -819,6 +844,7 @@ fn admit(
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
+    allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {
         dependencies::initial_edges(tx, &identity.id, facts.prerequisites)?;
     }

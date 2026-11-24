@@ -91,6 +91,7 @@ impl State {
 #[derive(PartialEq, Eq)]
 pub(crate) struct PlanningRepository {
     pub(crate) project_id: String,
+    pub(crate) checkout: std::path::PathBuf,
     pub(crate) repository: String,
     pub(crate) base: String,
 }
@@ -147,6 +148,7 @@ impl Service {
             }
             return Ok(PlanningRepository {
                 project_id: id.into(),
+                checkout: project.checkout.clone(),
                 repository: project.repository.clone(),
                 base: project.base.clone(),
             });
@@ -166,6 +168,7 @@ impl Service {
             }
             return Ok(PlanningRepository {
                 project_id,
+                checkout: target.path.clone(),
                 repository: target.origin.clone(),
                 base: target.base.clone(),
             });
@@ -192,6 +195,7 @@ impl Service {
         let repo = state.settings.repository(id, origin)?;
         Ok(PlanningRepository {
             project_id: id.into(),
+            checkout: repo.path.clone(),
             repository: repo.origin.clone(),
             base: repo.base.clone(),
         })

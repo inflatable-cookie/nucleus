@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod acp;
+mod allowance;
 mod dependencies;
 mod enrollment;
 mod inbox;
@@ -190,6 +191,7 @@ pub struct Service {
 
 struct State {
     store: Store,
+    allowance_clock: allowance::Clock,
     settings: web::RuntimeSettings,
     registry_mode: bool,
     schedule: Schedule,
@@ -313,6 +315,7 @@ impl Service {
         let profile = storage.lock_profile()?;
         let runtime_settings = web::RuntimeSettings::open(settings)?;
         let store = Store::open(&storage)?;
+        let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         let registry_mode = project.is_none();
         let (changes, _) = broadcast::channel(64);
         Ok(Self {
@@ -329,6 +332,7 @@ impl Service {
             report_command,
             state: Mutex::new(State {
                 store,
+                allowance_clock,
                 settings: runtime_settings,
                 registry_mode,
                 schedule: Schedule::new(),
@@ -516,6 +520,9 @@ impl Service {
                 return Ok(Action::Wait(wait));
             }
         }
+        if self.clear_surpassed_allowance_question(row).await? {
+            return Ok(Action::Advance(row.task.phase()));
+        }
         if let Err(error) = self.clear_stale_inbox(row).await
             && row.task.operator_question().is_some()
             && row.task.operator_decline().is_none()
@@ -676,6 +683,7 @@ impl Service {
     fn set_cached_host(&self, state: &mut State, status: web::CachedHost) {
         if state.settings.host != status {
             state.settings.host = status;
+            state.refresh_allowance_clock();
             self.settings_changes.send_replace(());
         }
     }
@@ -728,8 +736,15 @@ impl Service {
                 let mut state = self.state.lock().await;
                 let now = Instant::now();
                 let State {
-                    store, schedule, ..
+                    store,
+                    schedule,
+                    allowance_clock,
+                    thread_tasks,
+                    ..
                 } = &mut *state;
+                if !thread_tasks.is_empty() {
+                    allowance_clock.checkpoint(store, now)?;
+                }
                 schedule.seed(store, now, self.acp_provider().is_some())?;
                 if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
@@ -777,6 +792,9 @@ impl Service {
                 state.schedule.wake(id, Instant::now(), Priority::Decision);
             }
             return Ok(());
+        }
+        if state.observe_task_allowance(&current.task, wait)? {
+            self.publish(id, current.version);
         }
         let now = Instant::now();
         let (delay, priority) = state.schedule.retry_task(id, wait);
@@ -1130,12 +1148,11 @@ impl Service {
         subscription_group: Option<&str>,
     ) -> Result<i64, ServiceError> {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
-        let version = match subscription_group {
-            Some(group) => state
+        let allowance = state.allowance_transition(&prior.task, task, &audit.kind);
+        let version =
+            state
                 .store
-                .save_profile_launch(prior, task, &audit, group)?,
-            None => state.store.save_row(prior, task, &audit)?,
-        };
+                .save_accounted(prior, task, &audit, subscription_group, allowance)?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1417,6 +1434,11 @@ impl State {
         observation: &Observation,
         command: Command,
     ) -> Result<Preflight, ServiceError> {
+        if matches!(command, Command::Answer(nucleus_core::Answer::Extend))
+            && !self.allowance_view(task)?.exhausted
+        {
+            return Err(StoreError::AllowanceNotExhausted.into());
+        }
         let planner_answer = match (&command, actor) {
             (Command::Answer(_), Authority::Planner { actor }) => Some(actor.as_str()),
             _ => None,

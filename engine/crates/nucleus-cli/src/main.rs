@@ -251,6 +251,7 @@ impl PrerequisiteWaitArgs {
 enum AnswerArgs {
     Work { text: String },
     Retry,
+    Extend,
     Accept { head: Head, reason: String },
 }
 
@@ -259,6 +260,7 @@ impl From<AnswerArgs> for Answer {
         match args {
             AnswerArgs::Work { text } => Self::Work(text),
             AnswerArgs::Retry => Self::Retry,
+            AnswerArgs::Extend => Self::Extend,
             AnswerArgs::Accept { head, reason } => Self::Accept { head, reason },
         }
     }

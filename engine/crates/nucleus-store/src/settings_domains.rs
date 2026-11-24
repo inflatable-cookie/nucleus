@@ -130,14 +130,12 @@ pub struct DispatchSettings {
     pub project_default_slots: u32,
     #[serde(default)]
     pub project_slot_overrides: BTreeMap<String, u32>,
-    pub host_concurrency: u32,
     #[serde(default = "default_thread_retention_days")]
     pub thread_retention_days: u32,
     #[serde(default = "default_thread_retention_interval_hours")]
     pub thread_retention_interval_hours: u32,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) legacy_limits_imported: bool,
-    pub allowance_minutes: Option<u32>,
     #[serde(default = "default_provider_limit_cooldown_seconds")]
     pub provider_limit_cooldown_seconds: u32,
     #[serde(default)]
@@ -196,11 +194,9 @@ impl Default for DispatchSettings {
             global_slots: 32,
             project_default_slots: default_project_slots(),
             project_slot_overrides: BTreeMap::new(),
-            host_concurrency: 1,
             thread_retention_days: default_thread_retention_days(),
             thread_retention_interval_hours: default_thread_retention_interval_hours(),
             legacy_limits_imported: false,
-            allowance_minutes: None,
             provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
             mode: DispatchMode::Running,
         }
@@ -230,16 +226,17 @@ impl SettingsValue for DispatchSettings {
     const ID: &'static str = "nucleus.engine.dispatch";
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
-    const RETIRED_KEYS: &'static [&'static str] = &["maxLoad", "max_load"];
+    const RETIRED_KEYS: &'static [&'static str] = &[
+        "maxLoad",
+        "max_load",
+        "allowanceMinutes",
+        "allowance_minutes",
+        "hostConcurrency",
+        "host_concurrency",
+    ];
 
     fn validate(&self) -> Result<(), DomainIssue> {
-        check(
-            self.global_slots > 0
-                && self.host_concurrency == 1
-                && self.allowance_minutes != Some(0),
-            "dispatch",
-            "use positive slots and allowance. The host lane has one call slot",
-        )?;
+        check(self.global_slots > 0, "dispatch", "use positive slots")?;
         check(
             (1..=32).contains(&self.project_default_slots)
                 && self
@@ -512,14 +509,12 @@ mod dispatch_mode_tests {
     #[test]
     fn a_saved_domain_without_a_mode_reads_as_running() {
         let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "slots": 2,
-            "hostConcurrency": 1, "allowanceMinutes": null
+            "usage": "normal", "usageUntilMs": null, "slots": 2
         }))
         .expect("dispatch settings");
         assert_eq!(saved.mode, DispatchMode::Running);
         let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "slots": 2,
-            "hostConcurrency": 1, "allowanceMinutes": null, "mode": "stopped"
+            "usage": "normal", "usageUntilMs": null, "slots": 2, "mode": "stopped"
         }))
         .expect("dispatch settings");
         assert_eq!(stopped.mode, DispatchMode::Stopped);

@@ -213,7 +213,7 @@ function capacityValues(
     ...fallback,
     globalLimit: Math.max(1, Math.min(64, dispatch.globalSlots)),
     projectLimit: dispatch.projectDefaultSlots,
-    hostCallLimit: Math.max(1, dispatch.hostConcurrency),
+    hostCallLimit: 1,
     operatorDefaultHostKind: DEFAULT_HOST_KIND,
   };
 }
@@ -596,17 +596,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       const board = project && boardProject(keys.key(id), project);
       if (!board) throw new Error("The engine did not keep that project.");
       return board;
-    },
-    "rust.dispatch.allowance": async () => {
-      const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      return { minutes: dispatch.value.allowanceMinutes };
-    },
-    "rust.dispatch.allowance.set": async (input: { minutes: number | null }) => {
-      const saved = await editDispatch((value) => ({
-        ...value,
-        allowanceMinutes: input.minutes,
-      }));
-      return { minutes: saved.value.allowanceMinutes };
     },
     "rust.project.archive": async (input: { project: string; archived: boolean }) => {
       const id = keys.id(input.project);

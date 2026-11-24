@@ -81,8 +81,6 @@ const dispatch = z.object({
   globalSlots: integer,
   projectDefaultSlots: integer,
   projectSlotOverrides: z.record(z.string(), integer),
-  hostConcurrency: integer,
-  allowanceMinutes: integer.nullable(),
   providerLimitCooldownSeconds: integer.optional(),
   mode: dispatchMode.default("running"),
 }).loose();

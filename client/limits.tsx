@@ -2,9 +2,6 @@ import { useEngineFeatures } from "./engine-features";
 import { errorText as failureText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { useRpc } from "./shell";
-import { useQuery } from "@tanstack/react-query";
-import { rustAllowance, rustSetAllowance } from "./rust-contracts";
 import {
   ActionButton,
   Button,
@@ -372,8 +369,9 @@ function TaskSlots({
 }) {
   const features = useEngineFeatures();
   const shown = CAPACITY_FIELDS.filter(({ key }) =>
-    features.advancedLimits || key === "globalLimit" || key === "projectLimit" || key === "hostCallLimit"
+    features.advancedLimits || key === "globalLimit" || key === "projectLimit"
   );
+  const advanced = shown.filter((spec) => spec.advanced);
   const [drafts, setDrafts] = useState<Partial<Record<CapacityKey, number>>>(
     {},
   );
@@ -415,7 +413,6 @@ function TaskSlots({
     const name = CAPACITY_FIELD_LABELS[spec.key],
       unit = UNIT_SHORT[spec.unit];
     const draft = drafts[spec.key] ?? current[spec.key];
-    const fixed = features.engine === "rust" && spec.key === "hostCallLimit";
     return (
       <NumberStepper
         key={spec.key}
@@ -423,12 +420,11 @@ function TaskSlots({
         stacked={spec.advanced}
         c={c}
         label={name}
-        help={fixed ? "T3 runs one host call at a time." : spec.help}
+        help={spec.help}
         a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${spec.max})`}
         value={draft}
         min={spec.min}
-        max={fixed ? spec.min : spec.max}
-        disabled={fixed}
+        max={spec.max}
         unit={spec.unit === "slots" ? undefined : unit}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
@@ -465,20 +461,20 @@ function TaskSlots({
               (spec) => field(spec, values),
             )}
           </View>
-          <Disclosure
-            c={c}
-            gapAbove
-            label="Advanced limits"
-            expanded={advancedOpen}
-            onToggle={() => setAdvancedOpen((open) => !open)}
-          />
-          {advancedOpen && (
+          {advanced.length > 0 && (
+            <Disclosure
+              c={c}
+              gapAbove
+              label="Advanced limits"
+              expanded={advancedOpen}
+              onToggle={() => setAdvancedOpen((open) => !open)}
+            />
+          )}
+          {advancedOpen && advanced.length > 0 && (
             <View
               style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
             >
-              {shown.filter((spec) => spec.advanced).map((spec) =>
-                field(spec, values),
-              )}
+              {advanced.map((spec) => field(spec, values))}
             </View>
           )}
         </>
@@ -759,7 +755,6 @@ function ProjectLimitRow({
  * slots, project overrides.
  */
 export function DispatchLimits(props: DispatchLimitsProps) {
-  const features = useEngineFeatures();
   const { c, state, authority } = props;
   const values = authority?.effective ?? null;
   return (
@@ -772,7 +767,6 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         retry={props.retryAuthority}
         save={props.saveCapacity}
       />
-      {features.engine === "rust" && <Allowance c={c} />}
       <ProjectOverrides
         c={c}
         state={state}
@@ -781,44 +775,5 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         pendingOverrideRemovals={props.pendingOverrideRemovals}
       />
     </View>
-  );
-}
-
-/**
- * Rust engine (Spec 070 ruling 17): the one allowance that replaces budgets,
- * in minutes of run time. 0 means no limit.
- */
-function Allowance({ c }: { c: Colors }) {
-  const read = useRpc(rustAllowance);
-  const write = useRpc(rustSetAllowance);
-  const query = useQuery({ queryKey: ["nucleus", "rust-allowance"], queryFn: () => read({}) });
-  const [draft, setDraft] = useState<number | null>(null);
-  const auto = useSectionAutoSave(async (minutes: number) => {
-    await write({ minutes: minutes > 0 ? minutes : null });
-    await query.refetch();
-  });
-  const value = draft ?? query.data?.minutes ?? 0;
-  return (
-    <Section c={c} title="Allowance" status={auto.status} description="Run time the engine may spend, in minutes. 0 means no limit.">
-      {query.data && (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
-        <NumberStepper
-          card
-          c={c}
-          label="Allowance"
-          a11yLabel="Allowance in minutes (0 for no limit)"
-          value={value}
-          min={0}
-          max={100000}
-          unit="min"
-          onChange={(next) => {
-            setDraft(next);
-            auto.enqueue(next, 600);
-          }}
-          onCommit={() => void auto.saver.flush()}
-        />
-        </View>
-      )}
-    </Section>
   );
 }

@@ -71,33 +71,44 @@ impl Service {
         };
         let reference = input.reference.unwrap_or_else(|| id.clone());
         let identity = admission_identity(id, reference, input.review.as_ref(), caller, &route)?;
-        let task = if let Some(lane) = delivery_lane(&policy, &[])? {
+        let lane = delivery_lane(&policy, &[])?;
+        if let Some(lane) = &lane {
             if input.review.is_some() {
                 return Err(ServiceError::ReportInput(
                     "a report-only task cannot enter through a pull request".into(),
                 ));
             }
-            require_report_lanes(&state, &route, &policy, &[], &lane)?;
-            drop(state);
+            require_report_lanes(&state, &route, &policy, &[], lane)?;
+        } else if input.planning_commit.is_some() {
+            return Err(ServiceError::ReportInput(
+                "planningCommit is supported for report-only tasks".into(),
+            ));
+        }
+        drop(state);
+        let task = if let Some(lane) = &lane {
             let head = self
                 .capture_report_base(&identity, input.planning_commit.as_ref())
                 .await?;
-            state = self.state.lock().await;
-            if self.planning_repository(&mut state, scope, project, input.repository.as_deref())?
-                != route
-            {
-                return Err(ServiceError::Project);
-            }
-            require_report_lanes(&state, &route, &policy, &[], &lane)?;
-            Task::new_report_only(identity, input.brief, route.project_id.clone(), lane, head)
+            Task::new_report_only(
+                identity,
+                input.brief,
+                route.project_id.clone(),
+                lane.clone(),
+                head,
+            )
         } else {
-            if input.planning_commit.is_some() {
-                return Err(ServiceError::ReportInput(
-                    "planningCommit is supported for report-only tasks".into(),
-                ));
-            }
             Task::new(identity, input.brief, input.review)
         };
+        let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
+        let mut state = self.state.lock().await;
+        if self.planning_repository(&mut state, scope, project, input.repository.as_deref())?
+            != route
+        {
+            return Err(ServiceError::Project);
+        }
+        if let Some(lane) = &lane {
+            require_report_lanes(&state, &route, &policy, &[], lane)?;
+        }
         let permission = usage_permission(&state, &route.project_id, &policy);
         let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
@@ -107,6 +118,7 @@ impl Service {
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
+            affected_tests,
         };
         let number = state.store.create_with_facts(&task, &admitted, facts)?;
         if requested_permission {
@@ -157,22 +169,34 @@ impl Service {
         let task_id = new_id("t")?;
         let identity = admission_identity(task_id.clone(), task_id, None, caller, &route)?;
         let attached = &item.content.lanes;
-        let task = if let Some(lane) = delivery_lane(&policy, attached)? {
-            require_report_lanes(&state, &route, &policy, attached, &lane)?;
-            drop(state);
+        let lane = delivery_lane(&policy, attached)?;
+        if let Some(lane) = &lane {
+            require_report_lanes(&state, &route, &policy, attached, lane)?;
+        }
+        drop(state);
+        let task = if let Some(lane) = &lane {
             let head = self.capture_report_base(&identity, None).await?;
-            state = self.state.lock().await;
-            if self.planning_repository(&mut state, scope, project, None)? != route {
-                return Err(ServiceError::Project);
-            }
-            if state.store.item(&route.project_id, id)?.as_ref() != Some(&item) {
-                return Err(StoreError::PlanningConflict.into());
-            }
-            require_report_lanes(&state, &route, &policy, attached, &lane)?;
-            Task::new_report_only(identity, brief, route.project_id.clone(), lane, head)
+            Task::new_report_only(
+                identity,
+                brief,
+                route.project_id.clone(),
+                lane.clone(),
+                head,
+            )
         } else {
             Task::new(identity, brief, None)
         };
+        let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
+        let mut state = self.state.lock().await;
+        if self.planning_repository(&mut state, scope, project, None)? != route {
+            return Err(ServiceError::Project);
+        }
+        if state.store.item(&route.project_id, id)?.as_ref() != Some(&item) {
+            return Err(StoreError::PlanningConflict.into());
+        }
+        if let Some(lane) = &lane {
+            require_report_lanes(&state, &route, &policy, attached, lane)?;
+        }
         let permission = usage_permission(&state, &route.project_id, &policy);
         let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
@@ -182,6 +206,7 @@ impl Service {
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
+            affected_tests,
         };
         let (_, number) = state.store.promote_item_with_facts(
             &source,

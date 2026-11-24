@@ -499,6 +499,11 @@ impl Observation {
         let (Some(question), Observed::Known(forge)) = (&task.question, &self.forge) else {
             return false;
         };
+        if matches!(question.question, Question::Allowance { .. })
+            && matches!(forge, Forge::Merged { .. })
+        {
+            return true;
+        }
         let Question::Repair(repair) = question.question else {
             return false;
         };

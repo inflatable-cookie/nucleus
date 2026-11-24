@@ -61,7 +61,7 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
 
     let host = service.host.pass(service.storage.scratch().path());
     assert_eq!(
-        Box::pin(service.advance_due_task(&dependent, &host.for_task(&dependent.task)))
+        Box::pin(service.advance_due_task(&dependent, &host.for_task(&dependent.task, None)))
             .await
             .unwrap(),
         Action::Wait(WaitReason::Prerequisite),

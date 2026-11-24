@@ -220,20 +220,34 @@ export function formatSpan(ms: number): string {
   return hours % 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${Math.floor(hours / 24)}d`;
 }
 
+const budgetRatio = (used: number, limit: number) =>
+  limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
+
+export function wallTimeBudgetBar({
+  used,
+  limit,
+  pausedMs = 0,
+}: { used: number; limit: number; pausedMs?: number }): BudgetBar {
+  return {
+    key: "time",
+    label: "Time",
+    used,
+    limit,
+    ratio: budgetRatio(used, limit),
+    text: `${formatSpan(used)} / ${formatSpan(limit)}${pausedMs >= 60_000 ? ` · ${formatSpan(pausedMs)} held on Nucleus faults` : ""}`,
+  };
+}
+
 /** Spec 058's budget as two bars; the figures are the ones the card already shows. */
 export function budgetBars(budget: TaskBudgetView | null | undefined): BudgetBar[] {
   if (!budget) return [];
-  const ratio = (used: number, limit: number) => limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
-  const tokens = budget.effectiveTokens, wall = budget.wallMs;
+  const tokens = budget.effectiveTokens;
   return [
     {
-      key: "tokens", label: "Tokens", used: tokens.used, limit: tokens.limit, ratio: ratio(tokens.used, tokens.limit),
+      key: "tokens", label: "Tokens", used: tokens.used, limit: tokens.limit, ratio: budgetRatio(tokens.used, tokens.limit),
       text: `${formatTokenCount(tokens.used)} / ${formatTokenCount(tokens.limit)}${tokens.evidence === "none" ? " · usage not reported" : tokens.evidence === "partial" ? " · at least" : ""}`,
     },
-    { key: "time", label: "Time", used: wall.used, limit: wall.limit, ratio: ratio(wall.used, wall.limit),
-      // nucleus#1153: time held on a Nucleus-side cause stays off both the budget and
-      // this bar, and the paused figure says why the elapsed clock and the budget differ.
-      text: `${formatSpan(wall.used)} / ${formatSpan(wall.limit)}${wall.pausedMs >= 60_000 ? ` · ${formatSpan(wall.pausedMs)} held on Nucleus faults` : ""}` },
+    wallTimeBudgetBar(budget.wallMs),
   ];
 }
 

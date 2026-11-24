@@ -135,7 +135,6 @@ fn limits_import_replaces_pilot_slots_once_under_the_profile_lock() {
     settings
         .edit(&current.revision, |value: &mut crate::DispatchSettings| {
             value.mode = crate::DispatchMode::Paused;
-            value.allowance_minutes = Some(24);
             Ok(())
         })
         .expect("set pilot state");
@@ -156,7 +155,6 @@ fn limits_import_replaces_pilot_slots_once_under_the_profile_lock() {
     assert_eq!(dispatch.value.project_slots("product"), 8);
     assert_eq!(dispatch.value.global_slots, 18);
     assert_eq!(dispatch.value.mode, crate::DispatchMode::Paused);
-    assert_eq!(dispatch.value.allowance_minutes, Some(24));
     let registry = fs::read_to_string(projects).expect("rewritten registry");
     assert!(!registry.contains("\"slots\""));
     let typed = settings
