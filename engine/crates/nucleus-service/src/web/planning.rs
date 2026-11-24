@@ -20,10 +20,7 @@ use crate::{
 pub(super) fn routes() -> Router<Api> {
     Router::new().nest(
         "/v1/planning/{project}",
-        Router::new()
-            .route("/plan", get(plan).put(set_plan))
-            .route("/lanes/{key}", put(put_lane))
-            .route("/lanes/{key}/status", post(lane_status))
+        lane_routes()
             .route("/items", get(items).post(add_item))
             .route("/items/{id}", put(edit_item))
             .route("/items/{id}/park", post(park_item))
@@ -36,6 +33,14 @@ pub(super) fn routes() -> Router<Api> {
             // A JSON string can use six bytes to escape one input byte.
             .layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024)),
     )
+}
+
+pub(super) fn lane_routes() -> Router<Api> {
+    Router::new()
+        .route("/plan", get(plan).put(set_plan))
+        .route("/lanes/{key}", put(put_lane))
+        .route("/lanes/{key}/status", post(lane_status))
+        .layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024))
 }
 
 #[derive(Serialize)]
@@ -70,12 +75,12 @@ async fn set_plan(
 ) -> Result<Json<Plan>, ApiError> {
     let input = body(input)?;
     let mut state = api.service.planning_state(&project).await?;
-    Ok(Json(
-        state
-            .store
-            .set_plan(&project, input, stamp(&caller))
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .set_plan(&project, input, stamp(&caller))
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 #[derive(Deserialize)]
@@ -93,18 +98,12 @@ async fn put_lane(
 ) -> Result<Json<Lane>, ApiError> {
     let input = body(input)?;
     let mut state = api.service.planning_state(&project).await?;
-    Ok(Json(
-        state
-            .store
-            .put_lane(
-                &project,
-                &key,
-                input.version,
-                input.document,
-                stamp(&caller),
-            )
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .put_lane(&project, &key, input.version, input.document, stamp(&caller))
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 async fn lane_status(
@@ -115,12 +114,12 @@ async fn lane_status(
 ) -> Result<Json<Lane>, ApiError> {
     let input = body(input)?;
     let mut state = api.service.planning_state(&project).await?;
-    Ok(Json(
-        state
-            .store
-            .set_lane_status(&project, &key, input, stamp(&caller))
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .set_lane_status(&project, &key, input, stamp(&caller))
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 async fn items(
