@@ -3,10 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::{
-    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
-};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{ImportError, ImportReport, canonical_repository, has_table, open_copy, scratch_root};
@@ -97,7 +95,6 @@ impl Registry {
             .entry(id.into())
             .or_insert_with(|| ProjectSettings {
                 name: name.into(),
-                slots: 1,
                 archived: true,
                 repositories: Vec::new(),
             });
@@ -245,9 +242,6 @@ fn read_registry(
     existing: Projects,
     report: &mut ProjectImportReport,
 ) -> Result<Registry, ImportError> {
-    let default_slots = meta::<u32>(source, "projectLimit")?.unwrap_or(5);
-    let overrides =
-        meta::<BTreeMap<String, u32>>(source, "projectDispatchLimitOverrides")?.unwrap_or_default();
     let mut projects = Projects::default();
     let mut origins = BTreeMap::new();
     let mut aliases = BTreeMap::new();
@@ -297,7 +291,6 @@ fn read_registry(
             id.clone(),
             ProjectSettings {
                 name: project.name,
-                slots: overrides.get(&id).copied().unwrap_or(default_slots),
                 archived: false,
                 repositories,
             },
@@ -333,7 +326,6 @@ fn preserve_settings(
     aliases: &BTreeMap<String, String>,
     report: &mut ProjectImportReport,
 ) -> Result<(), ImportError> {
-    let mut saved_slots = BTreeMap::new();
     for (id, mut project) in existing.projects {
         let conflicting = || {
             ImportError::ProjectConflict(format!(
@@ -357,15 +349,6 @@ fn preserve_settings(
                 "archived Rust project {id} needs an explicit disposition before reassignment"
             )));
         }
-        if let Some((previous_id, previous_slots)) =
-            saved_slots.insert(target_id.clone(), (id.clone(), project.slots))
-            && previous_slots != project.slots
-        {
-            return Err(ImportError::ProjectConflict(format!(
-                "Rust projects {previous_id} and {id} have different saved slot limits for {target_id}"
-            )));
-        }
-        target.slots = project.slots;
         if project.name != target.name {
             report.replaced_project_settings.push(id.clone());
         }
@@ -385,15 +368,4 @@ fn preserve_settings(
         }
     }
     Ok(())
-}
-
-fn meta<T: DeserializeOwned>(source: &Connection, key: &str) -> Result<Option<T>, ImportError> {
-    let raw: Option<String> = source
-        .query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(raw.map(|raw| serde_json::from_str(&raw)).transpose()?)
 }

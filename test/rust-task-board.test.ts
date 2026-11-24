@@ -579,16 +579,17 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
   let dispatch = {
-    usage: "normal", usageUntilMs: null, slots: 2, hostConcurrency: 1,
+    usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
+    projectSlotOverrides: {}, hostConcurrency: 1,
     allowanceMinutes: null, providerLimitCooldownSeconds: 300, mode: "running",
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
   const views = {
     profiles: () => snap({ profiles: [], pausedGroups: [] }, "profiles-1"),
-    dispatch: () => snap(dispatch, "dispatch-" + dispatch.slots),
+    dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
-      settings: snap({ projects: { fixture: { name: "Fixture project", slots: 2, archived: false, repositories: [
+      settings: snap({ projects: { fixture: { name: "Fixture project", archived: false, repositories: [
         { origin: "example/fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
       ] } } }, "projects-1"),
       resolvedPlanners: { fixture: "fixture-planner" },

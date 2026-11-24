@@ -161,12 +161,19 @@ impl RuntimeSettings {
 
     pub(crate) fn fixture_slots(&self, fixture: &Project) -> Option<u32> {
         match &self.projects {
-            None => Some(u32::MAX),
+            None => Some(self.project_slots(&fixture.host_project)),
             Some(_) => self
                 .fixture_project(fixture)
                 .filter(|(_, project, _)| !project.archived)
-                .map(|(_, project, _)| project.slots),
+                .map(|(id, _, _)| self.project_slots(id)),
         }
+    }
+
+    pub(crate) fn project_slots(&self, id: &str) -> u32 {
+        self.dispatch.as_ref().map_or_else(
+            || DispatchSettings::default().project_default_slots,
+            |dispatch| dispatch.project_slots(id),
+        )
     }
 }
 
@@ -454,7 +461,6 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
             return Err(changed_route());
         }
         project.name = edits.name;
-        project.slots = edits.slots;
         project.archived = edits.archived;
         for (repo, edit) in project.repositories.iter_mut().zip(edits.repositories) {
             if (repo.origin.as_str(), &repo.path, repo.base.as_str())

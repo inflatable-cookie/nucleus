@@ -1,0 +1,1 @@
+Rust Limits uses a shared per-project default with optional overrides. The fenced TypeScript limits import carries the global limit, project default, overrides and retention settings into a stopped Rust profile.

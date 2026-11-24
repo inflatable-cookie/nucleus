@@ -371,10 +371,9 @@ function TaskSlots({
   save: (values: api.CapacityAuthorityValues) => Promise<void>;
 }) {
   const features = useEngineFeatures();
-  // Rust engine (Spec 070 rulings 8 and 21): the global slot limit is the only
-  // engine-wide limit; each project carries its own slots below.
-  const shown = (spec: LimitSpec) =>
-    features.advancedLimits || spec.key === "globalLimit";
+  const shown = CAPACITY_FIELDS.filter(({ key }) =>
+    features.advancedLimits || key === "globalLimit" || key === "projectLimit" || key === "hostCallLimit"
+  );
   const [drafts, setDrafts] = useState<Partial<Record<CapacityKey, number>>>(
     {},
   );
@@ -416,6 +415,7 @@ function TaskSlots({
     const name = CAPACITY_FIELD_LABELS[spec.key],
       unit = UNIT_SHORT[spec.unit];
     const draft = drafts[spec.key] ?? current[spec.key];
+    const fixed = features.engine === "rust" && spec.key === "hostCallLimit";
     return (
       <NumberStepper
         key={spec.key}
@@ -423,11 +423,12 @@ function TaskSlots({
         stacked={spec.advanced}
         c={c}
         label={name}
-        help={spec.help}
+        help={fixed ? "T3 runs one host call at a time." : spec.help}
         a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${spec.max})`}
         value={draft}
         min={spec.min}
-        max={spec.max}
+        max={fixed ? spec.min : spec.max}
+        disabled={fixed}
         unit={spec.unit === "slots" ? undefined : unit}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
@@ -445,7 +446,9 @@ function TaskSlots({
       c={c}
       title="Task slots"
       status={auto.status}
-      description="Only Settings changes these. Parked tasks hold no slot, lowering a limit lets running work finish, and papercuts also count toward Global."
+      description={features.engine === "rust"
+        ? "Parked tasks hold no slot. Lowering a limit lets running work finish."
+        : "Only Settings changes these. Parked tasks hold no slot, lowering a limit lets running work finish, and papercuts also count toward Global."}
     >
       <ReadNotice
         c={c}
@@ -458,22 +461,22 @@ function TaskSlots({
           <View
             style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
           >
-            {CAPACITY_FIELDS.filter((spec) => !spec.advanced && shown(spec)).map(
+            {shown.filter((spec) => !spec.advanced).map(
               (spec) => field(spec, values),
             )}
           </View>
-          {features.advancedLimits && <Disclosure
+          <Disclosure
             c={c}
             gapAbove
             label="Advanced limits"
             expanded={advancedOpen}
             onToggle={() => setAdvancedOpen((open) => !open)}
-          />}
-          {features.advancedLimits && advancedOpen && (
+          />
+          {advancedOpen && (
             <View
               style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
             >
-              {CAPACITY_FIELDS.filter((spec) => spec.advanced).map((spec) =>
+              {shown.filter((spec) => spec.advanced).map((spec) =>
                 field(spec, values),
               )}
             </View>

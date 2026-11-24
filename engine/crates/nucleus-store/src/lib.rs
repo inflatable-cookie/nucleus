@@ -275,7 +275,7 @@ impl Store {
         Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
     }
 
-    /// Count other held slots among the repositories and bases in one project.
+    /// Count other held slots among the repositories in one project.
     /// # Errors
     /// Returns an error if row custody cannot be read.
     pub fn occupied_project_slots(
@@ -292,6 +292,28 @@ impl Store {
             params![except, repositories],
             |row| row.get(0),
         )?)
+    }
+
+    /// Find tasks in a project that can hold the first-dispatch workspace budget.
+    /// # Errors
+    /// Returns an error if task custody cannot be read.
+    pub fn project_workspace_candidates(
+        &self,
+        except: &str,
+        repositories: &[String],
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let repositories = serde_json::to_string(repositories)?;
+        let mut query = self.connection.prepare_cached(
+            "SELECT id, repository FROM tasks
+             WHERE id <> ?1 AND phase NOT IN ('done', 'cancelled')
+             AND ((hold IS NULL AND question IS NULL) OR json_extract(run, '$.last_send_at_ms') IS NOT NULL)
+             AND EXISTS (SELECT 1 FROM json_each(?2) AS route
+                 WHERE tasks.repository = route.value COLLATE NOCASE)",
+        )?;
+        let rows = query.query_map(params![except, repositories], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Read completed tasks whose native archive receipt is still absent.

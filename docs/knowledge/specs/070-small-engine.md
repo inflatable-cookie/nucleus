@@ -63,14 +63,19 @@ Later decisions carry their own attribution.
 8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots, budgets and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);
-   - its slot limit;
    - per-repository merge checks (command and timeout), with an optional required reviewer;
    - its verified planners, shown from their live bindings;
    - an archived toggle.
 
    It drops agent registration and the preferred and responsible thread fields (rulings 2 and 23), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Repository routes come from first contact (ruling 23). Editing autosaves, one noun per control, with explanations only in help popovers.
 
-   Tom, 2026-11-24, confirmed that one project can contain several repositories. The project keeps its stable TypeScript key, display name, slot limit, plan and lanes. The slot limit covers runs in every member repository. Settings can move a repository to another project in one save and its verified planners follow the repository binding.
+   Tom, 2026-11-24, confirmed that one project can contain several repositories. It keeps its stable TypeScript key, display name, plan and lanes. Settings can move a repository in one save and its verified planners follow the repository binding.
+
+   **Limits (Tom, 2026-11-24).** Dispatch owns the global limit, per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. A run needs room under both ceilings, counting the project's member repositories together. A first worker checkout also needs room under twice the effective project limit. Review entry and existing work continue through their own gates. Concurrent host calls stays fixed at one under ruling 11.
+
+   `limits.import` reads the five capacity and retention meta keys from a fenced TypeScript copy. Applying it under the stopped profile lock removes old Projects slot fields and publishes the imported limits in Dispatch once. Projects without an imported override, including the Barge pilot, inherit the per-project default. Later edits survive replay.
+
+   Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Ruling 5 retires Default host. The import carries retention settings ahead of the scheduler pruning change.
 
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that

@@ -168,7 +168,6 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
             "product".into(),
             nucleus_store::ProjectSettings {
                 name: "Imported product".into(),
-                slots: 1,
                 archived: false,
                 repositories: [ALPHA_REPO, BETA_REPO]
                     .into_iter()
@@ -460,6 +459,7 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
     let projects = json_body(get_as(&registry.api, PROJECTS, &BOARD_KEY).await).await;
     let product = &projects["settings"]["value"]["projects"]["product"];
     assert_eq!(product["name"], "Imported product");
+    assert!(product.get("slots").is_none());
     assert_eq!(product["repositories"][0]["hostProject"], "alpha-native");
     assert!(product["repositories"][1]["hostProject"].is_null());
     assert_eq!(
@@ -487,6 +487,7 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
         .status(),
         StatusCode::CREATED
     );
+    assert_workspace_limit(&registry, [&alpha, &beta]).await;
     let route = registry
         .service
         .project_for(alpha.identity())
@@ -523,6 +524,39 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
         .await
         .status(),
         StatusCode::OK
+    );
+}
+
+async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
+    let service = &registry.service;
+    let worktrees = service.worktrees().expect("synthetic worktree root");
+    for task in tasks {
+        let identity = task.identity();
+        let route = service.project_for(identity).await.expect("member route");
+        let head = service
+            .verify_route(identity, &route)
+            .await
+            .expect("base head");
+        worktrees
+            .checkout(&route.checkout, &identity.repository, &identity.id)
+            .expect("member checkout")
+            .allocate(&head)
+            .expect("allocate candidate");
+    }
+    let waiting = service.task("explicit-member").await.expect("third task");
+    let identity = waiting.task.identity();
+    let route = service.project_for(identity).await.expect("same project");
+    assert!(
+        !service
+            .workspace_capacity(identity, &route, 1)
+            .await
+            .expect("two in flight")
+    );
+    assert!(
+        service
+            .workspace_capacity(identity, &route, 2)
+            .await
+            .expect("room under four")
     );
 }
 
@@ -854,7 +888,8 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
     let setting = "/v1/settings/dispatch";
     let dispatch = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
     let mut value = dispatch["value"].clone();
-    value["slots"] = json!(2);
+    value["globalSlots"] = json!(2);
+    value["projectDefaultSlots"] = json!(1);
     assert_eq!(
         put_settings(
             &registry.api,
@@ -891,4 +926,50 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
             .await
             .expect("Beta has capacity")
     );
+    let project = registry
+        .service
+        .project_for(&waiting)
+        .await
+        .expect("Alpha route")
+        .project_id
+        .expect("Alpha project");
+    for (global, overrides, alpha_allowed, beta_allowed) in [
+        (2, json!({&project: 2}), true, true),
+        (2, json!({}), false, true),
+        (1, json!({&project: 2}), false, false),
+    ] {
+        let current = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
+        let mut value = current["value"].clone();
+        value["globalSlots"] = json!(global);
+        value["projectSlotOverrides"] = overrides;
+        assert_eq!(
+            put_settings(
+                &registry.api,
+                setting,
+                &BOARD_KEY,
+                &json!({
+                    "revision": current["revision"], "value": value,
+                })
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            registry
+                .service
+                .launch_capacity(&waiting, false)
+                .await
+                .expect("Alpha capacity"),
+            alpha_allowed
+        );
+        assert_eq!(
+            registry
+                .service
+                .launch_capacity(beta.identity(), false)
+                .await
+                .expect("Beta capacity"),
+            beta_allowed
+        );
+    }
 }

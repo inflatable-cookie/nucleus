@@ -190,7 +190,7 @@ impl Service {
             project_id: Some(id.into()),
             checkout: repo.path.clone(),
             host_project: repo.host_project.clone().ok_or(ServiceError::Project)?,
-            slots: (!project.archived).then_some(project.slots),
+            slots: (!project.archived).then(|| state.settings.project_slots(id)),
             repositories: project
                 .repositories
                 .iter()

@@ -302,7 +302,14 @@ impl Service {
         let _projects = self.project_writes.read().await;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
-        if route.slots.is_none() {
+        let Some(slots) = route.slots else {
+            return Ok(None);
+        };
+        if review.is_none()
+            && identity.entry == nucleus_core::Entry::Brief
+            && task.threads().get(Role::Worker).is_none()
+            && !self.workspace_capacity(identity, &route, slots).await?
+        {
             return Ok(None);
         }
         self.checkout_binding(identity, &route, checkout)?;
@@ -317,6 +324,31 @@ impl Service {
             Observed::Known(checkout.allocate(start)?)
         };
         Ok(Some(workspace))
+    }
+
+    pub(super) async fn workspace_capacity(
+        &self,
+        identity: &nucleus_core::Identity,
+        route: &ProjectRoute,
+        slots: u32,
+    ) -> Result<bool, ServiceError> {
+        let candidates = self
+            .state
+            .lock()
+            .await
+            .store
+            .project_workspace_candidates(&identity.id, &route.repositories)?;
+        self.storage.work().verify()?;
+        let mut in_flight = 0;
+        for (task, repository) in candidates {
+            let path = nucleus_work::checkout_path(self.storage.work().path(), &repository, &task);
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => in_flight += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(nucleus_work::WorkError::from(error).into()),
+            }
+        }
+        Ok(in_flight < slots.saturating_mul(2))
     }
 
     async fn apply(

@@ -664,7 +664,7 @@ impl Service {
         let state = self.state.lock().await;
         let route = self.resolve_project(&state, identity)?;
         let fallback_slots = self.project.as_ref().map_or_else(
-            || nucleus_store::DispatchSettings::default().slots,
+            || nucleus_store::DispatchSettings::default().global_slots,
             |project| project.launch_budget.slots,
         );
         let project_slots = match route.slots {
@@ -676,7 +676,7 @@ impl Service {
             .settings
             .dispatch
             .as_ref()
-            .map_or(fallback_slots, |dispatch| dispatch.slots);
+            .map_or(fallback_slots, |dispatch| dispatch.global_slots);
         if state.store.occupied_slots(&identity.id)? >= slots {
             return Ok(false);
         }

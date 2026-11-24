@@ -275,6 +275,14 @@ impl SettingsFile {
         Ok((snapshot(value, was_configured || changed)?, changed))
     }
 
+    pub(crate) fn rewrite_legacy_projects(&self) -> Result<(), StorageError> {
+        if self.read::<Projects>()?.configured {
+            self.store
+                .mutate(&SettingsDomain::<Projects>::new()?, MUTATION, |_| Ok(()))?;
+        }
+        Ok(())
+    }
+
     /// Read the storage settings. A missing domain uses the disabled default.
     ///
     /// # Errors
@@ -789,7 +797,7 @@ mod tests {
             .read::<DispatchSettings>()
             .expect("decode legacy settings");
         assert!(saved.configured);
-        assert_eq!(saved.value.slots, 3);
+        assert_eq!(saved.value.global_slots, 3);
         assert_eq!(saved.value.allowance_minutes, Some(30));
         assert!(
             serde_json::to_value(saved.value)

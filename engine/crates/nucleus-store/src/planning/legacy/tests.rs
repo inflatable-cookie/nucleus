@@ -111,6 +111,79 @@ fn profile(root: &Path) -> SettingsFile {
     settings
 }
 
+#[test]
+fn limits_import_replaces_pilot_slots_once_under_the_profile_lock() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let source = scratch.path().join("limits.sqlite");
+    Connection::open(&source)
+        .expect("fixture source")
+        .execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+         INSERT INTO meta VALUES ('globalLimit','18'), ('projectLimit','4'),
+           ('projectDispatchLimitOverrides','{\"product\":8}'),
+           ('threadRetentionDays','3'), ('threadRetentionIntervalHours','12');",
+        )
+        .expect("synthetic limits");
+    let settings = profile(scratch.path());
+    let projects = scratch.path().join("profile/state/projects.json");
+    fs::write(&projects, json!({"domain":"nucleus.engine.projects", "schemaVersion":1,
+        "value":{"projects":{"pilot":{"name":"Pilot","slots":2},"product":{"name":"Product","slots":7}}}
+    }).to_string()).expect("old registry");
+    let current = settings
+        .read::<crate::DispatchSettings>()
+        .expect("dispatch");
+    settings
+        .edit(&current.revision, |value: &mut crate::DispatchSettings| {
+            value.mode = crate::DispatchMode::Paused;
+            value.allowance_minutes = Some(24);
+            Ok(())
+        })
+        .expect("set pilot state");
+    let report = import_limits(scratch.path(), &source, None).expect("read-only proof");
+    assert_eq!(report.global_slots, 18);
+    let storage = settings.storage().expect("profile storage");
+    let lock = storage.lock_profile().expect("simulate service lock");
+    assert!(import_limits(scratch.path(), &source, Some(&settings)).is_err());
+    drop(lock);
+    assert_eq!(
+        import_limits(scratch.path(), &source, Some(&settings)).expect("apply"),
+        report
+    );
+    let dispatch = settings
+        .read::<crate::DispatchSettings>()
+        .expect("saved dispatch");
+    assert_eq!(dispatch.value.project_slots("pilot"), 4);
+    assert_eq!(dispatch.value.project_slots("product"), 8);
+    assert_eq!(dispatch.value.global_slots, 18);
+    assert_eq!(dispatch.value.mode, crate::DispatchMode::Paused);
+    assert_eq!(dispatch.value.allowance_minutes, Some(24));
+    let registry = fs::read_to_string(projects).expect("rewritten registry");
+    assert!(!registry.contains("\"slots\""));
+    let typed = settings
+        .read::<crate::Projects>()
+        .expect("retained projects");
+    assert_eq!(typed.value.projects.len(), 2);
+    settings
+        .edit(&dispatch.revision, |value: &mut crate::DispatchSettings| {
+            value.project_slot_overrides.clear();
+            Ok(())
+        })
+        .expect("subsequent edit");
+    assert!(
+        import_limits(scratch.path(), &source, Some(&settings))
+            .expect("replay")
+            .already_applied
+    );
+    assert_eq!(
+        settings
+            .read::<crate::DispatchSettings>()
+            .expect("edited dispatch")
+            .value
+            .project_slots("product"),
+        4
+    );
+}
+
 fn legacy_profile(id: &str) -> Value {
     json!({
         "id":id, "name":id, "provider":"claude", "model":"model",
@@ -681,8 +754,8 @@ fn project_import_coalesces_compatible_edits_and_preserves_promotion_and_number(
         .expect("project settings");
     let product = &registry.value.projects["product"];
     assert_eq!(
-        (&*product.name, product.slots, product.repositories.len()),
-        ("A product", 7, 2)
+        (&*product.name, product.repositories.len()),
+        ("A product", 2)
     );
     let historical = format!("legacy.{}", mapping["example/historic"]);
     assert!(registry.value.projects[&historical].archived);
@@ -838,56 +911,15 @@ fn project_import_resumes_pending_settings_before_the_engine_reopens() {
 
     let result = import_projects(scratch.path(), &source, Some(&settings)).expect("resume");
     assert!(result.resumed);
-    assert_eq!(
-        settings
-            .read::<crate::Projects>()
-            .expect("saved registry")
-            .value
-            .projects["product"]
-            .slots,
-        7
+    let saved = settings.read::<crate::Projects>().expect("saved registry");
+    let product = &saved.value.projects["product"];
+    assert_eq!(product.name, "Imported product");
+    assert!(product.archived);
+    assert!(
+        serde_json::to_value(product)
+            .expect("saved project")
+            .get("slots")
+            .is_none()
     );
     assert!(Store::open(&storage).is_ok());
-}
-
-#[test]
-fn project_import_preserves_an_explicit_rust_slot_limit() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let (source, _) = project_copy(scratch.path());
-    let settings = profile(scratch.path());
-    let storage = settings.storage().expect("storage");
-    drop(Store::open(&storage).expect("initialize engine"));
-    let project_settings = || {
-        settings
-            .read::<crate::Projects>()
-            .expect("project settings")
-    };
-    settings
-        .edit(
-            &project_settings().revision,
-            |projects: &mut crate::Projects| {
-                projects.projects.insert(
-                    "product".into(),
-                    crate::ProjectSettings {
-                        name: "A product".into(),
-                        slots: 2,
-                        archived: false,
-                        repositories: Vec::new(),
-                    },
-                );
-                Ok(())
-            },
-        )
-        .expect("existing pilot override");
-
-    import_projects(scratch.path(), &source, Some(&settings)).expect("apply registry");
-    let applied = project_settings();
-    assert_eq!(applied.value.projects["product"].slots, 2);
-    assert_eq!(applied.value.projects["product"].repositories.len(), 2);
-    assert!(
-        import_projects(scratch.path(), &source, Some(&settings))
-            .expect("replay")
-            .already_applied
-    );
-    assert_eq!(project_settings().revision, applied.revision);
 }

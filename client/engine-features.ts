@@ -18,7 +18,7 @@ export interface EngineFeatures {
   telemetry: boolean;
   /** Settings → Backups, with Back up now and the tiered snapshot list. */
   backupsTab: boolean;
-  /** Limits beyond slots, usage and the host lane (stall, hold, drain, retention). */
+  /** Legacy Limits controls for papercuts, stall, hold, drain, outages and pruning. */
   advancedLimits: boolean;
   /** A global per-project default limit separate from each project's own slots. */
   projectDefaultLimit: boolean;
@@ -63,11 +63,11 @@ export const RUST_ENGINE_FEATURES: EngineFeatures = {
   telemetry: false,
   // Ruling 17: Storage folds in backups and retention; the engine has no backup-now verb.
   backupsTab: false,
-  // Rulings 1, 12, 13 and 21: no recovery stall, hold reminders, drain prompts,
-  // thread retention or machine-load gate. Slots and the allowance remain.
+  // Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation
+  // and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and its
+  // escalation. Ruling 5 retires Default host (hostCatalog below).
   advancedLimits: false,
-  // Ruling 8: each project carries its own slot limit.
-  projectDefaultLimit: false,
+  projectDefaultLimit: true,
   // Ruling 11: the board reads no run custody beyond each task's own summary.
   slotUsage: false,
   // Rulings 5 and 9: the profile matrix carries over; host-specific modes,
