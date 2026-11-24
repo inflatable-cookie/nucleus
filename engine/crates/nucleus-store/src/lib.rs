@@ -1,5 +1,6 @@
 //! The Rust engine's independent `SQLite` database.
 
+mod barge;
 mod inbox;
 mod numbers;
 pub mod planning;
@@ -21,8 +22,8 @@ use serde_json::{Value, json};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
 pub use settings::{
-    Backups, EngineSettings, EngineStorage, RetentionSettings, SettingsFile, SettingsSnapshot,
-    SettingsValue, StorageError, VerifiedBackup,
+    Backups, BargePaths, EngineSettings, EngineStorage, RetentionSettings, SettingsFile,
+    SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
 };
 pub use settings_domains::{
     DispatchSettings, Hosts, NamedProfile, Profiles, ProjectSettings, Projects, RepositorySettings,

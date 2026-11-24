@@ -299,12 +299,38 @@ async fn host_view(service: &Service, settings: SettingsSnapshot<Hosts>) -> Valu
 }
 
 fn storage_view(service: &Service, settings: &SettingsSnapshot<EngineSettings>) -> Value {
+    let EngineSettings {
+        enabled,
+        placement,
+        work_root,
+        scratch_root,
+        builds_root,
+        log_root,
+        retention,
+        work_volume: _,
+    } = &settings.value;
     json!({
-        "settings": settings,
+        "settings": {
+            "revision": settings.revision,
+            "configured": settings.configured,
+            "value": {
+                "enabled": enabled,
+                "placement": placement,
+                "workRoot": work_root,
+                "scratchRoot": scratch_root,
+                "buildsRoot": builds_root,
+                "logRoot": log_root,
+                "retention": retention,
+            },
+        },
         "active": {
+            "home": service.storage.home(),
+            "placement": service.storage.placement(),
+            "bargePaths": service.storage.barge_paths(),
             "databaseRoot": service.storage.database().path(),
             "workRoot": service.storage.work().path(),
             "scratchRoot": service.storage.scratch().path(),
+            "buildsRoot": service.storage.builds().path(),
             "backupRoot": service.storage.backup().path(),
             "logRoot": service.storage.log().path(),
         },
@@ -356,8 +382,20 @@ pub(super) async fn put(
                 Ok(host_view(&service, saved).await)
             }
             Domain::Storage => {
-                let (saved, _) =
-                    replace::<EngineSettings>(&service.settings, revision, value).await?;
+                let mut value: EngineSettings = decode(value)?;
+                if value.work_volume.is_some() {
+                    return Err(ApiError::Invalid);
+                }
+                let (saved, _) = edit(
+                    &service.settings,
+                    revision,
+                    move |current: &mut EngineSettings| {
+                        value.work_volume.clone_from(&current.work_volume);
+                        *current = value;
+                        Ok(())
+                    },
+                )
+                .await?;
                 Ok(storage_view(&service, &saved))
             }
         };

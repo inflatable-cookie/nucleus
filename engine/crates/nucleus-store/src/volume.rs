@@ -3,6 +3,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 use rustix::fs::{Mode, OFlags, fstat, mkdirat, open, openat};
@@ -50,9 +51,11 @@ impl PinnedVolume {
     ) -> Result<StorageDirectory, StorageError> {
         relative(&self.mount, &path)?;
         Ok(StorageDirectory {
-            volume: Some(self.clone()),
+            root: DirectoryRoot::Pinned {
+                volume: self.clone(),
+                scratch: scratch.into(),
+            },
             path,
-            scratch: Some(scratch.into()),
         })
     }
 
@@ -88,18 +91,46 @@ impl PinnedVolume {
 
 #[derive(Debug, Clone)]
 pub struct StorageDirectory {
-    volume: Option<PinnedVolume>,
+    root: DirectoryRoot,
     path: PathBuf,
-    scratch: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+enum DirectoryRoot {
+    Native,
+    Pinned {
+        volume: PinnedVolume,
+        scratch: PathBuf,
+    },
+    Barge {
+        class_root: PathBuf,
+        anchor: Arc<OwnedFd>,
+    },
 }
 
 impl StorageDirectory {
     pub(crate) fn native(path: PathBuf) -> Result<Self, StorageError> {
         relative(Path::new("/"), &path)?;
         Ok(Self {
-            volume: None,
+            root: DirectoryRoot::Native,
             path,
-            scratch: None,
+        })
+    }
+
+    pub(crate) fn barge(path: PathBuf) -> Result<Self, StorageError> {
+        let class_root = path.parent().ok_or(StorageError::Layout)?;
+        if class_root == Path::new("/") {
+            return Err(StorageError::Layout);
+        }
+        let class = Self::native(class_root.to_path_buf())?;
+        class.verify()?;
+        let anchor = open(class_root, DIRECTORY, Mode::empty())?;
+        Ok(Self {
+            root: DirectoryRoot::Barge {
+                class_root: class_root.to_path_buf(),
+                anchor: Arc::new(anchor),
+            },
+            path,
         })
     }
 
@@ -151,17 +182,34 @@ impl StorageDirectory {
     }
 
     fn walk(&self, path: &Path, create: bool) -> Result<(), StorageError> {
-        let root = match &self.volume {
-            Some(volume) => volume.open_mount(self.scratch.as_deref())?,
-            None => open(self.root(), DIRECTORY, Mode::empty())?,
+        let root = match &self.root {
+            DirectoryRoot::Native => open(self.root(), DIRECTORY, Mode::empty())?,
+            DirectoryRoot::Pinned { volume, scratch } => volume.open_mount(Some(scratch))?,
+            DirectoryRoot::Barge { class_root, anchor } => {
+                let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
+                    if error == rustix::io::Errno::NOENT {
+                        StorageError::VolumeUnavailable
+                    } else {
+                        error.into()
+                    }
+                })?;
+                let expected = fstat(anchor.as_ref())?;
+                let identity = fstat(&current)?;
+                if (identity.st_dev, identity.st_ino) != (expected.st_dev, expected.st_ino) {
+                    return Err(StorageError::VolumeUnavailable);
+                }
+                current
+            }
         };
         self.walk_from(root, path, create)
     }
 
     fn root(&self) -> &Path {
-        self.volume
-            .as_ref()
-            .map_or(Path::new("/"), |volume| volume.mount.as_path())
+        match &self.root {
+            DirectoryRoot::Native => Path::new("/"),
+            DirectoryRoot::Pinned { volume, .. } => &volume.mount,
+            DirectoryRoot::Barge { class_root, .. } => class_root,
+        }
     }
 
     fn walk_from(
@@ -185,7 +233,7 @@ impl StorageDirectory {
                 }
                 answer => answer?,
             };
-            if self.volume.is_some() && fstat(&directory)?.st_dev != device {
+            if !matches!(self.root, DirectoryRoot::Native) && fstat(&directory)?.st_dev != device {
                 return Err(StorageError::OutsideVolume);
             }
         }

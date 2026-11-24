@@ -394,8 +394,11 @@ impl Service {
             role,
             head,
             checkout.branch(),
-            &self.report_command,
-            &ticket_path,
+            &ticket::PromptPaths {
+                command: &self.report_command,
+                ticket: &ticket_path,
+                builds: self.storage.builds().path(),
+            },
             selection.map(|selected| &selected.intent),
         );
         let binding = route.binding(checkout)?;

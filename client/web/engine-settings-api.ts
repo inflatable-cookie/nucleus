@@ -80,11 +80,13 @@ const project = z.object({
 const projects = z.object({ projects: z.record(z.string(), project) });
 const host = z.object({ endpoint: z.string(), credentialRef: z.string() });
 const hosts = z.object({ t3: host.nullable() });
+export const storagePlacement = z.enum(["internal", "barge"]);
 const storage = z.object({
   enabled: z.boolean(),
-  workVolume: z.object({ volumeId: z.string(), mount: z.string() }).nullable(),
+  placement: storagePlacement,
   workRoot: z.string().nullable(),
   scratchRoot: z.string().nullable(),
+  buildsRoot: z.string().nullable(),
   logRoot: z.string().nullable(),
   retention: z.object({ keepNewest: integer, maxAgeDays: integer.nullable() }),
 });
@@ -114,10 +116,18 @@ export const hostsView = z.object({
 export const storageView = z.object({
   settings: snapshot(storage),
   active: z.object({
+    home: z.string(),
+    placement: storagePlacement,
+    bargePaths: z.object({
+      worktrees: z.string().optional(),
+      scratch: z.string().optional(),
+      builds: z.string().optional(),
+    }),
     databaseRoot: z.string(),
     workRoot: z.string(),
     backupRoot: z.string(),
     scratchRoot: z.string(),
+    buildsRoot: z.string(),
     logRoot: z.string(),
   }),
   backups: z

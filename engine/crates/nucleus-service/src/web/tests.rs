@@ -1562,6 +1562,39 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
 }
 
 #[tokio::test]
+async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let path = "/v1/settings/storage";
+    let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(original["active"]["placement"], "internal");
+    assert_eq!(original["active"]["bargePaths"], json!({}));
+    assert!(original["settings"]["value"].get("workVolume").is_none());
+    let mut update = json!({
+        "revision": original["settings"]["revision"],
+        "value": original["settings"]["value"],
+    });
+    update["value"]["placement"] = json!("barge");
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    update["value"]["placement"] = json!("internal");
+    update["value"]["retention"]["keepNewest"] = json!(3);
+    let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
+    assert_eq!(saved["settings"]["value"]["retention"]["keepNewest"], 3);
+    assert!(
+        service
+            .settings
+            .load()
+            .expect("read on-disk settings")
+            .work_volume
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn host_settings_reject_embedded_credentials_and_stage_the_endpoint() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);

@@ -539,9 +539,13 @@ async fn status(
         },
         "version": env!("CARGO_PKG_VERSION"),
         "storage": {
+            "home": storage.home(),
+            "placement": storage.placement(),
+            "bargePaths": storage.barge_paths(),
             "database": storage.database().path(),
             "work": storage.work().path(),
             "scratch": storage.scratch().path(),
+            "builds": storage.builds().path(),
             "backup": storage.backup().path(),
             "log": storage.log().path(),
         },

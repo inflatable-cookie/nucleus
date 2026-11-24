@@ -15,6 +15,7 @@ import { EngineProjects } from "./engine-projects";
 import {
   dispatchView,
   hostsView,
+  storagePlacement,
   storageView,
   usage,
   useEditor,
@@ -281,11 +282,24 @@ function StorageSettings({ c, disabled }: { c: Colors; disabled: boolean }) {
         {editor.query.error?.message ?? "Loading storage…"}
       </Text>
     );
-  const { workVolume, retention } = view.settings.value;
+  const { placement, retention } = view.settings.value;
   const roots = [
-    { key: "workRoot", label: "Work" },
-    { key: "scratchRoot", label: "Scratch" },
-    { key: "logRoot", label: "Logs" },
+    {
+      key: "workRoot",
+      label: "Worktrees",
+      bargePath: view.active.bargePaths.worktrees,
+    },
+    {
+      key: "scratchRoot",
+      label: "Scratch",
+      bargePath: view.active.bargePaths.scratch,
+    },
+    {
+      key: "buildsRoot",
+      label: "Builds",
+      bargePath: view.active.bargePaths.builds,
+    },
+    { key: "logRoot", label: "Logs", bargePath: undefined },
   ] as const;
   return (
     <>
@@ -293,15 +307,32 @@ function StorageSettings({ c, disabled }: { c: Colors; disabled: boolean }) {
         c={c}
         title="Storage"
         status={editor.status}
-        description="Root changes apply the next time the engine starts. Clearing an override uses the default."
+        description="Placement and root changes apply on restart. Clearing an override uses the selected placement."
       >
-        {workVolume && (
-          <SettingValue c={c} label="Pinned volume" value={workVolume.mount} />
-        )}
+        <EditChoice
+          c={c}
+          label="Placement"
+          value={placement}
+          choices={storagePlacement.options}
+          disabled={disabled}
+          onSave={(placement) =>
+            editor.save((value) => ({ ...value, placement }))
+          }
+        />
+        <SettingValue
+          c={c}
+          label="Active placement"
+          value={humanLabel(view.active.placement)}
+        />
+        <SettingValue c={c} label="Engine home" value={view.active.home} />
         <SettingValue c={c} label="Database" value={view.active.databaseRoot} />
-        {roots.map(({ key, label }) => (
+        {roots.map(({ key, label, bargePath }) => (
           <View key={key} style={{ gap: space.xs }}>
-            <SettingValue c={c} label={label} value={view.active[key]} />
+            <SettingValue
+              c={c}
+              label={bargePath ? `${label} (Barge)` : label}
+              value={view.active[key]}
+            />
             <EditText
               c={c}
               label={label + " root override"}

@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
@@ -20,7 +20,9 @@ use nucleus_service::{
     Controller, Project, ReportTicket, Service, router_with_board_and_t3_callers,
     router_with_t3_callers,
 };
-use nucleus_store::{Hosts, SettingsFile, TaskNumberSeed, planning::legacy::read_task_number_seed};
+use nucleus_store::{
+    Hosts, SettingsFile, StoragePlacement, TaskNumberSeed, planning::legacy::read_task_number_seed,
+};
 use reqwest::{Client, Method, Response, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -49,21 +51,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
-    /// Enable the engine and optionally set its storage roots or pin a volume.
-    Configure {
-        #[arg(long)]
-        home: Option<PathBuf>,
-        #[arg(long)]
-        enable: bool,
-        #[arg(long)]
-        volume: Option<PathBuf>,
-        #[arg(long)]
-        work_root: Option<PathBuf>,
-        #[arg(long)]
-        scratch_root: Option<PathBuf>,
-        #[arg(long)]
-        log_root: Option<PathBuf>,
-    },
+    /// Enable the engine and optionally set its storage placement and overrides.
+    Configure(Configure),
     /// Serve the engine for the configured projects.
     Serve {
         #[arg(long)]
@@ -182,25 +171,44 @@ impl From<AnswerArgs> for Answer {
     }
 }
 
+#[derive(Args)]
+struct Configure {
+    #[arg(long)]
+    home: Option<PathBuf>,
+    #[arg(long)]
+    enable: bool,
+    /// Select the defaults for worktrees, scratch and builds.
+    #[arg(long, value_enum)]
+    placement: Option<Placement>,
+    #[arg(long, hide = true, conflicts_with = "clear_legacy_volume")]
+    volume: Option<PathBuf>,
+    /// Remove the old volume pin from a copied profile during an offline move.
+    #[arg(long)]
+    clear_legacy_volume: bool,
+    /// Clear stored root overrides before applying the options below.
+    #[arg(long)]
+    reset_roots: bool,
+    #[arg(long)]
+    work_root: Option<PathBuf>,
+    #[arg(long)]
+    scratch_root: Option<PathBuf>,
+    #[arg(long)]
+    builds_root: Option<PathBuf>,
+    #[arg(long)]
+    log_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Placement {
+    Internal,
+    Barge,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli { endpoint, action } = Cli::parse();
     match action {
-        Action::Configure {
-            home,
-            enable,
-            volume,
-            work_root,
-            scratch_root,
-            log_root,
-        } => configure(
-            home.as_deref(),
-            enable,
-            volume.as_deref(),
-            work_root,
-            scratch_root,
-            log_root,
-        ),
+        Action::Configure(args) => configure(args),
         Action::Serve {
             home,
             project,
@@ -243,27 +251,32 @@ async fn main() -> Result<()> {
     }
 }
 
-fn configure(
-    home: Option<&Path>,
-    enabled: bool,
-    volume: Option<&Path>,
-    work_root: Option<PathBuf>,
-    scratch_root: Option<PathBuf>,
-    log_root: Option<PathBuf>,
-) -> Result<()> {
-    let settings = open_settings(home)?;
+fn configure(args: Configure) -> Result<()> {
+    let settings = open_settings(args.home.as_deref())?;
     let mut config = settings.load()?;
-    config.enabled = enabled;
-    if work_root.is_some() {
-        config.work_root = work_root;
+    config.enabled = args.enable;
+    if let Some(placement) = args.placement {
+        config.placement = match placement {
+            Placement::Internal => StoragePlacement::Internal,
+            Placement::Barge => StoragePlacement::Barge,
+        };
     }
-    if scratch_root.is_some() {
-        config.scratch_root = scratch_root;
+    if args.reset_roots || args.work_root.is_some() {
+        config.work_root = args.work_root;
     }
-    if log_root.is_some() {
-        config.log_root = log_root;
+    if args.reset_roots || args.scratch_root.is_some() {
+        config.scratch_root = args.scratch_root;
     }
-    if let Some(volume) = volume {
+    if args.reset_roots || args.builds_root.is_some() {
+        config.builds_root = args.builds_root;
+    }
+    if args.reset_roots || args.log_root.is_some() {
+        config.log_root = args.log_root;
+    }
+    if args.clear_legacy_volume {
+        config.work_volume = None;
+    }
+    if let Some(volume) = args.volume.as_deref() {
         config.work_volume = Some(settings.identify_volume(volume, &config)?);
     }
     settings.save(&config)?;
