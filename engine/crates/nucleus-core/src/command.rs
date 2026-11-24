@@ -652,6 +652,12 @@ impl Task {
         self.phase == Phase::Queued && self.threads.get(Role::Worker).is_none()
     }
 
+    /// A native reservation is durable even if its first send was never attempted.
+    #[must_use]
+    pub const fn dispatch_started(&self) -> bool {
+        self.threads.launch_sequence != 0 || self.run.is_some()
+    }
+
     fn move_to(&mut self, phase: Phase) {
         if let Some(run) = &mut self.run {
             run.revoked = true;

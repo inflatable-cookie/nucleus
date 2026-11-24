@@ -1,6 +1,7 @@
 //! Service entry points for the isolated Rust task engine.
 
 mod acp;
+mod dependencies;
 mod enrollment;
 mod inbox;
 mod native_inbox;
@@ -51,6 +52,10 @@ use tokio::{
     time::Instant,
 };
 
+pub use dependencies::{
+    DependencyCommand, DependencyEdits, DependencyFact, DependencyState, DependencyStatus,
+    PrerequisiteWaitView,
+};
 pub use native_inbox::native_inbox_directory;
 pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
@@ -87,6 +92,10 @@ pub enum ServiceError {
     ReportOpenPullRequest,
     #[error("the report checkout is preserved: {0}")]
     ReportCheckout(&'static str),
+    #[error("{0}")]
+    DependencyInput(String),
+    #[error("{0}")]
+    DependencyEdit(&'static str),
     #[error("task input is invalid")]
     Input,
     #[error("queue.complexity is required: very_low, low, medium, high or very_high")]
@@ -477,6 +486,29 @@ impl Service {
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
     ) -> Result<Action, ServiceError> {
+        if self.reconcile_prerequisites(row).await? {
+            return Ok(Action::Nothing);
+        }
+        // A planner's availability must not hold the dependent after release.
+        // Any unsent notice remains due through the store's scheduler scan.
+        let _ = self.notify_prerequisite_release(row).await;
+        let task = &row.task;
+        if !matches!(
+            task.phase(),
+            Phase::Done | Phase::Cancelled | Phase::Closing
+        ) && task.run().is_none()
+            && task.hold().is_none()
+            && task.question().is_none()
+            && self.dependencies_blocked(row).await?
+            && !self
+                .state
+                .lock()
+                .await
+                .forge_requested
+                .contains(&task.identity().id)
+        {
+            return Ok(Action::Wait(WaitReason::Prerequisite));
+        }
         {
             let mut state = self.state.lock().await;
             if let Some(wait) = self.usage_permission_wait(&mut state, row)? {
@@ -886,8 +918,19 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
+        if matches!(
+            command,
+            Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
+        ) && !prior.task.phase().is_terminal()
+            && state.store.dependency_blocked(id)?
+        {
+            return Err(ServiceError::DependencyEdit(
+                "this task has unfinished prerequisites",
+            ));
+        }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
+        let amendment = matches!(command, Command::Amend(_));
         let explicit_move = matches!(command, Command::Move(_) | Command::MoveWork { .. });
         let returned = matches!(command, Command::MoveWork { .. })
             .then(|| {
@@ -928,7 +971,9 @@ impl Service {
                 {
                     presentation::note_merge(&mut audit, &observation.forge);
                 }
-                let version = if explicit_move || prior.task != task {
+                let version = if amendment {
+                    self.commit_amendment(&mut state, &prior, &task, audit, scope)?
+                } else if explicit_move || prior.task != task {
                     self.commit(&mut state, &prior, &task, &audit, None)?
                 } else {
                     prior.version
@@ -1056,6 +1101,25 @@ impl Service {
         })
     }
 
+    fn commit_amendment(
+        &self,
+        state: &mut State,
+        prior: &TaskRow,
+        task: &Task,
+        mut audit: EventDraft,
+        scope: &ControllerScope,
+    ) -> Result<i64, ServiceError> {
+        let Some(ids) = self.amended_dependencies(state, scope, &prior.task, task)? else {
+            return self.commit(state, prior, task, &audit, None);
+        };
+        audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
+        let version = state
+            .store
+            .save_brief_with_dependencies(prior, task, &audit, &ids)?;
+        self.task_committed(state, prior, task, &audit, version);
+        Ok(version)
+    }
+
     fn commit(
         &self,
         state: &mut State,
@@ -1064,7 +1128,6 @@ impl Service {
         audit: &EventDraft,
         subscription_group: Option<&str>,
     ) -> Result<i64, ServiceError> {
-        let id = &task.identity().id;
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let version = match subscription_group {
             Some(group) => state
@@ -1072,6 +1135,22 @@ impl Service {
                 .save_profile_launch(prior, task, &audit, group)?,
             None => state.store.save_row(prior, task, &audit)?,
         };
+        self.task_committed(state, prior, task, &audit, version);
+        Ok(version)
+    }
+
+    fn task_committed(
+        &self,
+        state: &mut State,
+        prior: &TaskRow,
+        task: &Task,
+        audit: &EventDraft,
+        version: i64,
+    ) {
+        let id = &task.identity().id;
+        if prior.task.phase() != task.phase() || prior.task.brief() != task.brief() {
+            self.wake_dependents(state, id);
+        }
         self.retire_native_decision(state, prior);
         self.track(state, task);
         if task.phase().is_terminal() {
@@ -1092,9 +1171,8 @@ impl Service {
             state,
             id,
             version,
-            commit_priority(&prior.task, task, &audit),
+            commit_priority(&prior.task, task, audit),
         );
-        Ok(version)
     }
 
     async fn observe_commands(

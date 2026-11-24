@@ -403,6 +403,62 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
     assert_eq!(store.create(&second, &event("admitted")).expect("admit"), 2);
 }
 
+#[test]
+fn dependency_tables_open_from_the_previous_live_schema() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("fixture store");
+    let first = task("first", "fixture#first");
+    assert_eq!(store.create(&first, &event("admitted")).unwrap(), 1);
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch(
+        "DROP TABLE task_dependencies; DROP TABLE task_prerequisite_waits;
+         DROP TABLE task_prerequisite_notices;
+         DROP TABLE project_tell_deliveries; DROP TABLE project_tell_requests;
+         DROP INDEX planning_usage_permission;
+         ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
+         PRAGMA user_version = 9;",
+    )
+    .unwrap();
+    let version: i32 = db
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 9);
+    drop(db);
+
+    let mut store = Store::open(&storage).expect("open previous schema directly");
+    assert_eq!(row(&store, "first").number, Some(1));
+    assert_eq!(
+        store.dependencies("first").unwrap(),
+        nucleus_store::Dependencies::default()
+    );
+    let second = task("second", "fixture#second");
+    assert_eq!(
+        store
+            .create_with_facts(
+                &second,
+                &event("admitted"),
+                nucleus_store::TaskAdmissionFacts {
+                    prerequisites: &["first".into()],
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
+        2,
+    );
+    drop(store);
+
+    let store = Store::open(&storage).expect("reopen dependency edges");
+    assert_eq!(
+        store.dependencies("second").unwrap().before_dispatch,
+        ["first"]
+    );
+    assert_eq!(store.dependents("first").unwrap(), [("second".into(), 1)]);
+    assert!(store.dependency_blocked("second").unwrap());
+    assert_eq!(store.history("first", None, 1).unwrap().len(), 1);
+}
+
 fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Task) {
     let initial = task(id, id);
     let mut identity = initial.identity().clone();

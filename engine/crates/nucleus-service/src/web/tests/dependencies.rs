@@ -1,0 +1,208 @@
+use nucleus_store::TaskRow;
+
+use super::*;
+
+const ADMIT: &str = "---\nqueue:\n  complexity: medium\n---\n\n# Fixture";
+
+fn operator() -> Authority {
+    Authority::Operator {
+        actor: "fixture".into(),
+    }
+}
+
+fn controller(service: Arc<Service>) -> Router {
+    router(
+        service,
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: operator(),
+            },
+            planner_controller(PLANNER_KEY, "unrelated-planner"),
+        ],
+    )
+}
+
+async fn add(service: &Service, id: &str, brief: &str) -> TaskRow {
+    service
+        .admit(id.into(), id.into(), brief.into(), &operator())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn dependencies_admit_resolve_and_edit_without_host_reads() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = controller(Arc::clone(&service));
+    let first = add(&service, "first", ADMIT).await;
+    let brief = "---\nqueue:\n  complexity: medium\n  dependsOn: [inflatable-cookie/nucleus-fixture#001]\n---\n\n# Dependent";
+    let dependent = add(&service, "dependent", brief).await;
+    let detail = json_body(get_as(&api, "/v1/tasks/dependent", &BOARD_KEY).await).await;
+    assert_eq!(detail["brief"]["text"], brief);
+    assert_eq!(detail["wait"], "prerequisite");
+    assert_eq!(
+        detail["dependencyStatus"]["dependencies"][0],
+        json!({
+            "taskId": "first", "reference": "nucleus-fixture#1", "title": "Fixture",
+            "phase": "queued", "status": "pending",
+        })
+    );
+    let view = json_body(get_as(&api, "/v1/tasks/dependent/next", &BOARD_KEY).await).await;
+    assert_eq!(
+        view["dependencyEdits"],
+        json!({
+            "setDependencies": true, "setPrerequisiteWait": false,
+        })
+    );
+    expect_command(&view, "set_dependencies", None, "ready");
+    let cards = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    assert_eq!(cards[0]["dependencyStatus"], detail["dependencyStatus"]);
+
+    let host = service.host.pass(service.storage.scratch().path());
+    assert_eq!(
+        Box::pin(service.advance_due_task(&dependent, &host.for_task(&dependent.task)))
+            .await
+            .unwrap(),
+        Action::Wait(WaitReason::Prerequisite),
+    );
+    let first_path = "/v1/tasks/first/commands";
+    let cycle = json!({"set_dependencies":{"version":first.version,"depends_on":["#2"]}});
+    assert_eq!(
+        post_json(&api, first_path, &BOARD_KEY, &cycle).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(service.task("first").await.unwrap().version, first.version);
+
+    let dependent_path = "/v1/tasks/dependent/commands";
+    let clear = json!({"set_dependencies":{"version":dependent.version,"depends_on":[]}});
+    assert_eq!(
+        post_json(&api, dependent_path, &PLANNER_KEY, &clear).await,
+        StatusCode::FORBIDDEN,
+    );
+    let same = json!({"set_dependencies":{"version":dependent.version,"depends_on":["#1"]}});
+    assert_eq!(
+        json_body(post_as(&api, dependent_path, &BOARD_KEY, &same).await).await["version"],
+        dependent.version,
+    );
+    let mut changes = service.changes();
+    service
+        .command("first", &operator(), Command::Cancel)
+        .await
+        .unwrap();
+    assert_eq!(changes.try_recv().unwrap().task_id, "dependent");
+    let detail = json_body(get_as(&api, "/v1/tasks/dependent", &BOARD_KEY).await).await;
+    assert_eq!(
+        detail["dependencyStatus"]["dependencies"][0]["status"],
+        "cancelled"
+    );
+    assert_eq!(detail["dependencyStatus"]["blocking"], true);
+    assert_eq!(
+        post_json(&api, dependent_path, &BOARD_KEY, &clear).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_json(&api, dependent_path, &BOARD_KEY, &clear).await,
+        StatusCode::CONFLICT
+    );
+    let detail = json_body(get_as(&api, "/v1/tasks/dependent", &BOARD_KEY).await).await;
+    assert_eq!(detail["dependencyStatus"]["blocking"], false);
+    assert_eq!(detail["brief"]["text"], brief);
+}
+
+#[tokio::test]
+async fn prerequisite_wait_releases_once_and_preserves_reserved_run() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = controller(Arc::clone(&service));
+    let (running, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    seed_task(&service, &running).await;
+    add(&service, "prerequisite", ADMIT).await;
+    let path = "/v1/tasks/worker/commands";
+    assert_eq!(
+        post_json(
+            &api,
+            path,
+            &BOARD_KEY,
+            &json!({
+                "set_dependencies": {"version": 1, "depends_on": ["#2"]}
+            })
+        )
+        .await,
+        StatusCode::CONFLICT
+    );
+    let wait = json!({"set_prerequisite_wait":{
+        "version":1, "waits_for":["nucleus-fixture#2"], "reason":"  publish the prerequisite  "
+    }});
+    assert_eq!(
+        post_json(&api, path, &BOARD_KEY, &wait).await,
+        StatusCode::OK
+    );
+    let parked = service.task("worker").await.unwrap();
+    assert_eq!(parked.task.run(), running.run());
+    assert!(!service.reconcile_prerequisites(&parked).await.unwrap());
+    assert!(service.dependencies_blocked(&parked).await.unwrap());
+
+    // This fixture changes the prerequisite's persisted phase under the same
+    // service commit path used after a verified merge. The run under test is untouched.
+    let completed = {
+        let mut state = service.state.lock().await;
+        let prior = state.store.row("prerequisite").unwrap().unwrap();
+        let mut stored = serde_json::to_value(&prior.task).unwrap();
+        stored["phase"] = json!("done");
+        let done: Task = serde_json::from_value(stored).unwrap();
+        service
+            .commit(&mut state, &prior, &done, &event("fixture_done"), None)
+            .unwrap()
+    };
+    assert_eq!(completed, 2);
+    assert!(service.reconcile_prerequisites(&parked).await.unwrap());
+    let released = service.task("worker").await.unwrap();
+    assert_eq!(released.version, parked.version + 1);
+    assert_eq!(released.task.run(), running.run());
+    assert!(!service.reconcile_prerequisites(&released).await.unwrap());
+    let detail = json_body(get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await).await;
+    assert_eq!(detail["dependencyStatus"]["blocking"], false);
+    let wait = &detail["dependencyStatus"]["prerequisiteWait"];
+    assert_eq!(wait["reason"], "publish the prerequisite");
+    assert!(wait["releasedAtMs"].is_i64());
+    assert_eq!(wait["prerequisites"][0]["status"], "satisfied");
+    {
+        let mut state = service.state.lock().await;
+        let (version, notice) = state
+            .store
+            .pending_prerequisite_notice("worker")
+            .unwrap()
+            .unwrap();
+        assert_eq!(notice.prerequisites, ["prerequisite"]);
+        assert_eq!(notice.reason, "publish the prerequisite");
+        let intent = event("prerequisite_notice_intent");
+        assert!(
+            state
+                .store
+                .claim_prerequisite_notice("worker", version, &intent)
+                .unwrap()
+        );
+        assert!(
+            !state
+                .store
+                .claim_prerequisite_notice("worker", version, &intent)
+                .unwrap()
+        );
+        assert!(
+            state
+                .store
+                .pending_prerequisite_notice("worker")
+                .unwrap()
+                .is_none()
+        );
+    }
+    let history = service.history("worker", None, 20).await.unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event.content.kind == "prerequisite_wait_released")
+            .count(),
+        1
+    );
+}

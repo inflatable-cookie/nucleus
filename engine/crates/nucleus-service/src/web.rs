@@ -30,7 +30,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    CommandOutcome, Preflight, Service, ServiceError, State as EngineState,
+    CommandOutcome, DependencyCommand, DependencyEdits, DependencyStatus, Preflight, Service,
+    ServiceError, State as EngineState,
     acp::{MintedSession, SessionAccess, WriteAccess},
     now_ms,
     presentation::{HistoryEvent, RunView},
@@ -522,12 +523,16 @@ async fn admit(
             &scope,
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(Summary::new(&task, None))))
+    Ok((
+        StatusCode::CREATED,
+        Json(summary_after(&api.service, &task, &scope, &authority).await?),
+    ))
 }
 
 async fn list(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
+    Extension(authority): Extension<Authority>,
 ) -> Result<Json<Vec<Summary>>, ApiError> {
     api.service
         .storage
@@ -541,8 +546,8 @@ async fn list(
             .iter()
             .filter(|row| api.service.task_scope(row.task.identity()).is_ok())
             .filter(|row| scope.task(&state, row.task.identity()).is_ok())
-            .map(|row| Summary::read(row, &state))
-            .collect(),
+            .map(|row| Summary::read(row, &state, &scope, Some(&authority)))
+            .collect::<Result<_, _>>()?,
     ))
 }
 
@@ -550,12 +555,13 @@ async fn detail(
     State(api): State<Api>,
     TaskPath(id): TaskPath,
     Extension(scope): Extension<ControllerScope>,
+    authority: Option<Extension<Authority>>,
 ) -> Result<Json<Detail>, ApiError> {
     let state = api.service.state.lock().await;
     let row = api.service.lookup(&state, &id)?;
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
-    let summary = Summary::read(&row, &state);
+    let summary = Summary::read(&row, &state, &scope, authority.as_deref())?;
     let run = RunView::read(&row, state.activity.get(&id), &state.store);
     Ok(Json(Detail {
         summary,
@@ -583,7 +589,44 @@ async fn next(
     let row = api.service.lookup(&state, &id)?;
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
-    let summary = Summary::read(&row, &state);
+    let summary = Summary::read(&row, &state, &scope, Some(&authority))?;
+    let dependency_edits = summary.dependency_edits;
+    let mut commands = command_options(
+        task,
+        &authority,
+        &state.command_observation(&row),
+        &state,
+        api.service.uses_operator_inbox(),
+    );
+    for (name, available) in [
+        ("set_dependencies", dependency_edits.set_dependencies),
+        (
+            "set_prerequisite_wait",
+            dependency_edits.set_prerequisite_wait,
+        ),
+    ] {
+        commands.push(CommandView {
+            name,
+            preflight: if available {
+                CommandReadiness::Ready
+            } else {
+                CommandReadiness::Unavailable
+            },
+            phase: None,
+        });
+    }
+    if summary.dependency_status.blocking {
+        for command in &mut commands {
+            if command.name == "complete"
+                || matches!(
+                    command.phase,
+                    Some(Phase::Merging | Phase::Closing | Phase::Done)
+                )
+            {
+                command.preflight = CommandReadiness::Unavailable;
+            }
+        }
+    }
     Ok(Json(NextView {
         version: row.version,
         phase: summary.phase,
@@ -594,13 +637,9 @@ async fn next(
             .store
             .critical_review_fallbacks(&id)
             .map_err(ServiceError::from)?,
-        commands: command_options(
-            task,
-            &authority,
-            &state.command_observation(&row),
-            &state,
-            api.service.uses_operator_inbox(),
-        ),
+        dependency_status: summary.dependency_status,
+        dependency_edits,
+        commands,
     }))
 }
 
@@ -693,21 +732,37 @@ fn command_options(
         .collect()
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TaskCommand {
+    Lifecycle(Command),
+    Dependency(DependencyCommand),
+}
+
 async fn command(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
     TaskPath(id): TaskPath,
     session: Option<Extension<WriteAccess>>,
-    input: Result<Json<Command>, JsonRejection>,
+    input: Result<Json<TaskCommand>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let command = body(input)?;
-    let outcome = api
-        .service
-        .command_with_session(&id, &authority, command, session.as_deref(), &scope)
-        .await?;
+    let outcome = match body(input)? {
+        TaskCommand::Lifecycle(command) => {
+            api.service
+                .command_with_session(&id, &authority, command, session.as_deref(), &scope)
+                .await?
+        }
+        TaskCommand::Dependency(command) => CommandOutcome::Applied(Box::new(
+            api.service
+                .command_dependencies_in_scope(&id, &authority, command, session.as_deref(), &scope)
+                .await?,
+        )),
+    };
     match outcome {
-        CommandOutcome::Applied(row) => Ok(Json(Summary::new(&row, None)).into_response()),
+        CommandOutcome::Applied(row) => {
+            Ok(Json(summary_after(&api.service, &row, &scope, &authority).await?).into_response())
+        }
         CommandOutcome::Pending { version } => Ok((
             StatusCode::ACCEPTED,
             Json(json!({"status": "pending", "version": version})),
@@ -836,6 +891,18 @@ fn invalidation_events(
     )
 }
 
+async fn summary_after(
+    service: &Service,
+    row: &nucleus_store::TaskRow,
+    scope: &ControllerScope,
+    authority: &Authority,
+) -> Result<Summary, ServiceError> {
+    let state = service.state.lock().await;
+    let row = service.lookup(&state, &row.task.identity().id)?;
+    scope.task(&state, row.task.identity())?;
+    Summary::read(&row, &state, scope, Some(authority))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Summary {
@@ -849,25 +916,28 @@ struct Summary {
     next_check_at: Option<u64>,
     question: Option<Question>,
     hold: Option<Hold>,
+    dependency_status: DependencyStatus,
+    dependency_edits: DependencyEdits,
 }
 
 impl Summary {
-    fn read(row: &nucleus_store::TaskRow, state: &EngineState) -> Self {
+    fn read(
+        row: &nucleus_store::TaskRow,
+        state: &EngineState,
+        scope: &ControllerScope,
+        authority: Option<&Authority>,
+    ) -> Result<Self, ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        let mut view = Self::new(row, state.waits.get(id).map(|(reason, _)| *reason));
-        if view.wait.is_some() && task.operator_decline().is_none() {
-            view.next_check_at = state.schedule.due(id).map(|due| {
-                let delay = due.saturating_duration_since(tokio::time::Instant::now());
-                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
-            });
-        }
-        view
-    }
-
-    fn new(row: &nucleus_store::TaskRow, wait: Option<WaitReason>) -> Self {
-        let task = &row.task;
-        Self {
+        let dependency_status = DependencyStatus::read(state, row, scope)?;
+        let dependency_edits = DependencyEdits::read(state, task, authority, &dependency_status);
+        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let wait = if dependency_status.blocking && task.run().is_none() {
+            Some(WaitReason::Prerequisite)
+        } else {
+            wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
+        };
+        let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
             number: row.number,
@@ -890,7 +960,16 @@ impl Summary {
             },
             question: task.question().cloned(),
             hold: task.hold().cloned(),
+            dependency_status,
+            dependency_edits,
+        };
+        if view.wait.is_some() && task.operator_decline().is_none() {
+            view.next_check_at = state.schedule.due(id).map(|due| {
+                let delay = due.saturating_duration_since(tokio::time::Instant::now());
+                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
+            });
         }
+        Ok(view)
     }
 }
 
@@ -946,6 +1025,8 @@ struct NextView {
     question: Option<Question>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
+    dependency_status: DependencyStatus,
+    dependency_edits: DependencyEdits,
     commands: Vec<CommandView>,
 }
 
@@ -1021,6 +1102,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::ComplexityRequired
                     | ServiceError::LeadComplexity
                     | ServiceError::BriefPolicy(_)
+                    | ServiceError::DependencyInput(_)
                     | ServiceError::TaskReferenceAmbiguous
                     | ServiceError::TaskReferenceNeedsRepository
                     | ServiceError::Store(nucleus_store::StoreError::PlanningInput)
@@ -1049,8 +1131,10 @@ impl IntoResponse for ApiError {
                     | ServiceError::EffectInProgress
                     | ServiceError::ReportOpenPullRequest
                     | ServiceError::ReportWorkerBusy
+                    | ServiceError::DependencyEdit(_)
                     | ServiceError::Store(
                         nucleus_store::StoreError::StaleTask
+                        | nucleus_store::StoreError::DependencyCycle
                         | nucleus_store::StoreError::NumbersNeedSeed
                         | nucleus_store::StoreError::PlanningConflict,
                     ) => StatusCode::CONFLICT,

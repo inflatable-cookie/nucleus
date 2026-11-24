@@ -1,6 +1,7 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod barge;
+mod dependencies;
 mod inbox;
 mod numbers;
 pub mod planning;
@@ -20,6 +21,7 @@ use rusqlite::{
 };
 use serde_json::{Value, json};
 
+pub use dependencies::{Dependencies, DependencyEdit, PrerequisiteRelease, PrerequisiteWait};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
 pub use settings::{
@@ -70,6 +72,8 @@ pub enum StoreError {
     IdentityChanged,
     #[error("task changed since it was read")]
     StaleTask,
+    #[error("dependency change would create a cycle")]
+    DependencyCycle,
     #[error("planning record was not found")]
     PlanningMissing,
     #[error("planning input is invalid")]
@@ -148,6 +152,13 @@ pub struct AcpSession {
 pub enum ThreadProvenance {
     Dispatcher,
     TaskRole,
+}
+
+/// Durable inputs resolved by service admission and committed with the task.
+#[derive(Default)]
+pub struct TaskAdmissionFacts<'a> {
+    pub prerequisites: &'a [String],
+    pub usage_permission: Option<planning::UsagePermission<'a>>,
 }
 
 pub struct Store {
@@ -254,6 +265,7 @@ impl Store {
         tx.execute(titles::INBOX_SCHEMA, [])?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
+        tx.execute_batch(dependencies::SCHEMA)?;
         Ok(())
     }
 
@@ -308,6 +320,18 @@ impl Store {
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
              AND id > ?2
              UNION SELECT task_id FROM inbox_bindings WHERE task_id > ?2
+             UNION SELECT task_id FROM task_prerequisite_notices
+               WHERE task_id > ?2 AND attempted_at_ms IS NULL
+             UNION SELECT w.task_id FROM task_prerequisite_waits w
+               JOIN tasks t ON t.id = w.task_id
+               WHERE w.task_id > ?2 AND w.released_at_ms IS NULL
+                 AND t.phase NOT IN ('done','cancelled')
+                 AND NOT EXISTS (
+                    SELECT 1 FROM task_dependencies d
+                    LEFT JOIN tasks p ON p.id = d.prerequisite_id
+                    WHERE d.task_id = w.task_id AND d.after_dispatch = 1
+                      AND coalesce(p.phase, '') != 'done'
+                 )
              ORDER BY id LIMIT ?1",
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| row.get(0))?;
@@ -465,23 +489,23 @@ impl Store {
     /// # Errors
     /// Returns an error on duplicate identity, invalid state, or database failure.
     pub fn create(&mut self, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
-        self.create_with_permission(task, event, None)
+        self.create_with_facts(task, event, TaskAdmissionFacts::default())
     }
 
-    /// Create the task and its optional Low usage decision in the same transaction.
+    /// Admit a task with its prerequisites and any Low usage decision together.
     ///
     /// # Errors
-    /// Returns the same conflicts and write errors as [`Self::create`].
-    pub fn create_with_permission(
+    /// Returns an error if any part of admission cannot commit.
+    pub fn create_with_facts(
         &mut self,
         task: &Task,
         event: &EventDraft,
-        permission: Option<planning::UsagePermission<'_>>,
+        facts: TaskAdmissionFacts<'_>,
     ) -> Result<i64, StoreError> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let number = admit(&tx, task, event, permission)?;
+        let number = admit(&tx, task, event, facts)?;
         tx.commit()?;
         Ok(number)
     }
@@ -496,7 +520,21 @@ impl Store {
         task: &Task,
         event: &EventDraft,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None)
+        self.save(expected, task, event, None, None)
+    }
+
+    /// Amend a queued brief and replace its resolved dependency list together.
+    ///
+    /// # Errors
+    /// Returns an error on a stale row, invalid dependency or transaction failure.
+    pub fn save_brief_with_dependencies(
+        &mut self,
+        expected: &TaskRow,
+        task: &Task,
+        event: &EventDraft,
+        prerequisites: &[String],
+    ) -> Result<i64, StoreError> {
+        self.save(expected, task, event, None, Some(prerequisites))
     }
 
     /// Commit a newly frozen profiled launch and charge its subscription group.
@@ -512,7 +550,7 @@ impl Store {
         event: &EventDraft,
         group: &str,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, Some(group))
+        self.save(expected, task, event, Some(group), None)
     }
 
     /// Read Spec 053 counts for one candidate from the local engine database.
@@ -568,6 +606,7 @@ impl Store {
         task: &Task,
         event: &EventDraft,
         group: Option<&str>,
+        prerequisites: Option<&[String]>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
@@ -580,6 +619,9 @@ impl Store {
             return Err(StoreError::StaleTask);
         }
         persist(&tx, task, true)?;
+        if let Some(prerequisites) = prerequisites {
+            dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
+        }
         if task.phase() == Phase::Done {
             tx.execute(
                 "UPDATE acp_sessions SET writer = NULL WHERE task_id = ?1",
@@ -770,14 +812,17 @@ fn admit(
     tx: &Transaction<'_>,
     task: &Task,
     event: &EventDraft,
-    permission: Option<planning::UsagePermission<'_>>,
+    facts: TaskAdmissionFacts<'_>,
 ) -> Result<i64, StoreError> {
     let identity = task.identity();
     let number = numbers::reserve(tx, identity)?;
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
-    if let Some(permission) = permission {
+    if !facts.prerequisites.is_empty() {
+        dependencies::initial_edges(tx, &identity.id, facts.prerequisites)?;
+    }
+    if let Some(permission) = facts.usage_permission {
         let reference = numbers::reference(&identity.repository, number);
         planning::decisions::insert_usage_permission(tx, &identity.id, &reference, permission)?;
     }

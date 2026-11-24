@@ -10,7 +10,7 @@ use nucleus_core::Task;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{EventDraft, Store, StoreError, admit, decode_error};
+use crate::{EventDraft, Store, StoreError, TaskAdmissionFacts, admit, decode_error};
 
 pub use decisions::{USAGE_APPROVE, UsagePermission};
 pub use model::*;
@@ -270,21 +270,28 @@ impl Store {
         event: &EventDraft,
         stamp: WriteAt<'_>,
     ) -> Result<(Item, i64), StoreError> {
-        self.promote_item_with_permission(source, &task.brief().text, task, event, stamp, None)
+        self.promote_item_with_facts(
+            source,
+            &task.brief().text,
+            task,
+            event,
+            stamp,
+            TaskAdmissionFacts::default(),
+        )
     }
 
-    /// Promote the item, including any required Low usage permission, in one transaction.
+    /// Promote the item, including its prerequisites and any required Low usage permission, in one transaction.
     ///
     /// # Errors
     /// Returns the same conflicts and write errors as [`Self::promote_item`].
-    pub fn promote_item_with_permission(
+    pub fn promote_item_with_facts(
         &mut self,
         source: &ItemSource,
         expected_body: &str,
         task: &Task,
         event: &EventDraft,
         stamp: WriteAt<'_>,
-        permission: Option<UsagePermission<'_>>,
+        facts: TaskAdmissionFacts<'_>,
     ) -> Result<(Item, i64), StoreError> {
         let tx = self.planning_write()?;
         let ItemSource {
@@ -297,7 +304,7 @@ impl Store {
         {
             return Err(StoreError::PlanningConflict);
         }
-        let number = admit(&tx, task, event, permission)?;
+        let number = admit(&tx, task, event, facts)?;
         link_task(&tx, source, &task.identity().id)?;
         item.state = ItemState::Promoted {
             task_id: task.identity().id.clone(),

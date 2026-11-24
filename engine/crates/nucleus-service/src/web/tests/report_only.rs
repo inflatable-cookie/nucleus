@@ -529,6 +529,7 @@ impl ReportFixture {
             discovered_skill: None,
             model: "fixture",
             lanes: &[],
+            dependencies: &crate::DependencyStatus::default(),
             command: std::path::Path::new("/engine"),
             ticket: std::path::Path::new("/scratch/ticket"),
         }

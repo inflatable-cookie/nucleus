@@ -198,6 +198,7 @@ Later decisions carry their own attribution.
 |---|---|
 | `id`, `reference`, `repository`, `base`, `entry`, `origin_thread` | Internal identity fixed at admission. Entry is `brief` or `review_entry`. The submitting or promoting thread is the origin when the caller has one. |
 | Task number | Per-repository counter allocated with admission. API task views expose `number` and the public `reference` separately from the immutable identity. |
+| Prerequisites | Resolved task IDs for first dispatch, plus an optional post-dispatch wait with its reason and release time. Task edits and wait release commit with the row version and audit event. |
 | `brief` | The brief text, its version and digest. |
 | `phase` | `queued`, `working`, `reviewing`, `merging`, `closing`, `done` or `cancelled`. Report-only tasks also use `report_ready`, `blocked` and `error`. |
 | `threads` | Retained worker and reviewer thread IDs, their canonical profile bindings and a monotonic launch sequence. Reuse each role's thread when it is idle and can run the next assignment. Replace a thread only when the host confirms it is gone or the role's profile changes. A profile change starts a fresh child (ruling 9), and an unknown read never replaces a thread. The worker binding records which applied review launch authorized its most recent climb. |
@@ -281,6 +282,31 @@ Every action is idempotent:
 - **A task needs a person only when the question is about the work itself.**
 
 ### Commands
+
+`queue.dependsOn` resolves on admission, promotion and eligible brief amendments.
+Use a task ID, `owner/repo#N`, `repo#N` or `#N` in the target task's repository.
+The engine stores task IDs. Before dispatch an authorized planner or operator
+can replace the list with `nucleus engine set-dependencies <task> --version <n>
+[<prerequisite> ...]`. An empty list clears it. A self-reference, an ambiguous
+reference or a dependency cycle refuses the write.
+
+After dispatch, use `nucleus engine set-prerequisite-wait <task> --version <n>
+--reason <text> [<prerequisite> ...]` to park subsequent work before merge.
+An empty list clears the wait. The current run keeps its binding and can settle.
+An already-open wait stays editable if review settles into the merging phase
+while the merge is still fenced by the wait. A prerequisite satisfies the gate
+when it reaches `done`. A cancelled or missing prerequisite needs an owner edit.
+The final prerequisite's phase change wakes its dependents. Release records an
+informational planner notice and returns the task to ordinary scheduling, where
+the existing run, question, hold and exact-head rules still apply. The scheduler
+records the native notice attempt before sending it so an unknown delivery
+cannot trigger a resend.
+
+Task cards, details and `next` return `dependencyStatus` and caller-specific
+`dependencyEdits` from local state. The scheduler uses the same recorded edges
+for first dispatch and open waits. Native assignments carry the recorded
+prerequisite references and any released wait as context.
+
 
 | Command | Effect |
 |---|---|

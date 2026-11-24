@@ -1,0 +1,1 @@
+Rust tasks now resolve prerequisites at admission and let owners edit dependencies or set a post-dispatch prerequisite wait. Task views show what is blocking, and dependents wake when their prerequisites finish.
