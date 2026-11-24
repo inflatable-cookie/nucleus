@@ -77,7 +77,7 @@ async fn cancelled_inbox_turn_cannot_drain_into_the_next_ui() {
     service
         .host
         .fixture_held_shell(&json!({"kind":"thread.updated","sequence":1,
-        "thread":{"id":INBOX_THREAD,"activeRunId":"next"}}));
+        "thread":{"id":INBOX_THREAD,"activeRunId":"next","pinnedAt":"2026-11-24T00:00:00Z"}}));
     assert!(
         !service
             .inbox_snapshot(&inbox.credential)
@@ -125,9 +125,13 @@ fn observe_inbox_turn(service: &Service, inbox: &NativeInbox, run: &str) {
         .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
         "projects":[],"threads":[{"id":INBOX_THREAD,"activeRunId":run,"pinnedAt":"2026-11-24T00:00:00Z"}]
         }}));
+    observe_pinned_inbox(inbox, Some(run));
+}
+
+fn observe_pinned_inbox(inbox: &NativeInbox, run: Option<&str>) {
     inbox.set_observation(Observation::Pinned {
         forms: BTreeSet::new(),
-        active_run: Some(run.into()),
+        active_run: run.map(str::to_owned),
     });
 }
 
@@ -171,6 +175,11 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
         provider: PROVIDER,
     };
     let reconcile = || service.reconcile_inbox(inbox, &target);
+    let take_replies = || {
+        service
+            .take_inbox_replies(&inbox.credential, Some("turn"))
+            .unwrap()
+    };
 
     reconcile().await.unwrap();
     assert!(trace.lock().unwrap().calls.is_empty());
@@ -185,21 +194,14 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
         reconcile().await.unwrap();
         assert_eq!(trace.lock().unwrap().links.len(), 1);
     }
-    assert!(
-        service
-            .take_inbox_replies(&inbox.credential, Some("turn"))
-            .unwrap()
-            .is_empty()
-    );
+    assert!(take_replies().is_empty());
 
     message.store(1, Ordering::Relaxed);
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 2);
     assert!(
-        service
-            .take_inbox_replies(&inbox.credential, Some("turn"))
-            .unwrap()
+        take_replies()
             == [format!(
                 "Could not open the board (preview.open: missing preview:operate scope). Please type ui again to retry.\nBoard at {board_url}"
             )],
@@ -212,12 +214,7 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
     reconcile().await.unwrap();
     reconcile().await.unwrap();
     assert_eq!(trace.lock().unwrap().links.len(), 3);
-    assert!(
-        service
-            .take_inbox_replies(&inbox.credential, Some("turn"))
-            .unwrap()
-            .is_empty()
-    );
+    assert!(take_replies().is_empty());
 
     inbox.host_stream_ended(Ok(()));
     inbox.host_synchronized("replacement runtime".into());
@@ -235,12 +232,7 @@ async fn preview_opens_once_per_connection_and_each_claimed_ui_has_one_attempt()
         trace.calls,
         ["list", "close-success", "close-failed", "open"].repeat(5)
     );
-    assert_eq!(
-        service
-            .take_inbox_replies(&inbox.credential, Some("turn"))
-            .unwrap(),
-        [format!("Board at {board_url}")]
-    );
+    assert_eq!(take_replies(), [format!("Board at {board_url}")]);
     server.abort();
 }
 
@@ -345,10 +337,7 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
-    inbox.set_observation(Observation::Pinned {
-        forms: BTreeSet::new(),
-        active_run: None,
-    });
+    observe_pinned_inbox(inbox, None);
     let planner = Authority::Planner {
         actor: "planner".into(),
     };
@@ -513,10 +502,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
             .await
             .unwrap();
     }
-    inbox.set_observation(Observation::Pinned {
-        forms: BTreeSet::new(),
-        active_run: None,
-    });
+    observe_pinned_inbox(inbox, None);
     let snapshot = service.inbox_snapshot(&inbox.credential).await.unwrap();
     let offered: Vec<_> = snapshot
         .pending
