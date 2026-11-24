@@ -2246,6 +2246,14 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     let first = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
     assert_eq!(first.status(), StatusCode::OK);
     let receipt = json_body(first).await;
+    let original = &snapshot.value.projects[id].repositories[0];
+    assert_eq!(
+        receipt,
+        json!({
+            "repositories":[{"origin":original.origin,"path":original.path}],
+            "removedAtMs":receipt["removedAtMs"].as_u64().expect("durable removal time"),
+        })
+    );
 
     {
         let state = registry.service.state.lock().await;

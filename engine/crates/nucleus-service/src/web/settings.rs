@@ -592,11 +592,14 @@ pub(super) async fn remove_project(
                 .remove_project(&service.settings, &project, &digest, reason, removed_at_ms);
         match result {
             Ok((saved, removed)) => {
-                state.settings.projects = Some(saved.value);
-                service.project_settings_changed(&mut state);
-                Ok(Json(
-                    json!({"project": removed, "removedAtMs": removed_at_ms}),
-                ))
+                if state.settings.projects.as_ref() != Some(&saved.value) {
+                    state.settings.projects = Some(saved.value);
+                    service.project_settings_changed(&mut state);
+                }
+                Ok(Json(json!({
+                    "repositories": removed.repositories,
+                    "removedAtMs": removed.removed_at_ms,
+                })))
             }
             Err(error) => {
                 // A publication error or failed SQLite commit can leave a durable tombstone.

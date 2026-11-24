@@ -734,6 +734,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let resetAt: number | undefined;
   let decisionOpen = true;
   let projectArchived = false;
+  let projectRemoved = false;
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
   const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
@@ -765,6 +766,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closeStream: (() => void) | undefined;
   const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
+  const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
+    { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+    { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
+      hostProject: "fixture-bound", hostProjectTitle: boundTitle },
+  ] });
   const views = {
     profiles: () => snap({
       profiles: [{
@@ -775,11 +781,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }, "profiles-1"),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
-      settings: snap({ projects: { fixture: { name: "Fixture project", archived: projectArchived, repositories: [
-        { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
-        { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
-          hostProject: "fixture-bound", hostProjectTitle: boundTitle },
-      ] } } }, "projects-1"),
+      settings: snap({ projects: projectRemoved ? {} : { fixture: fixtureProject() } },
+        projectRemoved ? "projects-removed" : "projects-1"),
       resolvedPlanners: { fixture: "fixture-planner" },
     }),
     hosts: () => ({ settings: snap({ t3: null }, "hosts-1"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
@@ -873,6 +876,21 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         return Response.json({ ...card, commands: [] });
       assert.equal(path, "/api/engine/tasks");
       return Response.json([card, held]);
+    }
+    if (path === "/api/engine/settings/projects/fixture/removal") {
+      assert.ok(operator);
+      const project = fixtureProject();
+      if (init?.method !== "POST") {
+        return Response.json({ project, digest: "confirmed-project-revision", tasks: [] });
+      }
+      const body = JSON.parse(String(init.body));
+      assert.deepEqual(body, { digest: "confirmed-project-revision", reason: "Fixture retired" });
+      writes.push({ path, body });
+      projectRemoved = true;
+      return Response.json({
+        repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
+        removedAtMs: now,
+      });
     }
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
@@ -1298,5 +1316,26 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(selector("Fixture worker: On")?.getAttribute("aria-disabled"), "true");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
   assert.equal(planningReads().length, afterProjectSettings);
+
+  operator = true;
+  emit("refresh");
+  await eventually(() => Boolean(selector("Disable Fixture worker")), "the operator session is restored");
+  await click("Back to board");
+  await click("Projects, All projects");
+  await click("Project actions for Fixture project");
+  await click("Remove Fixture project from Nucleus");
+  await eventually(() => Boolean(selector("Remove Fixture project dialog")) && text().includes("No open work"),
+    "the shared dialog parsed the native preview");
+  const reason = selector("Reason") as HTMLInputElement;
+  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(reason, "Fixture retired");
+  reason.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  await click("Delete project");
+  assert.equal(projectRemoved, false, "a preview and the first click do not delete");
+  await click("Delete project Fixture project");
+  await eventually(() => projectRemoved && !selector("Remove Fixture project dialog"),
+    "the board parsed the durable removal receipt and closed the dialog");
+  assert.equal(writes.filter(({ path }) => path.endsWith("/removal")).length, 1);
+  await click("Projects, All projects");
+  await eventually(() => !projectRow(), "the removed project is absent from the selector");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });
