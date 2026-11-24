@@ -7,6 +7,7 @@ import type {
   AcpPendingCard,
   AcpSessionSurface,
 } from "../../shared/acp/surface";
+import { rustInboxDecisionId } from "../../shared/rust-inbox";
 import type { Projection, T3Reads } from "./reads";
 import { activeStatuses } from "./reads";
 
@@ -96,9 +97,11 @@ export class T3DecisionCards {
       if (item.questions?.length !== 1) continue;
       const question = item.questions[0];
       if (!question) continue;
-      const match = /^nucleus_([0-9a-f-]{36})_(\d+)$/i.exec(question.id);
+      const match = /^nucleus_(.+)_(\d+)$/.exec(question.id);
       if (!match) continue;
       const id = match[1]!;
+      if (!/^[0-9a-f-]{36}$/i.test(id) && !rustInboxDecisionId.safeParse(id).success)
+        continue;
       const version = Number(match[2]!);
       const decision = settlement(id, version, scope);
       const stale =

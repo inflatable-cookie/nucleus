@@ -167,6 +167,27 @@ test("the Rust bridge accepts one dedicated key and fences withdrawal before an 
   assert.deepEqual(await (await post(stale, key)).json(), {
     state: "withdrawn",
   });
+  const moving = { ...input, id: "rust-inbox:test-engine:greeter:4" };
+  await post(moving, key);
+  const handoff = { ...moving, operation: "handoff" };
+  assert.deepEqual(await (await post(handoff, key)).json(), {
+    state: "withdrawn",
+  });
+  assert.throws(
+    () => decisions.answer({ ...answer, id: moving.id }, { trustedT3: true }),
+    /changed to version|withdrawn/i,
+  );
+  assert.deepEqual(await (await post(moving, key)).json(), {
+    state: "withdrawn",
+  });
+  assert.deepEqual(await (await post({ ...input, operation: "handoff" }, key)).json(), {
+    state: "accepted",
+    actor: answer.answeredBy,
+    reason: answer.note,
+  });
+  assert.deepEqual(await (await post({ ...declined, operation: "handoff" }, key)).json(), {
+    state: "declined",
+  });
   assert.deepEqual(decisions.list({ status: "open" }), []);
   await board.close();
   assert.equal(bridge.authorization(`Bearer ${key}`), false);

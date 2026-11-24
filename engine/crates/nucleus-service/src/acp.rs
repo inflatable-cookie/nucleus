@@ -8,11 +8,11 @@ use std::{
 use crate::{Service, ServiceError, State};
 use nucleus_core::{
     Authority, Phase,
-    acp::{Binding, session_id},
+    acp::{Binding, InboxBinding, session_id},
 };
 use nucleus_store::AcpSession;
 use rustix::fs::{Mode, OFlags, open};
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -87,7 +87,7 @@ impl Service {
         let _ = self.lookup(&state, task)?;
         let (session_id, binding_path, scratch_dir) = self.acp_paths(checkout)?;
         if let Some(verifier) = state.store.acp_session(task)?
-            && let Some(mut binding) = existing_binding(&binding_path)?
+            && let Some(mut binding) = existing_binding::<Binding>(&binding_path)?
         {
             if binding.task_id != task
                 || binding.session_id != session_id
@@ -128,6 +128,12 @@ impl Service {
             return Err(ServiceError::AcpBinding);
         }
         root.ensure_child(&relative_scratch)?;
+        let binding_path = self.acp_binding_path(&session_id)?;
+        Ok((session_id, binding_path, scratch))
+    }
+
+    fn acp_binding_path(&self, session_id: &str) -> Result<PathBuf, ServiceError> {
+        let root = self.storage.database();
         root.ensure_child(Path::new(BINDINGS))?;
         let directory = root.path().join(BINDINGS);
         if !symlink_metadata(&directory).is_ok_and(|metadata| {
@@ -135,8 +141,30 @@ impl Service {
         }) {
             return Err(ServiceError::AcpBinding);
         }
-        let binding_path = directory.join(format!("{session_id}.json"));
-        Ok((session_id, binding_path, scratch))
+        Ok(directory.join(format!("{session_id}.json")))
+    }
+
+    pub(super) fn ensure_inbox_binding(&self, directory: &Path) -> Result<[u8; 32], ServiceError> {
+        let session_id = session_id(directory);
+        let path = self.acp_binding_path(&session_id)?;
+        let key = match existing_binding::<InboxBinding>(&path)? {
+            Some(binding) if binding.session_id == session_id => {
+                if binding.endpoint == self.callback {
+                    return Ok(binding.inbox_credential);
+                }
+                binding.inbox_credential
+            }
+            Some(_) => return Err(ServiceError::AcpBinding),
+            None => random_key()?,
+        };
+        let binding = InboxBinding {
+            session_id,
+            endpoint: self.callback,
+            inbox_credential: key,
+        };
+        let (file, directory) = prepare_binding(&path, &binding)?;
+        publish_binding(file, &path, directory)?;
+        Ok(key)
     }
 
     pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> bool {
@@ -159,7 +187,7 @@ impl Service {
     }
 }
 
-fn existing_binding(path: &Path) -> Result<Option<Binding>, ServiceError> {
+fn existing_binding<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ServiceError> {
     let file = match open(
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
@@ -187,11 +215,7 @@ fn write_binding(
     binding: &Binding,
     controller: Option<[u8; 32]>,
 ) -> Result<(), ServiceError> {
-    let directory = path.parent().ok_or(ServiceError::AcpBinding)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    serde_json::to_writer(temporary.as_file_mut(), binding)
-        .map_err(|_| ServiceError::AcpBinding)?;
-    temporary.as_file().sync_all()?;
+    let (temporary, directory) = prepare_binding(path, binding)?;
     if let Some(controller) = controller {
         // Rebinding revokes old credentials even if writing the pointer is interrupted.
         state.store.bind_acp(
@@ -203,6 +227,26 @@ fn write_binding(
             },
         )?;
     }
+    publish_binding(temporary, path, directory)
+}
+
+fn prepare_binding<'a>(
+    path: &'a Path,
+    binding: &impl Serialize,
+) -> Result<(tempfile::NamedTempFile, &'a Path), ServiceError> {
+    let directory = path.parent().ok_or(ServiceError::AcpBinding)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    serde_json::to_writer(temporary.as_file_mut(), binding)
+        .map_err(|_| ServiceError::AcpBinding)?;
+    temporary.as_file().sync_all()?;
+    Ok((temporary, directory))
+}
+
+fn publish_binding(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+    directory: &Path,
+) -> Result<(), ServiceError> {
     temporary
         .persist(path)
         .map_err(|_| ServiceError::AcpBinding)?;

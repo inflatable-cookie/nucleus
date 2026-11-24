@@ -34,6 +34,7 @@ use crate::{
 };
 
 mod board;
+mod inbox;
 mod planning;
 mod settings;
 pub use board::router_with_board;
@@ -109,6 +110,7 @@ fn routes(
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
     let mut routes = controller
         .merge(tasks)
+        .merge(inbox::routes())
         .route("/v1/runs/{task}/{instance}/report", post(report));
     if let Some(board) = board {
         routes = routes.merge(board.routes(&api));
@@ -299,6 +301,7 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     Ok(Json(Detail {
         summary,
         brief: task.brief().clone(),
+        operator_inbox: api.service.uses_operator_inbox(),
         source: state.store.task_source(&id).map_err(ServiceError::from)?,
         pull_request: task.pull_request().cloned(),
         verdict: task.verdict().cloned(),
@@ -326,7 +329,7 @@ async fn next(
             &authority,
             &state.command_observation(&row),
             &state,
-            api.service.inbox.is_some(),
+            api.service.uses_operator_inbox(),
         ),
     }))
 }
@@ -336,7 +339,7 @@ fn command_options(
     authority: &Authority,
     observation: &Observation,
     state: &EngineState,
-    bridged: bool,
+    inbox_enabled: bool,
 ) -> Vec<CommandView> {
     let mut commands = vec![
         ("cancel", Command::Cancel),
@@ -349,7 +352,7 @@ fn command_options(
     ];
     if let Some(question) = task.question()
         && task.operator_decline().is_none()
-        && !(bridged && task.operator_question().is_some())
+        && !(inbox_enabled && task.operator_question().is_some())
     {
         let answer = match question {
             Question::Work { .. } | Question::Repair(_) => Answer::Work(String::new()),
@@ -561,6 +564,7 @@ struct Detail {
     #[serde(flatten)]
     summary: Summary,
     brief: Brief,
+    operator_inbox: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<nucleus_store::planning::ItemSource>,
     pull_request: Option<PullRequest>,

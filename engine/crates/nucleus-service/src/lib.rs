@@ -2,6 +2,7 @@
 
 mod acp;
 mod inbox;
+mod native_inbox;
 mod pass;
 mod planning;
 mod presentation;
@@ -44,6 +45,7 @@ use tokio::{
     time::Instant,
 };
 
+pub use native_inbox::native_inbox_directory;
 pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
 pub use web::{Controller, router, router_with_board};
@@ -106,6 +108,7 @@ pub struct Service {
     host: T3,
     forge: GitHub,
     inbox: Option<inbox::Inbox>,
+    native_inbox: Option<native_inbox::NativeInbox>,
     callback: SocketAddr,
     report_command: PathBuf,
     state: Mutex<State>,
@@ -204,6 +207,7 @@ impl Service {
             host,
             forge,
             inbox: None,
+            native_inbox: None,
             callback,
             report_command,
             state: Mutex::new(State {
@@ -389,7 +393,8 @@ impl Service {
         tokio::join!(
             self.watch_thread_hints(),
             Box::pin(self.watch_planner_authority()),
-            Box::pin(self.watch_titles())
+            Box::pin(self.watch_titles()),
+            Box::pin(self.watch_inbox())
         );
     }
 
@@ -401,13 +406,21 @@ impl Service {
                 .acp_provider
                 .as_deref()
                 .map(|provider| (self.project.host_project.as_str(), provider));
-            let watch = self.host.watch_threads(&sender, titles);
+            let inbox = self.native_inbox.as_ref();
+            let watch = self.host.watch_threads(
+                &sender,
+                titles,
+                inbox.map(|_| nucleus_hosts::INBOX_THREAD),
+            );
             tokio::pin!(watch);
             loop {
                 tokio::select! {
                     _ = &mut watch => break,
                     Some(hint) = hints.recv() => self.wake_from_host(hint).await,
                 }
+            }
+            if let Some(inbox) = inbox {
+                inbox.unobserved();
             }
             {
                 let mut state = self.state.lock().await;
@@ -429,6 +442,11 @@ impl Service {
     }
 
     async fn wake_from_host(&self, hint: ThreadHint) {
+        if let Some(inbox) = &self.native_inbox
+            && inbox.matches_thread(&hint.thread)
+        {
+            inbox.wake();
+        }
         let mut state = self.state.lock().await;
         self.set_cached_host(&mut state, web::CachedHost::Reachable);
         let authorities = state.planner_authority.len();
@@ -654,7 +672,7 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
-        if self.inbox.is_some()
+        if self.uses_operator_inbox()
             && prior.task.operator_question().is_some()
             && matches!(&command, Command::Answer(_))
         {
@@ -818,6 +836,7 @@ impl Service {
                 .save_profile_launch(prior, task, &audit, group)?,
             None => state.store.save_row(prior, task, &audit)?,
         };
+        self.retire_native_decision(state, prior);
         self.track(state, task);
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);

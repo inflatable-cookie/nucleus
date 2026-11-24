@@ -109,7 +109,15 @@ Later decisions carry their own attribution.
 18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
     - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
-    - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust inbox session replaces the TypeScript Inbox as the one pinned thread.
+    - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust
+      Inbox session replaces the TypeScript Inbox as the one pinned thread. The
+      planner retires the TypeScript Inbox manually after global no-new-work is on
+      and its decisions have drained. Native install checks the legacy pin.
+      Each active Rust bridge version moves through a single TypeScript
+      transaction. A recorded answer goes to the scheduler for exact-head preflight.
+      An unanswered version is withdrawn before it can appear in the Rust Inbox.
+      An unconfirmed handoff stays fenced. Milestone 4 deletes the TypeScript
+      bridge when the old engine is removed.
 
 19. **Configurable storage; an external volume is opt-in.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD", then "An external drive shouldn't be a requirement - most people won't want that. It should be opt-in, default to sensible internal drive locations".
     - Every path the engine writes is configurable in the Storage domain. That covers the database, Longhorn config and its backups, worktrees, scratch (including ACP session scratch and run tickets), logs, and temp files for every process the engine spawns (`TMPDIR`, `TMP` and `TEMP` point at scratch).
@@ -270,7 +278,7 @@ A Cargo workspace inside this repository, at `engine/`:
 | `nucleus-hosts` | The host trait and the T3 adapter. No BB or Paseo adapters (ruling 5). |
 | `nucleus-forge` | GitHub: the PR, checks, merge at the exact head, and reviews. |
 | `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
-| `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands. A thin client of the service (ruling 6). |
+| `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands, and a host-scoped Inbox session offering native forms. A thin client of the service (rulings 6 and 18). |
 | `nucleus-service` | The pass loop, the JSON API for the board and the ACP agent, and callbacks. |
 | `nucleus-cli` | The single `nucleus` binary: `serve`, `acp`, `ensure` and the CLI verbs (ruling 20). |
 

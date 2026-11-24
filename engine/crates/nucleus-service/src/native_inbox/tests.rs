@@ -1,0 +1,293 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
+use nucleus_forge::GitHub;
+use nucleus_hosts::{InboxLifecycle, InboxStatus};
+use nucleus_store::{ProjectSettings, Projects};
+use serde_json::{Value, json};
+
+use super::*;
+use crate::tests::{fixture, native_fixture};
+
+const LEGACY: &str = "thread:legacy-fixture";
+const PROJECT: &str = "project:nucleus-rust-inbox";
+const PROVIDER: &str = "fixture-acp";
+
+#[tokio::test]
+async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service, None).unwrap());
+    let inbox = service.native_inbox.as_ref().unwrap();
+    let revision = service.settings.read::<Projects>().unwrap().revision;
+    service
+        .settings
+        .edit::<Projects>(&revision, |registry| {
+            for project in ["first", "second"] {
+                registry.projects.insert(
+                    project.into(),
+                    ProjectSettings {
+                        name: project.into(),
+                        slots: 1,
+                        archived: false,
+                        repositories: vec![],
+                    },
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    service.state.lock().await.settings =
+        crate::web::RuntimeSettings::open(&service.settings).unwrap();
+    let author = Authority::Planner {
+        actor: "fixture-planner".into(),
+    };
+    for project in ["first", "second"] {
+        service
+            .add_decision(
+                project,
+                DecisionInput {
+                    question: format!("Continue {project}?"),
+                    options: vec![
+                        DecisionOption {
+                            id: "continue".into(),
+                            label: "Continue".into(),
+                        },
+                        DecisionOption {
+                            id: "pause".into(),
+                            label: "Pause".into(),
+                        },
+                    ],
+                },
+                &author,
+            )
+            .await
+            .unwrap();
+    }
+    inbox.set_observation(Observation::Pinned(BTreeSet::new()));
+    let snapshot = service.inbox_snapshot(&inbox.credential).await.unwrap();
+    let offered: Vec<_> = snapshot
+        .pending
+        .iter()
+        .filter(|form| form.offer)
+        .map(|form| form.question.as_str())
+        .collect();
+    assert_eq!(offered, ["Continue first?", "Continue second?"]);
+}
+
+#[tokio::test]
+async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answer() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    service.project.acp_provider = Some(PROVIDER.into());
+    service.native_inbox = Some(NativeInbox::open(&service, Some(LEGACY.into())).unwrap());
+    let inbox = service.native_inbox.as_ref().unwrap();
+    let root = inbox.root.clone();
+    let stage = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&stage);
+    let (host, server) = native_fixture(move |req| native_response(req, &seen, &root)).await;
+    service.host = host;
+    let inbox = service.native_inbox.as_ref().unwrap();
+    let mut updates = inbox.changes();
+    let target = InboxTarget {
+        root: &inbox.root,
+        provider: PROVIDER,
+        legacy: Some(LEGACY),
+    };
+    let planner = Authority::Planner {
+        actor: "fixture-planner".into(),
+    };
+    let decision = service
+        .add_decision(
+            "local-fixture",
+            DecisionInput {
+                question: "Continue the fixture?".into(),
+                options: vec![
+                    DecisionOption {
+                        id: "continue".into(),
+                        label: "Continue".into(),
+                    },
+                    DecisionOption {
+                        id: "pause".into(),
+                        label: "Pause".into(),
+                    },
+                ],
+            },
+            &planner,
+        )
+        .await
+        .unwrap();
+    assert!(updates.has_changed().unwrap());
+    let _ = updates.borrow_and_update();
+    let key = inbox.credential;
+    assert!(matches!(
+        service.inbox_snapshot(&[0; 32]).await,
+        Err(ServiceError::AcpUnauthorized)
+    ));
+    service.reconcile_inbox(inbox, &target).await.unwrap();
+    assert_eq!(stage.load(Ordering::Relaxed), 0);
+    let snapshot = service.inbox_snapshot(&key).await.unwrap();
+    assert!(snapshot.pending.is_empty());
+    assert!(matches!(
+        service.host.prepare_inbox_install(&target).await.unwrap(),
+        InboxLifecycle::LegacyPinned
+    ));
+    install(&service, &target, &stage).await;
+    service.reconcile_inbox(inbox, &target).await.unwrap();
+    assert_eq!(stage.load(Ordering::Relaxed), 7);
+    let [form]: [InboxForm; 1] = service
+        .inbox_snapshot(&key)
+        .await
+        .unwrap()
+        .pending
+        .try_into()
+        .ok()
+        .unwrap();
+    assert!(form.offer);
+    let answer = || InboxAnswer {
+        field: form.field.clone(),
+        option_id: "continue".into(),
+    };
+    service.answer_inbox(&key, answer()).await.unwrap();
+    assert!(matches!(
+        service.answer_inbox(&key, answer()).await,
+        Err(ServiceError::Store(StoreError::PlanningConflict))
+    ));
+    assert!(updates.has_changed().unwrap());
+    let snapshot = service.inbox_snapshot(&key).await.unwrap();
+    assert!(snapshot.pending.is_empty());
+    let [record]: [Decision; 1] = service
+        .decisions("local-fixture", false)
+        .await
+        .unwrap()
+        .try_into()
+        .ok()
+        .unwrap();
+    assert_eq!(record.id, decision.id);
+    assert_eq!(record.answer.unwrap().input.option_id, "continue");
+    retire(&service, &target).await;
+    assert_eq!(stage.load(Ordering::Relaxed), 6);
+    server.abort();
+}
+
+async fn retire(service: &Service, target: &InboxTarget<'_>) {
+    for _ in 0..2 {
+        let InboxLifecycle::Write(write) = service.host.prepare_inbox_retire(target).await.unwrap()
+        else {
+            panic!("fixture retirement step was not prepared");
+        };
+        service.host.write_inbox(write).await.unwrap();
+    }
+    assert_eq!(
+        service.host.inbox_status(target).await.unwrap(),
+        InboxStatus::Archived
+    );
+    service
+        .reconcile_inbox(service.native_inbox.as_ref().unwrap(), target)
+        .await
+        .unwrap();
+    assert_eq!(service.inbox_health()["observed"], false);
+}
+
+async fn install(service: &Service, target: &InboxTarget<'_>, stage: &AtomicUsize) {
+    stage.store(1, Ordering::Relaxed);
+    for _ in 0..3 {
+        let InboxLifecycle::Write(write) =
+            service.host.prepare_inbox_install(target).await.unwrap()
+        else {
+            panic!("fixture install step was not prepared");
+        };
+        service.host.write_inbox(write).await.unwrap();
+    }
+}
+
+fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
+    let step = seen.load(Ordering::Relaxed);
+    let payload = &req["payload"];
+    let snapshot = match req["tag"].as_str().unwrap() {
+        "orchestration.subscribeThread" if payload["threadId"] == LEGACY => {
+            let pinned = (step == 0).then_some("2026-11-24T00:00:00Z");
+            json!({"kind":"snapshot","projection":{"thread":{
+                "id":LEGACY,"providerInstanceId":"nucleus","pinnedAt":pinned}}})
+        }
+        "orchestration.subscribeThread" if payload["threadId"] == INBOX_THREAD && step < 3 => {
+            return json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Failure","cause":[{
+                "_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError",
+                "threadId":INBOX_THREAD,"cause":{"_tag":"ProjectionStoreThreadNotFoundError","threadId":INBOX_THREAD}}
+            }]}});
+        }
+        "orchestration.subscribeThread" if payload["threadId"] == INBOX_THREAD => {
+            let pinned = matches!(step, 4 | 7).then_some("2026-11-24T00:00:00Z");
+            let archived = (step == 6).then_some("2026-11-24T01:00:00Z");
+            let runs = if step == 4 {
+                json!([])
+            } else {
+                json!([{"id":"turn","status":"running"}])
+            };
+            json!({"kind":"snapshot","snapshotSequence":step,"projection":{
+                "thread":{"id":INBOX_THREAD,"projectId":PROJECT,"providerInstanceId":PROVIDER,
+                    "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},"pinnedAt":pinned,
+                    "archivedAt":archived},
+                "runs":runs,
+                "runtimeRequests":[],"turnItems":[]
+            }})
+        }
+        "orchestration.subscribeShell" if step >= 1 => {
+            let projects = if step == 1 {
+                Vec::<Value>::new()
+            } else {
+                vec![json!({"id":PROJECT,"workspaceRoot":root})]
+            };
+            json!({"kind":"snapshot","snapshot":{"projects":projects}})
+        }
+        "server.getConfig" if step == 2 => {
+            return success(
+                req,
+                &json!({"environment":{"orchestrationProtocolVersion":2},
+                "providers":[{"driver":"acpRegistry","instanceId":PROVIDER,"enabled":true,
+                    "status":"ready","models":[{"slug":"nucleus"}]}]}),
+            );
+        }
+        "projects.mutate" if step == 1 => {
+            assert_eq!(payload["workspaceRoot"], root);
+            assert_eq!(payload["projectId"], PROJECT);
+            seen.store(2, Ordering::Relaxed);
+            return success(req, &json!({}));
+        }
+        "orchestration.launchThread" if step == 2 => {
+            assert_eq!(payload["threadId"], INBOX_THREAD);
+            assert_eq!(payload["workspaceStrategy"]["type"], "root");
+            seen.store(3, Ordering::Relaxed);
+            return success(req, &json!({}));
+        }
+        "orchestration.dispatchCommand" if step == 3 => {
+            assert_eq!(payload["type"], "thread.pin");
+            assert_eq!(payload["threadId"], INBOX_THREAD);
+            seen.store(4, Ordering::Relaxed);
+            return success(req, &json!({}));
+        }
+        "orchestration.dispatchCommand" if step == 4 => {
+            assert_eq!(payload["type"], "message.dispatch");
+            assert_eq!(payload["threadId"], INBOX_THREAD);
+            seen.store(7, Ordering::Relaxed);
+            return success(req, &json!({}));
+        }
+        "orchestration.dispatchCommand" if step == 7 || step == 5 => {
+            let kind = if step == 7 {
+                "thread.unpin"
+            } else {
+                "thread.archive"
+            };
+            assert_eq!(payload["type"], kind);
+            assert_eq!(payload["threadId"], INBOX_THREAD);
+            seen.store(if step == 7 { 5 } else { 6 }, Ordering::Relaxed);
+            return success(req, &json!({}));
+        }
+        _ => panic!("unexpected fixture request {req}"),
+    };
+    json!({"_tag":"Chunk","requestId":req["id"],"values":[snapshot,{"kind":"synchronized"}]})
+}
+
+fn success(request: &Value, value: &Value) -> Value {
+    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}})
+}

@@ -221,6 +221,7 @@ impl Rpc {
         &self,
         hints: &mpsc::Sender<ThreadHint>,
         titles: Option<(&crate::title_shell::TitleShell, &str, &str)>,
+        inbox_thread: Option<&str>,
     ) -> Result<(), HostError> {
         let socket = time::timeout(DEADLINE, self.connect())
             .await
@@ -242,6 +243,19 @@ impl Rpc {
                             .send(json!({"_tag":"Ack","requestId":"1"}))
                             .await?;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            if item["kind"] == "synchronized"
+                                && let Some(thread) = inbox_thread
+                            {
+                                hints
+                                    .try_send(ThreadHint {
+                                        thread: thread.into(),
+                                        change: None,
+                                        closed: false,
+                                        running: false,
+                                        identity: None,
+                                    })
+                                    .map_err(|_| HostError::Uncertain)?;
+                            }
                             if let Some((titles, project, provider)) = titles {
                                 match item["kind"].as_str() {
                                     Some("snapshot")

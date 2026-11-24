@@ -8,7 +8,7 @@ export const RUST_INBOX_ACCEPT = "Accept merge";
 export const RUST_INBOX_DECLINE = "Decline";
 
 export const rustInboxRequest = z.object({
-  operation: z.enum(["ensure", "withdraw"]),
+  operation: z.enum(["ensure", "withdraw", "handoff"]),
   id: rustInboxDecisionId,
   repository: z.string().max(240).regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
   reference: z.string().trim().min(1).max(160),

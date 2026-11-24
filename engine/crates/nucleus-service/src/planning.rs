@@ -131,9 +131,11 @@ impl Service {
         caller: &Authority,
     ) -> Result<Decision, ServiceError> {
         let mut state = self.planning_state(project).await?;
-        Ok(state
+        let decision = state
             .store
-            .add_decision(project, new_id("d")?, input, stamp(caller))?)
+            .add_decision(project, new_id("d")?, input, stamp(caller))?;
+        self.inbox_changed();
+        Ok(decision)
     }
 
     /// Record an operator's answer for consumption on the ordinary answer path.
@@ -148,10 +150,21 @@ impl Service {
         input: DecisionAnswerInput,
         caller: &Authority,
     ) -> Result<Decision, ServiceError> {
+        let mut state = self.planning_state(project).await?;
+        self.record_decision_answer(&mut state, project, id, input, caller)
+    }
+
+    pub(super) fn record_decision_answer(
+        &self,
+        state: &mut State,
+        project: &str,
+        id: &str,
+        input: DecisionAnswerInput,
+        caller: &Authority,
+    ) -> Result<Decision, ServiceError> {
         if !matches!(caller, Authority::Operator { .. }) {
             return Err(ServiceError::DecisionOperator);
         }
-        let mut state = self.planning_state(project).await?;
         let decision = state
             .store
             .answer_decision(project, id, input, stamp(caller))?;
@@ -163,6 +176,7 @@ impl Service {
             );
             self.wake.notify_one();
         }
+        self.inbox_changed();
         Ok(decision)
     }
 }

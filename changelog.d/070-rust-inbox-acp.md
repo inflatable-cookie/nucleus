@@ -1,0 +1,1 @@
+The Rust engine can serve one pinned Nucleus Inbox per host. Its native decision forms use the shared planning records, and active Rust questions hand off from the TypeScript bridge without accepting two answers.

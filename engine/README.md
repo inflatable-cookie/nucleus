@@ -601,4 +601,21 @@ Set `NUCLEUS_RUST_INBOX_ENGINE` and `NUCLEUS_RUST_INBOX_KEY_FILE` in both servic
 Use a stable engine name and an absolute path to a separate owner-only file
 containing a 32-byte key encoded as lowercase hex. Set `NUCLEUS_RUST_INBOX_URL`
 in Rust to the TypeScript board's `http://127.0.0.1:<port>` origin. The key works
-only on the bridge route. Answer operator questions in the pinned Inbox.
+only on the bridge route.
+
+The Rust Inbox is off by default. For a synthetic native setup, set
+`NUCLEUS_RUST_NATIVE_INBOX=1` on Rust and use the configured `acpProvider` with
+`NUCLEUS_ACP_BINDINGS` pointing at the service's binding directory. On an
+existing host, set `NUCLEUS_RUST_LEGACY_INBOX_THREAD` on Rust to the exact
+TypeScript Inbox thread ID. The planner retires the TypeScript Inbox manually
+after no-new-work is on and all open TypeScript decisions have drained. Native
+install verifies the legacy pin and provisions the Rust Inbox at the configured
+database root. A fresh host with no TypeScript Inbox can omit the legacy thread
+ID and bridge configuration.
+
+Keep the bridge connected until its active Rust task versions have been handed
+off. Rust reads any answer already recorded there and fences each unanswered
+version before offering it locally. Once an Inbox form is answered, the shared
+decision record holds the answer and the scheduler verifies the task and merge
+head before applying it. A fresh answer is required when the question's task
+version changes.
