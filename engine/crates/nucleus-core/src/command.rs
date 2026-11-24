@@ -8,8 +8,8 @@ use crate::decision::{
 };
 use crate::model::{
     Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, HoldBy,
-    LaunchInputs, OpenQuestion, Phase, PreparedLaunch, Question, Report, ReportAcceptance,
-    ReportArtifact, ReportReceipt, Role, Run, Task, Verdict,
+    LaunchInputs, OpenQuestion, Phase, PreparedLaunch, Question, Repair, Report, ReportAcceptance,
+    ReportArtifact, ReportReceipt, Role, Run, Task, Verdict, WorkContinuation,
 };
 use crate::profiles::{BriefPolicy, ProfileLaunch};
 
@@ -89,9 +89,7 @@ impl fmt::Display for CommandError {
             Self::ReportAcceptanceMismatch => {
                 "complete requires a reason and the exact artifact delivered by this task"
             }
-            Self::ReportInstructionRequired => {
-                "move to work requires a report revision instruction"
-            }
+            Self::ReportInstructionRequired => "move to work requires an instruction",
         })
     }
 }
@@ -171,6 +169,15 @@ impl Task {
         }
         if let Some(pr) = observation.pr() {
             self.observe_pr(pr);
+        }
+        if phase == Phase::Working
+            && let Some((head, instruction)) = observation.merge_recovery(self)
+        {
+            self.request_work(instruction, Some(head.clone()));
+            return;
+        }
+        if phase != Phase::Working {
+            self.work_continuation = None;
         }
         if let Some(Report::Review {
             head,
@@ -558,26 +565,7 @@ impl Task {
                 self.check_move(phase, observation)?;
                 self.move_to(phase);
             }
-            Command::MoveWork { instruction } => {
-                let instruction = instruction.trim();
-                if instruction.is_empty() {
-                    return Err(CommandError::ReportInstructionRequired);
-                }
-                if !matches!(
-                    self.phase,
-                    Phase::Working | Phase::ReportReady | Phase::Blocked | Phase::Error
-                ) {
-                    return Err(CommandError::ReportOwnerAction);
-                }
-                let report = self
-                    .report_state
-                    .as_mut()
-                    .ok_or(CommandError::ReportOwnerAction)?;
-                report.delivery = None;
-                report.failure = None;
-                report.instruction = Some(instruction.to_owned());
-                self.move_to(Phase::Working);
-            }
+            Command::MoveWork { instruction } => self.move_work(&instruction)?,
             Command::Complete {
                 version,
                 artifact,
@@ -661,6 +649,39 @@ impl Task {
         self.threads.launch_sequence != 0 || self.run.is_some()
     }
 
+    fn move_work(&mut self, instruction: &str) -> Result<(), CommandError> {
+        let instruction = instruction.trim();
+        if instruction.is_empty() {
+            return Err(CommandError::ReportInstructionRequired);
+        }
+        if let Some(report) = &mut self.report_state {
+            if !matches!(
+                self.phase,
+                Phase::Working | Phase::ReportReady | Phase::Blocked | Phase::Error
+            ) {
+                return Err(CommandError::ReportOwnerAction);
+            }
+            report.delivery = None;
+            report.failure = None;
+            report.instruction = Some(instruction.to_owned());
+            self.move_to(Phase::Working);
+        } else {
+            self.request_work(instruction.to_owned(), None);
+        }
+        Ok(())
+    }
+
+    fn request_work(&mut self, instruction: String, require_new_head_from: Option<Head>) {
+        if self.pr.as_ref().is_some_and(|pr| self.approves(&pr.head)) {
+            self.verdict = None;
+        }
+        self.move_to(Phase::Working);
+        self.work_continuation = Some(WorkContinuation {
+            instruction,
+            require_new_head_from,
+        });
+    }
+
     fn move_to(&mut self, phase: Phase) {
         if let Some(run) = &mut self.run {
             run.revoked = true;
@@ -668,6 +689,7 @@ impl Task {
         self.phase = phase;
         self.attempts = 0;
         self.question = None;
+        self.work_continuation = None;
     }
 
     fn check_move(&self, phase: Phase, observation: &Observation) -> Result<(), CommandError> {
@@ -739,6 +761,10 @@ impl Task {
             Ok(())
         };
         match (&question.question, answer) {
+            (Question::Repair(Repair::MergeBlocked), Answer::Work(instruction)) => {
+                check_question_head()?;
+                self.move_work(&instruction)?;
+            }
             (Question::Work { .. } | Question::Repair(_), Answer::Work(answer)) => {
                 check_question_head()?;
                 self.amend(format!(

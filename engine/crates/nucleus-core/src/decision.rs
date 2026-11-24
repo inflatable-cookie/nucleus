@@ -359,7 +359,11 @@ fn settled(task: &Task, observation: &Observation, role: Role, report: Option<&R
         Some(Report::Work(reported)) => match &observation.forge {
             Observed::Unknown => Signal::Wait(WaitReason::ForgeUnknown),
             Observed::Known(Forge::Open { pr, .. }) if *pr == reported.pull_request => {
-                if matches!(&task.verdict, Some(Verdict::Reviewed { head, decision: Review::Changes, .. }) if *head == pr.head)
+                if task
+                    .work_continuation
+                    .as_ref()
+                    .is_some_and(|work| work.require_new_head_from.as_ref() == Some(&pr.head))
+                    || matches!(&task.verdict, Some(Verdict::Reviewed { head, decision: Review::Changes, .. }) if *head == pr.head)
                 {
                     Signal::Question(Question::Repair(Repair::RevisionHasSameHead))
                 } else {
@@ -464,17 +468,17 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
                 ..
             }) => Signal::Wait(WaitReason::ChecksPending),
             Observed::Known(Forge::Open {
-                checks:
-                    CheckState::Blocked
-                    | CheckState::Conflict
-                    | CheckState::BaseMoved
-                    | CheckState::FailedRequired(_),
-                ..
-            }) => Signal::Question(Question::Repair(Repair::MergeBlocked)),
-            Observed::Known(Forge::Open {
                 pr,
                 checks: CheckState::Ready,
             }) => Signal::ReadyToMerge(pr.head.clone()),
+            Observed::Known(Forge::Open { .. })
+                if observation.recoverable_merge(task).is_some() =>
+            {
+                Signal::Refresh(Phase::Working)
+            }
+            Observed::Known(Forge::Open { .. }) => {
+                Signal::Question(Question::Repair(Repair::MergeBlocked))
+            }
             Observed::Known(_) => {
                 Signal::Question(Question::Repair(Repair::PullRequestUnavailable))
             }
@@ -486,6 +490,45 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
         Phase::ReportReady | Phase::Blocked | Phase::Error | Phase::Done | Phase::Cancelled => {
             Signal::Finished
         }
+    }
+}
+
+impl Observation {
+    fn recoverable_merge(&self, task: &Task) -> Option<(&Head, &CheckState)> {
+        match &self.forge {
+            Observed::Known(Forge::Open { pr, checks })
+                if matches!(
+                    checks,
+                    CheckState::Conflict | CheckState::BaseMoved | CheckState::FailedRequired(_)
+                ) && task.phase == Phase::Merging
+                    && task.threads.get(Role::Worker).is_some()
+                    && task.approves(&pr.head) =>
+            {
+                Some((&pr.head, checks))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn merge_recovery(&self, task: &Task) -> Option<(&Head, String)> {
+        let (head, checks) = self.recoverable_merge(task)?;
+        let base = &task.identity.base;
+        let instruction = match checks {
+            CheckState::Conflict => format!(
+                "GitHub confirms a merge conflict at {head}. Fetch origin/{base}, rebase the task branch onto it, resolve the conflicts, run the relevant checks, and push the same PR branch with --force-with-lease."
+            ),
+            CheckState::BaseMoved => format!(
+                "The base moved at reviewed head {head}. Fetch origin/{base}, rebase the task branch onto it, run the relevant checks, and push the same PR branch with --force-with-lease."
+            ),
+            CheckState::FailedRequired(names) => format!(
+                "GitHub required checks failed at {head}: {names:?}. Inspect those failures, fix the task branch, run the relevant checks, and push the new head to the same PR branch."
+            ),
+            _ => return None,
+        };
+        Some((
+            head,
+            format!("{instruction} Report the published head for fresh review."),
+        ))
     }
 }
 
@@ -555,17 +598,20 @@ impl Observation {
             Repair::RevisionHasSameHead => {
                 forge.pr().is_some_and(|pr| question.outdated_at(&pr.head))
             }
-            Repair::MergeBlocked => !matches!(
-                forge,
-                Forge::Open {
-                    checks: CheckState::Blocked
-                        | CheckState::Conflict
-                        | CheckState::BaseMoved
-                        | CheckState::FailedRequired(_)
-                        | CheckState::Unknown,
-                    ..
-                }
-            ),
+            Repair::MergeBlocked => {
+                self.recoverable_merge(task).is_some()
+                    || !matches!(
+                        forge,
+                        Forge::Open {
+                            checks: CheckState::Blocked
+                                | CheckState::Conflict
+                                | CheckState::BaseMoved
+                                | CheckState::FailedRequired(_)
+                                | CheckState::Unknown,
+                            ..
+                        }
+                    )
+            }
             Repair::MergeUnconfirmed => matches!(forge, Forge::Merged { .. }),
         }
     }
