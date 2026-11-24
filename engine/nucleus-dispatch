@@ -2,7 +2,7 @@
 set -eu
 
 if [ "${NUCLEUS_TICKET+x}${NUCLEUS_CONTINUATION_TICKET+x}${NUCLEUS_CONTINUATION_RUN_ID+x}" ] ||
-    [ "${1-}" = helper ]; then
+    [ "${1-}" = helper ] || [ "${1-}" = worktree ]; then
     exec "$HOME/.local/bin/nucleus-legacy" "$@"
 fi
 
