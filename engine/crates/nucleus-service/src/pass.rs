@@ -624,7 +624,7 @@ impl Service {
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            title: crate::titles::child_title(task, row.reference().as_ref(), role),
+            title: crate::titles::child_title(task, row.number, role),
             profile,
             via: &via,
             instance: &instance,

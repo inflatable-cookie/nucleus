@@ -104,7 +104,7 @@ impl Service {
                     row.number.is_some() && self.task_scope(row.task.identity()).is_ok()
                 })
             {
-                self.desire_title(&state, &row.task, row.reference().as_ref(), None);
+                self.desire_title(&state, &row.task, row.number, None);
             }
         }
         Ok(())

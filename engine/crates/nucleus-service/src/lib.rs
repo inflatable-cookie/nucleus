@@ -920,7 +920,7 @@ impl Service {
         if prior != wait {
             self.title_wake.notify_one();
         }
-        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
+        self.desire_title(&state, &row.task, row.number, wait);
         if prior != wait {
             self.publish(id, current.version);
         }
@@ -1314,7 +1314,7 @@ impl Service {
         {
             state.role_observations.remove(id);
         }
-        self.desire_title(state, task, prior.reference().as_ref(), None);
+        self.desire_title(state, task, prior.number, None);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
