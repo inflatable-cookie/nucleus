@@ -374,6 +374,14 @@ The opening prompt establishes the session. The adapter can supply silent hold
 and ignore patterns. ACP cancellation releases the presentation turn. Task
 cancellation goes through the same command preflight as other clients.
 
+An ACP launcher can bring up the local service using
+`python3 ensure-local-service.py <port> <controller-key-file> <lock-file> <serve-launcher>`.
+Put the lock beside the engine's settings and keep the serve launcher's log
+under its configured log root. The helper reuses a healthy loopback service.
+When the port is absent, it serializes startup and passes the lock to the
+detached engine for its lifetime. A later ACP start can recover the service
+after it exits. An unverified listener never triggers a second start.
+
 Keep host execution and parenting separate. The engine uses its host interface
 to prepare a launch, observe a run and stop it. A host's parenting adapter
 ensures the session is open and creates or continues the role's child there.
