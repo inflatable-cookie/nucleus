@@ -1,9 +1,15 @@
 //! Display projections from committed tasks and exact, in-memory run evidence.
 
+mod lifecycle;
+
 use std::sync::LazyLock;
 
+pub(super) use lifecycle::read as task_lifecycle;
+
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason};
+use nucleus_core::{
+    Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason, profiles::Provider,
+};
 use nucleus_hosts::RunActivity;
 use nucleus_store::{DependencyClock, Event, EventDraft, Store, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
@@ -101,7 +107,7 @@ impl RunView {
     pub(super) fn read(
         row: &TaskRow,
         activity: Option<&ActivityAt>,
-        store: &Store,
+        review_round: Option<u64>,
     ) -> Option<Self> {
         let run = row.task.run()?;
         let launch = run.launch();
@@ -109,7 +115,7 @@ impl RunView {
             role: launch.role,
             thread: launch.thread.clone(),
             instance: launch.instance.clone(),
-            purpose: purpose(&row.task, launch.role, store),
+            purpose: purpose(&row.task, launch.role, review_round),
             reserved_at: launch.started_at,
             last_send_at: run.last_send_at_ms(),
             review_head: launch.review_head.clone(),
@@ -138,6 +144,20 @@ enum Milestone {
         role: Role,
         purpose: String,
         review_head: Option<Head>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thread: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<Provider>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        round: Option<u64>,
+    },
+    RunReported {
+        instance: String,
+        sent_at_ms: u64,
     },
     RunEnded {
         instance: String,
@@ -156,6 +176,7 @@ enum Milestone {
     },
     Finished {
         phase: Phase,
+        previous_phase: Option<Phase>,
     },
 }
 
@@ -207,13 +228,32 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
         }
         if let Some(run) = run {
             let launch = run.launch();
+            let round = (launch.role == Role::Reviewer)
+                .then(|| lifecycle::Audit::read(store, task).ok())
+                .flatten()
+                .map(|audit| audit.next_review_round());
             records.push(Milestone::RunStarted {
                 instance: launch.instance.clone(),
                 role: launch.role,
-                purpose: purpose(task, launch.role, store),
+                purpose: purpose(task, launch.role, round),
                 review_head: launch.review_head.clone(),
+                thread: Some(launch.thread.clone()),
+                provider: launch.profile().map(|profile| profile.provider),
+                model: launch.profile().map(|profile| profile.model.clone()),
+                started_at_ms: run.last_send_at_ms(),
+                round,
             });
         }
+    }
+    if let Some(run) = run
+        && run.report().is_some()
+        && prior_run.is_some_and(|prior| prior.report().is_none())
+        && let Some(sent_at_ms) = run.last_send_at_ms()
+    {
+        records.push(Milestone::RunReported {
+            instance: run.launch().instance.clone(),
+            sent_at_ms,
+        });
     }
     if let Some(pr) = task.pull_request()
         && prior.pull_request().is_none_or(|old| old.url != pr.url)
@@ -260,6 +300,7 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
     if prior.phase() != task.phase() && task.phase().is_terminal() {
         records.push(Milestone::Finished {
             phase: task.phase(),
+            previous_phase: Some(prior.phase()),
         });
     }
     if !records.is_empty() {
@@ -269,13 +310,13 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
     audit
 }
 
-fn purpose(task: &Task, role: Role, store: &Store) -> String {
+fn purpose(task: &Task, role: Role, review_round: Option<u64>) -> String {
     match role {
         Role::Worker => brief_title(&task.brief().text)
             .map_or_else(|| "Implement the brief".into(), |line| excerpt(line, 100)),
-        Role::Reviewer => store.completed_reviews(&task.identity().id).map_or_else(
-            |_| "Review the exact PR head".into(),
-            |completed| format!("Checking round {}", completed.saturating_add(1)),
+        Role::Reviewer => review_round.map_or_else(
+            || "Review the exact PR head".into(),
+            |round| format!("Checking round {round}"),
         ),
     }
 }

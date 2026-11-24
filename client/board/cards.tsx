@@ -294,6 +294,7 @@ export const BoardCard = React.memo(function BoardCard({
   title,
   status,
   statusInHeader = false,
+  progress,
   flags,
   actions,
 }: {
@@ -320,6 +321,7 @@ export const BoardCard = React.memo(function BoardCard({
   status?: CardStatus | null;
   /** Put the state beside the age and leave any detail under the title. */
   statusInHeader?: boolean;
+  progress?: React.ReactNode;
   /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
   flags?: React.ReactNode;
   /**
@@ -419,6 +421,7 @@ export const BoardCard = React.memo(function BoardCard({
           <StatusLine status={status} c={c} />
         </View>
       ) : null}
+      {progress}
     </View>
   );
   const body = (

@@ -70,7 +70,13 @@ pub(crate) struct Inventory {
     scoped: Mutex<HashMap<(PathBuf, Option<PathBuf>), ScopedResult>>,
 }
 
-type ScopedResult = Result<Option<HashSet<u32>>, HostError>;
+type ScopedResult = Result<OpenOwners, HostError>;
+
+#[derive(Default)]
+struct OpenOwners {
+    cwd: HashSet<u32>,
+    files: HashSet<u32>,
+}
 
 #[derive(Default)]
 struct ProcessPaths {
@@ -342,11 +348,13 @@ impl Inventory {
             }
         };
         let paths = scan.as_ref().map_err(|error| *error)?;
-        Ok(match paths {
-            Some(pids) if pids.iter().any(|pid| !runtime.contains(pid)) => Activity::Busy,
-            Some(_) => Activity::Quiet,
-            None => Activity::Unknown,
-        })
+        Ok(
+            if !paths.files.is_empty() || paths.cwd.iter().any(|pid| !runtime.contains(pid)) {
+                Activity::Busy
+            } else {
+                Activity::Quiet
+            },
+        )
     }
 }
 
@@ -486,7 +494,6 @@ async fn scoped_activity(
         return Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope));
     }
     scoped_listing(&listing, &witnesses)
-        .map(Some)
         .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
 }
 
@@ -564,7 +571,7 @@ fn mount_points(listed: &Listing) -> Option<Vec<&Path>> {
         .filter(|mounts| !mounts.is_empty())
 }
 
-fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<u32>> {
+fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<OpenOwners> {
     if listing.exit != Some(0) {
         return None;
     }
@@ -572,7 +579,7 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSe
     let mut seen = vec![false; witnesses.len()];
     let mut pid = None;
     let mut fd = None;
-    let mut owners = HashSet::new();
+    let mut owners = OpenOwners::default();
     for field in fields.split(|&byte| byte == 0) {
         let field = field.strip_prefix(b"\n").unwrap_or(field);
         match field {
@@ -601,7 +608,11 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSe
                     .iter()
                     .any(|witness| path.starts_with(witness.path))
                 {
-                    owners.insert(pid?);
+                    if descriptor == b"cwd" {
+                        owners.cwd.insert(pid?);
+                    } else {
+                        owners.files.insert(pid?);
+                    }
                 }
             }
             _ => return None,
@@ -820,7 +831,10 @@ mod tests {
         inventory.runtime = Some((10, runtime));
         inventory.scoped.get_mut().insert(
             (checkout.clone(), Some(scratch.clone())),
-            Ok(Some(HashSet::from([21, 22, 23]))),
+            Ok(OpenOwners {
+                cwd: HashSet::from([21, 22, 23]),
+                files: HashSet::new(),
+            }),
         );
         let runtime = inventory.standing_pids("fixture-thread");
         assert!(matches!(
@@ -831,7 +845,10 @@ mod tests {
         ));
         inventory.scoped.get_mut().insert(
             (checkout.clone(), Some(scratch.clone())),
-            Ok(Some(HashSet::from([21, 22, 23, 24]))),
+            Ok(OpenOwners {
+                cwd: HashSet::from([21, 22, 23]),
+                files: HashSet::from([21]),
+            }),
         );
         assert!(matches!(
             inventory
@@ -856,12 +873,12 @@ mod tests {
         std::fs::File::create(&path).expect("file initially closed");
         assert!(matches!(
             scoped_activity(&checkout, Some(&scratch), &scratch).await,
-            Ok(Some(pids)) if pids.is_empty()
+            Ok(owners) if owners.cwd.is_empty() && owners.files.is_empty()
         ));
         let held = std::fs::File::open(&path).expect("open file outside process cwd");
         assert!(matches!(
             scoped_activity(&checkout, Some(&scratch), &scratch).await,
-            Ok(Some(pids)) if pids.contains(&std::process::id())
+            Ok(owners) if owners.files.contains(&std::process::id())
         ));
         drop(held);
     }

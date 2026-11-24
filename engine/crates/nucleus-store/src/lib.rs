@@ -941,16 +941,7 @@ impl Store {
         let mut query = self.connection.prepare_cached(
             "SELECT sequence, at, kind, detail FROM events\n             WHERE task_id = ?1 AND (?2 IS NULL OR sequence < ?2)\n             ORDER BY sequence DESC LIMIT ?3",
         )?;
-        let rows = query.query_map(params![id, before, limit], |row| {
-            Ok(Event {
-                sequence: row.get(0)?,
-                content: EventDraft {
-                    at: row.get(1)?,
-                    kind: row.get(2)?,
-                    detail: row.get(3)?,
-                },
-            })
-        })?;
+        let rows = query.query_map(params![id, before, limit], event_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -974,20 +965,32 @@ impl Store {
         Ok(receipts.collect::<Result<_, _>>()?)
     }
 
-    /// Count applied reviewer verdicts for the display's review round.
+    /// Read the lifecycle audit records in task order.
     ///
     /// # Errors
     /// Returns an error if the database cannot read the display history.
-    pub fn completed_reviews(&self, id: &str) -> Result<i64, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT count(*) FROM events
-              JOIN json_each(CASE WHEN json_valid(detail) THEN detail END, '$.presentation') AS item
-             WHERE task_id = ?1 AND kind = 'phase_reconciled'
-               AND json_type(CASE WHEN item.type = 'object' THEN item.value END, '$.verdict.reviewed') = 'object'",
-            [id],
-            |row| row.get(0),
-        )?)
+    pub fn lifecycle_events(&self, id: &str) -> Result<Vec<Event>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT sequence, at, kind, detail FROM events
+             WHERE task_id = ?1 AND (
+                kind IN ('host_send', 'reported')
+                OR json_type(CASE WHEN json_valid(detail) THEN detail END, '$.presentation') = 'array'
+             ) ORDER BY sequence",
+        )?;
+        let rows = query.query_map([id], event_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
+}
+
+fn event_from_row(row: &Row<'_>) -> rusqlite::Result<Event> {
+    Ok(Event {
+        sequence: row.get(0)?,
+        content: EventDraft {
+            at: row.get(1)?,
+            kind: row.get(2)?,
+            detail: row.get(3)?,
+        },
+    })
 }
 
 fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> {

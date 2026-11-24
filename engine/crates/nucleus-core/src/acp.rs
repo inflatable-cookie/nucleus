@@ -1,5 +1,7 @@
 //! The local binding exchanged between the service and the ACP client.
 
+pub mod lifecycle;
+
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},

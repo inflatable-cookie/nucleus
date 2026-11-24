@@ -11,6 +11,7 @@ use nucleus_core::{
 };
 use nucleus_forge::GitHub;
 use nucleus_hosts::{RunActivity, T3};
+use nucleus_store::EventDraft;
 use tower::ServiceExt;
 
 use super::*;
@@ -320,11 +321,17 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     let instance = task.run().expect("run").launch().instance.clone();
     seed_task(&service, &task).await;
     let mut row = service.task("worker").await.expect("row");
-    for at in [1, 2] {
+    let sent_at_ms = 1_790_000_000_000;
+    let reported_at_ms = sent_at_ms + 831_000;
+    let at = |kind, time| EventDraft {
+        at: i64::try_from(time).unwrap(),
+        ..event(kind)
+    };
+    for time in [sent_at_ms - 2_000, sent_at_ms] {
         let mut updated = row.task.clone();
-        updated.record_send(&instance, at).expect("send marker");
+        updated.record_send(&instance, time).expect("send marker");
         row = service
-            .save(&row, updated, &event("host_send"))
+            .save(&row, updated, &at("host_send", time))
             .await
             .expect("persist send");
     }
@@ -337,7 +344,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         .record_report(&instance, key.as_bytes(), Report::Work(pr.clone()))
         .expect("stage report");
     row = service
-        .save(&row, updated.clone(), &event("reported"))
+        .save(&row, updated.clone(), &at("reported", reported_at_ms))
         .await
         .expect("persist report");
     observation.host = Observed::Known(Host::Current {
@@ -356,6 +363,11 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         .save(&row, updated, &event("phase_reconciled"))
         .await
         .expect("apply report");
+    service
+        .state
+        .lock()
+        .await
+        .set_wait("worker", Some(WaitReason::Capacity));
     let api = router(
         Arc::new(service),
         [Controller {
@@ -372,14 +384,34 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
             {"kind":"run_ended","instance":instance}, {"kind":"pull_request","url":PR}
         ])
     );
-    assert_eq!(history[1]["presentation"], json!([]));
+    assert_eq!(
+        history[1]["presentation"],
+        json!([{"kind":"run_reported","instance":instance,"sentAtMs":sent_at_ms}])
+    );
     assert_eq!(history[2]["presentation"], json!([]));
     assert_eq!(
         history[3]["presentation"],
         json!([
-            {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null}
+            {"kind":"run_started","instance":instance,"role":"worker","purpose":"Synthetic change","reviewHead":null,
+                "thread":task.run().unwrap().launch().thread,"startedAtMs":sent_at_ms - 2_000}
         ])
     );
+    let detail = json_body(get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await).await;
+    let list = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    let lifecycle = &detail["lifecycle"];
+    assert_eq!(list[0]["lifecycle"], *lifecycle);
+    assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
+    assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
+    assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
+    assert_eq!(detail["stateLabel"], "Waiting for capacity");
+    assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
+    assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
+    assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());
+    assert_eq!(
+        lifecycle["worker"]["thread"],
+        task.run().unwrap().launch().thread
+    );
+    assert!(lifecycle["reviewer"].is_null());
 }
 
 #[tokio::test]
@@ -444,7 +476,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
         &observation,
         LaunchInputs {
             scratch: None,
-            thread: first.thread,
+            thread: first.thread.clone(),
             input: "fixture-only wire".into(),
             started_at: 3,
         },
@@ -471,6 +503,10 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     );
     let detail = json_body(get_as(&api, "/v1/tasks/reviewer", &BOARD_KEY).await).await;
     assert_eq!(detail["run"]["purpose"], "Checking round 2");
+    assert_eq!(detail["lifecycle"]["reviewRound"], 2);
+    assert_eq!(detail["lifecycle"]["reviewer"]["thread"], first.thread);
+    assert_eq!(detail["lifecycle"]["steps"][2]["roundLabel"], "Round 2");
+    assert_eq!(detail["lifecycle"]["steps"][2]["activeSinceMs"], 4);
     let history = json_body(get_as(&api, "/v1/tasks/reviewer/history", &BOARD_KEY).await).await;
     assert_eq!(history[0]["presentation"][0]["purpose"], "Checking round 2");
     assert_eq!(
@@ -1919,6 +1955,19 @@ async fn reopen_and_finish_review(
         .save(done, task.clone(), &event("command"))
         .await
         .expect("reopened task");
+    {
+        let state = service.state.lock().await;
+        for row in [done, &reopened] {
+            let label = crate::titles::task_state_label(&row.task, None);
+            let lifecycle =
+                crate::presentation::task_lifecycle(&row.task, &state.store, &label, None, None)
+                    .expect("project current finish");
+            assert_eq!(
+                lifecycle.finished_at_ms.is_some(),
+                row.task.phase().is_terminal()
+            );
+        }
+    }
     let instance = task.next_launch_instance().expect("new launch");
     let credential = task
         .reserve_launch(
@@ -2227,6 +2276,10 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     observe_task_wait(&reopened, WaitReason::ForgeUnknown).await;
     let changed = read_paired_task(&api, detail, &cookie).await;
     assert_eq!(changed["stateLabel"], "Waiting for GitHub");
+    assert_eq!(
+        changed["lifecycle"]["steps"][0]["note"],
+        changed["stateLabel"]
+    );
     assert!(changed["stateSinceMs"].as_i64().unwrap() > since);
     assert_eq!(&changed["createdAtMs"], created);
 }

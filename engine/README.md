@@ -272,7 +272,8 @@ also check the open PR and clean checkout after native authorization.
   cross-checks cwd-only `lsof` against the local T3 user's PIDs, then filters one
   open-file listing of the filesystems containing the checkout and run scratch.
   It holds both directory descriptors during that scan and requires each in
-  the reply. Closed files take no space in the listing.
+  the reply. Closed files take no space in the listing. The mount check covers
+  nested filesystems and verifies the scope again before accepting quiet.
   An open file or working directory in either scope is busy. An unaccounted
   live PID, undecodable path, incomplete listing or warning leaves settlement
   unknown. Decode `lsof` escapes before comparing path bytes. Run the
@@ -286,7 +287,8 @@ also check the open PR and clean checkout after native authorization.
   keep custody. Unreadable process facts and conflicting bindings also hold.
   A standing helper bound to another recorded role of the same task can be
   excluded when its cwd is inside this checkout and a fresh exact native read
-  confirms that role is idle with no pending work.
+  confirms that role is idle with no pending work. Its scoped open files still
+  hold custody.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery

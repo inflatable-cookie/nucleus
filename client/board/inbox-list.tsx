@@ -51,6 +51,7 @@ import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
+import { RustTaskProgress } from "../task/rust-progress";
 import { rustQuestionText, rustTaskLabel, rustWaitDetail, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
@@ -894,6 +895,7 @@ export function RustListRows({ c, rust, view }: {
           state: task.stateLabel, detail: question ? null : detail,
         }}
         age={task.stateSinceMs === null ? null : relativeAge(task.stateSinceMs)}
+        progress={<RustTaskProgress progress={task.lifecycle} c={c} compact />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
     {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}

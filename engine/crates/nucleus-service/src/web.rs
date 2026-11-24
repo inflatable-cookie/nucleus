@@ -582,7 +582,11 @@ async fn detail(
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
     let summary = Summary::read(&row, &state, &scope, authority.as_deref())?;
-    let run = RunView::read(&row, state.activity.get(&id), &state.store);
+    let run = RunView::read(
+        &row,
+        state.activity.get(&id),
+        summary.lifecycle.review_round,
+    );
     let (parent_hold, active_child) = if credential.is_some() {
         api.service.acp_turn_view(&state, &row)?
     } else {
@@ -986,6 +990,7 @@ struct Summary {
     wait: Option<WaitReason>,
     wait_detail: Option<&'static str>,
     attention: crate::attention::TaskAttention,
+    lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
     next_check_at: Option<u64>,
     question: Option<Question>,
     hold: Option<Hold>,
@@ -1018,21 +1023,8 @@ impl Summary {
             Some(label) => label,
             None => crate::titles::task_state_label(task, state.effective_wait(task)?),
         };
-        let mut view = Self {
-            identity: task.identity().clone(),
-            title: crate::titles::brief(task),
-            number: row.number,
-            reference: row.reference().into_owned(),
-            version: row.version,
-            phase: task.phase(),
-            attention: state.task_attention(row)?,
-            state_label,
-            state_since_ms,
-            created_at_ms,
-            next_check_at: None,
-            wait_detail: None,
-            wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
-            {
+        let wait =
+            if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal() {
                 wait
             } else if task.run().is_some_and(nucleus_core::Run::revoked) {
                 Some(WaitReason::Stopping)
@@ -1046,19 +1038,42 @@ impl Summary {
                 Some(WaitReason::Question)
             } else {
                 wait
-            },
+            };
+        let wait_detail =
+            (wait == state.wait_reason(id) && task.hold().is_none() && task.question().is_none())
+                .then(|| state.wait_detail(id))
+                .flatten()
+                .map(|detail| match detail {
+                    crate::WaitDetail::BeforeSend => "Checking the task thread before sending.",
+                    crate::WaitDetail::Observation(message) => message,
+                });
+        let mut view = Self {
+            identity: task.identity().clone(),
+            title: crate::titles::brief(task),
+            number: row.number,
+            reference: row.reference().into_owned(),
+            version: row.version,
+            phase: task.phase(),
+            attention: state.task_attention(row)?,
+            lifecycle: crate::presentation::task_lifecycle(
+                task,
+                &state.store,
+                &state_label,
+                wait,
+                wait_detail,
+                created_at_ms,
+            )?,
+            state_label,
+            state_since_ms,
+            created_at_ms,
+            next_check_at: None,
+            wait,
+            wait_detail,
             question: task.question().cloned(),
             hold: task.hold().cloned(),
             dependency_status,
             dependency_edits,
         };
-        if view.wait == state.wait_reason(id) && task.hold().is_none() && task.question().is_none()
-        {
-            view.wait_detail = state.wait_detail(id).map(|detail| match detail {
-                crate::WaitDetail::BeforeSend => "Checking the task thread before sending.",
-                crate::WaitDetail::Observation(message) => message,
-            });
-        }
         if view.wait.is_some() && task.operator_decline().is_none() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());

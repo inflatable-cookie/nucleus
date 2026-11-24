@@ -58,7 +58,30 @@ const current = z.object({
   // When the state the label names began; the card's age counts from it.
   stateSinceMs: timestamp.nullable(),
 });
+const participant = z.object({
+  thread: z.string(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+});
+const lifecycle = z.object({
+  steps: z.array(z.object({
+    key: z.enum(["queued", "working", "review", "merge", "close", "report_ready", "done"]),
+    label: z.string(),
+    state: z.enum(["todo", "current", "done"]),
+    tone: z.enum(["accent", "danger", "warning", "success", "muted"]),
+    note: z.string().nullable(),
+    roundLabel: z.string().nullable(),
+    elapsedMs: revision.nullable(),
+    activeSinceMs: timestamp.nullable(),
+  })),
+  admittedAtMs: timestamp.nullable(),
+  finishedAtMs: timestamp.nullable(),
+  reviewRound: revision.nullable(),
+  worker: participant.nullable(),
+  reviewer: participant.nullable(),
+});
 const summary = current.extend({
+  lifecycle,
   title: z.string().optional(),
   number: z.number().int().positive().nullish(),
   reference: z.string().optional(),
@@ -163,7 +186,13 @@ const historyRecord = z.discriminatedUnion("kind", [
     role,
     purpose: z.string(),
     reviewHead: head.nullable(),
+    thread: z.string().optional(),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    startedAtMs: timestamp.optional(),
+    round: revision.optional(),
   }),
+  z.object({ kind: z.literal("run_reported"), instance: z.string(), sentAtMs: timestamp }),
   z.object({ kind: z.literal("run_ended"), instance: z.string() }),
   z.object({ kind: z.literal("pull_request"), url: z.httpUrl() }),
   z.object({ kind: z.literal("verdict"), verdict }),
@@ -190,6 +219,7 @@ type BoardRequest = Omit<RequestInit, "headers"> & {
 
 export type RustPhase = z.infer<typeof phase>;
 export type RustQuestion = z.infer<typeof question>;
+export type RustLifecycle = z.infer<typeof lifecycle>;
 export type RustTask = z.infer<typeof summary>;
 export type RustTaskDetail = z.infer<typeof detail>;
 export type RustNext = z.infer<typeof next>;
