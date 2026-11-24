@@ -158,8 +158,9 @@ Later decisions carry their own attribution.
    availability, binding and operator snooze at send time.
    Older parent holds still require an idle thread. Delegated launch absence
    still requires an exact terminal parent run and an authoritative child absence.
-   New retained worker continuations pin provider and model and can enter the
-   native queue without an idle or presentation check. A reservation proven
+   New retained role continuations pin provider and model and can enter the
+   native queue without waiting for idle coverage or a prior send deadline.
+   The engine respects operator snoozes and checks the exact destination. A reservation proven
    unsent is replanned with a pin and a fresh command ID. For an older
    reservation that may have been sent, the engine waits for matching native
    evidence and uses the actual run's provider and model when it observes it.

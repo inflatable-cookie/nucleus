@@ -14,6 +14,13 @@ use crate::{
     thread_snapshots::ShellCustody,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MissingReceipt {
+    Fresh,
+    LegacyContinuation,
+    Queue,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
@@ -556,8 +563,7 @@ impl Projection {
     pub(crate) fn run(
         &self,
         message_id: &str,
-        replayable_continuation: bool,
-        queueable_worker: bool,
+        missing_receipt: MissingReceipt,
     ) -> Result<RunState, HostError> {
         if self.shell_closed == Some(RetainedThread::Busy) {
             return Err(HostError::Uncertain);
@@ -573,10 +579,9 @@ impl Projection {
             if message.is_some() {
                 return Ok(RunState::Starting);
             }
-            // T3's dispatchWithReceiptEffect looks up commandId before applying
-            // message.dispatch. Reuse the frozen wire, even when history is paged.
-            if !queueable_worker
-                && ((self.windowed && !replayable_continuation)
+            // T3 deduplicates the frozen queue command even when history is paged.
+            if missing_receipt != MissingReceipt::Queue
+                && ((self.windowed && missing_receipt == MissingReceipt::Fresh)
                     || self.retained()? != RetainedThread::Idle)
             {
                 return Err(HostError::Uncertain);

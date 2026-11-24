@@ -1860,15 +1860,8 @@ async fn superseded_review_replay_archives_after_exact_stop() {
     Box::pin(revoked_replay(true)).await;
 }
 
-#[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "assert the full unarchive, operator snooze and continuation sequence"
-)]
-async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let (mut task, mut observation, previous) = reserve(binding.clone());
+fn retained_reviewer(binding: Binding) -> (Task, Observation, String) {
+    let (mut task, mut observation, previous) = reserve(binding);
     revoke(&mut task, &observation);
     observation.host = Observed::Known(Host::Current {
         instance: previous.clone(),
@@ -1883,6 +1876,18 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
         &observation,
     )
     .expect("review again");
+    (task, observation, previous)
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "assert the full unarchive, operator snooze and continuation sequence"
+)]
+async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, mut observation, previous) = retained_reviewer(binding.clone());
 
     let archived = snapshot(&binding, &previous, "interrupted", true);
     let mut restored = snapshot(&binding, &previous, "interrupted", false);
@@ -2082,6 +2087,66 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     row["snoozedUntil"] = Value::Null;
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
+    let requests = native.await.unwrap();
+    let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
+    assert_eq!(wire["commandId"], instance);
+    assert_eq!(
+        wire["modelSelection"],
+        json!({"instanceId":"fixture-provider","model":"fixture-model"})
+    );
+    assert_eq!(wire["dispatchMode"]["type"], "queue_after_active");
+}
+
+#[tokio::test]
+async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, mut observation, _) = retained_reviewer(binding.clone());
+    observation.host = Observed::Known(Host::Retained {
+        thread: THREAD.into(),
+        state: RetainedThread::Idle,
+    });
+    let instance = task.next_launch_instance().unwrap();
+    let inputs = RunRequest {
+        binding: binding.clone(),
+        parent: None,
+        dispatch: Dispatch::Continue {
+            profile: Some(RoleProfile {
+                instance_id: "fixture-provider".into(),
+                model: "fixture-model".into(),
+                runtime_mode: "full-access".into(),
+                options: Vec::new(),
+            }),
+        },
+        text: "Review the current head".into(),
+    }
+    .inputs(&instance, THREAD.into(), 3)
+    .unwrap();
+    let _ = task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
+    task.record_send(&instance, 4).unwrap();
+
+    let mut window = snapshot(&binding, "unrelated-running-review", "running", false);
+    window["hasMoreHistory"] = json!(true);
+    window["historyCursor"] = json!("earlier-items");
+    window["projection"]["providerThreads"] = Value::Null;
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(window.clone()),
+        ),
+        ("orchestration.subscribeThread", Response::Snapshot(window)),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    assert_eq!(
+        pass.observe_run(task.run().unwrap(), 5).await.unwrap().host,
+        Host::Current {
+            instance: instance.clone(),
+            state: RunState::ReadyToSend
+        }
+    );
     assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
     let requests = native.await.unwrap();
     let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
