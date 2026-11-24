@@ -381,7 +381,9 @@ Later decisions carry their own attribution.
     checks writer custody.
 
     The planner also ruled that a task row snoozes only when the held shell
-    shows all its recorded role children quiet. A live turn, pending request or
+    shows its listed role children quiet. A reserved role without a native thread
+    contributes no child. A listed thread with incomplete activity data defers
+    the snooze. A live turn, pending request or
     background writer keeps the row visible, including after a report. Positive
     child activity clears an owned snooze. Operator snoozes keep their horizon.
 

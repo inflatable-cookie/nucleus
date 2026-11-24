@@ -566,16 +566,18 @@ async fn no_new_snooze_from_reservation_through_send() {
 }
 
 #[tokio::test]
-async fn a_reserved_role_waiting_for_capacity_keeps_one_snooze() {
+async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
-    let (worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
-    let run = worker.run().unwrap().launch();
-    fixture.child(&run.thread, false);
+    let (task, _, _) = crate::tests::reserved_reviewer(ID, &service.fixture().start);
+    let run = task.run().unwrap().launch();
+    let worker = task.threads().get(Role::Worker).unwrap();
+    assert_ne!(worker, run.thread);
+    fixture.child(worker, false);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&worker, &event("run_reserved")).unwrap();
-        service.desire_title(&state, &worker, None);
+        state.store.create(&task, &event("run_reserved")).unwrap();
+        service.desire_title(&state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
     service
@@ -599,6 +601,20 @@ async fn a_reserved_role_waiting_for_capacity_keeps_one_snooze() {
     let card = fixture.board_task().await;
     assert_eq!(card["stateLabel"], "Waiting for capacity");
     assert_eq!(card["attention"], "waiting");
+    fixture
+        .native
+        .lock()
+        .unwrap()
+        .child
+        .as_mut()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("pendingBackgroundTasks");
+    assert!(fixture.sync().await.is_empty());
+    fixture.child(worker, true);
+    assert!(fixture.sync().await.is_empty());
+    fixture.child(worker, false);
     let first = fixture.sync().await;
     assert_eq!(first.get("orchestration.dispatchCommand"), Some(&1));
     assert!(fixture.sync().await.is_empty());
