@@ -43,8 +43,8 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ArchiveWrite, DoneArchive, ParentAttempt, ParentRun, ParentSendError, ParentStep, ParentWrite,
-    is_pinned_parent_hold, parent_thread,
+    ActiveChild, ArchiveWrite, DoneArchive, ParentAttempt, ParentRun, ParentSendError, ParentStep,
+    ParentWrite, is_parent_reentry, is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -304,6 +304,7 @@ pub struct RunObservation {
     pub activity: Option<RunActivity>,
     pub provider_limit: Option<ProviderLimit>,
     pub routing: Option<RunRouting>,
+    pub active_child: Option<ActiveChild>,
 }
 
 /// Provider and model recorded on the exact native run after it started.
@@ -925,6 +926,7 @@ impl TaskHost for T3Pass<'_> {
                 activity: None,
                 provider_limit: None,
                 routing: None,
+                active_child: None,
             });
         }
         if state == RunState::ReadyToSend
@@ -965,12 +967,26 @@ impl TaskHost for T3Pass<'_> {
         let routing = thread
             .as_ref()
             .and_then(|thread| thread.run_routing(&message));
+        let active_child = ActiveChild {
+            binding: wire.binding,
+            thread: run.launch().thread.clone(),
+            instance: run.launch().instance.clone(),
+            native: thread
+                .as_ref()
+                .and_then(|thread| thread.owned_active_run(&message))
+                .map(str::to_owned),
+        };
+        let active_child = self
+            .host
+            .active_child_in_shell(&active_child)
+            .then_some(active_child);
         let activity = thread.and_then(|thread| thread.activity(&message));
         Ok(RunObservation {
             host: current(run, state),
             activity,
             provider_limit,
             routing,
+            active_child,
         })
     }
 
@@ -1258,6 +1274,7 @@ fn assignment_rejected(run: &Run) -> RunObservation {
         activity: None,
         provider_limit: None,
         routing: None,
+        active_child: None,
     }
 }
 

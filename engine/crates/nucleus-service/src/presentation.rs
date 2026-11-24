@@ -155,6 +155,26 @@ pub(super) struct TranscriptRequest<'a> {
     pub(super) activity: Option<&'a str>,
 }
 
+pub(super) fn retained_launch(
+    store: &Store,
+    task: &str,
+    threads: &[&str],
+) -> Result<Option<(String, String)>, nucleus_store::StoreError> {
+    Ok(store
+        .lifecycle_events(task)?
+        .into_iter()
+        .rev()
+        .flat_map(|event| HistoryEvent::from(event).presentation)
+        .find_map(|event| match event {
+            Milestone::RunStarted {
+                instance,
+                thread: Some(thread),
+                ..
+            } if threads.contains(&thread.as_str()) => Some((thread, instance)),
+            _ => None,
+        }))
+}
+
 #[derive(Serialize)]
 pub(super) struct HistoryEvent {
     #[serde(flatten)]

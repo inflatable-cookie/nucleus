@@ -591,6 +591,7 @@ impl Service {
         if let Some(snoozed) = self.operator_snooze_wait(row).await {
             return Err(snoozed);
         }
+        self.reenter_retained_parent(row).await?;
         if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
@@ -790,7 +791,10 @@ impl Service {
                 let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
                     Some(WaitDetail::OperatorSnoozed { thread, until, .. })
                     if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
-                if tracked.due && prior != Some(&hint) && !still_snoozed {
+                if (tracked.due || (tracked.role && hint.positive_role_activity()))
+                    && prior != Some(&hint)
+                    && !still_snoozed
+                {
                     if hint.has_delivery_change(prior) {
                         schedule.resume_on_host_evidence(id);
                     }

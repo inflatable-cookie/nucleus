@@ -12,9 +12,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest, NoticeAuthorization,
-    NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome, StopProgress, TaskHost,
-    launch_diagnostic,
+    ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
+    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
+    StopProgress, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -189,7 +189,7 @@ impl Service {
             return Ok(Action::Nothing);
         }
         let run_host = if let Some(run) = task.run().filter(|run| !run.revoked()) {
-            let (state, error) = self.read_current_run(row, run, host).await?;
+            let (state, error) = self.read_current_run(row, run, host, &route).await?;
             if !forge_requested
                 && run.last_send_at_ms().is_some()
                 && task.question().is_none()
@@ -309,8 +309,9 @@ impl Service {
         row: &TaskRow,
         run: &Run,
         host: &impl TaskHost,
+        route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
-        let (state, activity, error) = match host.observe_run(run, now_ms()).await {
+        let (state, activity, error, active_child) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
                 if run.launch().role == Role::Worker
                     && let Some(routing) = &seen.routing
@@ -320,7 +321,12 @@ impl Service {
                 if let Some(limit) = &seen.provider_limit {
                     self.record_provider_limit(row, run, limit).await?;
                 }
-                (Observed::Known(seen.host), seen.activity, None)
+                (
+                    Observed::Known(seen.host),
+                    seen.activity,
+                    None,
+                    seen.active_child,
+                )
             }
             Err(error) => {
                 if run.last_send_at_ms().is_none() {
@@ -330,11 +336,14 @@ impl Service {
                         launch_diagnostic(run)
                     );
                 }
-                (Observed::Unknown, None, Some(error))
+                (Observed::Unknown, None, Some(error), None)
             }
         };
         self.observe_role_state(row, &state).await?;
         self.observe_activity(row, activity).await?;
+        if let Some(child) = active_child {
+            self.reenter_active_parent(row, route, &child).await?;
+        }
         Ok((state, error))
     }
 
@@ -706,6 +715,109 @@ impl Service {
         Ok(true)
     }
 
+    pub(super) async fn reenter_retained_parent(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let task = &row.task;
+        if self.acp_provider().is_none()
+            || task.hold().is_some()
+            || task.operator_decline().is_some()
+        {
+            return Ok(());
+        }
+        let identity = task.identity();
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        let threads: Vec<_> = [Role::Worker, Role::Reviewer]
+            .into_iter()
+            .filter_map(|role| task.threads().get(role))
+            .filter(|thread| task.run().is_none_or(|run| run.launch().thread != *thread))
+            .filter(|thread| self.host.retained_reentry_due(thread, &path))
+            .collect();
+        if threads.is_empty() {
+            return Ok(());
+        }
+        let launch = {
+            let state = self.state.lock().await;
+            crate::presentation::retained_launch(&state.store, &identity.id, &threads)?
+        };
+        let Some((thread, instance)) = launch else {
+            return Ok(());
+        };
+        let route = self.project_for(identity).await?;
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let binding = self.checkout_binding(identity, &route, &checkout)?;
+        if let Some(child) = self
+            .host
+            .retained_active_child(binding, thread, instance)
+            .await?
+        {
+            self.reenter_active_parent(row, &route, &child).await?;
+        }
+        Ok(())
+    }
+
+    async fn reenter_active_parent(
+        &self,
+        row: &TaskRow,
+        route: &ProjectRoute,
+        child: &ActiveChild,
+    ) -> Result<(), ServiceError> {
+        let task = &row.task;
+        let Some(provider) = self.acp_provider().filter(|_| {
+            !task.phase().is_terminal()
+                && task.hold().is_none()
+                && task.operator_decline().is_none()
+                && self.host.parent_reentry_due(child)
+        }) else {
+            return Ok(());
+        };
+        let _fence = self.effect(row).await?;
+        if !self.dispatch_mode().await.allows_launch(false) {
+            return Ok(());
+        }
+        let Some(session) = self.host.runtime_identity() else {
+            return Ok(());
+        };
+        let identity = task.identity();
+        let (prior, current, start_line) = {
+            let state = self.state.lock().await;
+            (
+                state.store.task_turn_with_prefix(
+                    &identity.id,
+                    &session,
+                    &child.parent_command_prefix(),
+                )?,
+                prior_preparation_command(&state, row, &session)?,
+                crate::presentation::role_start_line(task, &state.store),
+            )
+        };
+        let Some(write) = self
+            .host
+            .prepare_parent_reentry(child, provider, &start_line, prior.as_deref())
+            .await?
+        else {
+            return Ok(());
+        };
+        if self
+            .state
+            .lock()
+            .await
+            .store
+            .task_turn_failed(&identity.id, write.command_id().ok_or(ServiceError::Input)?)?
+        {
+            return Ok(());
+        }
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let _ = self
+            .send_run_parent(row, &checkout, write, &session, current.as_deref())
+            .await?;
+        Ok(())
+    }
+
     async fn prepare_run_parent(
         &self,
         row: &TaskRow,
@@ -829,7 +941,9 @@ impl Service {
             }
             Err(error) => return Err(error),
         }
-        self.recheck_effect(row, WaitReason::HostUnknown).await;
+        if row.task.run().is_none() && !nucleus_hosts::is_parent_reentry(&command) {
+            self.recheck_effect(row, WaitReason::HostUnknown).await;
+        }
         Ok(ControlFlow::Break(WaitReason::Starting))
     }
 

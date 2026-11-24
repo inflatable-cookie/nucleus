@@ -983,6 +983,100 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
 }
 
 #[tokio::test]
+async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_latest() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let child = crate::ActiveChild {
+        binding: binding.clone(),
+        thread: THREAD.into(),
+        instance: "fixture-retained-launch".into(),
+        native: Some("exact-active-child".into()),
+    };
+    let prefix = child.parent_command_prefix();
+    let first_id = format!("{prefix}:fixture-acp");
+    let first = parent_snapshot(&binding, "completed", false);
+    let mut parent = first["projection"]["thread"].clone();
+    parent["status"] = json!("waiting");
+    parent["latestRunId"] = json!(NATIVE_RUN);
+    let mut child_row =
+        snapshot(&binding, "fixture-retained-launch", "running", false)["projection"]["thread"]
+            .clone();
+    child_row["status"] = json!("running");
+    child_row["activeRunId"] = json!("exact-active-child");
+
+    let mut ended = first.clone();
+    ended["snapshotSequence"] = json!(17);
+    ended["projection"]["runs"] = json!([
+        {"id":"owned-ended-parent","status":"completed","userMessageId":format!("{first_id}-message")},
+        {"id":"unrelated-latest","status":"completed","userMessageId":"unrelated-message"},
+    ]);
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(first.clone()),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(first),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(ended),
+        ),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16,"threads":[parent,child_row],"projects":[]
+        }}));
+    let first = host
+        .prepare_parent_reentry(&child, "fixture-acp", "Fixture", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.command_id(), Some(first_id.as_str()));
+    let retry = host
+        .prepare_parent_reentry(&child, "fixture-acp", "Fixture", Some(&first_id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retry.command_id(), first.command_id());
+
+    parent["latestRunId"] = json!("unrelated-latest");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":parent}));
+    child_row["status"] = json!("completed");
+    child_row["activeRunId"] = Value::Null;
+    child_row["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"fixture-background"}]);
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":child_row}));
+    let next = host
+        .prepare_parent_reentry(&child, "fixture-acp", "Fixture", Some(&first_id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        next.command_id()
+            .unwrap()
+            .starts_with(&format!("{prefix}-after-"))
+    );
+    assert_ne!(next.command_id(), first.command_id());
+
+    child_row
+        .as_object_mut()
+        .unwrap()
+        .remove("pendingBackgroundTasks");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":19,"thread":child_row}));
+    assert!(matches!(
+        host.write_verified_parent(next).await,
+        Err(crate::ParentSendError::NotSent(HostError::Uncertain))
+    ));
+    assert_eq!(native.await.unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn bounded_parent_custody_converges_after_visibility_changes() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

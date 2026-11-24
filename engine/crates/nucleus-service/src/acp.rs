@@ -70,37 +70,57 @@ impl Service {
         let task = &row.task;
         let id = &task.identity().id;
         let wait = state.wait_reason(id);
+        let checkout = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &task.identity().repository,
+            id,
+        );
+        let active_in_shell = [nucleus_core::Role::Worker, nucleus_core::Role::Reviewer]
+            .into_iter()
+            .filter_map(|role| task.threads().get(role))
+            .filter(|thread| {
+                task.run()
+                    .is_none_or(|run| !run.revoked() || run.launch().thread != *thread)
+            })
+            .chain(
+                task.run()
+                    .filter(|run| !run.revoked())
+                    .map(|run| run.launch().thread.as_str()),
+            )
+            .any(|thread| self.host.bound_child_active(thread, &checkout));
+        let active_child = active_in_shell || run_keeps_turn(state, row);
         if task.phase().is_terminal()
             || matches!(
                 state.wait_detail(id),
-                Some(
-                    crate::WaitDetail::BeforeSend(_)
-                        | crate::WaitDetail::ShowingForDelivery(_)
-                        | crate::WaitDetail::OperatorSnoozed { .. }
-                )
+                Some(crate::WaitDetail::OperatorSnoozed { .. })
             )
-            || crate::attention::waiting_for_person(task, wait)
+            || (!active_child
+                && matches!(
+                    state.wait_detail(id),
+                    Some(
+                        crate::WaitDetail::BeforeSend(_) | crate::WaitDetail::ShowingForDelivery(_)
+                    )
+                ))
+            || (!active_in_shell && crate::attention::waiting_for_person(task, wait))
             || task.hold().is_some()
             || task.operator_decline().is_some()
-            || matches!(
-                wait,
-                Some(
-                    WaitReason::Hold
-                        | WaitReason::OperatorDeclined
-                        | WaitReason::HostObservationBlocked
-                )
-            )
+            || state
+                .settings
+                .dispatch
+                .as_ref()
+                .is_some_and(|dispatch| dispatch.mode == nucleus_store::DispatchMode::Stopped)
+            || (!active_in_shell && wait == Some(WaitReason::HostObservationBlocked))
         {
             return Ok((None, false));
         }
-        if task.run().is_some() {
-            return Ok((None, run_keeps_turn(state, row)));
-        }
-        if !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)) {
+        if !active_child
+            && (task.run().is_some()
+                || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)))
+        {
             return Ok((None, false));
         }
         let Some(session) = self.host.runtime_identity() else {
-            return Ok((None, false));
+            return Ok((None, active_child));
         };
         let command =
             state
@@ -115,7 +135,7 @@ impl Service {
             Some(command) => state.store.task_turn_prompt(id, &command)?,
             None => None,
         };
-        Ok((prompt, false))
+        Ok((prompt, active_child))
     }
 
     pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
@@ -227,7 +247,8 @@ impl Service {
             "prompt": prompt,
         })
         .to_string();
-        let starting = matches!(kind, "native_turn_intent" | "native_turn_replay");
+        let starting =
+            row.task.run().is_none() && matches!(kind, "native_turn_intent" | "native_turn_replay");
         let wait = Some(WaitReason::Starting);
         let entered = starting && state.wait_label_changed(&row.task, wait);
         let attempt = state.store.claim_task_effect(id, &intent, entered)?;

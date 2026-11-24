@@ -737,6 +737,31 @@ impl Store {
             .optional()?)
     }
 
+    /// Recover the latest parent hold owned by this active child in the native session.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal cannot be queried.
+    pub fn task_turn_with_prefix(
+        &self,
+        id: &str,
+        session: &str,
+        prefix: &str,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT json_extract(detail, '$.command') FROM events
+             WHERE task_id = ?1 AND kind IN ('native_turn_intent', 'native_turn_replay')
+             AND json_valid(detail)
+             AND (json_extract(detail, '$.session') = ?2
+                  OR instr(json_extract(detail, '$.session'), ?2 || '/') = 1)
+             AND substr(json_extract(detail, '$.command'), 1, length(?3)) = ?3
+             ORDER BY sequence DESC LIMIT 1",
+            )?
+            .query_row(params![id, session, prefix], |row| row.get(0))
+            .optional()?)
+    }
+
     /// Recover the exact text attached to a native command before it could be sent.
     ///
     /// # Errors

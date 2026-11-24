@@ -10,6 +10,7 @@ use nucleus_core::{
     acp::{REFRESH_TASK_ROW, session_id},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::{
     Binding, HostError, ProfileCatalog, RowChildren, RowObservation, RowVisibility, T3, clock_ms,
@@ -26,6 +27,32 @@ pub struct ParentRun {
     pub(crate) thread: String,
     pub(crate) run: String,
     pub(crate) node: String,
+}
+
+/// An exact active run created by the current role's native user message.
+#[derive(Clone, Debug)]
+pub struct ActiveChild {
+    pub(crate) binding: Binding,
+    pub(crate) thread: String,
+    pub(crate) instance: String,
+    pub(crate) native: Option<String>,
+}
+
+impl ActiveChild {
+    /// Prefix of the owned parent commands for this exact child launch.
+    #[must_use]
+    pub fn parent_command_prefix(&self) -> String {
+        let thread = parent_thread(Path::new(&self.binding.worktree_path));
+        format!(
+            "{thread}-hold-acp-child-{:x}",
+            Sha256::digest(&self.instance)
+        )
+    }
+}
+
+struct ReentryFence {
+    child: ActiveChild,
+    latest_parent: Option<String>,
 }
 
 pub enum ParentStep {
@@ -80,6 +107,7 @@ pub struct ParentWrite {
     idle_at: Option<(String, u64)>,
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
+    reentry: Option<Box<ReentryFence>>,
 }
 
 struct ParentDelivery {
@@ -153,7 +181,14 @@ fn parent_hold_provider(command: &str) -> Option<&str> {
         .strip_prefix("thread:nucleus-")?
         .split_once("-hold-acp-")?;
     let (revision, provider) = pin.split_once(':')?;
-    (revision.parse::<u64>().is_ok() && !provider.is_empty()).then_some(provider)
+    (revision.parse::<u64>().is_ok() || revision.starts_with("child-"))
+        .then_some(provider)
+        .filter(|provider| !provider.is_empty())
+}
+
+#[must_use]
+pub fn is_parent_reentry(command: &str) -> bool {
+    is_pinned_parent_hold(command) && command.contains("-hold-acp-child-")
 }
 
 fn parent_hold(
@@ -182,6 +217,7 @@ fn parent_hold(
         idle_at,
         delivery,
         owned_snoozes: Vec::new(),
+        reentry: None,
         payload,
     }
 }
@@ -197,12 +233,40 @@ fn parent_row_matches(row: &Value, binding: &Binding, provider: &str) -> bool {
         && row["modelSelection"]["model"] == "nucleus"
 }
 
+fn parent_launch(
+    binding: &Binding,
+    provider: &str,
+    thread: &str,
+    title: &str,
+    start_line: &str,
+) -> ParentWrite {
+    let command = format!("{thread}-launch");
+    ParentWrite {
+        binding: binding.clone(),
+        rpc: "orchestration.launchThread",
+        idle_at: None,
+        delivery: None,
+        owned_snoozes: Vec::new(),
+        reentry: None,
+        payload: json!({
+            "commandId":command, "threadId":thread, "projectId":binding.project_id,
+            "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
+            "runtimeMode":"full-access", "interactionMode":"default",
+            "workspaceStrategy":{
+                "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
+            },
+            "initialMessage":{"messageId":message_id(&command),"text":start_line,"attachments":[]}
+        }),
+    }
+}
+
 fn unarchive_parent(binding: &Binding, thread: String, sequence: u64) -> ParentWrite {
     ParentWrite {
         binding: binding.clone(),
         rpc: "orchestration.dispatchCommand",
         delivery: None,
         owned_snoozes: Vec::new(),
+        reentry: None,
         payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
         idle_at: Some((thread, sequence)),
     }
@@ -274,6 +338,7 @@ impl T3 {
             idle_at: Some((thread.clone(), sequence)),
             delivery: prepare_delivery(&projection, provider, fence.row)?,
             owned_snoozes: Vec::new(),
+            reentry: None,
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -489,23 +554,9 @@ impl T3 {
         if !catalogue.await?.supports_parent(provider) {
             return Err(HostError::Configuration);
         }
-        let command = format!("{thread}-launch");
-        Ok(ParentStep::Write(ParentWrite {
-            binding: binding.clone(),
-            rpc: "orchestration.launchThread",
-            idle_at: None,
-            delivery: None,
-            owned_snoozes: Vec::new(),
-            payload: json!({
-                "commandId":command, "threadId":thread, "projectId":binding.project_id,
-                "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
-                "runtimeMode":"full-access", "interactionMode":"default",
-                "workspaceStrategy":{
-                    "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
-                },
-                "initialMessage":{"messageId":message_id(&command),"text":start_line,"attachments":[]}
-            }),
-        }))
+        Ok(ParentStep::Write(parent_launch(
+            binding, provider, &thread, title, start_line,
+        )))
     }
 
     fn prepare_held_parent(
@@ -536,6 +587,145 @@ impl T3 {
             start_line,
             None,
         )))
+    }
+
+    /// A bound child is active only on positive run or background evidence.
+    #[must_use]
+    pub fn bound_child_active(&self, thread: &str, checkout: &Path) -> bool {
+        self.rpc.thread_row(thread).is_some_and(|row| {
+            row["worktreePath"]
+                .as_str()
+                .is_some_and(|path| Path::new(path) == checkout)
+                && child_activity(&row, row["activeRunId"].as_str())
+        })
+    }
+
+    #[must_use]
+    pub fn retained_reentry_due(&self, thread: &str, checkout: &Path) -> bool {
+        self.bound_child_active(thread, checkout)
+            && self
+                .rpc
+                .thread_row(&parent_thread(checkout))
+                .is_some_and(|row| parent_accepts_reentry(&row))
+    }
+
+    /// Recover the exact active role from a retained binding and its launch journal.
+    ///
+    /// # Errors
+    /// Returns an error when the retained binding cannot be read.
+    pub async fn retained_active_child(
+        &self,
+        binding: Binding,
+        thread: String,
+        instance: String,
+    ) -> Result<Option<ActiveChild>, HostError> {
+        let Some(projection) = self
+            .read_thread(&binding, &thread, ThreadRead::Observation)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let message = if crate::child_origin_instance(&thread) == Some(instance.as_str()) {
+            format!("message:delegated-task:{instance}")
+        } else {
+            message_id(&instance)
+        };
+        let native = projection.owned_active_run(&message).map(str::to_owned);
+        let child = ActiveChild {
+            binding,
+            thread,
+            instance,
+            native,
+        };
+        Ok(self.active_child_in_shell(&child).then_some(child))
+    }
+
+    /// A held row can authorize re-entry planning only during exact child activity.
+    #[must_use]
+    pub fn parent_reentry_due(&self, child: &ActiveChild) -> bool {
+        let thread = parent_thread(Path::new(&child.binding.worktree_path));
+        self.rpc
+            .thread_row(&thread)
+            .is_some_and(|row| parent_accepts_reentry(&row))
+            && self.active_child_in_shell(child)
+    }
+
+    /// Prepare the first hold for this child or one new hold after an exact ended turn.
+    /// A bounded read can confirm a matching command, but cannot authorize a new ID
+    /// solely from the absence of the prior command.
+    ///
+    /// # Errors
+    /// Returns an error when the observed parent does not match the configured ACP binding.
+    pub async fn prepare_parent_reentry(
+        &self,
+        child: &ActiveChild,
+        provider: &str,
+        prompt: &str,
+        prior: Option<&str>,
+    ) -> Result<Option<ParentWrite>, HostError> {
+        let binding = &child.binding;
+        let thread = parent_thread(Path::new(&binding.worktree_path));
+        let Some(row) = self.rpc.thread_row(&thread) else {
+            return Ok(None);
+        };
+        if !parent_accepts_reentry(&row) || !self.active_child_in_shell(child) {
+            return Ok(None);
+        }
+        if !parent_row_matches(&row, binding, provider) {
+            return Err(HostError::Binding);
+        }
+        let latest = row["latestRunId"].as_str();
+        let prefix = child.parent_command_prefix();
+        let prior = prior.filter(|command| child_reentry_command(command, &prefix));
+        if prior
+            .and_then(parent_hold_provider)
+            .is_some_and(|frozen| frozen != provider)
+        {
+            return Err(HostError::Binding);
+        }
+        let (projection, _) = self.observe_parent(binding, &thread).await?;
+        let Some(projection) = projection else {
+            return Ok(None);
+        };
+        projection.require_parent_provider(provider)?;
+        if projection.has_pending_turn() {
+            return Ok(None);
+        }
+
+        if latest.is_some_and(|run| !projection.terminal_run(run)) {
+            return Ok(None);
+        }
+        let ended_owned = prior
+            .and_then(|command| projection.ended_run_for_message(&message_id(command)))
+            .or_else(|| {
+                latest.filter(|run| {
+                    projection
+                        .ended_parent_message(run)
+                        .and_then(|message| message.strip_suffix("-message"))
+                        .is_some_and(|command| child_reentry_command(command, &prefix))
+                })
+            });
+        let command = match (prior, ended_owned) {
+            (Some(prior), _) if !projection.has_delivery(&message_id(prior)) => prior.to_owned(),
+            (_, Some(native)) => format!("{prefix}-after-{:x}:{provider}", Sha256::digest(native)),
+            (None, None) => format!("{prefix}:{provider}"),
+            (Some(_), None) => return Ok(None),
+        };
+        let mut write = parent_hold(binding, thread, provider, &command, prompt, None);
+        write.reentry = Some(Box::new(ReentryFence {
+            child: child.clone(),
+            latest_parent: latest.map(str::to_owned),
+        }));
+        Ok(Some(write))
+    }
+
+    pub(crate) fn active_child_in_shell(&self, child: &ActiveChild) -> bool {
+        self.rpc.thread_row(&child.thread).is_some_and(|row| {
+            row["projectId"] == child.binding.project_id
+                && row["worktreePath"] == child.binding.worktree_path
+                && row["branch"] == child.binding.branch
+                && child_activity(&row, child.native.as_deref())
+        })
     }
 
     async fn observe_parent(
@@ -670,6 +860,13 @@ impl T3 {
                     {
                         return Err(HostError::Binding);
                     }
+                    if let Some(reentry) = &write.reentry
+                        && (!self.active_child_in_shell(&reentry.child)
+                            || !parent_accepts_reentry(&row)
+                            || row["latestRunId"].as_str() != reentry.latest_parent.as_deref())
+                    {
+                        return Err(HostError::Uncertain);
+                    }
                     crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
                 }
                 Ok(())
@@ -728,6 +925,40 @@ impl T3 {
             .map_err(|_| refuse("held shell visibility is invalid"))?;
         verify_delivery_visibility(visibility, delivery.row.sequence, observed)
     }
+}
+
+fn child_reentry_command(command: &str, prefix: &str) -> bool {
+    command
+        .strip_prefix(prefix)
+        .is_some_and(|suffix| suffix.starts_with(':') || suffix.starts_with("-after-"))
+}
+
+fn child_activity(row: &Value, native: Option<&str>) -> bool {
+    !closed_row(row)
+        && (ShellCustody(row).background() == Some(true)
+            || (native.is_some_and(|run| row["activeRunId"] == run)
+                && matches!(row["status"].as_str(), Some("running" | "waiting"))))
+}
+
+fn parent_accepts_reentry(row: &Value) -> bool {
+    if closed_row(row) || !row["activeRunId"].is_null() || !row["pendingRuntimeRequest"].is_null() {
+        return false;
+    }
+    matches!(
+        (row["status"].as_str(), row["latestRunId"].as_str()),
+        (Some("idle"), None)
+            | (
+                Some(
+                    "waiting"
+                        | "completed"
+                        | "failed"
+                        | "interrupted"
+                        | "cancelled"
+                        | "rolled_back"
+                ),
+                Some(_)
+            )
+    )
 }
 
 fn verify_delivery_visibility(
