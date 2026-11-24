@@ -13,6 +13,15 @@ use nucleus_store::{EngineStorage, StorageDirectory, StorageError};
 use sha2::{Digest, Sha256};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
+// Keep Git's bounded command runner without collecting one filename per entry.
+// `ls-files` quotes embedded newlines. Its records cannot look like the marker
+// which confirms that the whole scan completed successfully.
+const INDEX_VISIBILITY: &str = concat!(
+    r#"alias.nucleus-index-visibility=! { git ls-files -v && printf '%s\n' 'Nucleus index complete'; } | "#,
+    r#"awk '$0 == "Nucleus index complete" { complete = 1; next } "#,
+    r#"substr($0, 1, 2) != "H " { hidden = 1 } "#,
+    r#"END { if (!complete) exit 1; if (hidden) print "hidden" }'"#,
+);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkError {
@@ -28,8 +37,14 @@ pub enum WorkError {
     Filesystem(#[from] std::io::Error),
     #[error("the work volume or layout cannot be verified")]
     Storage(#[from] StorageError),
-    #[error("worktree Git operation failed")]
-    Git(#[from] GitFailure),
+    #[error("{command} failed in {directory:?} for repository {repository:?}: {source}")]
+    Git {
+        command: String,
+        directory: PathBuf,
+        repository: PathBuf,
+        #[source]
+        source: GitFailure,
+    },
     #[error("worktree head could not be read")]
     Head(#[from] InvalidHead),
 }
@@ -150,8 +165,15 @@ impl Checkout<'_> {
         )?;
         // Flags that hide working-tree changes invalidate ordinary status evidence.
         // Git uses S for skip-worktree and lowercase tags for assume-unchanged.
-        let index = self.git(&self.path, &["ls-files", "-v"])?;
-        if status.is_empty() && index.lines().all(|line| line.starts_with("H ")) {
+        if status.is_empty()
+            && self
+                .git_named(
+                    &self.path,
+                    &["-c", INDEX_VISIBILITY, "nucleus-index-visibility"],
+                    "git ls-files -v".into(),
+                )?
+                .is_empty()
+        {
             Ok(Workspace::Clean(identity.head_oid().parse()?))
         } else {
             Ok(Workspace::Dirty)
@@ -275,8 +297,8 @@ impl Checkout<'_> {
     }
 
     fn owned_identity(&self) -> Result<WorktreeIdentity, WorkError> {
-        let checkout = self.worktrees.git.worktree_identity(&self.path)?;
-        let repository = self.worktrees.git.worktree_identity(&self.repository)?;
+        let checkout = self.git_identity(&self.path)?;
+        let repository = self.git_identity(&self.repository)?;
         if checkout.root() != self.path
             || repository.root() != self.repository
             || !checkout.same_repository(&repository)
@@ -287,12 +309,42 @@ impl Checkout<'_> {
         Ok(checkout)
     }
 
+    fn git_identity(&self, directory: &Path) -> Result<WorktreeIdentity, WorkError> {
+        self.worktrees
+            .git
+            .worktree_identity(directory)
+            .map_err(|error| {
+                self.git_failure(directory, "git rev-parse / symbolic-ref".into(), error)
+            })
+    }
+
     fn git(&self, directory: &Path, args: &[&str]) -> Result<String, WorkError> {
-        Ok(self.worktrees.git.run(
-            directory,
-            args,
-            GitFailureCode::CommandUnavailable,
-            GIT_TIMEOUT,
-        )?)
+        self.git_named(directory, args, format!("git {args:?}"))
+    }
+
+    fn git_named(
+        &self,
+        directory: &Path,
+        args: &[&str],
+        command: String,
+    ) -> Result<String, WorkError> {
+        self.worktrees
+            .git
+            .run(
+                directory,
+                args,
+                GitFailureCode::CommandUnavailable,
+                GIT_TIMEOUT,
+            )
+            .map_err(|error| self.git_failure(directory, command, error))
+    }
+
+    fn git_failure(&self, directory: &Path, command: String, source: GitFailure) -> WorkError {
+        WorkError::Git {
+            command,
+            directory: directory.into(),
+            repository: self.repository.clone(),
+            source,
+        }
     }
 }
