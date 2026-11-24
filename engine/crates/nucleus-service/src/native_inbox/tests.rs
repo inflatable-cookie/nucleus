@@ -164,7 +164,9 @@ async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answ
         .ok()
         .unwrap();
     assert_eq!(record.id, decision.id);
-    assert_eq!(record.answer.unwrap().input.option_id, "continue");
+    let answer = record.answer.unwrap();
+    assert_eq!(answer.input.option_id, "continue");
+    assert_eq!(answer.author, "operator via T3 Inbox (unattested)");
     retire(&service, &target).await;
     assert_eq!(stage.load(Ordering::Relaxed), 6);
     server.abort();

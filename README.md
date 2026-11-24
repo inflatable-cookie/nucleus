@@ -178,6 +178,18 @@ settles a task thread, so its rows stay out of your settle list; a row you settl
 by hand is left alone. A question or permission still belongs to the task's own
 thread (open it from the row) or goes through Nucleus's own routes.
 
+### T3 requests
+
+The Rust Inbox records native form answers as
+`operator via T3 Inbox (unattested)`. T3 currently returns the same response
+for a desktop submission and an MCP submission.
+
+Nucleus requests server-attested answer provenance from T3 that distinguishes
+a direct human UI submission from MCP or a relay. The evidence must bind the
+host, thread, request, decision version and selected choice. When T3 supplies
+that evidence, Nucleus will require a direct UI submission for operator-only
+decisions.
+
 ## Development
 
 From a checkout:

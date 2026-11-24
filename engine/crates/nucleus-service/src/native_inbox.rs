@@ -212,7 +212,7 @@ impl Service {
             .find(|decision| inbox_field(&decision.project_id, &decision.id) == answer.field)
             .ok_or(StoreError::PlanningConflict)?;
         let authority = Authority::Operator {
-            actor: format!("operator (T3 Inbox on {})", self.host.endpoint()),
+            actor: "operator via T3 Inbox (unattested)".into(),
         };
         self.record_decision_answer(
             &mut state,
