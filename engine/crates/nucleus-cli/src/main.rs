@@ -1,3 +1,5 @@
+mod planning;
+
 use std::{
     env,
     error::Error,
@@ -75,6 +77,8 @@ enum Action {
         #[arg(long)]
         fixture_origin_thread: Option<String>,
     },
+    #[command(flatten)]
+    Planning(planning::Action),
     /// Admit a fixture task. Read the brief from stdin.
     Admit { id: String, reference: String },
     /// List task summaries.
@@ -347,6 +351,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
     loopback(endpoint)?;
     let key = control_key(CONTROL_KEY)?;
     let (method, path, body) = match action {
+        A::Planning(action) => action.request()?,
         A::Admit { id, reference } => (
             Method::POST,
             "/v1/tasks".into(),

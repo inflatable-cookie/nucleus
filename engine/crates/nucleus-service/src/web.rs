@@ -33,6 +33,7 @@ use crate::{
     presentation::{HistoryEvent, RunView},
 };
 
+mod planning;
 mod settings;
 pub(crate) use settings::{CachedHost, RuntimeSettings};
 
@@ -88,6 +89,7 @@ pub fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Contr
         )
         .route("/v1/settings/projects/reassign", post(settings::reassign))
         .route("/v1/events", get(events))
+        .merge(planning::routes())
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize));
     let tasks = Router::new()
         .route("/v1/tasks/{id}", get(detail))
@@ -283,6 +285,7 @@ async fn detail(State(api): State<Api>, Path(id): Path<String>) -> Result<Json<D
     Ok(Json(Detail {
         summary,
         brief: task.brief().clone(),
+        source: state.store.task_source(&id).map_err(ServiceError::from)?,
         pull_request: task.pull_request().cloned(),
         verdict: task.verdict().cloned(),
         run,
@@ -536,6 +539,8 @@ struct Detail {
     #[serde(flatten)]
     summary: Summary,
     brief: Brief,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<nucleus_store::planning::ItemSource>,
     pull_request: Option<PullRequest>,
     verdict: Option<Verdict>,
     run: Option<RunView>,
@@ -603,8 +608,12 @@ impl IntoResponse for ApiError {
             ),
             Self::Service(error) => {
                 let status = match error {
-                    ServiceError::Missing => StatusCode::NOT_FOUND,
+                    ServiceError::Missing
+                    | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => {
+                        StatusCode::NOT_FOUND
+                    }
                     ServiceError::Input
+                    | ServiceError::Store(nucleus_store::StoreError::PlanningInput)
                     | ServiceError::Project
                     | ServiceError::Settings(
                         nucleus_store::StorageError::InvalidSettings(_)
@@ -615,14 +624,16 @@ impl IntoResponse for ApiError {
                     ) => StatusCode::BAD_REQUEST,
                     ServiceError::QuestionPlanner
                     | ServiceError::PlannerAuthorityRefused
-                    | ServiceError::AnswerInInbox => StatusCode::FORBIDDEN,
+                    | ServiceError::AnswerInInbox
+                    | ServiceError::DecisionOperator => StatusCode::FORBIDDEN,
                     ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
                     | ServiceError::EffectInProgress
-                    | ServiceError::Store(nucleus_store::StoreError::StaleTask) => {
-                        StatusCode::CONFLICT
-                    }
+                    | ServiceError::Store(
+                        nucleus_store::StoreError::StaleTask
+                        | nucleus_store::StoreError::PlanningConflict,
+                    ) => StatusCode::CONFLICT,
                     _ => StatusCode::SERVICE_UNAVAILABLE,
                 };
                 (status, error.to_string())
