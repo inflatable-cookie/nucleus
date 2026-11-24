@@ -13,6 +13,7 @@ import {
 import { WebBoard } from "../service/web/web-board";
 import { RustBoardProxy } from "../service/web/rust-board";
 import { uiBoardSchema } from "../shared/contracts";
+import { inboxListWidth } from "../shared/inbox-board";
 
 const legacy = uiBoardSchema.parse({
   revision: 1,
@@ -649,6 +650,7 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
     assert.fail("Unexpected standalone route " + path);
   };
   Object.assign(dom.window, {
+    innerWidth: 1280,
     matchMedia: () =>
       Object.assign(new dom.window.EventTarget(), { matches: true }),
     fetch: fetcher,
@@ -672,6 +674,14 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
     () => text().includes("Standalone task"),
     "task title renders",
   );
+  assert.ok(
+    [...dom.window.document.querySelectorAll("div")].some(
+      (element) =>
+        element.textContent?.includes("Standalone task") &&
+        dom.window.getComputedStyle(element).flexBasis === `${inboxListWidth}px`,
+    ),
+    "the desktop task pane has a fixed nonzero flex basis",
+  );
   taskPhase = "working";
   assert.ok(stream, "the board subscribed to engine changes");
   stream.enqueue(
@@ -680,6 +690,15 @@ test("the standalone bundle uses only the Rust browser routes and refreshes on p
     ),
   );
   await click("Working, 1");
+  await eventually(
+    () => text().includes("Standalone task"),
+    "working view renders",
+  );
+  await click("Queue, 0");
+  await eventually(
+    () => !text().includes("Standalone task"),
+    "empty queue renders",
+  );
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
   await click("Increase Slots");
