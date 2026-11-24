@@ -49,6 +49,14 @@ const namedProfile = z.object({
     weight: weights,
   }),
   group: z.string().optional(),
+  enabled: z.boolean().optional(),
+  roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).optional(),
+  scopes: z.array(z.string()).optional(),
+  providerInstanceId: z.string().optional(),
+  modeId: z.string().optional(),
+  featureValues: z.record(z.string(), z.unknown()).optional(),
+  notes: z.string().optional(),
+  unrated: z.boolean().optional(),
 });
 const profiles = z.object({
   profiles: z.array(namedProfile),

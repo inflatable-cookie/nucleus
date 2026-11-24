@@ -321,6 +321,7 @@ pub(super) fn import_items(
     repositories: Vec<(String, String)>,
     keep: bool,
     apply: Option<&Path>,
+    profiles_only: bool,
 ) -> Result<()> {
     let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
         .map(PathBuf::from)
@@ -332,8 +333,12 @@ pub(super) fn import_items(
         }
     }
     let report = if let Some(home) = apply {
-        let storage = super::open_settings(Some(home))?.storage()?;
-        legacy::apply_items(&scratch, source, &mapping, &storage)?
+        let settings = super::open_settings(Some(home))?;
+        if profiles_only {
+            legacy::apply_profiles(&scratch, source, &settings)?
+        } else {
+            legacy::apply_items(&scratch, source, &mapping, &settings)?
+        }
     } else {
         let mode = if keep {
             ImportMode::Keep
@@ -374,5 +379,24 @@ mod tests {
         ));
         let result = Cli::try_parse_from(args.into_iter().chain(["/scratch/profile", "--keep"]));
         assert!(matches!(result, Err(error) if error.kind() == ErrorKind::ArgumentConflict));
+    }
+
+    #[test]
+    fn legacy_profiles_only_requires_apply_and_skips_repository_mapping() {
+        let args = ["nucleus-engine", "item.import", "copy.sqlite"];
+        assert!(Cli::try_parse_from(args.into_iter().chain(["--profiles-only"])).is_err());
+        assert!(
+            Cli::try_parse_from(args.into_iter().chain(["--apply", "/scratch/profile"])).is_err()
+        );
+        let parsed = Cli::try_parse_from(args.into_iter().chain([
+            "--profiles-only",
+            "--apply",
+            "/scratch/profile",
+        ]))
+        .expect("profiles-only apply");
+        assert!(matches!(
+            parsed.action,
+            Action::ImportItems { profiles_only: true, repositories, .. } if repositories.is_empty()
+        ));
     }
 }

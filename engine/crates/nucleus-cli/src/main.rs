@@ -84,13 +84,13 @@ enum Action {
     },
     #[command(flatten)]
     Planning(planning::Action),
-    /// Rehearse or apply a legacy planning import from a TypeScript `SQLite` copy.
+    /// Import legacy planning items and profiles from a TypeScript `SQLite` copy.
     #[command(name = "item.import")]
     ImportItems {
         /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
         source: PathBuf,
         /// Map a legacy owner/repo to a Rust project ID.
-        #[arg(long = "repository", required = true, value_parser = planning::repository_mapping)]
+        #[arg(long = "repository", required_unless_present = "profiles_only", value_parser = planning::repository_mapping)]
         repositories: Vec<(String, String)>,
         /// Keep the resulting scratch database. The default rolls back after rehearsal.
         #[arg(long)]
@@ -98,6 +98,9 @@ enum Action {
         /// Append to an existing, stopped Rust profile at this explicit home.
         #[arg(long, value_name = "PROFILE_HOME", conflicts_with = "keep")]
         apply: Option<PathBuf>,
+        /// Apply profiles and pool settings without opening the planning database.
+        #[arg(long, requires = "apply")]
+        profiles_only: bool,
     },
     /// Set up the Nucleus Rust provider in a local T3 environment.
     T3(t3_setup::Args),
@@ -249,7 +252,8 @@ async fn main() -> Result<()> {
             repositories,
             keep,
             apply,
-        } => planning::import_items(&source, repositories, keep, apply.as_deref()),
+            profiles_only,
+        } => planning::import_items(&source, repositories, keep, apply.as_deref(), profiles_only),
         Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
     }
