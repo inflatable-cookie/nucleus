@@ -631,13 +631,36 @@ impl GitHub {
                 observed: Err(ForgeError::Deferred { until }),
             });
         }
-        let mut observed = self.observe_for_merge(target).await;
-        if write == MergeWrite::HeadMismatch
-            && matches!(&observed, Ok(Forge::Open { pr, .. }) if pr.head == head)
-        {
-            observed = Err(ForgeError::HeadNotRefreshed);
-        }
+        let observed = self.merge_readback(target, &head, &base, &write).await;
         Ok(MergeAttempt { write, observed })
+    }
+
+    async fn merge_readback(
+        &self,
+        target: &PullTarget,
+        head: &Head,
+        base: &Head,
+        write: &MergeWrite,
+    ) -> Result<Forge, ForgeError> {
+        let pull = self.pull(target).await?;
+        let base_moved = pull.base.sha != *base;
+        let mut observed = self.observe_pull(target, pull, true).await?;
+        if let Forge::Open { pr, checks } = &mut observed
+            && pr.head == *head
+        {
+            if matches!(write, MergeWrite::Refused { .. } | MergeWrite::HeadMismatch)
+                && base_moved
+                && *checks != CheckState::Conflict
+            {
+                *checks = CheckState::BaseMoved;
+            }
+            if *write == MergeWrite::HeadMismatch
+                && !matches!(checks, CheckState::Conflict | CheckState::BaseMoved)
+            {
+                return Err(ForgeError::HeadNotRefreshed);
+            }
+        }
+        Ok(observed)
     }
 }
 

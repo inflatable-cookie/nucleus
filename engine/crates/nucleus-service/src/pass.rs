@@ -1381,9 +1381,22 @@ impl Service {
         }
         let observed = capture_forge(self, attempt.observed);
         if attempt.write == MergeWrite::HeadMismatch {
+            observation.forge = seen(observed);
+            if matches!(
+                &observation.forge,
+                Observed::Known(Forge::Open {
+                    checks: CheckState::Conflict | CheckState::BaseMoved,
+                    ..
+                })
+            ) && decide(task, &observation) == Action::Advance(Phase::Working)
+            {
+                // Returning to work retires the same approval as the mismatch path.
+                return self
+                    .apply(row, &observation, Action::Advance(Phase::Working))
+                    .await;
+            }
             let mut updated = task.clone();
             if updated.merge_head_mismatched(head) {
-                observation.forge = seen(observed);
                 let next = updated.reconcile(&observation);
                 let mut history = event("merge_head_changed");
                 history.detail = serde_json::json!({

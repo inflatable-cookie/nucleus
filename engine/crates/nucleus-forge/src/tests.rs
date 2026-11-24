@@ -735,3 +735,46 @@ async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
     ));
     assert_eq!(server.join().expect("GET and GraphQL only").len(), 3);
 }
+
+#[tokio::test]
+async fn a_refused_put_uses_positive_same_head_rebase_evidence_from_readback() {
+    for (status, head, base, conflicting, expected) in [
+        (405, 'a', 'd', false, CheckState::BaseMoved),
+        (405, 'a', 'b', false, CheckState::Ready),
+        (409, 'a', 'b', true, CheckState::Conflict),
+        (409, 'c', 'd', false, CheckState::Ready),
+        (502, 'a', 'd', false, CheckState::Ready),
+    ] {
+        let mut responses = ready_preflight();
+        let mut fresh_pull = pull(head, false);
+        fresh_pull["base"]["sha"] = json!(sha(base));
+        let mut fresh_checks = checks(head, "SUCCESS");
+        if conflicting {
+            let pr = &mut fresh_checks["data"]["repository"]["pullRequest"];
+            pr["mergeable"] = json!("CONFLICTING");
+            pr["mergeStateStatus"] = json!("DIRTY");
+        }
+        responses.extend([
+            Some(FixtureReply {
+                status,
+                headers: "",
+                body: json!({}),
+            }),
+            Some(FixtureReply::ok(fresh_pull)),
+            Some(FixtureReply::ok(fresh_checks)),
+        ]);
+        let total = responses.len();
+        let (forge, calls) = scripted(responses);
+        let target = branches().target(PR_URL).unwrap();
+        let attempt = forge.merge(&task_with_approval(), &target).await.unwrap();
+        assert!(
+            matches!(attempt.observed, Ok(Forge::Open { pr, checks })
+            if pr.head == sha(head) && checks == expected),
+            "HTTP {status} with readback head {head} and base {base}"
+        );
+        assert_eq!(
+            calls.join().expect("the ordinary readback only").len(),
+            total
+        );
+    }
+}
