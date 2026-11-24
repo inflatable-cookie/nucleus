@@ -1,0 +1,1 @@
+- Keep native parent turns open through child reservation and send. A confirmed ended parent and absent child retire the stale reservation before the next launch.

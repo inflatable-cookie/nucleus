@@ -65,7 +65,7 @@ impl Service {
                     )
                 )
             } else {
-                may_launch && wait == Some(WaitReason::Starting)
+                may_launch && matches!(wait, None | Some(WaitReason::Starting))
             };
             return Ok((None, active));
         }

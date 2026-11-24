@@ -416,6 +416,12 @@ interruption reconnects with backoff. A failed native turn is recorded for
 the task version and T3 session. Normal reconciliation can retry if either
 changes.
 
+A committed reservation keeps its parent open through the first send. If
+the exact frozen parent turn ends before a delegated child exists, the
+scheduler verifies the child's absence after observing the terminal parent
+and records the outcome before retiring that reservation. Subsequent
+preparation gets a new parent and a new launch identity.
+
 The operator can queue a read-only row refresh with
 `POST /v1/tasks/{id}/acp/refresh`. The scheduler proves the row is idle and
 records the refresh intent before sending it. The ACP session renders the

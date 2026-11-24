@@ -613,6 +613,13 @@ impl TaskHost for T3Pass<'_> {
         }
         let wire = Wire::read(run)?;
         let (thread, state) = self.host.delivery(run, &wire).await?;
+        if thread.is_none() && self.closed_delegation(run, &wire).await? {
+            return Ok(RunObservation {
+                host: current(run, RunState::ParentEnded),
+                activity: None,
+                provider_limit: None,
+            });
+        }
         if state == RunState::ReadyToSend && awaiting_reply(run, now_ms) {
             return Err(HostError::Uncertain);
         }
@@ -648,10 +655,17 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
-        if let Some(parent) = &wire.parent
-            && self.host.thread(&wire.binding, parent).await?.is_none()
-        {
-            return Err(HostError::Uncertain);
+        if let Some(parent) = &wire.parent {
+            let projection = self
+                .host
+                .thread(&wire.binding, parent)
+                .await?
+                .ok_or(HostError::Uncertain)?;
+            if let Some(run) = wire.delegated_parent_run()?
+                && !projection.active_run(&run)
+            {
+                return Err(HostError::Uncertain);
+            }
         }
         let (thread, state) = self.host.delivery(run, &wire).await?;
         if wire.method == Method::Continue
@@ -751,6 +765,9 @@ impl TaskHost for T3Pass<'_> {
                 }),
             }));
         }
+        if thread.is_none() && self.closed_delegation(run, &wire).await? {
+            return Ok(StopProgress::Settled(current(run, RunState::ParentEnded)));
+        }
         match state {
             RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
             RunState::Ended | RunState::Gone
@@ -772,6 +789,27 @@ impl TaskHost for T3Pass<'_> {
 }
 
 impl T3Pass<'_> {
+    async fn closed_delegation(&self, run: &Run, wire: &Wire) -> Result<bool, HostError> {
+        let (Some(parent), Some(parent_run)) = (&wire.parent, wire.delegated_parent_run()?) else {
+            return Ok(false);
+        };
+        if !self
+            .host
+            .thread(&wire.binding, parent)
+            .await?
+            .is_some_and(|projection| projection.terminal_run(&parent_run))
+        {
+            return Ok(false);
+        }
+        // Observe the exact child again after proving its parent can no longer launch it.
+        let (child, state) = self.host.delivery(run, wire).await?;
+        Ok(child.is_none()
+            && state == RunState::ReadyToSend
+            && self
+                .quiet(&wire.binding, &run.launch().thread, None)
+                .await?)
+    }
+
     async fn observe_rejected_archive(
         &self,
         run: &Run,

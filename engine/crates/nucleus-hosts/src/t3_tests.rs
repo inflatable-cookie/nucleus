@@ -190,6 +190,14 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
 }
 
 fn reserve_entry(binding: Binding, entry: Entry) -> (Task, Observation, String) {
+    reserve_with_parent(binding, entry, None)
+}
+
+fn reserve_with_parent(
+    binding: Binding,
+    entry: Entry,
+    parent: Option<crate::ParentRun>,
+) -> (Task, Observation, String) {
     let pr = PullRequest {
         url: "https://github.com/example/fixture/pull/1".into(),
         head: "a".repeat(40).parse().expect("head"),
@@ -220,21 +228,33 @@ fn reserve_entry(binding: Binding, entry: Entry) -> (Task, Observation, String) 
     };
     let _ = task.reconcile(&observation);
     let instance = task.next_launch_instance().expect("instance");
-    let inputs = RunRequest {
-        parent: None,
-        binding,
-        dispatch: Dispatch::Create {
-            title: "fixture".into(),
-            profile: RoleProfile {
-                instance_id: "fixture-provider".into(),
-                model: "fixture-model".into(),
-                runtime_mode: "full-access".into(),
-                options: Vec::new(),
+    let profile = RoleProfile {
+        instance_id: "fixture-provider".into(),
+        model: "fixture-model".into(),
+        runtime_mode: "full-access".into(),
+        options: Vec::new(),
+    };
+    let title = "fixture".into();
+    let parent_thread = parent.as_ref().map(|parent| parent.thread.clone());
+    let (dispatch, thread) = if let Some(parent) = parent {
+        (
+            Dispatch::Delegate {
+                title,
+                profile,
+                parent,
             },
-        },
+            crate::launch::delegated_child(&instance),
+        )
+    } else {
+        (Dispatch::Create { title, profile }, THREAD.into())
+    };
+    let inputs = RunRequest {
+        parent: parent_thread,
+        binding,
+        dispatch,
         text: "Frozen prompt".into(),
     }
-    .inputs(&instance, THREAD.into(), 1)
+    .inputs(&instance, thread, 1)
     .expect("inputs");
     let _ = task
         .reserve_launch(&observation, inputs, &[4; 32])
@@ -304,10 +324,56 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
 }
 
 fn absent() -> Response {
+    missing_thread(THREAD)
+}
+
+fn missing_thread(thread: &str) -> Response {
     Response::Failure(json!([{"_tag":"Fail","error":{
-        "_tag":"OrchestrationV2GetThreadProjectionError","threadId":THREAD,
-        "cause":{"name":"ProjectionStoreThreadNotFoundError","message": format!("No orchestration projection exists for thread {THREAD}.")},
+        "_tag":"OrchestrationV2GetThreadProjectionError","threadId":thread,
+        "cause":{"name":"ProjectionStoreThreadNotFoundError","message": format!("No orchestration projection exists for thread {thread}.")},
     }}]))
+}
+
+#[tokio::test]
+async fn an_expired_parent_and_absent_exact_child_settle_without_resending() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::ParentRun {
+        thread: crate::parent_thread(checkout.path()),
+        run: NATIVE_RUN.into(),
+        node: "parent-root".into(),
+    };
+    let (mut task, mut observation, instance) =
+        reserve_with_parent(binding.clone(), Entry::Brief, Some(parent));
+    task.record_send(&instance, 1).expect("previous send");
+    let run = task.run().expect("reservation");
+    let child = &run.launch().thread;
+    let read = "orchestration.subscribeThread";
+    let (client, native) = server(vec![
+        (read, missing_thread(child)),
+        (
+            read,
+            Response::ParentSnapshot(parent_snapshot(&binding, "completed", false)),
+        ),
+        (read, missing_thread(child)),
+    ])
+    .await;
+    let observed = quiet_pass(&client)
+        .observe_run(run, 2)
+        .await
+        .expect("fresh observations");
+    assert_eq!(
+        observed.host,
+        Host::Current {
+            instance,
+            state: RunState::ParentEnded
+        }
+    );
+    observation.host = Observed::Known(observed.host);
+    let _ = task.reconcile(&observation);
+    assert!(task.run().is_none());
+    assert_eq!(task.phase(), Phase::Working);
+    native.await.expect("reads only");
 }
 
 fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {

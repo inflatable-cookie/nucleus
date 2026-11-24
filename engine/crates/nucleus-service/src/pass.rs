@@ -431,6 +431,17 @@ impl Service {
             {
                 "provider_limit"
             }
+            Action::Advance(_)
+                if matches!(
+                    observation.host,
+                    Observed::Known(Host::Current {
+                        state: RunState::ParentEnded,
+                        ..
+                    })
+                ) =>
+            {
+                "delegated_parent_ended"
+            }
             Action::Advance(Phase::ReportReady) => "report_ready",
             Action::Advance(Phase::Blocked | Phase::Error) => "report_only_worker_returned",
             Action::Advance(_) => "phase_reconciled",
@@ -442,6 +453,16 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
+        if kind == "delegated_parent_ended"
+            && let Some(run) = row.task.run()
+        {
+            audit.detail = serde_json::json!({
+                "instance": run.launch().instance,
+                "thread": run.launch().thread,
+                "outcome": "parent ended before the delegated child started",
+            })
+            .to_string();
+        }
         if updated.phase() == Phase::ReportReady
             && let Some(delivery) = updated
                 .report_task()
