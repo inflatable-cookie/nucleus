@@ -182,6 +182,10 @@ fn binding(path: &Path) -> Binding {
 }
 
 fn reserve(binding: Binding) -> (Task, Observation, String) {
+    reserve_entry(binding, Entry::ReviewEntry)
+}
+
+fn reserve_entry(binding: Binding, entry: Entry) -> (Task, Observation, String) {
     let pr = PullRequest {
         url: "https://github.com/example/fixture/pull/1".into(),
         head: "a".repeat(40).parse().expect("head"),
@@ -192,18 +196,22 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
             reference: "fixture".into(),
             repository: "example/fixture".into(),
             base: "main".into(),
-            entry: Entry::ReviewEntry,
+            entry,
             origin_thread: None,
         },
         "Synthetic task".into(),
-        Some(pr.clone()),
+        (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {
         host: Observed::Unknown,
         workspace: Observed::Known(Workspace::Clean(pr.head.clone())),
-        forge: Observed::Known(Forge::Open {
-            pr,
-            checks: CheckState::Ready,
+        forge: Observed::Known(if entry == Entry::ReviewEntry {
+            Forge::Open {
+                pr,
+                checks: CheckState::Ready,
+            }
+        } else {
+            Forge::Absent
         }),
     };
     let _ = task.reconcile(&observation);
@@ -228,6 +236,51 @@ fn reserve(binding: Binding) -> (Task, Observation, String) {
         .reserve_launch(&observation, inputs, &[4; 32])
         .expect("reserve");
     (task, observation, instance)
+}
+
+#[tokio::test]
+async fn a_sibling_helper_needs_exact_idle_proof_and_never_hides_other_work() {
+    let checkout = checkout_fixture();
+    let root = checkout.path().canonicalize().expect("canonical checkout");
+    let binding = binding(&root);
+    let (mut task, _, instance) = reserve_entry(binding.clone(), Entry::Brief);
+    task.record_send(&instance, 1).expect("record worker send");
+    assert_eq!(task.threads().get(nucleus_core::Role::Worker), Some(THREAD));
+    for (status, unrelated, unknown, expected) in [
+        ("completed", false, false, Some(true)),
+        ("running", false, false, Some(false)),
+        ("completed", true, false, Some(false)),
+        ("completed", false, true, None),
+    ] {
+        let mut observed = snapshot(&binding, &instance, status, false);
+        if unknown {
+            observed["projection"]
+                .as_object_mut()
+                .expect("projection")
+                .remove("providerThreads");
+        }
+        let (client, server) = server(vec![(
+            "orchestration.subscribeThread",
+            Response::Snapshot(observed),
+        )])
+        .await;
+        let mut pass = client.fixture_pass().for_task(&task);
+        pass.evidence = std::sync::Arc::new(crate::PassEvidence {
+            processes: tokio::sync::OnceCell::new_with(Some(Ok(
+                crate::Inventory::bound_helper_fixture(&root, THREAD, unrelated),
+            ))),
+            ..crate::PassEvidence::default()
+        });
+        let result = pass.quiet(&binding, "fixture-reviewer", None).await;
+        if let Some(expected) = expected {
+            assert_eq!(result.expect("custody"), expected);
+        } else {
+            assert!(matches!(result, Err(HostError::Uncertain)));
+        }
+        let requests = server.await.expect("scripted host");
+        let payload: Value = serde_json::from_str(requests[0].payload.get()).expect("payload");
+        assert_eq!(payload["threadId"], THREAD);
+    }
 }
 
 fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> Value {
