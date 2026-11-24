@@ -71,7 +71,7 @@ pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
-pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility};
+pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility, snooze_deadline};
 use thread_snapshots::ThreadRead;
 pub use title_shell::TitleTarget;
 use tokio::sync::OnceCell;
@@ -109,6 +109,8 @@ pub enum HostError {
     Uncertain,
     #[error("T3 rejected the pinned parent hold")]
     ParentHoldRejected,
+    #[error("the operator snoozed the destination until {until} ms")]
+    OperatorSnoozed { until: u64 },
     #[error(
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]

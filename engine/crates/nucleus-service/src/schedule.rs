@@ -126,6 +126,13 @@ impl Schedule {
         self.tasks.entry(id.into()).or_default();
     }
 
+    pub(crate) fn defer_effect(&mut self, id: &str, due: Instant) {
+        self.reset_host_backoff(id);
+        let mut pending = Pending::default();
+        pending.wake(due, Priority::Effect);
+        self.tasks.insert(id.into(), pending);
+    }
+
     pub(crate) fn block_host_observation(&mut self, id: &str) {
         self.host_retry.insert(id.into(), HostRecovery::Blocked);
         self.tasks.insert(id.into(), Pending::default());

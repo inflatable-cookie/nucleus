@@ -79,6 +79,8 @@ pub enum ServiceError {
     },
     #[error("T3 parent message delivery could not be confirmed: {0}")]
     ParentDeliveryUnknown(HostError),
+    #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
+    OperatorSnoozed { thread: String, until: u64 },
     #[error("run scratch is already reserved for another run")]
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
@@ -223,6 +225,12 @@ enum WaitDetail {
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
     Archive(String),
+    OperatorSnoozed {
+        version: i64,
+        thread: String,
+        until: u64,
+        message: String,
+    },
 }
 
 struct State {
@@ -580,6 +588,9 @@ impl Service {
             }
             return Ok(Action::Nothing);
         }
+        if let Some(snoozed) = self.operator_snooze_wait(row).await {
+            return Err(snoozed);
+        }
         if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
@@ -760,6 +771,7 @@ impl Service {
         let State {
             thread_tasks,
             schedule,
+            waits,
             ..
         } = &mut *state;
         let now = Instant::now();
@@ -775,7 +787,10 @@ impl Service {
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
-                if tracked.due && prior != Some(&hint) {
+                let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
+                    Some(WaitDetail::OperatorSnoozed { thread, until, .. })
+                    if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
+                if tracked.due && prior != Some(&hint) && !still_snoozed {
                     if hint.has_delivery_change(prior) {
                         schedule.resume_on_host_evidence(id);
                     }
@@ -981,6 +996,39 @@ impl Service {
         Ok(())
     }
 
+    fn schedule_operator_snooze(
+        &self,
+        state: &mut State,
+        row: &TaskRow,
+        thread: &str,
+        until: u64,
+        message: String,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let delay = if self
+            .host
+            .row_visibility_hint(thread)
+            .is_none_or(|row| row.snoozed_until_ms == Some(until))
+        {
+            Duration::from_millis(until.saturating_sub(now_ms()))
+        } else {
+            Duration::ZERO
+        };
+        state.schedule.defer_effect(id, Instant::now() + delay);
+        let detail = WaitDetail::OperatorSnoozed {
+            version: row.version,
+            thread: thread.into(),
+            until,
+            message,
+        };
+        if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), Some(detail))? {
+            self.desire_title(state, &row.task, row.number);
+            self.title_wake.notify_one();
+            self.publish(id, row.version);
+        }
+        Ok(())
+    }
+
     fn schedule_parent_wait(
         &self,
         state: &mut State,
@@ -990,6 +1038,10 @@ impl Service {
         previous: Priority,
     ) -> Result<bool, ServiceError> {
         let id = &row.task.identity().id;
+        if let Err(error @ ServiceError::OperatorSnoozed { thread, until }) = result {
+            self.schedule_operator_snooze(state, row, thread, *until, error.to_string())?;
+            return Ok(true);
+        }
         if let Err(ServiceError::Host(error)) = result {
             let checkpoint = match error {
                 HostError::ProcessCoverage(nucleus_hosts::ProcessEvidenceFailure::Cwd { pid }) => {

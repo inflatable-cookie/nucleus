@@ -79,6 +79,7 @@ pub struct ParentWrite {
     payload: Value,
     idle_at: Option<(String, u64)>,
     delivery: Option<Box<ParentDelivery>>,
+    owned_snoozes: Vec<u64>,
 }
 
 struct ParentDelivery {
@@ -97,6 +98,16 @@ impl ParentWrite {
     #[must_use]
     pub fn command_id(&self) -> Option<&str> {
         self.payload["commandId"].as_str()
+    }
+
+    #[must_use]
+    pub fn thread_id(&self) -> Option<&str> {
+        self.payload["threadId"].as_str()
+    }
+
+    /// Pass the exact horizons owned by the task's existing presentation record.
+    pub fn allow_owned_snoozes(&mut self, horizons: Vec<u64>) {
+        self.owned_snoozes = horizons;
     }
 
     #[must_use]
@@ -170,6 +181,7 @@ fn parent_hold(
         rpc: "orchestration.dispatchCommand",
         idle_at,
         delivery,
+        owned_snoozes: Vec::new(),
         payload,
     }
 }
@@ -190,6 +202,7 @@ fn unarchive_parent(binding: &Binding, thread: String, sequence: u64) -> ParentW
         binding: binding.clone(),
         rpc: "orchestration.dispatchCommand",
         delivery: None,
+        owned_snoozes: Vec::new(),
         payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
         idle_at: Some((thread, sequence)),
     }
@@ -260,6 +273,7 @@ impl T3 {
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
             delivery: prepare_delivery(&projection, provider, fence.row)?,
+            owned_snoozes: Vec::new(),
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -481,6 +495,7 @@ impl T3 {
             rpc: "orchestration.launchThread",
             idle_at: None,
             delivery: None,
+            owned_snoozes: Vec::new(),
             payload: json!({
                 "commandId":command, "threadId":thread, "projectId":binding.project_id,
                 "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
@@ -655,6 +670,7 @@ impl T3 {
                     {
                         return Err(HostError::Binding);
                     }
+                    crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
                 }
                 Ok(())
             })

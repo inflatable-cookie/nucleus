@@ -902,7 +902,6 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
     busy["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
     let mut row = busy["projection"]["thread"].clone();
     row["status"] = json!("running");
-    row["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
     row["settledOverride"] = json!("settled");
     let (host, native) = server(vec![
         ("orchestration.dispatchCommand", Response::Success),
@@ -938,6 +937,9 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
     let crate::ParentStep::Write(changed) = prepare(None).await.unwrap() else {
         panic!("prepare a hold before the binding changes");
     };
+    let crate::ParentStep::Write(refused) = prepare(None).await.unwrap() else {
+        panic!("prepare a hold before the operator changes the horizon");
+    };
     row["providerInstanceId"] = json!("other-provider");
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
@@ -946,8 +948,18 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
         Err(crate::ParentSendError::NotSent(HostError::Binding))
     ));
     row["providerInstanceId"] = json!("fixture-acp");
+    row["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    assert!(matches!(
+        host.write_verified_parent(refused).await,
+        Err(crate::ParentSendError::NotSent(
+            HostError::OperatorSnoozed { .. }
+        ))
+    ));
+    row["snoozedUntil"] = Value::Null;
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":19,"thread":row}));
     host.write_parent(first).await.unwrap();
     let crate::ParentStep::Write(replay) = prepare(Some(crate::ParentAttempt {
         command: &command,

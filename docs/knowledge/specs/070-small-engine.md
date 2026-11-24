@@ -408,6 +408,7 @@ Later decisions carry their own attribution.
 35. **A lubricated workflow.** Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
     - Only destructive or irreversible steps (removing a checkout or worktree, merging, closing a PR) prove custody, and they prove it once.
     - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
+    - An operator-owned future snooze is the delivery exception carried forward from #1445 and the TypeScript `wakeBeforeDelivery`. T3's ordinary message dispatch clears its destination's snooze. Before a parent hold or retained continuation enters the wire, the synchronized shell's future horizon must be absent or match the existing Nucleus ownership record. The operator's horizon stays visible as a timed wait outside **Needs you**. A shell wake or horizon expiry resumes the same command.
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
     - The board's **Needs you** and T3 task rows share one attention rule.
       Operator decisions, unanswered Inbox forms and typed blocks with a
@@ -415,6 +416,7 @@ Later decisions carry their own attribution.
       an Inbox decline handed to the planner, wait for the planner. Scheduled
       rechecks, unexpired deadlines, capacity and dependencies are waiting.
       T3 snoozes quiet waiting rows under the rules in ruling 30.
+      A non-revoked role reservation is active for native row visibility from reservation through send.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
     - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
 

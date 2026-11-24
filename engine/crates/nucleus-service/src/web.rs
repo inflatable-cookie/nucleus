@@ -1070,6 +1070,7 @@ impl Summary {
                 | crate::WaitDetail::ShowingForDelivery(message)
                 | crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
+                crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
                 crate::WaitDetail::Archive(_) => None,
             }
         });
