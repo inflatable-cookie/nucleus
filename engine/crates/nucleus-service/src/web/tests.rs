@@ -1942,6 +1942,82 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     assert_browser_lanes(&api, &operator, &mut events).await;
 }
 
+#[tokio::test]
+async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let controllers = || {
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
+            },
+            planner_controller(PLANNER_KEY, "planner"),
+        ]
+    };
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    let file = service.storage.database().path().join("web-sessions.json");
+    let setup = |service| router_with_board(Arc::new(service), controllers(), &assets).unwrap();
+    let api = setup(service);
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let cookie_secret = cookie.split_once('=').unwrap().1;
+    let stored = std::fs::read_to_string(&file).unwrap();
+    assert!(!stored.contains(cookie_secret));
+    assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    drop(api);
+
+    let reopen = || {
+        Service::open(
+            &settings,
+            project.clone(),
+            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+            forge(),
+            "127.0.0.1:9".parse().unwrap(),
+            std::env::current_exe().unwrap(),
+        )
+        .unwrap()
+    };
+    let api = setup(reopen());
+    let session_path = "/api/engine/session";
+    let session = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;
+    assert_eq!(json_body(session).await["canEditSettings"], true);
+    let mut events = browser_request(&api, Method::GET, "/api/engine/events", Some(&cookie), None)
+        .await
+        .into_body()
+        .into_data_stream();
+    assert_event(&mut events, &["event: refresh"]).await;
+    assert_eq!(
+        post_as(&api, "/v1/board/revoke", &PLANNER_KEY, &json!({}))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        json_body(post_as(&api, "/v1/board/revoke", &BOARD_KEY, &json!({})).await).await["revoked"],
+        1
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(events);
+    drop(api);
+    let api = setup(reopen());
+    let revoked = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+}
+
 async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyDataStream) {
     let plan = "/api/engine/planning/local-fixture/plan";
     let lane = "/api/engine/planning/local-fixture/lanes/board";
@@ -2057,6 +2133,7 @@ async fn pair_board(api: &Router, key: &[u8; 32]) -> String {
         .to_str()
         .expect("session cookie");
     assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
+    assert!(cookie.contains("Path=/api/engine") && cookie.contains("Max-Age=2592000"));
     let session = cookie.split(';').next().expect("cookie value").to_owned();
     assert_eq!(
         api.clone()
