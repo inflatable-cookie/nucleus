@@ -38,7 +38,6 @@ use nucleus_store::{
     EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
 };
 use nucleus_work::{WorkError, Worktrees, checkout_path};
-use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
     sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc, watch},
@@ -67,8 +66,6 @@ pub enum ServiceError {
     PlannerAuthorityRefused,
     #[error("a task effect is still in progress. Retry shortly.")]
     EffectInProgress,
-    #[error("an isolated engine is already serving this profile or its lock is unreadable")]
-    ProfileLock,
     #[error("the callback configuration or ticket is invalid")]
     Ticket,
     #[error("the ACP binding could not be saved")]
@@ -196,16 +193,7 @@ impl Service {
         {
             return Err(ServiceError::Ticket);
         }
-        let database = storage.database();
-        database.ensure()?;
-        let profile = open(
-            database.path().join("service.lock"),
-            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::RUSR | Mode::WUSR,
-        )
-        .map_err(|_| ServiceError::ProfileLock)?;
-        flock(&profile, FlockOperation::NonBlockingLockExclusive)
-            .map_err(|_| ServiceError::ProfileLock)?;
+        let profile = storage.lock_profile()?;
         let store = Store::open(&storage)?;
         let (changes, _) = broadcast::channel(64);
         Ok(Self {

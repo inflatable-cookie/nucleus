@@ -163,7 +163,7 @@ impl Store {
             content,
             state: ItemState::Open,
         };
-        insert(&tx, ItemRecord, project, &item.id, &item, stamp)?;
+        insert(&tx, ItemRecord, project, &item.id, "add", &item, stamp)?;
         tx.commit()?;
         Ok(item)
     }
@@ -374,6 +374,7 @@ fn insert<T: Serialize>(
     kind: RecordKind,
     project: &str,
     id: &str,
+    action: &str,
     record: &T,
     stamp: WriteAt<'_>,
 ) -> Result<(), StoreError> {
@@ -385,7 +386,7 @@ fn insert<T: Serialize>(
     if count == 0 {
         return Err(StoreError::PlanningConflict);
     }
-    record_history(tx, kind, project, id, "add", &snapshot, stamp)
+    record_history(tx, kind, project, id, action, &snapshot, stamp)
 }
 
 fn save<T: Serialize>(

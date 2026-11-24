@@ -1,4 +1,4 @@
-//! Offline import from a standalone TypeScript `SQLite` copy into Rust scratch.
+//! Offline import from a standalone TypeScript `SQLite` copy.
 
 #[cfg(test)]
 mod tests;
@@ -11,17 +11,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::{Connection, OpenFlags, Transaction};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 
 use super::{
-    Item, ItemContent, ItemKind, ItemRecord, ItemState, WriteAt, decode, record_history, save,
+    Item, ItemContent, ItemKind, ItemRecord, ItemState, WriteAt, decode, insert, record_history,
     valid_key,
 };
-use crate::{DATABASE_FILE, Store, StoreError};
+use crate::{DATABASE_FILE, EngineStorage, StorageError, Store, StoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
@@ -33,6 +33,8 @@ pub enum ImportError {
     Repository(String),
     #[error("invalid repository mapping or legacy item {0}")]
     Item(String),
+    #[error("legacy item {id} collides with existing planning data in project {project}")]
+    Collision { project: String, id: String },
     #[error("invalid history for legacy lead {id} at version {version}")]
     History { id: String, version: u32 },
     #[error("invalid legacy timestamp {0}")]
@@ -45,6 +47,8 @@ pub enum ImportError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,6 +64,7 @@ pub struct ImportReport {
     pub papercuts: usize,
     pub versions: usize,
     pub task_links: usize,
+    pub skipped: usize,
     pub database: Option<PathBuf>,
 }
 
@@ -74,25 +79,9 @@ pub fn import_items(
     repositories: &BTreeMap<String, String>,
     mode: ImportMode,
 ) -> Result<ImportReport, ImportError> {
-    if !scratch.is_absolute() || repositories.is_empty() {
-        return Err(ImportError::Source);
-    }
-    let scratch = scratch.canonicalize()?;
+    let scratch = scratch_root(scratch)?;
     let source = open_copy(&scratch, source)?;
-    let mut mapping = BTreeMap::new();
-    for (repository, project) in repositories {
-        let valid_origin = repository
-            .split_once('/')
-            .is_some_and(|(owner, name)| valid_key(owner) && valid_key(name));
-        if !valid_origin
-            || !valid_key(project)
-            || mapping
-                .insert(repository.to_ascii_lowercase(), project.as_str())
-                .is_some()
-        {
-            return Err(ImportError::Item(repository.clone()));
-        }
-    }
+    let mapping = repository_projects(repositories)?;
     let directory = tempfile::Builder::new()
         .prefix("nucleus-planning-import-")
         .tempdir_in(scratch)?;
@@ -109,6 +98,62 @@ pub fn import_items(
         }
     }
     Ok(report)
+}
+
+/// Append planning items to an existing engine profile while holding its service lock.
+///
+/// # Errors
+/// Returns an error for a running or missing profile, unsafe source, item collision,
+/// unmapped repository, or database failure. The import is transactional.
+pub fn apply_items(
+    scratch: &Path,
+    source: &Path,
+    repositories: &BTreeMap<String, String>,
+    storage: &EngineStorage,
+) -> Result<ImportReport, ImportError> {
+    let source = open_copy(&scratch_root(scratch)?, source)?;
+    let mapping = repository_projects(repositories)?;
+    storage.database().verify()?;
+    let _lock = storage.lock_profile()?;
+    let database = storage.database().path().join(DATABASE_FILE);
+    let mut connection = Store::connect_database(&database, OpenFlags::empty())?;
+    connection.pragma_update(None, "foreign_keys", true)?;
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    Store::prepare_schema(&tx, false)?;
+    let mut report = copy_items(&source, &tx, &mapping)?;
+    tx.commit()?;
+    report.database = Some(database);
+    Ok(report)
+}
+
+fn scratch_root(scratch: &Path) -> Result<PathBuf, ImportError> {
+    if !scratch.is_absolute() {
+        return Err(ImportError::Source);
+    }
+    Ok(scratch.canonicalize()?)
+}
+
+fn repository_projects(
+    repositories: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, &str>, ImportError> {
+    if repositories.is_empty() {
+        return Err(ImportError::Source);
+    }
+    let mut mapping = BTreeMap::new();
+    for (repository, project) in repositories {
+        let valid_origin = repository
+            .split_once('/')
+            .is_some_and(|(owner, name)| valid_key(owner) && valid_key(name));
+        if !valid_origin
+            || !valid_key(project)
+            || mapping
+                .insert(repository.to_ascii_lowercase(), project.as_str())
+                .is_some()
+        {
+            return Err(ImportError::Item(repository.clone()));
+        }
+    }
+    Ok(mapping)
 }
 
 fn open_copy(scratch: &Path, path: &Path) -> Result<Connection, ImportError> {
@@ -388,6 +433,10 @@ fn copy_item(
     let at_ms = date_ms(legacy.updated_at.as_deref().unwrap_or(&legacy.created_at))?;
     let kind = legacy.kind();
     for project in projects {
+        if already_imported(tx, project, id)? {
+            report.skipped += 1;
+            continue;
+        }
         let mut seen = BTreeSet::new();
         let task_links: Vec<_> = legacy
             .targets
@@ -443,7 +492,7 @@ fn copy_item(
             &raw.to_string(),
             stamp,
         )?;
-        save(tx, ItemRecord, project, id, "import", &item, stamp)?;
+        insert(tx, ItemRecord, project, id, "import", &item, stamp)?;
         match kind {
             ItemKind::Lead => report.leads += 1,
             ItemKind::Papercut => report.papercuts += 1,
@@ -452,6 +501,24 @@ fn copy_item(
         report.task_links += item.task_links.len();
     }
     Ok(())
+}
+
+fn already_imported(tx: &Transaction<'_>, project: &str, id: &str) -> Result<bool, ImportError> {
+    let (exists, imported) = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM planning_items WHERE project = ?1 AND id = ?2),
+                EXISTS (SELECT 1 FROM planning_history
+                        WHERE project = ?1 AND id = ?2 AND kind = ?3 AND action = 'import')",
+        params![project, id, ItemRecord.as_str()],
+        |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+    )?;
+    match (exists, imported) {
+        (true, true) => Ok(true),
+        (false, false) => Ok(false),
+        _ => Err(ImportError::Collision {
+            project: project.into(),
+            id: id.into(),
+        }),
+    }
 }
 
 fn date_ms(date: &str) -> Result<u64, ImportError> {
