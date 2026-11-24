@@ -113,6 +113,7 @@ Later decisions carry their own attribution.
       Inbox session replaces the TypeScript Inbox as the one pinned thread. The
       planner retires the TypeScript Inbox manually after global no-new-work is on
       and its decisions have drained. Native install checks the legacy pin.
+    - During the cutover both Inbox threads may be pinned at once. Tom, 2026-11-24: "We can have two inbox threads - it will make it easier to test." Install no longer waits for the TypeScript pin. The Rust Inbox takes Rust decisions, and the TypeScript Inbox keeps TypeScript decisions until it is retired.
       Each active Rust bridge version moves through a single TypeScript
       transaction. A recorded answer goes to the scheduler for exact-head preflight.
       An unanswered version is withdrawn before it can appear in the Rust Inbox.
