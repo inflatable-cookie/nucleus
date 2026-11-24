@@ -177,7 +177,7 @@ const fn default_provider_limit_cooldown_seconds() -> u32 {
 }
 
 const fn default_project_slots() -> u32 {
-    4
+    5
 }
 
 const fn default_thread_retention_days() -> u32 {
@@ -193,7 +193,7 @@ impl Default for DispatchSettings {
         Self {
             usage: UsageLevel::Normal,
             usage_until_ms: None,
-            global_slots: 1,
+            global_slots: 32,
             project_default_slots: default_project_slots(),
             project_slot_overrides: BTreeMap::new(),
             host_concurrency: 1,
