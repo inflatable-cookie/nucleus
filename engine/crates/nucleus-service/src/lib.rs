@@ -1140,18 +1140,17 @@ impl Service {
             _ => None,
         };
         let now = Instant::now();
-        let reported = row.task.run().is_some_and(|run| run.report().is_some());
-        let reply_due = row
+        let sent = row
             .task
             .run()
-            .filter(|_| !reported)
-            .and_then(nucleus_core::Run::last_send_at_ms)
-            .and_then(|sent| {
-                sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
-                    .checked_sub(now_ms())
-                    .filter(|&remaining| remaining > 0)
-                    .map(|remaining| now + Duration::from_millis(remaining))
-            });
+            .filter(|run| run.report().is_none())
+            .and_then(nucleus_core::Run::last_send_at_ms);
+        let reply_due = sent.and_then(|sent| {
+            sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
+                .checked_sub(now_ms())
+                .filter(|&remaining| remaining > 0)
+                .map(|remaining| now + Duration::from_millis(remaining))
+        });
         let queue_replay = if row.task.run().is_none()
             && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
             && let Some(runtime) = self.host.runtime_identity()
@@ -1178,27 +1177,19 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
-        let delivery_pending = !reported
-            && (matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-                || row
-                    .task
-                    .run()
-                    .is_some_and(|run| run.last_send_at_ms().is_some()));
-        let cause = match (blocked, reported, delivery_pending, result) {
-            (_, _, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
+        let delivery_pending =
+            sent.is_some() || matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)));
+        let cause = match (blocked, delivery_pending, result) {
+            (_, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
                 process_check_detail(*failure, blocked)
             }
-            (true, true, _, _) => {
-                "Couldn’t verify that the reporting role finished. Open its thread to check."
-            }
-            (false, true, _, _) => "Checking that the reporting role has finished.",
-            (true, _, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
-            (true, _, false, _) => "Couldn’t verify the task thread. Open it to check.",
-            (false, _, _, Err(ServiceError::Host(HostError::Unavailable))) => {
+            (true, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
+            (true, false, _) => "Couldn’t verify the task thread. Open it to check.",
+            (false, _, Err(ServiceError::Host(HostError::Unavailable))) => {
                 "Couldn’t reach T3. Checking again."
             }
-            (false, _, true, _) => "Waiting for delivery confirmation.",
-            (false, _, false, _) => "Waiting for T3.",
+            (false, true, _) => "Waiting for delivery confirmation.",
+            (false, false, _) => "Waiting for T3.",
         };
         let prior = state.wait_reason(id);
         let detail = if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {

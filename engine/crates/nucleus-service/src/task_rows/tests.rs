@@ -180,7 +180,7 @@ impl Fixture {
         self.service.host.fixture_project_shell(&shell, PROVIDER);
     }
 
-    async fn sync(&self) {
+    async fn sync(&self) -> nucleus_hosts::HostCalls {
         self.publish_shell();
         let mut clear_retries = self.clear_retries.lock().await;
         let (result, calls) =
@@ -192,6 +192,7 @@ impl Fixture {
             .await;
         result.unwrap();
         assert!(!calls.contains_key("orchestration.subscribeThread"));
+        calls
     }
 
     fn child(&self, id: &str, busy: bool) {
@@ -344,20 +345,15 @@ impl Drop for Fixture {
 async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
-    let (mut task, credential, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    let (mut task, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
     let run = task.run().unwrap().launch().clone();
     task.record_send(&run.instance, 1).unwrap();
-    task.record_report(
-        &run.instance,
-        credential.as_bytes(),
-        Report::Question {
-            prompt: "Which copy?".into(),
-            options: vec!["Short".into(), "Long".into()],
-        },
-    )
-    .unwrap();
     let row = {
         let mut state = service.state.lock().await;
+        state.role_observations.insert(
+            ID.into(),
+            (run.instance.clone(), RunState::IdleWithoutTerminalRun),
+        );
         state.store.create(&task, &event("fixture")).unwrap();
         service.desire_title(&state, &task, None);
         service.lookup(&state, ID).unwrap()
@@ -370,10 +366,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     let checking = fixture.board_task().await;
     assert_eq!(checking["attention"], "waiting");
     assert_eq!(checking["wait"], "host_unknown");
-    assert_eq!(
-        checking["waitDetail"],
-        "Checking that the reporting role has finished."
-    );
+    assert_eq!(checking["waitDetail"], "Waiting for delivery confirmation.");
     assert!(checking["nextCheckAt"].as_u64().unwrap() > now_ms());
 
     fixture.child(&run.thread, true);
@@ -400,7 +393,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     assert_eq!(blocked["wait"], "host_observation_blocked");
     assert_eq!(
         blocked["waitDetail"],
-        "Couldn’t verify that the reporting role finished. Open its thread to check."
+        "Couldn’t confirm delivery. Open the task thread to check."
     );
     assert!(blocked["nextCheckAt"].is_null());
     fixture.sync().await;
@@ -570,6 +563,48 @@ async fn no_new_snooze_from_reservation_through_send() {
         fixture.commands().is_empty(),
         "native visibility cannot snooze between reservation and send"
     );
+}
+
+#[tokio::test]
+async fn a_reserved_role_waiting_for_capacity_keeps_one_snooze() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    let run = worker.run().unwrap().launch();
+    fixture.child(&run.thread, false);
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&worker, &event("run_reserved")).unwrap();
+        service.desire_title(&state, &worker, None);
+        service.lookup(&state, ID).unwrap()
+    };
+    service
+        .observe_role_state(
+            &row,
+            &Observed::Known(Host::Current {
+                instance: run.instance.clone(),
+                state: RunState::ReadyToSend,
+            }),
+        )
+        .await
+        .unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let card = fixture.board_task().await;
+    assert_eq!(card["stateLabel"], "Waiting for capacity");
+    assert_eq!(card["attention"], "waiting");
+    let first = fixture.sync().await;
+    assert_eq!(first.get("orchestration.dispatchCommand"), Some(&1));
+    assert!(fixture.sync().await.is_empty());
+    assert!(fixture.sync().await.is_empty());
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.observed_snooze().await;
 }
 
 #[tokio::test]
