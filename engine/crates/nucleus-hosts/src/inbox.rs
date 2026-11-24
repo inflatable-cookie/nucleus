@@ -10,6 +10,8 @@ use crate::{
     rpc::{Read, Reply},
 };
 
+mod preview;
+
 pub const INBOX_THREAD: &str = "thread:nucleus-rust-inbox";
 pub(crate) const PROJECT: &str = "project:nucleus-rust-inbox";
 const TITLE: &str = "Nucleus Inbox";
