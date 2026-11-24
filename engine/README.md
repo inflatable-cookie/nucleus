@@ -454,6 +454,7 @@ the planner to `nucleus-engine admit <id> <reference>` with the brief on stdin.
 Already accepted TypeScript operations and existing tasks keep their original
 engine. The same board shows both engines' task rows. If the Rust service is
 unavailable, its board section can retry while the TypeScript board stays usable.
+An invalid pilot file is logged, and the TypeScript service starts with the pilot off.
 
 The fixture uses the `nucleus-engine` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with

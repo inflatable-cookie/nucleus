@@ -15,7 +15,10 @@ import { Decisions } from "../core/planning/decisions";
 import { Store } from "../core/store/store";
 import { WebBoard } from "../service/web/web-board";
 import { configuredRustInbox } from "../service/web/rust-inbox";
-import { readRustPilot } from "../service/web/rust-pilot";
+import {
+  readRustPilot,
+  rustPilotServiceOptions,
+} from "../service/web/rust-pilot";
 import {
   RUST_INBOX_ACCEPT,
   RUST_INBOX_DECLINE,
@@ -44,6 +47,19 @@ test("the pilot settings select one canonical repository from an owner-only file
   renameSync(settings, other);
   symlinkSync(other, settings);
   assert.throws(() => readRustPilot(scratch), /owner-only/);
+});
+
+test("invalid pilot settings disable the pilot without stopping startup", (context) => {
+  const scratch = mkdtempSync(join(tmpdir(), "rust-pilot-invalid-"));
+  context.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const log = context.mock.method(console, "error", () => {});
+  assert.deepEqual(rustPilotServiceOptions(scratch), {});
+  writeFileSync(join(scratch, "rust-engine-pilot.json"), "{", { mode: 0o600 });
+  assert.deepEqual(rustPilotServiceOptions(scratch), { rustPilot: null });
+  assert.deepEqual(
+    log.mock.calls.map((call) => call.arguments),
+    [["Use a valid owner-only rust-engine-pilot.json for the Rust pilot."]],
+  );
 });
 
 test("the Rust bridge accepts one dedicated key and fences withdrawal before an ensure", async (context) => {

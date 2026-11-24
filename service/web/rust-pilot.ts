@@ -68,6 +68,19 @@ export function readRustPilot(dataDir: string): RustPilot | null {
   }
 }
 
+/** Keep the legacy service available when a pilot configuration cannot be used. */
+export function rustPilotServiceOptions(dataDir: string): {
+  rustPilot?: RustPilot | null;
+} {
+  try {
+    const configured = readRustPilot(dataDir);
+    return configured ? { rustPilot: configured } : {};
+  } catch (error) {
+    console.error((error as Error).message);
+    return { rustPilot: null };
+  }
+}
+
 export function readPrivateKey(file: string): string {
   const key = readPrivateText(file, 65);
   if (!/^[0-9a-f]{64}\n?$/.test(key)) throw new Error("Invalid private key");

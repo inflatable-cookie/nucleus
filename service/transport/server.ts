@@ -171,6 +171,7 @@ function namedField(message: string, fallback: string): string {
 
 export interface ServiceOptions {
   owner?: RuntimeOwnerOptions;
+  /** Null disables bridges on an invalid pilot config. Undefined permits the environment defaults. */
   rustPilot?: RustPilot | null;
   idleTimeoutMs?: number;
   /** Fixture override; production checks detached ownership every five seconds. */
@@ -461,12 +462,13 @@ export class QueueService {
     const sessionFile = join(this.dataDir, "web-sessions.json");
     await this.migrateWebSessions(sessionFile);
     const pilot = this.options.rustPilot;
+    const rustEnv = pilot === null ? {} : process.env;
     let rustInbox: RustInboxBridge | null = null;
     try {
       const inboxEnv = pilot ? {
         NUCLEUS_RUST_INBOX_ENGINE: pilot.inboxEngine,
         NUCLEUS_RUST_INBOX_KEY_FILE: pilot.inboxKeyFile,
-      } : process.env;
+      } : rustEnv;
       rustInbox = configuredRustInbox(inboxEnv, (input) =>
         this.executor.callHandler("rustInboxDecision", input),
       );
@@ -477,7 +479,7 @@ export class QueueService {
     try {
       const engine = pilot
         ? { url: pilot.endpoint, key: readPrivateKey(pilot.boardKeyFile) }
-        : configuredRustBoard(process.env);
+        : configuredRustBoard(rustEnv);
       if (engine) rustBoard = new RustBoardProxy(engine);
     } catch {
       console.error("Invalid Rust board configuration. The proxy is disabled.");
