@@ -41,7 +41,7 @@ mod inbox;
 mod planning;
 mod settings;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
-pub(crate) use settings::{CachedHost, RuntimeSettings};
+pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
 
 #[cfg(test)]
 mod tests;
@@ -212,6 +212,7 @@ fn routes(
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
     let mut routes = controller
         .merge(tasks)
+        .route("/v1/planning/tell", post(tell))
         .merge(inbox::routes())
         .merge(planning::report_lane_routes())
         .route("/v1/runs/{task}/{instance}/report", post(report));
@@ -225,6 +226,17 @@ fn routes(
             authorize_address,
         ))
         .with_state(api)
+}
+
+async fn tell(
+    State(api): State<Api>,
+    headers: HeaderMap,
+    input: Result<Json<crate::tell::TellRequest>, JsonRejection>,
+) -> Result<Json<crate::tell::TellResponse>, ApiError> {
+    let supplied = credential(&headers)?;
+    let caller = request_controller(&api, &supplied, &headers).ok_or(ApiError::Unauthorized)?;
+    let input = body(input)?;
+    Ok(Json(api.service.tell(&caller.scope, &input).await?))
 }
 
 async fn authorize_address(
@@ -996,11 +1008,15 @@ impl IntoResponse for ApiError {
             Self::Service(error) => {
                 let status = match error {
                     ServiceError::Missing
+                    | ServiceError::TellUnknownProject(_)
                     | ServiceError::TaskReferenceMissing
                     | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => {
                         StatusCode::NOT_FOUND
                     }
                     ServiceError::Input
+                    | ServiceError::TellInput
+                    | ServiceError::TellAmbiguousProject(_)
+                    | ServiceError::TellArchivedProject(_)
                     | ServiceError::ReportInput(_)
                     | ServiceError::ComplexityRequired
                     | ServiceError::LeadComplexity
@@ -1018,12 +1034,16 @@ impl IntoResponse for ApiError {
                         | nucleus_store::StorageError::ConfinedDirectory(_),
                     ) => StatusCode::BAD_REQUEST,
                     ServiceError::QuestionPlanner
+                    | ServiceError::TellPlannerRequired
                     | ServiceError::ControllerProject
                     | ServiceError::PlannerEnrollmentRefused(_)
                     | ServiceError::PlannerAuthorityRefused
                     | ServiceError::AnswerInInbox
                     | ServiceError::DecisionOperator => StatusCode::FORBIDDEN,
                     ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
+                    ServiceError::Store(nucleus_store::StoreError::TellRateLimit(_)) => {
+                        StatusCode::TOO_MANY_REQUESTS
+                    }
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
                     | ServiceError::EffectInProgress

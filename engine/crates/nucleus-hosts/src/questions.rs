@@ -82,6 +82,11 @@ pub enum NoticeSend {
     Rejected,
 }
 
+pub struct NoticeObservation {
+    pub state: NoticeState,
+    pub authorization: Option<NoticeAuthorization>,
+}
+
 /// A planner notice advances by one authorized write. Some hosts prepare the
 /// destination first and authorize the queue write on a later scheduler pass.
 pub enum NoticeWrite<'a, Authorization, Dispatch> {
@@ -110,6 +115,7 @@ pub struct NoticeTarget {
 /// Exact wire and thread evidence prepared by a fresh native read.
 pub struct NoticeAuthorization {
     target: NoticeTarget,
+    planner: Box<PlannerIdentity>,
     command: String,
     payload: Box<RawValue>,
     previous: Option<u64>,
@@ -151,6 +157,11 @@ impl NoticeAuthorization {
         self.wake.is_some()
     }
 
+    #[must_use]
+    pub fn matches_planner(&self, identity: &PlannerIdentity) -> bool {
+        self.planner.same_role(identity)
+    }
+
     /// Advance the notice marker before persisting and using the permit.
     /// # Errors
     /// Returns an error if the notice changed after authorization.
@@ -174,11 +185,9 @@ impl NoticeAuthorization {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NoticeThread {
-    id: String,
-    project_id: String,
+    #[serde(flatten)]
+    planner: PlannerIdentity,
     worktree_path: Option<String>,
-    archived_at: Option<String>,
-    deleted_at: Option<String>,
     settled_at: Option<String>,
     settled_override: Option<String>,
     snoozed_until: Option<String>,
@@ -254,7 +263,7 @@ impl T3 {
             .notice_projection(&target.thread)
             .await?
             .ok_or(HostError::Binding)?;
-        if snapshot.thread.project_id != target.project_id
+        if snapshot.thread.planner.project_id != target.project_id
             || snapshot.thread.worktree_path != target.worktree_path
         {
             return Err(HostError::Binding);
@@ -303,13 +312,26 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<Option<NoticeAuthorization>, HostError> {
+        Ok(self.observe_notice(delivery).await?.authorization)
+    }
+
+    /// Read the durable notice and any applicable write permit in one snapshot.
+    /// # Errors
+    /// Returns an error when the request or the native snapshot is unreadable.
+    pub async fn observe_notice(
+        &self,
+        delivery: &QuestionDelivery,
+    ) -> Result<NoticeObservation, HostError> {
         let now_ms = clock_ms()?;
         let reply_may_arrive = delivery
             .last_send_at_ms
             .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
         let Some(snapshot) = self.notice_projection(&delivery.thread).await? else {
-            return Ok(None);
+            return Ok(NoticeObservation {
+                state: NoticeState::Gone,
+                authorization: None,
+            });
         };
         let state = notice_state(&snapshot.projection, &delivery.command)?;
         let ready = match state {
@@ -318,7 +340,10 @@ impl T3 {
             _ => false,
         };
         if !ready || snoozed(&snapshot.thread)? {
-            return Ok(None);
+            return Ok(NoticeObservation {
+                state,
+                authorization: None,
+            });
         }
         let wake = if settled(&snapshot.thread) {
             if snapshot.sequence == 0 {
@@ -328,17 +353,21 @@ impl T3 {
         } else {
             None
         };
-        Ok(Some(NoticeAuthorization {
-            target: NoticeTarget {
-                thread: snapshot.thread.id,
-                project_id: snapshot.thread.project_id,
-                worktree_path: snapshot.thread.worktree_path,
-            },
-            command: delivery.command.clone(),
-            payload,
-            previous: delivery.last_send_at_ms,
-            wake,
-        }))
+        Ok(NoticeObservation {
+            state,
+            authorization: Some(NoticeAuthorization {
+                target: NoticeTarget {
+                    thread: snapshot.thread.planner.id.clone(),
+                    project_id: snapshot.thread.planner.project_id.clone(),
+                    worktree_path: snapshot.thread.worktree_path,
+                },
+                planner: Box::new(snapshot.thread.planner),
+                command: delivery.command.clone(),
+                payload,
+                previous: delivery.last_send_at_ms,
+                wake,
+            }),
+        })
     }
 
     /// Unsettle an authorized planner destination. Re-read before dispatch.
@@ -407,10 +436,10 @@ impl T3 {
         let projection = snapshot.remove("projection").ok_or(HostError::Protocol)?;
         let thread: NoticeThread = serde_json::from_value(projection["thread"].clone())
             .map_err(|_| HostError::Protocol)?;
-        if thread.id != id {
+        if thread.planner.id != id {
             return Err(HostError::Binding);
         }
-        if thread.archived_at.is_some() || thread.deleted_at.is_some() {
+        if thread.planner.archived_at.is_some() || thread.planner.deleted_at.is_some() {
             return Ok(None);
         }
         Ok(Some(NoticeSnapshot {

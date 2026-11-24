@@ -18,6 +18,16 @@ use super::{Result, read_with_limit};
 
 #[derive(Subcommand)]
 pub(super) enum Action {
+    /// Queue an informational notice for a project planner, or all project planners.
+    Tell {
+        /// A project ID, a project name, or all.
+        project: String,
+        /// The message, quoted if it contains spaces.
+        text: String,
+        /// Include another project by ID or name. Repeat for multiple projects.
+        #[arg(long = "project")]
+        additional_projects: Vec<String>,
+    },
     /// Read the project's plan and lane documents.
     #[command(name = "plan.get")]
     PlanGet { project: Option<String> },
@@ -225,6 +235,29 @@ impl Action {
     pub(super) fn request(self) -> Result<(Method, String, Option<Value>)> {
         use Action as A;
         let (method, project, path, body) = match self {
+            A::Tell {
+                project,
+                text,
+                additional_projects,
+            } => {
+                if project.trim() == "all" && !additional_projects.is_empty() {
+                    return Err("use all or a list of projects".into());
+                }
+                let to = if additional_projects.is_empty() {
+                    json!(project)
+                } else {
+                    json!(
+                        std::iter::once(project)
+                            .chain(additional_projects)
+                            .collect::<Vec<_>>()
+                    )
+                };
+                return Ok((
+                    Method::POST,
+                    "/v1/planning/tell".into(),
+                    Some(json!({"to": to, "text": text})),
+                ));
+            }
             A::LaneGet { .. } => return Err("use an authenticated report ticket".into()),
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
             A::PlanSet { args } => {
@@ -492,6 +525,32 @@ mod tests {
 
     use super::Action as Planning;
     use crate::{Action, Cli};
+
+    #[test]
+    fn project_tell_cli_uses_the_planner_endpoint() {
+        let parsed = Cli::try_parse_from([
+            "nucleus",
+            "tell",
+            "One",
+            "An update",
+            "--project",
+            "Two",
+            "--project",
+            "Three",
+        ])
+        .expect("tell command");
+        let Action::Planning(action) = parsed.action else {
+            panic!("expected a planning command");
+        };
+        assert!(!action.uses_ticket());
+        let (method, path, body) = action.request().expect("tell request");
+        assert_eq!(method, reqwest::Method::POST);
+        assert_eq!(path, "/v1/planning/tell");
+        assert_eq!(
+            body.unwrap(),
+            serde_json::json!({"to": ["One", "Two", "Three"], "text": "An update"})
+        );
+    }
 
     #[test]
     fn planning_cli_routes_implicit_and_explicit_projects() {

@@ -23,6 +23,11 @@ pub(crate) struct RuntimeSettings {
     pub host: CachedHost,
 }
 
+pub(crate) enum ProjectMatchError {
+    Unknown,
+    Ambiguous,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CachedHost {
@@ -124,22 +129,34 @@ impl RuntimeSettings {
         binding: Option<&'a Project>,
         selector: &str,
     ) -> Option<&'a str> {
+        self.match_planning_project(binding, selector).ok()
+    }
+
+    pub(crate) fn match_planning_project<'a>(
+        &'a self,
+        binding: Option<&'a Project>,
+        selector: &str,
+    ) -> Result<&'a str, ProjectMatchError> {
         match &self.projects {
             Some(registry) => {
                 if let Some((id, _)) = registry.projects.get_key_value(selector) {
-                    return Some(id);
+                    return Ok(id);
                 }
                 let selector = selector.to_lowercase();
                 let mut matches = registry
                     .projects
                     .iter()
                     .filter(|(_, project)| project.name.to_lowercase() == selector);
-                let (id, _) = matches.next()?;
-                matches.next().is_none().then_some(id.as_str())
+                let (id, _) = matches.next().ok_or(ProjectMatchError::Unknown)?;
+                if matches.next().is_some() {
+                    return Err(ProjectMatchError::Ambiguous);
+                }
+                Ok(id)
             }
             None => binding
                 .filter(|binding| binding.host_project == selector)
-                .map(|binding| binding.host_project.as_str()),
+                .map(|binding| binding.host_project.as_str())
+                .ok_or(ProjectMatchError::Unknown),
         }
     }
 

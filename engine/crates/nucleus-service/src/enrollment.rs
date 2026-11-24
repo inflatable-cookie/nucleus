@@ -39,6 +39,7 @@ impl From<EnrollmentFailure> for ServiceError {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct EnrolledPlanner {
     pub(super) identity: PlannerIdentity,
     pub(super) verified_at: Instant,
