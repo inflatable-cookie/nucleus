@@ -1006,17 +1006,17 @@ impl Service {
                     number: prior.number,
                 })))
             }
-            Preflight::Pending => {
-                state.forge_requested.insert(id.into());
-                state
-                    .schedule
-                    .wake(id, Instant::now() + self.forge_backoff(), Priority::Wake);
-                self.wake.notify_one();
-                Ok(CommandOutcome::Pending {
-                    version: prior.version,
-                })
-            }
+            Preflight::Pending => Ok(self.defer_command(&mut state, id, prior.version)),
         }
+    }
+
+    fn defer_command(&self, state: &mut State, id: &str, version: i64) -> CommandOutcome {
+        state.forge_requested.insert(id.into());
+        state
+            .schedule
+            .wake(id, Instant::now() + self.forge_backoff(), Priority::Wake);
+        self.wake.notify_one();
+        CommandOutcome::Pending { version }
     }
 
     /// Accept an idempotent report only for the current unrevoked run.

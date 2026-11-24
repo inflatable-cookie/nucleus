@@ -179,7 +179,7 @@ pub struct DecisionAnswer {
 pub struct DecisionTarget {
     pub task_id: String,
     pub task_version: i64,
-    #[serde(default, skip_serializing_if = "DecisionKind::is_question")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub kind: DecisionKind,
 }
 
@@ -192,10 +192,8 @@ pub enum DecisionKind {
     UsagePermission,
 }
 
-impl DecisionKind {
-    fn is_question(&self) -> bool {
-        *self == Self::Question
-    }
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    value == &T::default()
 }
 
 impl DecisionTarget {

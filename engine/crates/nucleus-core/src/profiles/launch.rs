@@ -239,18 +239,7 @@ fn select_launch(
         };
     let pr = task.pull_request().cloned();
     let changes = applied_changes(task, observation);
-    let consumed_review = if role == Role::Worker {
-        if climbed {
-            task.threads.applied_review_sequence
-        } else {
-            task.threads
-                .worker_profile
-                .as_ref()
-                .and_then(|bound| bound.consumed_review)
-        }
-    } else {
-        None
-    };
+    let consumed_review = consumed_review(task, role, climbed);
     Ok(Some(ProfileLaunch {
         role,
         via,
@@ -268,6 +257,18 @@ fn select_launch(
         request_reason: reason,
         critical_fallback_worker,
     }))
+}
+
+fn consumed_review(task: &Task, role: Role, climbed: bool) -> Option<u64> {
+    match role {
+        Role::Worker if climbed => task.threads.applied_review_sequence,
+        Role::Worker => task
+            .threads
+            .worker_profile
+            .as_ref()
+            .and_then(|bound| bound.consumed_review),
+        Role::Reviewer => None,
+    }
 }
 
 struct Demand {

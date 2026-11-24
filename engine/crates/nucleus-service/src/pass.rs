@@ -1,4 +1,5 @@
 use std::{
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -11,8 +12,8 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
-    SendOutcome, StopProgress, TaskHost, launch_diagnostic,
+    ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentRun,
+    ParentStep, SendOutcome, StopProgress, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
 use nucleus_work::Checkout;
@@ -509,47 +510,12 @@ impl Service {
             return Err(ServiceError::Ticket);
         }
         let binding = route.binding(checkout)?;
-        let parent = if let Some(provider) = self.acp_provider() {
-            if !self.launch_capacity(identity, false).await? {
-                return Ok(Action::Wait(WaitReason::Capacity));
-            }
-            // Parent creation can retry its stable command ID. The title
-            // receipt publishes the numbered label on its own command.
-            match self
-                .host
-                .prepare_parent(
-                    &binding,
-                    provider,
-                    &task.identity().reference,
-                    host.profile_catalog(),
-                )
-                .await?
-            {
-                ParentStep::Live(parent) => Some(parent),
-                ParentStep::Wait => return Ok(Action::Wait(WaitReason::Starting)),
-                ParentStep::Write(write) => {
-                    let Some(_permit) = self
-                        .dispatch_gate(
-                            task,
-                            DispatchTarget::Run {
-                                frozen: write.binding(),
-                                checkout,
-                                launch: false,
-                            },
-                        )
-                        .await?
-                    else {
-                        return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
-                    };
-                    self.ensure_parent_reader(&identity.id, checkout.path())
-                        .await?;
-                    self.host.write_parent(write).await?;
-                    self.recheck_effect(row, WaitReason::HostUnknown).await;
-                    return Ok(Action::Wait(WaitReason::Starting));
-                }
-            }
-        } else {
-            None
+        let parent = match self
+            .prepare_run_parent(row, checkout, &binding, host)
+            .await?
+        {
+            ControlFlow::Continue(parent) => parent,
+            ControlFlow::Break(reason) => return Ok(Action::Wait(reason)),
         };
         let profile = self.launch_profile(role, selection)?;
         let discovered_skill = if selection.is_some() {
@@ -598,6 +564,58 @@ impl Service {
             freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
         self.persist_reservation(row, &updated, &credential, selection, via)
             .await
+    }
+
+    async fn prepare_run_parent(
+        &self,
+        row: &TaskRow,
+        checkout: &Checkout<'_>,
+        binding: &Binding,
+        host: &impl TaskHost,
+    ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
+        let Some(provider) = self.acp_provider() else {
+            return Ok(ControlFlow::Continue(None));
+        };
+        let task = &row.task;
+        let identity = task.identity();
+        if !self.launch_capacity(identity, false).await? {
+            return Ok(ControlFlow::Break(WaitReason::Capacity));
+        }
+        // Parent creation can retry its stable command ID. The title
+        // receipt publishes the numbered label on its own command.
+        match self
+            .host
+            .prepare_parent(
+                binding,
+                provider,
+                &identity.reference,
+                host.profile_catalog(),
+            )
+            .await?
+        {
+            ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::Wait => Ok(ControlFlow::Break(WaitReason::Starting)),
+            ParentStep::Write(write) => {
+                let Some(_permit) = self
+                    .dispatch_gate(
+                        task,
+                        DispatchTarget::Run {
+                            frozen: write.binding(),
+                            checkout,
+                            launch: false,
+                        },
+                    )
+                    .await?
+                else {
+                    return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
+                };
+                self.ensure_parent_reader(&identity.id, checkout.path())
+                    .await?;
+                self.host.write_parent(write).await?;
+                self.recheck_effect(row, WaitReason::HostUnknown).await;
+                Ok(ControlFlow::Break(WaitReason::Starting))
+            }
+        }
     }
 
     async fn prompt_lanes(

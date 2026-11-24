@@ -682,6 +682,10 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         _ => return Err("this command does not use the control API".into()),
     };
     let response = request(endpoint, method, &path, &key, body, actor.as_deref()).await?;
+    print_control_response(response, board_link).await
+}
+
+async fn print_control_response(response: reqwest::Response, board_link: bool) -> Result<()> {
     let status = response.status();
     if board_link && status == reqwest::StatusCode::NOT_FOUND {
         return Err("the engine is running without board assets".into());

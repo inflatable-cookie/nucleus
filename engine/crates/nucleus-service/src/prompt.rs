@@ -123,6 +123,11 @@ impl Prompt<'_> {
             "\nKeep the Nucleus-held brief unchanged. Stay on the assigned branch.              Never push to another branch or repository. Report only through this run's binding.\n",
         );
         self.write_report(&mut text, report_only);
+        self.write_skill(&mut text, section);
+        text
+    }
+
+    fn write_skill(&self, text: &mut String, section: &str) {
         if let Some(path) = self
             .discovered_skill
             .filter(|path| has_installed_protocol(path, section))
@@ -141,7 +146,6 @@ impl Prompt<'_> {
             let role = skill_section(SKILL, section).expect("shipped role protocol");
             let _ = writeln!(text, "{}\n\n{}", shared.trim_end(), role.trim_end());
         }
-        text
     }
 
     fn write_dependencies(&self, text: &mut String) {
