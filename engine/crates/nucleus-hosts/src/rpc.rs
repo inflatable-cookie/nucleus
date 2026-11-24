@@ -23,7 +23,7 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    HostError, ProfileCatalog, T3_RETRY_DELAY,
+    HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
     catalog::CatalogRevision,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
@@ -357,6 +357,28 @@ impl Rpc {
         let mut slot = self.socket.lock().await;
         self.call_locked(&mut slot, method, payload, read, check)
             .await
+    }
+
+    pub(crate) async fn write_guarded(
+        &self,
+        method: &'static str,
+        payload: Value,
+        check: impl FnOnce() -> Result<(), HostError> + Send,
+    ) -> Result<Reply, ParentSendError> {
+        let mut reached_send = false;
+        self.call_guarded(method, payload, Read::One, || {
+            check()?;
+            reached_send = true;
+            Ok(true)
+        })
+        .await
+        .map_err(|error| {
+            if reached_send {
+                ParentSendError::Unknown(error)
+            } else {
+                ParentSendError::NotSent(error)
+            }
+        })
     }
 
     async fn call_locked(

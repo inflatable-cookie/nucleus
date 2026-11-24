@@ -4,7 +4,8 @@ use std::{path::Path, time::Duration};
 
 use nucleus_core::{Role, Task};
 use nucleus_hosts::{
-    ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
+    ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
+    SendOutcome,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -221,13 +222,12 @@ impl Service {
             .host
             .write_row_visibility(&binding, &command, change, Some(&target), &roles)
             .await;
-        if matches!(result, Err(nucleus_hosts::HostError::RowChildBusy)) {
-            let state = self.state.lock().await;
-            match prior {
-                Some(prior) => state.store.save_row_snooze(id, thread, &prior)?,
-                None => state.store.forget_row_snooze(id)?,
-            }
-            return Ok(());
+        if let Err(ParentSendError::NotSent(error)) = result {
+            self.restore_row_snooze(id, thread, prior.as_ref()).await?;
+            return match error {
+                nucleus_hosts::HostError::RowChildBusy => Ok(()),
+                _ => Err(error.into()),
+            };
         }
         if matches!(result, Ok(SendOutcome::Rejected))
             && matches!(change, RowChange::SnoozeUntil(_))
@@ -241,7 +241,23 @@ impl Service {
         }
         let fresh = self.host.observe_task_row(&binding, provider).await?;
         self.record_row_readback(id, thread, receipt, fresh).await?;
-        result.map(|_| ()).map_err(ServiceError::from)
+        result.map(|_| ()).map_err(|error| match error {
+            ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause.into(),
+        })
+    }
+
+    async fn restore_row_snooze(
+        &self,
+        id: &str,
+        thread: &str,
+        prior: Option<&RowSnooze>,
+    ) -> Result<(), ServiceError> {
+        let state = self.state.lock().await;
+        match prior {
+            Some(prior) => state.store.save_row_snooze(id, thread, prior)?,
+            None => state.store.forget_row_snooze(id)?,
+        }
+        Ok(())
     }
 
     async fn record_row_readback(
@@ -346,28 +362,39 @@ impl Service {
                 }
                 (command, None)
             } else {
-                let Some(mut receipt) =
-                    owned.filter(|receipt| receipt.clear_attempted_for != shown)
+                let Some(prior) = owned.filter(|receipt| receipt.clear_attempted_for != shown)
                 else {
                     return Err(self.parent_not_sent(format!(
                         "unsnooze already attempted (revision {}, horizon {shown:?})",
                         fresh.sequence
                     )));
                 };
+                let mut receipt = prior.clone();
                 receipt.clear_attempted_for = shown;
                 self.state
                     .lock()
                     .await
                     .store
                     .save_row_snooze(id, &thread, &receipt)?;
-                (snooze_command(id, &thread, change, &receipt), Some(receipt))
+                (
+                    snooze_command(id, &thread, change, &receipt),
+                    Some((prior, receipt)),
+                )
             };
             let result = self
                 .host
                 .write_row_visibility(binding, &command, change, None, &[])
                 .await;
+            if let Err(ParentSendError::NotSent(error)) = result {
+                if let Some((prior, _)) = &cleared {
+                    self.restore_row_snooze(id, &thread, Some(prior)).await?;
+                }
+                return Err(self.parent_not_sent(format!(
+                    "{change:?} refused before send (prepared {fresh:?}): {error}"
+                )));
+            }
             let readback = self.host.observe_task_row(binding, provider).await;
-            if let (Some(receipt), Ok(fresh)) = (cleared, &readback) {
+            if let (Some((_, receipt)), Ok(fresh)) = (cleared, &readback) {
                 self.record_row_readback(id, &thread, receipt, *fresh)
                     .await?;
             }

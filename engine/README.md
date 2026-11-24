@@ -269,11 +269,10 @@ also check the open PR and clean checkout after native authorization.
   evidence, Nucleus will require a direct UI submission for operator-only
   decisions.
 - A pass shares one bounded cwd census across checkout checks. The Mac adapter
-  cross-checks cwd-only `lsof` against the local T3 user's PIDs, then checks open
-  files recursively under the checkout and engine scratch. It holds both
-  directory descriptors during that scan and requires each in the reply.
-  Darwin `lsof` can exit 1 for closed descendants. For that status, a quiet
-  result requires explicit `-V` search misses and both descriptors.
+  cross-checks cwd-only `lsof` against the local T3 user's PIDs, then filters one
+  open-file listing of the filesystems containing the checkout and run scratch.
+  It holds both directory descriptors during that scan and requires each in
+  the reply. Closed files take no space in the listing.
   An open file or working directory in either scope is busy. An unaccounted
   live PID, undecodable path, incomplete listing or warning leaves settlement
   unknown. Decode `lsof` escapes before comparing path bytes. Run the

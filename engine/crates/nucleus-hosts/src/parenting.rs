@@ -42,6 +42,7 @@ pub struct ParentAttempt<'a> {
 }
 
 /// Whether failure happened before the command could enter the transport.
+#[derive(Debug)]
 pub enum ParentSendError {
     NotSent(HostError),
     Unknown(HostError),
@@ -423,22 +424,18 @@ impl T3 {
     /// # Errors
     /// Returns an error if T3 cannot confirm the command.
     pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
-        let mut reached_send = false;
         match self
             .rpc
-            .call_guarded(write.rpc, write.payload, Read::One, || {
+            .write_guarded(write.rpc, write.payload, || {
                 if let (Some(delivery), Some((thread, _))) = (&write.delivery, &write.idle_at) {
                     self.check_delivery_shell(thread, delivery)?;
                 }
-                reached_send = true;
-                Ok(true)
+                Ok(())
             })
-            .await
+            .await?
         {
-            Ok(Reply::Value(_)) => Ok(()),
-            Ok(Reply::Failure(_)) => Err(ParentSendError::Unknown(HostError::Uncertain)),
-            Err(cause) if reached_send => Err(ParentSendError::Unknown(cause)),
-            Err(cause) => Err(ParentSendError::NotSent(cause)),
+            Reply::Value(_) => Ok(()),
+            Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
         }
     }
 

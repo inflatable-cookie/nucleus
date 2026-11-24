@@ -448,34 +448,53 @@ async fn scoped_activity(
     if let Some(path) = run_scratch.filter(|path| *path != checkout) {
         witnesses.push(Witness::open(path)?);
     }
-    let mut args: Vec<&OsStr> = ["-n", "-P", "-V", "-F0pfn"]
+    let mut args = vec![OsStr::new("-P"), OsStr::new("--")];
+    args.extend(witnesses.iter().map(|witness| witness.path.as_os_str()));
+    let listed = read_listing("/bin/df", &args, Some(temporary)).await?;
+    let mounts = mount_points(&listed).ok_or(HostError::Uncertain)?;
+    let mut args: Vec<&OsStr> = ["-n", "-P", "-F0pfn", "+f", "--"]
         .into_iter()
         .map(OsStr::new)
         .collect();
-    for witness in &witnesses {
-        args.extend([OsStr::new("+D"), witness.path.as_os_str()]);
-    }
+    args.extend(mounts);
     let listing = read_listing("/usr/sbin/lsof", &args, Some(temporary)).await?;
     // Keep the directory descriptors open while lsof runs. They are dropped
     // with the witnesses before the pass can authorize worktree removal.
     Ok(scoped_listing(&listing, &witnesses))
 }
 
-fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<u32>> {
-    let end = listing.output.iter().rposition(|&byte| byte == 0)?;
-    let diagnostics = listing.output[end + 1..].strip_prefix(b"\n")?;
-    // Darwin lsof exits 1 for any closed descendant found by +D. With -V,
-    // distinguish these explicit search misses from all other failures.
-    match listing.exit {
-        Some(0) if diagnostics.is_empty() => {}
-        Some(1) if closed_paths(diagnostics, witnesses) => {}
-        _ => return None,
+fn mount_points(listed: &Listing) -> Option<HashSet<&OsStr>> {
+    if listed.exit != Some(0) {
+        return None;
     }
+    let lines = listed
+        .output
+        .strip_suffix(b"\n")?
+        .split(|&byte| byte == b'\n');
+    lines
+        .skip(1)
+        .map(|mut line| {
+            for _ in 0..5 {
+                let end = line.iter().position(u8::is_ascii_whitespace)?;
+                line = line[end..].trim_ascii_start();
+            }
+            let path = OsStr::from_bytes(line);
+            Path::new(path).is_absolute().then_some(path)
+        })
+        .collect::<Option<HashSet<_>>>()
+        .filter(|mounts| !mounts.is_empty())
+}
+
+fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSet<u32>> {
+    if listing.exit != Some(0) {
+        return None;
+    }
+    let fields = listing.output.strip_suffix(b"\0\n")?;
     let mut seen = vec![false; witnesses.len()];
     let mut pid = None;
     let mut fd = None;
     let mut owners = HashSet::new();
-    for field in listing.output[..end].split(|&byte| byte == 0) {
+    for field in fields.split(|&byte| byte == 0) {
         let field = field.strip_prefix(b"\n").unwrap_or(field);
         match field {
             [b'p', value @ ..] if fd.is_none() => {
@@ -499,7 +518,10 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSe
                     if std::mem::replace(&mut seen[index], true) {
                         return None;
                     }
-                } else {
+                } else if witnesses
+                    .iter()
+                    .any(|witness| path.starts_with(witness.path))
+                {
                     owners.insert(pid?);
                 }
             }
@@ -510,21 +532,6 @@ fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<HashSe
         return None;
     }
     Some(owners)
-}
-
-fn closed_paths(diagnostics: &[u8], witnesses: &[Witness<'_>]) -> bool {
-    diagnostics.strip_suffix(b"\n").is_some_and(|lines| {
-        lines.split(|&byte| byte == b'\n').all(|line| {
-            line.strip_prefix(b"lsof: no file use located: ")
-                .and_then(decode_lsof_path)
-                .is_some_and(|path| {
-                    path.is_absolute()
-                        && witnesses
-                            .iter()
-                            .any(|witness| path.starts_with(witness.path))
-                })
-        })
-    })
 }
 
 struct Listing {
@@ -680,13 +687,12 @@ mod tests {
             Witness::open(scratch.path()).expect("open scratch"),
         ];
         let listing = Listing {
-            exit: Some(1),
+            exit: Some(0),
             output: format!(
-                "p{}\0\nf{}\0n{}\0\nlsof: no file use located: {}/closed\n",
+                "p{}\0\nf{}\0n{}\0\n",
                 std::process::id(),
                 witnesses[0].fd.as_raw_fd(),
                 checkout.path().display(),
-                scratch.path().display(),
             )
             .into_bytes(),
             pid: 0,

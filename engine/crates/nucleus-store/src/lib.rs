@@ -762,6 +762,8 @@ impl Store {
     /// Restore a delivery fence for this task version and native runtime.
     /// Older engines could fence a parent preflight that had already proved
     /// the message unsent. A later send intent takes precedence over that proof.
+    /// Remove the legacy compatibility branch first in the reduction pass,
+    /// after a store query confirms no current live task still carries one.
     ///
     /// # Errors
     /// Returns an error if the task's delivery history is unreadable.

@@ -391,9 +391,15 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     }
     assert_eq!(fixture.attention().await, TaskAttention::Attention);
     fixture.sync().await;
-    let commands = fixture.commands();
-    assert_eq!(commands.len(), 4);
-    assert_eq!(&commands[2..], ["thread.snooze", "thread.unsnooze"]);
+    assert_eq!(
+        fixture.commands(),
+        [
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.snooze",
+            "thread.unsnooze"
+        ]
+    );
 }
 
 #[tokio::test]
