@@ -77,6 +77,39 @@ fn repository(path: &Path) -> Head {
 }
 
 #[test]
+fn review_allocation_can_fetch_a_pull_head_missing_from_the_registered_checkout() {
+    let home = tempfile::tempdir().expect("scratch");
+    let upstream = home.path().join("upstream");
+    let checkout = home.path().join("registered");
+    repository(&upstream);
+    git(
+        home.path(),
+        &[
+            "clone",
+            upstream.to_str().expect("path"),
+            checkout.to_str().expect("path"),
+        ],
+    );
+    fs::write(upstream.join("README.md"), "existing PR").expect("edit");
+    git(&upstream, &["commit", "-am", "Change greeting"]);
+    let head = git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("PR head");
+    git(&upstream, &["update-ref", "refs/pull/7/head", "HEAD"]);
+    let worktrees = worktrees(home.path());
+    let review = worktrees
+        .checkout(&checkout, "example/fixture", "review")
+        .expect("review checkout");
+    assert_eq!(
+        review
+            .allocate_review(&head, 7)
+            .expect("fetch and allocate"),
+        Workspace::Clean(head)
+    );
+}
+
+#[test]
 fn allocation_is_idempotent_and_closeout_only_removes_the_published_clean_checkout() {
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository with spaces");

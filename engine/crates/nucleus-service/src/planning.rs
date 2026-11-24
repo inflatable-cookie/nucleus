@@ -1,4 +1,4 @@
-use nucleus_core::{Authority, Task, profiles::BriefPolicy};
+use nucleus_core::{Authority, PullRequest, Task, profiles::BriefPolicy};
 use nucleus_store::{
     StoreError, TaskRow,
     planning::{
@@ -17,6 +17,7 @@ pub(crate) struct TaskAdmission {
     pub id: Option<String>,
     pub reference: Option<String>,
     pub brief: String,
+    pub review: Option<PullRequest>,
 }
 
 impl Service {
@@ -50,7 +51,7 @@ impl Service {
         };
         let reference = input.reference.unwrap_or_else(|| id.clone());
         check_brief(&input.brief)?;
-        let task = self.brief_task(id, reference, input.brief, caller)?;
+        let task = self.admission_task(id, reference, input.brief, input.review, caller)?;
         let mut admitted = event("admitted");
         admitted.detail = stamp(caller).actor.into();
         state.store.create(&task, &admitted)?;
@@ -85,7 +86,7 @@ impl Service {
         let brief = item.content.body;
         check_brief(&brief)?;
         let task_id = new_id("t")?;
-        let task = self.brief_task(task_id.clone(), task_id, brief, caller)?;
+        let task = self.admission_task(task_id.clone(), task_id, brief, None, caller)?;
         let mut admitted = event("admitted");
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
         state

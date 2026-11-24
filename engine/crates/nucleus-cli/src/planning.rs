@@ -92,6 +92,9 @@ pub(super) enum Action {
         id: Option<String>,
         #[arg(long)]
         reference: Option<String>,
+        /// Review an existing GitHub PR at its expected head.
+        #[arg(long, num_args = 2, value_names = ["PR_URL", "HEAD"])]
+        review: Vec<String>,
     },
     /// List operator decisions.
     #[command(name = "decision.list")]
@@ -218,11 +221,18 @@ impl Action {
                 project,
                 id,
                 reference,
+                review,
             } => (
                 Method::POST,
                 project,
                 "tasks".into(),
-                Some(json!({ "id": id, "reference": reference, "brief": stdin_text()? })),
+                Some(json!({
+                    "id": id, "reference": reference, "brief": stdin_text()?,
+                    "review": match review.as_slice() {
+                        [url, head] => Some(json!({"url": url, "head": head})),
+                        _ => None,
+                    },
+                })),
             ),
             A::DecisionList { project, pending } => (
                 Method::GET,

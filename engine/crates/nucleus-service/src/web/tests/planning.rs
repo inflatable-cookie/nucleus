@@ -118,6 +118,101 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
 }
 
 #[tokio::test]
+async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes() {
+    let head: nucleus_core::Head = "a".repeat(40).parse().expect("first head");
+    let replacement: nucleus_core::Head = "b".repeat(40).parse().expect("new head");
+    let latest = Arc::new(AtomicBool::new(false));
+    let changed = Arc::clone(&latest);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&reads);
+    let moved = replacement.clone();
+    let first = head.clone();
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls/1"),
+        get(move || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            let seen = if changed.load(Ordering::Relaxed) {
+                &moved
+            } else {
+                &first
+            };
+            let mut pull = forge_pull(seen);
+            pull["head"]["ref"] = json!("existing-topic");
+            pull["merged"] = json!(true);
+            pull["state"] = json!("closed");
+            pull["merge_commit_sha"] = json!("f".repeat(40));
+            std::future::ready(Json(pull))
+        }),
+    ))
+    .await;
+    let (_home, service) = fixture(forge);
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+    );
+    let path = format!("{PROJECT}/tasks");
+    let input = json!({
+        "id":"external",
+        "brief":"Review the existing fixture change.",
+        "review":{"url":PR,"head":head},
+    });
+    let admitted = post_as(&api, &path, &BOARD_KEY, &input).await;
+    assert_eq!(admitted.status(), StatusCode::CREATED);
+    assert_eq!(
+        json_body(admitted).await["identity"]["entry"],
+        "review_entry"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+
+    let _ = service.pass().await.expect("observe admitted PR");
+    let asked = service.task("external").await.expect("task");
+    assert_eq!(
+        asked.task.question(),
+        Some(&Question::Accept { head: head.clone() })
+    );
+    latest.store(true, Ordering::Relaxed);
+    {
+        let mut state = service.state.lock().await;
+        service.wake_task(
+            &mut state,
+            "external",
+            asked.version,
+            crate::schedule::Priority::Wake,
+        );
+    }
+    let _ = service.pass().await.expect("observe replacement head");
+    let row = service.task("external").await.expect("reconciled task");
+    assert_eq!(row.task.pull_request().expect("PR").head, replacement);
+    assert_eq!(row.task.question(), None);
+    assert_eq!(
+        post_json(
+            &api,
+            "/v1/tasks/external/commands",
+            &BOARD_KEY,
+            &json!({"answer":{"accept":{"head":head,"reason":"stale question"}}}),
+        )
+        .await,
+        StatusCode::CONFLICT,
+    );
+    assert!(
+        service
+            .task("external")
+            .await
+            .expect("task")
+            .task
+            .verdict()
+            .is_none()
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn planning_decision_history_identifies_authenticated_actors() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let api = router(
