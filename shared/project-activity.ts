@@ -190,63 +190,42 @@ type ItemInfo = {
 };
 
 /** Joins tasks and leads into items. Info lives on each root and merges as members join: repositories, newest activity and executing state. */
-export class ActivityItems {
-  private readonly parent = new Map<string, string>();
-  private readonly info = new Map<string, ItemInfo>();
+export function activityItems() {
+  const parent = new Map<string, string>();
+  const info = new Map<string, ItemInfo>();
 
-  add(key: string, value: ItemInfo): void {
-    if (!this.parent.has(key)) {
-      this.parent.set(key, key);
-      this.info.set(key, {
-        repositories: [...value.repositories],
-        at: value.at,
-        executing: value.executing,
-      });
-      return;
+  function root(key: string): string {
+    if (!parent.has(key)) {
+      parent.set(key, key);
+      info.set(key, { repositories: [], at: null, executing: false });
     }
-    this.absorb(this.find(key), value);
-  }
-
-  join(a: string, b: string): void {
-    const left = this.find(a),
-      right = this.find(b);
-    if (left === right) return;
-    this.parent.set(right, left);
-    this.absorb(left, this.info.get(right)!);
-    this.info.delete(right);
-  }
-
-  /** Each item's root and its merged info. */
-  components(): Map<string, ItemInfo> {
-    const out = new Map<string, ItemInfo>();
-    for (const key of this.parent.keys()) {
-      const root = this.find(key);
-      if (!out.has(root)) out.set(root, this.info.get(root)!);
-    }
-    return out;
-  }
-
-  private find(key: string): string {
-    let root = key;
-    while (this.parent.get(root) !== root) root = this.parent.get(root)!;
-    for (let walk = key; walk !== root; ) {
-      const next = this.parent.get(walk)!;
-      this.parent.set(walk, root);
+    let id = key;
+    while (parent.get(id) !== id) id = parent.get(id)!;
+    for (let walk = key; walk !== id;) {
+      const next = parent.get(walk)!;
+      parent.set(walk, id);
       walk = next;
     }
-    return root;
+    return id;
   }
 
-  private absorb(root: string, value: ItemInfo): void {
-    const target = this.info.get(root)!;
-    for (const repo of value.repositories)
-      if (
-        !target.repositories.some(
-          (known) => known.origin === repo.origin && known.path === repo.path,
-        )
-      )
+  function add(key: string, value: ItemInfo) {
+    const target = info.get(root(key))!;
+    for (const repo of value.repositories) {
+      if (!target.repositories.some(known => known.origin === repo.origin && known.path === repo.path))
         target.repositories.push(repo);
+    }
     if (value.at && (!target.at || value.at > target.at)) target.at = value.at;
-    target.executing = target.executing || value.executing;
+    target.executing ||= value.executing;
   }
+
+  function join(a: string, b: string) {
+    const left = root(a), right = root(b);
+    if (left === right) return;
+    add(left, info.get(right)!);
+    parent.set(right, left);
+    info.delete(right);
+  }
+
+  return { add, join, components: () => info };
 }

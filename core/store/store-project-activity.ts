@@ -1,6 +1,6 @@
 import type { Task } from "../../shared/contracts";
 import {
-  ActivityItems,
+  activityItems,
   EXECUTING_TASK_PHASES,
   isSubstantiveEventKind,
   LEAD_LINK_EVENT_KINDS,
@@ -99,7 +99,7 @@ export class StoreProjectActivity {
         .filter((task) => EXECUTING_TASK_PHASES.includes(task.phase))
         .map((task) => task.id),
     );
-    const union = new ActivityItems();
+    const union = activityItems();
     const taskKey = (id: string) => `t:${id}`;
     const leadKey = (id: string) => `l:${id}`;
     const taskRepository = (id: string) =>

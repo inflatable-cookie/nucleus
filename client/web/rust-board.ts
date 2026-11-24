@@ -1,4 +1,4 @@
-import { ActivityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
+import { activityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
 import type { Project, leadBoard } from "../../shared/contracts";
 import {
   useInfiniteQuery,
@@ -328,7 +328,7 @@ export function rustProjectActivity(
   tasks: readonly RustTask[],
   leads: NonNullable<z.infer<typeof leadBoard.output>["activity"]>,
 ) {
-  const items = new ActivityItems();
+  const items = activityItems();
   const byProject = new Map(projects.map(project => [project.key, project.repositories]));
   const byOrigin = new Map(projects.flatMap(project => project.repositories)
     .flatMap(repo => repo.origin ? [[repo.origin.toLowerCase(), repo] as const] : []));
@@ -346,7 +346,6 @@ export function rustProjectActivity(
     items.add(key, { at: lead.at, executing: false, repositories: byProject.get(lead.project) ?? [] });
     for (const task of lead.taskIds) {
       const linked = `task:${task}`;
-      items.add(linked, { at: null, executing: false, repositories: [] });
       items.join(key, linked);
     }
   }
