@@ -119,6 +119,7 @@ test("Rust task detail keeps Answer available alongside unknown command names", 
       path,
       {
         ...current,
+        createdAtMs: 1_700_000_000_000,
         brief: { text: "Fixture brief", version: 1 },
         pullRequest: null,
         verdict: null,
@@ -667,14 +668,17 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
-  // A planner-held task as the engine projects it: its native-title label and when the hold began.
+  const now = 1_800_000_000_000;
+  dom.window.Date.now = () => now;
   const held = {
-    ...task("held-task", "queued", "D2"),
+    ...task("held-task", "queued", "board-fixture#81"),
+    number: 81,
+    reference: "board-fixture#81",
     title: "Held task",
     wait: "hold",
     hold: { reason: "Wait for the schema review. Then continue with the API." },
     stateLabel: "Held by planner",
-    stateSinceMs: Date.now() - 3 * 3_600_000 - 60_000,
+    stateSinceMs: now - 3 * 3_600_000 - 60_000,
   };
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
@@ -730,8 +734,18 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }
     if (path === "/api/engine/profiles/catalog")
       return Response.json({ providers: null, readAtMs: null, status: "pending" });
-    if (path === "/api/engine/tasks")
-      return Response.json([{ ...task("board-task", taskPhase, "D1"), title: "Standalone task" }, held]);
+    if (path === "/api/engine/tasks") {
+      const card = {
+        ...task("board-task", taskPhase, "board-fixture#80"),
+        number: 80,
+        title: "Standalone task",
+        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : "Working*",
+        stateSinceMs: now - 12 * 60_000,
+        wait: taskPhase === "queued" ? "capacity" : "hold",
+        hold: taskPhase === "queued" ? null : { reason: "Wait before dispatching again." },
+      };
+      return Response.json([card, held]);
+    }
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
@@ -768,19 +782,34 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 2");
   await eventually(() => text().includes("Standalone task"), "task title renders");
-  // The card's state is the engine's label, its detail the hold reason preview, and its
-  // age counts from the state's start with the TypeScript card's coarse wording.
-  await eventually(() => text().includes("Held by planner"), "the engine state label renders");
-  assert.ok(text().includes("Wait for the schema review."), "the hold reason preview renders");
-  assert.ok(!text().includes("Then continue with the API."), "the card shows the first sentence only");
-  assert.ok(text().includes("3h ago"), "the card age counts from stateSinceMs");
+  const header = (card: HTMLElement, state: string, age: string) => {
+    const ageText = [...card.querySelectorAll("div")].find(
+      (node) => node.childElementCount === 0 && node.textContent === age,
+    );
+    assert.ok(ageText?.parentElement, age);
+    assert.ok(ageText.parentElement.textContent?.endsWith(state + age));
+    return ageText.parentElement;
+  };
+  const heldCard = selector("#81, Held task")!;
+  assert.ok(heldCard, "the production list renders the numbered card");
+  const heldHeader = header(heldCard, "Held by planner", "3h ago");
+  assert.match(heldHeader.textContent ?? "", /^#81/);
+  assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
+  assert.match(heldCard.textContent ?? "", /Held taskWait for the schema review\./);
+  assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
+  const capacityCard = selector("#80, Standalone task")!;
+  header(capacityCard, "Waiting for capacity", "12m ago");
+  assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
   assert.ok(stream, "the board subscribed to engine changes");
   stream.enqueue(new TextEncoder().encode('event: invalidate\ndata: {"taskId":"board-task","version":8}\n\n'));
   await click("Working, 1");
-  await eventually(() => text().includes("Standalone task"), "working view renders");
+  await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
+  const workingCard = selector("#80, Standalone task")!;
+  header(workingCard, "Working*", "12m ago");
+  assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");
   await click("Dispatch hold");

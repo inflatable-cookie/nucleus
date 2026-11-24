@@ -2087,8 +2087,6 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     let listed =
         json_body(browser_request(&api, Method::GET, tasks, Some(&operator), None).await).await;
     assert_eq!(listed[0]["phase"], "queued");
-    assert_eq!(listed[0]["stateLabel"], "Queued");
-    assert!(listed[0]["stateSinceMs"].is_u64());
     assert_eq!(listed[0]["title"], "Standalone task");
     let hold = json!({"hold":"Wait for the fixture"});
     let response = browser_request(
@@ -2100,16 +2098,129 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let held = json_body(response).await;
-    assert_eq!(held["phase"], "queued");
-    assert_eq!(held["stateLabel"], "Waiting on Tom");
-    assert!(held["stateSinceMs"].is_u64());
+    assert_eq!(json_body(response).await["phase"], "queued");
     assert_event(&mut events, &["event: invalidate", "board-task"]).await;
     assert_eq!(
         json_body(get_as(&api, "/v1/tasks/board-task", &BOARD_KEY).await).await["wait"],
         "hold"
     );
     assert_browser_lanes(&api, &operator, &mut events).await;
+}
+
+#[tokio::test]
+async fn board_state_age_survives_an_amendment_and_engine_restart() {
+    let forge = || GitHub::new("unused-fixture-forge").unwrap();
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    let service = Arc::new(service);
+    let setup = |service| {
+        router_with_board(
+            service,
+            [Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "fixture".into(),
+                },
+            }],
+            &assets,
+        )
+        .unwrap()
+    };
+    let api = setup(Arc::clone(&service));
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let list = "/api/engine/tasks";
+    let detail = "/api/engine/tasks/age";
+    let next = "/api/engine/tasks/age/next";
+    let admitted = json!({"id":"age","reference":"age","brief":"---\nqueue:\n  complexity: low\n---\n# Initial title"});
+    let response = browser_request(&api, Method::POST, list, Some(&cookie), Some(&admitted)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let queued = read_paired_task(&api, detail, &cookie).await;
+    assert_eq!(queued["stateLabel"], "Queued");
+    let created = &queued["createdAtMs"];
+    assert!(created.is_u64());
+    assert_eq!(&queued["stateSinceMs"], created);
+
+    let row = service.task("age").await.unwrap();
+    let wait = Some(WaitReason::Capacity);
+    // A prior scheduler pass recorded this episode at a fixed time.
+    let since = 1_700_000_000_000_i64;
+    let label = crate::titles::task_state_label(&row.task, wait);
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .record_board_state("age", &label, since)
+        .unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            crate::schedule::Priority::Wake,
+        )
+        .await
+        .unwrap();
+    let capacity = read_paired_task(&api, list, &cookie).await[0].clone();
+    assert_eq!(capacity["stateLabel"], "Waiting for capacity");
+    assert_eq!(capacity["stateSinceMs"], since);
+
+    let amend = json!({"amend": "---\nqueue:\n  complexity: low\n---\n# Renamed title"});
+    let response = browser_request(
+        &api,
+        Method::POST,
+        "/api/engine/tasks/age/commands",
+        Some(&cookie),
+        Some(&amend),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let changed = json_body(response).await;
+    assert_eq!(changed["title"], "Renamed title");
+    assert_eq!(changed["stateSinceMs"], since);
+    assert!(
+        service.host.host_calls().is_empty(),
+        "board GETs do not read the host"
+    );
+    drop(api);
+    drop(service);
+
+    let api = setup(Arc::new(reopen_fixture(&settings, project, forge())));
+    for (path, array) in [(list, true), (detail, false), (next, false)] {
+        let dto = read_paired_task(&api, path, &cookie).await;
+        let view = if array { &dto[0] } else { &dto };
+        assert_eq!(view["stateLabel"], "Waiting for capacity", "{path}");
+        assert_eq!(view["stateSinceMs"], since, "{path}");
+    }
+    assert_eq!(
+        &read_paired_task(&api, detail, &cookie).await["createdAtMs"],
+        created
+    );
+}
+
+async fn read_paired_task(api: &Router, path: &str, cookie: &str) -> Value {
+    let response = browser_request(api, Method::GET, path, Some(cookie), None).await;
+    assert_eq!(response.status(), StatusCode::OK, "{path}");
+    json_body(response).await
+}
+
+fn reopen_fixture(
+    settings: &nucleus_store::SettingsFile,
+    project: crate::Project,
+    forge: GitHub,
+) -> Service {
+    Service::open(
+        settings,
+        project,
+        T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+        forge,
+        LOCAL_HOST.parse().unwrap(),
+        std::env::current_exe().unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -2145,17 +2256,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     drop(api);
 
-    let reopen = || {
-        Service::open(
-            &settings,
-            project.clone(),
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            forge(),
-            "127.0.0.1:9".parse().unwrap(),
-            std::env::current_exe().unwrap(),
-        )
-        .unwrap()
-    };
+    let reopen = || reopen_fixture(&settings, project.clone(), forge());
     let api = setup(reopen());
     let session_path = "/api/engine/session";
     let session = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;

@@ -126,8 +126,7 @@ export function RustTaskDialog({
     ) ?? [];
   const toggle = (value: Section) =>
     setSection((current) => (current === value ? null : value));
-  const phaseView = commands ?? card;
-  const wait = phaseView ? rustWaitDetail(phaseView) : null;
+  const wait = detail ? rustWaitDetail(detail) : null;
   const age = detail?.createdAtMs == null ? null : relativeAge(detail.createdAtMs);
 
   return (
@@ -165,7 +164,7 @@ export function RustTaskDialog({
             <>
               <DetailSection
                 c={c}
-                title={(phaseView ?? detail).stateLabel}
+                title={detail.stateLabel}
               >
                 {wait && <Text style={muted(c)}>{wait}</Text>}
                 {detail.hold?.reason && (

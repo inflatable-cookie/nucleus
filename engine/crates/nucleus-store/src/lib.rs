@@ -2,6 +2,7 @@
 
 mod allowance;
 mod barge;
+mod board_state;
 mod dependencies;
 mod inbox;
 mod numbers;
@@ -24,6 +25,7 @@ use rusqlite::{
 use serde_json::{Value, json};
 
 pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, AllowanceView};
+pub use board_state::BoardState;
 pub use dependencies::{Dependencies, DependencyEdit, PrerequisiteRelease, PrerequisiteWait};
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
@@ -120,11 +122,9 @@ pub struct Event {
     pub content: EventDraft,
 }
 
-pub struct TaskTimes {
-    pub created: Option<u64>,
-    pub updated: Option<u64>,
-    pub held: Option<u64>,
-    pub stopping: Option<u64>,
+struct AccountedUpdate<'a> {
+    allowance: AllowanceObservation,
+    board_state: Option<&'a str>,
 }
 
 /// A committed fresh reviewer reservation that used the ordinary fallback.
@@ -174,6 +174,7 @@ pub struct TaskAdmissionFacts<'a> {
     pub prerequisites: &'a [String],
     pub usage_permission: Option<planning::UsagePermission<'a>>,
     pub affected_tests: bool,
+    pub board_state: Option<&'a str>,
 }
 
 pub struct Store {
@@ -284,6 +285,7 @@ impl Store {
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
+        tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
 
@@ -602,8 +604,13 @@ impl Store {
         event: &EventDraft,
         group: Option<&str>,
         observation: AllowanceObservation,
+        board_state: Option<&str>,
     ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, group, None, Some(observation))
+        let update = AccountedUpdate {
+            allowance: observation,
+            board_state,
+        };
+        self.save(expected, task, event, group, None, Some(update))
     }
 
     /// Read Spec 053 counts for one candidate from the local engine database.
@@ -725,7 +732,7 @@ impl Store {
         event: &EventDraft,
         group: Option<&str>,
         prerequisites: Option<&[String]>,
-        allowance_observation: Option<AllowanceObservation>,
+        accounted: Option<AccountedUpdate<'_>>,
     ) -> Result<i64, StoreError> {
         if expected.task.identity() != task.identity() {
             return Err(StoreError::IdentityChanged);
@@ -744,8 +751,11 @@ impl Store {
         if let Some(prerequisites) = prerequisites {
             dependencies::initial_edges(&tx, &task.identity().id, prerequisites)?;
         }
-        if let Some(observation) = allowance_observation {
-            allowance::observe(&tx, task, observation)?;
+        if let Some(update) = accounted {
+            allowance::observe(&tx, task, update.allowance)?;
+            if let Some(label) = update.board_state {
+                board_state::record(&tx, &task.identity().id, label, event.at)?;
+            }
         }
         if task.phase() == Phase::Done {
             tx.execute(
@@ -842,40 +852,6 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Read display timestamps from the task audit.
-    /// # Errors
-    /// Returns an error if the audit cannot be read.
-    pub fn task_times(
-        &self,
-        id: &str,
-        held: bool,
-        stopping: bool,
-    ) -> Result<TaskTimes, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "SELECT
-                (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence LIMIT 1),
-                (SELECT at FROM events WHERE task_id = ?1 ORDER BY sequence DESC LIMIT 1),
-                (SELECT at FROM events WHERE task_id = ?1 AND ?2
-                   AND json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.holdStarted') = 1
-                   ORDER BY sequence DESC LIMIT 1),
-                (SELECT at FROM events WHERE task_id = ?1 AND ?3
-                   AND json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.stopStarted') = 1
-                   ORDER BY sequence DESC LIMIT 1)",
-        )?;
-        Ok(query.query_row(params![id, held, stopping], |row| {
-            let time = |index| {
-                row.get::<_, Option<i64>>(index)
-                    .map(|value| value.and_then(|at| u64::try_from(at).ok()))
-            };
-            Ok(TaskTimes {
-                created: time(0)?,
-                updated: time(1)?,
-                held: time(2)?,
-                stopping: time(3)?,
-            })
-        })?)
     }
 
     /// Read the fallback receipts written with fresh reviewer reservations.
@@ -978,6 +954,9 @@ fn admit(
     persist(tx, task, false)?;
     numbers::assign(tx, &identity.id, &identity.repository, number)?;
     append(tx, &identity.id, event)?;
+    if let Some(label) = facts.board_state {
+        board_state::record(tx, &identity.id, label, event.at)?;
+    }
     allowance::admit(tx, &identity.id, facts.affected_tests)?;
     if !facts.prerequisites.is_empty() {
         dependencies::initial_edges(tx, &identity.id, facts.prerequisites)?;

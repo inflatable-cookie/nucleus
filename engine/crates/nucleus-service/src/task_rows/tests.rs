@@ -192,7 +192,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
                 },
             )
             .unwrap();
-        service.desire_title(&state, &pending, ID, None);
+        service.desire_title(&state, &pending, None);
     }
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     fixture.sync().await;
@@ -273,7 +273,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let row = {
         let mut state = service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        service.desire_title(&state, &pending, ID, None);
+        service.desire_title(&state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
     fixture.sync().await;

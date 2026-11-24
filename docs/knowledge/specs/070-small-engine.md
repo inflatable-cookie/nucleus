@@ -403,13 +403,6 @@ prerequisite references and any released wait as context.
 The board skips unrecognized `next` command names and logs a browser console
 warning once per name. It validates the readiness of each recognized command.
 
-Board state labels use the same rule as native task titles. A blocking hold
-replaces the phase label, and a non-blocking hold can add an asterisk. Card age
-uses the active turn start, stop, wait or hold time, then the latest task audit
-time. Before the engine recorded hold and stop transitions, age falls back to
-the audit when no better evidence is available.
-
-
 | Command | Effect |
 |---|---|
 | `move to=<phase>` | Ends any live run (revokes its credential, stops its turn), clears `attempts` and `question`, and sets the phase. Always applies, apart from the two gates. |
@@ -540,6 +533,16 @@ The standalone board is the TypeScript web board itself: the same navigation,
 cards, task dialog, Inbox list, planning screens and Settings sections. One
 client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
 board contracts from the paired API, so there is no second set of screens.
+
+A Rust card puts the engine's effective state and the time spent in that state
+beside each other in the top right. List, detail, `next` and native task titles
+share the label. A blocking hold supplies the label. A hold that lets the
+current turn finish adds an asterisk when the phase is shown. The engine
+records a label change with the task update or scheduler wait that caused it.
+Unrelated updates and repeated observations leave the entry time intact. Reads
+use the local store. Older rows show an age only when the engine has a known
+entry time.
+
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. Screens leave out
 controls for machinery these rulings retire; `client/engine-features.ts` names

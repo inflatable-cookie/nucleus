@@ -19,6 +19,30 @@ use crate::{
     schedule::Priority,
 };
 
+fn admission_state(
+    state: &State,
+    task: &Task,
+    prerequisites: &[String],
+    usage_permission: bool,
+) -> Result<String, ServiceError> {
+    for id in prerequisites {
+        if state
+            .store
+            .row(id)?
+            .is_none_or(|row| row.task.phase() != nucleus_core::Phase::Done)
+        {
+            return Ok(crate::titles::task_state_label(
+                task,
+                Some(WaitReason::Prerequisite),
+            ));
+        }
+    }
+    Ok(crate::titles::task_state_label(
+        task,
+        usage_permission.then_some(WaitReason::UsagePermission),
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskAdmission {
@@ -125,10 +149,12 @@ impl Service {
         admitted.detail = stamp(caller).actor.into();
         let prerequisites =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
+        let state_label = admission_state(&state, &task, &prerequisites, requested_permission)?;
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
             affected_tests,
+            board_state: Some(&state_label),
         };
         let number = state.store.create_with_facts(&task, &admitted, facts)?;
         if requested_permission {
@@ -213,10 +239,12 @@ impl Service {
         admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
         let prerequisites =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
+        let state_label = admission_state(&state, &task, &prerequisites, requested_permission)?;
         let facts = TaskAdmissionFacts {
             prerequisites: &prerequisites,
             usage_permission: permission,
             affected_tests,
+            board_state: Some(&state_label),
         };
         let (_, number) = state.store.promote_item_with_facts(
             &source,

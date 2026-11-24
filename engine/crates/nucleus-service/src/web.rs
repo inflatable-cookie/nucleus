@@ -988,7 +988,8 @@ impl Summary {
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
         };
-        let (state_since_ms, created_at_ms) = crate::presentation::state_times(row, state, wait)?;
+        let (state_label, state_since_ms, created_at_ms) =
+            crate::presentation::board_state(task, state)?;
         let mut view = Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -997,7 +998,7 @@ impl Summary {
             version: row.version,
             phase: task.phase(),
             attention: state.task_attention(row)?,
-            state_label: crate::titles::task_state_label(task, wait),
+            state_label,
             state_since_ms,
             created_at_ms,
             next_check_at: None,

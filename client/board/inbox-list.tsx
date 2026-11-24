@@ -884,15 +884,14 @@ export function RustListRows({ c, rust, view }: {
       const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
-      // The engine's state label is the status, as in the native title; the hold
-      // reason or a wait the label does not name is the one detail under it.
       const detail = task.hold ? holdReasonPreview(task.hold.reason) : rustWaitDetail(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
+        statusInHeader
         status={{
-          tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
-          state: question ? "Question" : task.stateLabel, detail: question ? null : detail,
+          tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
+          state: task.stateLabel, detail: question ? null : detail,
         }}
         age={task.stateSinceMs === null ? null : relativeAge(task.stateSinceMs)}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;

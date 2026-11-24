@@ -20,8 +20,7 @@ pub(super) fn child_title(task: &Task, number: Option<i64>, role: Role) -> Strin
     fit(&format!("{prefix}{}", brief(task)))
 }
 
-fn task_title(task: &Task, number: Option<i64>, wait: Option<WaitReason>) -> String {
-    let label = task_state_label(task, wait);
+fn task_title(task: &Task, number: Option<i64>, label: &str) -> String {
     let number = number.map_or_else(String::new, |number| format!("#{number} "));
     fit(&format!("{label}: {number}{}", brief(task)))
 }
@@ -51,15 +50,19 @@ pub(super) fn task_state_label(task: &Task, wait: Option<WaitReason>) -> String 
         Phase::Done => "Done",
         Phase::Cancelled => "Cancelled",
     };
-    let has_live_run = task
-        .run()
-        .is_some_and(|run| !run.revoked() && run.last_send_at_ms().is_some());
+    let has_live_run = task.run().is_some_and(|run| {
+        !run.revoked() && run.last_send_at_ms().is_some() && run.report().is_none()
+    });
     if task.phase().is_terminal() {
         phase.into()
-    } else if task.operator_question().is_some() && task.operator_decline().is_none() {
-        "Waiting on Tom".into()
+    } else if task.run().is_some_and(nucleus_core::Run::revoked) {
+        "Stopping".into()
     } else if let Some(hold) = task.hold().filter(|_| !has_live_run) {
         held_label(task.phase(), hold)
+    } else if task.operator_decline().is_some() {
+        "Declined by Tom".into()
+    } else if task.operator_question().is_some() {
+        "Waiting on Tom".into()
     } else if let Some(label) = wait_label(task, wait) {
         label.into()
     } else if task.hold().is_some() {
@@ -86,8 +89,7 @@ fn held_label(phase: Phase, hold: &Hold) -> String {
 
 fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
     Some(match wait {
-        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "Stopping",
-        _ if task.operator_decline().is_none() && task.question().is_some() => {
+        _ if task.question().is_some() || wait == Some(WaitReason::Question) => {
             "Waiting for the planner"
         }
         Some(WaitReason::Capacity) => "Waiting for capacity",
@@ -101,6 +103,8 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
         Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
         Some(WaitReason::ChecksPending) => "Waiting for checks",
+        Some(WaitReason::AssignmentTooLarge) => "Assignment too large",
+        Some(WaitReason::Starting) => "Starting",
         _ => return None,
     })
 }
@@ -183,17 +187,18 @@ fn inbox_title(decisions: usize, running: usize, mode: DispatchMode) -> String {
 }
 
 impl Service {
-    pub(super) fn desire_title(
-        &self,
-        state: &State,
-        task: &Task,
-        number: Option<i64>,
-        wait: Option<WaitReason>,
-    ) {
+    pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) {
         if self.acp_provider().is_none() {
             return;
         }
         let id = &task.identity().id;
+        let label = match presentation::board_state(task, state) {
+            Ok((label, _, _)) => label,
+            Err(error) => {
+                eprintln!("{id}: {error}");
+                return;
+            }
+        };
         let path = nucleus_work::checkout_path(
             self.storage.work().path(),
             &task.identity().repository,
@@ -202,7 +207,7 @@ impl Service {
         let thread = nucleus_hosts::parent_thread(&path);
         match state
             .store
-            .desire_title(id, &thread, &task_title(task, number, wait))
+            .desire_title(id, &thread, &task_title(task, number, &label))
         {
             Ok(true) => self.title_wake.notify_one(),
             Ok(false) => {}
@@ -222,11 +227,7 @@ impl Service {
                         .into_iter()
                         .filter(|row| self.task_scope(row.task.identity()).is_ok())
                     {
-                        let wait = state
-                            .waits
-                            .get(&row.task.identity().id)
-                            .map(|(reason, _)| *reason);
-                        self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
+                        self.desire_title(&state, &row.task, row.number);
                     }
                 }
                 Err(error) => eprintln!("{error}"),
@@ -470,11 +471,19 @@ mod tests {
             "#1 review: Add a greeting"
         );
         assert_eq!(
-            task_title(&task, Some(1), Some(WaitReason::Capacity)),
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Capacity))
+            ),
             "Waiting for capacity: #1 Add a greeting"
         );
         assert_eq!(
-            task_title(&task, Some(1), Some(WaitReason::HostUnknown)),
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::HostUnknown))
+            ),
             "Waiting on Nucleus: #1 Add a greeting"
         );
         let authority = Authority::Planner {
@@ -488,19 +497,31 @@ mod tests {
         task.command(Command::Hold("After (fixture#2).".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, Some(1), Some(WaitReason::Hold)),
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Hold))
+            ),
             "Waiting on fixture#2: #1 Add a greeting"
         );
         task.command(Command::Hold("Wait for copy".into()), &authority, &obs)
             .expect("hold");
         assert_eq!(
-            task_title(&task, Some(1), Some(WaitReason::Hold)),
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Hold))
+            ),
             "Held by planner: #1 Add a greeting"
         );
         task.command(Command::Cancel, &authority, &obs)
             .expect("cancel");
         assert_eq!(
-            task_title(&task, Some(1), Some(WaitReason::Stopping)),
+            task_title(
+                &task,
+                Some(1),
+                &task_state_label(&task, Some(WaitReason::Stopping))
+            ),
             "Cancelled: #1 Add a greeting"
         );
         let prefix = "🔬 ".repeat(66);
@@ -677,7 +698,7 @@ mod tests {
                 assert_eq!(
                     req["payload"],
                     json!({"type":"thread.metadata.update","threadId":expected,
-                    "commandId":"task-fixture-title-1","title":"Queued: #1 Add a greeting"})
+                    "commandId":"task-fixture-title-1","title":"Waiting for the planner: #1 Add a greeting"})
                 );
                 json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
             }
@@ -695,7 +716,7 @@ mod tests {
             let row = service
                 .lookup(&state, &subject.identity().id)
                 .expect("task");
-            service.desire_title(&state, &row.task, row.number, None);
+            service.desire_title(&state, &row.task, row.number);
             assert!(
                 state
                     .store
@@ -732,7 +753,7 @@ mod tests {
         {
             let state = service.state.lock().await;
             let row = service.lookup(&state, id).unwrap();
-            service.desire_title(&state, &row.task, row.reference().as_ref(), None);
+            service.desire_title(&state, &row.task, row.number);
         }
         assert!(
             service

@@ -3,13 +3,13 @@
 use std::sync::LazyLock;
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Run, Task, Verdict, WaitReason};
+use nucleus_core::{Forge, Head, Observed, Phase, Question, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::RunActivity;
 use nucleus_store::{Event, EventDraft, Store, TaskRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{ServiceError, State, now_ms};
+use crate::{ServiceError, State, titles};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct ActivityAt {
@@ -26,35 +26,50 @@ impl ActivityAt {
     }
 }
 
-pub(super) fn state_times(
-    row: &TaskRow,
+pub(super) fn board_state(
+    task: &Task,
     state: &State,
+) -> Result<(String, Option<u64>, Option<u64>), ServiceError> {
+    let (record, created) = state.store.board_state(&task.identity().id)?;
+    if let Some(record) = record {
+        return Ok((record.label, u64::try_from(record.since_ms).ok(), created));
+    }
+    // Earlier engine versions did not record state entry.
+    Ok((titles::task_state_label(task, None), None, created))
+}
+
+pub(super) fn record_wait_state(
+    state: &State,
+    task: &Task,
     wait: Option<WaitReason>,
-) -> Result<(Option<u64>, Option<u64>), ServiceError> {
-    let id = &row.task.identity().id;
-    let audit = state.store.task_times(
-        id,
-        row.task.hold().is_some(),
-        row.task.run().is_some_and(Run::revoked),
-    )?;
-    let activity = state.activity.get(id).and_then(|seen| seen.current(row));
-    let waiting = state
-        .waits
-        .get(id)
-        .filter(|(reason, _)| {
-            Some(*reason) == wait && !matches!(reason, WaitReason::Running | WaitReason::Hold)
+) -> Result<bool, ServiceError> {
+    let label = titles::task_state_label(task, wait);
+    let (current, _, _) = board_state(task, state)?;
+    if label == current {
+        return Ok(false);
+    }
+    let at = i64::try_from(crate::now_ms()).unwrap_or(i64::MAX);
+    Ok(state
+        .store
+        .record_board_state(&task.identity().id, &label, at)?)
+}
+
+pub(super) fn committed_board_state(prior: &Task, task: &Task) -> Option<String> {
+    fn run_basis(task: &Task) -> Option<(&str, bool, bool)> {
+        task.run().map(|run| {
+            (
+                run.launch().instance.as_str(),
+                run.revoked(),
+                run.report().is_some(),
+            )
         })
-        .map(|(_, since)| {
-            now_ms().saturating_sub(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX))
-        });
-    // TaskCard's since chain prefers the active turn, then stop, wait and hold.
-    let since = activity
-        .and_then(|activity| activity.started_at)
-        .or(audit.stopping)
-        .or(waiting)
-        .or(audit.held)
-        .or(audit.updated);
-    Ok((since, audit.created))
+    }
+    // A new role or phase invalidates waits observed for the previous work.
+    let label = titles::task_state_label(task, None);
+    (label != titles::task_state_label(prior, None)
+        || task.phase() != prior.phase()
+        || run_basis(task) != run_basis(prior))
+    .then_some(label)
 }
 
 #[derive(Serialize)]
@@ -231,19 +246,10 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
             phase: task.phase(),
         });
     }
-    let started_hold = task.hold().is_some() && task.hold() != prior.hold();
-    let started_stop =
-        task.run().is_some_and(Run::revoked) && !prior.run().is_some_and(Run::revoked);
-    if started_hold {
-        detail.insert("holdStarted".into(), json!(true));
-    }
-    if started_stop {
-        detail.insert("stopStarted".into(), json!(true));
-    }
     if !records.is_empty() {
         detail.insert("presentation".into(), json!(records));
     }
-    if started_hold || started_stop || detail.contains_key("presentation") {
+    if detail.contains_key("presentation") {
         audit.detail = Value::Object(detail).to_string();
     }
     audit

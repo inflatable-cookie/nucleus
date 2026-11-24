@@ -916,12 +916,13 @@ impl Service {
             Some(profiles::GroupPause::Manual) => state.schedule.park(id),
             None => state.schedule.wake(id, due, priority),
         }
+        let state_changed = presentation::record_wait_state(&state, &row.task, wait)?;
         let prior = state.set_wait(id, wait);
         if prior != wait {
             self.title_wake.notify_one();
         }
-        self.desire_title(&state, &row.task, row.number, wait);
-        if prior != wait {
+        self.desire_title(&state, &row.task, row.number);
+        if state_changed || prior != wait {
             self.publish(id, current.version);
         }
         Ok(())
@@ -957,6 +958,7 @@ impl Service {
         } else {
             WaitReason::HostUnknown
         });
+        let state_changed = presentation::record_wait_state(state, &row.task, wait)?;
         let prior = state.set_wait(id, wait);
         if blocked && prior != wait {
             let mut audit = event("host_observation_blocked");
@@ -967,8 +969,8 @@ impl Service {
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
         }
-        if state.observe_task_allowance(&row.task, wait)? || prior != wait {
-            self.desire_title(state, &row.task, row.reference().as_ref(), wait);
+        if state.observe_task_allowance(&row.task, wait)? || state_changed || prior != wait {
+            self.desire_title(state, &row.task, row.number);
             self.title_wake.notify_one();
             self.publish(id, row.version);
         }
@@ -1280,10 +1282,15 @@ impl Service {
     ) -> Result<i64, ServiceError> {
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
         let allowance = state.allowance_transition(&prior.task, task, &audit.kind);
-        let version =
-            state
-                .store
-                .save_accounted(prior, task, &audit, subscription_group, allowance)?;
+        let board_state = presentation::committed_board_state(&prior.task, task);
+        let version = state.store.save_accounted(
+            prior,
+            task,
+            &audit,
+            subscription_group,
+            allowance,
+            board_state.as_deref(),
+        )?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }
@@ -1314,7 +1321,7 @@ impl Service {
         {
             state.role_observations.remove(id);
         }
-        self.desire_title(state, task, prior.number, None);
+        self.desire_title(state, task, prior.number);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
