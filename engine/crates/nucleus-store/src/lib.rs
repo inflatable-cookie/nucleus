@@ -6,6 +6,7 @@ mod numbers;
 pub mod planning;
 mod settings;
 mod settings_domains;
+mod tells;
 mod titles;
 mod usage;
 mod volume;
@@ -28,6 +29,9 @@ pub use settings::{
 pub use settings_domains::{
     DispatchMode, DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings,
     Projects, RepositorySettings, T3Settings,
+};
+pub use tells::{
+    StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
 pub use titles::TitleReceipt;
 pub use volume::{PinnedVolume, StorageDirectory};
@@ -72,6 +76,8 @@ pub enum StoreError {
     PlanningInput,
     #[error("planning record conflicts with the current state")]
     PlanningConflict,
+    #[error("project {0:?} has already received 20 tells in the last hour. Send later.")]
+    TellRateLimit(String),
     #[error(
         "the offline project import is pending; finish project.import before starting the engine"
     )]
@@ -247,6 +253,7 @@ impl Store {
         tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
+        tx.execute_batch(tells::SCHEMA)?;
         Ok(())
     }
 

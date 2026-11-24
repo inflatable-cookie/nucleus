@@ -14,6 +14,7 @@ mod prompt;
 mod question;
 mod report_only;
 mod schedule;
+mod tell;
 #[cfg(test)]
 mod tests;
 mod ticket;
@@ -94,6 +95,16 @@ pub enum ServiceError {
     LeadComplexity,
     #[error("{0}")]
     BriefPolicy(#[from] nucleus_core::profiles::BriefPolicyError),
+    #[error("tell requires project recipients and between 1 and 4000 characters of text")]
+    TellInput,
+    #[error("tell requires a verified planner binding with a sending project")]
+    TellPlannerRequired,
+    #[error("no project matches {0:?}. Use a registered project ID or name.")]
+    TellUnknownProject(String),
+    #[error("project name {0:?} is ambiguous. Use its project ID.")]
+    TellAmbiguousProject(String),
+    #[error("project {0:?} is archived")]
+    TellArchivedProject(String),
     #[error("answering an operator decision requires the operator binding")]
     DecisionOperator,
     #[error("the question is assigned to a different planner")]
@@ -161,6 +172,7 @@ pub struct Service {
     planner_wake: Notify,
     title_wake: Notify,
     enrollment_wake: Notify,
+    tell_wake: Notify,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -337,6 +349,7 @@ impl Service {
             planner_wake: Notify::new(),
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
+            tell_wake: Notify::new(),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
@@ -527,6 +540,7 @@ impl Service {
             Box::pin(self.watch_planner_authority()),
             Box::pin(self.watch_titles()),
             Box::pin(self.watch_enrollments()),
+            Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())
         );

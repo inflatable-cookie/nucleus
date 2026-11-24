@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Mutex as SyncMutex, time::Duration};
 
 use nucleus_core::{Observation, Workspace};
 use nucleus_hosts::HostError;
@@ -13,6 +13,98 @@ const ALPHA_REPO: &str = REPOSITORY;
 const BETA_REPO: &str = "example/second";
 const PROJECTS: &str = "/v1/settings/projects";
 const T3_KEY: [u8; 32] = [8; 32];
+const TELL: &str = "/v1/planning/tell";
+
+#[derive(Default)]
+struct NoticeFixture {
+    sends: Vec<Value>,
+    controls: Vec<Value>,
+    started: bool,
+    next_reply: NoticeReply,
+    settled: bool,
+}
+
+#[derive(Default, PartialEq, Eq)]
+enum NoticeReply {
+    #[default]
+    Accepted,
+    Rejected,
+    Uncertain,
+}
+
+impl NoticeFixture {
+    fn thread_snapshot(&self, id: &str, archived: bool) -> Value {
+        let project = match id {
+            "beta-planner" => "beta-native",
+            "missing-root" => "missing-native",
+            _ => "alpha-native",
+        };
+        let (messages, runs) = self.projection(id);
+        json!({"kind": "snapshot", "snapshotSequence": 16, "projection": {"thread": {
+            "id": id, "projectId": project,
+            "archivedAt": (id == "closed" || id == "alpha-planner" && archived).then_some("2026-11-23T18:10:00Z"),
+            "parentThreadId": (id == "child").then_some("parent"),
+            "providerInstanceId": (id == "task-session").then_some("fixture-acp"),
+            "settledAt": self.settled.then_some("2026-11-23T18:10:00Z"),
+        }, "messages": messages, "runs": runs}})
+    }
+
+    fn projection(&self, id: &str) -> (Value, Value) {
+        let message = self
+            .sends
+            .iter()
+            .rev()
+            .find(|send| send["threadId"] == id && send["accepted"] == true);
+        if self.started
+            && let Some(message) = message
+        {
+            let id = &message["messageId"];
+            (
+                json!([{"id": id, "runId": "notice-run"}]),
+                json!([{"id": "notice-run", "userMessageId": id, "status": "running", "startedAt": "2026-11-24T10:00:00Z"}]),
+            )
+        } else {
+            (
+                json!(
+                    message
+                        .map(|send| json!({"id": send["messageId"]}))
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                ),
+                json!([]),
+            )
+        }
+    }
+
+    fn dispatch(&mut self, request: &Value) -> Value {
+        let mut payload = request["payload"].clone();
+        let reply = if payload["type"] == "thread.unsettle" {
+            self.controls.push(payload);
+            self.settled = false;
+            json!({"_tag": "Success", "value": {"sequence": 17}})
+        } else {
+            assert_eq!(payload["type"], "message.dispatch");
+            let reply = std::mem::take(&mut self.next_reply);
+            payload["accepted"] = json!(reply == NoticeReply::Accepted);
+            if reply == NoticeReply::Accepted {
+                self.sends.push(payload);
+                json!({"_tag": "Success", "value": {"sequence": 17}})
+            } else {
+                let command = payload["commandId"].clone();
+                self.sends.push(payload);
+                json!({"_tag": "Failure", "cause": [{"_tag": "Fail", "error": {
+                    "_tag": "OrchestrationV2DispatchCommandError",
+                    "commandId": command, "commandType": "message.dispatch",
+                    "cause": {
+                        "name": if reply == NoticeReply::Rejected { "OrchestratorCommandPreviouslyRejectedError" } else { "UnknownError" },
+                        "message": format!("Command {} was previously rejected: fixture", command.as_str().expect("command"))
+                    }
+                }}]})
+            }
+        };
+        json!({"_tag": "Exit", "requestId": request["id"], "exit": reply})
+    }
+}
 
 struct Registry {
     home: tempfile::TempDir,
@@ -22,6 +114,7 @@ struct Registry {
     read_started: Arc<tokio::sync::Notify>,
     moved: Arc<AtomicBool>,
     archived: Arc<AtomicBool>,
+    notices: Arc<SyncMutex<NoticeFixture>>,
     native: tokio::task::JoinHandle<()>,
 }
 
@@ -58,6 +151,29 @@ impl Registry {
         );
         self.service.task(id).await.expect("admitted task").task
     }
+
+    async fn tell(&self, actor: &str, to: Value, text: &str) -> Response {
+        caller_request(
+            &self.api,
+            Method::POST,
+            TELL,
+            actor,
+            json!({"to": to, "text": text}),
+        )
+        .await
+    }
+
+    async fn advance_tell(&self) -> Result<(), ServiceError> {
+        let row = self
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()?
+            .expect("queued notice");
+        self.service.advance_tell(&row).await
+    }
 }
 
 async fn registry() -> Registry {
@@ -91,23 +207,16 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     ], "threads": []});
     let archived = Arc::new(AtomicBool::new(false));
     let closed = Arc::clone(&archived);
+    let notices = Arc::new(SyncMutex::new(NoticeFixture::default()));
+    let delivery = Arc::clone(&notices);
     let (host, native) = native_fixture(move |request| {
         observed.fetch_add(1, Ordering::Relaxed);
+        let mut notices = delivery.lock().expect("native notice fixture");
         let snapshot = match request["tag"].as_str() {
             Some("orchestration.subscribeThread") => {
                 signal.notify_one();
                 let id = request["payload"]["threadId"].as_str().expect("exact ID");
-                let project = match id {
-                    "beta-planner" => "beta-native",
-                    "missing-root" => "missing-native",
-                    _ => "alpha-native",
-                };
-                json!({"kind": "snapshot", "projection": {"thread": {
-                    "id": id, "projectId": project,
-                    "archivedAt": (id == "closed" || id == "alpha-planner" && closed.load(Ordering::Relaxed)).then_some("2026-11-23T18:10:00Z"),
-                    "parentThreadId": (id == "child").then_some("parent"),
-                    "providerInstanceId": (id == "task-session").then_some("fixture-acp"),
-                }}})
+                notices.thread_snapshot(id, closed.load(Ordering::Relaxed))
             }
             Some("orchestration.subscribeShell") => {
                 let alpha = if moved_root.load(Ordering::Relaxed) {
@@ -121,6 +230,7 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                     {"id": "missing-native", "workspaceRoot": missing},
                 ]}})
             }
+            Some("orchestration.dispatchCommand") => return notices.dispatch(request),
             _ => panic!("unexpected T3 call"),
         };
         json!({"_tag": "Chunk", "requestId": request["id"], "values": [
@@ -158,6 +268,7 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
         read_started,
         moved,
         archived,
+        notices,
         native,
     }
 }
@@ -876,6 +987,330 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
             .as_deref(),
         Some("next-planner")
     );
+}
+
+#[tokio::test]
+async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
+    let registry = registry().await;
+    registry.enroll("next-planner").await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let (alpha, beta) = {
+        let state = registry.service.state.lock().await;
+        (
+            state
+                .live_planner_project("alpha-planner")
+                .expect("alpha")
+                .to_owned(),
+            state
+                .live_planner_project("beta-planner")
+                .expect("beta")
+                .to_owned(),
+        )
+    };
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let broadcast = || {
+        registry.tell(
+            "alpha-planner",
+            json!("all"),
+            "Synthetic cross-project note",
+        )
+    };
+    let original = broadcast().await;
+    assert_eq!(original.status(), StatusCode::OK);
+    let original = json_body(original).await;
+    assert_eq!(
+        original["deliveries"].as_array().expect("receipts").len(),
+        2
+    );
+    for receipt in original["deliveries"].as_array().expect("receipts") {
+        assert_eq!(receipt["status"], "queued");
+        assert_eq!(receipt["fromProject"], alpha);
+    }
+    assert_eq!(
+        registry.reads.load(Ordering::Relaxed),
+        reads,
+        "admission is local"
+    );
+    registry.notices.lock().expect("notices").settled = true;
+    for _ in 0..3 {
+        registry.advance_tell().await.expect("scheduler delivery");
+    }
+    let staged = json_body(broadcast().await).await;
+    assert_eq!(
+        staged, original,
+        "unsettle and native acceptance still report queued"
+    );
+    {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.controls.len(), 1);
+        assert_eq!(fixture.sends.len(), 2);
+        let threads: std::collections::BTreeSet<_> = fixture
+            .sends
+            .iter()
+            .map(|send| send["threadId"].as_str().expect("thread ID"))
+            .collect();
+        assert_eq!(
+            threads,
+            std::collections::BTreeSet::from(["next-planner", "beta-planner"])
+        );
+        for send in &fixture.sends {
+            assert_eq!(send["dispatchMode"]["type"], "queue_after_active");
+            let text = send["text"].as_str().expect("message text");
+            assert!(text.contains(&alpha));
+            assert!(text.contains("Synthetic cross-project note"));
+        }
+    }
+    registry.notices.lock().expect("notices").started = true;
+    for _ in 0..2 {
+        registry.advance_tell().await.expect("scheduler receipt");
+    }
+    let delivered = json_body(broadcast().await).await;
+    for (prior, after) in original["deliveries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(delivered["deliveries"].as_array().unwrap())
+    {
+        assert_eq!(after["messageId"], prior["messageId"]);
+        assert_eq!(after["status"], "delivered");
+        assert!(after["deliveredAtMs"].is_u64());
+    }
+    let duplicate = json_body(
+        registry
+            .tell(
+                "alpha-planner",
+                json!([&beta, "Exact T3 Alpha", &alpha]),
+                "Synthetic cross-project note",
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(
+        duplicate, delivered,
+        "canonical recipients dedupe across aliases and broadcasts"
+    );
+}
+
+#[tokio::test]
+async fn project_tell_refuses_unverified_and_ambiguous_requests_without_host_reads() {
+    let registry = registry().await;
+    let actor = "alpha-planner";
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let unverified = registry.tell(actor, json!("all"), "test").await;
+    assert_eq!(unverified.status(), StatusCode::FORBIDDEN);
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    assert!(registry.service.take_enrollment().await.is_none());
+    registry.enroll(actor).await;
+    registry.enroll("beta-planner").await;
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let unknown = registry
+        .tell(actor, json!(["Exact T3 Alpha", "missing"]), "test")
+        .await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    assert!(
+        json_body(unknown).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("no project matches")
+    );
+    {
+        let mut state = registry.service.state.lock().await;
+        for project in state
+            .settings
+            .projects
+            .as_mut()
+            .unwrap()
+            .projects
+            .values_mut()
+        {
+            project.name = "Shared name".into();
+        }
+    }
+    let ambiguous = registry.tell(actor, json!("shared name"), "test").await;
+    assert_eq!(ambiguous.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(ambiguous).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("ambiguous")
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    let state = registry.service.state.lock().await;
+    assert!(state.store.next_tell().expect("empty queue").is_none());
+}
+
+#[tokio::test]
+async fn project_tell_lists_projects_without_live_planners_and_preserves_the_broadcast_snapshot() {
+    let registry = registry().await;
+    let source = "alpha-planner";
+    registry.enroll(source).await;
+    let settings = &registry.service.settings;
+    let current = settings.read::<nucleus_store::Projects>().unwrap();
+    let (updated, _) = settings
+        .edit(
+            &current.revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects.projects.insert(
+                    "unbound".into(),
+                    nucleus_store::ProjectSettings {
+                        name: "Unbound project".into(),
+                        archived: false,
+                        repositories: Vec::new(),
+                    },
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    registry.service.state.lock().await.settings.projects = Some(updated.value);
+    let pending = json_body(
+        registry
+            .tell(source, json!("all"), "Will wait for a planner")
+            .await,
+    )
+    .await;
+    assert_eq!(pending["deliveries"], json!([]));
+    assert_eq!(pending["noLivePlanners"][0]["name"], "Exact T3 Alpha");
+    assert_eq!(pending["noLivePlanners"][1]["name"], "Unbound project");
+    assert!(registry.notices.lock().unwrap().sends.is_empty());
+    registry.enroll("beta-planner").await;
+    let replay = json_body(
+        registry
+            .tell(source, json!("all"), "Will wait for a planner")
+            .await,
+    )
+    .await;
+    assert_eq!(
+        pending, replay,
+        "broadcast retry keeps its original project set"
+    );
+    let unbound = json_body(
+        registry
+            .tell(source, json!("Unbound project"), "No unrelated fallback")
+            .await,
+    )
+    .await;
+    assert_eq!(unbound["deliveries"], json!([]));
+    assert_eq!(
+        unbound["noLivePlanners"],
+        json!([pending["noLivePlanners"][1]])
+    );
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_none()
+    );
+    assert!(registry.notices.lock().unwrap().sends.is_empty());
+}
+
+#[tokio::test]
+async fn project_tell_reads_back_an_unknown_send_without_replaying_it() {
+    let registry = registry().await;
+    let source = "alpha-planner";
+    registry.enroll(source).await;
+    registry.enroll("beta-planner").await;
+    let beta = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("beta-planner")
+        .unwrap()
+        .to_owned();
+    let notice = json_body(
+        registry
+            .tell(source, json!(&beta), "Uncertain fixture")
+            .await,
+    )
+    .await;
+    registry.notices.lock().unwrap().next_reply = NoticeReply::Uncertain;
+    assert!(matches!(
+        registry.advance_tell().await,
+        Err(ServiceError::Host(HostError::Uncertain))
+    ));
+    let reopened =
+        nucleus_store::Store::open(&registry.service.storage).expect("reopen durable queue");
+    let persisted = reopened
+        .next_tell()
+        .expect("retained notice")
+        .expect("notice");
+    assert!(matches!(
+        persisted.state,
+        nucleus_store::TellState::InFlight(_)
+    ));
+    let unknown = json_body(
+        registry
+            .tell(source, json!(&beta), "Uncertain fixture")
+            .await,
+    )
+    .await;
+    assert_eq!(
+        unknown["deliveries"][0]["messageId"],
+        notice["deliveries"][0]["messageId"]
+    );
+    assert_eq!(unknown["deliveries"][0]["status"], "uncertain");
+    registry.service.advance_tell(&persisted).await.unwrap();
+    {
+        let mut fixture = registry.notices.lock().unwrap();
+        assert_eq!(fixture.sends.len(), 1);
+        fixture.sends[0]["accepted"] = json!(true);
+        fixture.started = true;
+    }
+    registry
+        .advance_tell()
+        .await
+        .expect("late exact observation");
+    let delivered = json_body(
+        registry
+            .tell(source, json!(&beta), "Uncertain fixture")
+            .await,
+    )
+    .await;
+    assert_eq!(delivered["deliveries"][0]["status"], "delivered");
+    assert_eq!(
+        delivered["deliveries"][0]["messageId"],
+        notice["deliveries"][0]["messageId"]
+    );
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+}
+
+#[tokio::test]
+async fn project_tell_retries_a_proven_rejection_and_falls_back_after_archive() {
+    let registry = registry().await;
+    registry.enroll("next-planner").await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let queued = registry
+        .tell(
+            "beta-planner",
+            json!("Exact T3 Alpha"),
+            "Retry after rejection",
+        )
+        .await;
+    assert_eq!(queued.status(), StatusCode::OK);
+    registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+    registry.advance_tell().await.expect("proven rejection");
+    registry.archived.store(true, Ordering::Relaxed);
+    registry
+        .advance_tell()
+        .await
+        .expect("closed planner invalidated");
+    registry
+        .advance_tell()
+        .await
+        .expect("verified fallback receives notice");
+    let fixture = registry.notices.lock().unwrap();
+    assert_eq!(fixture.sends.len(), 2);
+    assert_eq!(fixture.sends[0]["threadId"], "alpha-planner");
+    assert_eq!(fixture.sends[1]["threadId"], "next-planner");
+    assert_ne!(fixture.sends[0]["commandId"], fixture.sends[1]["commandId"]);
 }
 
 #[tokio::test]
