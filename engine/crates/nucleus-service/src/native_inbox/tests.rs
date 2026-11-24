@@ -18,7 +18,7 @@ const PROVIDER: &str = "fixture-acp";
 #[tokio::test]
 async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    service.native_inbox = Some(NativeInbox::open(&service, None).unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
     let revision = service.settings.read::<Projects>().unwrap().revision;
     service
@@ -77,10 +77,10 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
 }
 
 #[tokio::test]
-async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answer() {
+async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answer() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
     service.project.as_mut().unwrap().acp_provider = Some(PROVIDER.into());
-    service.native_inbox = Some(NativeInbox::open(&service, Some(LEGACY.into())).unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
     let root = inbox.root.clone();
     let stage = Arc::new(AtomicUsize::new(0));
@@ -92,7 +92,6 @@ async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answ
     let target = InboxTarget {
         root: &inbox.root,
         provider: PROVIDER,
-        legacy: Some(LEGACY),
     };
     let planner = Authority::Planner {
         actor: "fixture-planner".into(),
@@ -128,10 +127,6 @@ async fn explicit_install_waits_for_the_legacy_pin_and_forms_use_the_shared_answ
     assert_eq!(stage.load(Ordering::Relaxed), 0);
     let snapshot = service.inbox_snapshot(&key).await.unwrap();
     assert!(snapshot.pending.is_empty());
-    assert!(matches!(
-        service.host.prepare_inbox_install(&target).await.unwrap(),
-        InboxLifecycle::LegacyPinned
-    ));
     install(&service, &target, &stage).await;
     service.reconcile_inbox(inbox, &target).await.unwrap();
     assert_eq!(stage.load(Ordering::Relaxed), 7);
@@ -207,11 +202,6 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
     let step = seen.load(Ordering::Relaxed);
     let payload = &req["payload"];
     let snapshot = match req["tag"].as_str().unwrap() {
-        "orchestration.subscribeThread" if payload["threadId"] == LEGACY => {
-            let pinned = (step == 0).then_some("2026-11-24T00:00:00Z");
-            json!({"kind":"snapshot","projection":{"thread":{
-                "id":LEGACY,"providerInstanceId":"nucleus","pinnedAt":pinned}}})
-        }
         "orchestration.subscribeThread" if payload["threadId"] == INBOX_THREAD && step < 3 => {
             return json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Failure","cause":[{
                 "_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError",
@@ -235,12 +225,16 @@ fn native_response(req: &Value, seen: &AtomicUsize, root: &str) -> Value {
             }})
         }
         "orchestration.subscribeShell" if step >= 1 => {
-            let projects = if step == 1 {
-                Vec::<Value>::new()
-            } else {
-                vec![json!({"id":PROJECT,"workspaceRoot":root})]
-            };
-            json!({"kind":"snapshot","snapshot":{"projects":projects}})
+            let mut projects = vec![
+                json!({"id":"legacy-project","title":"Nucleus Inbox","workspaceRoot":"/synthetic/ts-inbox"}),
+            ];
+            if step > 1 {
+                projects.push(json!({"id":PROJECT,"workspaceRoot":root}));
+            }
+            json!({"kind":"snapshot","snapshot":{"projects":projects,"threads":[{
+                "id":LEGACY,"projectId":"legacy-project","providerInstanceId":"nucleus",
+                "pinnedAt":"2026-11-24T00:00:00Z"
+            }]}})
         }
         "server.getConfig" if step == 2 => {
             return success(

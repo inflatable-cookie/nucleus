@@ -33,7 +33,6 @@ const DECLINE: &str = "decline";
 pub(super) struct NativeInbox {
     credential: [u8; 32],
     root: String,
-    legacy: Option<String>,
     observed: watch::Sender<Observation>,
     reconcile: Notify,
 }
@@ -61,29 +60,13 @@ impl NativeInbox {
             Some("1") => {}
             _ => return Err(ServiceError::InboxConfiguration),
         }
-        let legacy = env::var_os("NUCLEUS_RUST_LEGACY_INBOX_THREAD")
-            .map(|id| {
-                id.into_string()
-                    .map_err(|_| ServiceError::InboxConfiguration)
-            })
-            .transpose()?;
-        if service.acp_provider().is_none()
-            || (service.inbox.is_some() && legacy.is_none())
-            || legacy.as_ref().is_some_and(|id| {
-                !id.starts_with("thread:")
-                    || id == INBOX_THREAD
-                    || id.len() > 200
-                    || !id
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b":-_".contains(&byte))
-            })
-        {
+        if service.acp_provider().is_none() {
             return Err(ServiceError::InboxConfiguration);
         }
-        Self::open(service, legacy).map(Some)
+        Self::open(service).map(Some)
     }
 
-    pub(super) fn open(service: &Service, legacy: Option<String>) -> Result<Self, ServiceError> {
+    pub(super) fn open(service: &Service) -> Result<Self, ServiceError> {
         let storage = service.storage.database();
         storage.ensure_child(Path::new(INBOX_DIRECTORY))?;
         let root = native_inbox_directory(&service.storage);
@@ -94,14 +77,9 @@ impl NativeInbox {
                 .into_os_string()
                 .into_string()
                 .map_err(|_| ServiceError::AcpBinding)?,
-            legacy,
             observed: watch::channel(Observation::Unknown).0,
             reconcile: Notify::new(),
         })
-    }
-
-    pub(super) fn matches_thread(&self, thread: &str) -> bool {
-        thread == INBOX_THREAD || self.legacy.as_deref() == Some(thread)
     }
 
     pub(super) fn unobserved(&self) {
@@ -235,7 +213,6 @@ impl Service {
         let target = InboxTarget {
             root: &inbox.root,
             provider,
-            legacy: inbox.legacy.as_deref(),
         };
         loop {
             let retry = match self.reconcile_inbox(inbox, &target).await {

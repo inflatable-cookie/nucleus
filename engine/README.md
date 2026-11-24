@@ -402,8 +402,9 @@ after it exits. An unverified listener never triggers a second start.
 the local T3 environment. First enable the engine with `configure --enable`.
 Use the platform Storage defaults or pass the same `--home` to configure,
 serve and T3 setup. Set the T3 origin with `--t3` or the profile's Hosts
-setting. The provider's launcher and startup lock live in `t3-provider` under
-the engine's database root. A configured volume pin applies to that root.
+setting. The provider's launcher is `bin/nucleus-rust-acp` under the engine
+home, or under the platform state directory for a native profile. The startup
+lock lives beside `bin`. A configured volume pin applies to both.
 
 Prepare an owner-only executable serve launcher that sets
 `NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus-engine serve`
@@ -433,6 +434,11 @@ nucleus-engine t3 status --t3 http://127.0.0.1:3773 \
   --control-key-file /absolute/path/controller.key
 nucleus-engine t3 uninstall --t3 http://127.0.0.1:3773
 ```
+
+Use `install --adopt` to take over an existing local `nucleus-rust`
+registration. It verifies the owner-only launcher, then updates that
+instance's command path if it differs. A matching registration stays in
+place. Other provider IDs and running sessions are left alone.
 
 The launcher ensures the engine on `127.0.0.1` and execs Rust ACP over
 stdio with the profile's binding directory and `loadSession: true`. Install
@@ -719,15 +725,11 @@ containing a 32-byte key encoded as lowercase hex. Set `NUCLEUS_RUST_INBOX_URL`
 in Rust to the TypeScript board's `http://127.0.0.1:<port>` origin. The key works
 only on the bridge route.
 
-The Rust Inbox is off by default. For a synthetic native setup, set
-`NUCLEUS_RUST_NATIVE_INBOX=1` on Rust and use the configured `acpProvider` with
-`NUCLEUS_ACP_BINDINGS` pointing at the service's binding directory. On an
-existing host, set `NUCLEUS_RUST_LEGACY_INBOX_THREAD` on Rust to the exact
-TypeScript Inbox thread ID. The planner retires the TypeScript Inbox manually
-after no-new-work is on and all open TypeScript decisions have drained. Native
-install verifies the legacy pin and provisions the Rust Inbox at the configured
-database root. A fresh host with no TypeScript Inbox can omit the legacy thread
-ID and bridge configuration.
+Set `NUCLEUS_RUST_NATIVE_INBOX=1` to use the Rust Inbox, and install its pin with
+`nucleus-engine t3 install`. Both Inbox threads may be pinned during cutover.
+Rust routes new operator questions to the Rust Inbox and leaves the TypeScript
+Inbox in place for TypeScript decisions. The planner retires the TypeScript
+Inbox manually after its open decisions have drained.
 
 Keep the bridge connected until its active Rust task versions have been handed
 off. Rust reads any answer already recorded there and fences each unanswered

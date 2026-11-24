@@ -27,7 +27,6 @@ use crate::{
 };
 
 const INSTALL_BEARER: &str = "NUCLEUS_ENGINE_T3_INSTALL_BEARER";
-const SETUP_DIRECTORY: &str = "t3-provider";
 const LAUNCHER: &str = "nucleus-rust-acp";
 const MARKER: &str = "#!/bin/sh\n# nucleus-rust-acp-launcher-v1\n";
 const ENSURE: &str = include_str!("../../../ensure-local-service.py");
@@ -57,6 +56,9 @@ enum Action {
         /// Absolute path to the owner-only engine serve launcher.
         #[arg(long)]
         serve_launcher: PathBuf,
+        /// Adopt the existing local nucleus-rust registration.
+        #[arg(long)]
+        adopt: bool,
     },
     /// Retire the Rust Inbox and remove this profile's verified registration.
     Uninstall,
@@ -117,18 +119,12 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
     } else {
         settings.configured_storage()?
     };
-    let launcher = storage
-        .database()
-        .path()
-        .join(SETUP_DIRECTORY)
-        .join(LAUNCHER);
+    let launcher = storage.bin().path().join(LAUNCHER);
     let target = Target::resolve(&settings, args.t3);
     let inbox_root = native_inbox_directory(&storage);
-    let legacy = env::var("NUCLEUS_RUST_LEGACY_INBOX_THREAD").ok();
     let inbox = InboxTarget {
         root: path_string(&inbox_root)?,
         provider: NUCLEUS_RUST_PROVIDER,
-        legacy: legacy.as_deref(),
     };
 
     match args.action {
@@ -146,12 +142,20 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
         Action::Install {
             acp_command,
             serve_launcher,
+            adopt,
         } => {
             let target = target?;
             let provider = target.provider(&launcher, true)?;
             let host = target.inbox()?;
-            if verify_registration(&provider).await? == ProviderRegistration::Removing {
-                return Err(ProviderSetupError::Unconfirmed.to_string().into());
+            let registration = verify_registration(&provider).await?;
+            match registration {
+                ProviderRegistration::Removing => {
+                    return Err(ProviderSetupError::Unconfirmed.to_string().into());
+                }
+                ProviderRegistration::Adoptable if !adopt => {
+                    return Err(ProviderSetupError::AdoptionRequired.to_string().into());
+                }
+                _ => {}
             }
             let key_file = args
                 .control_key_file
@@ -163,6 +167,11 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
                 &key_file,
                 &serve_launcher,
                 &acp_command,
+                adopt
+                    && matches!(
+                        registration,
+                        ProviderRegistration::Ready | ProviderRegistration::Registered
+                    ),
             )?;
             ensure(&launcher).await?;
             let key = read_key_file(&key_file)?;
@@ -177,7 +186,7 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
                 return Err("enable the native Rust Inbox in the engine serve launcher".into());
             }
             provider
-                .install()
+                .install(adopt)
                 .await
                 .map_err(|error| error.to_string())?;
             reconcile_inbox(&host, &inbox, true).await?;
@@ -185,27 +194,35 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
             println!("Verified {NUCLEUS_RUST_PROVIDER} and the pinned Rust Inbox.");
         }
         Action::Uninstall => {
-            let target = target?;
-            let provider = target.provider(&launcher, true)?;
-            let setup_dir = open_setup_directory(&launcher)?;
-            if let Some(directory) = &setup_dir {
-                lock_setup(directory)?;
-            }
-            if matches!(
-                verify_registration(&provider).await?,
-                ProviderRegistration::Ready | ProviderRegistration::Registered
-            ) && local_launcher(&launcher)?.is_none()
-            {
-                return Err("the owner-only nucleus-rust launcher could not be verified".into());
-            }
-            reconcile_inbox(&target.inbox()?, &inbox, false).await?;
-            provider
-                .uninstall()
-                .await
-                .map_err(|error| error.to_string())?;
-            println!("Retired the Rust Inbox. {NUCLEUS_RUST_PROVIDER} is absent.");
+            Box::pin(uninstall(&target?, &launcher, &inbox)).await?;
         }
     }
+    Ok(())
+}
+
+async fn uninstall(target: &Target, launcher: &Path, inbox: &InboxTarget<'_>) -> Result<()> {
+    let provider = target.provider(launcher, true)?;
+    let setup_dir = open_setup_directory(launcher)?;
+    if let Some(directory) = &setup_dir {
+        lock_setup(directory)?;
+    }
+    match verify_registration(&provider).await? {
+        ProviderRegistration::Adoptable => {
+            return Err(ProviderSetupError::Conflict.to_string().into());
+        }
+        ProviderRegistration::Ready | ProviderRegistration::Registered
+            if local_launcher(launcher)?.is_none() =>
+        {
+            return Err("the owner-only nucleus-rust launcher could not be verified".into());
+        }
+        _ => {}
+    }
+    reconcile_inbox(&target.inbox()?, inbox, false).await?;
+    provider
+        .uninstall()
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("Retired the Rust Inbox. {NUCLEUS_RUST_PROVIDER} is absent.");
     Ok(())
 }
 
@@ -231,9 +248,6 @@ async fn reconcile_inbox(host: &T3, target: &InboxTarget<'_>, install: bool) -> 
             };
             match step {
                 InboxLifecycle::Complete => return Ok(()),
-                InboxLifecycle::LegacyPinned => {
-                    return Err("the provider is ready; rerun install after the TypeScript Inbox is retired".into());
-                }
                 InboxLifecycle::Write(write) => {
                     if sent.insert(write.command_id().to_owned()) {
                         host.write_inbox(write).await?;
@@ -281,6 +295,7 @@ fn install_launcher(
     key_file: &Path,
     serve: &Path,
     acp: &Path,
+    replace_registered: bool,
 ) -> Result<File> {
     if endpoint.ip() != Ipv4Addr::LOCALHOST {
         return Err("the local service helper requires an engine endpoint on 127.0.0.1".into());
@@ -296,19 +311,29 @@ fn install_launcher(
 
     let directory = launcher.parent().ok_or("invalid launcher directory")?;
     let script = launcher_script(storage, endpoint.port(), directory, &key_file, &serve, &acp)?;
-    storage
-        .database()
-        .ensure_child(Path::new(SETUP_DIRECTORY))?;
+    storage.bin().ensure()?;
+    storage.log().ensure()?;
     let setup_directory = open_setup_directory(launcher)?.ok_or("provider directory is missing")?;
     lock_setup(&setup_directory)?;
-    if local_launcher(launcher)?.is_none() {
+    let prior = private_launcher(launcher)?;
+    if prior.as_deref() != Some(script.as_bytes()) {
+        if prior.is_some() && !replace_registered {
+            return Err(
+                "existing launcher differs; --adopt requires a matching T3 registration".into(),
+            );
+        }
         let mut staged = tempfile::NamedTempFile::new_in(directory)?;
         staged.write_all(script.as_bytes())?;
         staged
             .as_file()
             .set_permissions(fs::Permissions::from_mode(0o700))?;
         staged.as_file().sync_all()?;
-        match staged.persist_noclobber(launcher) {
+        let published = if prior.is_some() {
+            staged.persist(launcher)
+        } else {
+            staged.persist_noclobber(launcher)
+        };
+        match published {
             Ok(_) => setup_directory.sync_all()?,
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.error.into()),
@@ -329,14 +354,19 @@ fn launcher_script(
     acp: &Path,
 ) -> Result<String> {
     let key_file = quote(key_file)?;
-    let lock = quote(&directory.join("service.lock"))?;
+    let home = directory.parent().ok_or("invalid engine home")?;
+    let lock = quote(&home.join("serve.lock"))?;
     let serve = quote(serve)?;
     let acp = quote(acp)?;
     let bindings = quote(&storage.database().path().join("acp-bindings"))?;
+    let scratch = quote(storage.scratch().path())?;
+    let log = quote(&storage.log().path().join("acp.log"))?;
     Ok(format!(
         r#"{MARKER}set -eu
 umask 077
 unset {INSTALL_BEARER} NUCLEUS_ACP_SESSION
+export TMPDIR={scratch} TMP={scratch} TEMP={scratch}
+exec 2>>{log}
 /usr/bin/env python3 - {port} {key_file} {lock} {serve} <<'NUCLEUS_ENSURE'
 {ENSURE}NUCLEUS_ENSURE
 if [ "${{1-}}" = --ensure-only ]; then exit 0; fi
@@ -385,7 +415,7 @@ fn lock_setup(directory: &File) -> Result<()> {
         .map_err(|_| "another T3 setup command holds the provider directory lock".into())
 }
 
-fn local_launcher(path: &Path) -> Result<Option<Vec<u8>>> {
+fn private_launcher(path: &Path) -> Result<Option<Vec<u8>>> {
     if open_setup_directory(path)?.is_none() {
         return Ok(None);
     }
@@ -395,11 +425,18 @@ fn local_launcher(path: &Path) -> Result<Option<Vec<u8>>> {
     if file.metadata()?.mode() & 0o777 != 0o700 {
         return Err("the nucleus-rust launcher must have mode 0700".into());
     }
-    let bytes = read(file)?;
-    if !bytes.starts_with(MARKER.as_bytes()) {
+    Ok(Some(read(file)?))
+}
+
+fn local_launcher(path: &Path) -> Result<Option<Vec<u8>>> {
+    let bytes = private_launcher(path)?;
+    if bytes
+        .as_ref()
+        .is_some_and(|bytes| !bytes.starts_with(MARKER.as_bytes()))
+    {
         return Err("the nucleus-rust launcher does not have the expected ownership marker".into());
     }
-    Ok(Some(bytes))
+    Ok(bytes)
 }
 
 fn read_key_file(path: &Path) -> Result<[u8; 32]> {
@@ -528,11 +565,7 @@ mod tests {
         let home = directory.path().canonicalize().expect("canonical profile");
         let settings = SettingsFile::open(&home).expect("settings");
         let storage = settings.configured_storage().expect("storage");
-        let launcher = storage
-            .database()
-            .path()
-            .join(SETUP_DIRECTORY)
-            .join(LAUNCHER);
+        let launcher = storage.bin().path().join(LAUNCHER);
         let key = home.join("controller.key");
         fs::write(&key, "ab".repeat(32)).expect("key fixture");
         fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("key mode");
@@ -542,25 +575,35 @@ mod tests {
         executable(&acp);
         let endpoint = SocketAddr::from((Ipv4Addr::LOCALHOST, 4319));
 
-        let lock =
-            install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp).expect("publish");
-        assert!(install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp).is_err());
+        let lock = install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp, false)
+            .expect("publish");
+        assert!(
+            install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp, false).is_err()
+        );
         drop(lock);
         let installed = local_launcher(&launcher)
             .expect("private launcher")
             .expect("present");
         let inode = fs::metadata(&launcher).expect("metadata").ino();
-        install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp).expect("repeat");
+        install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp, false).expect("repeat");
         assert_eq!(fs::metadata(&launcher).expect("metadata").ino(), inode);
         let script = String::from_utf8(installed).expect("script");
         assert!(script.contains("serve '\\''engine'\\''"));
         assert!(!script.contains(&"ab".repeat(32)));
 
         executable(&launcher);
-        assert!(install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp).is_err());
+        assert!(
+            install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp, false).is_err()
+        );
         assert_eq!(
             fs::read_to_string(&launcher).expect("untouched"),
             "#!/bin/sh\nexit 0\n"
+        );
+        install_launcher(&storage, endpoint, &launcher, &key, &serve, &acp, true)
+            .expect("adopt verified registration's launcher");
+        assert_eq!(
+            local_launcher(&launcher).unwrap().as_deref(),
+            Some(script.as_bytes())
         );
     }
 

@@ -116,7 +116,7 @@ async fn cutover_fences_the_legacy_version_before_it_can_appear_in_rust() {
     service.inbox = Some(legacy);
     let (row, _) = seed(&service, "handoff").await;
     service.operator_decision(&row).await.unwrap();
-    service.native_inbox = Some(NativeInbox::open(&service, None).unwrap());
+    service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     service.operator_decision(&row).await.unwrap();
     assert!(
         service

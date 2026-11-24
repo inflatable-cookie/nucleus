@@ -572,7 +572,7 @@ impl Service {
 
     async fn wake_from_host(&self, hint: ThreadHint) {
         if let Some(inbox) = &self.native_inbox
-            && inbox.matches_thread(&hint.thread)
+            && hint.thread == nucleus_hosts::INBOX_THREAD
         {
             inbox.wake();
         }

@@ -95,6 +95,10 @@ fn t3_status_reports_an_unconfigured_portable_profile() {
     assert_eq!(status["provider"], "nucleus-rust");
     assert!(status["registered"].is_null());
     assert_eq!(status["launcherVerified"], false);
+    assert_eq!(
+        status["launcher"],
+        home.join("bin/nucleus-rust-acp").to_str().unwrap()
+    );
     assert_eq!(status["engineHealth"], "credential unavailable");
     assert!(status["storage"]["database"].is_string());
     assert_eq!(home.read_dir().expect("unchanged profile").count(), 0);

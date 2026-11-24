@@ -108,11 +108,7 @@ Later decisions carry their own attribution.
 
 18. **One pinned Nucleus Inbox.** Tom, 2026-11-23: "do we get the equivalent pinned Nucleus Inbox thread via Nucleus ACP? That is vital to my workflow".
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
-    - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
-    - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust
-      Inbox session replaces the TypeScript Inbox as the one pinned thread. The
-      planner retires the TypeScript Inbox manually after global no-new-work is on
-      and its decisions have drained. Native install checks the legacy pin.
+    - Before native Rust Inbox setup, the scheduler sends Rust operator questions to the TypeScript decision store and reads the answers back. The planner retires the TypeScript Inbox manually after global no-new-work is on and its decisions have drained.
     - During the cutover both Inbox threads may be pinned at once. Tom, 2026-11-24: "We can have two inbox threads - it will make it easier to test." Install no longer waits for the TypeScript pin. The Rust Inbox takes Rust decisions, and the TypeScript Inbox keeps TypeScript decisions until it is retired.
       Each active Rust bridge version moves through a single TypeScript
       transaction. A recorded answer goes to the scheduler for exact-head preflight.
@@ -148,6 +144,7 @@ Later decisions carry their own attribution.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
 24. **Host setup commands.** Tom, 2026-11-24: "we'll need the `nucleus t3 install/uninstall/status` surface for setting up the ACP, etc".
     - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.
+    - Install keeps the launcher under the engine home. Explicit `install --adopt` can update the launcher of an existing local `nucleus-rust` instance in place. A conflicting registration otherwise stays untouched.
     - Install also creates the pinned Nucleus Inbox session (ruling 18) if it's missing, or adopts the existing one, so a fresh install has its Inbox with no further steps. Uninstall unpins and archives it; decisions stay in the store. Status reports the Inbox thread. Tom, 2026-11-24: "The install/uninstall surface should also set up / tear down the pinned inbox thread, right?"
     - A later ADE gets the same three commands under its own name.
 25. **Subscription groups pause on confirmed provider limits** (planner decision, 2026-11-24).
