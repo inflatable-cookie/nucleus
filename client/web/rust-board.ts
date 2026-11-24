@@ -1,4 +1,5 @@
-import type { Project } from "../../shared/contracts";
+import { ActivityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
+import type { Project, leadBoard } from "../../shared/contracts";
 import {
   useInfiniteQuery,
   useQuery,
@@ -322,23 +323,36 @@ const pushQuery = {
   refetchOnReconnect: false,
 };
 
-const executing = new Set([
-  "starting", "running", "permission", "input", "idle_without_terminal_run",
-  "assignment_too_large", "retained_thread_busy",
-]);
-
 export function rustProjectActivity(
   projects: readonly Project[],
   tasks: readonly RustTask[],
+  leads: NonNullable<z.infer<typeof leadBoard.output>["activity"]>,
 ) {
-  const now = new Date().toISOString();
-  return projects.map(({ key, repositories }) => {
-    const origins = new Set(repositories.map((repo) => repo.origin?.toLowerCase()));
-    const items = tasks
-      .filter((task) => origins.has(task.identity.repository.toLowerCase()) &&
-        task.wait !== null && executing.has(task.wait))
-      .map((task) => ({ id: task.identity.id, at: now, executing: true }));
-    return { key, items, lastAt: items.length ? now : null };
+  const items = new ActivityItems();
+  const byProject = new Map(projects.map(project => [project.key, project.repositories]));
+  const byOrigin = new Map(projects.flatMap(project => project.repositories)
+    .flatMap(repo => repo.origin ? [[repo.origin.toLowerCase(), repo] as const] : []));
+  for (const task of tasks) {
+    const repo = byOrigin.get(task.identity.repository.toLowerCase());
+    const at = task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
+    items.add(`task:${task.identity.id}`, {
+      at: at == null ? null : new Date(at).toISOString(),
+      executing: EXECUTING_TASK_PHASES.includes(task.phase),
+      repositories: repo ? [repo] : [],
+    });
+  }
+  for (const lead of leads) {
+    const key = `lead:${JSON.stringify([lead.project, lead.id])}`;
+    items.add(key, { at: lead.at, executing: false, repositories: byProject.get(lead.project) ?? [] });
+    for (const task of lead.taskIds) {
+      const linked = `task:${task}`;
+      items.add(linked, { at: null, executing: false, repositories: [] });
+      items.join(key, linked);
+    }
+  }
+  return projectActivityRows(projects, {
+    items: [...items.components()].flatMap(([id, item]) =>
+      item.at || item.executing ? [{ ...item, id, at: item.at ?? "" }] : []),
   });
 }
 

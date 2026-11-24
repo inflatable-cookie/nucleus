@@ -182,12 +182,6 @@ export function MainSurface({
   }, [rustTasks.data, state?.projects, scope.projects]);
   const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
   const features = useEngineFeatures();
-  const projectActivity = useMemo(
-    () => features.engine === "rust" && state && rustTasks.data
-      ? rustProjectActivity(state.projects, rustTasks.data)
-      : state?.projectActivity ?? [],
-    [features.engine, state?.projects, state?.projectActivity, rustTasks.data],
-  );
   // On the Rust engine every task is a Rust task. The project selector counts
   // each project's open tasks through its hidden-count input, keyed by checkout.
   const selectorCounts = useMemo(() => {
@@ -221,6 +215,12 @@ export function MainSurface({
     boardLeads,
     leadLinks,
   } = records;
+  const projectActivity = useMemo(
+    () => features.engine === "rust" && state && rustTasks.data
+      ? rustProjectActivity(state.projects, rustTasks.data, leadsQuery.data?.activity ?? [])
+      : state?.projectActivity ?? [],
+    [features.engine, state?.projects, state?.projectActivity, rustTasks.data, leadsQuery.data?.activity],
+  );
   const {
     lanes,
     planningProjects,

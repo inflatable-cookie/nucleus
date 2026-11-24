@@ -489,6 +489,13 @@ export function createRustPlanning(
             return card ? [card] : [];
           }),
         ),
+        activity: items.flatMap(({ row, items: list }) => list.map(item => {
+          const at = item.updatedAtMs ?? item.createdAtMs;
+          return {
+            project: row.board.key, id: item.id, at: at == null ? null : iso(at),
+            taskIds: [...new Set([...(item.taskLinks ?? []), ...(item.taskId ? [item.taskId] : [])])],
+          };
+        })),
         links: [],
       };
     },

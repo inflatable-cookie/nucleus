@@ -219,6 +219,34 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
 }
 
 #[test]
+fn board_activity_keeps_the_work_time_after_done_housekeeping() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    store
+        .create(&task("closed", "closed"), &event("admitted"))
+        .unwrap();
+    for (at, kind) in (2..).zip([
+        "entered_done",
+        "role_archive_progress",
+        "role_threads_archived",
+        "closed_checkout_removed",
+        "worktree_pruned",
+        "host_observation_incomplete",
+        "run_routing_observed",
+        "allowance_wait_cleared",
+        "task_title_set",
+        "row_snoozed",
+        "telemetry_stage",
+    ]) {
+        store
+            .record_task_effect("closed", &EventDraft { at, ..event(kind) })
+            .unwrap();
+    }
+    assert_eq!(store.board_times("closed").unwrap().latest_event, Some(2));
+}
+
+#[test]
 fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_session() {
     let home = tempfile::tempdir().expect("fixture volume");
     let storage = fixture_storage(home.path());
@@ -245,7 +273,7 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
         let times = store.board_times("fixture").unwrap();
         assert_eq!(times.since, Some(entered_at));
         assert_eq!(times.admitted, Some(entered_at - 1));
-        assert_eq!(times.latest_event, Some(entered_at));
+        assert_eq!(times.latest_event, times.admitted);
         receipt.at += 1;
         assert_eq!(
             store

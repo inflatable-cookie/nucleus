@@ -8,6 +8,7 @@ import { JSDOM } from "jsdom";
 import { profilesSnapshot } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
+  rustProjectActivity,
   rustWaitDetail,
   type RustCommand,
   type RustTask,
@@ -15,6 +16,8 @@ import {
 import { WebBoard } from "../service/web/web-board";
 import { RustBoardProxy } from "../service/web/rust-board";
 import { uiBoardSchema } from "../shared/contracts";
+import { projectActive, PROJECT_ACTIVITY_WINDOW_MS } from "../shared/project-activity";
+import { projectSchema } from "../shared/schema/projects";
 import { inboxListWidth } from "../shared/inbox-board";
 import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 
@@ -96,6 +99,24 @@ const task = (
   hold: null,
   stateLabel: phase[0]!.toUpperCase() + phase.slice(1),
   stateSinceMs: null,
+});
+
+test("project activity counts distinct recent tasks and linked planning items", () => {
+  const repo = { origin: repository, path: "/fixture" };
+  const project = projectSchema.parse({ key: "app", name: "App", repositories: [repo], primary: repo });
+  const now = Date.UTC(2026, 10, 24);
+  const cutoff = now - PROJECT_ACTIVITY_WINDOW_MS;
+  const running = { ...task("one", "working"), latestEventAtMs: cutoff - 1 };
+  const done = { ...task("two", "done"), latestEventAtMs: now - 1 };
+  const lead = { project: "app", id: "lead", at: new Date(now).toISOString(), taskIds: [] };
+  const active = (tasks: RustTask[], leads: Parameters<typeof rustProjectActivity>[2]) =>
+    projectActive(rustProjectActivity([project], tasks, leads)[0], now);
+  assert.equal(active([running], []), false);
+  assert.equal(active([running, done], []), true);
+  assert.equal(active([running], [lead]), true);
+  assert.equal(active([running], [{ ...lead, taskIds: ["one"] }]), false);
+  assert.equal(active([running, done], [{ ...lead, taskIds: ["one", "two"] }]), false);
+  assert.equal(active([running, { ...done, latestEventAtMs: cutoff }], []), false);
 });
 
 test("Rust task status names the check and only shows a time while it is scheduled", () => {
