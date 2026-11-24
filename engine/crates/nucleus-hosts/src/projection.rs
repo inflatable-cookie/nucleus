@@ -49,8 +49,17 @@ struct Thread {
     archived_at: Option<String>,
     deleted_at: Option<String>,
     parent_thread_id: Option<String>,
+    lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
     model_selection: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Lineage {
+    parent_thread_id: Option<String>,
+    relationship_to_parent: Option<String>,
+    root_thread_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -192,6 +201,11 @@ impl Projection {
 
     pub(crate) fn require_parent_provider(&self, instance: &str) -> Result<(), HostError> {
         if self.thread.parent_thread_id.is_some()
+            || self
+                .thread
+                .lineage
+                .as_ref()
+                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
             || self.thread.provider_instance_id.as_deref() != Some(instance)
             || !self
                 .thread
@@ -204,8 +218,22 @@ impl Projection {
         Ok(())
     }
 
-    pub(crate) fn belongs_to_parent(&self, parent: &str) -> bool {
-        self.thread.deleted_at.is_some() || self.thread.parent_thread_id.as_deref() == Some(parent)
+    pub(crate) fn belongs_to_parent(&self, parent: &str, in_parent_roster: bool) -> bool {
+        if self.thread.deleted_at.is_some() {
+            return true;
+        }
+        let recorded = self.thread.parent_thread_id.as_deref();
+        if recorded.is_some_and(|thread| thread != parent) {
+            return false;
+        }
+        self.thread.lineage.as_ref().map_or_else(
+            || in_parent_roster || recorded == Some(parent),
+            |lineage| {
+                lineage.parent_thread_id.as_deref() == Some(parent)
+                    && lineage.root_thread_id.as_deref() == Some(parent)
+                    && lineage.relationship_to_parent.as_deref() == Some("subagent")
+            },
+        )
     }
 
     pub(crate) fn matches_selection(&self, expected: &Value) -> bool {

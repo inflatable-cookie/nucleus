@@ -318,12 +318,7 @@ async fn archival_finds_displaced_children_and_reads_back_both_threads() {
     let parent = parent_snapshot(&binding, "completed", false);
     let mut archived_parent = parent_snapshot(&binding, "completed", true);
     archived_parent["snapshotSequence"] = json!(18);
-    let child = |state, archived| {
-        let mut value = snapshot(&binding, "child", state, archived);
-        value["projection"]["thread"]["parentThreadId"] =
-            json!(crate::parent_thread(Path::new(&binding.worktree_path)));
-        value
-    };
+    let child = |state, archived| snapshot(&binding, "child", state, archived);
     let read = "orchestration.subscribeThread";
     let write = "orchestration.dispatchCommand";
     let (client, native) = server(vec![
@@ -380,6 +375,28 @@ async fn archival_finds_displaced_children_and_reads_back_both_threads() {
         archived[1]["threadId"],
         crate::parent_thread(Path::new(&binding.worktree_path))
     );
+}
+
+#[test]
+fn native_child_lineage_binds_the_exact_parent_without_another_read() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let parent = crate::parent_thread(checkout.path());
+    let parse = |value| crate::Projection::parse(value, &binding, THREAD).expect("exact child");
+
+    let mut child = snapshot(&binding, "child", "running", false);
+    assert!(!parse(child.clone()).belongs_to_parent(&parent, false));
+    child["projection"]["thread"]["lineage"] = json!({
+        "parentThreadId": parent,
+        "rootThreadId": parent,
+        "relationshipToParent": "subagent",
+    });
+    assert!(parse(child.clone()).belongs_to_parent(&parent, false));
+    child["projection"]["thread"]["lineage"]["parentThreadId"] = json!("other-parent");
+    assert!(!parse(child.clone()).belongs_to_parent(&parent, true));
+    child["projection"]["thread"]["lineage"]["parentThreadId"] = json!(parent);
+    child["projection"]["thread"]["lineage"]["relationshipToParent"] = json!("fork");
+    assert!(!parse(child).belongs_to_parent(&parent, false));
 }
 
 fn revoke(task: &mut Task, observation: &Observation) {

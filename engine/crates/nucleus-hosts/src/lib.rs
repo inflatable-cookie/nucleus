@@ -348,7 +348,7 @@ impl T3 {
         let launch = run.launch();
         let thread = self.thread(&wire.binding, &launch.thread).await?;
         if let (Some(thread), Some(parent)) = (&thread, &wire.parent)
-            && !thread.belongs_to_parent(parent)
+            && !thread.belongs_to_parent(parent, false)
         {
             return Err(HostError::Binding);
         }

@@ -406,42 +406,19 @@ impl Service {
     }
 
     async fn launch_capacity(&self, id: &str, recovery: bool) -> Result<bool, ServiceError> {
-        let max_load = {
-            let state = self.state.lock().await;
-            let project_slots = match state.settings.fixture_slots(&self.project) {
-                Some(slots) => slots,
-                None if recovery => self.project.launch_budget.slots,
-                None => return Ok(false),
-            };
-            let (slots, max_load) = state.settings.dispatch.as_ref().map_or(
-                (
-                    self.project.launch_budget.slots,
-                    self.project.launch_budget.max_load,
-                ),
-                |dispatch| (dispatch.slots, dispatch.max_load),
-            );
-            if state.store.occupied_slots(id)? >= slots.min(project_slots) {
-                return Ok(false);
-            }
-            max_load
+        let state = self.state.lock().await;
+        let fallback_slots = self.project.launch_budget.slots;
+        let project_slots = match state.settings.fixture_slots(&self.project) {
+            Some(slots) => slots,
+            None if recovery => fallback_slots,
+            None => return Ok(false),
         };
-        let mut command = tokio::process::Command::new("/usr/sbin/sysctl");
-        command
-            .args(["-n", "vm.loadavg"])
-            .env_clear()
-            .envs(["TMPDIR", "TMP", "TEMP"].map(|name| (name, self.storage.scratch().path())))
-            .kill_on_drop(true);
-        let load = tokio::time::timeout(Duration::from_secs(2), command.output()).await;
-        let Ok(Ok(load)) = load else {
-            return Ok(false);
-        };
-        Ok(load.status.success()
-            && std::str::from_utf8(&load.stdout)
-                .ok()
-                .and_then(|raw| raw.trim().strip_prefix('{'))
-                .and_then(|raw| raw.split_whitespace().next())
-                .and_then(|value| value.parse::<f64>().ok())
-                .is_some_and(|value| value.is_finite() && value >= 0.0 && value <= max_load))
+        let slots = state
+            .settings
+            .dispatch
+            .as_ref()
+            .map_or(fallback_slots, |dispatch| dispatch.slots);
+        Ok(state.store.occupied_slots(id)? < slots.min(project_slots))
     }
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {

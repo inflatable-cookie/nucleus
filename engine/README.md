@@ -105,10 +105,9 @@ still use fresh evidence. T3 transport failures defer requests for 15 seconds.
 GitHub transport and server failures pause requests across all tasks for 30
 seconds, doubling up to four minutes until a read succeeds. Rate limits retain
 their supplied deadline. A settled run that held a launch slot wakes the oldest
-capacity waiter. Capacity also has a 60-second backstop for changes in local
-load. The active slot and load limits take effect when a Dispatch or Projects edit
-commits. The API serves task views from the store and memory and pushes
-invalidations.
+capacity waiter. Capacity also has a 60-second backstop. Slot limits take effect
+when a Dispatch or Projects edit commits. The API serves task views from the
+store and memory and pushes invalidations.
 
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
@@ -279,9 +278,9 @@ version and run instance with what it read. A stale result drops out and wakes
 the current task. Effects and commands acquire a per-task fence only after
 preflight. Store state and audit together, including the send intent before a
 native write. The board reads committed rows without waiting on GitHub or T3.
-Keep due times, load observations and displayed waits in memory. An idle process
-slot and acceptable local load permit a new launch. Pressure reschedules it
-without spending an attempt. A fresh pass checks process custody after launch.
+Keep due times and displayed waits in memory. An available slot permits a new
+launch. Waiting for a slot spends no attempt. A fresh pass checks process
+custody after launch.
 
 A definite GitHub head mismatch retires approval and keeps the bound PR in
 Merging until a read shows a new head. A refusal followed by incomplete
@@ -391,8 +390,12 @@ bound launch identity. The adapter reuses each role's retained child and settles
 its completion delivery with `delegated_task.completion-delivery.dispose`.
 The command ID names the native child and its first message. Continue sends a
 new message to the retained child. [T3 delegated task command](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L9952-L10170)
-The service continues to see its role thread and exact run. Verify reattach
-after closeout and checkout removal in the parenting fixtures. ACP and T3
+The exact child projection binds the run to the task through its native
+`lineage`. It must identify the task thread as both the parent and the root
+of a subagent, and the child still needs the matching project, branch and
+checkout. Closeout can also prove a child from the exact parent's app-owned
+roster when the child has no lineage. Conflicting lineage refuses either proof.
+Verify reattach after closeout and checkout removal in the parenting fixtures. ACP and T3
 parenting follow the milestone 1 proof and precede the first real project.
 Reaching Done schedules archival through the same native write gate after any
 revoked run settles. Confirm the children are archived or gone, then take a
@@ -491,7 +494,7 @@ Remove inside the editor.
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Name, optional subscription group, and canonical selection with stable ID, capability, weight, provider, model and effort. |
-| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, local load, one host call slot and one optional allowance in minutes. |
+| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, one host call slot and one optional allowance in minutes. |
 | Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
 | Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
