@@ -1251,7 +1251,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(style(name).color, activeName);
   assert.equal(style(actions).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(style(archive).backgroundColor, "rgba(0, 0, 0, 0)");
-  assert.equal(selector("Remove Fixture project from Nucleus"), null);
+  assert.ok(selector("Remove Fixture project from Nucleus"), "Remove is separate from Archive");
   pointer(archive, "pointerenter");
   await eventually(() => style(archive).backgroundColor === hover, "action hover adds a tint to the open panel");
   const grey = (color: string) => Number(color.match(/[\d.]+/)?.[0]);

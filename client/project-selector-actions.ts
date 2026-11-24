@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRpc } from "./shell";
+import { useEngineFeatures } from "./engine-features";
 import * as api from "../shared/contracts";
 import type { Project, ProjectUpsertInput } from "../shared/contracts";
 import type { ProjectManagementApi } from "./project-management-view";
@@ -34,6 +35,7 @@ export function useProjectSelectorActions(
   canArchive: boolean,
 ) {
   const queryClient = useQueryClient();
+  const { engine } = useEngineFeatures();
   const upsertRpc = useRpc(api.projectUpsert);
   const archiveProject = useArchiveProject();
   const previewRpc = useRpc(api.projectManagementPreview),
@@ -74,9 +76,7 @@ export function useProjectSelectorActions(
   const removal: ProjectManagementApi = {
     previewRpc,
     removeRpc,
-    cancelRpc,
-    cancellationRpc,
-    resetRpc,
+    ...(engine === "typescript" ? { cancelRpc, cancellationRpc, resetRpc } : {}),
   };
 
   return { actions, removal, refresh };

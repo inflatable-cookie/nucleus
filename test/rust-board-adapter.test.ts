@@ -89,6 +89,16 @@ function engine() {
     if (path === "/profiles/usage") return json(usage);
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     if (path === "/tasks") return json([]);
+    if (path === "/settings/projects/Orbit_Main/removal") {
+      const project = projects.projects.Orbit_Main;
+      if (init?.method !== "POST") {
+        return json({ project, digest: "confirmed-revision", tasks: [] });
+      }
+      assert.deepEqual(JSON.parse(String(init.body)), { digest: "confirmed-revision", reason: "Retired" });
+      projects = { projects: { ...projects.projects } };
+      Reflect.deleteProperty(projects.projects, "Orbit_Main");
+      return json({ project, removedAtMs: 1_790_000_000_000 });
+    }
     if (path === "/settings/projects/reassign") {
       const body = JSON.parse(String(init?.body)) as { revision: string; origin: string; toProject: string };
       writes.push({ domain: "reassign", body: { revision: body.revision, value: body } });
@@ -244,6 +254,24 @@ test("the archive control writes the Projects domain", async () => {
   assert.equal(projects.projects.Orbit_Main!.archived, true);
   const board = await adapter.rpc(api.uiSnapshot, {});
   assert.ok(!("unchanged" in board) && board.projects.length === 1, "an archived project leaves the board");
+});
+
+test("the Rust adapter ports project removal through one native resource", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  await adapter.rpc(api.uiSnapshot, {});
+  const key = "p-orbit-main";
+  const preview = await adapter.rpc(api.projectManagementPreview, { key });
+  assert.equal(preview.project.name, "Orbit");
+  assert.deepEqual(preview.tasks, []);
+  const removed = await adapter.rpc(api.projectManage, {
+    key, version: preview.project.version, digest: preview.digest, reason: "Retired",
+  });
+  assert.equal(removed.key, key);
+  const board = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board) && !board.projects.some((project) => project.key === key));
+  assert.deepEqual(fake.reads.filter((read) => read.endsWith("/removal")),
+    ["GET /settings/projects/Orbit_Main/removal", "POST /settings/projects/Orbit_Main/removal"]);
 });
 
 test("moving a repository in the shared Projects editor reassigns it in the engine", async () => {

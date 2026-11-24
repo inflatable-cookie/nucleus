@@ -460,6 +460,25 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       if (!board) throw new Error("The engine did not keep that project.");
       return board;
     },
+    "project.management-preview": async (input: { key: string; target?: string }) => {
+      if (input.target) throw new RustUnsupported("Project reassignment preview");
+      const { project, digest, tasks } = await rust.previewProjectRemoval(keys.id(input.key));
+      const current = boardProject(input.key, project);
+      if (!current) throw new Error("The project has no repository for this board.");
+      return {
+        project: current, target: null, digest, cancellation: null,
+        tasks: tasks.map(({ taskId, version }) => ({ taskId, version })),
+        items: tasks.map(({ taskId, label }) => ({ kind: "task", id: taskId, label, shared: false })),
+      } satisfies api.ProjectManagementPreview;
+    },
+    "project.manage-remove": async (input: api.ProjectManageInput) => {
+      if (input.target || input.cancellationOperationId) throw new RustUnsupported("Project cancellation or reassignment");
+      const result = await rust.removeProject(keys.id(input.key), { digest: input.digest, reason: input.reason });
+      return {
+        key: input.key, reason: input.reason, removedAt: new Date(result.removedAtMs).toISOString(),
+        repositories: result.project.repositories.map(({ origin, path }) => ({ origin, path })),
+      } satisfies api.ProjectTombstone;
+    },
     "rust.project.archive": async (input: { project: string; archived: boolean }) => {
       const id = keys.id(input.project);
       await editProjects((value) => {

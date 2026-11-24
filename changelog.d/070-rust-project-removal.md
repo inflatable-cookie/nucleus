@@ -1,0 +1,1 @@
+- The Rust board can remove a project once its open tasks are finished or cancelled. Removal deletes its planning records and keeps finished task history by repository.

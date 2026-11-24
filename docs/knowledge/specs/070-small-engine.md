@@ -101,6 +101,7 @@ Later decisions carry their own attribution.
        Restore in Settings → Projects reverses it. Both actions write the same archived flag.
      - Remove ports the TypeScript removal dialog. It previews blockers, refuses while tasks are open or offers to cancel them, then deletes the project and its planning records.
      - Finished task history stays readable by repository, but nothing new routes to the removed project.
+     - Rust refuses removal until open tasks are finished or cancelled. A confirmed removal keeps a registry tombstone so first contact cannot recreate the route. The engine completes any interrupted planning cleanup on startup.
 
    It drops agent registration and the preferred and responsible thread fields (rulings 2 and 23), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Repository routes come from first contact (ruling 23). Editing autosaves, one noun per control, with explanations only in help popovers.
 
