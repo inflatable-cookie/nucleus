@@ -263,9 +263,9 @@ async function linuxProcesses(
   return {
     state: "listed",
     processes: listed,
-    cwdComplete: listed.every(
-      (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
-    ),
+    // A readable /proc listing is complete; an unreadable working directory is
+    // named by the consumer, not read as a truncated listing.
+    cwdComplete: true,
     enumeratedPids: new Set(
       entries.filter((entry) => /^\d+$/.test(entry)).map(Number),
     ),
@@ -449,13 +449,10 @@ async function darwinProcesses(
     }
   }
   const processes = dropExitedProcesses(facts, cwds);
-  return {
-    state: "listed",
-    processes,
-    cwdComplete: processes.every(
-      (fact) => fact.cwd !== null || fact.state?.startsWith("Z"),
-    ),
-  };
+  // Whether the pass that supplied working directories completed. A killed,
+  // failed or warning pass is truncated. One unreadable working directory is not:
+  // the consumer names that process, so it never reads as a truncated listing.
+  return { state: "listed", processes, cwdComplete: complete };
 }
 
 /**

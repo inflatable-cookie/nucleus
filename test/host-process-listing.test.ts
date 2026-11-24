@@ -273,6 +273,9 @@ ROWS
       assert.ok(fact);
       assert.ok(fact.cwd);
       assert.equal(fact.openFiles?.complete, false);
+      // The pass itself exited nonzero with a warning, so the pass is observed
+      // as incomplete directly, not inferred from a missing working directory.
+      assert.equal(read.cwdComplete, false);
     } finally {
       process.env.PATH = path;
     }
