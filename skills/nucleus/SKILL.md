@@ -15,6 +15,9 @@ existing task, use the public reference from the board, for example
 `nucleus next 'repo#42'`.
 Use `nucleus --help` and the command's `--help` for its exact inputs.
 Never answer Inbox requests or operator decisions. They belong to Tom.
+Questions for Tom (releases, outward actions, product or scope calls) go to the
+pinned Inbox with `nucleus decision.add` and explicit options, never only in your
+planning thread.
 
 When a task spends its allowance after the automatic extension, its planner
 uses `nucleus answer 'repo#42' extend`. Approve by default, including beyond

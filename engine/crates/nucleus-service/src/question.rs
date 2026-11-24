@@ -448,7 +448,12 @@ fn notice_text(reference: &str, question: &Question) -> String {
             format!("The task needs a decision about the PR or checkout ({repair:?}).")
         }
     };
-    format!("Task {reference} needs input.\n\n{request}\n\nAnswer through Nucleus.")
+    let answer = if matches!(question, Question::Work { .. }) {
+        format!("Answer with `nucleus answer '{reference}' work '<choice or guidance>'`.")
+    } else {
+        "Answer through Nucleus.".into()
+    };
+    format!("Task {reference} needs input.\n\n{request}\n\n{answer}")
 }
 
 #[cfg(test)]

@@ -744,6 +744,27 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Read the role that asked the current work question, when recorded.
+    /// # Errors
+    /// Returns an error if the question audit is unreadable.
+    pub fn question_role(&self, id: &str) -> Result<Option<Role>, StoreError> {
+        let role: Option<String> = self.connection.query_row(
+            "SELECT
+                (SELECT json_extract(item.value, '$.askedBy')
+                   FROM json_each(CASE WHEN json_valid(event.detail) THEN event.detail END, '$.presentation') item
+                  WHERE json_extract(item.value, '$.kind') = 'question')
+               FROM events event WHERE task_id = ?1 AND kind = 'question_asked'
+              ORDER BY sequence DESC LIMIT 1",
+            [id],
+            |row| row.get(0),
+        ).optional()?.flatten();
+        Ok(match role.as_deref() {
+            Some("worker") => Some(Role::Worker),
+            Some("reviewer") => Some(Role::Reviewer),
+            _ => None,
+        })
+    }
+
     /// Read the fallback receipts written with fresh reviewer reservations.
     ///
     /// # Errors

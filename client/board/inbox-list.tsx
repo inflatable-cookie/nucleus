@@ -29,6 +29,7 @@ import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
 import {
+  Button,
   Disclosure,
   DropdownSelect,
   muted,
@@ -879,6 +880,8 @@ export function RustListRows({ c, rust, view }: {
       // The task number alone, as on TypeScript cards; the project shows beside it.
       const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
       const question = view === "needs" ? task.question : null;
+      const work = question && "work" in question ? question.work : null;
+      const asker = task.questionAskedBy;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const wait = rustWaitText(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
@@ -886,8 +889,12 @@ export function RustListRows({ c, rust, view }: {
         project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
         status={wait || view === "history" ? {
           tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
-          state: question ? "Question" : rustPhaseLabels[task.phase], detail: question ? null : wait,
+          state: question
+            ? (asker ? `Question from the ${asker}` : "Question")
+            : rustPhaseLabels[task.phase],
+          detail: work?.options.join(" · ") || (question ? null : wait),
         } : null}
+        actions={work && <Button c={c} small text="Answer" label={`Answer ${rustTaskLabel(task)}`} onPress={() => rust.onSelect(task.identity.id)} />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
     {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}

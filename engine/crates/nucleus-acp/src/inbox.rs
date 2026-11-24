@@ -129,9 +129,6 @@ fn take_answer(cards: &mut BTreeMap<String, Card>, response: &Value) -> Option<I
 }
 
 fn elicit(output: &Output, session: &str, form: &InboxForm) -> Result<Card, Failure> {
-    let mut nonce = [0; 16];
-    getrandom::fill(&mut nonce).map_err(|_| Failure::Binding)?;
-    let request = format!("{REQUEST_PREFIX}{session}:{}", hex::encode(nonce));
     let options: Vec<_> = form
         .choices
         .iter()
@@ -141,23 +138,18 @@ fn elicit(output: &Output, session: &str, form: &InboxForm) -> Result<Card, Fail
             })
         })
         .collect();
-    let _ = output.send(json!({
-        "jsonrpc": "2.0",
-        "id": request,
-        "method": "elicitation/create",
-        "params": {
-            "sessionId": session,
-            "mode": "form",
-            "message": form.question,
-            "requestedSchema": {
-                "type": "object",
-                "required": [form.field],
-                "properties": {
-                    (&form.field): { "type": "string", "title": form.question, "oneOf": options }
-                }
+    let request = request_form(
+        output,
+        session,
+        &form.question,
+        json!({
+            "type": "object",
+            "required": [form.field],
+            "properties": {
+                (&form.field): { "type": "string", "title": form.question, "oneOf": options }
             }
-        }
-    }));
+        }),
+    )?;
     Ok(Card {
         request,
         options: form
@@ -167,4 +159,27 @@ fn elicit(output: &Output, session: &str, form: &InboxForm) -> Result<Card, Fail
             .collect(),
         settled: false,
     })
+}
+
+pub(crate) fn request_form(
+    output: &Output,
+    session: &str,
+    message: &str,
+    schema: Value,
+) -> Result<String, Failure> {
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).map_err(|_| Failure::Binding)?;
+    let request = format!("{REQUEST_PREFIX}{session}:{}", hex::encode(nonce));
+    let _ = output.send(json!({
+        "jsonrpc": "2.0",
+        "id": request,
+        "method": "elicitation/create",
+        "params": {
+            "sessionId": session,
+            "mode": "form",
+            "message": message,
+            "requestedSchema": schema,
+        }
+    }));
+    Ok(request)
 }

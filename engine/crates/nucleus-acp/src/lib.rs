@@ -3,6 +3,7 @@
 mod client;
 mod inbox;
 mod presentation;
+mod question;
 
 use std::{collections::BTreeMap, env, io, path::PathBuf, sync::Arc, time::Duration};
 
@@ -307,6 +308,7 @@ impl Agent {
         let output = self.output.clone();
         let session_id = session_id.to_owned();
         let request = id.clone();
+        let (send, replies) = mpsc::channel(64);
         let job = tokio::spawn(async move {
             if let Some(command) = command {
                 match client.command(&command).await {
@@ -322,7 +324,9 @@ impl Agent {
                     }
                 }
             }
-            if let Err(failure) = follow(&client, &view, &output, &session_id, structured).await {
+            if let Err(failure) =
+                follow(&client, &view, &output, &session_id, structured, replies).await
+            {
                 error(&output, &request, -32000, &failure.to_string());
                 return;
             }
@@ -331,7 +335,7 @@ impl Agent {
         session.turn = Some(Turn {
             id: id.clone(),
             job,
-            replies: None,
+            replies: Some(send),
         });
     }
 }
@@ -372,16 +376,29 @@ async fn follow(
     output: &Output,
     session: &str,
     structured: bool,
+    mut replies: mpsc::Receiver<Value>,
 ) -> Result<(), Failure> {
     let mut delay = 1;
+    let mut offer = question::WorkOffer::default();
     loop {
         let result = async {
             let mut stream = client.stream().await?;
             loop {
-                stream.next().await?;
+                tokio::select! {
+                    change = stream.next() => { change?; }
+                    Some(response) = replies.recv() => {
+                        if let Some((answer, version)) = offer.take_answer(&response)
+                            && let Err(failure) = client.command_at(&answer, Some(version)).await
+                        {
+                            notify(output, session, message(&failure.to_string()));
+                            offer.withdrawn();
+                        }
+                    }
+                }
                 let cursor = view.lock().await.cursor;
                 let (detail, history) = snapshot(client, cursor).await?;
                 let finished = detail.phase.is_terminal();
+                offer.refresh(output, session, &detail, client.can_command())?;
                 for update in view.lock().await.update(detail, history, structured) {
                     notify(output, session, update);
                 }

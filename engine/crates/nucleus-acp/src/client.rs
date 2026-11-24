@@ -125,6 +125,8 @@ pub(crate) struct ServiceClient {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Detail {
     pub identity: Identity,
+    #[serde(default)]
+    pub version: i64,
     pub reference: Option<String>,
     pub phase: Phase,
     pub wait: Option<String>,
@@ -275,13 +277,29 @@ impl ServiceClient {
     }
 
     pub(crate) async fn command(&self, command: &Command) -> Result<bool, Failure> {
+        self.command_at(command, None).await
+    }
+
+    pub(crate) const fn can_command(&self) -> bool {
+        self.command_auth.is_some()
+    }
+
+    pub(crate) async fn command_at(
+        &self,
+        command: &Command,
+        version: Option<i64>,
+    ) -> Result<bool, Failure> {
         let key = self
             .command_auth
             .as_ref()
             .ok_or_else(|| Failure::Refused("This binding is read-only.".into()))?;
-        let response = self
+        let mut request = self
             .request(Method::POST, "/commands", key)
-            .timeout(DEADLINE)
+            .timeout(DEADLINE);
+        if let Some(version) = version {
+            request = request.header(reqwest::header::IF_MATCH, format!("\"{version}\""));
+        }
+        let response = request
             .json(command)
             .send()
             .await

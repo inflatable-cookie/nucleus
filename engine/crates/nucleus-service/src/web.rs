@@ -748,12 +748,20 @@ async fn command(
     Extension(scope): Extension<ControllerScope>,
     TaskPath(id): TaskPath,
     session: Option<Extension<WriteAccess>>,
+    headers: HeaderMap,
     input: Result<Json<TaskCommand>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let outcome = match body(input)? {
         TaskCommand::Lifecycle(command) => {
             api.service
-                .command_with_session(&id, &authority, command, session.as_deref(), &scope)
+                .command_with_session(
+                    &id,
+                    &authority,
+                    command,
+                    session.as_deref(),
+                    &scope,
+                    command_version(&headers)?,
+                )
                 .await?
         }
         TaskCommand::Dependency(command) => CommandOutcome::Applied(Box::new(
@@ -772,6 +780,22 @@ async fn command(
         )
             .into_response()),
     }
+}
+
+fn command_version(headers: &HeaderMap) -> Result<Option<i64>, ApiError> {
+    headers
+        .get(axum::http::header::IF_MATCH)
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|text| text.strip_prefix('"'))
+                .and_then(|text| text.strip_suffix('"'))
+                .and_then(|text| text.parse::<i64>().ok())
+                .filter(|version| *version > 0)
+                .ok_or(ApiError::Invalid)
+        })
+        .transpose()
 }
 
 #[derive(Deserialize)]
@@ -918,6 +942,8 @@ struct Summary {
     wait: Option<WaitReason>,
     next_check_at: Option<u64>,
     question: Option<Question>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question_asked_by: Option<nucleus_core::Role>,
     hold: Option<Hold>,
     dependency_status: DependencyStatus,
     dependency_edits: DependencyEdits,
@@ -962,6 +988,11 @@ impl Summary {
                 wait
             },
             question: task.question().cloned(),
+            question_asked_by: if matches!(task.question(), Some(Question::Work { .. })) {
+                state.store.question_role(id)?
+            } else {
+                None
+            },
             hold: task.hold().cloned(),
             dependency_status,
             dependency_edits,

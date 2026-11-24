@@ -901,8 +901,15 @@ impl Service {
         authority: &Authority,
         command: Command,
     ) -> Result<CommandOutcome, ServiceError> {
-        self.command_with_session(id, authority, command, None, &ControllerScope::default())
-            .await
+        self.command_with_session(
+            id,
+            authority,
+            command,
+            None,
+            &ControllerScope::default(),
+            None,
+        )
+        .await
     }
 
     async fn command_with_session(
@@ -912,12 +919,11 @@ impl Service {
         command: Command,
         session: Option<&acp::WriteAccess>,
         scope: &ControllerScope,
+        expected_version: Option<i64>,
     ) -> Result<CommandOutcome, ServiceError> {
         let fence = self.task_fence(id).await;
-        let local_planner_answer = matches!(
-            (&command, authority),
-            (Command::Answer(_), Authority::Planner { .. })
-        );
+        let is_answer = matches!(&command, Command::Answer(_));
+        let local_planner_answer = is_answer && matches!(authority, Authority::Planner { .. });
         let _fence = if session.is_some() || local_planner_answer {
             fence
                 .try_lock_owned()
@@ -929,10 +935,10 @@ impl Service {
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
         scope.task(&state, prior.task.identity())?;
-        if self.uses_operator_inbox()
-            && prior.task.operator_question().is_some()
-            && matches!(&command, Command::Answer(_))
-        {
+        if expected_version.is_some_and(|expected| expected != prior.version) {
+            return Err(StoreError::StaleTask.into());
+        }
+        if self.uses_operator_inbox() && prior.task.operator_question().is_some() && is_answer {
             return Err(ServiceError::AnswerInInbox);
         }
         if let Some(session) = session
@@ -968,7 +974,7 @@ impl Service {
         }
         match preflight? {
             Preflight::Ready => {
-                let mut audit = event("command");
+                let mut audit = command_audit(authority, is_answer, session.is_some());
                 if let Some(acceptance) = task
                     .report_task()
                     .and_then(|report| report.acceptance.as_ref())
@@ -1487,4 +1493,16 @@ fn event(kind: &str) -> EventDraft {
         kind: kind.into(),
         detail: String::new(),
     }
+}
+
+fn command_audit(authority: &Authority, is_answer: bool, native: bool) -> EventDraft {
+    let mut audit = event("command");
+    if is_answer {
+        audit.detail = serde_json::json!({
+            "answeredBy": authority,
+            "provenance": if native { "t3_session_unattested" } else { "authenticated_controller" },
+        })
+        .to_string();
+    }
+    audit
 }

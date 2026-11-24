@@ -75,22 +75,22 @@ export function RustTaskDialog({
       : undefined;
   const visibleQuestion = commands ? commands.question : detail?.question;
   const allowance = commands?.allowance ?? detail?.allowance;
-  const submit = async (command: RustCommand) => {
+  const submit = async (command: RustCommand, version?: number) => {
     if (saving.current)
       throw new Error("A task change is already in progress.");
     saving.current = true;
     setBusy(true);
     setNotice("");
     try {
-      return await postRustCommand(id, command);
+      return await postRustCommand(id, command, version);
     } finally {
       saving.current = false;
       setBusy(false);
       invalidate(id);
     }
   };
-  const run = (command: RustCommand) => {
-    void submit(command).then(
+  const run = (command: RustCommand, version?: number) => {
+    void submit(command, version).then(
       (outcome) => {
         if ("status" in outcome) {
           setNotice(
@@ -192,7 +192,7 @@ export function RustTaskDialog({
                   c={c}
                   enabled={offered("answer") && section !== "amend"}
                   busy={busy}
-                  onAnswer={run}
+                  onAnswer={(command) => run(command, commands?.version)}
                 />
               )}
               {next.error && (
@@ -475,7 +475,9 @@ function QuestionSection({
   onAnswer: (command: RustCommand) => void;
 }) {
   const [answer, setAnswer] = useState("");
+  const [choice, setChoice] = useState("");
   const choices = "work" in question ? question.work.options : [];
+  const guidance = [choice, answer.trim()].filter(Boolean).join("\n\n");
   let command: RustCommand;
   if ("retry" in question) command = { answer: "retry" };
   else if ("allowance" in question) command = { answer: "extend" };
@@ -483,7 +485,7 @@ function QuestionSection({
     command = {
       answer: { accept: { head: question.accept.head, reason: answer.trim() } },
     };
-  else command = { answer: { work: choices.length ? answer : answer.trim() } };
+  else command = { answer: { work: guidance } };
   const needsText = !("retry" in question || "allowance" in question);
   return (
     <DetailSection c={c} title="Question">
@@ -495,33 +497,32 @@ function QuestionSection({
       )}
       {enabled && (
         <>
-          {choices.length > 0 ? (
+          {choices.length > 0 && (
             <DropdownSelect
               c={c}
               label="Option"
               placeholder="Select"
-              value={answer}
+              value={choice}
               options={choices.map((label) => ({ value: label, label }))}
               disabled={busy}
-              onChange={setAnswer}
+              onChange={setChoice}
             />
-          ) : (
-            needsText && (
-              <Field
-                c={c}
-                label={"accept" in question ? "Reason" : "Guidance"}
-                multiline
-                value={answer}
-                onChange={setAnswer}
-                disabled={busy}
-              />
-            )
+          )}
+          {needsText && (
+            <Field
+              c={c}
+              label={"accept" in question ? "Reason" : "Guidance"}
+              multiline
+              value={answer}
+              onChange={setAnswer}
+              disabled={busy}
+            />
           )}
           <Button
             c={c}
             small
             text={"allowance" in question ? "Extend allowance" : "Answer"}
-            disabled={busy || (needsText && !answer.trim())}
+            disabled={busy || (needsText && !guidance)}
             onPress={() => onAnswer(command)}
           />
         </>

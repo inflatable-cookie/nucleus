@@ -53,6 +53,7 @@ const current = z.object({
   question: question.nullable(),
 });
 const summary = current.extend({
+  questionAskedBy: role.optional(),
   title: z.string().optional(),
   number: z.number().int().positive().nullish(),
   reference: z.string().optional(),
@@ -224,10 +225,13 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
       if (before !== undefined) search.set("before", String(before));
       return read(history, taskPath(id) + "/history?" + search, { signal });
     },
-    command: (id: string, command: RustCommand) =>
+    command: (id: string, command: RustCommand, version?: number) =>
       read(applied, taskPath(id) + "/commands", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(version === undefined ? {} : { "if-match": `"${version}"` }),
+        },
         body: JSON.stringify(command),
       }),
     events: (signal: AbortSignal) =>

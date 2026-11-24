@@ -84,6 +84,8 @@ enum Milestone {
     },
     Question {
         question: Question,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asked_by: Option<Role>,
     },
     Merged {
         commit: Head,
@@ -179,7 +181,10 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
                 *option = excerpt(option, 160);
             }
         }
-        records.push(Milestone::Question { question });
+        records.push(Milestone::Question {
+            question,
+            asked_by: prior.run().map(|run| run.launch().role),
+        });
     }
 
     let mut audit = audit.clone();
