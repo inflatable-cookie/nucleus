@@ -1,0 +1,1 @@
+- New Rust runs get a short, dedicated scratch path so tools can create local Unix sockets.

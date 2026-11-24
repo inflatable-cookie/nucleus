@@ -94,6 +94,7 @@ fn start(
         .reserve_launch(
             obs,
             LaunchInputs {
+                scratch: None,
                 thread: thread.into(),
                 started_at: 1,
                 input: input.into(),

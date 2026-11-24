@@ -366,6 +366,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     task.reserve_launch(
         &observation,
         LaunchInputs {
+            scratch: None,
             thread: first.thread,
             input: "fixture-only wire".into(),
             started_at: 3,
@@ -1788,6 +1789,7 @@ async fn reopen_and_finish_review(
         .reserve_launch(
             &observation,
             LaunchInputs {
+                scratch: None,
                 thread: format!("thread:delegated-task:{instance}"),
                 started_at: 2,
                 input: "fixture-only wire".into(),

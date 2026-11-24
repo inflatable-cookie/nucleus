@@ -175,11 +175,13 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
     let mut task = task("1", "fixture#1");
+    let scratch = root.path().join("r/abcdef001122");
     let observation = observation();
     task.reconcile(&observation);
     task.reserve_launch(
         &observation,
         LaunchInputs {
+            scratch: Some(scratch.clone()),
             thread: "worker".into(),
             started_at: 1,
             input: "first launch".into(),
@@ -190,6 +192,10 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     let mut store = Store::open(&storage).expect("open");
     store.create(&task, &event("launched")).expect("admit");
     let before = row(&store, "1");
+    assert_eq!(
+        before.task.run().unwrap().launch().scratch.as_deref(),
+        Some(scratch.as_path())
+    );
     assert_eq!(store.occupied_slots("other").expect("unsent run"), 0);
     let instance = task.run().expect("prepared run").launch().instance.clone();
     task.record_send(&instance, 1).expect("record dispatch");
@@ -518,6 +524,7 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
     task.reserve_profile_launch(
         &observation,
         LaunchInputs {
+            scratch: None,
             thread: format!("fixture-thread-{id}"),
             started_at: 42,
             input: "synthetic launch".into(),

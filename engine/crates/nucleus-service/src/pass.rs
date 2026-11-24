@@ -23,15 +23,10 @@ use crate::{
     profiles::{LaunchSelection, SelectedLaunch},
     project::{ProjectRoute, linked_checkout},
     prompt::Prompt,
-    ticket,
+    scratch, ticket,
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
-const LEGACY_RUN_SCRATCH: &str = "run-scratch";
-
-fn run_scratch(task: &Task, instance: &str) -> PathBuf {
-    Path::new(&task.identity().id).join(instance)
-}
 
 enum SendAttempt {
     Deferred,
@@ -64,15 +59,13 @@ pub(super) struct DispatchPermit<'a> {
 
 impl Service {
     pub(super) fn existing_run_scratch(&self, task: &Task) -> Option<PathBuf> {
-        let instance = &task.run()?.launch().instance;
-        let root = self.storage.scratch().path();
-        let path = root.join(run_scratch(task, instance));
-        let legacy = root.join(LEGACY_RUN_SCRATCH).join(instance);
-        Some(if path.exists() || !legacy.exists() {
-            path
-        } else {
-            legacy
-        })
+        let launch = task.run()?.launch();
+        Some(scratch::bound_path(
+            self.storage.scratch().path(),
+            &task.identity().id,
+            &launch.instance,
+            launch.scratch.as_deref(),
+        ))
     }
 
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
@@ -511,7 +504,7 @@ impl Service {
             .storage
             .scratch()
             .path()
-            .join(run_scratch(task, &instance));
+            .join(scratch::relative_path(&instance));
         if ticket_path.starts_with(checkout.path()) || scratch.starts_with(checkout.path()) {
             return Err(ServiceError::Ticket);
         }
@@ -590,7 +583,7 @@ impl Service {
             ticket: &ticket_path,
         }
         .render();
-        let inputs = host.prepare_launch(LaunchRequest {
+        let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
             title: crate::titles::child_title(task, row.reference().as_ref(), role),
@@ -600,6 +593,7 @@ impl Service {
             started_at: now_ms(),
             text,
         })?;
+        inputs.scratch = Some(scratch);
         let (updated, credential) =
             freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
         self.persist_reservation(row, &updated, &credential, selection, via)
@@ -653,9 +647,7 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
         self.storage.database().verify()?;
-        self.storage
-            .scratch()
-            .ensure_child(&run_scratch(updated, &run.launch().instance))?;
+        scratch::allocate(self.storage.scratch(), run.launch())?;
         ticket::prepare(
             self.storage.scratch(),
             updated,
