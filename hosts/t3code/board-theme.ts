@@ -77,23 +77,47 @@ function palette(
   return { colors: boardColors(roles), ...(seeds ? { seeds } : {}) };
 }
 
+/** The T3 inputs the board theme needs: the settings and the selected published theme. */
+export type T3ThemeInputs = { settings: unknown; theme: unknown };
+
+/**
+ * Turn T3's theme settings and the selected published theme into the board's
+ * snapshot. The TypeScript host reads the inputs on demand; the Rust engine
+ * caches them from T3's config stream. Both convert them here.
+ */
+export function boardThemeFromT3(inputs: T3ThemeInputs): BoardThemeSnapshot | null {
+  const parsed = themeSettings.safeParse(inputs.settings);
+  if (!parsed.success) return null;
+  const settings = parsed.data;
+  const id = settings.defaultTheme || null;
+  const appearance =
+    settings.defaultAppearance ||
+    (id === "light" || id === "dark" ? id : "system");
+  const snapshot: BoardThemeSnapshot = { appearance, themeId: id };
+  if (id === "light" || id === "dark" || id === "system") return snapshot;
+  const definition =
+    (id ? themeDefinition.safeParse(inputs.theme).data : undefined) ??
+    findT3BuiltInTheme(id ?? "t3-code");
+  if (!definition) return snapshot;
+
+  const { appearance: base, canvas, accent, colors, variants } = definition;
+  const seeds = canvas && accent ? { canvas, accent } : undefined;
+  snapshot.light =
+    base === "light" ? palette(colors, seeds) : palette(variants?.light);
+  snapshot.dark =
+    base === "dark" ? palette(colors, seeds) : palette(variants?.dark);
+  return snapshot;
+}
+
 /** Read the environment's defaults and published themes once per board load. */
 export async function readT3BoardTheme(
   rpc: T3RpcClient,
 ): Promise<BoardThemeSnapshot | null> {
   try {
-    const settings = themeSettings.parse(
-      await rpc.call("server.getSettings", {}),
-    );
-    const id = settings.defaultTheme || null;
-    const appearance =
-      settings.defaultAppearance ||
-      (id === "light" || id === "dark" ? id : "system");
-    const snapshot: BoardThemeSnapshot = { appearance, themeId: id };
-    if (id === "light" || id === "dark" || id === "system") return snapshot;
-
-    let definition: T3ThemeDefinition | undefined;
-    if (id) {
+    const settings: unknown = await rpc.call("server.getSettings", {});
+    const id = themeSettings.safeParse(settings).data?.defaultTheme || null;
+    let theme: unknown;
+    if (id && id !== "light" && id !== "dark" && id !== "system") {
       try {
         const event = themeEvent.parse(
           await rpc.readStream(
@@ -102,24 +126,14 @@ export async function readT3BoardTheme(
             (value) => themeEvent.safeParse(value).success,
           ),
         );
-        const selected = event.payload.themes.find(
+        theme = event.payload.themes.find(
           (value) => themeId.safeParse(value).data?.id === id,
         );
-        definition = themeDefinition.safeParse(selected).data;
       } catch {
         // Older hosts can still supply settings when the theme stream is unavailable.
       }
     }
-    definition ??= findT3BuiltInTheme(id ?? "t3-code");
-    if (!definition) return snapshot;
-
-    const { appearance: base, canvas, accent, colors, variants } = definition;
-    const seeds = canvas && accent ? { canvas, accent } : undefined;
-    snapshot.light =
-      base === "light" ? palette(colors, seeds) : palette(variants?.light);
-    snapshot.dark =
-      base === "dark" ? palette(colors, seeds) : palette(variants?.dark);
-    return snapshot;
+    return boardThemeFromT3({ settings, theme });
   } catch {
     return null;
   }

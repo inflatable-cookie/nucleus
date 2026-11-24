@@ -39,7 +39,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
-    EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError, TaskRow,
+    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
+    TaskRow,
 };
 use nucleus_work::{WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
@@ -133,6 +134,8 @@ pub struct Service {
     changes: broadcast::Sender<TaskChange>,
     project_changes: watch::Sender<()>,
     settings_changes: watch::Sender<()>,
+    /// The environment's board theme inputs, cached from the host's config stream.
+    theme: watch::Sender<Option<serde_json::Value>>,
     wake: Notify,
     planner_wake: Notify,
     title_wake: Notify,
@@ -305,6 +308,7 @@ impl Service {
             changes,
             project_changes: watch::Sender::new(()),
             settings_changes: watch::channel(()).0,
+            theme: watch::channel(None).0,
             wake: Notify::new(),
             planner_wake: Notify::new(),
             title_wake: Notify::new(),
@@ -526,8 +530,18 @@ impl Service {
             Box::pin(self.watch_planner_authority()),
             Box::pin(self.watch_titles()),
             Box::pin(self.watch_enrollments()),
-            Box::pin(self.watch_inbox())
+            Box::pin(self.watch_inbox()),
+            Box::pin(self.watch_theme())
         );
+    }
+
+    /// Keep the board theme current from the host's config stream. Board reads
+    /// use the cached value only; a dropped stream reconnects after the host delay.
+    async fn watch_theme(&self) {
+        loop {
+            let _ = self.host.watch_theme(&self.theme).await;
+            tokio::time::sleep(T3_RETRY_DELAY).await;
+        }
     }
 
     async fn watch_thread_hints(&self) {
@@ -620,6 +634,17 @@ impl Service {
             state.settings.host = status;
             self.settings_changes.send_replace(());
         }
+    }
+
+    /// The operator's global dispatch mode from the in-memory read model.
+    async fn dispatch_mode(&self) -> DispatchMode {
+        self.state
+            .lock()
+            .await
+            .settings
+            .dispatch
+            .as_ref()
+            .map_or(DispatchMode::Running, |dispatch| dispatch.mode)
     }
 
     async fn launch_capacity(

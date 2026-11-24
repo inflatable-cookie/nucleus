@@ -1,7 +1,9 @@
+import { useEngineFeatures } from "./engine-features";
+import { rustProjectArchive } from "./rust-contracts";
 import { errorText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { Icon } from "./shell";
+import { Icon, useRpc } from "./shell";
 import {
   ActionButton,
   Button,
@@ -139,10 +141,13 @@ function ProjectRow({
   c,
   entry,
   onOpen,
+  archive,
 }: {
   c: Colors;
   entry: ProjectSettingsRow;
   onOpen?: () => void;
+  /** Rust engine (Spec 070 ruling 8): shows Archive or Restore; called after a change. */
+  archive?: () => unknown;
 }) {
   const r = roles(c);
   const name = entry.project.name;
@@ -197,6 +202,7 @@ function ProjectRow({
           {face}
         </View>
       )}
+      {archive && <ArchiveButton c={c} entry={entry} name={name} changed={archive} />}
       {/* A fixed slot, so status words line up whether or not a row has a problem. */}
       <View style={{ width: 20, alignItems: "center" }}>
         {entry.problems.length > 0 && (
@@ -209,6 +215,38 @@ function ProjectRow({
         )}
       </View>
     </View>
+  );
+}
+
+/** Rust engine (Spec 070 ruling 8): archive or restore one project. */
+function ArchiveButton({
+  c,
+  entry,
+  name,
+  changed,
+}: {
+  c: Colors;
+  entry: ProjectSettingsRow;
+  name: string;
+  changed: () => unknown;
+}) {
+  const archiveProject = useRpc(rustProjectArchive);
+  const [busy, setBusy] = useState(false);
+  const verb = entry.archived ? "Restore" : "Archive";
+  return (
+    <Button
+      c={c}
+      small
+      text={verb}
+      label={`${verb} ${name}`}
+      disabled={busy}
+      onPress={() => {
+        setBusy(true);
+        void archiveProject({ project: entry.project.key, archived: !entry.archived })
+          .then(changed)
+          .finally(() => setBusy(false));
+      }}
+    />
   );
 }
 
@@ -243,6 +281,7 @@ export function ProjectsSection({
   /** The opened project's writes; without them rows do not open. */
   edit?: ProjectEditActions;
 }) {
+  const features = useEngineFeatures();
   const [view, setView] = useState<"list" | "project">("list");
   const [opened, setOpened] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -327,13 +366,14 @@ export function ProjectsSection({
               color={r.warning}
             />
           )}
-          <ActionButton
+          {/* Rust engine (Spec 070 ruling 23): projects register on a planner's first dispatch. */}
+          {features.projectAgents && <ActionButton
             c={c}
             action="add"
             label="Add project"
             disabled={!data}
             onPress={() => setAdding(true)}
-          />
+          />}
         </View>
         {!data && query.isPending && (
           <Text style={muted(c)}>Loading projects…</Text>
@@ -398,6 +438,7 @@ export function ProjectsSection({
                 c={c}
                 entry={entry}
                 onOpen={edit ? () => openProject(entry.project.key) : undefined}
+                archive={features.engine === "rust" ? () => query.refetch() : undefined}
               />
             ))}
           </View>

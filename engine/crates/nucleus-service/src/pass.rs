@@ -14,7 +14,7 @@ use nucleus_hosts::{
     ArchiveStep, Binding, ControlDispatch, HostError, LaunchRequest, NoticeTarget, ParentStep,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::TaskRow;
+use nucleus_store::{DispatchMode, TaskRow};
 use nucleus_work::Checkout;
 use tokio::sync::RwLockReadGuard;
 
@@ -157,7 +157,10 @@ impl Service {
             forge,
             workspace: seen(checkout.observe()),
         };
-        if task.run().is_some_and(nucleus_core::Run::revoked) {
+        // The operator's global stop settles a live run through stop custody too.
+        if task.run().is_some_and(nucleus_core::Run::revoked)
+            || (task.run().is_some() && self.dispatch_mode().await == DispatchMode::Stopped)
+        {
             return self.stop_run(row, &checkout, observation, host).await;
         }
         if task.phase() == Phase::Reviewing
@@ -530,7 +533,12 @@ impl Service {
         if let Some(wait) = self.pause_prepared(row, &observation).await? {
             return Ok(wait);
         }
-        if !self.launch_capacity(task.identity(), false).await? {
+        if !self
+            .dispatch_mode()
+            .await
+            .allows_launch(task.first_launch())
+            || !self.launch_capacity(task.identity(), false).await?
+        {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
@@ -733,6 +741,15 @@ impl Service {
         mut observation: Observation,
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
+        let stopped;
+        let row = if row.task.run().is_some_and(|run| !run.revoked()) {
+            let mut task = row.task.clone();
+            task.revoke_run();
+            stopped = self.save(row, task, &event("run_stopped")).await?;
+            &stopped
+        } else {
+            row
+        };
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
         let head = run.launch().review_head.as_ref();

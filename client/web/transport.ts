@@ -23,6 +23,13 @@ function waitForService(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 3000));
 }
 
+/** What the shared screens call: one board RPC, parsed by its contract. */
+export interface BoardTransport {
+  rpc<Input extends ZodType, Output extends ZodType>(
+    contract: RpcContract<Input, Output>, input: ZodInput<Input>, settings?: boolean,
+  ): Promise<ZodOutput<Output>>;
+}
+
 /** A paired board uses the browser's HttpOnly cookie; no credential enters app memory. */
 export function createWebTransport(fetcher: typeof fetch = fetch) {
   return {

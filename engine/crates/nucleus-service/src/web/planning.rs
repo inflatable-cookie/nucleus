@@ -24,23 +24,26 @@ pub(super) fn routes() -> Router<Api> {
     Router::new()
         .route(
             "/v1/planning/tasks",
-            post(add_task).layer(DefaultBodyLimit::max(6 * MAX_TEXT_BYTES + 64 * 1024)),
+            post(add_task).layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
         )
         .route("/v1/planning/items/{id}/promote", post(promote_current))
-        .nest(
-            "/v1/planning/{project}",
-            lane_routes()
-                .route("/items", get(items).post(add_item))
-                .route("/items/{id}", put(edit_item))
-                .route("/items/{id}/park", post(park_item))
-                .route("/items/{id}/drop", post(drop_item))
-                .route("/items/{id}/promote", post(promote))
-                .route("/tasks", post(add_task))
-                .route("/decisions", get(decisions).post(add_decision))
-                .route("/decisions/{id}/answer", post(answer_decision))
-                .route("/history/{kind}/{id}", get(history))
-                .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
-        )
+        .nest("/v1/planning/{project}", project_routes())
+}
+
+/// Every planning record route for one project. The controller API and the
+/// paired board mount the same handlers, so authority checks stay in one place.
+pub(super) fn project_routes() -> Router<Api> {
+    lane_routes()
+        .route("/items", get(items).post(add_item))
+        .route("/items/{id}", put(edit_item))
+        .route("/items/{id}/park", post(park_item))
+        .route("/items/{id}/drop", post(drop_item))
+        .route("/items/{id}/promote", post(promote))
+        .route("/tasks", post(add_task))
+        .route("/decisions", get(decisions).post(add_decision))
+        .route("/decisions/{id}/answer", post(answer_decision))
+        .route("/history/{kind}/{id}", get(history))
+        .layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT))
 }
 
 pub(super) fn lane_routes() -> Router<Api> {

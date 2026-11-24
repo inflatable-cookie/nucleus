@@ -10,7 +10,7 @@ use nucleus_core::{
 use nucleus_hosts::{
     HostError, ProfileCatalog, ProviderLimit, RoleProfile, TaskHost, launch_provider_instance,
 };
-use nucleus_store::{DispatchSettings, Profiles, TaskRow};
+use nucleus_store::{DispatchMode, DispatchSettings, Profiles, TaskRow};
 
 use crate::{ProjectMode, Service, ServiceError, State, now_ms};
 
@@ -78,6 +78,14 @@ impl Service {
     ) -> Result<LaunchSelection, ServiceError> {
         {
             let mut state = self.state.lock().await;
+            let mode = state
+                .settings
+                .dispatch
+                .as_ref()
+                .map_or(DispatchMode::Running, |dispatch| dispatch.mode);
+            if !mode.allows_launch(task.first_launch()) {
+                return Ok(LaunchSelection::Paused);
+            }
             if state.settings.profiles.is_none() {
                 let project = self
                     .project

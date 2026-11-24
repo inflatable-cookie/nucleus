@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -98,6 +99,8 @@ export function ProfilesPanel({
   ) => Promise<unknown>;
 }) {
   const queryClient = useQueryClient();
+  // Rust engine (Spec 070 rulings 5, 9 and 11): no host catalogue reads from Settings.
+  const { profileCatalog } = useEngineFeatures();
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
   // The form's choices: every registered host's catalog in canonical values (task 1158).
   const fetchProfiles = useRpc(api.listNucleusProfiles),
@@ -134,12 +137,14 @@ export function ProfilesPanel({
     queryKey: ["nucleus", "profiles", "compatibility"],
     queryFn: () => fetchCompatibility({}),
     staleTime: 15_000,
+    enabled: profileCatalog,
   });
   const compatibility = compatibilityQuery.data;
   const catalogQuery = useQuery({
     queryKey: ["nucleus", "profile-vocabulary", directory ?? ""],
     queryFn: () => fetchCatalog(directory ? { cwd: directory } : {}),
     staleTime: 30_000,
+    enabled: profileCatalog,
   });
   const catalogsQuery = useQuery({
     queryKey: ["nucleus", "profile-vocabularies", directories.join("|")],
@@ -150,7 +155,7 @@ export function ProfilesPanel({
           catalog: await fetchCatalog({ cwd }),
         })),
       ),
-    enabled: editor !== null && directories.length > 1,
+    enabled: profileCatalog && editor !== null && directories.length > 1,
     staleTime: 30_000,
   });
   const catalog = catalogQuery.data;
@@ -361,7 +366,7 @@ export function ProfilesPanel({
         status={quietSaveStatus(actionStatus) || null}
         description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm, for all roles or for one role at a time; a full strip means that profile is busiest in the list for the chosen view. Each view covers up to its last 50 recorded assignments."
         action={
-          <View style={{ ...row, flexWrap: "nowrap" }}>
+          profileCatalog ? <View style={{ ...row, flexWrap: "nowrap" }}>
             <ActionButton
               c={c}
               action="refresh"
@@ -377,7 +382,7 @@ export function ProfilesPanel({
               disabled={panelBusy || editor === "new"}
               onPress={() => setEditor("new")}
             />
-          </View>
+          </View> : undefined
         }
       >
         {state && (
@@ -385,7 +390,12 @@ export function ProfilesPanel({
             <TabRow
               c={c}
               label="Usage view"
-              tabs={USAGE_ROLE_TABS}
+              // Rust engine (Spec 070 ruling 1): the coordinator role is retired.
+              tabs={
+                profileCatalog
+                  ? USAGE_ROLE_TABS
+                  : USAGE_ROLE_TABS.filter((tab) => tab.id !== "coordinator")
+              }
               value={usageRole}
               onChange={setUsageRole}
               nowrap

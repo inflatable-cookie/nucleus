@@ -320,6 +320,7 @@ export async function listenForRustChanges(
   signal: AbortSignal,
   board?: {
     settingsChanged: () => void;
+    themeChanged?: () => void;
     connection: (state: "live" | "retrying" | "expired") => void;
   },
 ) {
@@ -348,6 +349,8 @@ export async function listenForRustChanges(
             rustInvalidationFromFrame(frame, invalidate);
             if (frame.event === "settings" || frame.event === "refresh")
               board?.settingsChanged();
+            if (frame.event === "theme" || frame.event === "refresh")
+              board?.themeChanged?.();
           }
         }
       } finally {

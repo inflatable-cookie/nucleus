@@ -6,7 +6,7 @@ use axum::{
 };
 use nucleus_core::Authority;
 use nucleus_store::{
-    DispatchSettings, EngineSettings, Hosts, Profiles, ProjectSettings, Projects,
+    DispatchMode, DispatchSettings, EngineSettings, Hosts, Profiles, ProjectSettings, Projects,
     RepositorySettings, SettingsFile, SettingsSnapshot, SettingsValue, StorageError,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -564,7 +564,13 @@ async fn save_dispatch(
     match result {
         Ok((saved, changed)) => {
             if changed {
+                let stopping = saved.value.mode == DispatchMode::Stopped
+                    && state.settings.dispatch.as_ref().map(|prior| prior.mode)
+                        != Some(DispatchMode::Stopped);
                 state.settings.dispatch = Some(saved.value.clone());
+                if stopping {
+                    wake_runs(&mut state)?;
+                }
                 service.wake_settings_capacity(&mut state);
             }
             Ok(json!(saved))
@@ -669,4 +675,15 @@ impl Service {
         }
         self.wake.notify_one();
     }
+}
+
+/// A global stop reaches every task that holds a run on its next pass.
+fn wake_runs(state: &mut crate::State) -> Result<(), ServiceError> {
+    let now = Instant::now();
+    for id in state.store.run_ids()? {
+        state
+            .schedule
+            .wake(&id, now, crate::schedule::Priority::Wake);
+    }
+    Ok(())
 }

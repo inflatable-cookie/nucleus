@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import {
   Button,
+  DropdownSelect,
   Field,
   HelpPopover,
   HelpTip,
@@ -18,7 +19,7 @@ import type {
 
 /** One class the Storage page edits: its resolved path, its settings key and what lives there. */
 type StorageClass = {
-  field: keyof WorkStorageState["defaults"];
+  field: keyof NonNullable<WorkStorageState["defaults"]>;
   setting: string;
   noun: string;
   help: string;
@@ -55,12 +56,37 @@ const CLASSES: readonly StorageClass[] = [
     noun: "Custodian records",
     help: "The start and stop handshake files for a Barge lease custodian. They carry one live lease and are removed when it is returned; an in-flight lease keeps the paths it recorded, so a retired queue/barge-custodians directory is never read.",
   },
+  {
+    field: "logRoot",
+    setting: "logRoot",
+    noun: "Logs",
+    help: "The engine's service and run logs.",
+  },
+  {
+    field: "buildsRoot",
+    setting: "buildsRoot",
+    noun: "Build output",
+    help: "Install and build output the engine writes.",
+  },
 ];
+
+/** The classes this engine reports. An engine without a class leaves it out. */
+const classesOf = (state: WorkStorageState) =>
+  CLASSES.filter(
+    (item) =>
+      state[item.field] !== undefined &&
+      // The Rust engine's work root is its worktree root: one row, not two.
+      !(state.home && item.field === "worktreesRoot" && state.worktreesRoot === state.workRoot),
+  );
+
+/** A class the engine reports but does not let Settings change. */
+const fixed = (state: WorkStorageState, item: StorageClass) =>
+  state.overrides[item.field] === undefined;
 
 /** The empty draft means the portable default; a typed path overrides it. */
 const draftOf = (state: WorkStorageState): Record<string, string> =>
   Object.fromEntries(
-    CLASSES.map((item) => [item.field, state.overrides[item.field] ?? ""]),
+    classesOf(state).map((item) => [item.field, state.overrides[item.field] ?? ""]),
   );
 
 /**
@@ -107,7 +133,7 @@ export function StoragePanel({
   const dirty =
     Boolean(savedAt) &&
     (workRoot !== (savedAt!.overrides.workRoot ?? "") ||
-      CLASSES.some(
+      classesOf(savedAt!).some(
         (item) =>
           (drafts[item.field] ?? "") !== (savedAt!.overrides[item.field] ?? ""),
       ));
@@ -145,7 +171,8 @@ export function StoragePanel({
     // whatever `settings.json` holds (including nothing at all).
     if (workRoot !== (baseline.overrides.workRoot ?? ""))
       input.workRoot = workRoot ? workRoot : null;
-    for (const item of CLASSES) {
+    for (const item of classesOf(baseline)) {
+      if (fixed(baseline, item)) continue;
       const value = drafts[item.field] ?? "";
       if (value === (baseline.overrides[item.field] ?? "")) continue;
       input[item.field] = value ? value : null;
@@ -155,7 +182,9 @@ export function StoragePanel({
   }
   async function reset() {
     const input: WorkStorageInput = {};
-    for (const item of CLASSES) input[item.field] = null;
+    const baseline = loaded.current;
+    for (const item of baseline ? classesOf(baseline) : CLASSES)
+      if (!baseline || !fixed(baseline, item)) input[item.field] = null;
     await persist(input).catch(() => {});
   }
   return (
@@ -223,7 +252,7 @@ export function StoragePanel({
         <>
           <Field
             c={c}
-            label="Work root"
+            label={state.home ? "Worktrees" : "Work root"}
             value={workRoot}
             onChange={(value) => {
               setWorkRoot(value);
@@ -232,12 +261,17 @@ export function StoragePanel({
             placeholder={state.workRoot}
             disabled={saving}
             invalid={failure.includes("workRoot")}
-            detail={`The volume mount every other path sits inside · in force now: ${state.workRoot}`}
+            detail={
+              state.home
+                ? `In force: ${state.workRoot}`
+                : `The volume mount every other path sits inside · in force now: ${state.workRoot}`
+            }
           />
-          {CLASSES.map((item) => {
+          {classesOf(state).map((item) => {
             const stored = state.overrides[item.field];
+            const fallback = state.defaults?.[item.field];
             const inForce =
-              state[item.field] !== (stored ?? state.defaults[item.field]);
+              fallback !== undefined && state[item.field] !== (stored ?? fallback);
             return (
               <Field
                 key={item.field}
@@ -249,9 +283,13 @@ export function StoragePanel({
                   setSaved(false);
                 }}
                 placeholder={state[item.field]}
-                disabled={saving}
+                disabled={saving || fixed(state, item)}
                 invalid={invalid === item}
-                detail={`Default: ${state.defaults[item.field]}${inForce ? ` · environment override in force: ${state[item.field]}` : ""}`}
+                detail={
+                  fallback === undefined
+                    ? `In force: ${state[item.field]}`
+                    : `Default: ${fallback}${inForce ? ` · environment override in force: ${state[item.field]}` : ""}`
+                }
               />
             );
           })}
@@ -271,7 +309,48 @@ export function StoragePanel({
               </Text>
             )}
           </View>
-          <View style={{ marginTop: space.sm, gap: space.xxs }}>
+          {state.placement && (
+            <DropdownSelect
+              c={c}
+              label="Placement"
+              value={state.placement}
+              disabled={saving}
+              options={[
+                { value: "internal", label: "Internal" },
+                { value: "barge", label: "Barge pool" },
+              ]}
+              onChange={(value) =>
+                void persist({ placement: value === "barge" ? "barge" : "internal" }).catch(() => {})
+              }
+            />
+          )}
+          {(state.activePlacement || state.home) && (
+            <Text style={muted(c)} accessibilityLabel="Placement in force">
+              {[
+                state.activePlacement
+                  ? `In force: ${state.activePlacement === "barge" ? "Barge pool" : "internal"}`
+                  : null,
+                state.home ? `home ${state.home}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          )}
+          {state.backups && (
+            <Text style={muted(c)} accessibilityLabel="Backups">
+              {[
+                `Backups: ${state.backups.verified} verified`,
+                state.backups.newestAt ? `newest ${state.backups.newestAt}` : null,
+                state.backups.issues ? `${state.backups.issues} could not be verified` : null,
+                state.retention
+                  ? `keeps the newest ${state.retention.keepNewest}${state.retention.maxAgeDays === null ? "" : `, up to ${state.retention.maxAgeDays} days old`}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          )}
+          {state.retired && <View style={{ marginTop: space.sm, gap: space.xxs }}>
             <Text style={muted(c)}>Retired locations still read</Text>
             <Text
               selectable
@@ -290,7 +369,7 @@ export function StoragePanel({
                 .filter(Boolean)
                 .join(" · ")}
             </Text>
-          </View>
+          </View>}
         </>
       )}
     </ScrollView>

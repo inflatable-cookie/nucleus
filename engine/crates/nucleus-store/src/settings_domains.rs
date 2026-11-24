@@ -129,6 +129,36 @@ pub struct DispatchSettings {
     pub allowance_minutes: Option<u32>,
     #[serde(default = "default_provider_limit_cooldown_seconds")]
     pub provider_limit_cooldown_seconds: u32,
+    #[serde(default)]
+    pub mode: DispatchMode,
+}
+
+/// The operator's global dispatch switch. It gates launches only; a stored
+/// task never changes because of it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchMode {
+    /// Launch as usual.
+    #[default]
+    Running,
+    /// Start no task that has never launched. Started tasks keep going.
+    Held,
+    /// Start no run. Running turns finish.
+    Paused,
+    /// Start no run and stop running turns. Running again relaunches them.
+    Stopped,
+}
+
+impl DispatchMode {
+    /// Whether this mode lets a task start its next run.
+    #[must_use]
+    pub const fn allows_launch(self, first_launch: bool) -> bool {
+        match self {
+            Self::Running => true,
+            Self::Held => !first_launch,
+            Self::Paused | Self::Stopped => false,
+        }
+    }
 }
 
 const fn default_provider_limit_cooldown_seconds() -> u32 {
@@ -144,6 +174,7 @@ impl Default for DispatchSettings {
             host_concurrency: 1,
             allowance_minutes: None,
             provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
+            mode: DispatchMode::Running,
         }
     }
 }
@@ -388,5 +419,36 @@ pub(super) fn check(test: bool, code: &str, message: &str) -> Result<(), DomainI
         Ok(())
     } else {
         Err(DomainIssue::new(code, message))
+    }
+}
+
+#[cfg(test)]
+mod dispatch_mode_tests {
+    use super::{DispatchMode, DispatchSettings};
+
+    #[test]
+    fn dispatch_mode_gates_first_launches_and_every_launch() {
+        assert!(DispatchMode::Running.allows_launch(true));
+        assert!(!DispatchMode::Held.allows_launch(true));
+        assert!(DispatchMode::Held.allows_launch(false));
+        for mode in [DispatchMode::Paused, DispatchMode::Stopped] {
+            assert!(!mode.allows_launch(true) && !mode.allows_launch(false));
+        }
+    }
+
+    #[test]
+    fn a_saved_domain_without_a_mode_reads_as_running() {
+        let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
+            "usage": "normal", "usageUntilMs": null, "slots": 2,
+            "hostConcurrency": 1, "allowanceMinutes": null
+        }))
+        .expect("dispatch settings");
+        assert_eq!(saved.mode, DispatchMode::Running);
+        let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
+            "usage": "normal", "usageUntilMs": null, "slots": 2,
+            "hostConcurrency": 1, "allowanceMinutes": null, "mode": "stopped"
+        }))
+        .expect("dispatch settings");
+        assert_eq!(stopped.mode, DispatchMode::Stopped);
     }
 }

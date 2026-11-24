@@ -26,6 +26,7 @@ import {
   type InboxView,
 } from "../../shared/inbox-board";
 import { openScopeLanes } from "../../shared/project-scope";
+import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
 import {
   Disclosure,
@@ -287,6 +288,7 @@ export type InboxListProps = {
     selected: string | null;
     onSelect: (id: string) => void;
     projectName: (task: RustTask) => string;
+    projectBadge?: (task: RustTask) => ProjectBadge | null;
   };
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
@@ -874,13 +876,14 @@ export function RustListRows({ c, rust, view }: {
   const remaining = tasks.length - limit;
   return <>
     {tasks.slice(0, limit).map((task) => {
-      const reference = rustTaskLabel(task);
+      // The task number alone, as on TypeScript cards; the project shows beside it.
+      const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const wait = rustWaitText(task);
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
-        project={<CardProject c={c} name={rust.projectName(task)} />}
+        project={<CardProject c={c} name={rust.projectName(task)} badge={rust.projectBadge?.(task)} />}
         status={wait || view === "history" ? {
           tone: task.phase === "done" ? "success" : task.hold || task.question ? "warning" : "muted",
           state: question ? "Question" : rustPhaseLabels[task.phase], detail: question ? null : wait,

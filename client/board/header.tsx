@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "../engine-features";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -120,7 +121,8 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   }, [queueMenuOpen]);
   const overrideCount = Object.keys(state?.projectLimitOverrides ?? {}).length;
   const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
-  const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false });
+  const features = useEngineFeatures();
+  const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false, enabled: features.serviceNotices });
   const pills = headerStatePills(state);
   const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
   const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
@@ -161,7 +163,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                 Boolean(state?.paused),
                 Boolean(state?.connected),
                 busy,
-              ).map((control) => control.id === "pause" ? (
+              ).filter((control) => control.id !== "refresh" || features.catalogRefresh).map((control) => control.id === "pause" ? (
                 <View key={control.id} style={{ position: "relative", zIndex: queueMenuOpen ? 50 : 0 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Button small iconOnly joined="start" c={c} icon={control.icon} text={control.label} disabled={control.disabled}
@@ -193,10 +195,12 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>{item.label}</Text>
                     </SurfacePress>)}
                     {state?.paused && <Text style={{ ...muted(c), ...meta, paddingHorizontal: space.sm, paddingBottom: space.xs }}>
-                      Submissions are stored. No new run starts. In-flight work drains. Idle status covers this plugin’s managed runs only.
+                      {features.engine === "rust"
+                        ? "Submissions are stored. No new run starts. In-flight work drains."
+                        : "Submissions are stored. No new run starts. In-flight work drains. Idle status covers this plugin’s managed runs only."}
                     </Text>}
                     {/* Queue #665: per-project slot usage, moved here from the header's status line (Tom, 2026-11-21). */}
-                    {state && <View accessibilityLabel={`Project slot usage (${state.occupiedSlots ?? 0}/${state.globalLimit} in use)`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
+                    {state && features.slotUsage && <View accessibilityLabel={`Project slot usage (${state.occupiedSlots ?? 0}/${state.globalLimit} in use)`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
                       <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between" }}>
                         <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>Slots</Text>
                         <Text numberOfLines={1} style={{ ...muted(c), ...meta, flexShrink: 1 }}>{`${state.occupiedSlots ?? 0}/${state.globalLimit} global · project default ${state.projectLimit}${overrideCount ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : ""}`}</Text>
@@ -208,7 +212,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                           <Text numberOfLines={1} style={{ color: c.foregroundMuted, ...meta, fontFamily: "monospace", textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots · ${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
                         </View>)}
                     </View>}
-                    {state && <View accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
+                    {state && features.slotUsage && <View accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
                       <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
                       {!state.drained && state.boundRuns.slice(0, 8).map(run =>
                         <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, ...meta }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
