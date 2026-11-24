@@ -361,7 +361,7 @@ fn discarding_an_unsent_review_keeps_only_an_established_thread() {
 }
 
 #[test]
-fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() {
+fn a_stale_review_report_refreshes_the_head_without_applying_a_verdict() {
     let mut task = task(Entry::ReviewEntry);
     let bearer = start(
         &mut task,
@@ -380,13 +380,8 @@ fn a_stale_review_report_waits_for_the_turn_to_settle_then_refreshes_the_head() 
             finding_titles: Vec::new(),
         },
     );
-    let changed = open('b', CheckState::Ready);
-    assert_eq!(
-        decide(&task, &host(&task, changed.clone(), RunState::Running)),
-        Action::Wait(WaitReason::Running)
-    );
-    let ended = host(&task, changed, RunState::Ended);
-    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
+    let changed = host(&task, open('b', CheckState::Ready), RunState::Running);
+    assert_eq!(task.reconcile(&changed), Action::Advance(Phase::Reviewing));
     assert_eq!(task.pull_request(), Some(&pr('b')));
     assert_eq!(task.verdict(), None);
 }
@@ -397,8 +392,7 @@ fn changes_continue_the_worker_and_require_a_new_head() {
     let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
     report(&mut task, &bearer, Report::Work(pr('a').into()));
     let review = open('a', CheckState::Ready);
-    let ended = host(&task, review.clone(), RunState::Ended);
-    task.reconcile(&ended);
+    assert_eq!(task.reconcile(&review), Action::Advance(Phase::Reviewing));
     let bearer = start(&mut task, &review, Role::Reviewer, "reviewer", "review-1");
     report(
         &mut task,
@@ -410,8 +404,7 @@ fn changes_continue_the_worker_and_require_a_new_head() {
             finding_titles: Vec::new(),
         },
     );
-    let ended = host(&task, review.clone(), RunState::Ended);
-    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Working));
+    assert_eq!(task.reconcile(&review), Action::Advance(Phase::Working));
     let worker = retained(review.clone(), "worker", RetainedThread::Idle);
     assert_eq!(
         decide(&task, &worker),

@@ -188,7 +188,10 @@ impl Service {
         if !active(task) && !forge_requested {
             return Ok(Action::Nothing);
         }
-        let run_host = if let Some(run) = task.run().filter(|run| !run.revoked()) {
+        let run_host = if let Some(run) = task
+            .run()
+            .filter(|run| !run.revoked() && run.report().is_none())
+        {
             let (state, error) = self.read_current_run(row, run, host, &route).await?;
             if !forge_requested
                 && run.last_send_at_ms().is_some()

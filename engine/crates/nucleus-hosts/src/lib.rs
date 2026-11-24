@@ -998,8 +998,9 @@ impl TaskHost for T3Pass<'_> {
         if wire.assignment_too_large() {
             return Err(HostError::AssignmentLimit);
         }
-        let worker_continuation =
-            run.launch().role == Role::Worker && wire.method == Method::Continue;
+        let continuation = wire.method == Method::Continue;
+        let role = run.launch().role;
+        let worker_continuation = continuation && role == Role::Worker;
         if (worker_continuation && (!wire.pinned || run.revoked() || run.report().is_some()))
             || (!worker_continuation && awaiting_reply(run, clock_ms()?))
         {
@@ -1016,7 +1017,7 @@ impl TaskHost for T3Pass<'_> {
             {
                 return Err(HostError::Uncertain);
             }
-            if !run.revoked() && wire.method == Method::Continue {
+            if !run.revoked() && continuation {
                 projection.row_observation()?
             } else {
                 None
@@ -1031,7 +1032,7 @@ impl TaskHost for T3Pass<'_> {
         };
         let (thread, state) = self.host.delivery(run, &wire, policy).await?;
         if !worker_continuation
-            && wire.method == Method::Continue
+            && continuation
             && run.launch().profile().is_some()
             && !wire.selection.as_ref().is_some_and(|selection| {
                 thread
@@ -1045,6 +1046,7 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::Uncertain);
         }
         if !worker_continuation
+            && (run.revoked() || role != Role::Reviewer || continuation)
             && !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
                 .await?
@@ -1052,7 +1054,7 @@ impl TaskHost for T3Pass<'_> {
             return Err(HostError::WorkspaceBusy);
         }
         let wake = if !worker_continuation
-            && wire.method == Method::Continue
+            && continuation
             && let Some(projection) = &thread
             && let Some(observed) = projection.row_observation()?
         {
@@ -1079,8 +1081,7 @@ impl TaskHost for T3Pass<'_> {
             instance: run.launch().instance.clone(),
             thread: run.launch().thread.clone(),
             input: run.launch().input.clone(),
-            archived: wire.method == Method::Continue
-                && thread.is_some_and(|thread| thread.archived()),
+            archived: continuation && thread.is_some_and(|thread| thread.archived()),
             wire,
             wake,
             prior_send: run.last_send_at_ms(),
