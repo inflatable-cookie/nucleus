@@ -476,20 +476,15 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   );
   await click("Working, 1");
   // The card shows the task number alone; the project shows beside it.
-  const workingStep = '[aria-label="Step Working: current · 13m 51s"]';
-  await eventually(
-    () => Boolean(dom.window.document.querySelector(workingStep)),
-    "the board card shows the projected work duration",
-  );
+  assert.equal(dom.window.document.querySelector('[aria-label^="Step Working:"]'), null);
   await click("#81");
   await eventually(() => text().includes(activity), "initial activity");
-  await eventually(
-    () => dom.window.document.querySelectorAll(workingStep).length === 2,
-    "the card and detail render the same progress step",
-  );
+  const detail = dom.window.document.querySelector('[aria-label="Task detail"]');
+  assert.ok(detail);
+  assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m 51s"]'));
   assert.match(text(), /fixture-worker-model/);
   assert.match(text(), /fixture-review-model/);
-  assert.equal(dom.window.document.querySelectorAll('[aria-label="Step Review: todo · Round 2"]').length, 2);
+  assert.ok(detail.querySelector('[aria-label="Step Review: todo · Round 2"]'));
   await eventually(() => text().includes("3m / 1h"), "task allowance");
   const beforeList = reads("/v1/tasks");
   const beforeDetail = reads("/v1/tasks/running");
@@ -908,15 +903,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.match(heldHeader.textContent ?? "", /^#81/);
   assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
   assert.match(heldCard.textContent ?? "", /Held taskWait for the schema review\./);
-  const withoutProgress = (card: HTMLElement) => {
-    const progress = card.querySelector('[aria-label^="Progress:"]');
-    assert.ok(progress, "the card renders the shared progress strip");
-    return (card.textContent ?? "").replace(progress.textContent ?? "", "");
-  };
-  assert.doesNotMatch(withoutProgress(heldCard), /Then continue|Queued|On hold/);
+  assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
   const capacityCard = selector("#80, Standalone task")!;
   header(capacityCard, "Waiting for capacity", "12m ago");
-  assert.doesNotMatch(withoutProgress(capacityCard), /Queued|work slot/);
+  assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
@@ -928,8 +918,29 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   header(workingCard, "Working*", "12m ago");
   assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
   assert.deepEqual(routes.map((route, i) => count(route) - beforeTransition[i]!), [1, 0, 0, 0]);
+  const cardStrip = workingCard.parentElement?.querySelector('[role="img"][aria-label^="Progress:"]');
+  assert.ok(cardStrip, "the card has an accessible progress strip");
+  assert.ok(
+    workingCard.compareDocumentPosition(cardStrip) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    "the strip follows the compact card body",
+  );
+  assert.ok(workingCard.parentElement?.lastElementChild?.contains(cardStrip), "the strip is at the bottom of the card");
+  assert.equal(cardStrip.children.length, 5, "one bar per code task step");
+  assert.equal(cardStrip.textContent, "", "card bars have no visible text");
+  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2\)/);
+
   await click("#80, Standalone task");
-  await eventually(() => text().includes("13m 51s"), "the selected task displays its run duration");
+  const detailProgress = () => selector("Task detail")?.querySelector('[aria-label^="Progress:"]');
+  await eventually(() => Boolean(detailProgress()?.textContent?.includes("13m 51s")),
+    "the selected task displays its run duration in the timeline");
+  const fullStrip = detailProgress()!;
+  assert.match(fullStrip.textContent ?? "", /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/);
+  const colours = (strip: Element) => Array.from(strip.children, (step) => {
+    assert.ok(step.firstElementChild);
+    return dom.window.getComputedStyle(step.firstElementChild).backgroundColor;
+  });
+  assert.equal(new Set(colours(cardStrip)).size, 3, "done, current and future bars have different colours");
+  assert.deepEqual(colours(cardStrip), colours(fullStrip), "card and detail use the same step colours");
   const beforeClock = requests.length;
   clock += 2000;
   await eventually(() => text().includes("13m 53s"), "run duration ticks locally");

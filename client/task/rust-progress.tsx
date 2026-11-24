@@ -15,10 +15,12 @@ function duration(ms: number): string {
 export function RustTaskProgress({
   progress,
   compact,
+  barsOnly,
   c,
 }: {
   progress: RustLifecycle;
   compact: boolean;
+  barsOnly?: boolean;
   c: Colors;
 }) {
   useTick(
@@ -52,5 +54,13 @@ export function RustTaskProgress({
       };
     },
   );
-  return <ProgressStrip c={c} compact={compact} steps={steps} subLines={2} />;
+  return (
+    <ProgressStrip
+      c={c}
+      compact={compact}
+      steps={steps}
+      subLines={2}
+      barsOnly={barsOnly}
+    />
+  );
 }

@@ -13,21 +13,25 @@ export function ProgressStrip({
   steps,
   compact,
   subLines = 1,
+  barsOnly = false,
   c,
 }: {
   steps: readonly (Omit<ProgressStep, "key"> & { key: string })[];
   compact: boolean;
   subLines?: 1 | 2;
+  barsOnly?: boolean;
   c: Colors;
 }) {
   const r = roles(c);
   return (
     <View
+      accessible={barsOnly || undefined}
+      accessibilityRole={barsOnly ? "image" : undefined}
       accessibilityLabel={`Progress: ${steps.map((s) => `${s.label} (${s.state}${s.sub ? `, ${s.sub}` : ""})`).join(", ")}`}
       style={{
         flexDirection: "row",
         gap: compact ? space.xxs : space.xs,
-        marginTop: space.xs,
+        marginTop: barsOnly ? undefined : space.xs,
       }}
     >
       {steps.map((step) => {
@@ -40,7 +44,11 @@ export function ProgressStrip({
         return (
           <View
             key={step.key}
-            accessibilityLabel={`Step ${step.label}: ${step.state}${step.sub ? ` · ${step.sub}` : ""}`}
+            accessibilityLabel={
+              barsOnly
+                ? undefined
+                : `Step ${step.label}: ${step.state}${step.sub ? ` · ${step.sub}` : ""}`
+            }
             style={{
               flex: 1,
               minWidth: 0,
@@ -54,29 +62,33 @@ export function ProgressStrip({
                 backgroundColor: barColor,
               }}
             />
-            <Text
-              numberOfLines={1}
-              style={{
-                color: step.state === "todo" ? r.muted : r.foreground,
-                fontSize: typeScale.metadata.fontSize,
-                lineHeight: typeScale.metadata.lineHeight,
-                fontWeight: step.state === "todo" ? "400" : "600",
-                marginTop: space.xxs / 2,
-              }}
-            >
-              {step.label}
-            </Text>
-            {Boolean(step.sub) && (
-              <Text
-                numberOfLines={subLines}
-                style={{
-                  color: r.muted,
-                  fontSize: typeScale.metadata.fontSize,
-                  lineHeight: typeScale.metadata.lineHeight,
-                }}
-              >
-                {step.sub}
-              </Text>
+            {!barsOnly && (
+              <>
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: step.state === "todo" ? r.muted : r.foreground,
+                    fontSize: typeScale.metadata.fontSize,
+                    lineHeight: typeScale.metadata.lineHeight,
+                    fontWeight: step.state === "todo" ? "400" : "600",
+                    marginTop: space.xxs / 2,
+                  }}
+                >
+                  {step.label}
+                </Text>
+                {Boolean(step.sub) && (
+                  <Text
+                    numberOfLines={subLines}
+                    style={{
+                      color: r.muted,
+                      fontSize: typeScale.metadata.fontSize,
+                      lineHeight: typeScale.metadata.lineHeight,
+                    }}
+                  >
+                    {step.sub}
+                  </Text>
+                )}
+              </>
             )}
           </View>
         );

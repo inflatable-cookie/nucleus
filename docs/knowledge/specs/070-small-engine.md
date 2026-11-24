@@ -59,8 +59,8 @@ Later decisions carry their own attribution.
 6. **The ACP task session is a core component.** Tom, 2026-11-23: "Is the fake ACP provider part of the T3 integration? That part would be what unlocks supporting other ADEs with the same workflow so it needs to be a core component". This carries over the 2026-11-17 decision 5e9a3193 behind [Spec 065](065-acp-task-session.md): a generic ACP agent in core, with parenting per host. Nucleus is an Agent Client Protocol agent over stdio with no model. Each task is one ACP session, which is one thread in any ACP-capable ADE. The session presents the task's phase, current run, wait and question, and it carries the five commands. A host adapter adds only how that host parents the worker and reviewer under the session. The ACP agent knows nothing about T3. Workers and reviewers are never top-level threads. They are child threads under the task's ACP session, as in the TypeScript engine. Tom, 2026-11-23: "when I said no worker or reviewer threads, I meant top-level.. it should work with the ACP the way the TS version does now". A person sees one row per task, and each run appears inside it as that session's `tool_call` (ruling 7).
 7. **The ACP session is written for a person.** Tom, 2026-11-23: "I would like the Nucleus ACP to be much more human friendly than it is now - provide actual useful feedback about the task as things happen, avoid too much noise, make it obvious what each sub agent is doing." The rules:
    - The lifecycle is one ACP `plan`. Code tasks show Queued, Working, Review (round N), Merge and Close. Report-only tasks show Queued, Working, Report ready and Done. Each step is pending, in progress or done. A wait shows as that step's status (for example, "Waiting for a review slot"). Waits are never messages.
-   - The engine projects the plan and the board's progress strip from the same
-     task and local audit records. Applied reviewer verdicts determine the round.
+   - The engine projects the plan and task detail's progress strip from the
+     same task and local audit records. Applied reviewer verdicts determine the round.
      Role durations use the recorded send and report times. A reservation alone
      does not start the clock. The task retains its worker and reviewer bindings
      between runs.
@@ -615,9 +615,16 @@ cards, task dialog, Inbox list, planning screens and Settings sections. One
 client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
 board contracts from the paired API, so there is no second set of screens.
 
-A Rust card puts the engine's effective state and the time spent in that state
-beside each other in the top right. List, detail, `next` and native task titles
-share the label. A blocking hold supplies the label. A hold that lets the
+A Rust card shows the task number, project badge and title. The engine's
+effective state and transition age sit together at the top right, with a
+one-line cause below the title when available. Tom clarified on 2026-11-24
+that the bottom of the card shows only coloured lifecycle bars. The strip
+uses the same steps and colours as task detail, with five bars for code tasks
+and four for report-only tasks. Its accessible name summarizes the steps.
+Task detail shows the labels, recorded durations and review round.
+
+List, detail, `next` and native task titles share the label. A blocking hold
+supplies the label. A hold that lets the
 current turn finish adds an asterisk when the phase is shown. The engine
 records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads
