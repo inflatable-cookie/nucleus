@@ -901,3 +901,44 @@ fn rotation_ties_use_group_then_lifetime_then_stable_id() {
         );
     }
 }
+
+#[test]
+fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
+    let retained = profile("retained", Mechanical);
+    let other = profile("other", Worker);
+    let mut task = working(
+        "---\nqueue:\n  profileRequests:\n    worker: {profileId: other, reason: Try this model}\n---\nFix the issue.",
+    );
+    finish_worker(&mut task, &retained);
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    task.command(
+        Command::MoveWork {
+            instruction: "Rebase the task branch".into(),
+        },
+        &Authority::Operator {
+            actor: "operator".into(),
+        },
+        &observation,
+    )
+    .unwrap();
+    let pool = [candidate(&retained), candidate(&other)];
+    let next = pick(&task, &observation, Normal, &pool);
+    assert_eq!(
+        next.via(),
+        &Launch::Continue {
+            thread: "worker-1".into()
+        }
+    );
+    assert_eq!(next.profile(), &retained);
+    let pool = [candidate(&other)];
+    let policy = LaunchPolicy {
+        usage: Normal,
+        candidates: &pool,
+        planner_brief: true,
+        author_models: &[],
+    };
+    assert!(matches!(
+        decide_profile_launch(&task, &observation, &policy),
+        Err(ProfileLaunchError::RequiredProfileUnavailable { role: Role::Worker, id }) if id == "retained"
+    ));
+}

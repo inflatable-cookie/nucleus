@@ -189,7 +189,24 @@ fn select_launch(
         })
     });
     let retained = task.threads().profile(role);
-    let (profile, reason, climbed) = if let Some(candidate) = requested {
+    let bound_worker = role == Role::Worker
+        && task.work_instruction().is_some()
+        && task.threads().get(Role::Worker).is_some();
+    let (profile, reason, climbed) = if bound_worker {
+        let retained = retained.ok_or(ProfileLaunchError::OpaqueAuthor)?;
+        if !eligible.clone().any(|candidate| {
+            candidate.profile.id == retained.id
+                && candidate.profile.provider == retained.provider
+                && candidate.profile.model == retained.model
+                && candidate.usable(retained.effort)
+        }) {
+            return Err(ProfileLaunchError::RequiredProfileUnavailable {
+                role,
+                id: retained.id.clone(),
+            });
+        }
+        (retained.clone(), None, false)
+    } else if let Some(candidate) = requested {
         let mut profile = candidate.profile.clone();
         let reason = request.map(|request| {
             profile.effort = request.thinking_option_id.or(profile.effort);
