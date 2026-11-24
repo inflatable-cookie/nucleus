@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { Store } from "../core/store/store";
+import { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../client/engine-features";
+import { generatedProjectBadge, projectBadgeWebForeground } from "../shared/t3/project-badge";
 import {
   submissionSchema,
   summarizeTask,
@@ -382,5 +384,40 @@ test("multi-project cards badge only unambiguous projects and never choose a bad
     forward.update(h("View", null));
     reverse.update(h("View", null));
     conflictedSameProject.update(h("View", null));
+  }
+});
+
+test("Rust rows use the known project badge when its repository refinements disagree", async () => {
+  const { CardProject } = await import("../client/board/cards");
+  const { LeadProjectEyebrow } = await import("../client/board/triage-lead-card");
+  const repoA = { origin: "owner/alpha", path: "/repos/alpha" };
+  const repoB = { origin: "owner/beta", path: "/repos/beta" };
+  const project = { key: "build-lab", name: "Build Lab" };
+  const expected = generatedProjectBadge(project.name);
+  const refined = { monogram: "RT", color: "amber" } as const;
+  for (const repositories of [[repoA, repoB], [repoB, repoA], [repoA]]) {
+    const ui = mount(h(EngineFeaturesContext.Provider, {
+      value: RUST_ENGINE_FEATURES,
+      children: h(LeadProjectEyebrow, {
+        repositories, c: dark, projectForRepository: () => project,
+        repositoryBadges: { [repoA.path]: refined, [repoB.path]: expected },
+      }),
+    }));
+    try {
+      const badge = repositories.length === 1 ? refined : expected;
+      assert.equal(monogramNode(ui, badge.monogram)?.props.style.color, projectBadgeWebForeground(badge, true));
+      assert.ok(!ui.ofType("Icon").some((node) => node.props.name === "Folder"));
+    } finally {
+      ui.update(h("View", null));
+    }
+  }
+  const ui = mount(h(EngineFeaturesContext.Provider, {
+    value: RUST_ENGINE_FEATURES,
+    children: h(CardProject, { name: project.name, projectKey: project.key, c: dark }),
+  }));
+  try {
+    assert.equal(monogramNode(ui, expected.monogram)?.props.style.color, projectBadgeWebForeground(expected, true));
+  } finally {
+    ui.update(h("View", null));
   }
 });

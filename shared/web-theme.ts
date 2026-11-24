@@ -18,6 +18,7 @@ const boardPaletteSchema = z.object({
     surfaceSelected: themeColorSchema.optional(),
     foreground: themeColorSchema.optional(),
     foregroundMuted: themeColorSchema.optional(),
+    foregroundLabel: themeColorSchema.optional(),
     border: themeColorSchema.optional(),
     accent: themeColorSchema.optional(),
     accentForeground: themeColorSchema.optional(),

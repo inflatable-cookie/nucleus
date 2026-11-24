@@ -144,6 +144,7 @@ function boardLeadRow(
   presence: string,
   preview: string,
   createdAt: unknown,
+  updatedAt: unknown,
 ): BoardLead {
   const lead = boardLeadFacts(facts, presence);
   return {
@@ -165,6 +166,7 @@ function boardLeadRow(
         repository: target.repository,
       })),
     ...(typeof createdAt === "string" ? { createdAt } : {}),
+    ...(typeof updatedAt === "string" ? { updatedAt } : {}),
     parked: lead.parked
       ? { reason: lead.parked.reason, revisitAt: lead.parked.revisitAt }
       : null,
@@ -1013,7 +1015,8 @@ export class StorePlanning {
       .prepare(
         `SELECT ${BOARD_LEAD_FACTS} AS facts, ${BOARD_LEAD_PRESENCE} AS presence,
          coalesce(substr(json_extract(data,'$.body'),1,${LEAD_PREVIEW_MAX}),'') AS preview,
-         json_extract(data,'$.createdAt') AS createdAt
+         json_extract(data,'$.createdAt') AS createdAt,
+         json_extract(data,'$.updatedAt') AS updatedAt
        FROM lead_read AS leads WHERE state IN ('open','promoted') AND (state='open' OR (
          EXISTS (SELECT 1 FROM json_each(leads.data,'$.targets') boardKind WHERE json_extract(boardKind.value,'$.kind') IN ('draft','task'))
          AND EXISTS (
@@ -1031,6 +1034,7 @@ export class StorePlanning {
           String(row.presence),
           String(row.preview),
           row.createdAt,
+          row.updatedAt,
         ),
       );
     // Open decisions resolve lanes and scope against linked leads, including tagged papercuts.

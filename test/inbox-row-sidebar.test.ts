@@ -173,11 +173,11 @@ for (const [name, c] of [
   });
 }
 
-for (const [name, c] of [
-  ["dark", dark],
-  ["light", light],
+for (const [name, c, titleColor] of [
+  ["dark", dark, "rgba(240, 246, 252, 0.75)"],
+  ["light", light, "rgba(31, 35, 40, 0.75)"],
 ] as const) {
-  test(`a ${name} row keeps the unselected title regular and muted`, async () => {
+  test(`a ${name} row uses the regular sidebar title above its muted labels`, async () => {
     await load();
     const ui = mount(
       h(cards.BoardCardVariantContext.Provider, {
@@ -205,8 +205,8 @@ for (const [name, c] of [
       assert.equal(title.props.style.fontWeight, "400");
       assert.equal(
         title.props.style.color,
-        (c as { foregroundMuted: string }).foregroundMuted,
-        "the unselected title uses the muted foreground",
+        titleColor,
+        "the unselected title uses the sidebar title tint",
       );
       const state = texts.find((node) => node.children.join("") === "Open");
       assert.ok(state, "line 3 names the state");

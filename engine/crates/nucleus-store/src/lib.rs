@@ -3,6 +3,7 @@
 mod allowance;
 mod barge;
 mod board_state;
+pub use board_state::BoardTimes;
 mod dependencies;
 mod inbox;
 mod numbers;

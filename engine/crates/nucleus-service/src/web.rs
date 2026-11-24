@@ -993,6 +993,7 @@ struct Summary {
     phase: Phase,
     state_label: String,
     state_since_ms: Option<u64>,
+    latest_event_at_ms: Option<u64>,
     #[serde(skip)]
     created_at_ms: Option<u64>,
     wait: Option<WaitReason>,
@@ -1024,10 +1025,12 @@ impl Summary {
         } else {
             wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
         };
-        let (since, created_at_ms) = state.store.board_times(id)?;
+        let times = state.store.board_times(id)?;
+        let created_at_ms = times.admitted;
         let fixed = crate::titles::task_label_from_facts(task);
-        let state_since_ms =
-            since.filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
+        let state_since_ms = times
+            .since
+            .filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
         let state_label = match fixed {
             Some(label) => label,
             None => crate::titles::task_state_label(task, state.effective_wait(task)?),
@@ -1085,6 +1088,7 @@ impl Summary {
             )?,
             state_label,
             state_since_ms,
+            latest_event_at_ms: times.latest_event,
             created_at_ms,
             next_check_at: None,
             wait,

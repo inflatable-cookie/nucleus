@@ -2363,6 +2363,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let created = &queued["createdAtMs"];
     assert!(created.is_u64());
     assert_eq!(&queued["stateSinceMs"], created);
+    assert_eq!(&queued["latestEventAtMs"], created);
 
     observe_task_wait(&service, WaitReason::Capacity).await;
     let since = 1_700_000_000_000_i64;
@@ -2390,6 +2391,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let changed = json_body(response).await;
     assert_eq!(changed["title"], "Renamed title");
     assert_eq!(changed["stateSinceMs"], since);
+    assert!(changed["latestEventAtMs"].as_i64().unwrap() > since);
     assert!(
         service.host.host_calls().is_empty(),
         "board GETs do not read the host"
@@ -2407,7 +2409,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
         .store
         .board_times("age")
         .unwrap()
-        .0;
+        .since;
     assert_eq!(
         recorded,
         u64::try_from(since).ok(),

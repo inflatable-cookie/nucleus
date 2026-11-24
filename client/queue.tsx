@@ -769,15 +769,16 @@ export function MainSurface({
                       retry: () => void rustTasks.refetch(),
                       selected: rustTaskId,
                       onSelect: selectRustTask,
-                      projectName: ({ identity }) => {
+                      project: ({ identity }) => {
                         const origin = normalizeRepositoryOrigin(identity.repository);
-                        return projectForRepository(identity.repository, origin)?.name ?? origin ?? identity.repository;
-                      },
-                      projectBadge: ({ identity }) => {
-                        const origin = normalizeRepositoryOrigin(identity.repository);
-                        const repo = projectForRepository(identity.repository, origin)?.repositories
+                        const project = projectForRepository(identity.repository, origin);
+                        const repo = project?.repositories
                           .find((candidate) => candidate.origin && normalizeRepositoryOrigin(candidate.origin) === origin);
-                        return (repo?.path && state?.repositoryBadges?.[repo.path]) || null;
+                        return {
+                          name: project?.name ?? origin ?? identity.repository,
+                          key: project?.key,
+                          badge: (repo?.path && state?.repositoryBadges?.[repo.path]) || null,
+                        };
                       },
                     } : undefined}
                     leadsLoading={leadsQuery.isLoading}

@@ -523,7 +523,7 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
     {
         let mut state = service.state.lock().await;
         let board_times = state.store.board_times("unsent").unwrap();
-        assert!(board_times.0.is_some());
+        assert!(board_times.since.is_some());
         let since = state.waits["unsent"].since;
         assert!(
             state

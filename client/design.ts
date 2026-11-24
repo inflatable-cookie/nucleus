@@ -88,6 +88,18 @@ export const wash = {
 
 export const navigationTextOpacity = { normal: 0.85, dimmed: 0.72 } as const;
 
+/** T3's row labels use `text-secondary-label`; other hosts supply muted text. */
+export function cardLabelColor(c: Colors): string {
+  return c.foregroundLabel ?? c.foregroundMuted;
+}
+
+/** T3 nightly 0.1.12-nightly.20261124.5191: the regular sidebar title uses
+ * `text-foreground/75` at rest and `text-foreground` on the active row.
+ */
+export function cardTitleColor(c: Colors, selected: boolean): string {
+  return selected ? c.foreground : toneSurface(c.foreground, c.foreground, 0.75);
+}
+
 /**
  * The detail pane uses `canvas`. A host navigation shade fills both the header
  * and menu, and the list shares the canvas in that layout. Cards on the canvas

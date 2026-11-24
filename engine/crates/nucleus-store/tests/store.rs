@@ -241,7 +241,7 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
             sequence
         );
         let entered_at = u64::try_from(receipt.at).unwrap();
-        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
+        assert_eq!(store.board_times("fixture").unwrap().since, Some(entered_at));
         receipt.at += 1;
         assert_eq!(
             store
@@ -249,7 +249,7 @@ fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_sessio
                 .expect("duplicate"),
             None
         );
-        assert_eq!(store.board_times("fixture").unwrap().0, Some(entered_at));
+        assert_eq!(store.board_times("fixture").unwrap().since, Some(entered_at));
         version
     };
     let store = Store::open(&storage).expect("reopen");

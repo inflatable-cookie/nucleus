@@ -665,11 +665,18 @@ client data adapter (`client/web/rust-adapter.ts`) answers the shared screens'
 board contracts from the paired API, so there is no second set of screens.
 
 A Rust card uses the TypeScript three-line layout (Tom, 2026-11-24). The first
-line shows the task number and project badge, with the transition age alone
-at the right when recorded. The second line uses regular title weight. The
-title uses the sidebar's muted foreground until selection, when it uses the
-primary foreground. The third line shows a dot, the engine's
-effective state and an optional one-line cause.
+line shows the task number and project badge, with age alone at the right. The
+age uses state entry, then the latest task event, then admission. Leads and
+papercuts use the last update or creation time. The second line uses a regular-weight title on one
+line with ellipsis, the full title on browser hover, and wrapping in detail.
+Labels and status detail use T3's secondary label colour, resting titles use
+its sidebar title colour, and open titles use its full title foreground.
+The third line shows a dot and the state. A cause remains in detail and in the
+status line's browser tooltip.
+
+Task, lead, and papercut cards generate their T3-style project badge from the
+Nucleus project name or key, including before dispatch. A saved T3 title refines
+the generated badge, and a saved custom mark takes precedence when available.
 
 Thin lifecycle bars sit below the body, aligned with its text. The strip uses
 the same steps and colours as task detail, with five bars for code tasks and
@@ -682,8 +689,7 @@ supplies the label. A hold that lets the
 current turn finish adds an asterisk when the phase is shown. The engine
 records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads
-use local task state and the recorded entry time. Older rows start showing an
-age after a recorded transition. The first scheduler observation after restart
+use local task state and the recorded entry time. The first scheduler observation after restart
 establishes a volatile wait without dating it. A label fixed by committed facts,
 such as a blocking hold or a finished phase, keeps its recorded entry time.
 

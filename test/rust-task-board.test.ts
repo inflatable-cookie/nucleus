@@ -16,6 +16,7 @@ import { WebBoard } from "../service/web/web-board";
 import { RustBoardProxy } from "../service/web/rust-board";
 import { uiBoardSchema } from "../shared/contracts";
 import { inboxListWidth } from "../shared/inbox-board";
+import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 
 const legacy = uiBoardSchema.parse({
   revision: 1,
@@ -710,6 +711,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let pausedGroups = ["fixture team"];
   let usageCount = 49;
   let resetAt: number | undefined;
+  const boundRepository = "example/bound-control";
+  const boundTitle = "Native Control";
+  const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
+  const leadItem = (id: string, title: string, origin: string) => ({
+    id, title, repositories: [origin], kind: "lead", author: "Fixture planner",
+    body: "Fixture body", lanes: [], state: "open",
+    createdAtMs: now - 4 * 3_600_000, updatedAtMs: now - 36 * 60_000,
+  });
+  const papercut = "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
   const held = {
     ...task("held-task", "queued", "board-fixture#81"),
     number: 81,
@@ -739,7 +749,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
       settings: snap({ projects: { fixture: { name: "Fixture project", archived: false, repositories: [
-        { origin: "example/fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+        { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+        { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
+          hostProject: "fixture-bound", hostProjectTitle: boundTitle },
       ] } } }, "projects-1"),
       resolvedPlanners: { fixture: "fixture-planner" },
     }),
@@ -784,7 +796,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         canEditSettings: operator,
         planningProjects: operator ? null : ["fixture"],
       });
-    if (path === "/api/engine/theme") return Response.json({ theme: null });
+    if (path === "/api/engine/theme") return Response.json({
+      theme: {
+        settings: { defaultTheme: "t3-code", defaultAppearance: "dark" },
+        theme: { id: "t3-code", appearance: "dark", colors: {
+          text: "#f5f5f5", textMuted: "#a3a3a3", secondaryLabel: "#818181", sidebar: "#000000",
+        } },
+      },
+    });
     if (path === "/api/engine/profiles/usage") {
       const empty = { counts: {}, groups: {}, sample: 0 };
       const counts = { "fixture-worker": usageCount };
@@ -804,7 +823,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         number: 80,
         title: "Standalone task",
         stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
-        stateSinceMs: now - 12 * 60_000,
+        stateSinceMs: taskPhase === "queued" ? null : now - 12 * 60_000,
+        latestEventAtMs: now - 4 * 60_000,
         wait: taskPhase === "queued" ? "capacity" : workerRunning ? "running" : "hold",
         hold: taskPhase === "queued" || workerRunning ? null : { reason: "Wait before dispatching again." },
       };
@@ -841,7 +861,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }
     if (path === "/api/engine/planning/fixture/plan")
       return Response.json({ version: 0, lanes: [], documents: [], idle: true });
-    if (path === "/api/engine/planning/fixture/items" || path === "/api/engine/planning/fixture/decisions")
+    if (path === "/api/engine/planning/fixture/items") return Response.json([
+      leadItem("unbound", longLead, "example/board-fixture"),
+      leadItem("bound", "Lead with a saved T3 title", boundRepository),
+      { ...leadItem("mixed", "Lead spanning mixed bindings", boundRepository), repositories: [boundRepository, "example/board-fixture"] },
+      { ...leadItem("cut", papercut, "example/board-fixture"), kind: "papercut", updatedAtMs: null },
+    ]);
+    if (path === "/api/engine/planning/fixture/decisions")
       return Response.json([]);
     assert.fail("Unexpected standalone route " + path);
   };
@@ -852,6 +878,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     TextDecoder,
     TextEncoder,
     AbortController,
+  });
+  // The fixture uses literal hex colours. JSDOM has no canvas implementation.
+  Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+    value: () => ({ fillStyle: "" }),
   });
   const selector = (label: string) =>
     dom.window.document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
@@ -906,10 +936,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const heldHeader = header(heldCard, "Held by planner", "3h ago");
   assert.match(heldHeader.textContent ?? "", /^#81/);
   assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
-  assert.match(heldCard.textContent ?? "", /Held taskHeld by planner · Wait for the schema review\./);
+  assert.match(heldCard.textContent ?? "", /Held taskHeld by planner$/);
+  assert.equal(heldCard.querySelector('[title="Wait for the schema review. Then continue with the API."]')?.textContent, "Held by planner");
   assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
   const capacityCard = selector("#80, Standalone task")!;
-  header(capacityCard, "Waiting for capacity", "12m ago");
+  header(capacityCard, "Waiting for capacity", "4m ago");
   assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
@@ -919,15 +950,27 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Working, 1");
   await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
   const workingCard = selector("#80, Standalone task")!;
-  header(workingCard, "Working*", "12m ago");
+  const workingHeader = header(workingCard, "Working*", "12m ago");
   const title = [...workingCard.querySelectorAll("div")].find(
     (node) => node.childElementCount === 0 && node.textContent === "Standalone task",
   );
   assert.ok(title);
   const style = (element: Element) => dom.window.getComputedStyle(element);
   assert.equal(style(title).fontWeight, "400");
-  assert.equal(style(title).color, "rgb(165, 172, 184)");
-  assert.equal(title.nextElementSibling?.textContent, "Working* · Wait before dispatching again.");
+  // T3's standard sidebar uses text-foreground/75 here, text-foreground on
+  // the open row, and text-secondary-label on metadata (nightly 20261124.5191).
+  assert.equal(style(title).color, "rgba(245, 245, 245, 0.75)");
+  assert.equal(title.getAttribute("title"), "Standalone task");
+  assert.equal(style(title).whiteSpace, "nowrap");
+  assert.equal(style(title).textOverflow, "ellipsis");
+  for (const label of ["#80", "Fixture project", "12m ago"]) {
+    const node = [...workingHeader.querySelectorAll("div")].find((item) => item.textContent === label);
+    assert.ok(node, label);
+    assert.equal(style(node).color, "rgb(129, 129, 129)");
+  }
+  const statusLine = title.nextElementSibling?.querySelector('[title="Wait before dispatching again."]');
+  assert.equal(statusLine?.textContent, "Working*");
+  assert.equal(style(statusLine!.lastElementChild!).color, "rgb(129, 129, 129)");
   assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
   assert.deepEqual(routes.map((route, i) => count(route) - beforeTransition[i]!), [1, 0, 0, 0]);
   const cardStrip = workingCard.parentElement?.querySelector('[role="img"][aria-label^="Progress:"]');
@@ -964,7 +1007,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     "the selected task displays its run duration in the timeline");
   const fullStrip = detailProgress()!;
   assert.equal(style(title).fontWeight, "400");
-  assert.equal(style(title).color, "rgb(241, 243, 245)");
+  assert.equal(style(title).color, "rgb(245, 245, 245)");
+  const taskHeading = selector("Task detail")?.querySelector('[role="heading"]');
+  assert.match(taskHeading?.textContent ?? "", /board-fixture#80 · Standalone task/);
+  assert.notEqual(style(taskHeading!).whiteSpace, "nowrap");
+  assert.match(selector("Task detail")?.textContent ?? "", /Wait before dispatching again\./);
   assert.match(fullStrip.textContent ?? "", /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/);
   const colours = (strip: Element) => Array.from(strip.children, (step) => {
     assert.ok(step.firstElementChild);
@@ -994,6 +1041,40 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   dispatch = { ...dispatch, mode: "running" };
   emit("settings");
   await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
+
+  await click("Leads");
+  await eventually(() => Boolean(selector("Leads, 3")), "the Leads view shows all fixtures");
+  const expectLeadBadge = (title: string, badgeTitle: string) => {
+    const card = selector(`Lead: ${title}, Status: Unchecked · awaiting a check`);
+    assert.ok(card, title);
+    const badge = generatedProjectBadge(badgeTitle);
+    const mark = [...card.querySelectorAll("div")].find((node) => node.textContent === badge.monogram);
+    assert.ok(mark, `badge for ${badgeTitle}`);
+    assert.equal(style(mark).color, projectBadgeWebStyle(badge, true).color);
+    const text = card.querySelector(`[title="${title}"]`);
+    assert.ok(text, "full native title");
+    assert.equal(style(text).whiteSpace, "nowrap");
+    assert.equal(style(text).textOverflow, "ellipsis");
+    header(card, "Unchecked", "36m ago");
+    assert.equal(card.querySelector('[title="awaiting a check"]')?.textContent, "Unchecked");
+  };
+  expectLeadBadge(longLead, "Fixture project");
+  expectLeadBadge("Lead with a saved T3 title", boundTitle);
+  expectLeadBadge("Lead spanning mixed bindings", "Fixture project");
+  await click(`Lead: ${longLead}, Status: Unchecked · awaiting a check`);
+  await eventually(() => selector("Lead detail")?.querySelector('[role="heading"]')?.textContent === longLead,
+    "the entire lead title is shown in detail");
+  const leadHeading = selector("Lead detail")!.querySelector('[role="heading"]')!;
+  assert.notEqual(style(leadHeading).whiteSpace, "nowrap");
+  assert.equal(style(leadHeading).getPropertyValue("-webkit-line-clamp"), "");
+  await click("Papercuts, 1");
+  const cutCard = selector(`Papercut: ${papercut}, Status: Open`);
+  assert.ok(cutCard);
+  header(cutCard, "Open", "4h ago");
+  const cutTitle = cutCard.querySelector(`[title="${papercut}"]`);
+  assert.ok(cutTitle);
+  assert.equal(style(cutTitle).textOverflow, "ellipsis");
+  await click("Working, 1");
 
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");

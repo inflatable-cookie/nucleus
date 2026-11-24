@@ -86,6 +86,15 @@ pub struct Item {
     pub state: ItemState,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemWithTimes {
+    #[serde(flatten)]
+    pub item: Item,
+    pub created_at_ms: Option<i64>,
+    pub updated_at_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemKind {

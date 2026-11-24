@@ -7,7 +7,8 @@ use axum::{
 use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent, ItemKind,
-    ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan, RecordKind,
+    ItemState, ItemWithTimes, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan,
+    RecordKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -272,13 +273,16 @@ async fn items(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
     ProjectSelector { project }: ProjectSelector,
-) -> Result<Json<Vec<Item>>, ApiError> {
+) -> Result<Json<Vec<ItemWithTimes>>, ApiError> {
     let (state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     Ok(Json(
-        state.store.items(&project).map_err(ServiceError::from)?,
+        state
+            .store
+            .items_with_times(&project)
+            .map_err(ServiceError::from)?,
     ))
 }
 

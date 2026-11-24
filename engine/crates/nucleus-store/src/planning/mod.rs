@@ -190,6 +190,29 @@ impl Store {
         list(&self.connection, ItemRecord, project)
     }
 
+    /// Read item snapshots with their first and latest recorded times.
+    ///
+    /// # Errors
+    /// Returns an error if the items or timestamps cannot be read.
+    pub fn items_with_times(&self, project: &str) -> Result<Vec<ItemWithTimes>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT i.snapshot,
+                (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
+                    AND id = i.id ORDER BY sequence LIMIT 1),
+                (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
+                    AND id = i.id ORDER BY sequence DESC LIMIT 1)
+             FROM planning_items i WHERE i.project = ?1 ORDER BY i.id",
+        )?;
+        let rows = query.query_map([project], |row| {
+            Ok(ItemWithTimes {
+                item: decode(row, 0)?,
+                created_at_ms: row.get(1)?,
+                updated_at_ms: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Read one item by its project and ID.
     ///
     /// # Errors

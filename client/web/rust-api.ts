@@ -202,6 +202,8 @@ export const item = z.object({
   author: z.string(),
   taskLinks: z.array(z.string()).optional(),
   title: z.string(),
+  createdAtMs: integer.nullish(),
+  updatedAtMs: integer.nullish(),
   body: z.string(),
   lanes: z.array(z.string()),
   /** Imported items name their member repositories within the project, by origin. */

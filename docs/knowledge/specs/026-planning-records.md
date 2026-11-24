@@ -625,12 +625,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
     submission's creation). The project group shrinks and clips as one unit so the
     age keeps its place: at most two project marks, the rest as one "+N" count.
     The label reads at normal weight in the muted foreground, like the project.
-  - **Line 2:** the title, up to two lines — the row's only bold line.
-  - **Line 3:** a coloured dot, the state in plain words and the single most useful
-    detail after a middle dot ("Working · running affected tests", "Needs attention ·
-    reviewer launch unconfirmed", "Waiting · on the host", "Checked · awaiting
-    approval"). The state word reads at normal weight in its dot's tone (muted
-    for a neutral tone); the detail stays muted. The detail is the existing wait,
+  - **Line 2:** a regular-weight title on one line with ellipsis and the full title
+    on browser hover. The detail wraps the full title.
+  - **Line 3:** a coloured dot and the state in plain words. A task, lead or
+    papercut shows its cause on browser hover and in detail. Other prompts may
+    show it inline. The state word reads at normal weight in its dot's tone (muted
+    for a neutral tone); the detail stays muted. The cause is the existing wait,
     stop or report wording, shortened, never a raw ID. A declared wait names its state and next action, its owner in the
     accessible name (Spec 043). A lead's state follows its current check first:
     unchecked, then checks failed (even with an earlier approval kept), then approved

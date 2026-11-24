@@ -14,7 +14,6 @@ import {
   Button,
   Field,
   StateWash,
-  muted,
   row,
   useCardFill,
   type Colors,
@@ -43,6 +42,7 @@ import {
   waitOwnerLabel,
 } from "../../shared/task-detail-summary";
 import {
+  generatedProjectBadge,
   isDarkSurface,
   projectBadgeWebStyle,
   type ProjectBadge,
@@ -73,7 +73,9 @@ import {
   InteractiveBadge,
 } from "./badges";
 import {
+  cardLabelColor,
   cardRow,
+  cardTitleColor,
   hoverSurface,
   roles,
   selectedSurface,
@@ -83,11 +85,12 @@ import {
   type as typeScale,
 } from "../design";
 import { useFocusVisible } from "../focus-modality";
+import { useEngineFeatures } from "../engine-features";
 
 /**
  * Spec 026 row 12a: the single card component for the inbox board. Every card is
  * the same three-line row (Tom, 2026-11-21, nucleus#1515): a kind tile, a meta
- * line (reference or kind, project, age), the title in up to two lines, and one
+ * line (reference or kind, project, age), a one-line title, and one
  * status line — a coloured dot, the state in plain words and the single most
  * useful detail. Flags appear only for exceptions; buttons only where the card is
  * the action (hold and drained-lane prompts). Routing, host identity, profiles
@@ -149,6 +152,13 @@ function toneColor(tone: CardTone, c: Colors): string {
   );
 }
 
+function setNativeTitle(node: unknown, title: string | null | undefined) {
+  // React Native Web does not forward the browser's title attribute.
+  if (typeof HTMLElement === "undefined" || !(node instanceof HTMLElement)) return;
+  if (title) node.title = title;
+  else node.removeAttribute("title");
+}
+
 /** The kind tile: one icon per kind on its tone at low alpha. Decorative; the row's label names the kind. */
 export function KindTile({ kind, c }: { kind: CardKind; c: Colors }) {
   const tile = KIND_TILES[kind];
@@ -175,25 +185,30 @@ export function KindTile({ kind, c }: { kind: CardKind; c: Colors }) {
 /** The project on a row's meta line: the T3 project badge when matched, otherwise the folder icon. */
 export function CardProject({
   name,
+  projectKey,
   badge = null,
   c,
 }: {
   name: string;
+  projectKey?: string;
   badge?: ProjectBadge | null;
   c: Colors;
 }) {
+  const color = cardLabelColor(c);
+  const { engine } = useEngineFeatures();
+  const mark = badge ?? (engine === "rust" && projectKey ? generatedProjectBadge(name.trim() || projectKey) : null);
   return (
     <>
-      {badge ? (
-        <ProjectBadgeMark badge={badge} c={c} />
+      {mark ? (
+        <ProjectBadgeMark badge={mark} c={c} />
       ) : (
-        <Icon name="Folder" size={12} color={c.foregroundMuted} />
+        <Icon name="Folder" size={12} color={color} />
       )}
       <Text
         numberOfLines={1}
         ellipsizeMode="tail"
         style={{
-          ...muted(c),
+          color,
           fontSize: typeScale.metadata.fontSize,
           lineHeight: typeScale.metadata.lineHeight,
           flexShrink: 1,
@@ -222,13 +237,17 @@ export function activityStatus(activity: TaskActivity): CardStatus {
 export function StatusLine({
   status,
   c,
+  stateOnly = false,
 }: {
   status: CardStatus;
   c: Colors;
+  stateOnly?: boolean;
 }) {
-  const color = toneColor(status.tone, c);
+  const labelColor = cardLabelColor(c);
+  const color = status.tone === "muted" ? labelColor : toneColor(status.tone, c);
   return (
     <View
+      ref={stateOnly ? (node) => setNativeTitle(node, status.detail && plainCardText(status.detail)) : undefined}
       accessible={Boolean(status.a11y)}
       accessibilityLabel={status.a11y ? plainCardText(status.a11y) : undefined}
       style={{
@@ -255,7 +274,7 @@ export function StatusLine({
           minWidth: 0,
           fontSize: typeScale.metadata.fontSize,
           lineHeight: typeScale.metadata.lineHeight,
-          color: c.foregroundMuted,
+          color: labelColor,
         }}
       >
         <Text
@@ -266,7 +285,7 @@ export function StatusLine({
         >
           {plainCardText(status.state)}
         </Text>
-        {status.detail ? ` · ${plainCardText(status.detail)}` : ""}
+        {!stateOnly && status.detail ? ` · ${plainCardText(status.detail)}` : ""}
       </Text>
     </View>
   );
@@ -348,7 +367,7 @@ export const BoardCard = React.memo(function BoardCard({
             <Text
               numberOfLines={1}
               style={{
-                color: c.foregroundMuted,
+                color: cardLabelColor(c),
                 fontSize: typeScale.metadata.fontSize,
                 lineHeight: typeScale.metadata.lineHeight,
                 fontWeight: "400",
@@ -379,7 +398,7 @@ export const BoardCard = React.memo(function BoardCard({
             <Text
               numberOfLines={1}
               style={{
-                ...muted(c),
+                color: cardLabelColor(c),
                 fontSize: typeScale.metadata.fontSize,
                 lineHeight: typeScale.metadata.lineHeight,
                 flexShrink: 0,
@@ -391,10 +410,11 @@ export const BoardCard = React.memo(function BoardCard({
         </View>
       )}
       <Text
-        pointerEvents="none"
-        numberOfLines={2}
+        ref={(node) => setNativeTitle(node, title)}
+        numberOfLines={1}
+        ellipsizeMode="tail"
         style={{
-          color: selected ? c.foreground : c.foregroundMuted,
+          color: cardTitleColor(c, selected),
           fontWeight: "400",
           fontSize: typeScale.body.fontSize,
           lineHeight: typeScale.body.lineHeight,
@@ -403,8 +423,8 @@ export const BoardCard = React.memo(function BoardCard({
         {title}
       </Text>
       {status ? (
-        <View pointerEvents="none">
-          <StatusLine status={status} c={c} />
+        <View>
+          <StatusLine status={status} c={c} stateOnly={kind === "task" || kind === "lead" || kind === "papercut"} />
         </View>
       ) : null}
     </View>
@@ -816,7 +836,7 @@ export const TaskCard = React.memo(function TaskCard({
                   ? {
                       tone: "muted",
                       state: "Dispatch held",
-                      detail: `by ${holdOwner}: ${holdReasonPreview(dispatchWait.reason)}`,
+                      detail: `by ${holdOwner}: ${dispatchWait.reason}`,
                       holds: ["dispatch"],
                     }
                   : stopRecord
@@ -995,6 +1015,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   board = true,
   projectBadge = null,
   projectLabel,
+  projectKey,
 }: {
   decision: DecisionView;
   selected: boolean;
@@ -1005,6 +1026,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   projectBadge?: ProjectBadge | null;
   /** The asking project's display name from the board's project lookup. */
   projectLabel?: string;
+  projectKey?: string;
 }) {
   useTick(30_000);
   const headline = decision.headline ?? decision.question;
@@ -1035,6 +1057,7 @@ export const DecisionCard = React.memo(function DecisionCard({
         <CardProject
           name={projectLabel ?? decisionProjectLabel(decision)}
           badge={projectBadge}
+          projectKey={projectKey}
           c={c}
         />
       }

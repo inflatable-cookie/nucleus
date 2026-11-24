@@ -113,6 +113,8 @@ export function boardItem(
     check: null,
     approved: false,
     targets: [],
+    createdAt: item.createdAtMs == null ? undefined : iso(item.createdAtMs),
+    updatedAt: item.updatedAtMs == null ? undefined : iso(item.updatedAtMs),
     parked:
       item.state === "parked"
         ? { reason: item.reason ?? "", revisitAt: item.revisitAt ?? null }
@@ -215,8 +217,8 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
         ? [{ kind: "task" as const, repository: repos[0]?.origin ?? null, reference: item.taskId, at: "" }]
         : [],
     source: null,
-    createdAt: "",
-    updatedAt: "",
+    createdAt: item.createdAtMs == null ? "" : iso(item.createdAtMs),
+    updatedAt: item.updatedAtMs == null ? "" : iso(item.updatedAtMs),
     closedAt: null,
   };
 }

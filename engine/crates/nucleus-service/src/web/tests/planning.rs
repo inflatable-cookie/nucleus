@@ -112,6 +112,8 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
     assert!(promoted.ends_with("Add a fixture."));
     let source = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
     assert_eq!(source[0]["body"], brief);
+    let created = source[0]["createdAtMs"].as_i64().unwrap();
+    assert!(source[0]["updatedAtMs"].as_i64().unwrap() >= created);
     assert_eq!(task["reference"], "nucleus-fixture#1");
     assert_eq!(task["identity"]["reference"], task_id);
     assert_eq!(task["identity"]["origin_thread"], "planner");
