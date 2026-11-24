@@ -18,7 +18,7 @@ const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
 
 #[tokio::test]
-async fn new_worker_launches_exclude_disabled_and_other_roles_even_when_requested() {
+async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() {
     let (forge, forge_server) = serve_forge(Router::new()).await;
     let (_home, mut service) = fixture(forge);
     let (host, native_server) = native_fixture_with_traffic(
@@ -38,7 +38,11 @@ async fn new_worker_launches_exclude_disabled_and_other_roles_even_when_requeste
             {"name":"Disabled","enabled":false,"selection":{"id":"disabled","provider":"codex","model":"first"}},
             {"name":"Review","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"first"}},
             {"name":"Coordinator","roles":["coordinator"],"selection":{"id":"coordinator","provider":"codex","model":"first"}},
-            {"name":"Worker","roles":["worker"],"selection":{"id":"worker","provider":"codex","model":"second"}}
+            {"name":"Missing instance","providerInstanceId":"unavailable","selection":{"id":"missing-instance","provider":"codex","model":"first"}},
+            {"name":"Missing model","providerInstanceId":"codex","selection":{"id":"missing-model","provider":"codex","model":"other"}},
+            {"name":"Worker","roles":["worker"],"modeId":"supervised",
+             "featureValues":{"speed":"priority"},
+             "selection":{"id":"worker","provider":"codex","model":"second"}}
         ]
     })).expect("profile settings")));
     let observation = Observation {
@@ -47,11 +51,22 @@ async fn new_worker_launches_exclude_disabled_and_other_roles_even_when_requeste
         workspace: Observed::Known(Workspace::Absent),
     };
     let host = service.host.fixture_pass();
-    for request in [None, Some("disabled"), Some("review"), Some("coordinator")] {
-        let brief = request.map_or_else(
-            || "Fixture brief".into(),
-            |id| format!("---\nqueue: {{profileRequests: {{worker: {{profileId: {id}, reason: fixture, required: true}}}}}}\n---\nFixture brief"),
-        );
+    for request in [
+        None,
+        Some(("disabled", true)),
+        Some(("review", true)),
+        Some(("coordinator", true)),
+        Some(("missing-instance", true)),
+        Some(("missing-model", true)),
+        Some(("missing-instance", false)),
+        Some(("missing-model", false)),
+    ] {
+        let brief = match request {
+            Some((id, required)) => format!(
+                "---\nqueue:\n  profileRequests:\n    worker:\n      profileId: {id}\n      reason: fixture\n      required: {required}\n---\nFixture brief"
+            ),
+            None => "Fixture brief".into(),
+        };
         let mut task = Task::new(
             Identity {
                 id: "fixture".into(),
@@ -74,11 +89,16 @@ async fn new_worker_launches_exclude_disabled_and_other_roles_even_when_requeste
                 .select_launch(&task, &observation, Role::Worker, &host)
                 .await,
         ) {
-            (None, Ok(LaunchSelection::Profile(selected))) => {
+            (None | Some((_, false)), Ok(LaunchSelection::Profile(selected))) => {
                 assert_eq!(selected.intent.profile().id, "worker");
+                assert_eq!(selected.native.runtime_mode, "approval-required");
+                assert_eq!(
+                    json!(selected.native.options),
+                    json!([{"id":"serviceTier","value":"priority"}])
+                );
             }
             (
-                Some(requested),
+                Some((requested, true)),
                 Err(ServiceError::Profile(ProfileLaunchError::RequiredProfileUnavailable {
                     id,
                     ..
@@ -128,7 +148,10 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
             "environment":{"orchestrationProtocolVersion":2},
             "providers":[
                 {"instanceId":"codex","enabled":true,"status":"ready",
-                 "models":[{"slug":"first"},{"slug":"second"}]},
+                 "models":[{"slug":"first"},{"slug":"second","capabilities":{
+                    "optionDescriptors":[{"id":"serviceTier","type":"select",
+                                          "options":[{"id":"default"},{"id":"priority"}]}]
+                 }}]},
                 {"instanceId":"claudeAgent","enabled":true,"status":"ready",
                  "models":[{"slug":"other"}]}
             ]

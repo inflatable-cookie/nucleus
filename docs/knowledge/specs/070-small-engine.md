@@ -514,8 +514,10 @@ Older Rust Profiles JSON still allows both roles and enables profiles by
 default. Dispatch checks the imported enabled flag and role list for each new
 reservation. Scopes and coordinator membership are available in Settings for
 reference. The T3 adapter translates canonical mode, effort and options against
-the matching provider instance. A profile with an option the adapter or model
-cannot express stays out of dispatch.
+the matching provider instance and model. It uses the same thinking carrier
+precedence as the [TypeScript adapter](t3code-host-adapter.md#model-options) and
+leaves canonical feature defaults to the provider. A profile with an option the
+adapter or model cannot express stays out of dispatch.
 
 ## Out of scope until milestone 3
 
