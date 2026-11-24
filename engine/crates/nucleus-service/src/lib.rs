@@ -11,6 +11,7 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 mod ticket;
+mod titles;
 mod web;
 
 use std::{
@@ -113,6 +114,7 @@ pub struct Service {
     changes: broadcast::Sender<TaskChange>,
     wake: Notify,
     planner_wake: Notify,
+    title_wake: Notify,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -232,6 +234,7 @@ impl Service {
             changes,
             wake: Notify::new(),
             planner_wake: Notify::new(),
+            title_wake: Notify::new(),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
@@ -372,14 +375,20 @@ impl Service {
         let _subscription = self.watch_lock.lock().await;
         tokio::join!(
             self.watch_thread_hints(),
-            Box::pin(self.watch_planner_authority())
+            Box::pin(self.watch_planner_authority()),
+            Box::pin(self.watch_titles())
         );
     }
 
     async fn watch_thread_hints(&self) {
         loop {
             let (sender, mut hints) = mpsc::channel(128);
-            let watch = self.host.watch_threads(&sender);
+            let titles = self
+                .project
+                .acp_provider
+                .as_deref()
+                .map(|provider| (self.project.host_project.as_str(), provider));
+            let watch = self.host.watch_threads(&sender, titles);
             tokio::pin!(watch);
             loop {
                 tokio::select! {
@@ -530,6 +539,7 @@ impl Service {
         };
         state.schedule.wake(id, due, priority);
         let prior = state.set_wait(id, wait);
+        self.desire_title(&state, &row.task, wait);
         if prior != wait {
             self.publish(id, current.version);
         }
@@ -773,6 +783,7 @@ impl Service {
             state.planner_authority.remove(id);
         }
         state.set_wait(id, None);
+        self.desire_title(state, task, None);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);

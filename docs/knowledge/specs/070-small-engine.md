@@ -125,6 +125,10 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - Dispatch never reads the machine's load average. Slots and the allowance are the only dispatch limits.
     - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
     - The Dispatch settings domain drops `max_load`, and a saved domain that still carries it loads with the field ignored.
+22. **Native task titles.** Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
+    - The task row shows `<State>: <reference> <brief title>`. The reference stands in for the task number until milestone 3. Worker children use `<reference>: <brief title>` and reviewer children use `<reference> review: <brief title>`. Strip a trailing `worker` and fit the title to the host's limit at a word boundary.
+    - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity, Waiting on Nucleus, and named hold targets. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
+    - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
 
 ## The model
 

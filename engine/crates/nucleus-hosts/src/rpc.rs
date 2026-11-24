@@ -174,6 +174,16 @@ impl Rpc {
         payload: impl Serialize + Send,
         read: Read,
     ) -> Result<Reply, HostError> {
+        self.call_guarded(method, payload, read, || Ok(())).await
+    }
+
+    pub(crate) async fn call_guarded(
+        &self,
+        method: &str,
+        payload: impl Serialize + Send,
+        read: Read,
+        check: impl FnOnce() -> Result<(), HostError> + Send,
+    ) -> Result<Reply, HostError> {
         let mut slot = self.socket.lock().await;
         if time::Instant::now() < slot.retry_at {
             return Err(HostError::Deferred {
@@ -190,6 +200,10 @@ impl Rpc {
                     next_id: 0,
                 },
             };
+            if let Err(error) = check() {
+                slot.connection = Some(connection);
+                return Err(error);
+            }
             let reply = time::timeout(DEADLINE, connection.call(method, payload, read))
                 .await
                 .map_err(|_| HostError::Timeout)??;
@@ -206,13 +220,15 @@ impl Rpc {
     pub(crate) async fn watch_threads(
         &self,
         hints: &mpsc::Sender<ThreadHint>,
+        titles: Option<(&crate::title_shell::TitleShell, &str, &str)>,
     ) -> Result<(), HostError> {
         let socket = time::timeout(DEADLINE, self.connect())
             .await
             .map_err(|_| HostError::Timeout)??;
         let mut connection = Connection { socket, next_id: 0 };
         connection.send(json!({"_tag":"Request", "id":"1", "tag":"orchestration.subscribeShell", "headers":[],
-            "payload":{"omitIdleSubagents":true,"omitOlderSettled":true}})).await?;
+            "payload":{"omitIdleSubagents":true,"omitOlderSettled":true,"requestCompletionMarker":true}})).await?;
+        let mut initial = None;
         loop {
             let frames = time::timeout(Duration::from_mins(1), connection.frames())
                 .await
@@ -226,6 +242,30 @@ impl Rpc {
                             .send(json!({"_tag":"Ack","requestId":"1"}))
                             .await?;
                         for item in frame["values"].as_array().ok_or(HostError::Protocol)? {
+                            if let Some((titles, project, provider)) = titles {
+                                match item["kind"].as_str() {
+                                    Some("snapshot")
+                                        if item
+                                            .get("resolvedRepositoryIdentityRoots")
+                                            .is_none() =>
+                                    {
+                                        titles.replace(None);
+                                        initial = crate::title_shell::Shell::read(
+                                            &item["snapshot"],
+                                            project,
+                                            provider,
+                                        );
+                                    }
+                                    Some("synchronized") => titles.replace(initial.take()),
+                                    _ => {
+                                        if let Some(shell) = &mut initial {
+                                            shell.update(item, project, provider);
+                                        } else {
+                                            titles.update(item, project, provider);
+                                        }
+                                    }
+                                }
+                            }
                             if let Some(hint) = ThreadHint::read(item) {
                                 hints.try_send(hint).map_err(|_| HostError::Uncertain)?;
                             }

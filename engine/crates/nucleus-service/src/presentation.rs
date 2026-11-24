@@ -214,7 +214,7 @@ fn purpose(task: &Task, role: Role, store: &Store) -> String {
     }
 }
 
-fn brief_title(text: &str) -> Option<&str> {
+pub(super) fn brief_title(text: &str) -> Option<&str> {
     let mut lines = text
         .lines()
         .skip_while(|line| line.trim().is_empty())
@@ -279,7 +279,7 @@ fn brief_title_prefers_a_heading_to_prose_and_code() {
     assert_eq!(brief_title("---\nkind: work"), None);
 }
 
-fn excerpt(value: &str, limit: usize) -> String {
+pub(super) fn excerpt(value: &str, limit: usize) -> String {
     static REDACTOR: LazyLock<Redactor> =
         LazyLock::new(|| Redactor::new([], RedactionRules::common()));
     REDACTOR.redact(value).text.chars().take(limit).collect()

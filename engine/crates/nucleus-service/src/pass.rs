@@ -34,6 +34,10 @@ pub(super) enum DispatchTarget<'a> {
         frozen: &'a Binding,
         checkout: &'a Checkout<'a>,
     },
+    Title {
+        frozen: &'a Binding,
+        checkout: &'a Checkout<'a>,
+    },
     Planner(&'a NoticeTarget),
 }
 
@@ -250,7 +254,7 @@ impl Service {
         }
     }
 
-    fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
+    pub(super) fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
         Ok(Binding {
             project_id: self.project.host_project.clone(),
             worktree_path: checkout
@@ -371,7 +375,7 @@ impl Service {
         let inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            title: format!("{} • {role:?}", task.identity().reference),
+            title: crate::titles::child_title(task, role),
             profile: selection
                 .as_ref()
                 .map_or(self.project.profile(role), |selected| &selected.native),
@@ -527,6 +531,7 @@ impl Service {
                 frozen, checkout, ..
             }
             | DispatchTarget::Archive { frozen, checkout }
+            | DispatchTarget::Title { frozen, checkout }
                 if **frozen != self.binding(checkout)? =>
             {
                 return Err(HostError::Binding.into());
@@ -536,8 +541,17 @@ impl Service {
             }
             _ => {}
         }
-        self.check_project().await?;
+        if !matches!(target, DispatchTarget::Title { .. }) {
+            self.check_project().await?;
+        }
         match target {
+            DispatchTarget::Title { checkout, .. } => {
+                // Exact native destination and project came from the synchronized
+                // shell. Keep the usual local identity and ownership fence.
+                self.project.verify(&self.git)?;
+                let present = checkout.observe()? != Workspace::Absent;
+                Ok((present || task.phase().is_terminal()).then_some(false))
+            }
             DispatchTarget::Archive { checkout, .. } => {
                 if task.phase() != Phase::Done {
                     return Err(HostError::Binding.into());

@@ -7,8 +7,8 @@ use crate::decision::{
     Action, CloseWorkspace, Forge, Launch, Observation, Observed, RunState, decide,
 };
 use crate::model::{
-    Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, LaunchInputs,
-    OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
+    Acceptance, Authority, Brief, CallbackCredential, CredentialDigest, Head, Hold, HoldBy,
+    LaunchInputs, OpenQuestion, Phase, PreparedLaunch, Question, Report, Role, Run, Task, Verdict,
 };
 use crate::profiles::ProfileLaunch;
 
@@ -406,7 +406,15 @@ impl Task {
                 }
                 self.amend(text)?;
             }
-            Command::Hold(reason) => self.hold = Some(Hold { reason }),
+            Command::Hold(reason) => {
+                self.hold = Some(Hold {
+                    reason,
+                    by: Some(match authority {
+                        Authority::Operator { .. } => HoldBy::Operator,
+                        Authority::Planner { .. } => HoldBy::Planner,
+                    }),
+                });
+            }
             Command::Release => self.hold = None,
         }
         Ok(())

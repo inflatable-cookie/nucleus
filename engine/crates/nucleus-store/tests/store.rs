@@ -224,6 +224,80 @@ fn an_unrelated_database_is_never_initialized_as_engine_state() {
 }
 
 #[test]
+fn title_receipts_keep_the_same_request_across_restart_and_retry() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open");
+    store
+        .create(&task("1", "fixture#1"), &event("admitted"))
+        .expect("admit");
+    assert!(
+        store
+            .desire_title("1", "thread", "Working")
+            .expect("new title")
+    );
+    let first = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("desired");
+    assert!(store.defer_title(&first, 100).expect("begin send"));
+    drop(store);
+
+    let store = Store::open(&storage).expect("restart");
+    let retry = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("retry");
+    assert_eq!(retry.generation, first.generation);
+    assert_eq!(retry.retry_at, 5_100);
+    assert!(store.defer_title(&retry, retry.retry_at).expect("retry"));
+    assert_eq!(
+        store
+            .pending_title("thread")
+            .expect("pending")
+            .expect("backoff")
+            .retry_at,
+        15_100
+    );
+    assert!(
+        store
+            .desire_title("1", "thread", "Reviewing")
+            .expect("phase changed")
+    );
+    store.confirm_title(&retry).expect("late receipt");
+    let next = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("new intent");
+    assert_eq!(next.generation, first.generation + 1);
+    assert_eq!(next.retry_at, 0);
+    assert!(
+        !store
+            .desire_title("1", "thread", "Reviewing")
+            .expect("same desired title")
+    );
+    store.confirm_title(&next).expect("settled title");
+    assert!(store.pending_title("thread").expect("pending").is_none());
+
+    store
+        .desire_title("1", "thread", "Waiting for capacity")
+        .expect("new wait");
+    let uncertain = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("wait intent");
+    store.defer_title(&uncertain, 0).expect("attempted rename");
+    store
+        .desire_title("1", "thread", "Reviewing")
+        .expect("wait cleared");
+    let restored = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("a possibly delivered rename needs correcting");
+    assert_eq!(restored.generation, uncertain.generation + 1);
+}
+
+#[test]
 fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
@@ -234,7 +308,7 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
+        "DROP TABLE task_titles; DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
          DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
