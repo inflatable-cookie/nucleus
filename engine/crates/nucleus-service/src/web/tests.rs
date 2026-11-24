@@ -1429,6 +1429,42 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
 }
 
 #[tokio::test]
+async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let path = "/v1/settings/profiles";
+    let initial = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(initial["value"]["pausedGroups"], json!([]));
+    let mut input = json!({"revision": initial["revision"], "value": initial["value"]});
+    input["value"]["pausedGroups"] = json!([" shared"]);
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &input).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    input["value"]["pausedGroups"] = json!(["shared"]);
+    let paused = json_body(put_settings(&api, path, &BOARD_KEY, &input).await).await;
+    assert_eq!(paused["value"]["pausedGroups"], json!(["shared"]));
+    {
+        let mut state = service.state.lock().await;
+        state.set_wait("awaiting-group", Some(WaitReason::Capacity));
+        state
+            .group_waits
+            .insert("awaiting-group".into(), crate::profiles::GroupPause::Manual);
+        state.schedule.park("awaiting-group");
+        assert!(state.schedule.due("awaiting-group").is_none());
+    }
+    let input =
+        json!({"revision": paused["revision"], "value": {"profiles": [], "pausedGroups": []}});
+    let unpaused = json_body(put_settings(&api, path, &BOARD_KEY, &input).await).await;
+    assert_eq!(unpaused["value"]["pausedGroups"], json!([]));
+    let state = service.state.lock().await;
+    assert!(
+        state.schedule.due("awaiting-group").expect("settings wake") <= tokio::time::Instant::now()
+    );
+}
+
+#[tokio::test]
 async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
     let (host, _, reads, native) = planner_roster_fixture("planner-one", "planner-two").await;

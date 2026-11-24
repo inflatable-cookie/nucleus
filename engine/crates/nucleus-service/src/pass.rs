@@ -5,9 +5,9 @@ use std::{
 };
 
 use nucleus_core::{
-    Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation,
-    Observed, Phase, Report, RetainedThread, Role, Run, RunState, Task, WaitReason, Workspace,
-    decide,
+    Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
+    LaunchInputs, Observation, Observed, Phase, Report, RetainedThread, Role, Run, RunState, Task,
+    WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -18,8 +18,10 @@ use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
 
 use crate::{
-    Service, ServiceError, active, event, now_ms, profiles::SelectedLaunch,
-    project::linked_checkout, ticket,
+    Service, ServiceError, active, event, now_ms,
+    profiles::{LaunchSelection, SelectedLaunch},
+    project::linked_checkout,
+    ticket,
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
@@ -206,7 +208,12 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
         let (state, activity, error) = match host.observe_run(run, now_ms()).await {
-            Ok(seen) => (Observed::Known(seen.host), seen.activity, None),
+            Ok(seen) => {
+                if let Some(limit) = &seen.provider_limit {
+                    self.record_provider_limit(row, run, limit).await?;
+                }
+                (Observed::Known(seen.host), seen.activity, None)
+            }
             Err(error) => (Observed::Unknown, None, Some(error)),
         };
         self.observe_activity(row, activity).await?;
@@ -273,6 +280,17 @@ impl Service {
         action: Action,
     ) -> Result<Action, ServiceError> {
         let kind = match &action {
+            Action::Advance(_)
+                if matches!(
+                    observation.host,
+                    Observed::Known(Host::Current {
+                        state: RunState::UsageLimited,
+                        ..
+                    })
+                ) =>
+            {
+                "provider_limit"
+            }
             Action::Advance(_) => "phase_reconciled",
             Action::Revoke => "run_revoked",
             Action::Relaunch(_) => "run_failed",
@@ -300,10 +318,13 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
-        let selection = self.select_launch(task, &observation, role, host).await?;
-        let via = selection
-            .as_ref()
-            .map_or(via.clone(), |selected| selected.intent.via().clone());
+        let selection = match self.select_launch(task, &observation, role, host).await? {
+            LaunchSelection::Fixture => None,
+            LaunchSelection::Profile(selected) => Some(selected),
+            LaunchSelection::Paused => return Ok(Action::Wait(WaitReason::Capacity)),
+        };
+        let selection = selection.as_deref();
+        let via = selection.map_or(via, |selected| selected.intent.via().clone());
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
             self.project.verify(&self.git)?;
             observation.workspace = Observed::Known(checkout.allocate(&self.project.start)?);
@@ -328,7 +349,7 @@ impl Service {
             checkout.branch(),
             &self.report_command,
             &ticket_path,
-            selection.as_ref().map(|selected| &selected.intent),
+            selection.map(|selected| &selected.intent),
         );
         let binding = self.binding(checkout)?;
         let parent = if let Some(provider) = &self.project.acp_provider {
@@ -372,27 +393,20 @@ impl Service {
         } else {
             None
         };
+        let profile = selection.map_or(self.project.profile(role), |selected| &selected.native);
         let inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
             title: crate::titles::child_title(task, role),
-            profile: selection
-                .as_ref()
-                .map_or(self.project.profile(role), |selected| &selected.native),
+            profile,
             via: &via,
             instance: &instance,
             started_at: now_ms(),
             text,
         })?;
-        let mut seed = [0; 32];
-        getrandom::fill(&mut seed).map_err(|_| ServiceError::Ticket)?;
-        let mut updated = task.clone();
-        let credential = if let Some(selected) = &selection {
-            updated.reserve_profile_launch(&observation, inputs, &seed, selected.intent.clone())?
-        } else {
-            updated.reserve_launch(&observation, inputs, &seed)?
-        };
-        self.persist_reservation(row, &updated, &credential, selection.as_ref(), via)
+        let (updated, credential) =
+            freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
+        self.persist_reservation(row, &updated, &credential, selection, via)
             .await
     }
 
@@ -462,11 +476,17 @@ impl Service {
         ) {
             return self.apply(row, &observation, action).await;
         }
+        if let Some(wait) = self.pause_prepared(row, &observation).await? {
+            return Ok(wait);
+        }
         if !self.launch_capacity(&task.identity().id, false).await? {
             return Ok(Action::Wait(WaitReason::Capacity));
         }
         let Some((sent, result, _)) = self.send(row, checkout, host).await? else {
-            return Ok(Action::Wait(WaitReason::HostUnknown));
+            return Ok(self
+                .pause_prepared(row, &observation)
+                .await?
+                .unwrap_or(Action::Wait(WaitReason::HostUnknown)));
         };
         if result == SendOutcome::Rejected {
             observation.host = Observed::Known(current(&sent.task, RunState::Rejected)?);
@@ -500,9 +520,18 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(None);
         }
-        let mut sent = task.clone();
-        let dispatch = authorization.record(&mut sent)?;
-        let mut sent = self.save(row, sent, &event("host_send")).await?;
+        self.storage.database().verify()?;
+        let (mut sent, dispatch) = {
+            let mut state = self.state.lock().await;
+            let run = task.run().ok_or(ServiceError::Input)?;
+            if !run.revoked() && state.prepared_pause(run)?.is_some() {
+                return Ok(None);
+            }
+            let mut task = task.clone();
+            let dispatch = authorization.record(&mut task)?;
+            let version = self.commit(&mut state, row, &task, &event("host_send"), None)?;
+            (TaskRow { task, version }, dispatch)
+        };
         let result = host.send(dispatch).await?;
         if archive && result == SendOutcome::Rejected {
             let mut updated = sent.task.clone();
@@ -795,6 +824,27 @@ impl Service {
         self.save(row, updated, &audit).await?;
         Ok(action)
     }
+}
+
+fn freeze_launch(
+    task: &Task,
+    observation: &Observation,
+    inputs: LaunchInputs,
+    selection: Option<&SelectedLaunch>,
+    fallback_group: &str,
+) -> Result<(Task, CallbackCredential), ServiceError> {
+    let mut seed = [0; 32];
+    getrandom::fill(&mut seed).map_err(|_| ServiceError::Ticket)?;
+    let mut updated = task.clone();
+    let group = selection.map_or(fallback_group, |selected| &selected.group);
+    let credential = updated.reserve_grouped_launch(
+        observation,
+        inputs,
+        &seed,
+        selection.map(|selected| selected.intent.clone()),
+        group.into(),
+    )?;
+    Ok((updated, credential))
 }
 
 fn waiting_on_run(

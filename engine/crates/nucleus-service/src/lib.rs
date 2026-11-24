@@ -131,6 +131,7 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, (WaitReason, Instant)>,
     capacity_waiters: VecDeque<String>,
+    group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
@@ -223,6 +224,7 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 capacity_waiters: VecDeque::new(),
+                group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
@@ -296,10 +298,17 @@ impl Service {
     /// # Errors
     /// Returns an error if the engine cannot verify its volume or read its rows.
     pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
+        self.pass_with_host(&self.host.pass(self.storage.scratch().path()))
+            .await
+    }
+
+    async fn pass_with_host(
+        &self,
+        host: &nucleus_hosts::T3Pass<'_>,
+    ) -> Result<Vec<PassOutcome>, ServiceError> {
         let _cycle = self.pass_lock.lock().await;
         self.storage.database().verify()?;
         let mut first = Some(self.wait_due_task().await?);
-        let host = self.host.pass(self.storage.scratch().path());
         let mut results = Vec::with_capacity(PASS_BATCH);
         let mut visited = BTreeSet::new();
         for _ in 0..PASS_BATCH {
@@ -324,6 +333,7 @@ impl Service {
             let defer_refresh = {
                 let mut state = self.state.lock().await;
                 self.track(&mut state, &row.task);
+                state.group_waits.remove(&id);
                 priority == Priority::Refresh && state.fresh_running_hint(&row.task)
             };
             let result = if defer_refresh {
@@ -550,7 +560,20 @@ impl Service {
         } else {
             priority
         };
-        state.schedule.wake(id, due, priority);
+        match state
+            .group_waits
+            .get(id)
+            .copied()
+            .filter(|_| wait == Some(WaitReason::Capacity))
+        {
+            Some(profiles::GroupPause::Until(reset)) => state.schedule.wake(
+                id,
+                now + Duration::from_millis(reset.saturating_sub(now_ms())),
+                priority,
+            ),
+            Some(profiles::GroupPause::Manual) => state.schedule.park(id),
+            None => state.schedule.wake(id, due, priority),
+        }
         let prior = state.set_wait(id, wait);
         self.desire_title(&state, &row.task, wait);
         if prior != wait {
@@ -944,6 +967,9 @@ impl State {
     }
 
     fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
+        if wait != Some(WaitReason::Capacity) {
+            self.group_waits.remove(id);
+        }
         let prior = self.waits.get(id).map(|(reason, _)| *reason);
         if prior == wait {
             return prior;
@@ -968,7 +994,7 @@ impl State {
         if let Some(id) = self
             .capacity_waiters
             .iter()
-            .find(|id| !self.schedule.effect_ready(id, now))
+            .find(|id| !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now))
         {
             self.schedule.wake(id, now, Priority::Effect);
         }

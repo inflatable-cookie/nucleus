@@ -706,6 +706,89 @@ async fn activity_comes_only_from_the_launchs_own_native_run() {
 }
 
 #[tokio::test]
+async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let mut limited = snapshot(&binding, &instance, "failed", false);
+    let run = &mut limited["projection"]["runs"][0];
+    run["rootNodeId"] = json!("root");
+    run["completedAt"] = json!("2026-11-23T16:00:00Z");
+    run["providerInstanceId"] = json!("fixture-provider");
+    limited["projection"]["turnItems"] = json!([{
+        "id": "error", "type":"error", "status":"failed", "runId":NATIVE_RUN,
+        "nodeId":"root", "ordinal":1, "updatedAt":"2026-11-23T16:00:00Z",
+        "failure":{"class":"usage_limit","code":"api_error_429","message":"fixture only",
+                   "retryable":true,"resetAt":"2026-11-23T16:05:00Z"}
+    }]);
+    let mut no_reset = limited.clone();
+    no_reset["projection"]["turnItems"][0]["failure"]["resetAt"] = Value::Null;
+    let mut running = limited.clone();
+    running["projection"]["runs"][0]["status"] = json!("running");
+    let mut completed = limited.clone();
+    completed["projection"]["runs"][0]["status"] = json!("completed");
+    let mut older_run = limited.clone();
+    older_run["projection"]["turnItems"][0]["runId"] = json!("older-run");
+    let mut child_node = limited.clone();
+    child_node["projection"]["turnItems"][0]["nodeId"] = json!("child");
+    let mut text_only = limited.clone();
+    text_only["projection"]["turnItems"][0]["failure"] =
+        json!({"class":"provider_error","message":"usage limit reached","code":"api_error_429"});
+    let mut superseded = limited.clone();
+    superseded["projection"]["turnItems"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!({
+            "id": "later", "type":"error", "status":"failed", "runId":NATIVE_RUN,
+            "nodeId":"root", "ordinal":2, "updatedAt":"2026-11-23T16:00:00Z",
+            "failure":{"class":"provider_error","message":"latest terminal error"}
+        }));
+    let mut steer = limited.clone();
+    steer["projection"]["runs"][0]["userMessageId"] = json!("another-message");
+    steer["projection"]["messages"] =
+        json!([{"id":format!("{instance}-message"),"runId":NATIVE_RUN}]);
+
+    let steps = [
+        limited, no_reset, running, completed, older_run, child_node, text_only, superseded, steer,
+    ]
+    .into_iter()
+    .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
+    .collect();
+    let (client, server) = server(steps).await;
+    let pass = quiet_pass(&client);
+    let run = task.run().expect("own launch");
+    for (status, evidence) in [
+        (RunState::UsageLimited, Some(Some(1_795_449_900_000))),
+        (RunState::UsageLimited, Some(None)),
+        (RunState::Running, None),
+        (RunState::Ended, None),
+        (RunState::Ended, None),
+        (RunState::Ended, None),
+        (RunState::Ended, None),
+        (RunState::Ended, None),
+        (RunState::Ended, None),
+    ] {
+        let seen = pass.observe_run(run, 2).await.expect("native observation");
+        assert_eq!(
+            seen.host,
+            Host::Current {
+                instance: instance.clone(),
+                state: status
+            }
+        );
+        assert_eq!(
+            seen.provider_limit,
+            evidence.map(|reset_at_ms| crate::ProviderLimit {
+                instance: "fixture-provider".into(),
+                ended_at_ms: 1_795_449_600_000,
+                reset_at_ms,
+            })
+        );
+    }
+    server.await.expect("scripted host");
+}
+
+#[tokio::test]
 async fn an_unsent_revoked_reservation_clears_without_contacting_t3() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

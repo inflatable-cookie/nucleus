@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, net::IpAddr, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::IpAddr,
+    path::PathBuf,
+};
 
 use longhorn_config::{DomainIssue, StorageClass};
 use nucleus_core::profiles::{Profile, UsageLevel};
@@ -20,6 +24,8 @@ pub struct NamedProfile {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profiles {
     pub profiles: Vec<NamedProfile>,
+    #[serde(default)]
+    pub paused_groups: BTreeSet<String>,
 }
 
 impl SettingsValue for Profiles {
@@ -47,7 +53,13 @@ impl SettingsValue for Profiles {
                 "subscription group names must be nonempty and trimmed",
             )?;
         }
-        Ok(())
+        check(
+            self.paused_groups
+                .iter()
+                .all(|group| text(group) && group.trim() == group),
+            "pausedGroups",
+            "paused subscription group names must be nonempty and trimmed",
+        )
     }
 }
 
@@ -59,6 +71,12 @@ pub struct DispatchSettings {
     pub slots: u32,
     pub host_concurrency: u32,
     pub allowance_minutes: Option<u32>,
+    #[serde(default = "default_provider_limit_cooldown_seconds")]
+    pub provider_limit_cooldown_seconds: u32,
+}
+
+const fn default_provider_limit_cooldown_seconds() -> u32 {
+    300
 }
 
 impl Default for DispatchSettings {
@@ -69,6 +87,7 @@ impl Default for DispatchSettings {
             slots: 1,
             host_concurrency: 1,
             allowance_minutes: None,
+            provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
         }
     }
 }
@@ -94,6 +113,11 @@ impl SettingsValue for DispatchSettings {
             self.slots > 0 && self.host_concurrency == 1 && self.allowance_minutes != Some(0),
             "dispatch",
             "use positive slots and allowance. The host lane has one call slot",
+        )?;
+        check(
+            self.provider_limit_cooldown_seconds > 0,
+            "providerLimitCooldownSeconds",
+            "the provider limit cooldown must be positive",
         )?;
         check(
             self.usage_until_ms.is_none()

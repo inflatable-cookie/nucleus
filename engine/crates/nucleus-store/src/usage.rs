@@ -1,5 +1,7 @@
 use nucleus_core::{PreparedLaunch, Role, profiles::RotationCounts};
-use rusqlite::{Connection, params};
+use std::collections::BTreeMap;
+
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 const WINDOW: u32 = 50;
 
@@ -21,6 +23,64 @@ CREATE TABLE profile_assignment_totals (
   PRIMARY KEY (role, profile_id, group_id)
 ) STRICT;
 CREATE INDEX profile_assignment_group ON profile_assignment_totals (group_id);";
+
+pub(super) const PROVIDER_PAUSES: &str = "
+CREATE TABLE IF NOT EXISTS provider_pauses (
+  group_id TEXT PRIMARY KEY,
+  until_ms INTEGER NOT NULL CHECK (until_ms > 0)
+) STRICT";
+
+pub(super) fn record_pause(
+    connection: &Connection,
+    group: &str,
+    until_ms: u64,
+    now_ms: u64,
+) -> rusqlite::Result<()> {
+    if until_ms > now_ms {
+        connection.execute(
+            "INSERT INTO provider_pauses (group_id, until_ms) VALUES (?1, ?2)
+             ON CONFLICT (group_id) DO UPDATE SET until_ms = excluded.until_ms
+             WHERE excluded.until_ms > provider_pauses.until_ms",
+            params![group, sql_millis(until_ms)?],
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn active_pauses(
+    connection: &Connection,
+    now_ms: u64,
+) -> rusqlite::Result<BTreeMap<String, u64>> {
+    connection
+        .prepare("SELECT group_id, until_ms FROM provider_pauses WHERE until_ms > ?1")?
+        .query_map([sql_millis(now_ms)?], |row| {
+            Ok((row.get(0)?, read_millis(row, 1)?))
+        })?
+        .collect()
+}
+
+pub(super) fn active_pause(
+    connection: &Connection,
+    group: &str,
+    now_ms: u64,
+) -> rusqlite::Result<Option<u64>> {
+    connection
+        .query_row(
+            "SELECT until_ms FROM provider_pauses WHERE group_id = ?1 AND until_ms > ?2",
+            params![group, sql_millis(now_ms)?],
+            |row| read_millis(row, 0),
+        )
+        .optional()
+}
+
+fn sql_millis(millis: u64) -> rusqlite::Result<i64> {
+    i64::try_from(millis).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+}
+
+fn read_millis(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
+    let millis = row.get::<_, i64>(column)?;
+    u64::try_from(millis).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, millis))
+}
 
 const fn role_name(role: Role) -> &'static str {
     match role {

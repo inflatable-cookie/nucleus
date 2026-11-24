@@ -1,0 +1,1 @@
+The Rust scheduler pauses a subscription group when T3 confirms that a run ended on a provider usage limit. Dispatch resumes at the provider reset or the configured cooldown. Operators can also pause groups in Profiles settings.

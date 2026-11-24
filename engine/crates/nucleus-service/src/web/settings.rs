@@ -481,7 +481,11 @@ impl Service {
 
     fn wake_settings_capacity(&self, state: &mut crate::State) {
         let now = Instant::now();
-        for id in &state.capacity_waiters {
+        for id in state
+            .capacity_waiters
+            .iter()
+            .chain(state.group_waits.keys())
+        {
             state
                 .schedule
                 .wake(id, now, crate::schedule::Priority::Wake);

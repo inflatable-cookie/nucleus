@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{Binding, HostError};
+use crate::{Binding, HostError, ProviderLimit};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +69,8 @@ struct Run {
     status: Status,
     user_message_id: Option<String>,
     root_node_id: Option<String>,
+    provider_instance_id: Option<String>,
+    completed_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -118,6 +120,11 @@ struct TurnItem {
     kind: String,
     status: String,
     run_id: Option<String>,
+    node_id: Option<String>,
+    id: Option<String>,
+    ordinal: Option<u64>,
+    updated_at: Option<String>,
+    failure: Option<Value>,
     input: Option<Value>,
     file_name: Option<Value>,
     started_at: Option<Value>,
@@ -129,6 +136,11 @@ struct TurnItem {
 pub struct RunActivity {
     pub label: String,
     pub started_at: Option<u64>,
+}
+
+fn timestamp_ms(value: Option<&str>) -> Option<u64> {
+    let time = OffsetDateTime::parse(value?, &Rfc3339).ok()?;
+    u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -373,6 +385,43 @@ impl Projection {
             .max_by_key(|activity| activity.started_at)
     }
 
+    pub(crate) fn provider_limit(&self, message_id: &str) -> Option<ProviderLimit> {
+        if self.windowed || self.thread.deleted_at.is_some() {
+            return None;
+        }
+        // A steer can link to a run started by someone else's message.
+        let run = self.delivery(message_id).1.filter(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && matches!(run.status, Status::Failed)
+        })?;
+        // T3's shell chooses the latest failed error on the root execution node.
+        let terminal = self
+            .turn_items
+            .as_ref()?
+            .iter()
+            .filter(|item| {
+                item.kind == "error"
+                    && item.status == "failed"
+                    && item.run_id.as_ref() == Some(&run.id)
+                    && item.node_id == run.root_node_id
+            })
+            .max_by_key(|item| (&item.updated_at, item.ordinal, &item.id))?;
+        let failure = terminal.failure.as_ref()?;
+        if failure["class"] != "usage_limit" {
+            return None;
+        }
+        Some(ProviderLimit {
+            instance: run
+                .provider_instance_id
+                .as_ref()
+                .filter(|id| !id.is_empty())?
+                .clone(),
+            ended_at_ms: timestamp_ms(run.completed_at.as_deref())
+                .or_else(|| timestamp_ms(terminal.updated_at.as_deref()))?,
+            reset_at_ms: timestamp_ms(failure["resetAt"].as_str()),
+        })
+    }
+
     pub(crate) fn stop_command(&self, message_id: &str) -> Option<(&'static str, &str)> {
         let run = self.delivery(message_id).1?;
         match run.status {
@@ -409,12 +458,7 @@ impl TurnItem {
             }
             _ => return None,
         };
-        let started_at = self
-            .started_at
-            .as_ref()
-            .and_then(Value::as_str)
-            .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok())
-            .and_then(|value| u64::try_from(value.unix_timestamp_nanos() / 1_000_000).ok());
+        let started_at = timestamp_ms(self.started_at.as_ref().and_then(Value::as_str));
         Some(RunActivity { label, started_at })
     }
 }

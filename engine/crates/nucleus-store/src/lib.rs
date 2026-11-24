@@ -179,6 +179,8 @@ impl Store {
                 });
             }
         }
+        // This independent table is additive to every supported task schema.
+        tx.execute(usage::PROVIDER_PAUSES, [])?;
         tx.commit()?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", true)?;
@@ -363,6 +365,40 @@ impl Store {
         group: &str,
     ) -> Option<RotationCounts> {
         usage::counts(&self.connection, role, profile, group).ok()
+    }
+
+    /// Record a positive provider deadline without shortening another known pause.
+    ///
+    /// # Errors
+    /// Returns a database error if the deadline could not be recorded.
+    pub fn record_provider_pause(
+        &self,
+        group: &str,
+        until_ms: u64,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        Ok(usage::record_pause(
+            &self.connection,
+            group,
+            until_ms,
+            now_ms,
+        )?)
+    }
+
+    /// Read all subscription groups with a deadline in the future.
+    ///
+    /// # Errors
+    /// Returns a database error if the active deadlines could not be read.
+    pub fn active_provider_pauses(&self, now_ms: u64) -> Result<BTreeMap<String, u64>, StoreError> {
+        Ok(usage::active_pauses(&self.connection, now_ms)?)
+    }
+
+    /// Read a single subscription group's deadline if it is still active.
+    ///
+    /// # Errors
+    /// Returns a database error if the deadline could not be read.
+    pub fn provider_pause(&self, group: &str, now_ms: u64) -> Result<Option<u64>, StoreError> {
+        Ok(usage::active_pause(&self.connection, group, now_ms)?)
     }
 
     fn save(

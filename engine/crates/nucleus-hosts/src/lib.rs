@@ -23,7 +23,9 @@ use std::{
 };
 
 pub use catalog::{ProfileCatalog, ProfileOffer};
-pub use launch::{Binding, Dispatch, ModelOption, RoleProfile, RunRequest};
+pub use launch::{
+    Binding, Dispatch, ModelOption, RoleProfile, RunRequest, launch_provider_instance,
+};
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{ArchiveStep, ParentRun, ParentStep, ParentWrite, parent_thread};
@@ -168,6 +170,15 @@ impl ReplayAuthorization {
 pub struct RunObservation {
     pub host: Host,
     pub activity: Option<RunActivity>,
+    pub provider_limit: Option<ProviderLimit>,
+}
+
+/// Terminal usage-limit evidence for the exact native run.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProviderLimit {
+    pub instance: String,
+    pub ended_at_ms: u64,
+    pub reset_at_ms: Option<u64>,
 }
 
 /// The service serializes commands and effects for each task and persists
@@ -537,20 +548,27 @@ impl TaskHost for T3Pass<'_> {
         if state == RunState::ReadyToSend && awaiting_reply(run, now_ms) {
             return Err(HostError::Uncertain);
         }
+        let message = wire.message_id(&run.launch().instance);
+        let provider_limit = thread
+            .as_ref()
+            .filter(|_| state == RunState::Ended)
+            .and_then(|thread| thread.provider_limit(&message));
         let state = if matches!(state, RunState::Ended | RunState::Gone)
             && !self
                 .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
                 .await?
         {
             RunState::Running
+        } else if provider_limit.is_some() {
+            RunState::UsageLimited
         } else {
             state
         };
-        let activity =
-            thread.and_then(|thread| thread.activity(&wire.message_id(&run.launch().instance)));
+        let activity = thread.and_then(|thread| thread.activity(&message));
         Ok(RunObservation {
             host: current(run, state),
             activity,
+            provider_limit,
         })
     }
 
