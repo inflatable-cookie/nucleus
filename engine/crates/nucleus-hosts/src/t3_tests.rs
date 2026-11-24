@@ -1838,25 +1838,60 @@ fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, Strin
 }
 
 #[tokio::test]
-async fn pinned_worker_queues_while_busy_and_snoozed_without_workspace_custody() {
+async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, instance) = reserved_worker_continuation(&binding, true);
     let mut busy = snapshot(&binding, "other-message", "running", false);
-    busy["projection"]["thread"]["providerInstanceId"] = json!("fixture-provider");
+    busy["projection"]["thread"]["providerInstanceId"] = json!("alternate-provider");
     busy["projection"]["thread"]["modelSelection"] =
-        json!({"instanceId":"fixture-provider","model":"fixture-model"});
-    busy["projection"]["thread"]["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
+        json!({"instanceId":"alternate-provider","model":"alternate-model"});
     busy["projection"]["thread"]["settledOverride"] = json!("settled");
+    let mut row = busy["projection"]["thread"].clone();
     let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(busy.clone()),
+        ),
         ("orchestration.subscribeThread", Response::Snapshot(busy)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
     .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16,"threads":[row],"projects":[]
+        }}));
     let pass = host.pass(checkout.path());
+    assert_eq!(
+        pass.observe_retained_worker(&binding, THREAD)
+            .await
+            .unwrap(),
+        Host::Retained {
+            thread: THREAD.into(),
+            state: RetainedThread::QueueableWorker,
+        }
+    );
+    let mut refused = task.clone();
+    let dispatch = pass
+        .authorize_send(task.run().unwrap())
+        .await
+        .unwrap()
+        .record(&mut refused)
+        .unwrap();
+    row["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    assert!(matches!(
+        pass.send(dispatch).await,
+        Err(HostError::OperatorSnoozed { .. })
+    ));
+    row["snoozedUntil"] = Value::Null;
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
     assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
     let requests = native.await.unwrap();
-    let wire: Value = serde_json::from_str(requests[1].payload.get()).unwrap();
+    let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
     assert_eq!(wire["commandId"], instance);
     assert_eq!(
         wire["modelSelection"],

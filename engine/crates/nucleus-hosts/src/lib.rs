@@ -114,6 +114,8 @@ pub enum HostError {
     ParentHoldRejected,
     #[error("the operator snoozed the destination until {until} ms")]
     OperatorSnoozed { until: u64 },
+    #[error("the operator snoozed the retained worker's parent until {until} ms")]
+    WorkerParentSnoozed { until: u64 },
     #[error(
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]
@@ -214,6 +216,7 @@ pub struct ReplayAuthorization {
     archived: bool,
     wake: Option<ControlDispatch>,
     parent_row: Option<RowObservation>,
+    worker_continuation: bool,
 }
 
 /// Frozen native write whose send marker must be committed before dispatch.
@@ -221,6 +224,14 @@ pub struct RunDispatch {
     instance: String,
     wire: Wire,
     worker_continuation: bool,
+    owned_parent_snoozes: Vec<u64>,
+}
+
+impl RunDispatch {
+    /// Pass the exact parent horizons owned by the task’s presentation record.
+    pub fn allow_owned_parent_snoozes(&mut self, horizons: Vec<u64>) {
+        self.owned_parent_snoozes = horizons;
+    }
 }
 
 impl ReplayAuthorization {
@@ -244,7 +255,16 @@ impl ReplayAuthorization {
         })
     }
 
-    /// An existing child must be visibly awake before its next message can be sent.
+    /// The parent of a queueable retained worker, if it has one.
+    #[must_use]
+    pub fn queued_worker_parent(&self) -> Option<&str> {
+        self.wire
+            .parent
+            .as_deref()
+            .filter(|_| self.worker_continuation)
+    }
+
+    /// Get the explicit wake for continuations using the visibility fence.
     #[must_use]
     pub fn unsettle(&self) -> Option<ControlDispatch> {
         self.wake.clone()
@@ -266,13 +286,12 @@ impl ReplayAuthorization {
         {
             return Err(HostError::Binding);
         }
-        let worker_continuation =
-            run.launch().role == Role::Worker && self.wire.method == Method::Continue;
         task.record_send(&self.instance, clock_ms()?)
             .map_err(|_| HostError::Binding)?;
         Ok(RunDispatch {
             instance: self.instance,
-            worker_continuation,
+            worker_continuation: self.worker_continuation,
+            owned_parent_snoozes: Vec::new(),
             wire: self.wire,
         })
     }
@@ -658,7 +677,11 @@ impl T3 {
         Ok((thread, state))
     }
 
-    fn verify_worker_target(&self, wire: &Wire) -> Result<(), HostError> {
+    fn verify_worker_target(
+        &self,
+        wire: &Wire,
+        owned_parent_snoozes: &[u64],
+    ) -> Result<(), HostError> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct WorkerTarget<'a> {
@@ -672,18 +695,11 @@ impl T3 {
             .ok_or(HostError::WorkerBindingChanged)?;
         let parent = wire.parent.as_deref();
         let lineage = &row["lineage"];
-        let selected = wire
-            .selection
-            .as_ref()
-            .ok_or(HostError::WorkerBindingChanged)?;
         if row["projectId"] != wire.binding.project_id
             || row["worktreePath"] != wire.binding.worktree_path
             || row["branch"] != wire.binding.branch
             || !row["archivedAt"].is_null()
             || !row["deletedAt"].is_null()
-            || row["providerInstanceId"] != selected["instanceId"]
-            || row["modelSelection"]["instanceId"] != selected["instanceId"]
-            || row["modelSelection"]["model"] != selected["model"]
             || parent.is_some_and(|parent| {
                 lineage["parentThreadId"] != parent
                     || lineage["rootThreadId"] != parent
@@ -692,7 +708,19 @@ impl T3 {
         {
             return Err(HostError::WorkerBindingChanged);
         }
-        Ok(())
+        if let Some(parent) = parent
+            && let Some(row) = self.rpc.thread_row(parent)
+        {
+            task_row::check_delivery_snooze(&row, owned_parent_snoozes).map_err(
+                |error| match error {
+                    HostError::OperatorSnoozed { until } => {
+                        HostError::WorkerParentSnoozed { until }
+                    }
+                    error => error,
+                },
+            )?;
+        }
+        task_row::check_delivery_snooze(&row, &[])
     }
 
     async fn thread_command(&self, payload: Value) -> Result<(), HostError> {
@@ -947,10 +975,7 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn authorize_send(&self, run: &Run) -> Result<ReplayAuthorization, HostError> {
-        if run.rejected_awaiting_archive()
-            || awaiting_reply(run, clock_ms()?)
-            || (run.revoked() && run.last_send_at_ms().is_none())
-        {
+        if run.rejected_awaiting_archive() || (run.revoked() && run.last_send_at_ms().is_none()) {
             return Err(HostError::Uncertain);
         }
         let wire = Wire::read(run)?;
@@ -959,7 +984,12 @@ impl TaskHost for T3Pass<'_> {
         }
         let worker_continuation =
             run.launch().role == Role::Worker && wire.method == Method::Continue;
-        if worker_continuation && (!wire.pinned || run.revoked()) {
+        let replay_authorized = if worker_continuation {
+            wire.pinned && !run.revoked() && run.report().is_none()
+        } else {
+            !awaiting_reply(run, clock_ms()?)
+        };
+        if !replay_authorized {
             return Err(HostError::Uncertain);
         }
         let parent_row = if !worker_continuation && let Some(parent) = &wire.parent {
@@ -987,7 +1017,8 @@ impl TaskHost for T3Pass<'_> {
             ThreadRead::Exact
         };
         let (thread, state) = self.host.delivery(run, &wire, policy).await?;
-        if wire.method == Method::Continue
+        if !worker_continuation
+            && wire.method == Method::Continue
             && run.launch().profile().is_some()
             && !wire.selection.as_ref().is_some_and(|selection| {
                 thread
@@ -1042,6 +1073,7 @@ impl TaskHost for T3Pass<'_> {
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
             parent_row,
+            worker_continuation,
         })
     }
 
@@ -1056,7 +1088,8 @@ impl TaskHost for T3Pass<'_> {
             .rpc
             .call_guarded(wire.method.rpc(), wire.payload.as_ref(), Read::One, || {
                 if dispatch.worker_continuation && self.host.rpc.uses_held_shell() {
-                    self.host.verify_worker_target(&wire)?;
+                    self.host
+                        .verify_worker_target(&wire, &dispatch.owned_parent_snoozes)?;
                 }
                 Ok(true)
             })

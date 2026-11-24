@@ -521,10 +521,6 @@ impl Projection {
         })
     }
 
-    pub(crate) const fn deleted(&self) -> bool {
-        self.thread.deleted_at.is_some()
-    }
-
     pub(crate) fn run(
         &self,
         message_id: &str,
