@@ -47,10 +47,10 @@ pub use usage::{ProfileUsage, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
-const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task";
+const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation";
 const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
@@ -258,7 +258,14 @@ impl Store {
                 if version < 9 {
                     tx.execute_batch(numbers::SCHEMA)?;
                 }
-                Self::migrate_report_tasks(tx)?;
+                if version < 10 {
+                    Self::migrate_report_tasks(tx)?;
+                } else {
+                    tx.execute(
+                        "ALTER TABLE tasks ADD COLUMN work_continuation TEXT CHECK (json_valid(work_continuation))",
+                        [],
+                    )?;
+                }
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -287,8 +294,8 @@ impl Store {
     fn migrate_report_tasks(tx: &Transaction<'_>) -> Result<(), StoreError> {
         tx.execute_batch(&TASK_SCHEMA.replacen("CREATE TABLE tasks", "CREATE TABLE tasks_v10", 1))?;
         let columns = TASK_COLUMNS
-            .strip_suffix(", report_task")
-            .expect("report task is the column added in schema ten");
+            .strip_suffix(", report_task, work_continuation")
+            .expect("task columns before schema ten");
         tx.execute_batch(&format!(
             "INSERT INTO tasks_v10 ({columns}, version) SELECT {columns}, version FROM tasks;
              DROP TABLE tasks;
@@ -1054,8 +1061,8 @@ fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> 
 fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         task: decode_task(row)?,
-        version: row.get(16)?,
-        number: row.get(17)?,
+        version: row.get(17)?,
+        number: row.get(18)?,
     })
 }
 
@@ -1079,6 +1086,7 @@ fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         "question": json_column(row, 12)?,
         "hold": json_column(row, 13)?,
         "report_task": json_column(row, 15)?,
+        "work_continuation": json_column(row, 16)?,
     });
     serde_json::from_value(value).map_err(|error| decode_error(0, error))
 }
@@ -1121,10 +1129,10 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
     let identity = task.identity();
     let snapshot = serde_json::to_value(task)?;
     let mut sql = format!(
-        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task)"
+        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task, :work_continuation)"
     );
     if update {
-        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, version = tasks.version + 1");
+        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, work_continuation = excluded.work_continuation, version = tasks.version + 1");
     }
     let nullable_json = |key: &str| (!snapshot[key].is_null()).then(|| snapshot[key].to_string());
     tx.execute(
@@ -1146,6 +1154,7 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
             ":hold": nullable_json("hold"),
             ":origin_thread": identity.origin_thread,
             ":report_task": nullable_json("report_task"),
+            ":work_continuation": nullable_json("work_continuation"),
         },
     )?;
     Ok(())

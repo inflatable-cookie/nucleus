@@ -81,7 +81,9 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::AssignmentTooLarge
             | WaitReason::HostObservationBlocked,
         ) => (Duration::from_mins(1), Priority::Refresh),
-        Some(WaitReason::ChecksPending) => (Duration::from_secs(15), Priority::Decision),
+        Some(WaitReason::ChecksPending | WaitReason::ChecksUnreported) => {
+            (Duration::from_secs(15), Priority::Decision)
+        }
         _ => (Duration::from_secs(3), Priority::Decision),
     }
 }

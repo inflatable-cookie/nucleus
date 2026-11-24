@@ -15,5 +15,6 @@ CREATE TABLE tasks (
   version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
   origin_thread TEXT,
   report_task TEXT CHECK (json_valid(report_task)),
+  work_continuation TEXT CHECK (json_valid(work_continuation)),
   UNIQUE (repository, reference)
 ) STRICT;

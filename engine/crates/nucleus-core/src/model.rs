@@ -616,6 +616,12 @@ impl Threads {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WorkContinuation {
+    pub(crate) instruction: String,
+    pub(crate) require_new_head_from: Option<Head>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "StoredTask")]
 pub struct Task {
     pub(crate) identity: Identity,
@@ -628,6 +634,8 @@ pub struct Task {
     pub(crate) attempts: u8,
     pub(crate) question: Option<OpenQuestion>,
     pub(crate) hold: Option<Hold>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task", skip_serializing_if = "Option::is_none")]
     pub(crate) report_state: Option<ReportTask>,
 }
@@ -644,6 +652,8 @@ struct StoredTask {
     attempts: u8,
     question: Option<OpenQuestion>,
     hold: Option<Hold>,
+    #[serde(default)]
+    work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task")]
     report_state: Option<ReportTask>,
 }
@@ -712,6 +722,7 @@ impl TryFrom<StoredTask> for Task {
             attempts: stored.attempts,
             question: stored.question,
             hold: stored.hold,
+            work_continuation: stored.work_continuation,
             report_state: stored.report_state,
         })
     }
@@ -735,6 +746,7 @@ impl Task {
             attempts: 0,
             question: None,
             hold: None,
+            work_continuation: None,
             report_state: None,
         }
     }
@@ -762,6 +774,14 @@ impl Task {
             receipts: Vec::new(),
         });
         task
+    }
+
+    /// The instruction to freeze in the next code worker assignment.
+    #[must_use]
+    pub fn work_instruction(&self) -> Option<&str> {
+        self.work_continuation
+            .as_ref()
+            .map(|work| work.instruction.as_str())
     }
 
     /// Read the report-only delivery state, if the task opted in at admission.

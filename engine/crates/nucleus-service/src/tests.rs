@@ -176,6 +176,66 @@ pub(super) fn reservation_at(
     (task, credential, observation)
 }
 
+pub(super) fn code_task_at_merge(id: &str, head: &Head) -> (Task, Observation) {
+    let (mut task, credential, mut observation) = reservation(id, Entry::Brief, head);
+    let pr = PullRequest {
+        url: PR.into(),
+        head: head.clone(),
+    };
+    let instance = task.run().expect("worker").launch().instance.clone();
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::Work(pr.clone().into()),
+    )
+    .unwrap();
+    observation.forge = Observed::Known(Forge::Open {
+        pr,
+        checks: CheckState::Ready,
+    });
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: nucleus_core::RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Reviewing)
+    );
+    let credential = task
+        .reserve_launch(
+            &observation,
+            LaunchInputs {
+                scratch: None,
+                thread: "thread:reviewer".into(),
+                started_at: 2,
+                input: "fixture review".into(),
+            },
+            &[4; 32],
+        )
+        .unwrap();
+    let instance = task.run().expect("reviewer").launch().instance.clone();
+    task.record_report(
+        &instance,
+        credential.as_bytes(),
+        Report::Review {
+            head: head.clone(),
+            decision: nucleus_core::Review::Approve,
+            summary: "Approved the original head".into(),
+            finding_titles: Vec::new(),
+        },
+    )
+    .unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: nucleus_core::RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Merging)
+    );
+    (task, observation)
+}
+
 pub(super) async fn forge_fixture(
     head: &Head,
 ) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
@@ -216,7 +276,7 @@ pub(super) fn forge_checks(head: &Head) -> Value {
     json!({"data":{"repository":{"pullRequest":{
         "headRefOid":head, "baseRefName":"main", "isDraft":false, "state":"OPEN",
         "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
-        "statusCheckRollup":{"state":"SUCCESS"},
+        "statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false},"nodes":[]}},
     }}}})
 }
 
@@ -845,7 +905,11 @@ pub(super) async fn native_fixture_with_traffic(
                         }
                         let req: Value = serde_json::from_str(&frame).expect("Effect request");
                         if req["_tag"] == "Request" {
-                            let reply = response(&req).to_string();
+                            let reply = response(&req);
+                            if reply.is_null() {
+                                break;
+                            }
+                            let reply = reply.to_string();
                             let bytes = reply.len();
                             ws.send(Message::Text(reply.into())).await.expect("reply");
                             if let Some(traffic) = &traffic {

@@ -1061,3 +1061,102 @@ fn a_settled_reviewer_report_survives_forge_outage_and_applies_to_a_fresh_merge(
     );
     assert!(task.finish_close(&merged));
 }
+
+#[test]
+fn confirmed_merge_recovery_continues_the_worker_and_requires_a_published_revision() {
+    for (checks, expected) in [
+        (CheckState::Conflict, "resolve the conflicts"),
+        (CheckState::BaseMoved, "The base moved"),
+        (
+            CheckState::FailedRequired(vec!["Test / Linux".into()]),
+            "Test / Linux",
+        ),
+    ] {
+        let mut task = ready_for_merge();
+        let stale = open('b', checks.clone());
+        assert_eq!(decide(&task, &stale), Action::Advance(Phase::Reviewing));
+        let blocked = open('a', checks);
+        assert_eq!(task.reconcile(&blocked), Action::Advance(Phase::Working));
+        let instruction = task
+            .work_instruction()
+            .expect("retained worker instruction");
+        assert!(instruction.contains(expected), "{instruction}");
+        assert!(instruction.contains(sha('a').as_str()));
+        assert!(task.question().is_none());
+        assert!(task.verdict().is_none());
+
+        let idle = retained(blocked.clone(), "worker", RetainedThread::Idle);
+        let credential = start(
+            &mut task,
+            &idle,
+            Role::Worker,
+            "worker",
+            "frozen continuation",
+        );
+        let same = {
+            let mut same = task.clone();
+            report(&mut same, &credential, Report::Work(pr('a').into()));
+            let ended = host(&same, blocked.clone(), RunState::Ended);
+            assert_eq!(
+                same.reconcile(&ended),
+                Action::Ask(Question::Repair(Repair::RevisionHasSameHead))
+            );
+            same
+        };
+        assert_eq!(decide(&same, &blocked), Action::Wait(WaitReason::Question));
+
+        let fresh = open('b', CheckState::Ready);
+        report(&mut task, &credential, Report::Work(pr('b').into()));
+        let ended = host(&task, fresh.clone(), RunState::Ended);
+        assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
+        assert!(task.work_instruction().is_none());
+        assert_eq!(
+            task.command(Command::Move(Phase::Merging), &planner(), &fresh),
+            Err(CommandError::MergeAuthorityRequired)
+        );
+    }
+}
+
+#[test]
+fn a_legacy_merge_blocked_answer_uses_the_code_owner_continuation() {
+    let mut task = ready_for_merge();
+    let blocked = open('a', CheckState::Blocked);
+    assert_eq!(
+        task.reconcile(&blocked),
+        Action::Ask(Question::Repair(Repair::MergeBlocked))
+    );
+    let instruction = "Rebase and report the published head";
+    assert_eq!(
+        task.command(
+            Command::Answer(Answer::Work(instruction.into())),
+            &planner(),
+            &open('b', CheckState::Ready),
+        ),
+        Err(CommandError::AnswerDoesNotMatch)
+    );
+    task.command(
+        Command::Answer(Answer::Work(instruction.into())),
+        &planner(),
+        &blocked,
+    )
+    .expect("apply existing question's work answer");
+    assert_eq!(task.phase(), Phase::Working);
+    assert_eq!(task.work_instruction(), Some(instruction));
+    assert!(task.question().is_none());
+    let idle = retained(blocked, "worker", RetainedThread::Idle);
+    assert_eq!(
+        decide(&task, &idle),
+        Action::Launch {
+            role: Role::Worker,
+            via: Launch::Continue {
+                thread: "worker".into()
+            }
+        }
+    );
+
+    let gate = open('a', CheckState::Unreported);
+    assert_eq!(
+        decide(&ready_for_merge(), &gate),
+        Action::Wait(WaitReason::ChecksUnreported)
+    );
+}

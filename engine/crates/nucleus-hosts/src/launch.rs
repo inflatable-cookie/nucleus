@@ -109,17 +109,24 @@ impl RunRequest {
                     "completionWake":"settled_only"
                 }),
             ),
-            Dispatch::Continue { .. } => (
-                Method::Continue,
-                json!({
+            Dispatch::Continue { .. } => (Method::Continue, {
+                let mut payload = json!({
                     "type": "message.dispatch", "commandId": instance, "threadId": thread,
                     "messageId": message, "text": self.text, "attachments": [],
                     "createdBy": "user", "creationSource": "server", "dispatchMode": {"type": "queue_after_active"},
-                }),
-            ),
+                });
+                if let Dispatch::Continue {
+                    profile: Some(profile),
+                } = &self.dispatch
+                {
+                    payload["modelSelection"] = profile.selection();
+                }
+                payload
+            }),
         };
         let wire = Wire {
             binding: self.binding.clone(),
+            pinned: false,
             parent: self.parent.clone(),
             method,
             selection: match &self.dispatch {
@@ -158,6 +165,8 @@ impl Method {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Wire {
     pub(crate) binding: Binding,
+    #[serde(skip)]
+    pub(crate) pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) parent: Option<String>,
     pub(crate) method: Method,
@@ -226,7 +235,7 @@ impl Wire {
 
     pub(crate) fn read(run: &Run) -> Result<Self, HostError> {
         let launch = run.launch();
-        let wire: Self =
+        let mut wire: Self =
             serde_json::from_str(&launch.input).map_err(|_| HostError::Configuration)?;
         let payload: Value =
             serde_json::from_str(wire.payload.get()).map_err(|_| HostError::Configuration)?;
@@ -258,6 +267,19 @@ impl Wire {
                     && launch.thread == delegated_child(&launch.instance)
             }
             Method::Continue => {
+                if let Some(selection) = payload.get("modelSelection") {
+                    let valid = wire.selection.as_ref() == Some(selection)
+                        && selection["instanceId"]
+                            .as_str()
+                            .is_some_and(|id| !id.is_empty())
+                        && selection["model"]
+                            .as_str()
+                            .is_some_and(|model| !model.is_empty());
+                    if !valid {
+                        return Err(HostError::Binding);
+                    }
+                    wire.pinned = true;
+                }
                 payload["type"] == "message.dispatch"
                     && payload["threadId"] == launch.thread
                     && payload["messageId"] == message
@@ -303,6 +325,13 @@ pub fn child_origin_instance(thread: &str) -> Option<&str> {
     thread
         .strip_prefix(DELEGATED_THREAD_PREFIX)
         .filter(|instance| !instance.is_empty())
+}
+
+/// Whether a worker reservation predates the explicit T3 provider and model pin.
+#[must_use]
+pub fn unpinned_worker_continuation(run: &Run) -> bool {
+    run.launch().role == nucleus_core::Role::Worker
+        && Wire::read(run).is_ok_and(|wire| wire.method == Method::Continue && !wire.pinned)
 }
 
 pub(crate) fn delegated_child(instance: &str) -> String {

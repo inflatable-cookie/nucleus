@@ -38,7 +38,7 @@ pub use inbox::{
 };
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, child_origin_instance,
-    launch_diagnostic, launch_provider_instance,
+    launch_diagnostic, launch_provider_instance, unpinned_worker_continuation,
 };
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
@@ -1203,6 +1203,7 @@ mod tests {
             branch: "fixture-branch".into(),
         };
         let wire = |method| Wire {
+            pinned: false,
             binding: binding.clone(),
             parent: None,
             method,

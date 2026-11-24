@@ -17,7 +17,7 @@ use tower::ServiceExt;
 use super::*;
 use crate::{
     event,
-    tests::{REPOSITORY, fixture, forge_pull, reservation, serve_forge},
+    tests::{REPOSITORY, code_task_at_merge, fixture, forge_pull, reservation, serve_forge},
 };
 
 #[path = "tests/dependencies.rs"]
@@ -711,6 +711,67 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
             .status(),
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn next_and_owner_commands_agree_on_code_recovery() {
+    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+    );
+    let head = &service.fixture().start;
+    for (id, answer) in [("owner-move", false), ("legacy-answer", true)] {
+        let (mut task, mut observation) = code_task_at_merge(id, head);
+        observation.forge = Observed::Known(Forge::Open {
+            pr: task.pull_request().unwrap().clone(),
+            checks: CheckState::Blocked,
+        });
+        if answer {
+            assert_eq!(
+                task.reconcile(&observation),
+                Action::Ask(nucleus_core::Question::Repair(
+                    nucleus_core::Repair::MergeBlocked
+                ))
+            );
+        }
+        seed_task(&service, &task).await;
+        let prior = service.task(id).await.unwrap();
+        service
+            .observe_commands(&prior, &observation.forge)
+            .await
+            .unwrap();
+        let view = json_body(get_as(&api, &format!("/v1/tasks/{id}/next"), &BOARD_KEY).await).await;
+        expect_command(&view, "move", Some("working"), "ready");
+        let instruction = "Rebase the same PR branch";
+        let command = if answer {
+            expect_command(&view, "answer", None, "ready");
+            json!({"answer":{"work":instruction}})
+        } else {
+            json!({"move_work":{"instruction":instruction}})
+        };
+        assert_eq!(
+            post_json(
+                &api,
+                &format!("/v1/tasks/{id}/commands"),
+                &BOARD_KEY,
+                &command
+            )
+            .await,
+            StatusCode::OK
+        );
+        let row = service.task(id).await.unwrap();
+        assert_eq!(row.task.phase(), Phase::Working);
+        assert_eq!(row.task.work_instruction(), Some(instruction));
+        assert!(row.task.question().is_none());
+        assert!(row.task.verdict().is_none());
+    }
 }
 
 #[tokio::test]

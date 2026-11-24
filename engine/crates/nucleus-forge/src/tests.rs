@@ -100,7 +100,7 @@ fn checks(head: char, state: &str) -> Value {
     json!({"data": {"repository": {"pullRequest": {
         "headRefOid": sha(head), "baseRefName": "main", "isDraft": false,
         "state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-        "reviewDecision": null, "statusCheckRollup": {"state": state},
+        "reviewDecision": null, "statusCheckRollup": {"state": state, "contexts": {"pageInfo": {"hasNextPage": false}, "nodes": []}},
         "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false}}
     }}}})
 }
@@ -600,7 +600,7 @@ fn a_pull_target_stays_inside_the_configured_repository() {
 
 #[tokio::test]
 async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
-    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Pending)] {
+    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Unreported)] {
         let mut response = checks('a', "SUCCESS");
         response["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"] = json!({
             "pageInfo": {"hasNextPage": false},
@@ -618,6 +618,163 @@ async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
         assert_eq!(
             requests[1].body.as_ref().expect("GraphQL request")["variables"]["namedChecks"],
             true
+        );
+    }
+}
+
+#[tokio::test]
+async fn classifies_only_positive_rebase_or_required_failure_evidence() {
+    let ci = |conclusion: Option<&str>, required| json!({"__typename":"CheckRun","name":"Build / release","conclusion":conclusion,"isRequired":required});
+    let lint =
+        json!({"__typename":"StatusContext","context":"Lint","state":"FAILURE","isRequired":true});
+    let failed = CheckState::FailedRequired(vec!["Build / release".into(), "Lint".into()]);
+    for (mergeable, state, rollup, nodes, incomplete, expected) in [
+        (
+            "CONFLICTING",
+            "DIRTY",
+            "FAILURE",
+            json!([]),
+            false,
+            CheckState::Conflict,
+        ),
+        (
+            "MERGEABLE",
+            "BEHIND",
+            "PENDING",
+            json!([]),
+            false,
+            CheckState::BaseMoved,
+        ),
+        (
+            "MERGEABLE",
+            "BLOCKED",
+            "FAILURE",
+            json!([ci(Some("FAILURE"), true), lint]),
+            false,
+            failed,
+        ),
+        (
+            "MERGEABLE",
+            "BLOCKED",
+            "FAILURE",
+            json!([ci(Some("FAILURE"), false)]),
+            false,
+            CheckState::Blocked,
+        ),
+        (
+            "MERGEABLE",
+            "BLOCKED",
+            "PENDING",
+            json!([ci(None, true)]),
+            false,
+            CheckState::Pending,
+        ),
+        (
+            "MERGEABLE",
+            "CLEAN",
+            "SUCCESS",
+            json!([ci(Some("SUCCESS"), true)]),
+            true,
+            CheckState::Unknown,
+        ),
+        (
+            "MERGEABLE",
+            "CLEAN",
+            "SUCCESS",
+            Value::Null,
+            false,
+            CheckState::Unknown,
+        ),
+    ] {
+        let mut response = checks('a', rollup);
+        let wire = &mut response["data"]["repository"]["pullRequest"];
+        wire["mergeable"] = json!(mergeable);
+        wire["mergeStateStatus"] = json!(state);
+        wire["statusCheckRollup"]["contexts"] = if nodes.is_null() {
+            nodes
+        } else {
+            json!({"pageInfo":{"hasNextPage":incomplete},"nodes":nodes})
+        };
+        let (forge, server) = server(vec![Some(pull('a', false)), Some(response)]);
+        assert!(
+            matches!(
+                forge.observe_for_merge(&branches().target(PR_URL).unwrap()).await,
+                Ok(Forge::Open { checks, .. }) if checks == expected
+            ),
+            "{mergeable}, {state}, {rollup}: {expected:?}"
+        );
+        let requests = server.join().expect("forge reads");
+        assert_eq!(
+            requests[1].body.as_ref().unwrap()["variables"]["namedChecks"],
+            true
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
+    let task = task_with_approval();
+    let mut moved = pull('a', false);
+    moved["base"]["sha"] = json!(sha('d'));
+    let (forge, server) = server(vec![
+        Some(pull('a', false)),
+        Some(checks('a', "SUCCESS")),
+        Some(moved),
+    ]);
+    let attempt = forge
+        .merge(&task, &branches().target(PR_URL).unwrap())
+        .await
+        .expect("merge preflight");
+    assert_eq!(attempt.write, MergeWrite::Skipped);
+    assert!(matches!(
+        attempt.observed,
+        Ok(Forge::Open {
+            checks: CheckState::BaseMoved,
+            ..
+        })
+    ));
+    assert_eq!(server.join().expect("GET and GraphQL only").len(), 3);
+}
+
+#[tokio::test]
+async fn a_refused_put_uses_positive_same_head_rebase_evidence_from_readback() {
+    for (status, head, base, conflicting, expected) in [
+        (405, 'a', 'd', false, CheckState::BaseMoved),
+        (405, 'a', 'b', false, CheckState::Ready),
+        (409, 'a', 'b', true, CheckState::Conflict),
+        (409, 'c', 'd', false, CheckState::Ready),
+        (502, 'a', 'd', false, CheckState::Ready),
+    ] {
+        let mut responses = ready_preflight();
+        let mut fresh_pull = pull(head, false);
+        fresh_pull["base"]["sha"] = json!(sha(base));
+        let mut fresh_checks = checks(head, "SUCCESS");
+        if conflicting {
+            let pr = &mut fresh_checks["data"]["repository"]["pullRequest"];
+            pr["mergeable"] = json!("CONFLICTING");
+            pr["mergeStateStatus"] = json!("DIRTY");
+        }
+        responses.extend([
+            Some(FixtureReply {
+                status,
+                headers: "",
+                body: json!({}),
+            }),
+            Some(FixtureReply::ok(fresh_pull)),
+            Some(FixtureReply::ok(fresh_checks)),
+        ]);
+        let total = responses.len();
+        let (forge, calls) = scripted(responses);
+        let target = branches().target(PR_URL).unwrap();
+        let attempt = forge.merge(&task_with_approval(), &target).await.unwrap();
+        assert!(
+            matches!(attempt.observed, Ok(Forge::Open { pr, checks })
+            if pr.head == sha(head) && checks == expected),
+            "HTTP {status} with readback head {head} and base {base}"
+        );
+        assert_eq!(
+            calls.join().expect("the ordinary readback only").len(),
+            total
         );
     }
 }

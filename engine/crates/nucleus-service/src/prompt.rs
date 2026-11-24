@@ -216,6 +216,14 @@ impl Prompt<'_> {
                 );
             }
         }
+        if self.role == Role::Worker
+            && let Some(instruction) = task.work_instruction()
+        {
+            let _ = writeln!(
+                text,
+                "\nBound continuation instruction\n----- BEGIN INSTRUCTION -----\n{instruction}\n----- END INSTRUCTION -----"
+            );
+        }
         self.write_dependencies(text);
     }
 

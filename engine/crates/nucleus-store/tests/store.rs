@@ -626,6 +626,42 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
 }
 
 #[test]
+fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("fixture store");
+    let mut task = task("merge-recovery", "fixture#1");
+    store.create(&task, &event("admitted")).unwrap();
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN work_continuation; PRAGMA user_version = 10;")
+        .unwrap();
+    drop(db);
+
+    let mut store = Store::open(&storage).expect("migrate published schema");
+    let prior = row(&store, "merge-recovery");
+    assert_eq!(prior.task, task);
+    let instruction = "Rebase the existing branch";
+    task.command(
+        Command::MoveWork {
+            instruction: instruction.into(),
+        },
+        &Authority::Operator {
+            actor: "operator".into(),
+        },
+        &observation(),
+    )
+    .unwrap();
+    store.save_row(&prior, &task, &event("owner_move")).unwrap();
+    drop(store);
+    let reopened = Store::open(&storage).expect("reopen migrated store");
+    let current = row(&reopened, "merge-recovery");
+    assert_eq!(current.version, prior.version + 1);
+    assert_eq!(current.number, prior.number);
+    assert_eq!(current.task.work_instruction(), Some(instruction));
+}
+
+#[test]
 fn dependency_tables_open_from_the_previous_live_schema() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());

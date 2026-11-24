@@ -373,7 +373,12 @@ impl Service {
         match target {
             Some(target) => {
                 let target = target.with_required_checks(route.required_checks);
-                let forge = capture_forge(self, self.forge.observe(&target).await)?;
+                let observed = if task.phase() == Phase::Merging && task.verdict().is_some() {
+                    self.forge.observe_for_merge(&target).await
+                } else {
+                    self.forge.observe(&target).await
+                };
+                let forge = capture_forge(self, observed)?;
                 Ok((forge, Some(target)))
             }
             None => Ok((Forge::Absent, None)),
@@ -498,6 +503,9 @@ impl Service {
             {
                 "delegated_parent_ended"
             }
+            Action::Advance(Phase::Working) if row.task.phase() == Phase::Merging => {
+                "merge_returned_to_work"
+            }
             Action::Advance(Phase::ReportReady) => "report_ready",
             Action::Advance(Phase::Blocked | Phase::Error) => "report_only_worker_returned",
             Action::Advance(_) => "phase_reconciled",
@@ -509,6 +517,13 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
+        if kind == "merge_returned_to_work" {
+            audit.detail = serde_json::json!({
+                "instruction": updated.work_instruction(),
+                "priorVerdict": row.task.verdict(),
+            })
+            .to_string();
+        }
         if matches!(kind, "delegated_parent_ended" | "assignment_input_rejected")
             && let Some(run) = row.task.run()
         {
@@ -1366,9 +1381,22 @@ impl Service {
         }
         let observed = capture_forge(self, attempt.observed);
         if attempt.write == MergeWrite::HeadMismatch {
+            observation.forge = seen(observed);
+            if matches!(
+                &observation.forge,
+                Observed::Known(Forge::Open {
+                    checks: CheckState::Conflict | CheckState::BaseMoved,
+                    ..
+                })
+            ) && decide(task, &observation) == Action::Advance(Phase::Working)
+            {
+                // Returning to work retires the same approval as the mismatch path.
+                return self
+                    .apply(row, &observation, Action::Advance(Phase::Working))
+                    .await;
+            }
             let mut updated = task.clone();
             if updated.merge_head_mismatched(head) {
-                observation.forge = seen(observed);
                 let next = updated.reconcile(&observation);
                 let mut history = event("merge_head_changed");
                 history.detail = serde_json::json!({
@@ -1388,7 +1416,10 @@ impl Service {
         }
         observation.forge = observed;
         if let MergeWrite::Refused { .. } = attempt.write
-            && let Observed::Known(Forge::Open { checks, .. }) = &mut observation.forge
+            && let Observed::Known(Forge::Open {
+                checks: checks @ CheckState::Ready,
+                ..
+            }) = &mut observation.forge
         {
             *checks = CheckState::Blocked;
         }
@@ -1664,8 +1695,8 @@ mod tests {
 
     use super::*;
     use crate::tests::{
-        Due, REPOSITORY, fixture, forge_checks, forge_fixture, forge_pull, native_fixture,
-        reservation, serve_forge,
+        Due, REPOSITORY, code_task_at_merge, fixture, forge_checks, forge_fixture, forge_pull,
+        native_fixture, reservation, serve_forge,
     };
 
     #[tokio::test]
@@ -2141,6 +2172,238 @@ mod tests {
             serde_json::from_value(restored).expect("typed reservation"),
             observation,
         )
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one loopback trace crosses forge, native host, callback, and restart"
+    )]
+    async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restart() {
+        let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let project = service.fixture().clone();
+        let old_head = project.start.clone();
+        let (task, _) = code_task_at_merge("worker", &old_head);
+        let worktrees = service.worktrees().unwrap();
+        let checkout = worktrees
+            .checkout(&project.checkout, REPOSITORY, "worker")
+            .unwrap();
+        checkout.allocate(&old_head).unwrap();
+        let binding = service.binding(&checkout).unwrap();
+        let owned = checkout.path().to_owned();
+        crate::tests::git(
+            &owned,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Resolve the merge conflict",
+            ],
+        );
+        let new_head: Head = crate::tests::git(&owned, &["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+        crate::tests::git(&owned, &["reset", "--hard", old_head.as_str()]);
+
+        let published = Arc::new(AtomicBool::new(false));
+        let merge_requests = Arc::new(AtomicUsize::new(0));
+        let pull = |head| {
+            let mut wire = forge_pull(head);
+            wire["head"]["ref"] = json!("ns-worker");
+            wire
+        };
+        let checks = {
+            let mut wire = forge_checks(&old_head);
+            wire["data"]["repository"]["pullRequest"]["mergeable"] = json!("CONFLICTING");
+            wire["data"]["repository"]["pullRequest"]["mergeStateStatus"] = json!("DIRTY");
+            wire
+        };
+        let (old_pull, new_pull, new_checks) =
+            (pull(&old_head), pull(&new_head), forge_checks(&new_head));
+        let (pull_published, checks_published) = (Arc::clone(&published), Arc::clone(&published));
+        let writes = Arc::clone(&merge_requests);
+        let api = Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    Json(if pull_published.load(Ordering::Relaxed) {
+                        new_pull
+                    } else {
+                        old_pull
+                    })
+                }),
+            )
+            .route(
+                "/graphql",
+                post(move || async move {
+                    Json(if checks_published.load(Ordering::Relaxed) {
+                        new_checks
+                    } else {
+                        checks
+                    })
+                }),
+            )
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                put(move || async move {
+                    writes.fetch_add(1, Ordering::Relaxed);
+                    StatusCode::FORBIDDEN
+                }),
+            );
+        let (forge, forge_server) = serve_forge(api).await;
+        service.forge = forge;
+
+        let selection = json!({"instanceId":"provider","model":"fixture"});
+        let native_selection = selection.clone();
+        let root = project.checkout.clone();
+        let instance = task.next_launch_instance().unwrap();
+        let accepted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let returns = Arc::new(AtomicBool::new(false));
+        let (native_accepted, native_returns) = (Arc::clone(&accepted), Arc::clone(&returns));
+        let (host, native_server) = native_fixture(move |request| {
+            let payload = &request["payload"];
+            let id = &request["id"];
+            let snapshot = match request["tag"].as_str() {
+                Some("orchestration.subscribeShell") => json!({"snapshot":{
+                    "projects":[{"id":binding.project_id,"workspaceRoot":root}]
+                }}),
+                Some("orchestration.subscribeThread") => {
+                    let payloads = native_accepted.lock().unwrap();
+                    let runs = if payloads.is_empty() || payload["threadId"] != "thread:worker" {
+                        json!([])
+                    } else {
+                        let status = if native_returns.load(Ordering::Relaxed) { "completed" } else { "running" };
+                        json!([{"id":"native-continuation","status":status,"userMessageId":payloads[0]}])
+                    };
+                    json!({"projection":{
+                        "thread":{"id":payload["threadId"],"projectId":binding.project_id,
+                            "worktreePath":binding.worktree_path,"branch":binding.branch,
+                            "providerInstanceId":"provider","modelSelection":native_selection},
+                        "runs":runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                    }})
+                }
+                Some("orchestration.dispatchCommand") => {
+                    assert_eq!(payload["type"], "message.dispatch");
+                    assert_eq!(payload["threadId"], "thread:worker");
+                    assert_eq!(payload["commandId"], instance);
+                    assert_eq!(payload["modelSelection"], native_selection);
+                    assert!(payload["text"].as_str().unwrap().contains("resolve the conflicts"));
+                    native_accepted.lock().unwrap().push(payload["messageId"].clone());
+                    return serde_json::Value::Null;
+                }
+                _ => panic!("unexpected native request {request}"),
+            };
+            let mut snapshot = snapshot;
+            snapshot["kind"] = json!("snapshot");
+            snapshot["snapshotSequence"] = json!(12);
+            json!({"_tag":"Chunk","requestId":id,"values":[snapshot,{"kind":"synchronized"}]})
+        }).await;
+        service.host = host;
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let advance = async |service: &Service| {
+            let row = service.task("worker").await.unwrap();
+            Box::pin(service.advance(&row, &service.host.fixture_pass())).await
+        };
+
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Advance(Phase::Working)
+        );
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Launch {
+                via: Launch::Continue {
+                    thread: "thread:worker".into()
+                },
+                role: Role::Worker
+            }
+        );
+        let retained = service.task("worker").await.unwrap();
+        let launch = retained.task.run().unwrap().launch();
+        let wire: serde_json::Value = serde_json::from_str(&launch.input).unwrap();
+        assert_eq!(wire["selection"], selection);
+        assert_eq!(wire["payload"]["modelSelection"], selection);
+        assert!(
+            advance(&service).await.is_err(),
+            "the accepted send loses its reply"
+        );
+        assert_eq!(
+            *accepted.lock().unwrap(),
+            vec![wire["payload"]["messageId"].clone()]
+        );
+        let sent = service.task("worker").await.unwrap();
+        assert!(sent.task.run().unwrap().last_send_at_ms().is_some());
+
+        let host = nucleus_hosts::T3::new(service.host.endpoint(), "fixture").unwrap();
+        let forge = std::mem::replace(&mut service.forge, GitHub::new("unused-fixture").unwrap());
+        drop(service);
+        let settings =
+            nucleus_store::SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
+        let service = Service::open(
+            &settings,
+            project,
+            host,
+            forge,
+            "127.0.0.1:9".parse().unwrap(),
+            std::env::current_exe().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(service.task("worker").await.unwrap().task, sent.task);
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Wait(WaitReason::Running)
+        );
+
+        crate::tests::git(&owned, &["reset", "--hard", new_head.as_str()]);
+        published.store(true, Ordering::Relaxed);
+        returns.store(true, Ordering::Relaxed);
+        let file = ticket::path(service.storage.scratch(), &launch.instance);
+        let binding: ticket::ReportTicket =
+            serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+        let new_pr = PullRequest {
+            url: task.pull_request().unwrap().url.clone(),
+            head: new_head.clone(),
+        };
+        service
+            .report(
+                "worker",
+                &launch.instance,
+                &binding.credential,
+                Report::Work(new_pr.into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Advance(Phase::Reviewing)
+        );
+        let review = service.task("worker").await.unwrap();
+        assert_eq!(review.task.pull_request().unwrap().head, new_head);
+        assert!(review.task.verdict().is_none());
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Launch {
+                via: Launch::Continue {
+                    thread: "thread:reviewer".into()
+                },
+                role: Role::Reviewer
+            }
+        );
+        assert_eq!(accepted.lock().unwrap().len(), 1);
+        assert_eq!(merge_requests.load(Ordering::Relaxed), 0);
+
+        native_server.abort();
+        forge_server.abort();
     }
 
     #[tokio::test]
