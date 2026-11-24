@@ -160,6 +160,11 @@ Later decisions carry their own attribution.
     - Agent instructions forbid answering Inbox requests or operator decisions.
     - Request for T3: server-attested provenance on a request response (UI versus MCP or relay, bound to host, thread, request and choice). When a host provides it, the engine requires the UI source for operator-only decisions.
 
+27. **Inbox commands.** Tom, 2026-11-24: "I could send `ui` as a message and it would spawn the UI in the browser. I need that, and I would like to expand it to a full command interface via the ACP", then approved this set: "That looks great. Go for it".
+    - Typed in the pinned Rust Inbox: `ui`, `settings` and `help`; `status`, `tasks [project]`, `task <ref>` and `decisions`; `pause`, `hold`, `stop` and `resume` (the board's pause modes); `hold <ref> [reason]`, `release <ref>`, `cancel <ref>`, `move <ref> <phase>`, `accept <ref>` and `decline <ref>`; `level <low|normal|high>`, `slots <n> [project]` and `tell <project|all> <text>`.
+    - One parser calls the same service APIs as the CLI and board. Reads and browser commands run at once. Mutations confirm first. Each message is served once, and unknown input replies with help.
+    - Commands come only from operator messages typed in the T3 UI when the host can show that provenance; otherwise they carry the ruling 26 trust level and an unattested actor.
+
 ## The model
 
 ### Stored state per task
