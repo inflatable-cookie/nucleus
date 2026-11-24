@@ -908,6 +908,22 @@ async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
             .allocate(&head)
             .expect("allocate candidate");
     }
+    let parked = service
+        .task(&tasks[0].identity().id)
+        .await
+        .expect("allocated task");
+    let runtime = service.host.runtime_identity().expect("fixture runtime");
+    assert!(
+        service
+            .record_native_turn(
+                &parked,
+                "native_turn_failed",
+                &service.turn_failure_scope(&runtime),
+                "fixture-command",
+            )
+            .await
+            .expect("record a definitive failure")
+    );
     let waiting = service.task("explicit-member").await.expect("third task");
     let identity = waiting.task.identity();
     let route = service.project_for(identity).await.expect("same project");
@@ -922,6 +938,26 @@ async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
             .workspace_capacity(identity, &route, 2)
             .await
             .expect("room under four")
+    );
+    let released = tasks[1].identity();
+    let member = service.project_for(released).await.expect("member route");
+    let head = service
+        .verify_route(released, &member)
+        .await
+        .expect("base head");
+    assert!(matches!(
+        worktrees
+            .checkout(&member.checkout, &released.repository, &released.id)
+            .expect("member checkout")
+            .retire(&head)
+            .expect("retire the fixture checkout"),
+        nucleus_work::Retirement::Removed
+    ));
+    assert!(
+        service
+            .workspace_capacity(identity, &route, 1)
+            .await
+            .expect("retiring an owned checkout frees workspace capacity")
     );
 }
 

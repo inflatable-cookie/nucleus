@@ -397,29 +397,22 @@ impl Store {
         )?)
     }
 
-    /// Find tasks in a project that can hold the first-dispatch workspace budget.
+    /// Find nonterminal tasks whose managed checkout can occupy the project's workspace budget.
     /// # Errors
     /// Returns an error if task custody cannot be read.
     pub fn project_workspace_candidates(
         &self,
         except: &str,
         repositories: &[String],
-        failed_turn_scope: Option<&str>,
     ) -> Result<Vec<(String, String)>, StoreError> {
         let repositories = serde_json::to_string(repositories)?;
         let mut query = self.connection.prepare_cached(
             "SELECT id, repository FROM tasks
              WHERE id <> ?1 AND phase NOT IN ('done', 'cancelled')
-             AND (json_extract(run, '$.last_send_at_ms') IS NOT NULL
-               OR (hold IS NULL AND question IS NULL AND NOT EXISTS (
-                    SELECT 1 FROM events WHERE task_id = tasks.id
-                      AND kind IN ('native_turn_failed', 'host_observation_blocked')
-                      AND json_valid(detail) AND json_extract(detail, '$.version') = tasks.version
-                      AND json_extract(detail, '$.session') = ?3)))
              AND EXISTS (SELECT 1 FROM json_each(?2) AS route
                  WHERE tasks.repository = route.value COLLATE NOCASE)",
         )?;
-        let rows = query.query_map(params![except, repositories, failed_turn_scope], |row| {
+        let rows = query.query_map(params![except, repositories], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
