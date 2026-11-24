@@ -244,7 +244,7 @@ export class ParticipantLease {
     task: Task,
     agentId: string,
     workspaceId: string,
-    options: { direct?: boolean } = {},
+    options: { direct?: boolean; directFallback?: boolean } = {},
   ): Promise<string | null> {
     const deadline =
       this.resolution.quantumReadTimeoutMs ?? QUANTUM_READ_DEADLINE_MS;
@@ -274,78 +274,91 @@ export class ParticipantLease {
     if (roots.has(undefined))
       return "a participant run temporary directory is unrecorded";
 
-    const scan = await this.resolution.readPassProcesses(task.hostId, {
-      participant: { agentId, observation: state },
-      direct: options.direct,
-    });
-    if (scan.state === "unknown") return scan.reason;
     const runtime = participantRuntime({
       dataHome: storeDataHome(this.store),
       tasks: [task],
       runs,
     });
-    const workspace = await boundedRead(
-      "workspace process probe",
-      () =>
-        noLiveWorkspaceProcesses.call(
-          this.adapter,
-          workspaceId,
+    const readScan = (direct: boolean | undefined) =>
+      this.resolution.readPassProcesses(task.hostId, {
+        participant: { agentId, observation: state },
+        direct,
+      });
+    let scan = await readScan(options.direct);
+    for (;;) {
+      if (scan.state === "unknown") return scan.reason;
+      const listing = scan;
+      // Positive evidence first: a holder this listing already shows is final,
+      // whatever coverage the listing lacks.
+      const workspace = await boundedRead(
+        "workspace process probe",
+        () =>
+          noLiveWorkspaceProcesses.call(
+            this.adapter,
+            workspaceId,
+            runIds,
+            runtime,
+            listing.processes,
+          ),
+        deadline,
+      );
+      if (workspace.state === "unknown") return workspace.reason;
+      if (workspace.value !== null)
+        return (
+          workspace.value || "the workspace process probe returned no result"
+        );
+      for (const root of roots) {
+        const issue = workspaceToolProcessIssue(
+          scan.processes,
+          root!,
           runIds,
           runtime,
-          scan.processes,
-        ),
-      deadline,
-    );
-    if (workspace.state === "unknown") return workspace.reason;
-    if (workspace.value !== null)
-      return (
-        workspace.value || "the workspace process probe returned no result"
-      );
-    for (const root of roots) {
-      const issue = workspaceToolProcessIssue(
-        scan.processes,
-        root!,
-        runIds,
-        runtime,
-      );
-      if (issue) return issue;
-    }
-    for (const runId of runIds) {
-      // The same listing also proves custody for provider descendants that
-      // have moved out of the workspace and scratch trees.
-      const custody = await readRunProcessCustody({
-        store: this.store,
-        readProcesses: async () => scan,
-        task,
-        runId,
-        run: runs.find((run) => run.id === runId),
-      });
-      if (custody.state === "unknown") return custody.reason;
-      if (custody.state === "live")
-        return `process ${custody.process.pid} still holds custody for run ${runId}`;
-    }
-    // Coverage is judged only after positive evidence: a truncated listing names
-    // itself only when no holder is already known.
-    const complete =
-      scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
-    // A timed-out listing is unknown above; what reaches here is a truncated one.
-    if (complete !== true) return truncatedListingReason(scan);
-    if (incompleteRunProcessScan(scan)) return truncatedListingReason(scan);
-    if (scan.fromPassSnapshot) {
+        );
+        if (issue) return issue;
+      }
+      for (const runId of runIds) {
+        // The same listing also proves custody for provider descendants that
+        // have moved out of the workspace and scratch trees.
+        const custody = await readRunProcessCustody({
+          store: this.store,
+          readProcesses: async () => scan,
+          task,
+          runId,
+          run: runs.find((run) => run.id === runId),
+        });
+        if (custody.state === "unknown") return custody.reason;
+        if (custody.state === "live")
+          return `process ${custody.process.pid} still holds custody for run ${runId}`;
+      }
+      // Coverage is judged only after positive evidence: a truncated listing
+      // names itself only when no holder is already known.
+      const complete =
+        scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+      if (complete !== true) return truncatedListingReason(scan);
+      if (incompleteRunProcessScan(scan)) return truncatedListingReason(scan);
+      if (!scan.fromPassSnapshot) break;
       const beforeScan =
         scan.directBeforeScan === undefined
           ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
           : scan.directBeforeScan;
       const observedAt = Date.parse(state.updatedAt ?? "");
       if (
-        !Number.isFinite(observedAt) ||
-        observedAt > scan.capturedAt ||
-        !noTurnLive(beforeScan) ||
-        beforeScan?.updatedAt !== state.updatedAt
-      ) {
+        Number.isFinite(observedAt) &&
+        observedAt <= scan.capturedAt &&
+        noTurnLive(beforeScan) &&
+        beforeScan?.updatedAt === state.updatedAt
+      )
+        break;
+      // The pass snapshot predates this participant's latest inactivity, and a
+      // later pass may never line up with it. A fresh listing taken after the
+      // exact inactivity read above covers it by construction, as owner
+      // completion does (#1564). Merge and closeout take that one listing.
+      if (!options.directFallback) {
         this.resolution.requestPassProof(task.hostId, agentId);
         return "the process listing does not cover the participant's latest inactivity";
       }
+      scan = await readScan(true);
+      options = { ...options, directFallback: false };
     }
     return null;
   }
@@ -371,7 +384,9 @@ export class ParticipantLease {
       let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
       try {
         if (this.adapter.observeParticipant) {
-          const issue = await this.exactCustodyIssue(t, id, workspace);
+          const issue = await this.exactCustodyIssue(t, id, workspace, {
+            directFallback: true,
+          });
           if (!issue) continue;
           if (!probe)
             this.resolution.waiting(

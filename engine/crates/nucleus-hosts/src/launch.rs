@@ -23,6 +23,24 @@ pub struct RoleProfile {
     pub instance_id: String,
     pub model: String,
     pub runtime_mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ModelOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelOption {
+    pub id: String,
+    pub value: String,
+}
+
+impl RoleProfile {
+    fn selection(&self) -> Value {
+        let mut selection = json!({"instanceId": self.instance_id, "model": self.model});
+        if !self.options.is_empty() {
+            selection["options"] = json!(self.options);
+        }
+        selection
+    }
 }
 
 #[derive(Clone)]
@@ -36,7 +54,9 @@ pub enum Dispatch {
         profile: RoleProfile,
         parent: ParentRun,
     },
-    Continue,
+    Continue {
+        profile: Option<RoleProfile>,
+    },
 }
 
 #[derive(Clone)]
@@ -65,7 +85,7 @@ impl RunRequest {
                 Method::Create,
                 json!({
                     "commandId": instance, "threadId": thread, "projectId": self.binding.project_id, "title": title,
-                    "modelSelection": {"instanceId": profile.instance_id, "model": profile.model},
+                    "modelSelection": profile.selection(),
                     "runtimeMode": profile.runtime_mode, "interactionMode": "default",
                     "workspaceStrategy": {
                         "type": "existing_worktree", "worktreePath": self.binding.worktree_path, "branch": self.binding.branch,
@@ -84,12 +104,12 @@ impl RunRequest {
                     "createdBy":"user", "creationSource":"server",
                     "parentThreadId":parent.thread, "parentRunId":parent.run, "parentNodeId":parent.node,
                     "task":self.text,"title":title,
-                    "modelSelection":{"instanceId":profile.instance_id,"model":profile.model},
+                    "modelSelection":profile.selection(),
                     "runtimeMode":profile.runtime_mode,"interactionMode":"default",
                     "completionWake":"settled_only"
                 }),
             ),
-            Dispatch::Continue => (
+            Dispatch::Continue { .. } => (
                 Method::Continue,
                 json!({
                     "type": "message.dispatch", "commandId": instance, "threadId": thread,
@@ -102,6 +122,10 @@ impl RunRequest {
             binding: self.binding.clone(),
             parent: self.parent.clone(),
             method,
+            selection: match &self.dispatch {
+                Dispatch::Continue { profile } => profile.as_ref().map(RoleProfile::selection),
+                _ => None,
+            },
             payload: to_raw_value(&payload).map_err(|_| HostError::Configuration)?,
         };
         let input = serde_json::to_string(&wire).map_err(|_| HostError::Configuration)?;
@@ -136,6 +160,8 @@ pub(crate) struct Wire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) parent: Option<String>,
     pub(crate) method: Method,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selection: Option<Value>,
     pub(crate) payload: Box<RawValue>,
 }
 

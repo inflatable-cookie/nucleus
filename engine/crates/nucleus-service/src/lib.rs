@@ -3,6 +3,7 @@
 mod acp;
 mod pass;
 mod presentation;
+mod profiles;
 mod project;
 mod question;
 mod schedule;
@@ -37,11 +38,11 @@ use nucleus_work::{WorkError, Worktrees, checkout_path};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
-    sync::{Mutex, Notify, OnceCell, OwnedMutexGuard, broadcast, mpsc},
+    sync::{Mutex, Notify, OwnedMutexGuard, broadcast, mpsc},
     time::Instant,
 };
 
-pub use project::{LaunchBudget, Project, RegisteredAgent, RegisteredRole};
+pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
 pub use ticket::ReportTicket;
 pub use web::{Controller, router};
 
@@ -67,6 +68,10 @@ pub enum ServiceError {
     Ticket,
     #[error("the ACP binding could not be saved")]
     AcpBinding,
+    #[error(transparent)]
+    Profile(#[from] nucleus_core::profiles::ProfileLaunchError),
+    #[error("project dispatch requires a configured Profiles domain")]
+    ProfileConfiguration,
     #[error("authentication failed")]
     AcpUnauthorized,
     #[error("local I/O failed")]
@@ -256,7 +261,6 @@ impl Service {
         self.storage.database().verify()?;
         let mut first = Some(self.wait_due_task().await?);
         let host = self.host.pass(self.storage.scratch().path());
-        let profiles = OnceCell::new();
         let mut results = Vec::with_capacity(PASS_BATCH);
         let mut visited = BTreeSet::new();
         for _ in 0..PASS_BATCH {
@@ -282,7 +286,7 @@ impl Service {
                 let mut state = self.state.lock().await;
                 self.track(&mut state, &row.task);
             }
-            let result = Box::pin(self.advance_due_task(&row, &host, &profiles)).await;
+            let result = Box::pin(self.advance_due_task(&row, &host)).await;
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
@@ -293,7 +297,6 @@ impl Service {
         &self,
         row: &TaskRow,
         host: &impl nucleus_hosts::TaskHost,
-        profiles: &OnceCell<Result<(), HostError>>,
     ) -> Result<Action, ServiceError> {
         if row.task.phase() == Phase::Done
             && row.task.run().is_none()
@@ -306,23 +309,25 @@ impl Service {
             && row.task.hold().is_none()
             && row.task.question().is_none()
         {
-            if self
-                .state
-                .lock()
-                .await
-                .settings
-                .fixture_slots(&self.project)
-                .is_none()
-            {
+            let (enabled, configured) = {
+                let state = self.state.lock().await;
+                (
+                    state.settings.fixture_slots(&self.project).is_some(),
+                    state.settings.profiles.is_some(),
+                )
+            };
+            if !enabled || (!configured && self.project.mode == ProjectMode::Project) {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
-            (*profiles
-                .get_or_init(|| async {
-                    self.host
-                        .check(&[&self.project.worker, &self.project.reviewer])
-                        .await
-                })
-                .await)?;
+            if !configured {
+                let catalog = host.profile_catalog().await?;
+                if ![&self.project.worker, &self.project.reviewer]
+                    .into_iter()
+                    .all(|profile| catalog.supports(profile))
+                {
+                    return Err(HostError::Configuration.into());
+                }
+            }
         }
         self.advance(row, host).await
     }
@@ -452,6 +457,9 @@ impl Service {
             Err(ServiceError::Host(_)) => Some(WaitReason::HostUnknown),
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
             Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
+            Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
+                Some(WaitReason::Capacity)
+            }
             _ => None,
         };
         let mut state = self.state.lock().await;
@@ -593,7 +601,7 @@ impl Service {
                     {
                         presentation::note_merge(&mut audit, &observation.forge);
                     }
-                    self.commit(&mut state, &prior, &task, &audit)?
+                    self.commit(&mut state, &prior, &task, &audit, None)?
                 } else {
                     prior.version
                 };
@@ -700,7 +708,7 @@ impl Service {
         self.storage.database().verify()?;
         let version = {
             let mut state = self.state.lock().await;
-            self.commit(&mut state, prior, &task, audit)?
+            self.commit(&mut state, prior, &task, audit, None)?
         };
         if task.run().is_none()
             && let Some(run) = prior.task.run()
@@ -716,10 +724,16 @@ impl Service {
         prior: &TaskRow,
         task: &Task,
         audit: &EventDraft,
+        subscription_group: Option<&str>,
     ) -> Result<i64, ServiceError> {
         let id = &task.identity().id;
         let audit = presentation::decorate(&prior.task, task, audit, &state.store);
-        let version = state.store.save_row(prior, task, &audit)?;
+        let version = match subscription_group {
+            Some(group) => state
+                .store
+                .save_profile_launch(prior, task, &audit, group)?,
+            None => state.store.save_row(prior, task, &audit)?,
+        };
         self.track(state, task);
         state.set_wait(id, None);
         state.observed_forge.remove(id);

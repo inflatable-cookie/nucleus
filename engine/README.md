@@ -2,9 +2,9 @@
 
 [Spec 070](../docs/knowledge/specs/070-small-engine.md) owns the model. Milestone 1
 runs one synthetic task from work through closeout on T3. The Rust engine is off
-by default, uses its own settings and database, and admits only the explicitly
-configured fixture repository. The planner checks the run by hand. The board
-switch starts in milestone 2.
+by default and uses its own settings and database. Fixture mode scopes dispatch
+to the authorized fixture repository. The planner checks the run by hand. The
+board switch starts in milestone 2.
 
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
@@ -462,7 +462,7 @@ Remove inside the editor.
 
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
-| Profiles | `config/profiles.json` | Name and canonical selection with stable ID, capability, weight, provider, model and effort. |
+| Profiles | `config/profiles.json` | Name, optional subscription group, and canonical selection with stable ID, capability, weight, provider, model and effort. |
 | Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, local load, one host call slot and one optional allowance in minutes. |
 | Projects | `state/projects.json` | Name, slots, archival and repositories with GitHub origin, path, base, required check names and hung-tool limit. The limit defaults to 30 minutes. Show the planner from the scheduler's current authority. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
@@ -506,6 +506,12 @@ transaction. The store keeps the last 50 assignments per role and lifetime
 counts. The group tie-break uses the most recent 50 assignments across roles.
 An empty or unreadable history leaves selection to the configured weights. A
 failed usage write rolls back the charge while leaving the launch available.
+Configured profiles use one T3 catalog read per pass for due launch decisions.
+A profile's optional `group` names its subscription. Unset groups use the
+resolved T3 provider instance ID. The scheduler freezes the profile and native
+request together, using the retained worker's model to require an independent
+reviewer. An unavailable profile leaves the task waiting. Fixture serve files
+without a Profiles domain keep their static worker and reviewer settings.
 
 ## Milestone 1 proof
 
@@ -515,3 +521,14 @@ and push remotes and the native project's registered checkout before dispatch.
 One process holds the engine profile's write lock. Use
 a real guarded merge and verify task state, exact heads, T3 turn settlement,
 merge commit and worktree disposition by hand with the planner.
+
+## Binding one real project
+
+The `serve --project` file pins one GitHub repository, canonical local checkout,
+base branch and T3 project ID. Existing files default to fixture mode. Set
+`"mode": "project"` explicitly for a real project and name its Rust ACP provider
+in `acpProvider`. Real dispatch waits for configured profiles.
+
+The native write gate verifies both origin remotes against the configured
+repository and confirms that the exact T3 project is active at the pinned
+checkout. Role threads use the task's ACP parent in project mode.

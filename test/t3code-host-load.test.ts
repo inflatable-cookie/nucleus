@@ -308,10 +308,10 @@ test("a missing pass timeline uses the exact T3 thread and the owned-process sca
 
   thread.thread.updatedAt = new Date(Date.parse(STAMP) + 1_000).toISOString();
   thread.updatedAt = thread.thread.updatedAt;
-  assert.equal(await lease(), false);
-  assert.match(
-    store.task(task.id).reason,
-    /does not cover the participant's latest inactivity/,
+  assert.equal(
+    await lease(),
+    true,
+    "inactivity newer than the pass scan is covered by one fresh listing after the exact read",
   );
 
   server.threads.delete(agentId);

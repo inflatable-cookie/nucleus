@@ -5,8 +5,9 @@ use std::{
 };
 
 use nucleus_core::{
-    Action, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation, Observed, Phase,
-    Report, RetainedThread, Role, Run, RunState, Task, WaitReason, Workspace, decide,
+    Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch, Observation,
+    Observed, Phase, Report, RetainedThread, Role, Run, RunState, Task, WaitReason, Workspace,
+    decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -16,7 +17,10 @@ use nucleus_hosts::{
 use nucleus_store::TaskRow;
 use nucleus_work::Checkout;
 
-use crate::{Service, ServiceError, active, event, now_ms, project::linked_checkout, ticket};
+use crate::{
+    Service, ServiceError, active, event, now_ms, profiles::SelectedLaunch,
+    project::linked_checkout, ticket,
+};
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
 
@@ -57,7 +61,13 @@ impl Service {
         match archive {
             ArchiveStep::Finished => {
                 let mut state = self.state.lock().await;
-                self.commit(&mut state, row, &row.task, &event("role_threads_archived"))?;
+                self.commit(
+                    &mut state,
+                    row,
+                    &row.task,
+                    &event("role_threads_archived"),
+                    None,
+                )?;
                 Ok(Action::Nothing)
             }
             ArchiveStep::Wait => Ok(Action::Wait(WaitReason::Stopping)),
@@ -286,6 +296,10 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
         let task = &row.task;
+        let selection = self.select_launch(task, &observation, role, host).await?;
+        let via = selection
+            .as_ref()
+            .map_or(via.clone(), |selected| selected.intent.via().clone());
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
             self.project.verify()?;
             observation.workspace = Observed::Known(checkout.allocate(&self.project.start)?);
@@ -310,6 +324,7 @@ impl Service {
             checkout.branch(),
             &self.report_command,
             &ticket_path,
+            selection.as_ref().map(|selected| &selected.intent),
         );
         let binding = self.binding(checkout)?;
         let parent = if let Some(provider) = &self.project.acp_provider {
@@ -318,7 +333,12 @@ impl Service {
             }
             match self
                 .host
-                .prepare_parent(&binding, provider, &task.identity().reference)
+                .prepare_parent(
+                    &binding,
+                    provider,
+                    &task.identity().reference,
+                    host.profile_catalog(),
+                )
                 .await?
             {
                 ParentStep::Live(parent) => Some(parent),
@@ -352,7 +372,9 @@ impl Service {
             binding,
             parent,
             title: format!("{} • {role:?}", task.identity().reference),
-            profile: self.project.profile(role),
+            profile: selection
+                .as_ref()
+                .map_or(self.project.profile(role), |selected| &selected.native),
             via: &via,
             instance: &instance,
             started_at: now_ms(),
@@ -361,17 +383,56 @@ impl Service {
         let mut seed = [0; 32];
         getrandom::fill(&mut seed).map_err(|_| ServiceError::Ticket)?;
         let mut updated = task.clone();
-        let credential = updated.reserve_launch(&observation, inputs, &seed)?;
+        let credential = if let Some(selected) = &selection {
+            updated.reserve_profile_launch(&observation, inputs, &seed, selected.intent.clone())?
+        } else {
+            updated.reserve_launch(&observation, inputs, &seed)?
+        };
+        self.persist_reservation(row, &updated, &credential, selection.as_ref(), via)
+            .await
+    }
+
+    async fn persist_reservation(
+        &self,
+        row: &TaskRow,
+        updated: &Task,
+        credential: &CallbackCredential,
+        selection: Option<&SelectedLaunch>,
+        via: Launch,
+    ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
+        self.storage.database().verify()?;
         ticket::prepare(
             self.storage.scratch(),
-            task,
+            updated,
             run,
-            &credential,
+            credential,
             &format!("http://{}", self.callback),
         )?;
-        self.save(row, updated, &event("run_reserved")).await?;
-        Ok(Action::Launch { role, via })
+        let saved = {
+            let mut state = self.state.lock().await;
+            if selection.map_or(state.settings.profiles.is_none(), |selected| {
+                selected.is_current(&state)
+            }) {
+                self.commit(
+                    &mut state,
+                    row,
+                    updated,
+                    &event("run_reserved"),
+                    selection.map(|selected| selected.group.as_str()),
+                )
+                .map(|_| Action::Launch {
+                    role: run.launch().role,
+                    via,
+                })
+            } else {
+                Ok(Action::Wait(WaitReason::Capacity))
+            }
+        };
+        if !matches!(saved, Ok(Action::Launch { .. })) {
+            ticket::clear(self.storage.scratch(), run);
+        }
+        saved
     }
 
     async fn send_prepared(
@@ -870,6 +931,110 @@ mod tests {
         Due, fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation,
         serve_forge,
     };
+
+    #[tokio::test]
+    async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let native_reads = Arc::clone(&reads);
+        let (host, server) = native_fixture(move |request| {
+            assert_eq!(request["tag"], "server.getConfig");
+            native_reads.fetch_add(1, Ordering::Relaxed);
+            let models: Vec<_> = ["model-first", "model-second"].into_iter().map(|slug| json!({
+                "slug": slug, "capabilities": {"optionDescriptors": [
+                    {"id":"reasoningEffort","type":"select","options":[{"id":"high"}]}
+                ]}
+            })).collect();
+            json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
+                "environment":{"orchestrationProtocolVersion":2},
+                "providers":[
+                    {"instanceId":"custom-codex","driver":"codex","enabled":true,"status":"ready","models":models},
+                    {"instanceId":"claudeAgent","enabled":false,"status":"disabled","models":[{"slug":"offline"}]}
+                ]
+            }}})
+        }).await;
+        service.host = host;
+        service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
+            "profiles": [
+                {"name":"First","group":"Shared plan","selection":{"id":"first","capability":"worker","provider":"codex","model":"model-first","effort":"high"}},
+                {"name":"Second","group":"Shared plan","selection":{"id":"second","capability":"worker","provider":"codex","model":"model-second","effort":"high"}},
+                {"name":"Offline","group":"Other plan","selection":{"id":"offline","capability":"worker","provider":"claude","model":"offline"}}
+            ]
+        })).expect("profile settings")));
+        let pass = service.host.fixture_pass();
+        let worktrees = service.worktrees().expect("worktrees");
+        let mut selected = Vec::new();
+        for id in ["worker-one", "worker-two"] {
+            let mut task = Task::new(
+                nucleus_core::Identity {
+                    id: id.into(),
+                    reference: id.into(),
+                    repository: service.project.repository.clone(),
+                    base: service.project.base.clone(),
+                    entry: Entry::Brief,
+                    origin_thread: None,
+                },
+                "Add a synthetic greeting.".into(),
+                None,
+            );
+            let observation = Observation {
+                host: Observed::Unknown,
+                forge: Observed::Known(Forge::Absent),
+                workspace: Observed::Known(Workspace::Absent),
+            };
+            assert_eq!(
+                task.reconcile(&observation),
+                Action::Advance(Phase::Working)
+            );
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("admitted"))
+                .expect("seed");
+            let row = service.task(id).await.expect("row");
+            let checkout = worktrees
+                .checkout(&service.project.checkout, &service.project.repository, id)
+                .expect("checkout");
+            Box::pin(service.reserve(
+                &row,
+                &checkout,
+                observation,
+                Role::Worker,
+                Launch::Create,
+                &pass,
+            ))
+            .await
+            .expect("reserve configured worker");
+            let frozen = service.task(id).await.expect("frozen row");
+            let launch = frozen.task.run().expect("run").launch();
+            let profile = launch.profile().expect("canonical choice");
+            let wire: serde_json::Value =
+                serde_json::from_str(&launch.input).expect("frozen payload");
+            assert_eq!(
+                wire["payload"]["modelSelection"],
+                json!({
+                    "instanceId":"custom-codex",
+                    "model":profile.model,
+                    "options":[{"id":"reasoningEffort","value":"high"}],
+                })
+            );
+            selected.push(profile.id.clone());
+        }
+        assert_ne!(selected[0], selected[1]);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+        let state = service.state.lock().await;
+        for id in selected {
+            let counts = state
+                .store
+                .rotation_counts(Role::Worker, &id, "Shared plan")
+                .expect("rotation persisted");
+            assert_eq!(counts.profile_lifetime, 1);
+            assert_eq!(counts.group_lifetime, 2);
+        }
+        server.abort();
+    }
 
     #[tokio::test]
     async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {

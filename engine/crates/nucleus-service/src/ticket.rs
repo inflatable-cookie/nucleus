@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use nucleus_core::profiles::ProfileLaunch;
 use nucleus_core::{CallbackCredential, Role, Run, Task};
 use nucleus_store::StorageDirectory;
 use serde::{Deserialize, Serialize};
@@ -75,6 +76,7 @@ pub(crate) fn prompt(
     branch: &str,
     report_command: &Path,
     ticket: &Path,
+    profile: Option<&ProfileLaunch>,
 ) -> String {
     let assignment = match role {
         Role::Worker => format!(
@@ -95,10 +97,26 @@ pub(crate) fn prompt(
         }
     };
     let question = r#"{"question":{"prompt":"QUESTION","options":["OPTION"]}}"#;
-    format!(
+    let mut prompt = format!(
         "{assignment}\n\nUse this synthetic checkout and repository only. Send {report} on stdin to the local CLI at {} with arguments `report --ticket` and ticket path {}. If you need a planning decision, send {question}. Keep the ticket contents private.\n\nBrief\n\n{}",
         report_command.display(),
         ticket.display(),
         task.brief().text
-    )
+    );
+    if let Some(profile) = profile
+        && role == Role::Worker
+        && let Some(pr) = profile.pull_request()
+    {
+        use std::fmt::Write as _;
+
+        let _ = write!(
+            prompt,
+            "\n\nCurrent pull request\n{} at {}",
+            pr.url, pr.head
+        );
+        if let Some(findings) = profile.findings() {
+            let _ = write!(prompt, "\n\nApplied review findings\n{findings}");
+        }
+    }
+    prompt
 }

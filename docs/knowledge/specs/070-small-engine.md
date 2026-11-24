@@ -110,6 +110,12 @@ Tom approved all of these on 2026-11-23 ("Approve, let's get this working."):
     - The operator keeps one Inbox throughout the transition (Tom chose this). Until milestone 3, the Rust engine's operator decisions are added to the existing TypeScript decision store, so they appear in the current Inbox, and their answers flow back to the Rust task. The scheduler does that hand-off, never a request path (ruling 11).
     - At milestone 3, decisions move into the Rust service (ruling 12) and the Rust inbox session replaces the TypeScript Inbox as the one pinned thread.
 
+19. **Configurable storage; an external volume is opt-in.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD", then "An external drive shouldn't be a requirement - most people won't want that. It should be opt-in, default to sensible internal drive locations".
+    - Every path the engine writes is configurable in the Storage domain. That covers the database, Longhorn config and its backups, worktrees, scratch (including ACP session scratch and run tickets), logs, and temp files for every process the engine spawns (`TMPDIR`, `TMP` and `TEMP` point at scratch).
+    - By default everything uses the platform's standard internal locations (application support, caches and logs on macOS; the XDG directories on Linux), with no external drive needed.
+    - An external volume is an opt-in Storage setting. When it's set, every root must resolve onto that pinned volume. If the volume is absent or a root resolves off it, the engine refuses to start rather than falling back to the internal drive. A Barge worktree pool, when enabled, follows the same rule.
+    - Tom's machine opts in: home `/Volumes/Stash/nucleus-engine`, worktrees `/Volumes/Stash/worktrees/nucleus-engine`, scratch `/Volumes/Stash/scratch/nucleus-engine`, and install build output under `/Volumes/Stash/builds`. That configuration is in place before the first real project goes live.
+
 ## The model
 
 ### Stored state per task

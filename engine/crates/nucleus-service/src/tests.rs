@@ -72,8 +72,10 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
         instance_id: "provider".into(),
         model: "fixture".into(),
         runtime_mode: "auto".into(),
+        options: Vec::new(),
     };
     let project = Project {
+        mode: ProjectMode::Fixture,
         repository: REPOSITORY.into(),
         checkout,
         base: "main".into(),
@@ -102,7 +104,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     (home, service)
 }
 
-fn git(root: &Path, args: &[&str]) -> String {
+pub(super) fn git(root: &Path, args: &[&str]) -> String {
     let output = Process::new("git")
         .current_dir(root)
         .args(args)
@@ -220,6 +222,10 @@ pub(super) async fn serve_forge(app: Router) -> (GitHub, tokio::task::JoinHandle
 pub(super) struct Due(pub(super) AtomicUsize);
 
 impl TaskHost for Due {
+    async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
+        unreachable!("only revoked runs are exercised")
+    }
+
     fn prepare_launch(
         &self,
         _: nucleus_hosts::LaunchRequest<'_>,
