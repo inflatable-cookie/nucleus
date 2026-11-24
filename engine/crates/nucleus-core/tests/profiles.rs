@@ -555,7 +555,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
     task.record_send(&instance, 3).unwrap();
     assert_eq!(task.threads().profile(Role::Worker), Some(&next));
     assert_eq!(
-        task.reconcile(&current(open('a'), &instance, RunState::Ended)),
+        task.reconcile(&current(open('a'), &instance, RunState::Gone)),
         Action::Relaunch(Role::Worker)
     );
 
