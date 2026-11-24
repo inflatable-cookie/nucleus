@@ -304,6 +304,93 @@ pub(super) struct Due(
     pub(super) Option<nucleus_core::RunState>,
 );
 
+#[tokio::test]
+async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
+    let head: Head = "a".repeat(40).parse().unwrap();
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let source = {
+        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
+        let pull = forge_pull(&head);
+        let checks = forge_checks(&head);
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    entered.notify_one();
+                    release.notified().await;
+                    Json(pull)
+                }),
+            )
+            .route("/graphql", post(move || async move { Json(checks) }))
+    };
+    let (forge, server) = serve_forge(source).await;
+    let (_home, service) = fixture(forge);
+    let id = "reviewer";
+    let (mut task, credential, _) = reservation(id, Entry::ReviewEntry, &head);
+    let instance = task.run().unwrap().launch().instance.clone();
+    task.record_send(&instance, 2).unwrap();
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&task, &event("fixture"))
+        .unwrap();
+    let owner = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
+    let CommandOutcome::Applied(held_row) = service
+        .command(id, &owner, Command::Hold("Check the review first".into()))
+        .await
+        .unwrap()
+    else {
+        panic!("hold must commit");
+    };
+    assert_eq!(held_row.task.brief(), task.brief());
+    assert_eq!(held_row.task.pull_request(), task.pull_request());
+    assert_eq!(held_row.task.run(), task.run());
+    assert_eq!(
+        service.advance(&held_row, &ended).await.unwrap(),
+        Action::Wait(WaitReason::Hold)
+    );
+    let CommandOutcome::Applied(released) =
+        service.command(id, &owner, Command::Release).await.unwrap()
+    else {
+        panic!("release must commit");
+    };
+
+    let report = Report::Review {
+        head,
+        decision: nucleus_core::Review::Changes,
+        summary: "Original reviewer recovered the findings".into(),
+        finding_titles: Vec::new(),
+    };
+    let (result, ()) = tokio::join!(service.advance(&released, &ended), async {
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("terminal observation reached the forge before reserving");
+        let accepted = service
+            .report(id, &instance, credential.as_bytes(), report.clone())
+            .await;
+        release.notify_one();
+        accepted.expect("late original report authenticates");
+    });
+    assert!(matches!(
+        result,
+        Err(ServiceError::Store(StoreError::StaleTask))
+    ));
+    let current = service.task(id).await.unwrap();
+    assert_eq!(current.version, released.version + 1);
+    let run = current.task.run().unwrap();
+    assert_eq!(run.launch().instance, instance);
+    assert_eq!(run.report(), Some(&report));
+    assert!(run.report_reminder_for().is_none());
+    assert_eq!(ended.0.load(Ordering::Relaxed), 0);
+    server.abort();
+}
+
 impl TaskHost for Due {
     async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
         unreachable!("only revoked runs are exercised")
