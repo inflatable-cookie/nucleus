@@ -215,15 +215,6 @@ enum WaitDetail {
     Observation(&'static str),
 }
 
-impl WaitDetail {
-    const fn message(self) -> &'static str {
-        match self {
-            Self::BeforeSend => "Checking the task thread before sending.",
-            Self::Observation(message) => message,
-        }
-    }
-}
-
 struct State {
     store: Store,
     allowance_clock: allowance::Clock,

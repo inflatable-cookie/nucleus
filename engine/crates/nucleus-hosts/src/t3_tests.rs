@@ -601,8 +601,8 @@ fn missing_thread(thread: &str) -> Response {
 
 #[tokio::test]
 async fn an_expired_parent_and_absent_exact_child_settle_without_resending() {
-    expired_parent_with_absent_child(true).await;
-    expired_parent_with_absent_child(false).await;
+    Box::pin(expired_parent_with_absent_child(true)).await;
+    Box::pin(expired_parent_with_absent_child(false)).await;
 }
 
 async fn expired_parent_with_absent_child(sent: bool) {

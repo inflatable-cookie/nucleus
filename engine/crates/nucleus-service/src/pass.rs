@@ -682,10 +682,6 @@ impl Service {
         Ok(true)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep the parent proof, intent and send in order"
-    )]
     async fn prepare_run_parent(
         &self,
         row: &TaskRow,

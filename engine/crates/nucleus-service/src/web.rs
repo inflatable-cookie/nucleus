@@ -1012,14 +1012,7 @@ impl Summary {
             phase: task.phase(),
             attention: state.task_attention(row)?,
             next_check_at: None,
-            wait_detail: state
-                .wait_detail(id)
-                .map(crate::WaitDetail::message)
-                .filter(|_| {
-                    !task.phase().is_terminal()
-                        && task.hold().is_none()
-                        && task.question().is_none()
-                }),
+            wait_detail: None,
             wait: if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal()
             {
                 wait
@@ -1041,8 +1034,14 @@ impl Summary {
             dependency_status,
             dependency_edits,
         };
-        if (view.wait.is_some() || view.wait_detail.is_some()) && task.operator_decline().is_none()
+        if view.wait == state.wait_reason(id) && task.hold().is_none() && task.question().is_none()
         {
+            view.wait_detail = state.wait_detail(id).map(|detail| match detail {
+                crate::WaitDetail::BeforeSend => "Checking the task thread before sending.",
+                crate::WaitDetail::Observation(message) => message,
+            });
+        }
+        if view.wait.is_some() && task.operator_decline().is_none() {
             view.next_check_at = state.schedule.due(id).map(|due| {
                 let delay = due.saturating_duration_since(tokio::time::Instant::now());
                 now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
