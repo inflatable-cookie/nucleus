@@ -141,7 +141,7 @@ impl Service {
         let number = state.store.create_with_facts(&task, &admitted, facts)?;
         state.apply_task_wait(&task, admission_wait(blocked, requested_permission), true);
         if requested_permission {
-            self.inbox_changed();
+            self.decision_changed();
         }
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok(TaskRow {
@@ -237,7 +237,7 @@ impl Service {
         )?;
         state.apply_task_wait(&task, admission_wait(blocked, requested_permission), true);
         if requested_permission {
-            self.inbox_changed();
+            self.decision_changed();
         }
         self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
         Ok((
@@ -290,7 +290,7 @@ impl Service {
         let decision = state
             .store
             .add_decision(&project, new_id("d")?, input, stamp(caller))?;
-        self.inbox_changed();
+        self.decision_changed();
         Ok(decision)
     }
 
@@ -346,7 +346,7 @@ impl Service {
             );
             self.wake.notify_one();
         }
-        self.inbox_changed();
+        self.decision_changed();
         Ok(decision)
     }
 
@@ -391,7 +391,7 @@ impl Service {
                     at_ms: now_ms(),
                 },
             )?;
-            self.inbox_changed();
+            self.decision_changed();
             return Ok(None);
         }
         Ok(decision

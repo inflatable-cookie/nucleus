@@ -311,6 +311,7 @@ async fn add_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
     Ok((StatusCode::CREATED, Json(item)))
 }
 
@@ -327,12 +328,12 @@ async fn edit_item(
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
-    Ok(Json(
-        state
-            .store
-            .edit_item(&project, &id, input, stamp(&caller))
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .edit_item(&project, &id, input, stamp(&caller))
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 #[derive(Deserialize)]
@@ -355,17 +356,17 @@ async fn park_item(
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
-    Ok(Json(
-        state
-            .store
-            .set_item_state(
-                &project,
-                &id,
-                ItemState::Parked { reason, revisit_at },
-                stamp(&caller),
-            )
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .set_item_state(
+            &project,
+            &id,
+            ItemState::Parked { reason, revisit_at },
+            stamp(&caller),
+        )
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 #[derive(Deserialize)]
@@ -387,12 +388,12 @@ async fn drop_item(
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
-    Ok(Json(
-        state
-            .store
-            .set_item_state(&project, &id, ItemState::Dropped { reason }, stamp(&caller))
-            .map_err(ServiceError::from)?,
-    ))
+    let saved = state
+        .store
+        .set_item_state(&project, &id, ItemState::Dropped { reason }, stamp(&caller))
+        .map_err(ServiceError::from)?;
+    api.service.settings_changes.send_replace(());
+    Ok(Json(saved))
 }
 
 #[derive(Deserialize)]
@@ -416,6 +417,7 @@ async fn promote(
         .service
         .promote_planning_item(project.as_deref(), &id, complexity, &caller, &scope)
         .await?;
+    api.service.settings_changes.send_replace(());
     let status = if created {
         StatusCode::CREATED
     } else {

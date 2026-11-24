@@ -242,6 +242,10 @@ export type RustCommand =
 
 const taskPath = (id: string) => "/tasks/" + encodeURIComponent(id);
 
+export function isRustHttpError(error: unknown, status: number): boolean {
+  return error instanceof Error && "status" in error && error.status === status;
+}
+
 export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
   async function read<T>(
     schema: z.ZodType<T>,
@@ -257,11 +261,10 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
         })
         .safeParse(body);
       const error = refusal.data?.error;
-      throw new Error(
-        typeof error === "string"
-          ? error
-          : (error?.message ?? `Engine request failed (${response.status})`),
-      );
+      const message = typeof error === "string"
+        ? error
+        : (error?.message ?? `Engine request failed (${response.status})`);
+      throw Object.assign(new Error(message), { status: response.status });
     }
     const result = schema.safeParse(body);
     if (!result.success)
@@ -405,6 +408,7 @@ export async function listenForRustChanges(
   signal: AbortSignal,
   board?: {
     settingsChanged: () => void;
+    decisionsChanged?: () => void;
     themeChanged?: () => void;
     catalogChanged?: () => void;
     connection: (state: "live" | "retrying" | "expired") => void;
@@ -435,6 +439,7 @@ export async function listenForRustChanges(
             rustInvalidationFromFrame(frame, invalidate);
             if (frame.event === "settings" || frame.event === "refresh")
               board?.settingsChanged();
+            if (frame.event === "decisions") board?.decisionsChanged?.();
             if (frame.event === "theme" || frame.event === "refresh")
               board?.themeChanged?.();
             if (frame.event === "catalog")

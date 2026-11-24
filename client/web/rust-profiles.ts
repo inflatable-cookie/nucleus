@@ -117,6 +117,22 @@ export function boardProfileUsage(usage: RustProfileUsage) {
   };
 }
 
+export function boardSubscriptionAvailability(
+  paused: readonly string[],
+  limited: Record<string, number>,
+): api.UiQueueState["availability"] {
+  const groups = new Set([...paused, ...Object.keys(limited)]);
+  return [...groups].map((group) => {
+    const manual = paused.includes(group);
+    return {
+      group,
+      unavailable: true,
+      reason: manual ? "Paused in Settings" : "Provider usage limit",
+      retryAt: manual ? null : new Date(limited[group]!).toISOString(),
+    };
+  });
+}
+
 function sameSet(a: readonly string[], b: readonly string[]) {
   return a.length === b.length && a.every((value) => b.includes(value));
 }

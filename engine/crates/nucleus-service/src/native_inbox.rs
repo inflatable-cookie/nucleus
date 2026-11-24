@@ -136,6 +136,11 @@ impl Service {
         })
     }
 
+    pub(super) fn decision_changed(&self) {
+        self.decision_changes.send_replace(());
+        self.inbox_changed();
+    }
+
     pub(super) fn inbox_changed(&self) {
         if let Some(inbox) = &self.native_inbox {
             self.title_wake.notify_one();
@@ -332,7 +337,7 @@ impl Service {
                     },
                     engine_stamp(),
                 )?;
-                self.inbox_changed();
+                self.decision_changed();
                 decision
             }
         };
@@ -369,7 +374,7 @@ impl Service {
             // The old row version is already fenced by the shared pending and answer paths.
             eprintln!("{}: {error}", row.task.identity().id);
         }
-        self.inbox_changed();
+        self.decision_changed();
     }
 }
 

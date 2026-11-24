@@ -28,6 +28,7 @@ use axum::{
 use futures_util::{Stream, StreamExt, stream};
 use nucleus_core::Authority;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::{
     sync::watch,
     time::{Instant, sleep_until},
@@ -108,6 +109,7 @@ struct Grant {
 
 #[derive(Clone)]
 struct BrowserSession {
+    id: [u8; 32],
     scope: ControllerScope,
     expires: Instant,
     revoked: watch::Receiver<()>,
@@ -216,8 +218,23 @@ async fn javascript(Extension(board): Extension<Board>) -> impl IntoResponse {
     )
 }
 
-async fn session(Extension(authority): Extension<Authority>) -> Json<Value> {
-    Json(json!({"canEditSettings": matches!(authority, Authority::Operator { .. })}))
+async fn session(
+    State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
+    Extension(session): Extension<BrowserSession>,
+) -> Json<Value> {
+    let state = api.service.state.lock().await;
+    let projects = session.scope.actor().map(|actor| {
+        state
+            .live_planner_project(actor)
+            .into_iter()
+            .collect::<Vec<_>>()
+    });
+    Json(json!({
+        "id": hex::encode(session.id),
+        "canEditSettings": matches!(authority, Authority::Operator { .. }),
+        "planningProjects": projects,
+    }))
 }
 
 /// The cached theme inputs. A board read never calls the host.
@@ -236,7 +253,13 @@ async fn profile_usage(State(api): State<Api>) -> Result<Json<Value>, ApiError> 
         .store
         .profile_usage()
         .map_err(crate::ServiceError::from)?;
-    Ok(Json(json!(usage)))
+    let limited_groups = state
+        .store
+        .active_provider_pauses(now_ms())
+        .map_err(crate::ServiceError::from)?;
+    let mut view = json!(usage);
+    view["limitedGroups"] = json!(limited_groups);
+    Ok(Json(view))
 }
 
 async fn headers(request: Request, next: Next) -> Response {
@@ -364,6 +387,12 @@ async fn authorize_browser(
     request.extensions_mut().insert(session.authority);
     request.extensions_mut().insert(session.scope.clone());
     request.extensions_mut().insert(BrowserSession {
+        // A public cache key, distinct from the cookie and its stored digest.
+        id: Sha256::new()
+            .chain_update(b"board session")
+            .chain_update(key)
+            .finalize()
+            .into(),
         scope: session.scope,
         expires: Instant::now()
             + IDLE.min(Duration::from_millis(
@@ -409,6 +438,13 @@ async fn events(
             Some((Ok(Event::default().event("settings").data("{}")), changes))
         },
     );
+    let decisions = stream::unfold(
+        api.service.decision_changes.subscribe(),
+        |mut changes| async {
+            changes.changed().await.ok()?;
+            Some((Ok(Event::default().event("decisions").data("{}")), changes))
+        },
+    );
     let mut theme = api.service.theme.subscribe();
     theme.mark_unchanged();
     let theme = stream::unfold(theme, |mut changes| async {
@@ -421,7 +457,10 @@ async fn events(
     });
     let changes = stream::select(
         invalidation_events(api.service, None, session.scope),
-        stream::select(settings, stream::select(theme, catalog)),
+        stream::select(
+            stream::select(settings, decisions),
+            stream::select(theme, catalog),
+        ),
     )
     .take_until(async move {
         let mut revoked = session.revoked;

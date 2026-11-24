@@ -278,8 +278,8 @@ test("Planning uses the batched current plan and current lane projections", () =
   );
   assert.match(
     ui,
-    /queryFn: \(\) => fetchPlans\(\{\}\),\s*enabled:\s*\(tab === "planning" \|\| tab === "queue"\) &&\s*Boolean\(state\?\.projects\.length\),\s*staleTime: 300_000,\s*placeholderData: keepPreviousData,?\s*\}/,
-    "the batched plan read refetches on the plans revision (#1011), not a timer",
+    /queryKey: \["nucleus", "plans", plansRevision\],\s*queryFn: \(\) => fetchPlans\(\{\}\),\s*enabled: rust\s*\? view === "planning"\s*:\s*\(tab === "planning" \|\| tab === "queue"\) && Boolean\(state\?\.projects\.length\),\s*staleTime,\s*placeholderData: keepPreviousData,?\s*\}/,
+    "the batched read follows view demand on Rust and plan revisions on TypeScript",
   );
 });
 

@@ -558,7 +558,7 @@ test("026-14b one header selector scopes every view through the selection alone"
   );
   assert.match(
     ui,
-    /lanes=\{state\?\.lanes \?\? \[\]\}/,
+    /lanes=\{lanes\}/,
     "Planning receives the lanes the finder searches",
   );
   assert.match(

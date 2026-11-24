@@ -15,6 +15,8 @@ import {
 } from "../../shared/project-scope";
 import { lanePlaces } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
+import { useEngineFeatures } from "../engine-features";
+import type { BoardView } from "./inbox-menu";
 import { domainRevision, useBoardState } from "../board-state";
 import { useRetainedRead } from "../retained-read";
 import { readDecisions, clearDecisionRead } from "../decision-read";
@@ -48,20 +50,23 @@ export function useTaskDetail(selected: string | null) {
 }
 
 /**
- * The planning lists: leads, open decisions and plans. The pipeline projection
- * needs all three loaded, so those reads are not gated to one view.
+ * Rust reads each planning collection on the views that use it and refreshes it
+ * on engine events. The TypeScript pipeline keeps its shared revisioned reads.
  */
 export function useRecordQueries({
   stateQuery,
   state,
   tab,
   scopeOpen,
+  view,
 }: {
   stateQuery: BoardStateQuery;
   state: UiQueueState | undefined;
   tab: BoardTab;
   scopeOpen: boolean;
+  view: BoardView;
 }) {
+  const rust = useEngineFeatures().engine === "rust";
   const fetchLeadBoard = useRpc(api.leadBoard);
   const fetchDecisions = useRpc(api.decisionList);
   const fetchPlans = useRpc(api.plans);
@@ -71,14 +76,17 @@ export function useRecordQueries({
   // Task 1030: each planning list keys on its own domain revision, so a run, event or
   // telemetry write never refetches it, and keeps its last result on screen while a new
   // revision loads or a refresh fails (useRetainedRead).
-  const leadsRevision = domainRevision(stateQuery.data, "leads"),
-    decisionsRevision = domainRevision(stateQuery.data, "decisions"),
-    plansRevision = domainRevision(stateQuery.data, "plans");
+  const leadsRevision = rust ? undefined : domainRevision(stateQuery.data, "leads"),
+    decisionsRevision = rust ? undefined : domainRevision(stateQuery.data, "decisions"),
+    plansRevision = rust ? undefined : domainRevision(stateQuery.data, "plans");
+  const staleTime = rust ? Infinity : 300_000;
   const leadsFetch = useQuery({
     queryKey: ["nucleus", "leads", leadsRevision],
     queryFn: () => fetchLeadBoard({}),
-    enabled: scopeOpen || tab === "planning" || tab === "queue",
-    staleTime: 300_000,
+    enabled: rust
+      ? view === "planning" || view === "leads" || view === "papercuts"
+      : scopeOpen || tab === "planning" || tab === "queue",
+    staleTime,
     placeholderData: keepPreviousData,
   });
   const leadsQuery = {
@@ -86,29 +94,28 @@ export function useRecordQueries({
     isLoading: leadsFetch.isLoading,
     refetch: leadsFetch.refetch,
   };
-  // Spec 032: open decisions feed the Pipeline Decisions column and linked-record
-  // chips. The list is open decisions only, so it loads on every tab.
   const decisionsFetch = useQuery({
     queryKey: ["nucleus", "decisions", decisionsRevision],
-    queryFn: () =>
-      readDecisions(decisionsRevision, () =>
-        fetchDecisions({ status: "open" }),
-      ),
-    staleTime: 300_000,
+    queryFn: () => rust
+      ? fetchDecisions({ status: "open" })
+      : readDecisions(decisionsRevision, () => fetchDecisions({ status: "open" })),
+    enabled: !rust || view === "needs",
+    staleTime,
     placeholderData: keepPreviousData,
   });
   const decisionsQuery = useRetainedRead(decisionsFetch);
   const planFetch = useQuery({
     queryKey: ["nucleus", "plans", plansRevision],
     queryFn: () => fetchPlans({}),
-    enabled:
-      (tab === "planning" || tab === "queue") &&
-      Boolean(state?.projects.length),
-    staleTime: 300_000,
+    enabled: rust
+      ? view === "planning"
+      : (tab === "planning" || tab === "queue") && Boolean(state?.projects.length),
+    staleTime,
     placeholderData: keepPreviousData,
   });
   const planQuery = {
     ...useRetainedRead(planFetch),
+    isLoading: planFetch.isLoading,
     refetch: planFetch.refetch,
   };
   const staleRead = leadsQuery.stale
@@ -146,9 +153,16 @@ export function usePlanningData({
   records: RecordQueries;
   onLeaveLane: () => void;
 }) {
+  const rust = useEngineFeatures().engine === "rust";
   const fetchLaneDocument = useRpc(api.laneDocumentGet);
   const fetchLaneTaskPage = useRpc(api.laneTaskPage);
   const { planQuery, boardLeads } = records;
+  const lanes = useMemo(
+    () => rust
+      ? (planQuery.data ?? []).flatMap((plan) => plan.laneViews ?? [])
+      : state?.lanes ?? [],
+    [rust, planQuery.data, state?.lanes],
+  );
   const [laneTaskOffset, setLaneTaskOffset] = useState(0);
   // A lane opened from Planning keeps the project context it was found in (#866): the
   // search reaches past the chosen project, so the open lane stays in scope.
@@ -170,7 +184,7 @@ export function usePlanningData({
                 ? scope.projects
                 : planningProjects.map((project) => project.key),
               planQuery.data,
-              state.lanes ?? [],
+              lanes,
             ),
             ...(planningPin ? [planningPin] : []),
           ]),
@@ -186,7 +200,8 @@ export function usePlanningData({
     queryKey: ["nucleus", "lane-document", planningLane],
     queryFn: () => fetchLaneDocument({ key: planningLane }),
     enabled: tab === "planning" && Boolean(planningLane),
-    refetchInterval: 4000,
+    refetchInterval: rust ? false : 4000,
+    staleTime: rust ? Infinity : 0,
   });
   useEffect(() => setLaneTaskOffset(0), [planningLane]);
   const laneTasksQuery = useQuery({
@@ -198,11 +213,10 @@ export function usePlanningData({
         limit: 25,
       }),
     enabled: tab === "planning" && Boolean(planningLane),
-    refetchInterval: 4000,
+    refetchInterval: rust ? false : 4000,
+    staleTime: rust ? Infinity : 0,
   });
-  const planningLaneRecord = (state?.lanes ?? []).find(
-    (lane) => lane.key === planningLane,
-  );
+  const planningLaneRecord = lanes.find((lane) => lane.key === planningLane);
   // The open lane's leads and papercuts come from every project that lists the lane, whatever the
   // chooser shows, so the lane screen's counts are the lane's own (#867). A lane no project lists falls
   // back to the projects in scope, as it did before (#866).
@@ -222,6 +236,7 @@ export function usePlanningData({
       : planningProjects.map((project) => project.key),
   );
   return {
+    lanes,
     planningProjects,
     planningLane,
     setPlanningLane,

@@ -82,8 +82,10 @@ Later decisions carry their own attribution.
    profiles. Provider and model use the engine's held T3 config catalog. Refresh
    reloads that cache through the paired API. If T3 is unavailable, the editor
    reports it and keeps the last usable choices for the lifetime of the service.
-   The usage strips read recorded assignments across both roles or for one role,
-   using up to the last 50 assignments in the selected view.
+   Paired sessions read stored enabled flags, subscription pauses and recorded
+   usage even when their Settings controls are read-only. Only an authenticated
+   operator session can edit. Usage strips show up to the last 50 assignments
+   in the selected view across both roles or for one role.
 
    **Limits (Tom, 2026-11-24).** Dispatch owns the global limit, per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. A run needs room under both ceilings, counting the project's member repositories together. A first worker checkout also needs room under twice the effective project limit. Review entry and existing work continue through their own gates. The Rust Limits editor shows usage, global slots, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure. The TypeScript editor remains available during drain.
 
@@ -551,7 +553,12 @@ establishes a volatile wait without dating it. A label fixed by committed facts,
 such as a blocking hold or a finished phase, keeps its recorded entry time.
 
 The paired API mounts the same planning handlers as the controller API (plans,
-lanes, items, decisions) and the repository reassign action. Screens leave out
+lanes, items, decisions) and the repository reassign action. The session response
+reports the engine's current project scope. The board reads planning collections
+only on views that use them, refreshes them from engine events, and stops
+requesting a denied project until the session or its scope changes. Settings
+needs no planning reads. Decision changes refresh Needs you independently of
+task activity. Screens leave out
 controls for machinery these rulings retire; `client/engine-features.ts` names
 the ruling behind each one. Settings writes send the whole domain value back
 and keep fields the client does not know.

@@ -174,6 +174,7 @@ export function InboxMenu({
   view,
   counts,
   loaded,
+  pendingCounts,
   rust,
   standalone = false,
   onSelect,
@@ -182,6 +183,7 @@ export function InboxMenu({
   view: BoardView;
   counts: InboxMenuCounts;
   loaded: boolean;
+  pendingCounts?: readonly BoardView[];
   rust?: { totals: Partial<Record<BoardView, number>> };
   standalone?: boolean;
   onSelect: (view: BoardView) => void;
@@ -194,6 +196,7 @@ export function InboxMenu({
     ? allEntries.filter(({ id }) => id !== "planning" && id !== "leads" && id !== "papercuts")
     : allEntries;
   const count = (id: BoardView) => {
+    if (pendingCounts?.includes(id)) return null;
     const rustTotal = rust?.totals[id];
     if (standalone) return rustTotal ?? null;
     if (id === "merging" || id === "history") return rustTotal ?? null;

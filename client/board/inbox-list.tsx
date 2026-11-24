@@ -169,6 +169,7 @@ export type PipelineState = ReturnType<typeof usePipelineState>;
 export type InboxBoardInput = {
   state: UiQueueState | undefined;
   selection: string[];
+  lanes?: UiQueueState["lanes"];
   boardLeads: readonly BoardLead[];
   leadLinks: readonly BoardLeadLink[];
   decisions: DecisionView[] | undefined;
@@ -184,6 +185,7 @@ export type InboxBoardInput = {
 export function useInboxBoard({
   state,
   selection,
+  lanes = state?.lanes,
   boardLeads,
   leadLinks,
   decisions,
@@ -195,7 +197,7 @@ export function useInboxBoard({
     () =>
       pipelineBoard({
         projects: state?.projects ?? [],
-        lanes: state?.lanes ?? [],
+        lanes: lanes ?? [],
         selection,
         leads: boardLeads,
         linkedLeads: leadLinks,
@@ -206,7 +208,7 @@ export function useInboxBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       state?.projects,
-      state?.lanes,
+      lanes,
       state?.tasks,
       state?.pendingSubmissions,
       selectionKey,
@@ -260,10 +262,10 @@ export function useInboxBoard({
   // like the rest of the menu counts.
   const planning = useMemo(
     () =>
-      openScopeLanes(state?.projects ?? [], state?.lanes ?? [], selection)
+      openScopeLanes(state?.projects ?? [], lanes ?? [], selection)
         .length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state?.projects, state?.lanes, selectionKey],
+    [state?.projects, lanes, selectionKey],
   );
   // The menu counts ignore the tag filter: it narrows the list, not the inbox. The list's
   // own header counts what it shows.
@@ -295,6 +297,7 @@ export type InboxListProps = {
   };
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
+  decisionsError?: unknown;
   /** Per project, the queued tasks the board holds back; the Queue list reads them as pages. */
   queuedHidden: Array<{ repoPath: string; hidden: number }>;
   projectForRepository: (
@@ -344,6 +347,7 @@ export function InboxList({
   rust,
   leadsLoading,
   decisions,
+  decisionsError,
   queuedHidden,
   projectForRepository,
   selected,
@@ -686,7 +690,9 @@ export function InboxList({
       : 0);
   const readState = rust && !rust.tasks
     ? (rust.error ? "failed" : "loading")
-    : legacyView ? boardRead : "loaded";
+    : rust && view === "needs" && state && !decisions
+      ? (decisionsError ? "failed" : "loading")
+      : legacyView ? boardRead : "loaded";
   const countText =
     readState === "loaded"
       ? `${viewCount} item${viewCount === 1 ? "" : "s"}`

@@ -80,6 +80,7 @@ export function ProfilesPanel({
   compact,
   inset,
   state,
+  stateError,
   repositories,
   busy,
   savePool,
@@ -90,6 +91,7 @@ export function ProfilesPanel({
   compact: boolean;
   inset: number;
   state: UiQueueState | null;
+  stateError?: unknown;
   repositories: RepositorySettings[];
   busy: boolean;
   savePool: (entry: PoolEntry) => Promise<void>;
@@ -101,6 +103,7 @@ export function ProfilesPanel({
   const queryClient = useQueryClient();
   const { coordinatorRole, engine } = useEngineFeatures();
   const pairedCatalog = engine === "rust";
+  const canEdit = !pairedCatalog || state?.canEditSettings === true;
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
   // The form's choices: every registered host's catalog in canonical values (task 1158).
   const fetchProfiles = useRpc(api.listNucleusProfiles),
@@ -311,7 +314,7 @@ export function ProfilesPanel({
       await removeProfile({ id });
       setCreated((current) => (current?.id === id ? null : current));
       if (editor === id) setEditor(null);
-      if (state?.pool.some((entry) => entry.profileId === id))
+      if (!pairedCatalog && state?.pool.some((entry) => entry.profileId === id))
         await savePoolList(removePoolEntry(state.pool, id));
       await refreshProfiles();
     } catch (error) {
@@ -320,7 +323,7 @@ export function ProfilesPanel({
       setRemoving(null);
     }
   }
-  const stale = state
+  const stale = state && !pairedCatalog
     ? stalePoolEntries(state.pool, state.connected ? state.profiles : [])
     : [];
   const groups = state
@@ -406,7 +409,7 @@ export function ProfilesPanel({
               c={c}
               action="add"
               label="Add profile"
-              disabled={panelBusy || editor === "new"}
+              disabled={!canEdit || panelBusy || editor === "new"}
               onPress={() => setEditor("new")}
             />
           </View>
@@ -438,7 +441,7 @@ export function ProfilesPanel({
             )}
           </View>
         )}
-        {editor === "new" && (
+        {canEdit && editor === "new" && (
           <ProfileEditor
             key="new"
             c={c}
@@ -477,6 +480,7 @@ export function ProfilesPanel({
             repositories={repositories}
             state={state}
             busy={panelBusy}
+            canEdit={canEdit}
             editing={editor === item.id}
             poolSave={savePool}
             onEdit={() => setEditor(editor === item.id ? null : item.id)}
@@ -495,7 +499,7 @@ export function ProfilesPanel({
             key={entry.profileId}
             c={c}
             entry={entry}
-            busy={panelBusy}
+            busy={panelBusy || !canEdit}
             onRemove={() =>
               void savePoolList(removePoolEntry(state!.pool, entry.profileId))
             }
@@ -519,7 +523,11 @@ export function ProfilesPanel({
           endsInRow={Boolean(state && groups.length)}
           description="Profiles that share a provider subscription form one group. An unavailable group leaves selection until its retry time or a reset."
         >
-          {!state && <Text style={muted(c)}>Reading subscriptions…</Text>}
+          {!state && (
+            <Text style={muted(c)}>
+              {stateError ? "Could not read subscriptions." : "Reading subscriptions…"}
+            </Text>
+          )}
           {state && !groups.length && (
             <Text style={muted(c)}>None yet. Add a profile first.</Text>
           )}
@@ -531,6 +539,7 @@ export function ProfilesPanel({
                 group={group}
                 state={state}
                 busy={busy}
+                canEdit={canEdit}
                 save={saveAvailability}
               />
             ))}
@@ -601,14 +610,17 @@ function Availability({
   group,
   state,
   busy,
+  canEdit,
   save,
 }: {
   c: Colors;
   group: string;
   state: UiQueueState;
   busy: boolean;
+  canEdit: boolean;
   save: (v: UiQueueState["availability"][number]) => Promise<unknown>;
 }) {
+  const rust = useEngineFeatures().engine === "rust";
   const current = state.availability.find((a) => a.group === group);
   const [editing, setEditing] = useState(false),
     [reason, setReason] = useState(current?.reason ?? ""),
@@ -638,7 +650,7 @@ function Availability({
                 : "Unavailable"
               : "Available"}
           </Text>
-          {paused && (
+          {canEdit && paused && (!rust || !current?.retryAt) && (
             <Button
               small
               c={c}
@@ -654,15 +666,17 @@ function Availability({
               }
             />
           )}
-          <ActionButton
-            c={c}
-            action={editing ? "close" : paused ? "edit" : "pause"}
-            label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`}
-            onPress={() => setEditing(!editing)}
-          />
+          {canEdit && (
+            <ActionButton
+              c={c}
+              action={editing ? "close" : paused ? "edit" : "pause"}
+              label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`}
+              onPress={() => setEditing(!editing)}
+            />
+          )}
         </View>
       </HoverRow>
-      {editing && (
+      {canEdit && editing && (
         <View
           style={{
             gap: space.xs,
