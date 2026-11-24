@@ -285,6 +285,13 @@ impl SettingsFile {
         }
         EngineStorage::resolve(&self.layout, &settings)
     }
+
+    /// Resolve configured roots for status, including when the engine is disabled.
+    /// # Errors
+    /// Returns an error if settings or the pinned volume cannot be verified.
+    pub fn configured_storage(&self) -> Result<EngineStorage, StorageError> {
+        EngineStorage::resolve(&self.layout, &self.load()?)
+    }
 }
 
 impl StorageError {

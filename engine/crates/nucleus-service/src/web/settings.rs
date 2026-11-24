@@ -131,6 +131,10 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
         json!({"taskId": id, "reason": reason, "seconds": now.saturating_duration_since(*since).as_secs()})
     }).collect();
     Json(json!({
+        "engine": {
+            "databaseRoot": api.service.storage.database().path(),
+            "t3Endpoint": api.service.host.endpoint(),
+        },
         "lanes": {"t3": {"depth": state.schedule.depth(), "status": state.settings.host}},
         "inbox": api.service.inbox_health(),
         "oldestWaits": oldest,
