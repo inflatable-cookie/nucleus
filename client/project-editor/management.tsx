@@ -5,6 +5,7 @@ import { ActionButton, Button, DropdownSelect, Field, HelpPopover, HelpTip, Inli
 import { radius, roles, space, touchTarget, type } from "../design";
 import { projectCarriedText, projectRemovalBlockerText } from "../../shared/project-removal";
 import { errorText } from "../error-text";
+import { useEngineFeatures } from "../engine-features";
 import { OWNER_NAME, identityOf, implicitRepositories, repositoryLabel, withoutHostPaths, type ProjectRepository } from "../project-helpers";
 import type { Project, ProjectMergeCheck, ProjectRemovalBlocker, ProjectSettingsRow, RepositorySetInput, RepositorySettings } from "../../shared/contracts";
 import { RepositoryFields } from "./repository-fields";
@@ -70,6 +71,7 @@ export function RepositoryBlock({ c, repo, primary, single, open, disabled, sett
   settings: RepositorySettings | null; saves: ProjectSaves; setRepository: ProjectEditActions["setRepository"];
   onToggle: () => void; onPrimary: () => void; checkBlockers: () => Promise<ProjectRemovalBlocker[]>; onSeparate: () => void; alsoDeletes?: string; onRemoveFromNucleus: () => void;
 }) {
+  const { projectAgents } = useEngineFeatures();
   const r = roles(c);
   const label = repositoryLabel(repo);
   const [confirming, setConfirming] = useState(false);
@@ -86,7 +88,7 @@ export function RepositoryBlock({ c, repo, primary, single, open, disabled, sett
           <View style={{ flex: 1 }} />
           <Icon name={open ? "ChevronDown" : "ChevronRight"} size={16} color={r.muted} />
         </Pressable>}
-    {open && !single && <View style={{ ...row, justifyContent: "flex-end" }}>
+    {projectAgents && open && !single && <View style={{ ...row, justifyContent: "flex-end" }}>
       {!primary && <ActionButton c={c} action="primary" label={`Make ${label} primary`} disabled={disabled} onPress={onPrimary} />}
       <ActionButton c={c} action="remove" label={`Remove ${label}`} tip={primary ? "Move ★ to another repository first" : undefined} disabled={disabled || primary || confirming} onPress={() => setConfirming(true)} />
     </View>}
@@ -217,6 +219,7 @@ export function MoveRepositoryConfirm({ c, repo, source, target, check, onMoveRe
   c: Colors; repo: ProjectRepository; source: Project; target: string; check: () => Promise<ProjectMergeCheck>;
   onMoveRepository: () => void; onMoveProject: () => void; onCancel: () => void;
 }) {
+  const { projectAgents } = useEngineFeatures();
   const r = roles(c);
   const label = repositoryLabel(repo);
   const { state, loading, blocked, carried, why, retry } = useMergeCheck(check);
@@ -225,12 +228,16 @@ export function MoveRepositoryConfirm({ c, repo, source, target, check, onMoveRe
   const rest = source.repositories.length - 1;
   return <View accessibilityRole="alert" accessibilityLabel={`Add ${label} from ${source.name}`} style={{ gap: space.xs }}>
     <Text style={{ color: r.warning, ...note }}>
-      {sole
+      {!projectAgents
+        ? `Move ${label} from ${source.name} to ${target}?`
+        : sole
         ? `Move ${label} here${carried ? ` with ${carried}` : ""}? It's the only repository in ${source.name}, so ${source.name} goes: its name, planner and slots are dropped.`
         : `${label} is in ${source.name} with ${plural(rest, "other repository", "other repositories")}. Move just it, or all of ${source.name}? Moving all drops ${source.name}'s name, planner and slots.`}
     </Text>
     <View style={row}>
-      {sole
+      {!projectAgents
+        ? <Button small c={c} text="Move repository" label={`Move ${label} into ${target}`} onPress={onMoveRepository} />
+        : sole
         ? <Button small danger c={c} text="Move" label={`Move ${label} into ${target}`} disabled={Boolean(why)} hint={why} onPress={onMoveRepository} />
         : <>
             <Button small c={c} text="Move repository" label={`Move only ${label} into ${target}`} disabled={primary} hint={primary ? `${label} is ${source.name}'s primary: move ★ there first` : undefined} onPress={onMoveRepository} />
@@ -238,7 +245,7 @@ export function MoveRepositoryConfirm({ c, repo, source, target, check, onMoveRe
           </>}
       <Button small c={c} text="Cancel" label={`Cancel moving ${label}`} onPress={onCancel} />
     </View>
-    <CheckStatus c={c} label={source.name} loading={loading} error={state.error} retry={retry} />
-    {blocked ? <Text style={{ color: r.warning, ...note }}>Can't move {source.name}: {blocked}</Text> : null}
+    {projectAgents && <CheckStatus c={c} label={source.name} loading={loading} error={state.error} retry={retry} />}
+    {projectAgents && blocked ? <Text style={{ color: r.warning, ...note }}>Can't move {source.name}: {blocked}</Text> : null}
   </View>;
 }
