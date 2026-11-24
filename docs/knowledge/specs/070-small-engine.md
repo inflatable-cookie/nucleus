@@ -94,7 +94,12 @@ Later decisions carry their own attribution.
    - its repositories (origin, path, base branch);
    - per-repository merge checks (command and timeout), with an optional required reviewer;
    - its verified planners, shown from their live bindings;
-   - an archived toggle.
+   - an archived toggle;
+   - removal. Tom, 2026-11-24, after the port had left only the archived toggle: "Yeah, let's get removal back in, as per your spec". The planner's proposal he accepted:
+     - The board's project selector offers Archive and Remove.
+     - Archive hides the project. Settings reverses it.
+     - Remove ports the TypeScript removal dialog. It previews blockers, refuses while tasks are open or offers to cancel them, then deletes the project and its planning records.
+     - Finished task history stays readable by repository, but nothing new routes to the removed project.
 
    It drops agent registration and the preferred and responsible thread fields (rulings 2 and 23), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Repository routes come from first contact (ruling 23). Editing autosaves, one noun per control, with explanations only in help popovers.
 
