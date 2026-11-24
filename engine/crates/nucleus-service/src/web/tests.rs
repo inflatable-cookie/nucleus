@@ -1444,6 +1444,49 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
 }
 
 #[tokio::test]
+async fn operators_can_pause_a_known_subscription_until_its_reset() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let profiles = "/v1/settings/profiles";
+    let initial = json_body(get_as(&api, profiles, &BOARD_KEY).await).await;
+    let input = json!({"revision":initial["revision"], "value":{"profiles":[{
+        "name":"Fixture", "selection":{"id":"fixture","provider":"codex","model":"fixture"},
+        "group":"shared",
+    }]}});
+    assert_eq!(
+        put_settings(&api, profiles, &BOARD_KEY, &input)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let path = "/v1/settings/profiles/pauses/shared";
+    let deadline = now_ms() + 60_000;
+    let pause = json!({"untilMs":deadline});
+    assert_eq!(
+        put_settings(&api, path, &PLANNER_KEY, &pause)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let saved = put_settings(&api, path, &BOARD_KEY, &pause).await;
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(saved).await,
+        json!({"group":"shared","untilMs":deadline})
+    );
+    let state = service.state.lock().await;
+    assert_eq!(
+        state.store.provider_pause("shared", deadline - 1).unwrap(),
+        Some(deadline)
+    );
+    assert_eq!(
+        state.store.provider_pause("shared", deadline).unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
 async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);

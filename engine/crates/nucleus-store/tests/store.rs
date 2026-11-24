@@ -73,6 +73,40 @@ fn observation() -> Observation {
 }
 
 #[test]
+fn failed_turn_receipts_survive_reopen_and_scope_to_task_version_and_host_session() {
+    let home = tempfile::tempdir().expect("fixture volume");
+    let storage = fixture_storage(home.path());
+    let version = {
+        let mut store = Store::open(&storage).expect("open before failure");
+        let version = store
+            .create(&task("fixture", "fixture"), &event("admitted"))
+            .expect("admit");
+        let mut receipt = event("native_turn_failed");
+        receipt.detail = serde_json::json!({
+            "version":version,"session":"before-restart","command":"hold-3",
+        })
+        .to_string();
+        assert!(store.claim_task_effect("fixture", &receipt).expect("claim"));
+        assert!(
+            !store
+                .claim_task_effect("fixture", &receipt)
+                .expect("duplicate")
+        );
+        version
+    };
+    let store = Store::open(&storage).expect("reopen");
+    let lookup = |version, session| {
+        store
+            .task_turn_command("fixture", "native_turn_failed", version, session)
+            .expect("lookup")
+    };
+    assert_eq!(row(&store, "fixture").version, version);
+    assert_eq!(lookup(version, "before-restart").as_deref(), Some("hold-3"));
+    assert_eq!(lookup(version + 1, "before-restart"), None);
+    assert_eq!(lookup(version, "after-restart"), None);
+}
+
+#[test]
 fn provider_pauses_survive_reopen_and_expire_at_the_deadline() {
     let home = tempfile::tempdir().expect("fixture volume");
     let storage = fixture_storage(home.path());

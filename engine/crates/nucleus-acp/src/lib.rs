@@ -7,9 +7,8 @@ mod presentation;
 use std::{collections::BTreeMap, env, io, path::PathBuf, sync::Arc, time::Duration};
 
 use client::{Failure, ServiceClient};
-use nucleus_core::{Answer, Command, acp::SessionBinding};
-use presentation::{Presentation, message};
-use regex::Regex;
+use nucleus_core::acp::SessionBinding;
+use presentation::Presentation;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
@@ -26,15 +25,12 @@ struct Agent {
     sessions: BTreeMap<String, Session>,
     model: &'static str,
     structured: bool,
-    ignore: Option<Regex>,
-    hold: Option<Regex>,
 }
 
 struct Session {
     client: Option<ServiceClient>,
     view: Arc<Mutex<Presentation>>,
     structured: bool,
-    prompted: bool,
     turn: Option<Turn>,
 }
 
@@ -79,8 +75,6 @@ pub async fn run() -> io::Result<()> {
         sessions: BTreeMap::new(),
         model: MODELS[0],
         structured: env::var("NUCLEUS_ACP_TEXT_FALLBACK").as_deref() != Ok("1"),
-        ignore: pattern("NUCLEUS_ACP_IGNORE_PATTERN")?,
-        hold: pattern("NUCLEUS_ACP_HOLD_PATTERN")?,
     };
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Some(line) = lines.next_line().await? {
@@ -225,7 +219,6 @@ impl Agent {
                 client,
                 view: Arc::new(Mutex::new(view)),
                 structured,
-                prompted: loading,
                 turn: None,
             },
         );
@@ -273,56 +266,22 @@ impl Agent {
             return;
         }
         let prompt = prompt_text(&params["prompt"]);
-        let text = operator_text(&prompt);
-        let opening = !std::mem::replace(&mut session.prompted, true);
-        if self
-            .ignore
-            .as_ref()
-            .is_some_and(|pattern| pattern.is_match(text))
-        {
-            stop(&self.output, id, "end_turn");
-            return;
-        }
-        let command = if opening
-            || self
-                .hold
-                .as_ref()
-                .is_some_and(|pattern| pattern.is_match(text))
-        {
-            None
-        } else {
-            let Some(command) = parse_command(text) else {
-                error(
-                    &self.output,
-                    id,
-                    -32602,
-                    "Use a task command such as move, answer, cancel, amend, hold or release.",
-                );
-                return;
-            };
-            Some(command)
-        };
         let view = Arc::clone(&session.view);
         let structured = session.structured;
         let output = self.output.clone();
         let session_id = session_id.to_owned();
         let request = id.clone();
         let job = tokio::spawn(async move {
-            if let Some(command) = command {
-                match client.command(&command).await {
-                    Ok(true) => {}
-                    Ok(false) => notify(
-                        &output,
-                        &session_id,
-                        message("Nucleus is checking the evidence for that command."),
-                    ),
-                    Err(failure) => {
-                        error(&output, &request, -32000, &failure.to_string());
-                        return;
-                    }
-                }
-            }
-            if let Err(failure) = follow(&client, &view, &output, &session_id, structured).await {
+            if let Err(failure) = task_prompt(
+                &client,
+                &view,
+                &output,
+                &session_id,
+                structured,
+                operator_text(&prompt),
+            )
+            .await
+            {
                 error(&output, &request, -32000, &failure.to_string());
                 return;
             }
@@ -361,18 +320,30 @@ async fn snapshot(
     client: &ServiceClient,
     cursor: i64,
 ) -> Result<(client::Detail, Vec<client::Event>), Failure> {
-    let history = client.history(cursor).await?;
     let detail = client.detail().await?;
+    let history = client.history(cursor).await?;
     Ok((detail, history))
 }
 
-async fn follow(
+async fn task_prompt(
     client: &ServiceClient,
     view: &Mutex<Presentation>,
     output: &Output,
     session: &str,
     structured: bool,
+    prompt: &str,
 ) -> Result<(), Failure> {
+    // T3 ACP supplies text without authenticated author metadata. Its only
+    // special text is a read-only hold bound to a recorded preparation.
+    let cursor = view.lock().await.cursor;
+    let (detail, history) = snapshot(client, cursor).await?;
+    let hold = !detail.phase.is_terminal() && detail.parent_hold.as_deref() == Some(prompt);
+    for update in view.lock().await.update(detail, history, structured) {
+        notify(output, session, update);
+    }
+    if !hold {
+        return Ok(());
+    }
     let mut delay = 1;
     loop {
         let result = async {
@@ -381,11 +352,12 @@ async fn follow(
                 stream.next().await?;
                 let cursor = view.lock().await.cursor;
                 let (detail, history) = snapshot(client, cursor).await?;
-                let finished = detail.phase.is_terminal();
+                let hold = !detail.phase.is_terminal()
+                    && (detail.parent_hold.as_deref() == Some(prompt) || detail.active_child);
                 for update in view.lock().await.update(detail, history, structured) {
                     notify(output, session, update);
                 }
-                if finished {
+                if !hold {
                     return Ok(());
                 }
                 delay = 1;
@@ -397,57 +369,9 @@ async fn follow(
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(30);
             }
+            Err(Failure::Unauthorized) => return Ok(()),
             result => return result,
         }
-    }
-}
-
-fn parse_command(text: &str) -> Option<Command> {
-    let (verb, rest) = text
-        .split_once(char::is_whitespace)
-        .map_or((text, ""), |(verb, rest)| (verb, rest.trim()));
-    match verb {
-        "cancel" if rest.is_empty() => Some(Command::Cancel),
-        "release" if rest.is_empty() => Some(Command::Release),
-        "move" if rest.starts_with("work ") => Some(Command::MoveWork {
-            instruction: rest.strip_prefix("work ")?.trim().to_owned(),
-        }),
-        "move" => serde_json::from_value(json!(rest)).ok().map(Command::Move),
-        "complete" => {
-            let (version, rest) = rest.split_once(' ')?;
-            let (key, rest) = rest.trim_start().split_once(' ')?;
-            let (artifact_version, rest) = rest.trim_start().split_once(' ')?;
-            let (digest, reason) = rest.trim_start().split_once(' ')?;
-            Some(Command::Complete {
-                version: version.parse().ok()?,
-                artifact: nucleus_core::ReportArtifact {
-                    key: key.into(),
-                    version: artifact_version.parse().ok()?,
-                    digest: digest.into(),
-                },
-                reason: reason.trim().into(),
-            })
-        }
-        "hold" if !rest.is_empty() => Some(Command::Hold(rest.into())),
-        "amend" if !rest.is_empty() => Some(Command::Amend(rest.into())),
-        "answer" if rest == "retry" => Some(Command::Answer(Answer::Retry)),
-        "answer" if rest == "extend" => Some(Command::Answer(Answer::Extend)),
-        "answer" => {
-            let (kind, body) = rest.split_once(char::is_whitespace)?;
-            let body = body.trim();
-            match kind {
-                "work" if !body.is_empty() => Some(Command::Answer(Answer::Work(body.into()))),
-                "accept" => {
-                    let (head, reason) = body.split_once(char::is_whitespace)?;
-                    Some(Command::Answer(Answer::Accept {
-                        head: head.parse().ok()?,
-                        reason: reason.trim().into(),
-                    }))
-                }
-                _ => None,
-            }
-        }
-        _ => None,
     }
 }
 
@@ -470,17 +394,6 @@ fn operator_text(text: &str) -> &str {
         .and_then(|(before, _)| before.rsplit_once("<user_request>"))
         .map_or(text, |(_, request)| request)
         .trim()
-}
-
-fn pattern(key: &str) -> io::Result<Option<Regex>> {
-    env::var(key)
-        .ok()
-        .map(|value| {
-            Regex::new(&value).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "Invalid ACP prompt pattern.")
-            })
-        })
-        .transpose()
 }
 
 fn structured(params: &Value) -> bool {

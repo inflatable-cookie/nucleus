@@ -317,9 +317,35 @@ fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
     projection["thread"]["providerInstanceId"] = json!("fixture-acp");
     projection["thread"]["modelSelection"] = json!({"instanceId":"fixture-acp","model":"nucleus"});
     projection["runs"][0]["rootNodeId"] = json!("parent-root");
+    projection["runs"][0]["userMessageId"] = json!("fixture-parent-command-message");
     projection["subagents"] =
         json!([{"id":"child-node","childThreadId":THREAD,"origin":"app_owned"}]);
     reply
+}
+
+#[tokio::test]
+async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (client, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(parent_snapshot(&binding, "failed", false)),
+    )])
+    .await;
+    let result = Box::pin(client.prepare_parent(
+        &binding,
+        "fixture-acp",
+        "Synthetic task",
+        Some(crate::ParentAttempt {
+            command: "fixture-parent-command",
+            released: false,
+        }),
+        quiet_pass(&client).profile_catalog(),
+    ))
+    .await
+    .expect("read exact prior turn");
+    assert!(matches!(result, crate::ParentStep::Failed));
+    native.await.expect("only one read");
 }
 
 #[tokio::test]
@@ -335,6 +361,10 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         &binding,
         "fixture-acp",
         "Synthetic task",
+        Some(crate::ParentAttempt {
+            command: "fixture-parent-command",
+            released: false,
+        }),
         quiet_pass(&client).profile_catalog(),
     ))
     .await

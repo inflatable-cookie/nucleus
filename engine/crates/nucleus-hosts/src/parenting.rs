@@ -1,14 +1,15 @@
 use std::{collections::BTreeMap, future::Future, path::Path};
 
-use nucleus_core::{RetainedThread, acp::session_id};
+use nucleus_core::{
+    RetainedThread,
+    acp::{REFRESH_TASK_ROW, parent_hold_prompt, session_id},
+};
 use serde_json::{Value, json};
 
 use crate::{
     Binding, HostError, ProfileCatalog, T3, message_id,
     rpc::{Read, Reply},
 };
-
-const HOLD: &str = "Nucleus keeps this task thread open for its next role.";
 
 /// Evidence for the exact active turn and root node that can parent a child.
 #[derive(Clone)]
@@ -20,8 +21,14 @@ pub struct ParentRun {
 
 pub enum ParentStep {
     Live(ParentRun),
+    Failed,
     Write(ParentWrite),
     Wait,
+}
+
+pub struct ParentAttempt<'a> {
+    pub command: &'a str,
+    pub released: bool,
 }
 
 pub enum ArchiveStep {
@@ -43,6 +50,16 @@ impl ParentWrite {
     pub const fn binding(&self) -> &Binding {
         &self.binding
     }
+
+    #[must_use]
+    pub fn command_id(&self) -> Option<&str> {
+        self.payload["commandId"].as_str()
+    }
+
+    #[must_use]
+    pub fn starts_turn(&self) -> bool {
+        self.rpc == "orchestration.launchThread" || self.payload["type"] == "message.dispatch"
+    }
 }
 
 /// The deterministic native identity of the task's one visible thread.
@@ -52,6 +69,38 @@ pub fn parent_thread(checkout: &Path) -> String {
 }
 
 impl T3 {
+    /// Prepare a refresh of an existing, idle, unarchived task row.
+    ///
+    /// # Errors
+    /// Returns an error when the row's identity or idle evidence is invalid.
+    pub async fn prepare_parent_refresh(
+        &self,
+        binding: &Binding,
+        provider: &str,
+    ) -> Result<Option<ParentWrite>, HostError> {
+        let thread = parent_thread(Path::new(&binding.worktree_path));
+        let Some(projection) = self.thread(binding, &thread).await? else {
+            return Ok(None);
+        };
+        projection.require_parent_provider(provider)?;
+        if projection.archived() || projection.retained()? != RetainedThread::Idle {
+            return Ok(None);
+        }
+        let sequence = projection.sequence();
+        let command = format!("{thread}-refresh-{sequence}");
+        Ok(Some(ParentWrite {
+            binding: binding.clone(),
+            rpc: "orchestration.dispatchCommand",
+            idle_at: Some((thread.clone(), sequence)),
+            payload: json!({
+                "type":"message.dispatch", "commandId":command, "threadId":thread,
+                "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
+                "createdBy":"user", "creationSource":"server",
+                "dispatchMode":{"type":"queue_after_active"},
+            }),
+        }))
+    }
+
     /// Retire children before the parent, with a fresh complete read before
     /// each proposed mutation and readback on the next scheduler pass.
     /// # Errors
@@ -153,17 +202,32 @@ impl T3 {
         binding: &Binding,
         provider: &str,
         title: &str,
+        prior_turn: Option<ParentAttempt<'_>>,
         catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
     ) -> Result<ParentStep, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         if let Some(projection) = self.thread(binding, &thread).await? {
             projection.require_parent_provider(provider)?;
-            if let Some((run, node)) = projection.live_parent_run() {
+            if let Some((run, node)) = prior_turn.as_ref().and_then(|attempt| {
+                (!attempt.released)
+                    .then(|| projection.live_parent_run(&message_id(attempt.command)))
+                    .flatten()
+            }) {
                 return Ok(ParentStep::Live(ParentRun {
                     thread,
                     run: run.into(),
                     node: node.into(),
                 }));
+            }
+            if let Some(attempt) = prior_turn.as_ref() {
+                let message = message_id(attempt.command);
+                let completed = projection.turn_completed(&message);
+                if projection.turn_failed(&message) || (completed && !attempt.released) {
+                    return Ok(ParentStep::Failed);
+                }
+                if !completed {
+                    return Ok(ParentStep::Wait);
+                }
             }
             if projection.retained()? != RetainedThread::Idle {
                 return Ok(ParentStep::Wait);
@@ -184,13 +248,16 @@ impl T3 {
                 idle_at: Some((thread.clone(), sequence)),
                 payload: json!({
                     "type":"message.dispatch", "commandId":command, "threadId":thread,
-                    "messageId":message_id(&command), "text":HOLD, "attachments":[],
+                    "messageId":message_id(&command), "text":parent_hold_prompt(&command), "attachments":[],
                     "createdBy":"user", "creationSource":"server",
                     "dispatchMode":{"type":"queue_after_active"}
                 }),
             }));
         }
 
+        if prior_turn.is_some() {
+            return Ok(ParentStep::Wait);
+        }
         if !catalogue.await?.supports_parent(provider) {
             return Err(HostError::Configuration);
         }
@@ -206,7 +273,7 @@ impl T3 {
                 "workspaceStrategy":{
                     "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
                 },
-                "initialMessage":{"messageId":message_id(&command),"text":HOLD,"attachments":[]}
+                "initialMessage":{"messageId":message_id(&command),"text":parent_hold_prompt(&command),"attachments":[]}
             }),
         }))
     }

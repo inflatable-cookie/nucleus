@@ -25,6 +25,10 @@ pub(crate) struct ServerRuntime {
 }
 
 impl ServerRuntime {
+    pub(crate) fn identity(&self) -> String {
+        format!("{}:{}", self.pid, self.started.unix_timestamp_nanos())
+    }
+
     pub(crate) fn read(path: &Path, endpoint: &Url) -> Option<Self> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]

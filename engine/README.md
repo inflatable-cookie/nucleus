@@ -403,13 +403,28 @@ bound planner or task origin, and the service asks the caller to retry. The
 service keeps that authority in memory until the host reports an identity change,
 the connection fails or the task reaches Done. Rebinding keeps the session ID
 and rotates the credentials. Reaching Done revokes command access and keeps the final view
-readable. The live turn follows task invalidations, including changes within a
-row version. Attach and load read the committed view and history locally.
-A stream interruption reconnects
-with backoff. After the opening prompt, enter commands such as
-`hold <reason>`, `move reviewing`, `answer work <guidance>` or `release`.
-`NUCLEUS_ACP_HOLD_PATTERN` and `NUCLEUS_ACP_IGNORE_PATTERN` configure silent
-re-entry and wake prompts.
+readable. Attach, load and every prompt read the committed view and history
+locally. A terminal task renders its final view and ends normally. T3's ACP
+prompt carries text without sender attestation, so task text prompts refresh
+the view. Task commands remain available from the CLI and board.
+
+The scheduler records the exact launch-preparation prompt before sending it.
+The bound task view identifies that prompt while preparation is active.
+Its turn follows task invalidations while the launch is being prepared or
+its role child is active. A wait without a child ends the turn. A stream
+interruption reconnects with backoff. A failed native turn is recorded for
+the task version and T3 session. Normal reconciliation can retry if either
+changes.
+
+The operator can queue a read-only row refresh with
+`POST /v1/tasks/{id}/acp/refresh`. The scheduler proves the row is idle and
+records the refresh intent before sending it. The ACP session renders the
+current task and releases the turn.
+
+Use `PUT /v1/settings/profiles/pauses/{group}` with `{"untilMs":<epoch-ms>}`
+to pause a named subscription group until a known provider reset. This
+operator-only endpoint extends the same durable deadline used by automatic
+provider-limit recognition.
 
 Preserve the stdio protocol from [Spec 065](../docs/knowledge/specs/065-acp-task-session.md).
 `initialize` advertises `loadSession: true`. An unbound `session/new` is inert;

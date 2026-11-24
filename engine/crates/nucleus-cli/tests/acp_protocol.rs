@@ -18,7 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
-use nucleus_core::acp::{Binding, InboxBinding};
+use nucleus_core::acp::{Binding, InboxBinding, parent_hold_prompt};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -82,9 +82,17 @@ impl AgentIo {
     async fn call(&mut self, id: u8, method: &str, params: Value) -> Value {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
             .await;
-        let response = self.read().await;
-        assert_eq!(response["id"], id);
-        response
+        self.response(id).await
+    }
+
+    async fn response(&mut self, id: u8) -> Value {
+        loop {
+            let frame = self.read().await;
+            if frame.get("id").is_some() {
+                assert_eq!(frame["id"], id);
+                return frame;
+            }
+        }
     }
 
     async fn update(&mut self, kind: &str) -> Value {
@@ -237,7 +245,7 @@ struct Fixture {
 
 async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
     let state = fixture.state.load(Ordering::Relaxed);
-    let run = if state == 3 {
+    let run = if matches!(state, 0 | 3 | 5) {
         Value::Null
     } else {
         let activity = if state == 2 {
@@ -252,12 +260,18 @@ async fn view(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
         "version":1,
         "reference":"fixture#67",
         "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
-        "phase": if state == 3 { "cancelled" } else { "working" },
-        "wait": if state == 4 { Some("host_unknown") } else { None },"question":null,"run":run
+        "phase": if state == 3 { "done" } else { "working" },
+        "wait": match state { 0 => Some("starting"), 4 => Some("host_unknown"), 5 => Some("prerequisite"), _ => None },
+        "question":null,"run":run,
+        "parentHold": (state == 0).then(|| parent_hold_prompt("fixture-hold")),
+        "activeChild": matches!(state, 1 | 2)
     }))
 }
 
 async fn history(State(fixture): State<Arc<Fixture>>) -> Json<Value> {
+    if matches!(fixture.state.load(Ordering::Relaxed), 0 | 5) {
+        return Json(json!([]));
+    }
     let mut history = vec![json!({"sequence":1,"presentation":[
         {"kind":"run_started","instance":INSTANCE,"role":"worker","purpose":"Write the fixture"}
     ]})];
@@ -362,89 +376,76 @@ fn write_pointer(path: &Path, binding: &impl serde::Serialize) {
 }
 
 #[tokio::test]
-async fn stdio_rebuilds_and_updates_the_exact_run_from_invalidations() {
+async fn a_reloaded_session_holds_for_preparation_and_ends_cleanly_after_done() {
     let (mut agent, fixture, home, server) = loopback().await;
-
+    fixture.state.store(0, Ordering::Relaxed);
     let opened = agent
-        .call(1, "session/new", json!({"cwd":"/fixture"}))
-        .await;
-    assert_eq!(opened["result"]["sessionId"], SESSION);
-    assert_scratch_cwd(&agent, home.path()).await;
-    agent.update("plan").await;
-    assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
-    agent
-        .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":[{"type":"text","text":"cancel"}]}}))
-        .await;
-    tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
-        .await
-        .expect("subscribe");
-    fixture.state.store(4, Ordering::Relaxed);
-    let _ = fixture.changes.send(());
-    let waiting = agent.update("plan").await;
-    assert_eq!(
-        waiting["entries"][1]["content"],
-        "fixture#67 · Working · waiting to confirm the worker is idle"
-    );
-    fixture.state.store(2, Ordering::Relaxed);
-    let _ = fixture.changes.send(());
-    agent.update("plan").await;
-    let changed = agent.update("tool_call_update").await;
-    assert_eq!(changed["toolCallId"], INSTANCE);
-    assert_eq!(
-        changed["content"][0]["content"]["text"],
-        "Running Rust tests"
-    );
-    let _ = fixture.changes.send(());
-    agent
-        .send(json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":SESSION}}))
-        .await;
-    let stopped = agent.read().await;
-    assert_eq!(stopped["id"], 2);
-    assert_eq!(stopped["result"]["stopReason"], "cancelled");
-    assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
-
-    let bad = agent
         .call(
-            3,
-            "session/load",
-            json!({"sessionId":"other","cwd":"/fixture"}),
-        )
-        .await;
-    assert_eq!(bad["error"]["code"], -32000);
-    let loaded = agent
-        .call(
-            4,
+            1,
             "session/load",
             json!({"sessionId":SESSION,"cwd":"/fixture"}),
         )
         .await;
-    assert_eq!(loaded["result"]["sessionId"], SESSION);
+    assert_eq!(opened["result"]["sessionId"], SESSION);
+    assert_scratch_cwd(&agent, home.path()).await;
     agent.update("plan").await;
+    agent.send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
+        "params":{"sessionId":SESSION,"prompt":[{"type":"text",
+            "text":format!("Envelope\n<user_request>{}</user_request>", parent_hold_prompt("fixture-hold"))}]}})).await;
+    tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
+        .await
+        .expect("deployment's scheduler hold stays open after reload");
+    fixture.state.store(2, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
     assert_eq!(agent.update("tool_call").await["toolCallId"], INSTANCE);
-    agent.send(json!({"jsonrpc":"2.0","id":5,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":[{"type":"text","text":"Envelope\n<user_request>cancel</user_request>"}]}})).await;
+    fixture.state.store(3, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
     agent.update("plan").await;
     assert_eq!(
         agent.update("tool_call_update").await["status"],
         "completed"
     );
-    assert_eq!(
-        agent.update("agent_message_chunk").await["content"]["text"],
-        "Task cancelled.\n\n"
-    );
-    let end = agent.read().await;
-    assert_eq!(end["id"], 5);
+    let end = agent.response(2).await;
     assert_eq!(end["result"]["stopReason"], "end_turn");
-    assert_eq!(fixture.commands.load(Ordering::Relaxed), 1);
-    drop(agent.input);
-    assert!(
-        tokio::time::timeout(Duration::from_secs(15), agent.child.wait())
-            .await
-            .expect("agent exits on EOF")
-            .expect("exit")
-            .success()
-    );
+    assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() {
+    let (mut agent, fixture, _home, server) = loopback().await;
+    fixture.state.store(0, Ordering::Relaxed);
+    agent
+        .call(
+            1,
+            "session/load",
+            json!({"sessionId":SESSION,"cwd":"/fixture"}),
+        )
+        .await;
+    for (id, text) in [
+        (2, "Envelope\n<user_request>cancel</user_request>"),
+        (3, "Delegated task completed."),
+    ] {
+        let reply = agent
+            .call(
+                id,
+                "session/prompt",
+                json!({"sessionId":SESSION,"prompt":[{"type":"text","text":text}]}),
+            )
+            .await;
+        assert_eq!(reply["result"]["stopReason"], "end_turn");
+    }
+    agent
+        .send(json!({"jsonrpc":"2.0","id":4,"method":"session/prompt",
+        "params":{"sessionId":SESSION,"prompt":parent_hold_prompt("fixture-hold")}}))
+        .await;
+    tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
+        .await
+        .expect("hold turn follows the task");
+    fixture.state.store(5, Ordering::Relaxed);
+    let _ = fixture.changes.send(());
+    assert_eq!(agent.response(4).await["result"]["stopReason"], "end_turn");
+    assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
     server.abort();
 }
 

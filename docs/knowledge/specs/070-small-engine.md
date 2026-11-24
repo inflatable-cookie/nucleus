@@ -193,6 +193,22 @@ Later decisions carry their own attribution.
     When the selected provider does not advertise the matching installed
     protocol, the engine includes the same skill sections with the assignment.
 
+30. **T3 owns the engine's lifetime.** Tom, 2026-11-24, asked the engine to
+    start with T3 and exit after the last host disconnects. The pinned Inbox
+    uses the ACP ensure path on reconnect. Shutdown waits 300 seconds, matching
+    TypeScript's `idleTimeoutMs` in `service/standalone.ts`. A reconnect within
+    the grace period cancels shutdown. After the grace period the engine
+    reaches a durable safe point, releases the profile lock and listener, and
+    exits. Normal startup reconciliation checks existing tasks.
+
+    T3 requires an active parent turn to launch a delegated child. Tom kept
+    the scheduler's read-only hold during launch preparation. The held turn
+    follows the task while the role child is active and ends when the task
+    waits without a child. Terminal and agent prompts render the current
+    view and end normally. Mutating commands require attested input under
+    ruling 27. A native turn failure is recorded against the task version
+    and T3 session and waits for either to change before another attempt.
+
 ## The model
 
 ### Stored state per task

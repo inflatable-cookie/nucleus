@@ -16,6 +16,45 @@ use tokio::{task, time::Instant};
 use super::{Api, ApiError, body};
 use crate::{Project, Service, ServiceError};
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ProviderPause {
+    until_ms: u64,
+}
+
+pub(super) async fn pause_group(
+    State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
+    Path(group): Path<String>,
+    input: Result<Json<ProviderPause>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    require_operator(&authority)?;
+    let now = crate::now_ms();
+    let pause = body(input)?;
+    let mut state = api.service.state.lock().await;
+    if pause.until_ms <= now
+        || !state.settings.profiles.as_ref().is_some_and(|profiles| {
+            profiles
+                .profiles
+                .iter()
+                .any(|profile| profile.group.as_deref() == Some(group.as_str()))
+        })
+    {
+        return Err(ApiError::Invalid);
+    }
+    state
+        .store
+        .record_provider_pause(&group, pause.until_ms, now)
+        .map_err(ServiceError::from)?;
+    let until_ms = state
+        .store
+        .provider_pause(&group, now)
+        .map_err(ServiceError::from)?;
+    api.service.wake_settings_capacity(&mut state);
+    api.service.settings_changes.send_replace(());
+    Ok(Json(json!({"group":group, "untilMs":until_ms})))
+}
+
 pub(crate) struct RuntimeSettings {
     pub dispatch: Option<DispatchSettings>,
     pub profiles: Option<Arc<Profiles>>,

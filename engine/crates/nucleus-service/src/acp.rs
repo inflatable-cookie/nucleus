@@ -5,12 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ControllerScope, Service, ServiceError, State};
+use crate::{ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget};
 use nucleus_core::{
-    Authority, Phase,
-    acp::{Binding, InboxBinding, session_id},
+    Authority, Phase, WaitReason,
+    acp::{Binding, InboxBinding, parent_hold_prompt, session_id},
 };
-use nucleus_store::AcpSession;
+use nucleus_store::{AcpSession, TaskRow};
 use rustix::fs::{Mode, OFlags, open};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -34,6 +34,150 @@ pub(super) struct WriteAccess {
 }
 
 impl Service {
+    pub(super) fn acp_turn_view(
+        &self,
+        state: &State,
+        row: &TaskRow,
+    ) -> Result<(Option<String>, bool), ServiceError> {
+        let task = &row.task;
+        let id = &task.identity().id;
+        if task.phase().is_terminal() || task.question().is_some() {
+            return Ok((None, false));
+        }
+        let wait = state.waits.get(id).map(|(reason, _)| *reason);
+        let may_launch = state
+            .settings
+            .dispatch
+            .as_ref()
+            .is_none_or(|dispatch| dispatch.mode.allows_launch(task.first_launch()));
+        if let Some(run) = task
+            .run()
+            .filter(|run| !run.revoked() && run.report().is_none())
+        {
+            let active = if run.last_send_at_ms().is_some() {
+                matches!(
+                    wait,
+                    None | Some(
+                        WaitReason::Running
+                            | WaitReason::Starting
+                            | WaitReason::Permission
+                            | WaitReason::Input
+                    )
+                )
+            } else {
+                may_launch && wait == Some(WaitReason::Starting)
+            };
+            return Ok((None, active));
+        }
+        if !may_launch || task.hold().is_some() || wait != Some(WaitReason::Starting) {
+            return Ok((None, false));
+        }
+        let Some(session) = self.host.runtime_identity() else {
+            return Ok((None, false));
+        };
+        let command =
+            state
+                .store
+                .task_turn_command(id, "native_turn_intent", row.version, &session)?;
+        Ok((command.as_deref().map(parent_hold_prompt), false))
+    }
+
+    pub(super) async fn record_native_turn(
+        &self,
+        row: &TaskRow,
+        kind: &str,
+        session: &str,
+        command: &str,
+    ) -> Result<bool, ServiceError> {
+        let mut intent = event(kind);
+        intent.detail = serde_json::json!({
+            "command":command, "version":row.version, "session":session,
+        })
+        .to_string();
+        let id = &row.task.identity().id;
+        let mut state = self.state.lock().await;
+        let recorded = state.store.claim_task_effect(id, &intent)?;
+        if recorded {
+            if kind == "native_turn_intent" {
+                state.set_wait(id, Some(WaitReason::Starting));
+            }
+            self.publish(id, row.version);
+        }
+        Ok(recorded)
+    }
+
+    pub(super) async fn queue_acp_refresh(&self, id: &str) -> Result<bool, ServiceError> {
+        let mut state = self.state.lock().await;
+        let row = self.lookup(&state, id)?;
+        if row.task.phase().is_terminal() || row.task.run().is_some() {
+            return Ok(false);
+        }
+        state.acp_refresh_requests.insert(id.into(), row.version);
+        self.wake_task(
+            &mut state,
+            id,
+            row.version,
+            crate::schedule::Priority::Effect,
+        );
+        Ok(true)
+    }
+
+    pub(super) async fn refresh_acp_parent(&self, row: &TaskRow) -> Result<bool, ServiceError> {
+        let task = &row.task;
+        if task.phase().is_terminal() || task.run().is_some() {
+            return Ok(false);
+        }
+        let _fence = self.effect(row).await?;
+        let provider = self.acp_provider().ok_or(ServiceError::AcpBinding)?;
+        let identity = task.identity();
+        let id = &identity.id;
+        let route = self.project_for(identity).await?;
+        let work = self.worktrees()?;
+        let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
+        let binding = route.binding(&checkout)?;
+        let Some(write) = self.host.prepare_parent_refresh(&binding, provider).await? else {
+            return Ok(false);
+        };
+        let Some(_permit) = self
+            .dispatch_gate(
+                task,
+                DispatchTarget::Run {
+                    frozen: write.binding(),
+                    checkout: &checkout,
+                    launch: false,
+                },
+            )
+            .await?
+        else {
+            return Ok(false);
+        };
+        self.ensure_parent_reader(id, checkout.path()).await?;
+        let session = self
+            .host
+            .runtime_identity()
+            .ok_or(nucleus_hosts::HostError::Uncertain)?;
+        if self
+            .state
+            .lock()
+            .await
+            .store
+            .task_turn_command(id, "acp_row_refresh_intent", row.version, &session)?
+            .is_some()
+            || !self
+                .record_native_turn(
+                    row,
+                    "acp_row_refresh_intent",
+                    &session,
+                    write.command_id().ok_or(ServiceError::Input)?,
+                )
+                .await?
+        {
+            return Ok(false);
+        }
+        self.host.write_parent(write).await?;
+        Ok(true)
+    }
+
     pub(super) async fn bind_acp(
         &self,
         task: &str,

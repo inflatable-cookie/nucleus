@@ -605,6 +605,51 @@ impl Store {
         )?)
     }
 
+    /// Record a task effect's exact intent once without changing its task version.
+    ///
+    /// # Errors
+    /// Returns an error if the journal cannot be updated.
+    pub fn claim_task_effect(&mut self, id: &str, event: &EventDraft) -> Result<bool, StoreError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let recorded: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE task_id = ?1 AND kind = ?2 AND detail = ?3)",
+            params![id, event.kind, event.detail],
+            |row| row.get(0),
+        )?;
+        if !recorded {
+            append(&tx, id, event)?;
+        }
+        tx.commit()?;
+        Ok(!recorded)
+    }
+
+    /// Read a native turn intent for the current task state and host session.
+    ///
+    /// # Errors
+    /// Returns an error if the journal is unreadable.
+    pub fn task_turn_command(
+        &self,
+        id: &str,
+        kind: &str,
+        version: i64,
+        session: &str,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT json_extract(detail, '$.command') FROM events
+             WHERE task_id = ?1 AND kind = ?2 AND json_valid(detail)
+             AND json_extract(detail, '$.version') = ?3
+             AND json_extract(detail, '$.session') = ?4
+             ORDER BY sequence DESC LIMIT 1",
+                params![id, kind, version, session],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// Read all subscription groups with a deadline in the future.
     ///
     /// # Errors
