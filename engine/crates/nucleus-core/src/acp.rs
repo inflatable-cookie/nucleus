@@ -5,6 +5,7 @@ pub mod lifecycle;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use sha2::{Digest, Sha256};
 
 /// A scheduler-owned refresh of the current row, without a held turn.
 pub const REFRESH_TASK_ROW: &str = "Nucleus refreshes the current task row.";
+/// One Inbox board attempt's budget across the native preview calls.
+pub const INBOX_PREVIEW_TIMEOUT: Duration = Duration::from_secs(20);
 /// The scheduler keeps a parent turn available while it prepares a child.
 #[must_use]
 pub fn parent_hold_prompt(command: &str) -> String {
@@ -72,6 +75,8 @@ pub struct InboxSnapshot {
     pub pending: Vec<InboxForm>,
     #[serde(default)]
     pub replies_ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_run: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

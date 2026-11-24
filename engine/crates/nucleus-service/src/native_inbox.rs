@@ -32,6 +32,8 @@ use tokio::{
 
 use crate::{Service, ServiceError, State, now_ms};
 
+use self::commands::InboxReply;
+
 const INBOX_DIRECTORY: &str = "acp-inbox";
 const ENGINE: &str = "Nucleus";
 const ACCEPT: &str = "accept";
@@ -42,7 +44,7 @@ pub(super) struct NativeInbox {
     pub(super) root: String,
     observed: watch::Sender<Observation>,
     reconcile: Notify,
-    replies: Mutex<VecDeque<String>>,
+    replies: Mutex<VecDeque<InboxReply>>,
     preview_session: Mutex<Option<String>>,
     preview_pending: AtomicBool,
 }
@@ -51,7 +53,10 @@ pub(super) struct NativeInbox {
 pub(super) enum Observation {
     Unknown,
     Inactive,
-    Pinned(BTreeSet<String>),
+    Pinned {
+        forms: BTreeSet<String>,
+        active_run: Option<String>,
+    },
 }
 
 /// The dedicated native project root and ACP binding identity for this engine.
@@ -140,7 +145,7 @@ impl Service {
         serde_json::json!({
             "enabled": self.native_inbox.is_some(),
             "observed": self.native_inbox.as_ref().is_some_and(|inbox| matches!(
-                &*inbox.observed.borrow(), Observation::Pinned(_)
+                &*inbox.observed.borrow(), Observation::Pinned { .. }
             )),
             "threadId": INBOX_THREAD
         })
@@ -183,16 +188,26 @@ impl Service {
             return Ok(InboxSnapshot {
                 pending: Vec::new(),
                 replies_ready: false,
+                reply_run: None,
             });
         }
         let decisions = pending(&state, self)?;
+        let reply_run = self
+            .inbox_reply_run(&observed)
+            .filter(|run| {
+                inbox
+                    .replies
+                    .lock()
+                    .is_ok_and(|replies| replies.iter().any(|reply| reply.run_id == *run))
+            })
+            .map(str::to_owned);
         Ok(InboxSnapshot {
             pending: decisions
                 .into_iter()
                 .map(|decision| {
                     let field = inbox_field(&decision.project_id, &decision.id);
                     InboxForm {
-                        offer: matches!(&*observed, Observation::Pinned(present) if !present.contains(&field)),
+                        offer: matches!(&*observed, Observation::Pinned { forms, .. } if !forms.contains(&field)),
                         field,
                         question: decision.input.question,
                         choices: decision
@@ -207,7 +222,8 @@ impl Service {
                     }
                 })
                 .collect(),
-            replies_ready: inbox.replies.lock().is_ok_and(|replies| !replies.is_empty()),
+            replies_ready: reply_run.is_some(),
+            reply_run,
         })
     }
 
@@ -218,7 +234,7 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let inbox = self.inbox_session(credential)?;
         let mut state = self.state.lock().await;
-        if !matches!(&*inbox.observed.borrow(), Observation::Pinned(_)) {
+        if !matches!(&*inbox.observed.borrow(), Observation::Pinned { .. }) {
             return Err(ServiceError::InboxUnavailable {
                 until: Instant::now() + T3_RETRY_DELAY,
             });
@@ -293,8 +309,12 @@ impl Service {
         };
         match self.host.prepare_inbox(target, &fields).await? {
             InboxStep::Wait => inbox.set_observation(Observation::Inactive),
-            InboxStep::Ready { forms, commands } => {
-                inbox.set_observation(Observation::Pinned(forms));
+            InboxStep::Ready {
+                forms,
+                commands,
+                active_run,
+            } => {
+                inbox.set_observation(Observation::Pinned { forms, active_run });
                 self.serve_inbox_commands(inbox, &commands).await?;
             }
             InboxStep::Write(write) => {
@@ -305,7 +325,10 @@ impl Service {
                 self.storage.database().verify()?;
                 // ACP can attach before T3 publishes the new turn. It needs the
                 // exact pin proof before dispatch, while the Inbox is still idle.
-                inbox.set_observation(Observation::Pinned(BTreeSet::new()));
+                inbox.set_observation(Observation::Pinned {
+                    forms: BTreeSet::new(),
+                    active_run: None,
+                });
                 self.host.write_inbox(write).await?;
                 self.serve_inbox_commands(inbox, &[]).await?;
             }

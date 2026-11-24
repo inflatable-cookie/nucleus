@@ -13,6 +13,8 @@ use crate::{
 
 mod preview;
 
+pub use preview::InboxPreviewError;
+
 pub const INBOX_THREAD: &str = "thread:nucleus-rust-inbox";
 pub(crate) const PROJECT: &str = "project:nucleus-rust-inbox";
 const TITLE: &str = "Nucleus Inbox";
@@ -34,6 +36,7 @@ pub enum InboxStep {
     Ready {
         forms: BTreeSet<String>,
         commands: Vec<InboxOperatorMessage>,
+        active_run: Option<String>,
     },
 }
 
@@ -41,6 +44,7 @@ pub enum InboxStep {
 #[derive(Debug, PartialEq, Eq)]
 pub struct InboxOperatorMessage {
     pub id: String,
+    pub run_id: String,
     pub text: String,
 }
 
@@ -81,6 +85,17 @@ impl InboxWrite {
 }
 
 impl T3 {
+    /// Confirm the Inbox run identity against the synchronized shell without a host read.
+    #[must_use]
+    pub fn inbox_run_is_active(&self, run_id: &str) -> bool {
+        self.rpc.thread_row(INBOX_THREAD).is_some_and(|row| {
+            row["activeRunId"] == run_id
+                && row["pinnedAt"].is_string()
+                && row["archivedAt"].is_null()
+                && row["deletedAt"].is_null()
+        })
+    }
+
     /// Resolve the live, pinned Inbox and prepare at most one turn effect.
     /// # Errors
     /// Returns an error when the native destination or requests cannot be established.
@@ -99,7 +114,9 @@ impl T3 {
         if !thread["archivedAt"].is_null() || !pinned(thread)? {
             return Ok(InboxStep::Wait);
         }
-        reconcile(&snapshot, pending)
+        let shell = self.rpc.thread_row(INBOX_THREAD);
+        let active_run = shell.as_ref().and_then(|row| row["activeRunId"].as_str());
+        reconcile(&snapshot, pending, active_run)
     }
 
     /// Observe the exact Rust Inbox without mutating either Inbox.
@@ -355,7 +372,11 @@ fn command(id: String, payload: Value) -> InboxWrite {
     InboxWrite::new("orchestration.dispatchCommand", id, payload)
 }
 
-fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, HostError> {
+fn reconcile(
+    snapshot: &Value,
+    pending: &BTreeSet<String>,
+    active_run: Option<&str>,
+) -> Result<InboxStep, HostError> {
     if !snapshot["idTable"].is_null() {
         return Err(HostError::Protocol);
     }
@@ -423,6 +444,13 @@ fn reconcile(snapshot: &Value, pending: &BTreeSet<String>) -> Result<InboxStep, 
     Ok(InboxStep::Ready {
         forms: present,
         commands: operator_messages(&projection["messages"], runs),
+        active_run: active_run
+            .filter(|id| {
+                runs.iter().any(|run| {
+                    run["id"].as_str() == Some(*id) && live_run(run) && run["status"] != "queued"
+                })
+            })
+            .map(str::to_owned),
     })
 }
 
@@ -453,6 +481,7 @@ fn operator_messages(messages: &Value, runs: &[Value]) -> Vec<InboxOperatorMessa
         .filter_map(|message| {
             Some(InboxOperatorMessage {
                 id: message["id"].as_str()?.to_owned(),
+                run_id: message["runId"].as_str()?.to_owned(),
                 text: message["text"].as_str()?.to_owned(),
             })
         })
@@ -497,6 +526,7 @@ mod tests {
             commands,
             [InboxOperatorMessage {
                 id: "operator-message".into(),
+                run_id: "queued".into(),
                 text: "ui".into(),
             }]
         );

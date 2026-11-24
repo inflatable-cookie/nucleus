@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use nucleus_core::acp::{InboxAnswer, InboxForm};
+use nucleus_core::acp::{INBOX_PREVIEW_TIMEOUT, InboxAnswer, InboxForm};
 use serde_json::{Value, json};
 use tokio::{
     sync::mpsc,
@@ -40,7 +40,10 @@ pub(crate) fn prompt(
     let job = tokio::spawn(async move {
         // ACP text is only a hint to wait for a reply. The scheduler proves
         // that T3 actually recorded a direct operator message.
-        let until = wait_for_ui_reply.then(|| Instant::now() + Duration::from_secs(8));
+        // The scheduler can finish an in-flight automatic open before serving
+        // this message. Allow both attempts and the next service refresh.
+        let until = wait_for_ui_reply
+            .then(|| Instant::now() + 2 * INBOX_PREVIEW_TIMEOUT + Duration::from_secs(5));
         match follow(&client, &output, &session, receive, until).await {
             Ok(()) => stop(&output, &request, "end_turn"),
             Err(failure) => error(&output, &request, -32000, &failure.to_string()),
@@ -124,7 +127,9 @@ async fn refresh_cards(
 ) -> Result<bool, Failure> {
     let snapshot = client.inbox().await?;
     if snapshot.replies_ready {
-        let replies = client.take_inbox_replies().await?;
+        let replies = client
+            .take_inbox_replies(snapshot.reply_run.as_deref())
+            .await?;
         if !replies.is_empty() {
             *wait_for_ui = None;
         }
