@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub const INBOX_THREAD: &str = "thread:nucleus-rust-inbox";
-const PROJECT: &str = "project:nucleus-rust-inbox";
+pub(crate) const PROJECT: &str = "project:nucleus-rust-inbox";
 const TITLE: &str = "Nucleus Inbox";
 const PROMPT: &str = "Open the Nucleus Inbox.";
 

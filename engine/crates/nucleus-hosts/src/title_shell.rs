@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 use crate::{
-    Binding, HostError, RegisteredProject, T3, parent_thread,
+    Binding, HostError, RegisteredProject, T3,
+    inbox::{self, INBOX_THREAD, InboxTarget},
+    parent_thread,
     rpc::{Read, Reply},
 };
 
@@ -43,8 +45,10 @@ struct TitleThread {
     id: String,
     project_id: String,
     provider_instance_id: String,
-    worktree_path: String,
-    branch: String,
+    worktree_path: Option<String>,
+    branch: Option<String>,
+    title: Option<String>,
+    pinned_at: Option<String>,
     parent_thread_id: Option<String>,
     lineage: Option<Lineage>,
     archived_at: Option<String>,
@@ -59,7 +63,8 @@ struct Lineage {
 
 /// The matching parent record from T3's synchronized shell.
 pub struct TitleTarget {
-    binding: Binding,
+    binding: Option<Binding>,
+    current_title: Option<String>,
     thread: String,
     provider: String,
     root: String,
@@ -67,8 +72,13 @@ pub struct TitleTarget {
 
 impl TitleTarget {
     #[must_use]
-    pub const fn binding(&self) -> &Binding {
-        &self.binding
+    pub const fn binding(&self) -> Option<&Binding> {
+        self.binding.as_ref()
+    }
+
+    #[must_use]
+    pub fn current_title(&self) -> Option<&str> {
+        self.current_title.as_deref()
     }
 
     #[must_use]
@@ -212,8 +222,8 @@ impl TitleShell {
         if project.workspace_root != root
             || parent.project_id != project.id
             || parent.provider_instance_id != provider
-            || parent.worktree_path != binding.worktree_path
-            || parent.branch != binding.branch
+            || parent.worktree_path.as_deref() != Some(&binding.worktree_path)
+            || parent.branch.as_deref() != Some(&binding.branch)
             || parent.parent_thread_id.is_some()
             || parent
                 .lineage
@@ -225,10 +235,41 @@ impl TitleShell {
             return None;
         }
         Some(TitleTarget {
-            binding: binding.clone(),
+            binding: Some(binding.clone()),
+            current_title: parent.title.clone(),
             thread,
             provider: provider.into(),
             root: root.into(),
+        })
+    }
+
+    fn inbox_target(&self, target: &InboxTarget<'_>) -> Option<TitleTarget> {
+        let view = self.view.read().ok()?;
+        let shell = view.as_ref()?;
+        let project = shell.active_project(inbox::PROJECT)?;
+        let thread = shell.threads.get(INBOX_THREAD)?;
+        if project.workspace_root != target.root
+            || thread.project_id != project.id
+            || thread.provider_instance_id != target.provider
+            || thread.worktree_path.is_some()
+            || thread.parent_thread_id.is_some()
+            || thread
+                .lineage
+                .as_ref()
+                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
+            || thread.archived_at.is_some()
+            || thread.deleted_at.is_some()
+            || thread.pinned_at.as_deref().is_none_or(str::is_empty)
+            || thread.title.is_none()
+        {
+            return None;
+        }
+        Some(TitleTarget {
+            binding: None,
+            current_title: thread.title.clone(),
+            thread: thread.id.clone(),
+            provider: target.provider.into(),
+            root: target.root.into(),
         })
     }
 }
@@ -275,6 +316,12 @@ impl T3 {
         self.titles.target(binding, provider, root)
     }
 
+    /// Prepare a title update for the verified pinned Inbox on the cached shell.
+    #[must_use]
+    pub fn inbox_title_target(&self, target: &InboxTarget<'_>) -> Option<TitleTarget> {
+        self.titles.inbox_target(target)
+    }
+
     /// Deliver the same title bytes under the receipt ID until T3 confirms it.
     /// # Errors
     /// Returns an error if the proof changes or the write cannot be confirmed.
@@ -293,10 +340,14 @@ impl T3 {
         match self
             .rpc
             .call_guarded("orchestration.dispatchCommand", payload, Read::One, || {
-                self.titles
-                    .target(&target.binding, &target.provider, &target.root)
-                    .map(|_| ())
-                    .ok_or(HostError::Binding)
+                let current = match &target.binding {
+                    Some(binding) => self.titles.target(binding, &target.provider, &target.root),
+                    None => self.titles.inbox_target(&InboxTarget {
+                        provider: &target.provider,
+                        root: &target.root,
+                    }),
+                };
+                current.map(|_| ()).ok_or(HostError::Binding)
             })
             .await?
         {

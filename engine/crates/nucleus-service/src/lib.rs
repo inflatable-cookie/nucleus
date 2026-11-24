@@ -756,6 +756,9 @@ impl Service {
             None => state.schedule.wake(id, due, priority),
         }
         let prior = state.set_wait(id, wait);
+        if (prior == Some(WaitReason::Running)) != (wait == Some(WaitReason::Running)) {
+            self.title_wake.notify_one();
+        }
         self.desire_title(&state, &row.task, row.reference().as_ref(), wait);
         if prior != wait {
             self.publish(id, current.version);
@@ -1047,7 +1050,9 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
         }
-        state.set_wait(id, None);
+        if state.set_wait(id, None) == Some(WaitReason::Running) {
+            self.title_wake.notify_one();
+        }
         self.desire_title(state, task, prior.reference().as_ref(), None);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
