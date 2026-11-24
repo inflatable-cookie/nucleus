@@ -26,6 +26,45 @@ pub struct PlannerThread {
     pub provider_instance_id: Option<String>,
 }
 
+/// Exact thread metadata for a local authority check. It carries no custody proof.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannerIdentity {
+    pub id: String,
+    pub project_id: String,
+    pub archived_at: Option<String>,
+    pub deleted_at: Option<String>,
+    pub provider_instance_id: Option<String>,
+    parent_thread_id: Option<String>,
+    lineage: Option<PlannerLineage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlannerLineage {
+    parent_thread_id: Option<String>,
+}
+
+impl PlannerIdentity {
+    #[must_use]
+    pub fn is_child(&self) -> bool {
+        self.parent_thread_id.is_some()
+            || self
+                .lineage
+                .as_ref()
+                .is_some_and(|lineage| lineage.parent_thread_id.is_some())
+    }
+
+    pub(crate) fn same_role(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.project_id == other.project_id
+            && self.archived_at == other.archived_at
+            && self.deleted_at == other.deleted_at
+            && self.provider_instance_id == other.provider_instance_id
+            && self.is_child() == other.is_child()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeState {
     Gone,
@@ -180,7 +219,31 @@ impl T3 {
     /// # Errors
     /// Returns an error for an unreadable or different thread.
     pub async fn planner_routable(&self, thread: &str) -> Result<bool, HostError> {
-        Ok(self.notice_projection(thread).await?.is_some())
+        Ok(self
+            .planner_identity(thread)
+            .await?
+            .is_some_and(|identity| !identity.is_child()))
+    }
+
+    /// Read only the thread identity from a synchronized compact projection.
+    /// # Errors
+    /// Returns an error for an unreadable or mismatched identity.
+    pub async fn planner_identity(&self, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
+        let reply = self.rpc.call("orchestration.subscribeThread", json!({
+            "threadId": id, "requestCompletionMarker": true, "acceptBoundedSnapshot": true,
+            "acceptDeferredWork": true, "acceptCompactTurnItems": true, "acceptDedupedBodies": true,
+        }), Read::Thread).await?;
+        let value = match reply {
+            Reply::Value(value) => value,
+            Reply::Failure(cause) if projection::missing_thread(&cause, id) => return Ok(None),
+            Reply::Failure(_) => return Err(HostError::Uncertain),
+        };
+        let thread: PlannerIdentity = serde_json::from_value(value["projection"]["thread"].clone())
+            .map_err(|_| HostError::Protocol)?;
+        if thread.id != id {
+            return Err(HostError::Binding);
+        }
+        Ok((thread.archived_at.is_none() && thread.deleted_at.is_none()).then_some(thread))
     }
 
     /// Recheck the actual thread and workspace of an authorized notice.

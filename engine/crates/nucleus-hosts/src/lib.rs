@@ -28,7 +28,7 @@ use projection::Projection;
 pub use projection::RunActivity;
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeHost, NoticeSend, NoticeState, NoticeTarget,
-    NoticeWrite, PlannerThread,
+    NoticeWrite, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc};

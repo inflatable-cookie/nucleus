@@ -13,7 +13,7 @@ use crate::ServiceError;
 const SCAN_PAGE: u32 = 32;
 pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
-const LIVE_CHECK: Duration = Duration::from_secs(45);
+pub(crate) const LIVE_CHECK: Duration = Duration::from_secs(45);
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 const HOST_RETRY_CAP: Duration = Duration::from_mins(4);
 

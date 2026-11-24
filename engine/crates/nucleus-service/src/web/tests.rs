@@ -657,7 +657,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let head = service.project.start.clone();
     let exact = seed_review_work_question(&service, &head).await;
     service
-        .refresh_planner_authority()
+        .refresh_planner_authority("reviewer")
         .await
         .expect("planner roster");
     let prior = service.task("reviewer").await.expect("seeded question");
@@ -898,7 +898,7 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
     assert_eq!(reads.load(Ordering::Relaxed), 0);
     replaced.store(true, Ordering::Relaxed);
     service
-        .refresh_planner_authority()
+        .refresh_planner_authority("worker")
         .await
         .expect("published replacement");
     let origin = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
@@ -1015,6 +1015,22 @@ async fn seed_task(service: &Service, task: &Task) {
         .expect("seed task");
 }
 
+async fn seed_planner_task(service: &Service, id: &str, planner: &str) {
+    let task = Task::new(
+        Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: Some(planner.into()),
+        },
+        "Synthetic planner task".into(),
+        None,
+    );
+    seed_task(service, &task).await;
+}
+
 async fn json_body(response: Response) -> Value {
     let body = to_bytes(response.into_body(), 64 * 1024)
         .await
@@ -1071,22 +1087,7 @@ async fn an_acp_planner_command_is_refused_after_handover() {
     let (host, replaced, reads, native) =
         planner_roster_fixture("old-planner", "new-planner").await;
     service.host = host;
-    seed_task(
-        &service,
-        &Task::new(
-            Identity {
-                id: "handover".into(),
-                reference: "handover".into(),
-                repository: REPOSITORY.into(),
-                base: "main".into(),
-                entry: Entry::Brief,
-                origin_thread: Some("old-planner".into()),
-            },
-            "Synthetic brief".into(),
-            None,
-        ),
-    )
-    .await;
+    seed_planner_task(&service, "handover", "old-planner").await;
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
@@ -1095,21 +1096,30 @@ async fn an_acp_planner_command_is_refused_after_handover() {
             planner_controller(BOUND_KEY, "new-planner"),
         ],
     );
-    let binding = mint_binding(&api, "handover", &PLANNER_KEY).await;
-    let writer = binding.command_credential.expect("scope writer");
     let path = "/v1/tasks/handover/commands";
+    let mint_path = "/v1/tasks/handover/acp";
     let hold = json!({"hold":"Keep the first plan"});
-    let cold = post_as(&api, path, &writer, &hold).await;
+    let cold = post_as(&api, mint_path, &PLANNER_KEY, &json!({})).await;
     assert_eq!(cold.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
         json_body(cold).await["error"],
         "planner authority is not yet known. Retry shortly."
     );
     assert_eq!(reads.load(Ordering::Relaxed), 0);
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .planner_requests
+            .contains("handover")
+    );
     service
-        .refresh_planner_authority()
+        .refresh_planner_authority("handover")
         .await
-        .expect("first roster");
+        .expect("exact planner identity");
+    let binding = mint_binding(&api, "handover", &PLANNER_KEY).await;
+    let writer = binding.command_credential.expect("scope writer");
 
     let fence = service.fence("handover").await;
     let busy = tokio::time::timeout(
@@ -1124,20 +1134,16 @@ async fn an_acp_planner_command_is_refused_after_handover() {
     assert_eq!(reads.load(Ordering::Relaxed), 1);
 
     replaced.store(true, Ordering::Relaxed);
-    service
-        .state
-        .lock()
-        .await
-        .planner_thread_closed("old-planner");
+    service.state.lock().await.invalidate_planner_authority();
     let release = json!("release");
     assert_eq!(
         post_json(&api, path, &writer, &release).await,
         StatusCode::SERVICE_UNAVAILABLE
     );
     service
-        .refresh_planner_authority()
+        .refresh_planner_authority("handover")
         .await
-        .expect("handover roster");
+        .expect("archived identity");
     assert_eq!(
         post_json(&api, path, &writer, &release).await,
         StatusCode::FORBIDDEN
@@ -1158,11 +1164,9 @@ async fn an_acp_planner_command_is_refused_after_handover() {
         post_json(&new_api, path, &writer, &release).await,
         StatusCode::UNAUTHORIZED
     );
-    let new_binding = mint_binding(&new_api, "handover", &BOUND_KEY).await;
-    let new_writer = new_binding.command_credential.expect("new scope writer");
     assert_eq!(
-        post_json(&new_api, path, &new_writer, &release).await,
-        StatusCode::OK
+        post_json(&new_api, mint_path, &BOUND_KEY, &json!({})).await,
+        StatusCode::FORBIDDEN
     );
     assert_eq!(reads.load(Ordering::Relaxed), 2);
     native.abort();
@@ -1182,14 +1186,16 @@ async fn planner_roster_fixture(
     let changed = Arc::clone(&replaced);
     let calls = Arc::clone(&reads);
     let (host, native) = crate::tests::native_fixture(move |request| {
-        assert_eq!(request["tag"], "orchestration.subscribeShell");
+        assert_eq!(request["tag"], "orchestration.subscribeThread");
+        assert_eq!(request["payload"]["acceptCompactTurnItems"], true);
+        let id = request["payload"]["threadId"].as_str().expect("exact ID");
+        assert!(id == old || id == new);
         calls.fetch_add(1, Ordering::Relaxed);
         json!({"_tag":"Chunk","requestId":request["id"],"values":[
-            {"kind":"snapshot","snapshot":{"threads":[
-                {"id":old,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z",
-                    "archivedAt":changed.load(Ordering::Relaxed).then_some("2026-11-23T18:10:00Z")},
-                {"id":new,"projectId":"local-fixture","updatedAt":"2026-11-23T18:00:00Z"}
-            ]}},
+            {"kind":"snapshot","hasMoreHistory":true,"historyCursor":"bounded",
+                "turnItemsOmitLocalVisible":true,"projection":{"thread":{
+                    "id":id,"projectId":"local-fixture",
+                    "archivedAt":(id == old && changed.load(Ordering::Relaxed)).then_some("2026-11-23T18:10:00Z")}}},
             {"kind":"synchronized"}
         ]})
     })
@@ -1278,6 +1284,19 @@ async fn later_history_never_reopens_a_confirmed_native_archive() {
     service.project.acp_provider = Some("fixture-acp".into());
     let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    service
+        .state
+        .lock()
+        .await
+        .set_wait("reviewer", Some(WaitReason::Stopping));
+    for path in ["/v1/tasks/reviewer", "/v1/tasks/reviewer/next"] {
+        let view = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+        assert_eq!(view["phase"], "done");
+        assert_eq!(view["wait"], Value::Null);
+        assert_eq!(view["nextCheckAt"], Value::Null);
+    }
     {
         let mut state = service.state.lock().await;
         assert_eq!(
@@ -1411,6 +1430,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
     let (host, _, reads, native) = planner_roster_fixture("planner-one", "planner-two").await;
     service.host = host;
+    seed_planner_task(&service, "planned", "planner-one").await;
     let service = Arc::new(service);
     let api = settings_api(&service);
     let path = "/v1/settings/projects";
@@ -1446,7 +1466,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         "the save made no host request"
     );
     service
-        .refresh_planner_authority()
+        .refresh_planner_authority("planned")
         .await
         .expect("scheduler publishes authority");
     let resolved = json_body(get_as(&api, path, &BOARD_KEY).await).await;
@@ -1489,7 +1509,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     );
     let state = service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
-    assert!(state.planner_authority.is_none());
+    assert!(state.planner_authority.is_empty());
     assert_eq!(state.settings.fixture_slots(&service.project), Some(2));
     assert_eq!(
         reads.load(Ordering::Relaxed),

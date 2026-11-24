@@ -129,9 +129,16 @@ struct State {
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
-    planner_authority: Option<question::PlannerAuthority>,
+    planner_authority: BTreeMap<String, question::PlannerAuthority>,
     planner_authority_epoch: u64,
-    thread_tasks: BTreeMap<String, BTreeMap<String, Option<ThreadHint>>>,
+    planner_requests: BTreeSet<String>,
+    planner_check: Option<String>,
+    thread_tasks: BTreeMap<String, BTreeMap<String, Option<SeenThread>>>,
+}
+
+struct SeenThread {
+    hint: ThreadHint,
+    at: Instant,
 }
 
 pub enum CommandOutcome {
@@ -214,8 +221,10 @@ impl Service {
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
-                planner_authority: None,
+                planner_authority: BTreeMap::new(),
                 planner_authority_epoch: 0,
+                planner_requests: BTreeSet::new(),
+                planner_check: None,
                 thread_tasks: BTreeMap::new(),
             }),
             pass_lock: Mutex::new(()),
@@ -296,11 +305,16 @@ impl Service {
                 Err(ServiceError::Missing) => continue,
                 Err(error) => return Err(error),
             };
-            {
+            let defer_refresh = {
                 let mut state = self.state.lock().await;
                 self.track(&mut state, &row.task);
-            }
-            let result = Box::pin(self.advance_due_task(&row, &host)).await;
+                priority == Priority::Refresh && state.fresh_running_hint(&row.task)
+            };
+            let result = if defer_refresh {
+                Ok(Action::Wait(WaitReason::Running))
+            } else {
+                Box::pin(self.advance_due_task(&row, &host)).await
+            };
             self.schedule_result(&row, &result, priority).await?;
             results.push(PassOutcome { task: id, result });
         }
@@ -377,6 +391,13 @@ impl Service {
                 let mut state = self.state.lock().await;
                 state.settings.host = web::CachedHost::Unavailable;
                 state.invalidate_planner_authority();
+                for seen in state
+                    .thread_tasks
+                    .values_mut()
+                    .flat_map(|threads| threads.values_mut())
+                {
+                    *seen = None;
+                }
             }
             tokio::time::sleep(T3_RETRY_DELAY).await;
         }
@@ -385,9 +406,7 @@ impl Service {
     async fn wake_from_host(&self, hint: ThreadHint) {
         let mut state = self.state.lock().await;
         state.settings.host = web::CachedHost::Reachable;
-        if hint.closed() {
-            state.planner_thread_closed(&hint.thread);
-        }
+        state.planner_thread_changed(&hint);
         let State {
             thread_tasks,
             schedule,
@@ -397,8 +416,12 @@ impl Service {
         for (id, threads) in thread_tasks {
             if let Some(prior) = threads.get_mut(&hint.thread) {
                 let backed_off = schedule.reset_host_backoff(id);
-                if prior.as_ref() != Some(&hint) {
-                    *prior = Some(hint.clone());
+                let changed = prior.as_ref().is_none_or(|prior| prior.hint != hint);
+                *prior = Some(SeenThread {
+                    hint: hint.clone(),
+                    at: now,
+                });
+                if changed {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 } else if backed_off {
@@ -587,20 +610,19 @@ impl Service {
         {
             return Err(ServiceError::AnswerInInbox);
         }
-        if let Some(session) = session {
-            if acp::writer_controller(&state, id, &session.credential) != Some(session.controller) {
-                return Err(ServiceError::AcpUnauthorized);
-            }
-            if let Authority::Planner { actor } = authority
-                && !matches!(command, Command::Answer(_))
-            {
-                state.check_planner_authority(&prior.task, actor)?;
-            }
+        if let Some(session) = session
+            && acp::writer_controller(&state, id, &session.credential) != Some(session.controller)
+        {
+            return Err(ServiceError::AcpUnauthorized);
         }
         let observation = state.command_observation(&prior);
         let mut task = prior.task.clone();
         let explicit_move = matches!(command, Command::Move(_));
-        match state.preflight(&mut task, authority, &observation, command)? {
+        let preflight = state.preflight(&mut task, authority, &observation, command);
+        if matches!(preflight, Err(ServiceError::PlannerAuthorityUnknown)) {
+            self.request_planner_check(&mut state, &prior.task);
+        }
+        match preflight? {
             Preflight::Ready => {
                 let version = if explicit_move || prior.task != task {
                     let mut audit = event("command");
@@ -747,6 +769,9 @@ impl Service {
             None => state.store.save_row(prior, task, &audit)?,
         };
         self.track(state, task);
+        if task.phase().is_terminal() {
+            state.planner_authority.remove(id);
+        }
         state.set_wait(id, None);
         state.schedule.reset_host_backoff(id);
         state.observed_forge.remove(id);
@@ -875,6 +900,25 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 }
 
 impl State {
+    fn fresh_running_hint(&self, task: &Task) -> bool {
+        let id = &task.identity().id;
+        let Some(run) = task
+            .run()
+            .filter(|run| !run.revoked() && run.report().is_none())
+        else {
+            return false;
+        };
+        self.waits
+            .get(id)
+            .is_some_and(|(wait, _)| *wait == WaitReason::Running)
+            && self
+                .thread_tasks
+                .get(id)
+                .and_then(|threads| threads.get(&run.launch().thread))
+                .and_then(Option::as_ref)
+                .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
+    }
+
     fn set_wait(&mut self, id: &str, wait: Option<WaitReason>) -> Option<WaitReason> {
         let prior = self.waits.get(id).map(|(reason, _)| *reason);
         if prior == wait {
@@ -993,14 +1037,16 @@ impl State {
         } else {
             false
         };
+        let authority = match actor {
+            Authority::Planner { actor } => self.check_planner_authority(task, actor),
+            Authority::Operator { .. } => Ok(()),
+        };
         let ready = match task.command(command, actor, observation) {
             Ok(()) if !awaiting_planner => Preflight::Ready,
             Ok(()) | Err(CommandError::HeadUnverified) => Preflight::Pending,
             Err(error) => return Err(error.into()),
         };
-        if let Some(actor) = planner_answer {
-            self.check_planner_authority(task, actor)?;
-        }
+        authority?;
         Ok(ready)
     }
 }

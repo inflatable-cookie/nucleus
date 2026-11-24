@@ -1052,6 +1052,7 @@ mod tests {
             .expect("checkout");
         let (mut task, _) = frozen_review(&service, &checkout, &head);
         let instance = task.run().expect("run").launch().instance.clone();
+        let thread_id = task.run().expect("run").launch().thread.clone();
         task.record_send(&instance, 1).expect("send recorded");
         service
             .state
@@ -1061,8 +1062,18 @@ mod tests {
             .create(&task, &event("fixture"))
             .expect("seed");
         let binding = service.binding(&checkout).expect("binding");
+        let native_reads = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&native_reads);
         let (host, native_server) = native_fixture(move |req| {
+            if req["tag"] == "orchestration.subscribeShell" {
+                return json!({"_tag":"Chunk","requestId":req["id"],"values":[
+                    {"kind":"thread.updated","location":"active","thread":{
+                        "id":thread_id,"status":"running","activeRunId":"native"
+                    }}
+                ]});
+            }
             assert_eq!(req["tag"], "orchestration.subscribeThread");
+            calls.fetch_add(1, Ordering::Relaxed);
             json!({"_tag":"Chunk","requestId":req["id"],"values":[
                 {"kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":req["payload"]["threadId"],"projectId":binding.project_id,
@@ -1074,6 +1085,7 @@ mod tests {
             ]})
         }).await;
         service.host = host;
+        let service = Arc::new(service);
 
         let outcomes = service.pass().await.expect("exact run read");
         assert!(matches!(
@@ -1092,6 +1104,7 @@ mod tests {
             .due("reviewer")
             .expect("backstop");
         assert!(due > tokio::time::Instant::now() + Duration::from_secs(40));
+        let watch = prove_running_hint_refresh(&service, &native_reads).await;
         let authority = Authority::Operator {
             actor: "fixture".into(),
         };
@@ -1110,8 +1123,35 @@ mod tests {
                 .await,
             Ok(crate::CommandOutcome::Applied(_))
         ));
+        watch.abort();
         forge_server.abort();
         native_server.abort();
+    }
+
+    async fn prove_running_hint_refresh(
+        service: &Arc<Service>,
+        native_reads: &AtomicUsize,
+    ) -> tokio::task::JoinHandle<()> {
+        let service_watch = Arc::clone(service);
+        let watch = tokio::spawn(async move { service_watch.watch_host().await });
+        tokio::time::timeout(Duration::from_secs(5), service.pass())
+            .await
+            .expect("host event wakes the decision")
+            .expect("event pass");
+        let reads = native_reads.load(Ordering::Relaxed);
+        assert_eq!(reads, 2);
+        service.state.lock().await.schedule.wake(
+            "reviewer",
+            tokio::time::Instant::now(),
+            crate::schedule::Priority::Refresh,
+        );
+        let outcomes = service.pass().await.expect("running backstop");
+        assert!(matches!(
+            outcomes[0].result,
+            Ok(Action::Wait(WaitReason::Running))
+        ));
+        assert_eq!(native_reads.load(Ordering::Relaxed), reads);
+        watch
     }
 
     #[tokio::test]

@@ -1,0 +1,1 @@
+- Planner authority checks read the bound T3 thread on demand. Unknown host reads back off, ACP explains when it is confirming that a reported run is idle, and completed tasks hide archival waits.

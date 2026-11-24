@@ -203,11 +203,12 @@ async fn bind_acp(
     State(api): State<Api>,
     Path(id): Path<String>,
     Extension(ControllerDigest(controller)): Extension<ControllerDigest>,
+    Extension(authority): Extension<Authority>,
     Query(options): Query<BindOptions>,
 ) -> Result<Json<MintedSession>, ApiError> {
     Ok(Json(
         api.service
-            .bind_acp(&id, controller, options.read_only)
+            .bind_acp(&id, controller, &authority, options.read_only)
             .await?,
     ))
 }
@@ -512,6 +513,8 @@ impl Summary {
             next_check_at: None,
             wait: if task.run().is_some_and(nucleus_core::Run::revoked) {
                 Some(WaitReason::Stopping)
+            } else if task.phase() == Phase::Done {
+                None
             } else if task.hold().is_some() {
                 Some(WaitReason::Hold)
             } else if task.operator_decline().is_some() {

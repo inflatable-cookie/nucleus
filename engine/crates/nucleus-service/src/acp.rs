@@ -7,7 +7,7 @@ use std::{
 
 use crate::{Service, ServiceError, State};
 use nucleus_core::{
-    Phase,
+    Authority, Phase,
     acp::{Binding, session_id},
 };
 use nucleus_store::AcpSession;
@@ -38,10 +38,21 @@ impl Service {
         &self,
         task: &str,
         controller: [u8; 32],
+        authority: &Authority,
         read_only: bool,
     ) -> Result<MintedSession, ServiceError> {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let row = self.lookup(&state, task)?;
+        if !read_only
+            && row.task.phase() != Phase::Done
+            && let Authority::Planner { actor } = authority
+        {
+            let check = state.check_planner_authority(&row.task, actor);
+            if matches!(check, Err(ServiceError::PlannerAuthorityUnknown)) {
+                self.request_planner_check(&mut state, &row.task);
+            }
+            check?;
+        }
         let worktrees = self.worktrees()?;
         let checkout =
             worktrees.checkout(&self.project.checkout, &self.project.repository, task)?;

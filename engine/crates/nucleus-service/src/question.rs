@@ -1,8 +1,9 @@
-use std::{cmp::Reverse, collections::BTreeSet, path::Path, time::Duration};
+use std::{cmp::Reverse, path::Path};
 
 use nucleus_core::{Action, OperatorDecline, Question, Task, WaitReason};
 use nucleus_hosts::{
-    HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerThread, T3, T3_RETRY_DELAY,
+    HostError, NoticeHost, NoticeSend, NoticeState, NoticeWrite, PlannerIdentity, PlannerThread,
+    T3, ThreadHint,
 };
 use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
@@ -10,41 +11,42 @@ use tokio::time::Instant;
 use crate::pass::DispatchTarget;
 use crate::{RegisteredRole, Service, ServiceError, State, event, project::linked_checkout};
 
-const PLANNER_REFRESH: Duration = Duration::from_secs(45);
-
 pub(super) struct PlannerAuthority {
-    live: BTreeSet<String>,
-    fallback: Option<String>,
-    expires: Instant,
+    thread: String,
+    identity: Option<PlannerIdentity>,
+    checked_at: Instant,
 }
 
 impl PlannerAuthority {
-    pub(crate) fn resolved(&self) -> Option<&str> {
-        (Instant::now() < self.expires).then_some(())?;
-        self.fallback.as_deref()
+    pub(crate) fn resolved(&self) -> Option<(Instant, &str)> {
+        self.identity
+            .as_ref()
+            .map(|identity| (self.checked_at, identity.id.as_str()))
     }
 }
 
-struct PlannerCandidates {
-    live: BTreeSet<String>,
-    ranked: Vec<(u8, Reverse<String>, PlannerThread)>,
+fn bound_planner(task: &Task) -> Option<&str> {
+    task.question_delivery()
+        .map(|delivery| delivery.thread.as_str())
+        .or(task.identity().origin_thread.as_deref())
 }
 
 impl State {
     pub(super) fn invalidate_planner_authority(&mut self) {
         self.planner_authority_epoch += 1;
-        self.planner_authority = None;
+        self.planner_authority.clear();
     }
 
-    pub(super) fn planner_thread_closed(&mut self, thread: &str) {
-        // An inventory read that started before the closure cannot publish it.
-        self.planner_authority_epoch += 1;
-        if self
-            .planner_authority
-            .as_ref()
-            .is_some_and(|authority| authority.live.contains(thread))
+    pub(super) fn planner_thread_changed(&mut self, hint: &ThreadHint) {
+        let count = self.planner_authority.len();
+        self.planner_authority.retain(|_, authority| {
+            authority.thread != hint.thread || !hint.is_identity_change(authority.identity.as_ref())
+        });
+        if self.planner_authority.len() != count
+            || self.planner_check.as_ref() == Some(&hint.thread)
         {
-            self.planner_authority = None;
+            // A read started before an identity event cannot publish stale authority.
+            self.planner_authority_epoch += 1;
         }
     }
 
@@ -53,21 +55,19 @@ impl State {
         task: &Task,
         actor: &str,
     ) -> Result<(), ServiceError> {
-        let authority = self
-            .planner_authority
-            .as_ref()
-            .filter(|authority| Instant::now() < authority.expires)
-            .ok_or(ServiceError::PlannerAuthorityUnknown)?;
-        let planner = task
-            .identity()
-            .origin_thread
-            .as_deref()
-            .filter(|origin| authority.live.contains(*origin))
-            .or(authority.fallback.as_deref());
-        if planner != Some(actor) {
+        if bound_planner(task) != Some(actor) {
             return Err(ServiceError::PlannerAuthorityRefused);
         }
-        Ok(())
+        let authority = self
+            .planner_authority
+            .get(&task.identity().id)
+            .filter(|authority| authority.thread == actor)
+            .ok_or(ServiceError::PlannerAuthorityUnknown)?;
+        authority
+            .identity
+            .as_ref()
+            .map(|_| ())
+            .ok_or(ServiceError::PlannerAuthorityRefused)
     }
 }
 
@@ -169,60 +169,72 @@ impl Service {
 
     pub(super) async fn watch_planner_authority(&self) {
         loop {
-            let delay = if self.refresh_planner_authority().await.is_ok() {
-                PLANNER_REFRESH
-            } else {
-                T3_RETRY_DELAY
-            };
-            tokio::select! {
-                () = tokio::time::sleep(delay) => {}
-                () = self.planner_wake.notified() => {}
+            self.planner_wake.notified().await;
+            while let Some(id) = self.take_planner_check().await {
+                let _ = self.refresh_planner_authority(&id).await;
             }
         }
     }
 
-    pub(super) async fn refresh_planner_authority(&self) -> Result<(), ServiceError> {
-        let (epoch, enabled) = {
-            let state = self.state.lock().await;
-            (
-                state.planner_authority_epoch,
-                state.settings.fixture_slots(&self.project).is_some(),
-            )
+    async fn take_planner_check(&self) -> Option<String> {
+        self.state.lock().await.planner_requests.pop_first()
+    }
+
+    pub(super) fn request_planner_check(&self, state: &mut State, task: &Task) {
+        state.planner_requests.insert(task.identity().id.clone());
+        self.planner_wake.notify_one();
+    }
+
+    pub(super) async fn refresh_planner_authority(&self, id: &str) -> Result<(), ServiceError> {
+        let (epoch, thread) = {
+            let mut state = self.state.lock().await;
+            let row = self.lookup(&state, id)?;
+            if state.settings.fixture_slots(&self.project).is_none() {
+                return Ok(());
+            }
+            let Some(thread) = bound_planner(&row.task).map(str::to_owned) else {
+                return Ok(());
+            };
+            if state
+                .planner_authority
+                .get(id)
+                .is_some_and(|authority| authority.thread == thread)
+            {
+                return Ok(());
+            }
+            state.planner_check = Some(thread.clone());
+            (state.planner_authority_epoch, thread)
         };
-        if !enabled {
-            return Ok(());
-        }
-        let result = self.read_planner_authority().await;
+        let result = self.host.planner_identity(&thread).await;
         let mut state = self.state.lock().await;
-        if state.planner_authority_epoch != epoch {
+        state.planner_check = None;
+        let row = self.lookup(&state, id)?;
+        if state.planner_authority_epoch != epoch || bound_planner(&row.task) != Some(&thread) {
             return Err(HostError::Uncertain.into());
         }
         state.settings.host = match &result {
             Ok(_) => crate::web::CachedHost::Reachable,
-            Err(ServiceError::Host(
-                HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout,
-            )) => crate::web::CachedHost::Unavailable,
+            Err(HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout) => {
+                crate::web::CachedHost::Unavailable
+            }
             Err(_) => crate::web::CachedHost::Unknown,
         };
-        state.planner_authority = None;
-        state.planner_authority = Some(result?);
+        let identity = result?.filter(|identity| {
+            identity.project_id == self.project.host_project
+                && !identity.is_child()
+                && !(self.project.acp_provider.is_some()
+                    && self.project.acp_provider == identity.provider_instance_id)
+        });
+        state.planner_authority.insert(
+            id.into(),
+            PlannerAuthority {
+                thread,
+                identity,
+                checked_at: Instant::now(),
+            },
+        );
+        self.publish(id, row.version);
         Ok(())
-    }
-
-    async fn read_planner_authority(&self) -> Result<PlannerAuthority, ServiceError> {
-        let PlannerCandidates { live, ranked } = self.planner_candidates().await?;
-        let mut fallback = None;
-        for (rank, _, thread) in ranked {
-            if self.planner_workspace(rank, thread.worktree_path).await? {
-                fallback = Some(thread.id);
-                break;
-            }
-        }
-        Ok(PlannerAuthority {
-            live,
-            fallback,
-            expires: Instant::now() + PLANNER_REFRESH + T3_RETRY_DELAY,
-        })
     }
 
     async fn responsible_planner(&self, task: &Task) -> Result<Option<String>, ServiceError> {
@@ -231,7 +243,7 @@ impl Service {
         {
             return Ok(Some(origin.clone()));
         }
-        for (rank, _, thread) in self.planner_candidates().await?.ranked {
+        for (rank, _, thread) in self.planner_candidates().await? {
             if self.planner_workspace(rank, thread.worktree_path).await?
                 && self.host.planner_routable(&thread.id).await?
             {
@@ -241,7 +253,9 @@ impl Service {
         Ok(None)
     }
 
-    async fn planner_candidates(&self) -> Result<PlannerCandidates, ServiceError> {
+    async fn planner_candidates(
+        &self,
+    ) -> Result<Vec<(u8, Reverse<String>, PlannerThread)>, ServiceError> {
         let threads = self.host.planner_threads().await?;
         let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
         let (provenance, use_fixture_registrations) = {
@@ -253,7 +267,6 @@ impl Service {
                 !state.settings.uses_project_registry(),
             )
         };
-        let mut live = BTreeSet::new();
         let mut ranked = Vec::new();
         for thread in threads {
             if thread.archived_at.is_some()
@@ -286,7 +299,6 @@ impl Service {
                 })
                 .or_else(|| (thread.project_id == self.project.host_project).then_some(3));
             if let Some(rank) = rank {
-                live.insert(thread.id.clone());
                 let interaction = thread.latest_user_message_at.clone().map_or_else(
                     || thread.updated_at.clone(),
                     |last| last.max(thread.updated_at.clone()),
@@ -297,7 +309,7 @@ impl Service {
         ranked.sort_unstable_by(|left, right| {
             (left.0, &left.1, &left.2.id).cmp(&(right.0, &right.1, &right.2.id))
         });
-        Ok(PlannerCandidates { live, ranked })
+        Ok(ranked)
     }
 
     async fn planner_workspace(
@@ -565,7 +577,12 @@ mod tests {
             ]}}),
             Some("orchestration.subscribeThread") => {
                 let id = req["payload"]["threadId"].as_str().expect("exact thread");
-                json!({"hasMoreHistory": id == "unverified", "projection": {"thread": {
+                if id == "unverified" {
+                    return json!({"_tag":"Exit","requestId":req["id"],"exit":{
+                        "_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"ReadUnavailable"}}]
+                    }});
+                }
+                json!({"projection": {"thread": {
                                     "id": if id == "mismatch" { "another-thread" } else { id },
                                     "projectId": if id == "outside" { "other-project" } else { "local-fixture" },
                                     "settledAt": (id == "outside").then_some("2026-11-01T00:00:00.000Z"),
