@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { Section, muted, type Colors } from "../controls";
 import { space } from "../design";
+import { EngineLanes } from "./engine-lanes";
 import {
   projectsView,
   useEditor,
@@ -77,6 +78,7 @@ export function EngineProjects({
                 update(id, (current) => ({ ...current, archived }))
               }
             />
+            <EngineLanes c={c} project={id} disabled={disabled} />
             <Section c={c} title="Repositories" last>
               {project.repositories.map((repo) => (
                 <RepositorySettings

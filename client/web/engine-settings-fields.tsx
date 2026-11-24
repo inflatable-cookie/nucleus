@@ -62,7 +62,8 @@ export function EditText({
       disabled={disabled}
       multiline={multiline}
       onBlur={() => {
-        if (draft.trim() !== value) onSave(draft.trim());
+        const next = multiline ? draft : draft.trim();
+        if (next !== value) onSave(next);
       }}
     />
   );
