@@ -220,8 +220,8 @@ struct TaskWait {
 
 #[derive(PartialEq, Eq)]
 enum WaitDetail {
-    BeforeSend(&'static str),
-    ShowingForDelivery(&'static str),
+    BeforeSend(Option<&'static str>),
+    ShowingForDelivery(Option<&'static str>),
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
     Archive(String),
@@ -1094,9 +1094,10 @@ impl Service {
             );
             let cause = match result {
                 Err(ServiceError::Host(HostError::ProcessCoverage(failure))) => {
-                    process_check_detail(*failure, false)
+                    Some(process_check_detail(*failure, false))
                 }
-                _ => "Checking the task thread before sending.",
+                Err(ServiceError::Host(HostError::Unavailable)) => Some("Couldn’t reach T3."),
+                _ => None,
             };
             let detail = if showing {
                 WaitDetail::ShowingForDelivery(cause)
@@ -1196,8 +1197,8 @@ impl Service {
             (false, _, _, Err(ServiceError::Host(HostError::Unavailable))) => {
                 "Couldn’t reach T3. Checking again."
             }
-            (false, _, true, _) => "Checking whether the message reached the task thread.",
-            (false, _, false, _) => "Checking the task thread.",
+            (false, _, true, _) => "Waiting for delivery confirmation.",
+            (false, _, false, _) => "Waiting for T3.",
         };
         let prior = state.wait_reason(id);
         let detail = if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
@@ -1807,7 +1808,7 @@ impl State {
     ) -> Result<bool, StoreError> {
         let id = &task.identity().id;
         // The first pass after restart establishes a baseline for a volatile wait.
-        let entered = self.wait_label_changed(task, reason);
+        let entered = self.wait_label_changed(task, reason, detail.as_ref());
         if entered {
             self.store
                 .record_board_entry(id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
@@ -1827,9 +1828,15 @@ impl State {
         Ok(changed || detail_changed)
     }
 
-    fn wait_label_changed(&self, task: &Task, reason: Option<WaitReason>) -> bool {
+    fn wait_label_changed(
+        &self,
+        task: &Task,
+        reason: Option<WaitReason>,
+        detail: Option<&WaitDetail>,
+    ) -> bool {
         self.waits.get(&task.identity().id).is_some_and(|wait| {
-            titles::task_state_label(task, wait.reason) != titles::task_state_label(task, reason)
+            titles::task_state_label(task, wait.reason, wait.detail.as_ref())
+                != titles::task_state_label(task, reason, detail)
         })
     }
 

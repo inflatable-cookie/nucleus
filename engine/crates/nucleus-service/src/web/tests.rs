@@ -2153,7 +2153,7 @@ async fn reopen_and_finish_review(
     {
         let state = service.state.lock().await;
         for row in [done, &reopened] {
-            let label = crate::titles::task_state_label(&row.task, None);
+            let label = crate::titles::task_state_label(&row.task, None, None);
             let lifecycle = crate::presentation::task_lifecycle(
                 &row.task,
                 &state.store,

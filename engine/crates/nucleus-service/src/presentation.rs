@@ -56,7 +56,8 @@ impl State {
             Some(WaitReason::Starting)
         } else if prior.phase() == task.phase()
             && run_basis(prior) == run_basis(task)
-            && titles::task_state_label(prior, None) == titles::task_state_label(task, None)
+            && titles::task_state_label(prior, None, None)
+                == titles::task_state_label(task, None, None)
         {
             before
         } else {
@@ -64,7 +65,8 @@ impl State {
         };
         Ok((
             after,
-            titles::task_state_label(prior, before) != titles::task_state_label(task, after),
+            titles::task_state_label(prior, before, self.wait_detail(&prior.identity().id))
+                != titles::task_state_label(task, after, self.wait_detail(&task.identity().id)),
         ))
     }
 
@@ -74,6 +76,10 @@ impl State {
         edit: impl FnOnce(&mut Store, DependencyClock<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let before = self.effective_wait(task)?;
+        let detail = self
+            .waits
+            .get(&task.identity().id)
+            .and_then(|wait| wait.detail.as_ref());
         let mut after = before;
         let mut changed = false;
         let result = edit(&mut self.store, &mut |blocked| {
@@ -82,8 +88,8 @@ impl State {
             } else {
                 before.filter(|reason| *reason != WaitReason::Prerequisite)
             };
-            changed =
-                titles::task_state_label(task, before) != titles::task_state_label(task, after);
+            changed = titles::task_state_label(task, before, detail)
+                != titles::task_state_label(task, after, detail);
             changed
         })?;
         self.apply_task_wait(task, after, changed);

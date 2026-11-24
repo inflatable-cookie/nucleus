@@ -1036,7 +1036,11 @@ impl Summary {
             since.filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
         let state_label = match fixed {
             Some(label) => label,
-            None => crate::titles::task_state_label(task, state.effective_wait(task)?),
+            None => crate::titles::task_state_label(
+                task,
+                state.effective_wait(task)?,
+                state.wait_detail(id),
+            ),
         };
         let archive_detail = match state.wait_detail(id) {
             Some(crate::WaitDetail::Archive(message)) if task.phase() == Phase::Done => {
@@ -1067,8 +1071,8 @@ impl Summary {
             }
             match state.wait_detail(id)? {
                 crate::WaitDetail::BeforeSend(message)
-                | crate::WaitDetail::ShowingForDelivery(message)
-                | crate::WaitDetail::ConfirmingDelivery(message)
+                | crate::WaitDetail::ShowingForDelivery(message) => *message,
+                crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
                 crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
                 crate::WaitDetail::Archive(_) => None,

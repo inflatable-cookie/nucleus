@@ -419,7 +419,7 @@ async fn checking_without_a_due_send_snoozes_once_after_a_prior_wake() {
             .observe_wait_detail(
                 &task,
                 Some(WaitReason::HostUnknown),
-                Some(WaitDetail::ShowingForDelivery("Checking delivery.")),
+                Some(WaitDetail::ShowingForDelivery(None)),
             )
             .unwrap();
         state.schedule.wake(
@@ -477,6 +477,9 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
         .await
         .unwrap();
     assert!(service.operator_snooze_wait(&row).await.is_some());
+    let board = fixture.board_task().await;
+    assert_eq!(board["stateLabel"], "You snoozed this thread");
+    assert!(board["waitDetail"].as_str().unwrap().contains("until"));
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert!(service.state.lock().await.schedule.due(ID).unwrap() > tokio::time::Instant::now());
 
@@ -538,6 +541,16 @@ async fn no_new_snooze_from_reservation_through_send() {
         service.desire_title(&state, &worker, None);
         service.lookup(&state, ID).unwrap()
     };
+    let board = fixture.board_task().await;
+    assert_eq!(board["stateLabel"], "Starting");
+    assert!(board["waitDetail"].is_null());
+    assert!(
+        board["lifecycle"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step["note"] == "Starting")
+    );
     let ready = Observed::Known(Host::Current {
         instance: launch.instance.clone(),
         state: RunState::ReadyToSend,
