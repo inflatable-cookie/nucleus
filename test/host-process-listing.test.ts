@@ -299,3 +299,45 @@ test(
     }
   },
 );
+
+test("a truncated listing names the one process it could not read", async () => {
+  const { truncatedListingReason } = await import(
+    "../core/machine/run-process-custody"
+  );
+  const uid = process.getuid?.() ?? 0;
+  const fact = (
+    pid: number,
+    extra: Partial<HostProcessFact> = {},
+  ): HostProcessFact => ({
+    pid,
+    ppid: 1,
+    state: "S",
+    pgid: 1,
+    uid,
+    startIdentity: `${pid}@fixture`,
+    command: "worker",
+    cwd: "/work",
+    ...extra,
+  });
+  assert.equal(
+    truncatedListingReason({ processes: [fact(1)], cwdComplete: false }),
+    "the process listing is truncated",
+  );
+  assert.equal(
+    truncatedListingReason({
+      processes: [fact(1), fact(7, { cwd: null })],
+      cwdComplete: true,
+    }),
+    "the working directory of process 7 is unreadable",
+  );
+  assert.equal(
+    truncatedListingReason({
+      processes: [
+        fact(1),
+        fact(8, { openFiles: { paths: [], complete: false } }),
+      ],
+      cwdComplete: true,
+    }),
+    "the open files of process 8 are unreadable",
+  );
+});

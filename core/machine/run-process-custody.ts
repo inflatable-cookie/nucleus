@@ -70,8 +70,10 @@ export function runWorkProcesses(input: {
 }
 
 /**
- * The named reason an incomplete listing is short: its working directories or its
- * open files were truncated, not timed out (a timeout is unknown before this point).
+ * The named reason an incomplete listing is short. A listing whose pass failed
+ * or warned is truncated as a whole. Otherwise the reason names the one process
+ * whose working directory or open files could not be read, so an unrelated
+ * process never reads as a truncated listing. A timeout is unknown before this.
  */
 export function truncatedListingReason(
   scan: Pick<
@@ -79,13 +81,18 @@ export function truncatedListingReason(
     "processes" | "cwdComplete"
   >,
 ): string {
+  if (scan.cwdComplete === false) return "the process listing is truncated";
   const uid = process.getuid?.();
   const owned = scan.processes.filter(
     (fact) => (uid === undefined || fact.uid === uid) && isLiveProcess(fact),
   );
-  return scan.cwdComplete === false || owned.some((fact) => fact.cwd === null)
-    ? "the working-directory listing is truncated"
-    : "the open-file listing is truncated";
+  const cwdless = owned.find((fact) => fact.cwd === null);
+  if (cwdless)
+    return `the working directory of process ${cwdless.pid} is unreadable`;
+  const unopened = owned.find((fact) => fact.openFiles?.complete === false);
+  if (unopened)
+    return `the open files of process ${unopened.pid} are unreadable`;
+  return "the process listing is truncated";
 }
 
 export function incompleteRunProcessScan(

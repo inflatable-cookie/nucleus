@@ -279,28 +279,6 @@ export class ParticipantLease {
       direct: options.direct,
     });
     if (scan.state === "unknown") return scan.reason;
-    const complete =
-      scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
-    // A timed-out listing is unknown above; what reaches here is a truncated one.
-    if (complete !== true) return "the working-directory listing is truncated";
-    if (incompleteRunProcessScan(scan)) return truncatedListingReason(scan);
-    if (scan.fromPassSnapshot) {
-      const beforeScan =
-        scan.directBeforeScan === undefined
-          ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
-          : scan.directBeforeScan;
-      const observedAt = Date.parse(state.updatedAt ?? "");
-      if (
-        !Number.isFinite(observedAt) ||
-        observedAt > scan.capturedAt ||
-        !noTurnLive(beforeScan) ||
-        beforeScan?.updatedAt !== state.updatedAt
-      ) {
-        this.resolution.requestPassProof(task.hostId, agentId);
-        return "the process listing does not cover the participant's latest inactivity";
-      }
-    }
-
     const runtime = participantRuntime({
       dataHome: storeDataHome(this.store),
       tasks: [task],
@@ -345,6 +323,29 @@ export class ParticipantLease {
       if (custody.state === "unknown") return custody.reason;
       if (custody.state === "live")
         return `process ${custody.process.pid} still holds custody for run ${runId}`;
+    }
+    // Coverage is judged only after positive evidence: a truncated listing names
+    // itself only when no holder is already known.
+    const complete =
+      scan.cwdComplete ?? (scan.processes as HostProcessTable).cwdComplete;
+    // A timed-out listing is unknown above; what reaches here is a truncated one.
+    if (complete !== true) return truncatedListingReason(scan);
+    if (incompleteRunProcessScan(scan)) return truncatedListingReason(scan);
+    if (scan.fromPassSnapshot) {
+      const beforeScan =
+        scan.directBeforeScan === undefined
+          ? this.resolution.passObservedBeforeProcesses(task.hostId, agentId)
+          : scan.directBeforeScan;
+      const observedAt = Date.parse(state.updatedAt ?? "");
+      if (
+        !Number.isFinite(observedAt) ||
+        observedAt > scan.capturedAt ||
+        !noTurnLive(beforeScan) ||
+        beforeScan?.updatedAt !== state.updatedAt
+      ) {
+        this.resolution.requestPassProof(task.hostId, agentId);
+        return "the process listing does not cover the participant's latest inactivity";
+      }
     }
     return null;
   }
