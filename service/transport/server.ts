@@ -102,6 +102,7 @@ import {
 } from "../web/web-board";
 import { configuredRustBoard, RustBoardProxy } from "../web/rust-board";
 import { configuredRustInbox, type RustInboxBridge } from "../web/rust-inbox";
+import { readPrivateKey, type RustPilot } from "../web/rust-pilot";
 
 export {
   SERVICE_BUILD,
@@ -170,6 +171,7 @@ function namedField(message: string, fallback: string): string {
 
 export interface ServiceOptions {
   owner?: RuntimeOwnerOptions;
+  rustPilot?: RustPilot | null;
   idleTimeoutMs?: number;
   /** Fixture override; production checks detached ownership every five seconds. */
   ownershipCheckMs?: number;
@@ -458,22 +460,27 @@ export class QueueService {
     const configuredPort = this.options.webBoard?.port ?? configuredWebPort();
     const sessionFile = join(this.dataDir, "web-sessions.json");
     await this.migrateWebSessions(sessionFile);
-    const engine = configuredRustBoard(process.env);
+    const pilot = this.options.rustPilot;
     let rustInbox: RustInboxBridge | null = null;
     try {
-      rustInbox = configuredRustInbox(process.env, (input) =>
+      const inboxEnv = pilot ? {
+        NUCLEUS_RUST_INBOX_ENGINE: pilot.inboxEngine,
+        NUCLEUS_RUST_INBOX_KEY_FILE: pilot.inboxKeyFile,
+      } : process.env;
+      rustInbox = configuredRustInbox(inboxEnv, (input) =>
         this.executor.callHandler("rustInboxDecision", input),
       );
     } catch {
       console.error("Invalid Rust Inbox bridge configuration. The bridge is disabled.");
     }
     let rustBoard: RustBoardProxy | null = null;
-    if (engine) {
-      try {
-        rustBoard = new RustBoardProxy(engine);
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : "Invalid Rust board configuration.");
-      }
+    try {
+      const engine = pilot
+        ? { url: pilot.endpoint, key: readPrivateKey(pilot.boardKeyFile) }
+        : configuredRustBoard(process.env);
+      if (engine) rustBoard = new RustBoardProxy(engine);
+    } catch {
+      console.error("Invalid Rust board configuration. The proxy is disabled.");
     }
     const web = new WebBoard({
       host: this.webHost(),

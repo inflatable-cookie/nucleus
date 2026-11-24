@@ -47,6 +47,7 @@ import {
   type RepositoryRekeyInput,
 } from "../../shared/repository-rekey";
 import { hostKindOf, type IdentitySource } from "../../shared/host-kind";
+import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { ProtocolError } from "../../shared/service/protocol";
 import { assertBbSubmissionIngressAvailable } from "./submission-routing";
 import type { Engine } from "../engine";
@@ -280,6 +281,19 @@ export class Operations {
       "review_entry",
       "source_promote",
     ].includes(input.kind);
+    if (!previous && submissionKind) {
+      const selectedRepository = this.engine.rustEngineRepository;
+      const registeredRepository = repoPath && selectedRepository
+        ? this.store.canonicalRepository(repoPath)?.repository.origin
+        : null;
+      if (selectedRepository && [repositoryOriginForSelection, registeredRepository]
+        .some((origin) => normalizeRepositoryOrigin(origin ?? "") === selectedRepository)) {
+        throw new ProtocolError(
+          "invalid_input",
+          `${selectedRepository} now runs on the Rust engine. Admit the brief with nucleus-engine admit or ask the Nucleus planner.`,
+        );
+      }
+    }
     // A BB submission's caller host is ingress identity; the accepted operation
     // records the separately selected work host. Permit that mismatch only when
     // the retry carries the exact same payload and BB caller identity.
