@@ -375,10 +375,14 @@ impl Service {
             return Err(ServiceError::Ticket);
         }
         let profile = storage.lock_profile()?;
-        let runtime_settings = web::RuntimeSettings::open(settings)?;
+        let mut runtime_settings = web::RuntimeSettings::open(settings)?;
         let mut store = Store::open(&storage)?;
-        if let Some(projects) = &runtime_settings.projects {
-            store.clean_removed_projects(projects)?;
+        if runtime_settings
+            .projects
+            .as_ref()
+            .is_some_and(nucleus_store::Projects::has_pending_removals)
+        {
+            runtime_settings.projects = Some(store.clean_removed_projects(settings)?.value);
         }
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         let registry_mode = project.is_none();
@@ -2076,12 +2080,14 @@ impl State {
         authority?;
         if was_terminal
             && !task.phase().is_terminal()
-            && self.settings.projects.as_ref().is_some_and(|projects| {
-                projects.removed_origin(&task.identity().repository)
-                    || task
-                        .report_task()
-                        .is_some_and(|report| projects.removed.contains_key(&report.project))
-            })
+            && (self.store.task_project_removed(&task.identity().id)?
+                || self.settings.projects.as_ref().is_some_and(|projects| {
+                    projects.removed_origin(&task.identity().repository)
+                        || task.report_task().is_some_and(|report| {
+                            projects.removed.contains_key(&report.project)
+                                && !projects.projects.contains_key(&report.project)
+                        })
+                }))
         {
             return Err(ServiceError::Project);
         }

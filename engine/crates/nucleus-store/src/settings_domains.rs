@@ -338,6 +338,9 @@ pub struct Projects {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemovedProject {
     pub repositories: Vec<RemovedRepository>,
+    /// Origins still barred from first-contact enrollment. The receipt stays immutable.
+    pub blocked_origins: BTreeSet<String>,
+    pub cleanup_pending: bool,
     pub digest: String,
     pub reason: String,
     pub removed_at_ms: u64,
@@ -353,10 +356,30 @@ pub struct RemovedRepository {
 impl Projects {
     #[must_use]
     pub fn removed_origin(&self, origin: &str) -> bool {
+        let origin = origin.to_ascii_lowercase();
         self.removed
             .values()
-            .flat_map(|project| &project.repositories)
-            .any(|removed| removed.origin.eq_ignore_ascii_case(origin))
+            .any(|project| project.blocked_origins.contains(&origin))
+    }
+
+    /// Release an explicitly registered origin from the first-contact fence.
+    ///
+    /// # Errors
+    /// Returns a conflict if the previous project's planning cleanup is pending.
+    pub fn restore_origin(&mut self, origin: &str) -> Result<(), crate::StorageError> {
+        let origin = origin.to_ascii_lowercase();
+        for removed in self.removed.values_mut() {
+            if removed.blocked_origins.contains(&origin) && removed.cleanup_pending {
+                return Err(crate::StorageError::SettingsConflict);
+            }
+            removed.blocked_origins.remove(&origin);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn has_pending_removals(&self) -> bool {
+        self.removed.values().any(|removed| removed.cleanup_pending)
     }
 }
 
@@ -373,7 +396,12 @@ impl SettingsValue for Projects {
         let mut planners = std::collections::BTreeSet::new();
         for (id, project) in &self.projects {
             check(
-                key(id) && text(&project.name) && !self.removed.contains_key(id),
+                key(id)
+                    && text(&project.name)
+                    && self
+                        .removed
+                        .get(id)
+                        .is_none_or(|removed| !removed.cleanup_pending),
                 "project",
                 "each project needs a stable ID and name",
             )?;

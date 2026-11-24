@@ -4,7 +4,7 @@ use axum::{
     Extension, Json,
     extract::{Path, State, rejection::JsonRejection},
 };
-use nucleus_core::Authority;
+use nucleus_core::{Authority, Role, Task};
 use nucleus_store::{
     DispatchMode, DispatchSettings, EngineSettings, Hosts, Profiles, ProjectSettings, Projects,
     RepositorySettings, SettingsFile, SettingsSnapshot, SettingsValue, StorageError, StoreError,
@@ -458,6 +458,13 @@ pub(super) async fn put(
                 let legacy = service.project.is_some();
                 save_projects(&service, revision, move |current| {
                     if legacy {
+                        for repo in value
+                            .projects
+                            .values()
+                            .flat_map(|project| &project.repositories)
+                        {
+                            current.restore_origin(&repo.origin)?;
+                        }
                         current.projects = value.projects;
                         Ok(())
                     } else {
@@ -552,7 +559,9 @@ pub(super) async fn preview_project_removal(
     let state = service.state.lock().await;
     let preview = state
         .store
-        .project_removal_preview(&service.settings, &project)
+        .project_removal_preview(&service.settings, &project, |task| {
+            service.removal_task_live(task)
+        })
         .map_err(removal_error)?;
     Ok(Json(preview))
 }
@@ -586,10 +595,14 @@ pub(super) async fn remove_project(
             .map_err(ServiceError::from)?;
         let mut state = service.state.lock().await;
         let removed_at_ms = crate::now_ms();
-        let result =
-            state
-                .store
-                .remove_project(&service.settings, &project, &digest, reason, removed_at_ms);
+        let result = state.store.remove_project(
+            &service.settings,
+            &project,
+            &digest,
+            reason,
+            removed_at_ms,
+            |task| service.removal_task_live(task),
+        );
         match result {
             Ok((saved, removed)) => {
                 if state.settings.projects.as_ref() != Some(&saved.value) {
@@ -605,19 +618,21 @@ pub(super) async fn remove_project(
                 // A publication error or failed SQLite commit can leave a durable tombstone.
                 // Refresh routing under the same fence before allowing another admission.
                 if matches!(error, StoreError::Storage(_) | StoreError::Sqlite(_)) {
-                    let registry = service.settings.read::<Projects>();
-                    state.settings.projects = Some(
-                        registry
-                            .as_ref()
-                            .map_or_else(|_| Projects::default(), |saved| saved.value.clone()),
+                    let recovered = state.store.clean_removed_projects(&service.settings);
+                    let value = recovered.as_ref().map_or_else(
+                        |_| {
+                            service
+                                .settings
+                                .read::<Projects>()
+                                .map_or_else(|_| Projects::default(), |saved| saved.value)
+                        },
+                        |saved| saved.value.clone(),
                     );
-                    service.project_settings_changed(&mut state);
-                    if let Ok(saved) = registry {
-                        state
-                            .store
-                            .clean_removed_projects(&saved.value)
-                            .map_err(removal_error)?;
+                    if state.settings.projects.as_ref() != Some(&value) {
+                        state.settings.projects = Some(value);
+                        service.project_settings_changed(&mut state);
                     }
+                    recovered.map_err(removal_error)?;
                 }
                 Err(removal_error(error))
             }
@@ -638,29 +653,55 @@ fn removal_error(error: StoreError) -> ApiError {
 fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), StorageError> {
     let changed_route =
         || StorageError::InvalidSettings("Nucleus discovers project routes from T3".into());
-    if !current.projects.keys().eq(value.projects.keys()) {
+    if !current
+        .projects
+        .keys()
+        .all(|id| value.projects.contains_key(id))
+    {
         return Err(changed_route());
     }
-    for (id, edits) in value.projects {
-        let project = current.projects.get_mut(&id).ok_or_else(changed_route)?;
-        if project.repositories.len() != edits.repositories.len() {
+    for (id, mut edits) in value.projects {
+        let known = current.projects.get(&id);
+        let existing = known.map_or(0, |project| project.repositories.len());
+        if edits.repositories.len() < existing || (known.is_none() && edits.repositories.is_empty())
+        {
             return Err(changed_route());
         }
-        project.name = edits.name;
-        project.archived = edits.archived;
-        for (repo, edit) in project.repositories.iter_mut().zip(edits.repositories) {
-            if (repo.origin.as_str(), &repo.path, repo.base.as_str())
-                != (edit.origin.as_str(), &edit.path, edit.base.as_str())
-                || edit
-                    .host_project
-                    .as_ref()
-                    .is_some_and(|id| Some(id) != repo.host_project.as_ref())
-                || !edit.planner_threads.is_empty() && edit.planner_threads != repo.planner_threads
+        for repo in &edits.repositories[existing..] {
+            if !current.removed_origin(&repo.origin)
+                || repo.host_project.is_some()
+                || repo.host_project_title.is_some()
+                || !repo.planner_threads.is_empty()
             {
                 return Err(changed_route());
             }
-            repo.required_checks = edit.required_checks;
-            repo.hung_tool_minutes = edit.hung_tool_minutes;
+            current.restore_origin(&repo.origin)?;
+        }
+        if let Some(project) = current.projects.get_mut(&id) {
+            project.name = edits.name;
+            project.archived = edits.archived;
+            for (repo, edit) in project
+                .repositories
+                .iter_mut()
+                .zip(edits.repositories.drain(..existing))
+            {
+                if (repo.origin.as_str(), &repo.path, repo.base.as_str())
+                    != (edit.origin.as_str(), &edit.path, edit.base.as_str())
+                    || edit
+                        .host_project
+                        .as_ref()
+                        .is_some_and(|id| Some(id) != repo.host_project.as_ref())
+                    || !edit.planner_threads.is_empty()
+                        && edit.planner_threads != repo.planner_threads
+                {
+                    return Err(changed_route());
+                }
+                repo.required_checks = edit.required_checks;
+                repo.hung_tool_minutes = edit.hung_tool_minutes;
+            }
+            project.repositories.extend(edits.repositories);
+        } else {
+            current.projects.insert(id, edits);
         }
     }
     Ok(())
@@ -845,6 +886,20 @@ async fn save_projects(
 }
 
 impl Service {
+    fn removal_task_live(&self, task: &Task) -> bool {
+        let identity = task.identity();
+        let checkout = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        [Role::Worker, Role::Reviewer]
+            .into_iter()
+            .filter_map(|role| task.threads().get(role))
+            .chain(task.run().map(|run| run.launch().thread.as_str()))
+            .any(|thread| self.host.bound_child_active(thread, &checkout))
+    }
+
     pub(crate) fn project_settings_changed(&self, state: &mut crate::State) {
         state.invalidate_planner_authority();
         state.observed_forge.clear();

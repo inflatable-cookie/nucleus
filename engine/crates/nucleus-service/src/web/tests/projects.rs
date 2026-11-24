@@ -2212,7 +2212,8 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
         .unwrap();
     let id = snapshot.value.projects.keys().next().unwrap();
     let removal = format!("{PROJECTS}/{id}/removal");
-    seed_finished_removal_task(&registry).await;
+    registry.task("alpha-planner", "finished-removal").await;
+    finish_removal_task(&registry, "finished-removal", None).await;
     let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
     let confirm = |digest: &Value| json!({"digest":digest, "reason":"Retired fixture"});
     seed_removal_planning(&registry, id).await;
@@ -2297,11 +2298,229 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     ));
 }
 
-async fn seed_finished_removal_task(registry: &Registry) {
-    registry.task("alpha-planner", "finished-removal").await;
+#[tokio::test]
+async fn project_removal_rechecks_positive_activity_for_a_finished_task() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let task = registry.task("alpha-planner", "terminal-removal").await;
+    let id = removal_settings(&registry)
+        .value
+        .projects
+        .into_keys()
+        .next()
+        .unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    let head = "a".repeat(40).parse::<Head>().unwrap();
+    finish_removal_task(&registry, &task.identity().id, Some(&head)).await;
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(
+        preview["tasks"],
+        json!([]),
+        "a leftover reservation is not activity"
+    );
+    let confirmation = json!({"digest":preview["digest"], "reason":"Retired fixture"});
+
+    terminal_removal_worker(&registry, &task, true);
+    let active = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(active["tasks"][0]["taskId"], task.identity().id);
+    let refused = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(
+        json_body(refused).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("open tasks")
+    );
+
+    terminal_removal_worker(&registry, &task, false);
+    let removed = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(removed.status(), StatusCode::OK);
+}
+
+fn terminal_removal_worker(registry: &Registry, task: &Task, active: bool) {
+    let checkout = nucleus_work::checkout_path(
+        registry.service.storage.work().path(),
+        &task.identity().repository,
+        &task.identity().id,
+    );
+    registry.service.host.fixture_project_shell(
+        &json!({"projects": [], "threads": [{
+            "id": "fixture-worker", "worktreePath": checkout,
+            "status": if active { "running" } else { "completed" },
+            "activeRunId": active.then_some("active-worker"),
+            "pendingBackgroundTasks": [],
+        }]}),
+        "fixture-acp",
+    );
+}
+
+#[tokio::test]
+async fn project_removal_recreates_the_same_project_after_pending_cleanup() {
+    assert_removal_restoration(None).await;
+}
+
+#[tokio::test]
+async fn project_removal_restores_an_origin_under_a_different_project() {
+    assert_removal_restoration(Some("restored-project")).await;
+}
+
+async fn assert_removal_restoration(destination: Option<&str>) {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "old-task").await;
+    finish_removal_task(&registry, "old-task", None).await;
+
+    let before = removal_settings(&registry);
+    let (old_id, original) = before.value.projects.iter().next().unwrap();
+    let mut restored = original.clone();
+    let repo = restored.repositories.first_mut().unwrap();
+    repo.host_project = None;
+    repo.host_project_title = None;
+    repo.planner_threads.clear();
+    let new_id = destination.unwrap_or(old_id);
+    let removal = format!("{PROJECTS}/{old_id}/removal");
+    seed_removal_planning(&registry, old_id).await;
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirmation = json!({"digest":preview["digest"],"reason":"retired test project"});
+    let expected = seed_pending_project_removal(&registry, &before, old_id, &confirmation);
+    assert_eq!(
+        put_restored_project(&registry, new_id, &restored)
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+        "the pending receipt must fence re-add",
+    );
+
+    let registry = registry.reopen();
+    assert!(!removal_settings(&registry).value.removed[old_id].cleanup_pending);
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .plan(old_id)
+            .unwrap()
+            .version,
+        0
+    );
+    assert_eq!(
+        put_restored_project(&registry, new_id, &restored)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert!(!removal_settings(&registry).value.removed_origin(ALPHA_REPO));
+    seed_removal_planning(&registry, new_id).await;
+
+    let registry = registry.reopen();
+    assert_eq!(
+        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
+        expected,
+        "an old exact receipt is replayable after re-add",
+    );
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .plan(new_id)
+            .unwrap()
+            .version,
+        1
+    );
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "new-task").await;
+    finish_removal_task(&registry, "new-task", None).await;
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    assert!(matches!(
+        registry
+            .service
+            .command("old-task", &operator, Command::Move(Phase::Working))
+            .await,
+        Err(ServiceError::Project),
+    ));
+    assert!(
+        registry
+            .service
+            .command("new-task", &operator, Command::Move(Phase::Working))
+            .await
+            .is_ok()
+    );
+}
+
+fn removal_settings(
+    registry: &Registry,
+) -> nucleus_store::SettingsSnapshot<nucleus_store::Projects> {
+    registry.service.settings.read().unwrap()
+}
+
+fn seed_pending_project_removal(
+    registry: &Registry,
+    before: &nucleus_store::SettingsSnapshot<nucleus_store::Projects>,
+    old_id: &str,
+    confirmation: &Value,
+) -> Value {
+    let repo = &before.value.projects[old_id].repositories[0];
+    let expected =
+        json!({"repositories":[{"origin":repo.origin,"path":repo.path}],"removedAtMs":42});
+    registry
+        .service
+        .settings
+        .edit(
+            &before.revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects.projects.remove(old_id);
+                projects.removed.insert(
+                    old_id.into(),
+                    serde_json::from_value(json!({
+                        "repositories": expected["repositories"],
+                        "blockedOrigins": [ALPHA_REPO.to_ascii_lowercase()],
+                        "cleanupPending": true,
+                        "digest": confirmation["digest"],
+                        "reason": confirmation["reason"],
+                        "removedAtMs": expected["removedAtMs"],
+                    }))
+                    .unwrap(),
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    expected
+}
+
+async fn put_restored_project(
+    registry: &Registry,
+    id: &str,
+    project: &nucleus_store::ProjectSettings,
+) -> Response {
+    let snapshot = removal_settings(registry);
+    let mut projects = snapshot.value.projects;
+    projects.insert(id.into(), project.clone());
+    planning::put_as(
+        &registry.api,
+        PROJECTS,
+        &BOARD_KEY,
+        &json!({"revision":snapshot.revision,"value":{"projects":projects}}),
+    )
+    .await
+}
+
+async fn finish_removal_task(registry: &Registry, id: &str, retained: Option<&Head>) {
     let mut state = registry.service.state.lock().await;
-    let row = state.store.row("finished-removal").unwrap().unwrap();
-    let mut snapshot = serde_json::to_value(&row.task).unwrap();
+    let row = state.store.row(id).unwrap().unwrap();
+    let mut task = row.task.clone();
+    if let Some(head) = retained {
+        occupy_slot(&mut task, head);
+        task.revoke_run();
+    }
+    let mut snapshot = serde_json::to_value(&task).unwrap();
     snapshot["phase"] = json!("done");
     state
         .store
