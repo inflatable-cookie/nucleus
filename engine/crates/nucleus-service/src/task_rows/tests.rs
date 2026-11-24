@@ -170,6 +170,7 @@ impl Fixture {
             "threads":[{"id":self.thread,"projectId":self.binding.project_id,"providerInstanceId":PROVIDER,
                 "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
                 "title":"Fixture","snoozedUntil":row.until,"settledAt":row.settled_at,
+                "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
                 "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
         });
         let mut shell = shell;
@@ -404,6 +405,158 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     assert!(blocked["nextCheckAt"].is_null());
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+}
+
+#[tokio::test]
+async fn checking_without_a_due_send_snoozes_once_after_a_prior_wake() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .observe_wait_detail(
+                &task,
+                Some(WaitReason::HostUnknown),
+                Some(WaitDetail::ShowingForDelivery("Checking delivery.")),
+            )
+            .unwrap();
+        state.schedule.wake(
+            ID,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            Priority::Effect,
+        );
+        service.desire_title(&state, &task, None);
+    }
+    fixture.sync().await;
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+}
+
+#[tokio::test]
+async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.track(&mut state, &task);
+        service.lookup(&state, ID).unwrap()
+    };
+    fixture.publish_shell();
+    let pending_catalogue = std::future::pending();
+    let nucleus_hosts::ParentStep::Write(write) = service
+        .host
+        .prepare_parent(
+            &fixture.binding,
+            PROVIDER,
+            "Fixture",
+            "Preparing the task thread.",
+            None,
+            pending_catalogue,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("the bound shell can prepare a pinned hold");
+    };
+    let command = write.command_id().unwrap().to_owned();
+    let runtime = service.host.runtime_identity().unwrap();
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let error = service
+        .deliver_parent(&row, write, &runtime, Some("native_turn_intent"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ServiceError::OperatorSnoozed { .. }));
+    assert!(fixture.commands().is_empty());
+    service
+        .schedule_result(&row, &Err(error), Priority::Effect)
+        .await
+        .unwrap();
+    assert!(service.operator_snooze_wait(&row).await.is_some());
+    assert_eq!(fixture.attention().await, TaskAttention::Waiting);
+    assert!(service.state.lock().await.schedule.due(ID).unwrap() > tokio::time::Instant::now());
+
+    fixture.native.lock().unwrap().until = Value::Null;
+    fixture.publish_shell();
+    let hint = nucleus_hosts::ThreadHint::fixture(&json!({"kind":"thread.updated","thread":{
+        "id":fixture.thread, "snoozedUntil":null,
+    }}))
+    .unwrap();
+    service.wake_from_host(hint).await;
+    assert!(service.operator_snooze_wait(&row).await.is_none());
+    assert!(service.state.lock().await.schedule.due(ID).unwrap() <= tokio::time::Instant::now());
+    let nucleus_hosts::ParentStep::Write(retry) = service
+        .host
+        .prepare_parent(
+            &fixture.binding,
+            PROVIDER,
+            "Fixture",
+            "Preparing the task thread.",
+            Some(nucleus_hosts::ParentAttempt {
+                command: &command,
+                released: false,
+            }),
+            std::future::pending(),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("operator wake should resume the frozen hold");
+    };
+    assert_eq!(retry.command_id(), Some(command.as_str()));
+    service
+        .deliver_parent(
+            &row,
+            retry,
+            &service.turn_failure_scope(&runtime),
+            Some("native_turn_replay"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    assert_eq!(
+        fixture.native.lock().unwrap().commands[0]["commandId"],
+        command
+    );
+}
+
+#[tokio::test]
+async fn no_new_snooze_from_reservation_through_send() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (mut worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    let launch = worker.run().unwrap().launch().clone();
+    fixture.child(&launch.thread, false);
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&worker, &event("fixture")).unwrap();
+        state.set_wait(ID, Some(WaitReason::HostUnknown));
+        service.desire_title(&state, &worker, None);
+        service.lookup(&state, ID).unwrap()
+    };
+    let ready = Observed::Known(Host::Current {
+        instance: launch.instance.clone(),
+        state: RunState::ReadyToSend,
+    });
+    service.observe_role_state(&row, &ready).await.unwrap();
+    fixture.sync().await;
+    assert!(fixture.commands().is_empty());
+
+    worker.record_send(&launch.instance, now_ms()).unwrap();
+    let sent = service
+        .save(&row, worker, &event("host_send"))
+        .await
+        .unwrap();
+    service.observe_role_state(&sent, &ready).await.unwrap();
+    fixture.sync().await;
+    assert!(
+        fixture.commands().is_empty(),
+        "native visibility cannot snooze between reservation and send"
+    );
 }
 
 #[tokio::test]
@@ -716,7 +869,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
 }
 
 #[tokio::test]
-async fn a_delivery_wake_stays_visible_across_checking_and_allows_one_message() {
+async fn an_imminent_delivery_stays_visible_across_checking_and_sends_once() {
     let task = pending_task();
     let fixture = Fixture::new(&task).await;
     let service = &fixture.service;
@@ -740,7 +893,13 @@ async fn a_delivery_wake_stays_visible_across_checking_and_allows_one_message() 
     assert!(matches!(result, Err(ServiceError::ParentNotSent { .. })));
     drop(fence);
 
-    // The watcher can run before the pass publishes its retry decision.
+    // A due effect can already be scheduled when the watcher sees the wake.
+    service
+        .state
+        .lock()
+        .await
+        .schedule
+        .wake(ID, tokio::time::Instant::now(), Priority::Effect);
     fixture.sync().await;
     service
         .schedule_result(&row, &result, Priority::Effect)
@@ -754,6 +913,12 @@ async fn a_delivery_wake_stays_visible_across_checking_and_allows_one_message() 
         )
         .await
         .unwrap();
+    service
+        .state
+        .lock()
+        .await
+        .schedule
+        .wake(ID, tokio::time::Instant::now(), Priority::Effect);
     fixture.sync().await;
     service
         .schedule_result(
@@ -763,6 +928,12 @@ async fn a_delivery_wake_stays_visible_across_checking_and_allows_one_message() 
         )
         .await
         .unwrap();
+    service
+        .state
+        .lock()
+        .await
+        .schedule
+        .wake(ID, tokio::time::Instant::now(), Priority::Effect);
     fixture.sync().await;
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);

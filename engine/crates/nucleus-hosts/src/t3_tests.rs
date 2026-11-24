@@ -895,102 +895,185 @@ async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() 
 }
 
 #[tokio::test]
-async fn bounded_parent_custody_converges_after_visibility_changes() {
-    for prior in [None, Some("fixture-parent-command")] {
-        let checkout = checkout_fixture();
-        let binding = binding(checkout.path());
-        let thread = crate::parent_thread(checkout.path());
-        let mut prepared = parent_snapshot(&binding, "completed", false);
-        prepared["hasMoreHistory"] = json!(true);
-        prepared["historyCursor"] = json!("older-turns");
-        prepared["turnItemsOmitLocalVisible"] = json!(true);
-        prepared["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
-        let mut fresh = prepared.clone();
-        fresh["snapshotSequence"] = json!(18);
-        fresh["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:39:00Z");
-        let mut row = prepared["projection"]["thread"].clone();
-        row["latestRunId"] = json!(NATIVE_RUN);
-        row["status"] = json!("completed");
-        row["pendingBackgroundTasks"] = json!([]);
-        let mut changed = fresh.clone();
-        changed["snapshotSequence"] = json!(19);
-        changed["projection"]["runtimeRequests"] = json!([{"kind":"approval","status":"pending"}]);
-        let read = "orchestration.subscribeThread";
-        let (host, native) = server(vec![
-            (read, Response::ParentSnapshot(prepared)),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(changed)),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh.clone())),
-            (read, Response::ParentSnapshot(fresh)),
-            ("orchestration.dispatchCommand", Response::Success),
-        ])
-        .await;
-        host.rpc
-            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-                "snapshotSequence":16, "threads":[row], "projects":[]
-            }}));
-        let pass = quiet_pass(&host);
-        let prepare = || {
-            Box::pin(host.prepare_parent(
-                &binding,
-                "fixture-acp",
-                "Fixture",
-                "Starting work",
-                prior.map(|command| crate::ParentAttempt {
-                    command,
-                    released: false,
-                }),
-                pass.profile_catalog(),
-            ))
-        };
-        let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {
-            panic!("idle parent should prepare a message");
-        };
-        assert_stale_shell_refusal(&host, &mut first).await;
+async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let mut busy = parent_snapshot(&binding, "running", false);
+    busy["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
+    let mut row = busy["projection"]["thread"].clone();
+    row["status"] = json!("running");
+    row["settledOverride"] = json!("settled");
+    let (host, native) = server(vec![
+        ("orchestration.dispatchCommand", Response::Success),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(busy),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16, "threads":[row], "projects":[]
+        }}));
+    let pass = quiet_pass(&host);
+    let prepare = |prior| {
+        Box::pin(host.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Fixture",
+            "Preparing the task thread.",
+            prior,
+            pass.profile_catalog(),
+        ))
+    };
+    let crate::ParentStep::Write(first) = prepare(None).await.unwrap() else {
+        panic!("an authorized busy parent can receive a hold from the shell");
+    };
+    let command = first.command_id().unwrap().to_owned();
+    assert!(crate::is_pinned_parent_hold(&command));
+    assert!(first.delivery_row().is_none());
+    let crate::ParentStep::Write(changed) = prepare(None).await.unwrap() else {
+        panic!("prepare a hold before the binding changes");
+    };
+    let crate::ParentStep::Write(refused) = prepare(None).await.unwrap() else {
+        panic!("prepare a hold before the operator changes the horizon");
+    };
+    row["providerInstanceId"] = json!("other-provider");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    assert!(matches!(
+        host.write_verified_parent(changed).await,
+        Err(crate::ParentSendError::NotSent(HostError::Binding))
+    ));
+    row["providerInstanceId"] = json!("fixture-acp");
+    row["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    assert!(matches!(
+        host.write_verified_parent(refused).await,
+        Err(crate::ParentSendError::NotSent(
+            HostError::OperatorSnoozed { .. }
+        ))
+    ));
+    row["snoozedUntil"] = Value::Null;
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":19,"thread":row}));
+    host.write_parent(first).await.unwrap();
+    let crate::ParentStep::Write(replay) = prepare(Some(crate::ParentAttempt {
+        command: &command,
+        released: false,
+    }))
+    .await
+    .unwrap() else {
+        panic!("retry the same hold when the run is unobserved");
+    };
+    assert_eq!(replay.command_id(), Some(command.as_str()));
+    host.write_parent(replay).await.unwrap();
+    let sent = native.await.unwrap();
+    assert_eq!(sent[0].payload.get(), sent[2].payload.get());
+    let payload: Value = serde_json::from_str(sent[0].payload.get()).unwrap();
+    assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
+    assert_eq!(
+        payload["modelSelection"],
+        json!({"instanceId":"fixture-acp","model":"nucleus"})
+    );
+}
 
-        row["title"] = json!("Updated title");
-        host.rpc
-            .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
-        let crate::ParentStep::Write(mut second) = prepare().await.unwrap() else {
-            panic!("fresh held-shell revision covers the compact snapshot");
+#[tokio::test]
+async fn bounded_parent_custody_converges_after_visibility_changes() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let command = format!("{thread}-hold-16");
+    let mut prepared = parent_snapshot(&binding, "completed", false);
+    prepared["hasMoreHistory"] = json!(true);
+    prepared["historyCursor"] = json!("older-turns");
+    prepared["turnItemsOmitLocalVisible"] = json!(true);
+    prepared["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
+    let mut fresh = prepared.clone();
+    fresh["snapshotSequence"] = json!(18);
+    fresh["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:39:00Z");
+    let mut row = prepared["projection"]["thread"].clone();
+    row["latestRunId"] = json!(NATIVE_RUN);
+    row["status"] = json!("completed");
+    row["pendingBackgroundTasks"] = json!([]);
+    let mut changed = fresh.clone();
+    changed["snapshotSequence"] = json!(19);
+    changed["projection"]["runtimeRequests"] = json!([{"kind":"approval","status":"pending"}]);
+    let read = "orchestration.subscribeThread";
+    let (host, native) = server(vec![
+        (read, Response::ParentSnapshot(prepared)),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(changed)),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(fresh)),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16, "threads":[row], "projects":[]
+        }}));
+    let pass = quiet_pass(&host);
+    let prepare = || {
+        Box::pin(host.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Fixture",
+            "Preparing the task thread.",
+            Some(crate::ParentAttempt {
+                command: &command,
+                released: false,
+            }),
+            pass.profile_catalog(),
+        ))
+    };
+    let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {
+        panic!("idle parent should prepare a message");
+    };
+    assert_stale_shell_refusal(&host, &mut first).await;
+
+    row["title"] = json!("Updated title");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    let crate::ParentStep::Write(mut second) = prepare().await.unwrap() else {
+        panic!("fresh held-shell revision covers the compact snapshot");
+    };
+    let error = host
+        .verify_parent_write(&mut second)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("active run or runtime request"), "{error}");
+    let mut verified = Vec::new();
+    for _ in 0..2 {
+        let crate::ParentStep::Write(mut write) = prepare().await.unwrap() else {
+            panic!("prepare an idle parent message");
         };
-        let error = host
-            .verify_parent_write(&mut second)
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("active run or runtime request"), "{error}");
-        let mut verified = Vec::new();
-        for _ in 0..2 {
-            let crate::ParentStep::Write(mut write) = prepare().await.unwrap() else {
-                panic!("prepare an idle parent message");
-            };
-            host.verify_parent_write(&mut write).await.unwrap();
-            verified.push(write);
-        }
-        row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
-        host.rpc
-            .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
-        assert_repeat_custody_refusal(&host, verified).await;
-        row["pendingBackgroundTasks"] = json!([]);
-        row["updatedAt"] = json!("2026-11-24T17:39:00Z");
-        host.rpc
-            .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
-        let crate::ParentStep::Write(last) = prepare().await.unwrap() else {
-            panic!("the task can replan once custody converges");
-        };
-        assert_eq!(
-            last.command_id(),
-            Some(format!("{thread}-hold-18").as_str())
-        );
-        host.write_parent(last).await.unwrap();
-        assert_eq!(native.await.unwrap().len(), 11);
+        host.verify_parent_write(&mut write).await.unwrap();
+        verified.push(write);
     }
+    row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
+    assert_repeat_custody_refusal(&host, verified).await;
+    row["pendingBackgroundTasks"] = json!([]);
+    row["updatedAt"] = json!("2026-11-24T17:39:00Z");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
+    let crate::ParentStep::Write(last) = prepare().await.unwrap() else {
+        panic!("the task can replan once custody converges");
+    };
+    assert_eq!(last.command_id(), Some(command.as_str()));
+    host.write_parent(last).await.unwrap();
+    assert_eq!(native.await.unwrap().len(), 11);
 }
 
 async fn assert_stale_shell_refusal(host: &T3, write: &mut crate::ParentWrite) {

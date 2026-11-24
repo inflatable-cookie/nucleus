@@ -25,6 +25,32 @@ pub(crate) fn visibility(row: &Value) -> Result<RowVisibility, HostError> {
         .read()
 }
 
+pub(crate) fn check_delivery_snooze(row: &Value, owned: &[u64]) -> Result<(), HostError> {
+    if let Some(until) = visibility(row)?.snoozed_until_ms
+        && until > crate::clock_ms()?
+        && !owned.contains(&until)
+    {
+        return Err(HostError::OperatorSnoozed { until });
+    }
+    Ok(())
+}
+
+/// Show a native snooze deadline with its time zone.
+#[must_use]
+pub fn snooze_deadline(until: u64) -> String {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(until) * 1_000_000).map_or_else(
+        |_| format!("{until} ms UTC"),
+        |time| {
+            format!(
+                "{} {:02}:{:02} UTC",
+                time.date(),
+                time.hour(),
+                time.minute()
+            )
+        },
+    )
+}
+
 /// The host's current settle and snooze state for an available task row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowVisibility {

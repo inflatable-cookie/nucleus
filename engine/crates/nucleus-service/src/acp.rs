@@ -73,7 +73,11 @@ impl Service {
         if task.phase().is_terminal()
             || matches!(
                 state.wait_detail(id),
-                Some(crate::WaitDetail::BeforeSend(_) | crate::WaitDetail::ShowingForDelivery(_))
+                Some(
+                    crate::WaitDetail::BeforeSend(_)
+                        | crate::WaitDetail::ShowingForDelivery(_)
+                        | crate::WaitDetail::OperatorSnoozed { .. }
+                )
             )
             || crate::attention::waiting_for_person(task, wait)
             || task.hold().is_some()
@@ -120,12 +124,22 @@ impl Service {
         };
         let identity = row.task.identity();
         let id = &identity.id;
-        let pending =
-            self.state
-                .lock()
-                .await
-                .store
-                .task_delivery_fence(id, row.version, &runtime)?;
+        let pending = {
+            let state = self.state.lock().await;
+            let pending = state.store.task_delivery_fence(id, row.version, &runtime)?;
+            if let Some([command]) = pending.as_deref()
+                && nucleus_hosts::is_pinned_parent_hold(command)
+                && state
+                    .store
+                    .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
+                    .as_ref()
+                    == Some(command)
+            {
+                // The launch owner can reconcile its current frozen hold directly.
+                return Ok(false);
+            }
+            pending
+        };
         let Some(commands) = pending else {
             return Ok(false);
         };
@@ -198,6 +212,12 @@ impl Service {
                 .task_turn_attempt(id, kind, row.version, session, command)?
             {
                 Some((sequence, true)) => Some(sequence),
+                Some((sequence, false))
+                    if kind == "native_turn_replay"
+                        && nucleus_hosts::is_pinned_parent_hold(command) =>
+                {
+                    return Ok(Some(sequence));
+                }
                 Some((_, false)) => return Ok(None),
                 None => None,
             };
@@ -227,6 +247,13 @@ impl Service {
     ) -> Result<bool, ServiceError> {
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let message = write.starts_turn();
+        let pinned_thread = if nucleus_hosts::is_pinned_parent_hold(&command) {
+            let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
+            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
+            Some(thread)
+        } else {
+            None
+        };
         if let Err(error) = self.wake_parent_delivery(row, &write).await {
             if let ServiceError::ParentNotSent { reason, .. } = &error {
                 self.record_parent_refusal(row, &command, "preflight", None, reason)
@@ -266,10 +293,20 @@ impl Service {
         };
         match self.host.write_verified_parent(write).await {
             Ok(()) => Ok(true),
+            Err(nucleus_hosts::ParentSendError::Rejected) => {
+                Err(nucleus_hosts::HostError::ParentHoldRejected.into())
+            }
             Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
                 Err(ServiceError::ParentDeliveryUnknown(error))
             }
             Err(nucleus_hosts::ParentSendError::Unknown(error)) => Err(error.into()),
+            Err(nucleus_hosts::ParentSendError::NotSent(
+                nucleus_hosts::HostError::OperatorSnoozed { until },
+            )) => {
+                let thread = pinned_thread.ok_or(ServiceError::Input)?;
+                // Keep the current intent so an operator wake resumes this exact ID.
+                Err(ServiceError::OperatorSnoozed { thread, until })
+            }
             Err(nucleus_hosts::ParentSendError::NotSent(error)) => {
                 self.record_parent_refusal(row, &command, session, attempt, &error.to_string())
                     .await?;

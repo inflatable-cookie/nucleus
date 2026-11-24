@@ -41,11 +41,21 @@ pub struct ParentAttempt<'a> {
     pub released: bool,
 }
 
-/// Whether failure happened before the command could enter the transport.
+/// Whether T3 could have delivered the write.
 #[derive(Debug)]
 pub enum ParentSendError {
     NotSent(HostError),
     Unknown(HostError),
+    Rejected,
+}
+
+impl From<ParentSendError> for HostError {
+    fn from(error: ParentSendError) -> Self {
+        match error {
+            ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
+            ParentSendError::Rejected => Self::Uncertain,
+        }
+    }
 }
 
 /// Next housekeeping action for the known threads of a Done task.
@@ -69,6 +79,7 @@ pub struct ParentWrite {
     payload: Value,
     idle_at: Option<(String, u64)>,
     delivery: Option<Box<ParentDelivery>>,
+    owned_snoozes: Vec<u64>,
 }
 
 struct ParentDelivery {
@@ -87,6 +98,16 @@ impl ParentWrite {
     #[must_use]
     pub fn command_id(&self) -> Option<&str> {
         self.payload["commandId"].as_str()
+    }
+
+    #[must_use]
+    pub fn thread_id(&self) -> Option<&str> {
+        self.payload["threadId"].as_str()
+    }
+
+    /// Pass the exact horizons owned by the task's existing presentation record.
+    pub fn allow_owned_snoozes(&mut self, horizons: Vec<u64>) {
+        self.owned_snoozes = horizons;
     }
 
     #[must_use]
@@ -118,6 +139,72 @@ impl ParentWrite {
     #[must_use]
     pub fn starts_turn(&self) -> bool {
         self.rpc == "orchestration.launchThread" || self.payload["type"] == "message.dispatch"
+    }
+}
+
+/// Identify holds whose command identity fixes the ACP routing on every replay.
+#[must_use]
+pub fn is_pinned_parent_hold(command: &str) -> bool {
+    parent_hold_provider(command).is_some()
+}
+
+fn parent_hold_provider(command: &str) -> Option<&str> {
+    let (_, pin) = command
+        .strip_prefix("thread:nucleus-")?
+        .split_once("-hold-acp-")?;
+    let (revision, provider) = pin.split_once(':')?;
+    (revision.parse::<u64>().is_ok() && !provider.is_empty()).then_some(provider)
+}
+
+fn parent_hold(
+    binding: &Binding,
+    thread: String,
+    provider: &str,
+    command: &str,
+    prompt: &str,
+    legacy: Option<(u64, Option<Box<ParentDelivery>>)>,
+) -> ParentWrite {
+    let mut payload = json!({
+        "type":"message.dispatch", "commandId":command, "threadId":thread,
+        "messageId":message_id(command), "text":prompt, "attachments":[],
+        "createdBy":"user", "creationSource":"server",
+        "dispatchMode":{"type":"queue_after_active"}
+    });
+    let (idle_at, delivery) = if let Some((sequence, delivery)) = legacy {
+        (Some((thread, sequence)), delivery)
+    } else {
+        payload["modelSelection"] = json!({"instanceId":provider,"model":"nucleus"});
+        (None, None)
+    };
+    ParentWrite {
+        binding: binding.clone(),
+        rpc: "orchestration.dispatchCommand",
+        idle_at,
+        delivery,
+        owned_snoozes: Vec::new(),
+        payload,
+    }
+}
+
+fn parent_row_matches(row: &Value, binding: &Binding, provider: &str) -> bool {
+    row["projectId"] == binding.project_id
+        && row["worktreePath"] == binding.worktree_path
+        && row["branch"] == binding.branch
+        && row["parentThreadId"].is_null()
+        && row["lineage"]["parentThreadId"].is_null()
+        && row["providerInstanceId"] == provider
+        && row["modelSelection"]["instanceId"] == provider
+        && row["modelSelection"]["model"] == "nucleus"
+}
+
+fn unarchive_parent(binding: &Binding, thread: String, sequence: u64) -> ParentWrite {
+    ParentWrite {
+        binding: binding.clone(),
+        rpc: "orchestration.dispatchCommand",
+        delivery: None,
+        owned_snoozes: Vec::new(),
+        payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
+        idle_at: Some((thread, sequence)),
     }
 }
 
@@ -186,6 +273,7 @@ impl T3 {
             rpc: "orchestration.dispatchCommand",
             idle_at: Some((thread.clone(), sequence)),
             delivery: prepare_delivery(&projection, provider, fence.row)?,
+            owned_snoozes: Vec::new(),
             payload: json!({
                 "type":"message.dispatch", "commandId":command, "threadId":thread,
                 "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
@@ -316,6 +404,11 @@ impl T3 {
         catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
     ) -> Result<ParentStep, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
+        if prior_turn.is_none()
+            && let Some(write) = self.prepare_held_parent(binding, provider, &thread, start_line)?
+        {
+            return Ok(ParentStep::Write(write));
+        }
         let (projection, fence) = self.observe_parent(binding, &thread).await?;
         if let Some(projection) = projection {
             projection.require_parent_provider(provider)?;
@@ -350,10 +443,7 @@ impl T3 {
                     replay = Some(attempt.command);
                 }
             }
-            if matches!(
-                projection.retained(),
-                Ok(RetainedThread::Busy | RetainedThread::Gone)
-            ) {
+            if projection.deleted() {
                 return Ok(ParentStep::Wait);
             }
             let sequence = projection.sequence();
@@ -361,27 +451,36 @@ impl T3 {
                 if projection.retained()? != RetainedThread::Idle {
                     return Ok(ParentStep::Wait);
                 }
-                return Ok(ParentStep::Write(ParentWrite {
-                    binding: binding.clone(),
-                    rpc: "orchestration.dispatchCommand",
-                    idle_at: Some((thread.clone(), sequence)),
-                    delivery: None,
-                    payload: json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")}),
-                }));
+                return Ok(ParentStep::Write(unarchive_parent(
+                    binding, thread, sequence,
+                )));
             }
-            let command = replay.map_or_else(|| format!("{thread}-hold-{sequence}"), str::to_owned);
-            return Ok(ParentStep::Write(ParentWrite {
-                binding: binding.clone(),
-                rpc: "orchestration.dispatchCommand",
-                idle_at: Some((thread.clone(), sequence)),
-                delivery: prepare_delivery(&projection, provider, fence.row)?,
-                payload: json!({
-                    "type":"message.dispatch", "commandId":command, "threadId":thread,
-                    "messageId":message_id(&command), "text":start_line, "attachments":[],
-                    "createdBy":"user", "creationSource":"server",
-                    "dispatchMode":{"type":"queue_after_active"}
-                }),
-            }));
+            // Old intents must keep their original wire. Only the new command
+            // identity carries an explicit route that T3 preserves in its queue.
+            let legacy = if replay.is_none_or(is_pinned_parent_hold) {
+                if replay
+                    .and_then(parent_hold_provider)
+                    .is_some_and(|frozen| frozen != provider)
+                {
+                    return Err(HostError::Binding);
+                }
+                None
+            } else {
+                if projection.retained()? != RetainedThread::Idle {
+                    return Ok(ParentStep::Wait);
+                }
+                Some((
+                    sequence,
+                    prepare_delivery(&projection, provider, fence.row)?,
+                ))
+            };
+            let command = replay.map_or_else(
+                || format!("{thread}-hold-acp-{sequence}:{provider}"),
+                str::to_owned,
+            );
+            return Ok(ParentStep::Write(parent_hold(
+                binding, thread, provider, &command, start_line, legacy,
+            )));
         }
 
         if prior_turn.is_some() {
@@ -396,6 +495,7 @@ impl T3 {
             rpc: "orchestration.launchThread",
             idle_at: None,
             delivery: None,
+            owned_snoozes: Vec::new(),
             payload: json!({
                 "commandId":command, "threadId":thread, "projectId":binding.project_id,
                 "title":title, "modelSelection":{"instanceId":provider,"model":"nucleus"},
@@ -406,6 +506,36 @@ impl T3 {
                 "initialMessage":{"messageId":message_id(&command),"text":start_line,"attachments":[]}
             }),
         }))
+    }
+
+    fn prepare_held_parent(
+        &self,
+        binding: &Binding,
+        provider: &str,
+        thread: &str,
+        start_line: &str,
+    ) -> Result<Option<ParentWrite>, HostError> {
+        if !self.rpc.uses_held_shell() {
+            return Ok(None);
+        }
+        let (Some(row), Some(revision)) = self.rpc.thread_row_with_revision(thread) else {
+            return Ok(None);
+        };
+        if !row["archivedAt"].is_null() || !row["deletedAt"].is_null() {
+            return Ok(None);
+        }
+        if !parent_row_matches(&row, binding, provider) {
+            return Err(HostError::Binding);
+        }
+        let command = format!("{thread}-hold-acp-{revision}:{provider}");
+        Ok(Some(parent_hold(
+            binding,
+            thread.into(),
+            provider,
+            &command,
+            start_line,
+            None,
+        )))
     }
 
     async fn observe_parent(
@@ -428,9 +558,7 @@ impl T3 {
         self.verify_parent_write(&mut write).await?;
         self.write_verified_parent(write)
             .await
-            .map_err(|error| match error {
-                ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
-            })
+            .map_err(HostError::from)
     }
 
     /// Verify the destination before the owner records the send intent.
@@ -510,17 +638,52 @@ impl T3 {
     /// # Errors
     /// Returns an error if T3 cannot confirm the command.
     pub async fn write_verified_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
+        let hold = write
+            .command_id()
+            .filter(|id| is_pinned_parent_hold(id))
+            .map(|id| {
+                (
+                    id.to_owned(),
+                    write.payload["threadId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    write.payload["modelSelection"]["instanceId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            });
         match self
             .rpc
             .write_guarded(write.rpc, write.payload, Read::One, || {
                 if let (Some(delivery), Some((thread, _))) = (&write.delivery, &write.idle_at) {
                     self.check_delivery_shell(thread, delivery)?;
                 }
+                if let Some((_, thread, provider)) = &hold
+                    && self.rpc.uses_held_shell()
+                {
+                    let row = self.rpc.thread_row(thread).ok_or(HostError::Uncertain)?;
+                    if !row["archivedAt"].is_null()
+                        || !row["deletedAt"].is_null()
+                        || !parent_row_matches(&row, &write.binding, provider)
+                    {
+                        return Err(HostError::Binding);
+                    }
+                    crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
+                }
                 Ok(())
             })
             .await?
         {
             Reply::Value(_) => Ok(()),
+            Reply::Failure(cause)
+                if hold
+                    .as_ref()
+                    .is_some_and(|(command, _, _)| crate::dispatch_rejected(&cause, command)) =>
+            {
+                Err(ParentSendError::Rejected)
+            }
             Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
         }
     }

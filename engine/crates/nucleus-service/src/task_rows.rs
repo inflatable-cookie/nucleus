@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Role, Task, WaitReason};
+use nucleus_core::{Role, RunState, Task, WaitReason};
 use nucleus_hosts::{
     ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
     SendOutcome,
@@ -137,6 +137,49 @@ fn confirm_snooze(receipt: &mut RowSnooze, shown: Option<u64>) -> bool {
 }
 
 impl Service {
+    pub(super) async fn operator_snooze_wait(&self, row: &TaskRow) -> Option<ServiceError> {
+        let state = self.state.lock().await;
+        let WaitDetail::OperatorSnoozed {
+            version,
+            thread,
+            until,
+            ..
+        } = state.wait_detail(&row.task.identity().id)?
+        else {
+            return None;
+        };
+        (*version == row.version
+            && *until > now_ms()
+            && self
+                .host
+                .row_visibility_hint(thread)
+                .is_none_or(|row| row.snoozed_until_ms == Some(*until)))
+        .then(|| ServiceError::OperatorSnoozed {
+            thread: thread.clone(),
+            until: *until,
+        })
+    }
+
+    pub(super) async fn owned_delivery_snoozes(
+        &self,
+        row: &TaskRow,
+        thread: &str,
+    ) -> Result<Vec<u64>, ServiceError> {
+        let receipt = self
+            .state
+            .lock()
+            .await
+            .store
+            .row_snooze(&row.task.identity().id, thread)?;
+        Ok(receipt.map_or_else(Vec::new, |receipt| {
+            [Some(receipt.until_ms), receipt.previous_until_ms]
+                .into_iter()
+                .flatten()
+                .filter(|&until| receipt.owns(Some(until)))
+                .collect()
+        }))
+    }
+
     pub(super) async fn reconcile_task_rows(
         &self,
         provider: &str,
@@ -266,7 +309,7 @@ impl Service {
                     _ => Err(error.into()),
                 }
             }
-            Err(ParentSendError::Unknown(error)) => Err(error.into()),
+            Err(error) => Err(nucleus_hosts::HostError::from(error).into()),
             Ok(outcome) => {
                 self.finish_visibility_write(id, thread, change, outcome, receipt)
                     .await?;
@@ -491,12 +534,21 @@ fn row_attention_for_effect(
     row: &TaskRow,
 ) -> Result<Option<TaskAttention>, ServiceError> {
     let attention = state.task_attention(row)?;
-    if attention == TaskAttention::Waiting
-        && matches!(
-            state.wait_detail(&row.task.identity().id),
-            Some(WaitDetail::ShowingForDelivery(_) | WaitDetail::ConfirmingDelivery(_))
-        )
-    {
+    let task = &row.task;
+    let about_to_send = task.hold().is_none()
+        && task.run().is_some_and(|run| {
+            !run.revoked()
+                && run.report().is_none()
+                && (run.last_send_at_ms().is_none()
+                    || state.role_observation(task) == Some(RunState::ReadyToSend))
+        });
+    let showing_delivery = matches!(
+        state.wait_detail(&task.identity().id),
+        Some(WaitDetail::ShowingForDelivery(_) | WaitDetail::ConfirmingDelivery(_))
+    ) && state
+        .schedule
+        .effect_ready(&task.identity().id, tokio::time::Instant::now());
+    if attention == TaskAttention::Waiting && (about_to_send || showing_delivery) {
         return Ok(Some(TaskAttention::Active));
     }
     // After a cold start a recorded send alone gives no evidence that a child is quiet.

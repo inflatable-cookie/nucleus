@@ -174,6 +174,13 @@ impl ThreadHint {
         self.running && !self.closed
     }
 
+    /// The native horizon in a held thread update.
+    #[must_use]
+    pub fn snoozed_until(&self) -> Option<u64> {
+        let time = parse_native_time(self.change.as_ref()?[12].as_str()?)?;
+        u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
+    }
+
     /// A run change is a reason to check delivery again.
     #[must_use]
     pub fn has_delivery_change(&self, prior: Option<&Self>) -> bool {
