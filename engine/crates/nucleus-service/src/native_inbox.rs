@@ -14,7 +14,8 @@ use nucleus_hosts::{HostError, INBOX_THREAD, InboxStep, InboxTarget, T3_RETRY_DE
 use nucleus_store::{
     EngineStorage, StoreError, TaskRow,
     planning::{
-        Decision, DecisionAnswerInput, DecisionInput, DecisionOption, DecisionTarget, WriteAt,
+        Decision, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget,
+        WriteAt,
     },
 };
 use subtle::ConstantTimeEq;
@@ -365,7 +366,7 @@ fn task_target(row: &TaskRow) -> DecisionTarget {
     DecisionTarget {
         task_id: row.task.identity().id.clone(),
         task_version: row.version,
-        kind: Default::default(),
+        kind: DecisionKind::Question,
     }
 }
 

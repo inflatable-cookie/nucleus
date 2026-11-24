@@ -1,6 +1,6 @@
 use nucleus_store::planning::{
-    DecisionAnswerInput, DecisionInput, DecisionOption, DecisionTarget, ItemContent, ItemKind,
-    ItemSource, ItemState, RecordKind, WriteAt,
+    DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget, ItemContent,
+    ItemKind, ItemSource, ItemState, RecordKind, WriteAt,
 };
 
 use super::*;
@@ -145,7 +145,7 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
         let target = DecisionTarget {
             task_id: id.into(),
             task_version: 1,
-            kind: Default::default(),
+            kind: DecisionKind::Question,
         };
         let decision = store
             .ensure_task_decision("project", target.clone(), input.clone(), STAMP)

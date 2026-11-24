@@ -850,7 +850,7 @@ fn admit(
     }
     if let Some(permission) = facts.usage_permission {
         let reference = numbers::reference(&identity.repository, number);
-        planning::decisions::insert_usage_permission(tx, &identity.id, &reference, permission)?;
+        planning::decisions::insert_usage_permission(tx, &identity.id, &reference, &permission)?;
     }
     Ok(number)
 }

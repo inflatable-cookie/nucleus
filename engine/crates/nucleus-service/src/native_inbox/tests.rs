@@ -59,20 +59,7 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
                 Ok(Action::Wait(WaitReason::UsagePermission))
             )));
     }
-    let snapshot = service.inbox_snapshot(&inbox.credential).await.unwrap();
-    assert_eq!(snapshot.pending.len(), 3);
-    for (id, option) in [("approved", USAGE_APPROVE), ("declined", "decline")] {
-        service
-            .answer_inbox(
-                &inbox.credential,
-                InboxAnswer {
-                    field: inbox_field("local-fixture", &format!("usage-permission-{id}")),
-                    option_id: option.into(),
-                },
-            )
-            .await
-            .unwrap();
-    }
+    answer_low_usage_permissions(&service, &inbox.credential).await;
 
     service
         .command(
@@ -132,6 +119,23 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
         None
     );
     assert!(state.store.usage_permission("earlier").unwrap().is_none());
+}
+
+async fn answer_low_usage_permissions(service: &Service, credential: &[u8; 32]) {
+    let snapshot = service.inbox_snapshot(credential).await.unwrap();
+    assert_eq!(snapshot.pending.len(), 3);
+    for (id, option) in [("approved", USAGE_APPROVE), ("declined", "decline")] {
+        service
+            .answer_inbox(
+                credential,
+                InboxAnswer {
+                    field: inbox_field("local-fixture", &format!("usage-permission-{id}")),
+                    option_id: option.into(),
+                },
+            )
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]

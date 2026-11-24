@@ -226,7 +226,7 @@ pub(crate) fn insert_usage_permission(
     tx: &Transaction<'_>,
     task_id: &str,
     reference: &str,
-    permission: UsagePermission<'_>,
+    permission: &UsagePermission<'_>,
 ) -> Result<(), StoreError> {
     let stamp = WriteAt {
         actor: "Nucleus",
