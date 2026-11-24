@@ -131,6 +131,7 @@ pub(crate) struct Detail {
     pub reference: Option<String>,
     pub phase: Phase,
     pub wait: Option<String>,
+    pub wait_detail: Option<String>,
     pub question: Option<Question>,
     #[serde(default)]
     pub operator_inbox: bool,

@@ -412,7 +412,7 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
             service.lookup(&state, "worker").unwrap()
         };
         let unknown = Due(AtomicUsize::new(0), None);
-        let result = service.advance_due_task(&row, &unknown).await;
+        let result = Box::pin(service.advance_due_task(&row, &unknown)).await;
         assert!(matches!(
             result,
             Err(ServiceError::Host(HostError::Uncertain))
@@ -442,7 +442,9 @@ async fn old_report_fences_retry_until_child_custody_allows_the_next_decision() 
         service.wake_from_host(hint).await;
         assert!(service.state.lock().await.schedule.due("worker").is_some());
         let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
-        let result = service.advance_due_task(&row, &ended).await.unwrap();
+        let result = Box::pin(service.advance_due_task(&row, &ended))
+            .await
+            .unwrap();
         let next = service.task("worker").await.unwrap();
         if question {
             assert!(matches!(

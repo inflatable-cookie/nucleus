@@ -276,7 +276,10 @@ fn plan(detail: &Detail, reviews: usize, previous: Option<Phase>) -> Value {
     json!({"sessionUpdate":"plan","entries":entries})
 }
 
-fn wait_text(detail: &Detail) -> Option<&'static str> {
+fn wait_text(detail: &Detail) -> Option<&str> {
+    if let Some(cause) = detail.wait_detail.as_deref() {
+        return Some(cause);
+    }
     Some(match detail.wait.as_deref()? {
         "capacity" if detail.phase == Phase::Reviewing => "waiting for a review slot",
         "capacity" => "waiting for a work slot",
@@ -294,7 +297,9 @@ fn wait_text(detail: &Detail) -> Option<&'static str> {
                 Role::Reviewer => "waiting to confirm the reviewer is idle",
             }
         }
-        "host_unknown" | "idle_without_terminal_run" => "waiting for the host",
+        "host_unknown" => "checking the task thread",
+        "idle_without_terminal_run" => "checking how the turn ended",
+        "host_observation_blocked" => "couldn’t verify the task thread. Open it to check.",
         "operator_declined" => "operator declined. Move or cancel the task",
         "stopping" => "waiting for the run to finish",
         "workspace_unknown" => "checking the workspace",
