@@ -378,6 +378,11 @@ Later decisions carry their own attribution.
     - Only destructive or irreversible steps (removing a checkout or worktree, merging, closing a PR) prove custody, and they prove it once.
     - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
+    - The board's **Needs you** and T3 task rows share one attention rule.
+      An open question, an operator decision, a review requiring acceptance or
+      a typed block with a concrete owner action needs a person. Scheduled
+      rechecks, unexpired deadlines, capacity and dependencies are waiting.
+      T3 snoozes quiet waiting rows under the rules in ruling 30.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
     - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
 

@@ -85,6 +85,10 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
         .insert("worker".into(), (instance.clone(), RunState::Running));
     state.set_wait("worker", Some(WaitReason::HostUnknown));
     assert_eq!(
+        state.task_attention(&row).unwrap(),
+        crate::attention::TaskAttention::Active
+    );
+    assert_eq!(
         service.acp_turn_view(&state, &row).expect("deferred view"),
         (None, true)
     );

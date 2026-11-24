@@ -39,10 +39,7 @@ impl State {
         let wait = self.wait_reason(id);
         if self.has_open_usage_decision(task)?
             || waiting_for_person(task, wait)
-            || matches!(
-                wait,
-                Some(WaitReason::HostUnknown | WaitReason::HostObservationBlocked)
-            )
+            || wait == Some(WaitReason::HostObservationBlocked)
         {
             return Ok(TaskAttention::Attention);
         }
