@@ -10,6 +10,7 @@ mod planning;
 mod presentation;
 mod profiles;
 mod project;
+mod prompt;
 mod question;
 mod report_only;
 mod schedule;

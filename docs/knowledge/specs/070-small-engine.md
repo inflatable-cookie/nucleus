@@ -177,6 +177,15 @@ Later decisions carry their own attribution.
 
 28. **TypeScript features retired at cutover.** Tom, 2026-11-24, from the source inventory triage: retire author-side proofs and the proof executor (proof files, receipts, the GO release gate); worker and reviewer checkpoints ("Context limits shouldn't be a problem? Context gets compacted and it just continues?"); and interactive tasks. Task dependencies are ported. Retired with earlier rulings: merge check command and timeout, and the optional required reviewer (ruling 13); repository rekey, bulk dispose, reparent, detach, outcome search and removal, review-entry reconcile, receipt acceptance and task registration (rulings 1, 2 and 15); planner handover (ruling 23); and TS-only runtime settings. Everything else in the inventory is ported from the TypeScript source, which is the reference for migrated behaviour.
 
+29. **Role protocol and run facts.** Tom agreed to this split, as reported by the
+    Nucleus planner on 2026-11-24. AGENTS.md owns each repository's validation
+    selectors, test bounds, changelog format and project-specific scratch
+    instructions. The installed Nucleus skill owns the shared worktree rules
+    and worker and reviewer protocol. Each assignment carries the run's
+    identity, brief, relevant recorded context and authenticated report route.
+    When the selected provider does not advertise the matching installed
+    protocol, the engine includes the same skill sections with the assignment.
+
 ## The model
 
 ### Stored state per task

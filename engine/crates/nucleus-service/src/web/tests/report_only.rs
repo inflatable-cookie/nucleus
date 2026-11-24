@@ -509,22 +509,34 @@ impl ReportFixture {
                 Action::Advance(Phase::Working)
             );
         }
-        let prompt = crate::ticket::prompt(
-            &task,
-            Role::Worker,
-            None,
-            checkout.branch(),
-            &crate::ticket::PromptPaths {
-                command: std::path::Path::new("/engine"),
-                ticket: std::path::Path::new("/scratch/ticket"),
-                builds: std::path::Path::new("/scratch/builds"),
-            },
-            None,
-        );
-        assert!(prompt.contains("report-only delivery"));
-        assert!(prompt.contains("lane.put local-fixture qa VERSION --ticket"));
+        let row = nucleus_store::TaskRow {
+            task: task.clone(),
+            version: prior.version,
+            number: prior.number,
+        };
+        let instance = task.next_launch_instance().expect("run identity");
+        let prompt = crate::prompt::Prompt {
+            row: &row,
+            role: Role::Worker,
+            via: &nucleus_core::Launch::Create,
+            replaced_thread: None,
+            instance: &instance,
+            checkout: checkout.path(),
+            scratch: std::path::Path::new("/scratch/run"),
+            branch: checkout.branch(),
+            checkout_head: Some(&self.head),
+            pr: None,
+            discovered_skill: None,
+            model: "fixture",
+            lanes: &[],
+            command: std::path::Path::new("/engine"),
+            ticket: std::path::Path::new("/scratch/ticket"),
+        }
+        .render();
+        assert!(prompt.contains("Report-only delivery"));
+        assert!(prompt.contains("lane.put 'local-fixture' 'qa' VERSION --ticket"));
         assert!(prompt.contains("report_ready"));
-        assert!(!prompt.contains("ready_for_review"));
+        assert!(!prompt.contains("Ready for review"));
         if let Some(instruction) = task
             .report_task()
             .and_then(|report| report.instruction.as_deref())

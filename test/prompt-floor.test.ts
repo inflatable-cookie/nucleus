@@ -88,11 +88,17 @@ for (const role of ['worker', 'revision', 'reviewer', 'recovery', 'executor'] as
   });
 }
 
-test('rules read from each role’s run context match the skill and preserve callback guidance', () => {
+test('legacy context preserves callback guidance and skill pointers reach the current role sections', () => {
   const skill = readFileSync('skills/nucleus/SKILL.md', 'utf8');
   for (const role of ['worker', 'revision', 'reviewer', 'recovery'] as const) {
     const { rules } = buildRunContext(task, { id: `${role}-run`, role, head });
-    assert.ok(skill.includes(`## ${floors[role].rule} rules\n\n${rules}\n`));
+    const heading = floors[role].rule;
+    if (role === 'recovery') {
+      assert.ok(skill.includes(`## ${heading} rules\n\n${rules}\n`));
+    } else {
+      assert.ok(skill.includes(`## ${heading} rules\n\nTypeScript runs follow [${heading}](#${heading.toLowerCase()}) and`));
+      assert.ok(skill.includes(`### ${heading}\n`));
+    }
     assert.match(rules, /\{kind: 'external', name: '[^']+'\}.*\{kind: 'internal'\}.*\{kind: 'unfinished'\}/);
     assert.match(rules, /`impediment` with the failed command(?: or|,) observed provider message/);
     if (role !== 'recovery') {
