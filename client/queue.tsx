@@ -165,6 +165,7 @@ export function MainSurface({
   const setScope = workspaceBoard ? setPanelScope : saveSurfaceScope;
   const [scopeOpen, setScopeOpen] = useState(false);
   const {
+    recordProject,
     selected,
     setSelected,
     rustTaskId,
@@ -267,9 +268,11 @@ export function MainSurface({
     records,
     onLeaveLane: () => setLaneDraft(null),
   });
+  const laneCards = new Set(planningLeads);
   // The list's tag filter, pages and held-back queue reads outlive a visit to another view.
   const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
+    recordProject,
     selected,
     selectedLeadId,
     openPapercutId,
@@ -285,8 +288,8 @@ export function MainSurface({
   const taskDrafts = useTaskDraftStore(`${selected ?? ""}|${view}`);
   useEffect(() => {
     setRecordNotice(null);
-  }, [selectedLeadId, openPapercutId, openDecisionId]);
-  const recordKey = `${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
+  }, [recordProject, selectedLeadId, openPapercutId, openDecisionId]);
+  const recordKey = `${recordProject ?? ""}|${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
   const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
   // The selection is the only filter state (nucleus#1476): an empty selection shows
@@ -415,7 +418,8 @@ export function MainSurface({
     />
   ) : selectedLeadId ? (
     <LeadDialog
-      key={`lead:${selectedLeadId}`}
+      key={recordKey}
+      project={recordProject}
       id={selectedLeadId}
       lane={leadLane}
       compact={compact}
@@ -432,6 +436,7 @@ export function MainSurface({
     // A record dialog remounts when any open record changes, which clears its drafts.
     <PapercutDialog
       key={recordKey}
+      project={recordProject}
       id={openPapercutId}
       compact={compact}
       busy={busy}
@@ -446,13 +451,14 @@ export function MainSurface({
   ) : openDecisionId ? (
     <DecisionDialog
       key={recordKey}
+      project={recordProject}
       id={openDecisionId}
       compact={compact}
       busy={busy}
       act={act}
       recordNotice={recordNotice}
       setRecordNotice={setRecordNotice}
-      onOpenDecision={setOpenDecisionId}
+      onOpenDecision={id => selectDecision(id, recordProject)}
       taskLinkLabel={(id) => {
         const task = state?.tasks.find((item) => item.id === id);
         if (!task) return null;
@@ -725,11 +731,7 @@ export function MainSurface({
                       }
                       onRetryTasks={() => void laneTasksQuery.refetch()}
                       leads={{
-                        items: leadsQuery.data
-                          ? boardLeads.filter((lead) =>
-                              planningLeads.some((item) => item.id === lead.id),
-                            )
-                          : undefined,
+                        items: leadsQuery.data ? boardLeads.filter(lead => laneCards.has(lead)) : undefined,
                         error: leadsQuery.error
                           ? planMessage(leadsQuery.error)
                           : undefined,
@@ -737,12 +739,12 @@ export function MainSurface({
                       onRetryLeads={() => void leadsQuery.refetch()}
                       onOpenTask={selectTask}
                       onOpenLead={(lead) => {
-                        if (isPapercut(lead)) selectPapercut(lead.id);
+                        if (isPapercut(lead)) selectPapercut(lead.id, lead.projectKey);
                         else
                           selectLead(lead.id, {
                             key: planningLaneRecord.key,
                             title: planningLaneRecord.title,
-                          });
+                          }, lead.projectKey);
                       }}
                       readFinished={(cursor) =>
                         searchOutcomes({
@@ -824,6 +826,7 @@ export function MainSurface({
                     queuedHidden={queuedHidden}
                     projectForRepository={projectForRepository}
                     selected={selected}
+                    recordProject={recordProject}
                     selectedLeadId={selectedLeadId}
                     openPapercutId={openPapercutId}
                     openDecisionId={openDecisionId}

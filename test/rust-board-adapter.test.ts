@@ -1031,6 +1031,79 @@ test("unreadable planning records leave healthy siblings readable in lists and d
   assert.equal(fake.writes.length, 0);
 });
 
+test("a board click and action address the selected project's colliding decision and items", async (t) => {
+  const fake = engine();
+  const answers = new Map<string, string>();
+  const dropped = new Set<string>();
+  const calls: string[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    const match = /\/planning\/([^/]+)\/(decisions|items)(?:\/(shared|cut)\/(answer|drop))?(?:\?pending=true)?$/.exec(path);
+    if (!match) return fake.fetcher(url, init);
+    const project = match[1]!;
+    calls.push(path);
+    if (match[2] === "decisions") {
+      if (match[4] === "answer") answers.set(project, JSON.parse(String(init?.body)).optionId);
+      const record = { id: "shared", projectId: project, author: "planner", question: project + " decision",
+        options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }], createdAtMs: 10,
+        answer: answers.has(project) ? { optionId: answers.get(project), note: null, author: "operator", answeredAtMs: 20 } : null };
+      return Response.json(match[4] ? record : path.endsWith("?pending=true") && record.answer ? [] : [record]);
+    }
+    if (match[4] === "drop") dropped.add(project);
+    const item = { id: "shared", title: project + " lead", body: project + " lead body", kind: "lead",
+      state: "open", author: "planner", lanes: [], version: 1, createdAtMs: 10 };
+    const cut = { ...item, id: "cut", title: project + " cut", body: project + " cut body", kind: "papercut", state: dropped.has(project) ? "dropped" : "open" };
+    return Response.json(match[4] ? cut : [item, cut]);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const h = React.createElement;
+  const ui = mount(h(QueryClientProvider, {
+    client,
+    children: h(web.WebContext.Provider, {
+      value: { transport: adapter, settings: false },
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(MainSurface, {
+          theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
+          layout: { compact: false },
+        }),
+      }),
+    }),
+  }));
+  t.after(() => {
+    ui.update(h(React.Fragment));
+    client.clear();
+    useNativeStubs();
+  });
+  const visible = async (label: string | RegExp) => {
+    await waitFor(() => Boolean(ui.query(label)), 4000, String(label)).catch((error) => {
+      throw new Error(`${String(error)}; board text: ${ui.text()}; calls: ${calls.slice(-10).join(", ")}`);
+    });
+  };
+
+  const press = async (label: string | RegExp) => { await visible(label); ui.press(label); };
+  await press(/^Needs you, 2$/);
+  await press(/^Decision: lantern decision,/);
+  await press("Use option: Second");
+  await press("Answer");
+  await waitFor(() => answers.size > 0, 4000, "decision answer");
+  assert.deepEqual([...answers], [["lantern", "second"]]);
+  await press(/^Leads, 2$/);
+  await press(/^Lead: lantern lead,/);
+  await waitFor(() => ui.text().includes("lantern lead body"), 4000, "second project lead");
+  await press(/^Papercuts, 2$/);
+  await press(/^Papercut: lantern cut,/);
+  await press("Close as completed");
+  await waitFor(() => dropped.size > 0, 4000, "papercut closed");
+  assert.deepEqual([...dropped], ["lantern"]);
+});
+
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
   const lane = (name: string): RustLane => ({
     key: "Delivery_Q4",
