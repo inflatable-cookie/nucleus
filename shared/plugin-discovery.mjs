@@ -2,8 +2,6 @@
 // that still names the retired `northstar-queue` ID is ignored, not migrated.
 // Two nucleus registrations can create two bridges, even when they point at
 // the same files, so never choose between them: more than one is a refusal.
-//
-// The Paseo CLI's catalog read lives in `hosts/paseo/cli/plugin-catalog.mjs`.
 
 /** The one registered Nucleus plugin, or null when no enabled registration exists. */
 export function pluginRegistration(plugins = {}) {
