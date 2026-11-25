@@ -45,11 +45,6 @@ setup = "npm ci"
 # nucleus#1459's private proof: a finished task parent archived by the ordinary host pass,
 # with a sibling read fault, a service roll and a mismatched twin.
 "proof:t3code:parent-archive" = "node --import tsx scripts/acceptance/t3code-parent-archive-private.ts {args}"
-# nucleus#1377's and nucleus#1397's private proof: the task parent's nucleus-acp
-# process and the shared provider app-server's standing helpers are the
-# participant's runtime on a private T3Code server, with real native children and
-# the negative cases that still hold.
-"proof:t3:runtime" = "node --import tsx scripts/proof-t3-runtime.ts {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
 # and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.
 "proof:bb" = "node --import tsx scripts/acceptance/bb-private.ts {args}"

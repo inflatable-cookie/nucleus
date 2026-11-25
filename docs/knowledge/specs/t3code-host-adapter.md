@@ -1605,7 +1605,7 @@ children — or the server's children whose readable `T3CODE_THREAD_ID` names a
 recorded participant thread. A command a session's tools start stays a tool. The
 same recognition protects these processes from run cleanup and lets the
 owned-tool, review and closeout workspace proofs pass while the task is idle. The
-private proof is `effigy proof:t3:runtime`.
+pre-cutover proof exercised this recognition against an isolated T3 server.
 
 **A shared provider app-server's helpers are runtime too.** T3 starts each
 thread's provider as `<provider> app-server …` directly under the connected
