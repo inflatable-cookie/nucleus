@@ -627,7 +627,10 @@ Later decisions carry their own attribution.
       in bounded batches.
     - Planning history keeps every version from the last 30 days plus the
       newest 20 versions of each record. Older versions are compacted after a
-      verified backup. Existing backups keep the full history until they age
+      verified backup. Byte-identical snapshots count once per record, at their
+      earliest sequence. Imported versions use their original timestamp when
+      available. Item timestamps, edit revisions and artifacts awaiting
+      acceptance survive compaction. Existing backups keep the full history until they age
       out.
     - The engine takes scheduled tiered backups of its database (hourly, daily
       and weekly, as in Spec 028) under the retention settings, not only before

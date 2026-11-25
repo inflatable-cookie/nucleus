@@ -123,7 +123,8 @@ impl Store {
         database: &StorageDirectory,
         root: &StorageDirectory,
         now_ms: u64,
-    ) -> Result<(), StoreError> {
+    ) -> Result<Option<i64>, StoreError> {
+        let mut captured_sequence = None;
         let now = OffsetDateTime::from_unix_timestamp_nanos(i128::from(now_ms) * 1_000_000)
             .map_err(|_| StorageError::Layout)?;
         database.verify()?;
@@ -141,6 +142,17 @@ impl Store {
                 ".engine-checkpoint-",
                 "integrity_check",
             )?;
+            {
+                let snapshot = rusqlite::Connection::open_with_flags(
+                    verified.path(),
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                )?;
+                captured_sequence = Some(snapshot.query_row(
+                    "SELECT coalesce(max(sequence),0) FROM planning_history",
+                    [],
+                    |r| r.get(0),
+                )?);
+            }
             let capture = || -> io::Result<tempfile::NamedTempFile> {
                 let mut packed = tempfile::NamedTempFile::new_in(root.path())?;
                 let mut original = verified.reopen()?;
@@ -201,7 +213,7 @@ impl Store {
         File::open(root.path())
             .and_then(|d| d.sync_all())
             .map_err(StorageError::from)?;
-        Ok(())
+        Ok(captured_sequence)
     }
 }
 

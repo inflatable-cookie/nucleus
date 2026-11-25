@@ -212,7 +212,7 @@ fn preview(
         }
     }
     let newest: Option<i64> = connection.query_row(
-        "SELECT max(sequence) FROM planning_history WHERE project = ?1",
+        "SELECT max(version) FROM planning_record_clocks WHERE project = ?1",
         [id],
         |row| row.get(0),
     )?;
@@ -262,6 +262,7 @@ fn clear_removed_project(
         "planning_lanes",
         "planning_plans",
         "planning_history",
+        "planning_record_clocks",
     ] {
         connection.execute(
             &format!("DELETE FROM {table} WHERE project = ?1"),

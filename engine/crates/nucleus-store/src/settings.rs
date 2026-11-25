@@ -613,7 +613,14 @@ impl EngineStorage {
         let listing =
             list_operational_backups(&root, &application, BackupArchiveLimits::default(), 128);
         response.complete = listing.is_complete();
-        response.issues = listing.diagnostics().len();
+        response.issues = listing
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.kind != longhorn_config::BackupRetentionDiagnosticKind::Unmanaged
+                    || !diagnostic.path.as_deref().is_some_and(schema_backup)
+            })
+            .count();
         response.verified = listing
             .candidates()
             .iter()
@@ -624,6 +631,42 @@ impl EngineStorage {
             .collect();
         Ok(response)
     }
+}
+
+fn schema_backup(path: &Path) -> bool {
+    let Some((version, suffix)) = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("engine-before-v"))
+        .and_then(|n| n.strip_suffix(".sqlite"))
+        .and_then(|n| n.split_once('-'))
+    else {
+        return false;
+    };
+    let Ok(version) = version.parse::<i32>() else {
+        return false;
+    };
+    if !(1..crate::SCHEMA_VERSION).contains(&version)
+        || suffix.len() != 6
+        || !suffix.bytes().all(|b| b.is_ascii_alphanumeric())
+        || !path.symlink_metadata().is_ok_and(|m| m.is_file())
+    {
+        return false;
+    }
+    // Inspect only the SQLite header. Opening a WAL-mode file through SQLite can
+    // create sidecars even when the connection is read-only.
+    let Ok(fd) = open(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) else {
+        return false;
+    };
+    let mut header = [0u8; 72];
+    std::io::Read::read_exact(&mut std::fs::File::from(fd), &mut header).is_ok()
+        && header.starts_with(b"SQLite format 3\0")
+        && header[60..64] == version.to_be_bytes()
+        && header[68..72] == crate::APPLICATION_ID.to_be_bytes()
 }
 
 fn identity() -> Result<StorageIdentity, StorageError> {

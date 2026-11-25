@@ -3,6 +3,7 @@
 pub(super) mod decisions;
 mod model;
 mod removal;
+mod retention;
 
 use std::collections::BTreeSet;
 
@@ -25,14 +26,9 @@ use RecordKind::{
     Decision as DecisionRecord, Item as ItemRecord, Lane as LaneRecord, Plan as PlanRecord,
 };
 
-const ITEM_VIEW: &str = "SELECT i.snapshot,
-    (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
-        AND id = i.id ORDER BY sequence LIMIT 1),
-    h.at_ms, h.sequence
-    FROM planning_items i JOIN planning_history h ON h.sequence = (
-        SELECT sequence FROM planning_history WHERE project = i.project AND kind = 'item'
-        AND id = i.id ORDER BY sequence DESC LIMIT 1
-    )";
+const ITEM_VIEW: &str = "SELECT i.snapshot, c.created_at, c.updated_at, c.version
+    FROM planning_items i JOIN planning_record_clocks c
+    ON c.project=i.project AND c.kind='item' AND c.id=i.id";
 
 impl Store {
     /// Read the project's ordered plan. An unset plan has version zero.
@@ -542,8 +538,17 @@ fn record_history(
 ) -> Result<(), StoreError> {
     let at_ms = i64::try_from(stamp.at_ms).map_err(|_| StoreError::PlanningInput)?;
     tx.execute(
-        "INSERT INTO planning_history (project, kind, id, actor, at_ms, action, snapshot) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![project, kind.as_str(), id, stamp.actor, at_ms, action, snapshot],
+        "INSERT INTO planning_history (sequence, project, kind, id, actor, at_ms, action, snapshot)
+         SELECT coalesce(max(version),0)+1, ?1, ?2, ?3, ?4, ?5, ?6, ?7 FROM planning_record_clocks",
+        params![
+            project,
+            kind.as_str(),
+            id,
+            stamp.actor,
+            at_ms,
+            action,
+            snapshot
+        ],
     )?;
     Ok(())
 }
