@@ -32,6 +32,17 @@ const INDEX_VISIBILITY: &str = concat!(
     r#"END { if (!complete) exit 1; if (hidden) print "hidden" }'"#,
 );
 
+// Reduce potentially thousands of names to one answer. The sentinel requires
+// successful Git completion. Porcelain quotes newlines inside file names.
+const DELETIONS_ONLY: &str = concat!(
+    r#"alias.nucleus-deletions-only=! { git ls-files -v --stage && "#,
+    r#"git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none && printf '%s\n' 'Nucleus scan complete'; } | "#,
+    r#"awk '$0 == "Nucleus scan complete" { complete=1; next } "#,
+    r#"/^H (100644|100755|120000) [0-9a-f]+ 0\t/ { next } "#,
+    r#"substr($0,1,3) == " D " { deleted=1; next } { other=1 } "#,
+    r#"END { if (!complete) exit 1; if (deleted && !other) print "deletions" }'"#,
+);
+
 #[derive(Debug, thiserror::Error)]
 pub enum WorkError {
     #[error("task ID cannot be used for a worktree name")]
@@ -422,6 +433,23 @@ impl Checkout<'_> {
         self.allocate(head)
     }
 
+    /// Return the exact head only for a checkout containing solely unstaged
+    /// tracked deletions. The caller still needs independent publication evidence.
+    ///
+    /// # Errors
+    /// Returns a Git or custody error if the state cannot be verified.
+    pub fn deletion_only_head(&self) -> Result<Option<Head>, WorkError> {
+        if self.git_named(
+            &self.path,
+            &["-c", DELETIONS_ONLY, "nucleus-deletions-only"],
+            "git status for tracked deletions".into(),
+        )? != "deletions"
+        {
+            return Ok(None);
+        }
+        Ok(Some(self.owned_identity()?.head_oid().parse()?))
+    }
+
     /// Remove an idle checkout only if it is still clean at the published head.
     /// The caller establishes that its turn and tools have stopped.
     ///
@@ -439,21 +467,21 @@ impl Checkout<'_> {
         &'a self,
         published: &Head,
     ) -> Result<impl FnOnce() -> Result<Retirement, WorkError> + 'a, WorkError> {
-        let settled = match self.observe()? {
-            Workspace::Absent => Some(Retirement::Absent),
-            Workspace::Clean(head)
-                if &head == published
-                    && self.owned_identity()?.head_oid() == published.as_str() =>
-            {
-                None
-            }
-            Workspace::Clean(_) | Workspace::Dirty => Some(Retirement::Retained),
-        };
+        let initial = self.observe()?;
+        let published = published.clone();
         Ok(move || {
-            if let Some(settled) = settled {
-                return Ok(settled);
+            let flags: &[&str] = match initial {
+                Workspace::Absent => return Ok(Retirement::Absent),
+                Workspace::Clean(head) if head == published => &[],
+                Workspace::Dirty if self.deletion_only_head()?.as_ref() == Some(&published) => {
+                    &["--force"]
+                }
+                Workspace::Clean(_) | Workspace::Dirty => return Ok(Retirement::Retained),
+            };
+            if self.owned_identity()?.head_oid() != published.as_str() {
+                return Ok(Retirement::Retained);
             }
-            self.remove(&[])?;
+            self.remove(flags)?;
             Ok(Retirement::Removed)
         })
     }

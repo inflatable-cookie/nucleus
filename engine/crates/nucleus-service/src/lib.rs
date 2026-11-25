@@ -669,8 +669,8 @@ impl Service {
                 return self.advance(row, host).await;
             }
             Box::pin(self.notify_completion(row)).await?;
-            if task.phase() == Phase::Done
-                && (self.acp_provider().is_some() || task.report_task().is_some())
+            if self.acp_provider().is_some()
+                || (task.phase() == Phase::Done && task.report_task().is_some())
             {
                 return self.archive_done(row).await;
             }

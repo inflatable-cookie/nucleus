@@ -574,3 +574,53 @@ fn a_repository_name_ending_in_space_does_not_adopt_its_siblings_checkout() {
     ));
     assert!(checkout.path().join("README.md").is_file());
 }
+
+#[test]
+fn retire_only_tracked_deletions_at_the_published_head() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    repository(&repo);
+    fs::create_dir(repo.join("tracked")).unwrap();
+    for i in 0..1401 {
+        fs::write(repo.join(format!("tracked/{i}")), "published").unwrap();
+    }
+    git(&repo, &["add", "tracked"]);
+    git(&repo, &["commit", "-qm", "Publish tracked inputs"]);
+    let published: Head = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-retired")
+        .unwrap();
+    checkout.allocate(&published).unwrap();
+    fs::remove_dir_all(checkout.path().join("tracked")).unwrap();
+    for name in ["draft", "local.settings"] {
+        fs::write(checkout.path().join(name), "keep").unwrap();
+        assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+        assert_eq!(
+            fs::read_to_string(checkout.path().join(name)).unwrap(),
+            "keep"
+        );
+        fs::remove_file(checkout.path().join(name)).unwrap();
+    }
+    assert_eq!(checkout.retire(&published).unwrap(), Retirement::Removed);
+    assert!(!checkout.path().exists());
+}
+
+#[test]
+fn a_clean_head_moved_after_preparation_remains_in_custody() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let published = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-moved")
+        .unwrap();
+    checkout.allocate(&published).unwrap();
+    let retire = checkout.prepare_retirement(&published).unwrap();
+    git(
+        checkout.path(),
+        &["commit", "--allow-empty", "-m", "Unpublished"],
+    );
+    assert_eq!(retire().unwrap(), Retirement::Retained);
+    assert!(checkout.path().is_dir());
+}

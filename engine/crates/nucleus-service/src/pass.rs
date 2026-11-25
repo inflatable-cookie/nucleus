@@ -104,39 +104,14 @@ impl Service {
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         let reviewer = task.threads().get(Role::Reviewer);
         let worker = task.threads().get(Role::Worker);
-        if checkout.observe()? != Workspace::Absent {
-            if task.report_task().is_none() {
-                return Err(ServiceError::ArchiveEvidence(
-                    "Waiting for the retained task checkout to be removed.".into(),
-                ));
-            }
-            let head = self.report_archive_head(row, &checkout).await?;
-            match self
-                .retire_if_idle(task, &binding, &checkout, head.as_ref())
-                .await?
-            {
-                Some(Retirement::Retained) => {
-                    return Err(ServiceError::ReportCheckout(
-                        "the checkout changed after publication was proved",
-                    ));
-                }
-                None => {
-                    return Err(ServiceError::ArchiveEvidence(
-                        "Waiting for the task threads and checkout to be idle before removal."
-                            .into(),
-                    ));
-                }
-                Some(Retirement::Removed | Retirement::Absent) => {}
-            }
-        }
         let step = if parenting {
             self.host.prepare_archive(&binding, reviewer, worker)?
         } else {
             DoneArchive::Finished
         };
         match step {
-            DoneArchive::Finished => Ok(Action::Nothing),
-            DoneArchive::Wait(cause) => Err(ServiceError::ArchiveEvidence(cause)),
+            DoneArchive::Finished => {}
+            DoneArchive::Wait(cause) => return Err(ServiceError::ArchiveEvidence(cause)),
             DoneArchive::Write(write) => {
                 self.check_project_route(identity, &route).await?;
                 if !self.host.write_archive(write).await? {
@@ -145,8 +120,43 @@ impl Service {
                     ));
                 }
                 self.recheck_effect(row, WaitReason::Stopping).await;
-                Ok(Action::Wait(WaitReason::Stopping))
+                return Ok(Action::Wait(WaitReason::Stopping));
             }
+        }
+        let workspace = checkout.observe()?;
+        if workspace == Workspace::Absent || task.phase() == Phase::Cancelled {
+            return Ok(Action::Nothing);
+        }
+        let head = if task.report_task().is_some() {
+            self.report_archive_head(row, &checkout).await?
+        } else if task.phase() == Phase::Done {
+            task.pull_request().map(|pr| pr.head.clone())
+        } else {
+            None
+        };
+        let retained = || {
+            ServiceError::ArchiveEvidence(
+                "The task checkout was retained. Inspect its local changes.".into(),
+            )
+        };
+        let Some(head) = head else {
+            return Err(retained());
+        };
+        if workspace == Workspace::Dirty && checkout.deletion_only_head()?.as_ref() != Some(&head) {
+            return Err(retained());
+        }
+        match self
+            .retire_if_idle(task, &binding, &checkout, Some(&head))
+            .await?
+        {
+            Some(Retirement::Retained) if task.report_task().is_some() => Err(
+                ServiceError::ReportCheckout("the checkout changed after publication was proved"),
+            ),
+            Some(Retirement::Retained) => Err(retained()),
+            None => Err(ServiceError::ArchiveEvidence(
+                "Waiting for the checkout to be idle before removal.".into(),
+            )),
+            Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
         }
     }
 
@@ -1867,7 +1877,7 @@ impl Service {
         self.host
             .retire_with_quiet_shell(&parent, &threads, || ())?;
         drop(state);
-        // No Git observations or waits between the final writer check and unforced removal.
+        // Recheck Git custody and remove synchronously after final writer admission.
         Ok(Some(match remove {
             Some(remove) => remove()?,
             None => Retirement::Absent,
