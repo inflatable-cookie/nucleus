@@ -2232,9 +2232,10 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
         state: RetainedThread::Idle,
     });
     let instance = task.next_launch_instance().unwrap();
+    let parent = crate::parent_thread(checkout.path());
     let inputs = RunRequest {
         binding: binding.clone(),
-        parent: Some("parent".into()),
+        parent: Some(parent.clone()),
         dispatch: Dispatch::Continue {
             profile: Some(RoleProfile {
                 instance_id: "fixture-provider".into(),
@@ -2253,7 +2254,7 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     window["hasMoreHistory"] = json!(true);
     window["historyCursor"] = json!("earlier-items");
     window["projection"]["providerThreads"] = Value::Null;
-    window["projection"]["thread"]["parentThreadId"] = json!("parent");
+    window["projection"]["thread"]["parentThreadId"] = json!(parent);
     let child = window["projection"]["thread"].clone();
     let (host, native) = server(vec![
         (
@@ -2275,7 +2276,7 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     host.rpc.use_held_shell();
     let until_ms = 4_102_444_800_000;
     host.rpc.fixture_shell(&json!({"kind":"snapshot","snapshot":{
-        "snapshotSequence":16,"threads":[child,{"id":"parent", "snoozedUntil":"2100-01-01T00:00:00Z"}],"projects":[]
+        "snapshotSequence":16,"threads":[child,{"id":parent, "snoozedUntil":"2100-01-01T00:00:00Z"}],"projects":[]
     }}));
     let pass = host.pass(checkout.path());
     let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
