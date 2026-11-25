@@ -102,6 +102,12 @@ The selector creates its `releases` child if needed. It builds `nucleus` with
 and `skills/nucleus/SKILL.md` together under `<builds-root>/releases/<git-sha>/`.
 It refuses an existing release or a destination that changes during staging.
 
+On macOS, staging uses the installed `Nucleus Local Signing` identity by default.
+Set `NUCLEUS_CODESIGN_IDENTITY` to use another installed identity by name.
+Staging signs the copied executable with the fixed identifier
+`com.inflatable-cookie.nucleus` and verifies it before publishing. Reuse the
+same certificate across releases so Keychain can recognize the engine.
+
 At activation, point the CLI runtime link and the service and ACP launchers
 at the staged `nucleus`. Pass its `board-assets/` to the service. The managed
 skill link at `<engine-home>/skills/nucleus` points to that release's skill
