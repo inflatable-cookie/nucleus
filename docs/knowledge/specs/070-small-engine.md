@@ -672,7 +672,7 @@ Later decisions carry their own attribution.
     reviewer credentials. REST reads revalidate cached representations by URL
     and bearer. The GraphQL checks query runs on every open-PR observation
     that needs checks. Every page must identify the head and base commit from
-    the PR read. Incomplete or inconsistent evidence keeps the merge gate closed.
+    the PR read. Every selected field must be present on every page, including nullable fields. Incomplete or inconsistent evidence keeps the merge gate closed.
 
 45. **A worker that stops early continues.** On 2026-11-25 the Bovine planner,
     asked by Tom to agree a fix, reported Terra workers ending their first
