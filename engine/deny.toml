@@ -1,15 +1,8 @@
+# The engine:deny selector passes one supported target per invocation.
+# Longhorn enables keyring on macOS and Windows. Its zbus dependency applies
+# to other Unix targets. Checking these targets together joins incompatible edges.
 [advisories]
-# The all-target lock graph joins keyring's non-Apple Unix zbus edge with
-# Longhorn's macOS/Windows-only keyring edge. Cargo trees for macOS, Windows
-# and Linux contain none of these crates. Remove when Longhorn's keyring
-# facade drops its zbus 5 dependency or updates to the merged zbus 6 crates.
-# cargo-deny 0.19.4 only accepts an advisory ID and reason. Recheck the
-# separate target graphs if any of these locked versions change.
-ignore = [
-  { id = "RUSTSEC-2026-0370", reason = "zvariant 5.9.2 only appears in the all-target keyring union" },
-  { id = "RUSTSEC-2026-0371", reason = "zbus_names 4.3.1 only appears in the all-target keyring union" },
-  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5.9.2 only appears in the all-target keyring union" },
-]
+ignore = []
 
 [bans]
 # Transitive consumers still require different versions of some crates.
