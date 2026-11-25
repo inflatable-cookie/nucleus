@@ -876,6 +876,84 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
 }
 
 #[tokio::test]
+async fn queued_external_merge_acceptance_bypasses_saturation() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let head = service.fixture().start.clone();
+    let (forge, readable, reads, server) = serve_merged_forge(&head).await;
+    readable.store(true, Ordering::Relaxed);
+    service.forge = forge;
+    let (mut holder, _, _) = reservation("holder", Entry::Brief, &head);
+    let instance = holder.run().unwrap().launch().instance.clone();
+    holder.record_send(&instance, 2).unwrap();
+    seed_task(&service, &holder).await;
+    service.state.lock().await.schedule.park("holder");
+    let (shape, _, _) = reservation("reviewer", Entry::Brief, &head);
+    let task = Task::new(
+        shape.identity().clone(),
+        "Fixture external merge".into(),
+        Some(nucleus_core::PullRequest {
+            url: PR.into(),
+            head: head.clone(),
+        }),
+    );
+    seed_task(&service, &task).await;
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    assert!(matches!(
+        service
+            .command("reviewer", &operator, Command::Move(Phase::Done))
+            .await
+            .unwrap(),
+        crate::CommandOutcome::Pending { .. }
+    ));
+    service.pass().await.unwrap();
+    let waiting = service.task("reviewer").await.unwrap();
+    assert_eq!(waiting.task.phase(), Phase::Queued);
+    assert!(matches!(
+        waiting.task.question(),
+        Some(Question::Accept { head: asked }) if asked == &head
+    ));
+    let answer = Command::Answer(nucleus_core::Answer::Accept {
+        head,
+        reason: "Reviewed the exact external merge".into(),
+    });
+    assert!(matches!(
+        service
+            .command("reviewer", &operator, answer.clone())
+            .await
+            .unwrap(),
+        crate::CommandOutcome::Pending { .. }
+    ));
+    service.pass().await.unwrap();
+    assert!(matches!(
+        service
+            .command("reviewer", &operator, answer)
+            .await
+            .unwrap(),
+        crate::CommandOutcome::Applied(_)
+    ));
+    service.state.lock().await.schedule.park("reviewer");
+    assert!(matches!(
+        service
+            .command("reviewer", &operator, Command::Move(Phase::Done))
+            .await
+            .unwrap(),
+        crate::CommandOutcome::Pending { .. }
+    ));
+    service.pass().await.unwrap();
+    let row = service.task("reviewer").await.unwrap();
+    assert_eq!(row.task.phase(), Phase::Closing);
+    assert!(row.task.run().is_none());
+    assert_eq!(reads.load(Ordering::Relaxed), 3);
+    assert_eq!(
+        service.state.lock().await.store.occupied_slots("").unwrap(),
+        1
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let (forge, server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls/1"),
@@ -1713,6 +1791,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     let now = tokio::time::Instant::now();
     {
         let mut state = service.state.lock().await;
+        state.capacity_waiters.insert((1, "awaiting-slot".into()));
         state.set_wait("awaiting-slot", Some(nucleus_core::WaitReason::Capacity));
         state.schedule.wake(
             "awaiting-slot",

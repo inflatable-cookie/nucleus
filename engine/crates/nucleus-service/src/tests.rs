@@ -715,6 +715,11 @@ async fn an_unconfirmed_hold_gets_readback_only_until_its_exact_message_is_obser
     }).await;
     service.host = host;
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        global_slots: 1,
+        project_default_slots: 1,
+        ..Default::default()
+    });
     let runtime = service.host.runtime_identity().unwrap();
     let row = {
         let mut state = service.state.lock().await;
@@ -879,6 +884,72 @@ pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {
     native_fixture_with_traffic(response, None).await
+}
+
+#[tokio::test]
+async fn full_checkout_budget_does_not_peek_at_t3() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (host, native) = native_fixture(|request| {
+        panic!("queued checkout wait called T3: {}", request["tag"]);
+    })
+    .await;
+    service.host = host;
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let root = service.storage.work().path();
+    assert!(
+        !root.exists(),
+        "the fresh profile has no managed checkout root"
+    );
+    let head = &service.fixture().start;
+    let checkout_repo = &service.fixture().checkout;
+    let worktrees = service.worktrees().unwrap();
+    for id in ["first-owned", "second-owned"] {
+        let (shape, _, observation) = reservation(id, Entry::Brief, head);
+        let mut task = Task::new(shape.identity().clone(), "Fixture".into(), None);
+        task.command(
+            Command::Hold("Retain the checkout".into()),
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            &observation,
+        )
+        .unwrap();
+        worktrees
+            .checkout(checkout_repo, REPOSITORY, id)
+            .unwrap()
+            .allocate(head)
+            .unwrap();
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state.schedule.park(id);
+    }
+    let (shape, _, _) = reservation("queued", Entry::Brief, head);
+    let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        assert_eq!(state.store.occupied_slots("").unwrap(), 0);
+        state.store.create(&queued, &event("fixture")).unwrap();
+    }
+    for _ in 0..2 {
+        let outcomes = service.pass().await.unwrap();
+        assert!(matches!(
+            outcomes.as_slice(),
+            [PassOutcome {
+                result: Ok(Action::Wait(WaitReason::Capacity)),
+                ..
+            }]
+        ));
+        let row = service.task("queued").await.unwrap();
+        assert_eq!(row.task, queued);
+        assert_eq!(row.version, 1);
+        let mut state = service.state.lock().await;
+        assert!(state.last_pass_calls.is_empty());
+        state
+            .schedule
+            .wake("queued", Instant::now(), Priority::Wake);
+    }
+    assert!(service.host.host_calls().is_empty());
+    native.abort();
 }
 
 #[tokio::test]

@@ -330,14 +330,14 @@ impl Store {
         Ok(load(&self.connection, id)?)
     }
 
-    /// Read one bounded page of active task IDs from the active index.
+    /// Read active task IDs in admission order, with the ordinal for first workers.
     /// # Errors
     /// Returns an error if the database cannot read the page.
     pub fn active_ids(
         &self,
         after: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<(String, bool)>, StoreError> {
+    ) -> Result<Vec<(String, Option<i64>)>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "WITH cursor AS (SELECT coalesce((SELECT rowid FROM tasks WHERE id = ?2), 0) AS seq),
              due AS (SELECT rowid AS admitted, id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
@@ -360,14 +360,26 @@ impl Store {
                       AND coalesce(p.phase, '') != 'done'
                  )
              ORDER BY admitted LIMIT ?1)
-             SELECT due.id, t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
+             SELECT due.id, CASE WHEN t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
                AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
+               THEN due.admitted END
              FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
         Ok(ids.collect::<Result<_, _>>()?)
+    }
+
+    /// Read the admission ordinal used to order capacity waiters across repositories.
+    ///
+    /// # Errors
+    /// Returns an error if the task row cannot be read.
+    pub fn admission_order(&self, id: &str) -> Result<i64, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached("SELECT rowid FROM tasks WHERE id = ?1")?
+            .query_row([id], |row| row.get(0))?)
     }
 
     /// Read the IDs of tasks that hold a run.

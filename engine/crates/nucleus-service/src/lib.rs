@@ -27,7 +27,7 @@ mod titles;
 mod web;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     os::fd::OwnedFd,
     path::PathBuf,
@@ -248,7 +248,7 @@ struct State {
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
-    capacity_waiters: VecDeque<String>,
+    capacity_waiters: BTreeSet<(i64, String)>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
@@ -412,7 +412,7 @@ impl Service {
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
-                capacity_waiters: VecDeque::new(),
+                capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
@@ -643,13 +643,13 @@ impl Service {
         if row.task.phase() == Phase::ReportReady {
             return Box::pin(self.notify_report_ready(row)).await;
         }
-        if task.first_launch()
-            && task.hold().is_none()
-            && task.question().is_none()
-            && (!self.dispatch_mode().await.allows_launch(true)
-                || !self.launch_capacity(task.identity(), false).await?)
-        {
-            return Ok(Action::Wait(WaitReason::Capacity));
+        if task.first_launch() && task.hold().is_none() && task.question().is_none() {
+            let state = self.state.lock().await;
+            if !state.forge_requested.contains(&task.identity().id)
+                && !self.initial_dispatch_allowed(&state, task.identity())?
+            {
+                return Ok(Action::Wait(WaitReason::Capacity));
+            }
         }
         self.refresh_acp_if_requested(row).await?;
         self.advance(row, host).await
@@ -823,6 +823,19 @@ impl Service {
         recovery: bool,
     ) -> Result<bool, ServiceError> {
         self.launch_capacity_in(&*self.state.lock().await, identity, recovery)
+    }
+
+    fn initial_dispatch_allowed(
+        &self,
+        state: &State,
+        identity: &Identity,
+    ) -> Result<bool, ServiceError> {
+        Ok(state
+            .settings
+            .dispatch
+            .as_ref()
+            .is_none_or(|dispatch| dispatch.mode.allows_launch(true))
+            && self.launch_capacity_in(state, identity, false)?)
     }
 
     fn launch_capacity_in(
@@ -1773,14 +1786,22 @@ impl State {
         self.waits.get(id).and_then(|wait| wait.detail.as_ref())
     }
 
+    fn enqueue_capacity(&mut self, id: &str) -> Result<(), StoreError> {
+        if !self
+            .capacity_waiters
+            .iter()
+            .any(|(_, waiting)| waiting == id)
+        {
+            self.capacity_waiters
+                .insert((self.store.admission_order(id)?, id.into()));
+        }
+        Ok(())
+    }
+
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
-        if reason == Some(WaitReason::Capacity) {
-            if !self.capacity_waiters.iter().any(|waiting| waiting == id) {
-                self.capacity_waiters.push_back(id.into());
-            }
-        } else {
+        if reason != Some(WaitReason::Capacity) {
             self.group_waits.remove(id);
-            self.capacity_waiters.retain(|waiting| waiting != id);
+            self.capacity_waiters.retain(|(_, waiting)| waiting != id);
         }
         let entry = self.waits.entry(id.into()).or_insert_with(|| TaskWait {
             reason: None,
@@ -1812,6 +1833,9 @@ impl State {
         detail: Option<WaitDetail>,
     ) -> Result<bool, StoreError> {
         let id = &task.identity().id;
+        if reason == Some(WaitReason::Capacity) && self.wait_reason(id) != reason {
+            self.enqueue_capacity(id)?;
+        }
         // The first pass after restart establishes a baseline for a volatile wait.
         let entered = self.wait_label_changed(task, reason, detail.as_ref());
         if entered {
@@ -1872,15 +1896,15 @@ impl State {
         self.schedule.take_ready(
             now,
             visited,
-            self.capacity_waiters.front().map(String::as_str),
+            self.capacity_waiters.iter().map(|(_, id)| id.as_str()),
         )
     }
 
     fn wake_capacity(&mut self, now: Instant) {
-        if let Some(id) = self
-            .capacity_waiters
-            .iter()
-            .find(|id| !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now))
+        if let Some(id) =
+            self.capacity_waiters.iter().map(|(_, id)| id).find(|id| {
+                !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now)
+            })
         {
             self.schedule.wake(id, now, Priority::Effect);
         }

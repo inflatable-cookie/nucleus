@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
@@ -185,7 +185,7 @@ impl Schedule {
         store: &Store,
         now: Instant,
         parenting: bool,
-        capacity_waiters: &mut VecDeque<String>,
+        capacity_waiters: &mut BTreeSet<(i64, String)>,
     ) -> Result<(), ServiceError> {
         if now < self.scan_at {
             return Ok(());
@@ -203,10 +203,10 @@ impl Schedule {
             } else {
                 SCAN_INTERVAL
             };
-        for (id, first_worker) in ids {
+        for (id, admitted) in ids {
             self.tasks.entry(id.clone()).or_insert_with(|| {
-                if first_worker && !capacity_waiters.contains(&id) {
-                    capacity_waiters.push_back(id);
+                if let Some(admitted) = admitted {
+                    capacity_waiters.insert((admitted, id));
                 }
                 let mut pending = Pending::default();
                 pending.wake(now, Priority::Decision);
@@ -223,21 +223,22 @@ impl Schedule {
         Ok(())
     }
 
-    pub(crate) fn take_ready(
+    pub(crate) fn take_ready<'a>(
         &mut self,
         now: Instant,
         visited: &BTreeSet<String>,
-        first_waiting: Option<&str>,
+        waiting: impl IntoIterator<Item = &'a str>,
     ) -> Option<DueTask> {
         let ((priority, _), id) = self
             .tasks
             .iter()
             .filter_map(|(id, pending)| pending.ready(now).map(|ready| (ready, id)))
             .min()?;
-        let (priority, id) = first_waiting
-            .and_then(|first| self.tasks.get_key_value(first))
-            .and_then(|(first, due)| due.ready(now).map(|(priority, _)| (priority, first)))
-            .filter(|(first, _)| priority != Priority::Effect || *first == Priority::Effect)
+        let (priority, id) = waiting
+            .into_iter()
+            .filter_map(|id| self.tasks.get_key_value(id))
+            .filter_map(|(id, due)| due.ready(now).map(|(priority, _)| (priority, id)))
+            .find(|(candidate, _)| priority != Priority::Effect || *candidate == Priority::Effect)
             .unwrap_or((priority, id));
         // Start a fresh pass instead of observing the same task again with the
         // census shared by this pass. Lower priority work stays in the queue.

@@ -284,6 +284,12 @@ impl Service {
         }
         match action {
             Action::Advance(Phase::Working) if task.phase() == Phase::Queued => {
+                if forge_requested && let Some(error) = forge_error {
+                    return Err(error);
+                }
+                if observation.workspace == Observed::Unknown {
+                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                }
                 let _fence = self.effect(row).await?;
                 let _projects = self.project_writes.read().await;
                 let route = self.project_for(identity).await?;
@@ -295,7 +301,12 @@ impl Service {
                 {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
-                let configured = self.state.lock().await.settings.profiles.is_some();
+                let state = self.state.lock().await;
+                if !self.initial_dispatch_allowed(&state, identity)? {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let configured = state.settings.profiles.is_some();
+                drop(state);
                 if !configured {
                     let Some(fixture) = self
                         .project
@@ -316,18 +327,14 @@ impl Service {
                 if state.store.dependency_blocked(&identity.id)? {
                     return Ok(Action::Wait(WaitReason::Prerequisite));
                 }
-                if !state
-                    .settings
-                    .dispatch
-                    .as_ref()
-                    .is_none_or(|dispatch| dispatch.mode.allows_launch(task.first_launch()))
-                    || !self.launch_capacity_in(&state, identity, false)?
-                {
+                if !self.initial_dispatch_allowed(&state, identity)? {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
                 let mut admitted = task.clone();
                 admitted.reconcile(&observation);
+                let order = state.store.admission_order(&identity.id)?;
                 self.commit(&mut state, row, &admitted, &event("queue_admitted"), None)?;
+                state.capacity_waiters.insert((order, identity.id.clone()));
                 Ok(action)
             }
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {

@@ -492,7 +492,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     assert_eq!(store.active().expect("active"), vec![task.clone()]);
     assert_eq!(
         store.active_ids(None, 1).expect("first page"),
-        [("1".into(), false)]
+        [("1".into(), None)]
     );
     assert!(
         store

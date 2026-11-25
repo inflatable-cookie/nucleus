@@ -466,7 +466,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
     }
     if matches!(
         task.phase,
-        Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
+        Phase::Queued | Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
     ) {
         if let Observed::Known(Forge::Merged { pr, commit }) = &observation.forge {
             if task.phase != Phase::Closing || !task.approves(&pr.head) {
