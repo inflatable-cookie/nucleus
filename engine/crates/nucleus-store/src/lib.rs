@@ -10,6 +10,7 @@ mod inbox;
 mod numbers;
 mod parent_delivery;
 pub mod planning;
+mod review_publication;
 mod settings;
 mod settings_domains;
 mod task_rows;
@@ -34,6 +35,7 @@ pub use dependencies::{
 pub use github_accounts::{GITHUB_HOST, GitHubAccount, GitHubAccountSettings};
 pub use inbox::InboxBinding;
 pub use parent_delivery::{ParentDelivery, ParentResult};
+pub use review_publication::{ReviewIntent, ReviewPublication, ReviewPublicationOutcome};
 pub use settings::{
     Backups, BargePaths, EngineSettings, EngineStorage, RetentionSettings, SettingsFile,
     SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
@@ -84,6 +86,8 @@ pub enum StoreError {
     IdentityChanged,
     #[error("task changed since it was read")]
     StaleTask,
+    #[error("review publication journal does not match the outstanding intent")]
+    ReviewPublicationConflict,
     #[error("dependency change would create a cycle")]
     DependencyCycle,
     #[error("planning record was not found")]
