@@ -2802,6 +2802,50 @@ async fn restored_task_board_age(registry: &Registry) -> [Option<u64>; 4] {
     [latest, since, admitted, latest.or(since).or(admitted)]
 }
 
+#[tokio::test]
+async fn saved_filter_alias_considers_removed_projects_without_exposing_receipts() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let before = removal_settings(&registry);
+    let project = before.value.projects.values().next().unwrap().clone();
+    registry
+        .service
+        .settings
+        .edit::<nucleus_store::Projects>(&before.revision, |settings| {
+            settings.projects.clear();
+            settings.projects.insert("Orbit_Main".into(), project);
+            Ok(())
+        })
+        .unwrap();
+    let settings = || get_as(&registry.api, PROJECTS, &BOARD_KEY);
+    let view = json_body(settings().await).await;
+    assert_eq!(
+        view["legacyScopeKeys"],
+        json!({"Orbit_Main":"p-orbit-main"})
+    );
+    let before = removal_settings(&registry);
+    registry
+        .service
+        .settings
+        .edit::<nucleus_store::Projects>(&before.revision, |settings| {
+            settings.removed.insert(
+                "p-orbit-main".into(),
+                serde_json::from_value(json!({
+                    "repositories":[{"origin":"example/retired","path":"/fixture/retired"}],
+                    "blockedOrigins":["example/retired"],"cleanupPending":false,
+                    "digest":"retired","reason":"Retired","removedAtMs":42
+                }))
+                .unwrap(),
+            );
+            Ok(())
+        })
+        .unwrap();
+    let view = json_body(settings().await).await;
+    assert_eq!(view["legacyScopeKeys"], json!({}));
+    assert!(view["settings"]["value"].get("removed").is_none());
+    assert!(!view.to_string().contains("example/retired"));
+}
+
 fn removal_settings(
     registry: &Registry,
 ) -> nucleus_store::SettingsSnapshot<nucleus_store::Projects> {
