@@ -30,8 +30,6 @@ setup = "npm ci"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 # nucleus#1366's private snooze proof: the one row rule against the installed nightly.
 "proof:t3code:inbox" = "node --import tsx scripts/acceptance/t3code-inbox-private.ts {args}"
-# nucleus#1407's private proof: a settled inbox wake outside the bounded window (--expect blocked|woken).
-"proof:t3code:window" = "node --import tsx scripts/acceptance/t3code-window-private.ts {args}"
 "proof:t3code:snooze" = "node --import tsx scripts/acceptance/t3code-snooze-private.ts {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
 # and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.

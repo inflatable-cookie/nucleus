@@ -1210,10 +1210,9 @@ How the previous occurrence is judged depends on its send (nucleus#1407):
   paged transcript raises `subscribeThread: incomplete projection`, nothing is
   resent, and re-entry waits. The sweep reports it after its nesting pass runs,
   not as a silent skip.
-  `effigy proof:t3code:window` runs this case on the installed nightly: an earlier
-  wake pushed outside the window, a T3 daemon restart that keeps the inbox thread,
-  binding and credential, then a fresh decision (`--expect woken`, or `--expect
-  blocked` on the pre-fix code). Its evidence names the source revision it ran.
+  The pre-cutover proof covered an earlier wake outside the window, a T3 daemon
+  restart that kept the inbox thread, binding and credential, then a fresh decision.
+  Its evidence records the source revision and whether the decision woke the thread.
 
 **The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
 while an operator decision is offered: the same host-scoped projection that raises
