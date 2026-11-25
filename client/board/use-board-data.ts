@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   keepPreviousData,
+  skipToken,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -13,7 +14,7 @@ import {
   scopedProjects,
   type ProjectScope,
 } from "../../shared/project-scope";
-import { lanePlaces } from "../../shared/lane-finder";
+import { lanePlaces, laneProjects } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
 import { useEngineFeatures } from "../engine-features";
 import { domainRevision, useBoardState } from "../board-state";
@@ -185,20 +186,30 @@ export function usePlanningData({
       : null;
   const {
     lane: planningLane,
+    project: planningLaneProject,
     setLane: setPlanningLane,
     step: planningStep,
     setStep: setPlanningStep,
   } = usePlanningLane(planningInScope, onLeaveLane);
+  const planningLaneRecord = lanes.find((lane) =>
+    lane.key === planningLane &&
+    Boolean(planningLaneProject) &&
+    laneProjects(lane, state?.projects ?? []).some(({ key }) => key === planningLaneProject),
+  );
+  const planningLaneRef =
+    planningLaneProject && planningLaneRecord
+      ? { key: planningLane, project: planningLaneProject }
+      : null;
   const documentQuery = useQuery({
-    queryKey: ["nucleus", "lane-document", planningLane],
-    queryFn: () => fetchLaneDocument({ key: planningLane }),
-    enabled: tab === "planning" && Boolean(planningLane),
+    queryKey: ["nucleus", "lane-document", planningLaneProject, planningLane],
+    queryFn: planningLaneRef ? () => fetchLaneDocument(planningLaneRef) : skipToken,
+    enabled: tab === "planning" && Boolean(planningLaneRef),
     refetchInterval: rust ? false : 4000,
     staleTime: rust ? Infinity : 0,
   });
-  useEffect(() => setLaneTaskOffset(0), [planningLane]);
+  useEffect(() => setLaneTaskOffset(0), [planningLaneProject, planningLane]);
   const laneTasksQuery = useQuery({
-    queryKey: ["nucleus", "lane-tasks", planningLane, laneTaskOffset],
+    queryKey: ["nucleus", "lane-tasks", planningLaneProject, planningLane, laneTaskOffset],
     queryFn: () =>
       fetchLaneTaskPage({
         lane: planningLane!,
@@ -209,7 +220,6 @@ export function usePlanningData({
     refetchInterval: rust ? false : 4000,
     staleTime: rust ? Infinity : 0,
   });
-  const planningLaneRecord = lanes.find((lane) => lane.key === planningLane);
   // The open lane's leads and papercuts come from every project that lists the lane, whatever the
   // chooser shows, so the lane screen's counts are the lane's own (#867). A lane no project lists falls
   // back to the projects in scope, as it did before (#866).
@@ -232,6 +242,8 @@ export function usePlanningData({
     lanes,
     planningProjects,
     planningLane,
+    planningLaneProject,
+    planningLaneRef,
     setPlanningLane,
     planningStep,
     setPlanningStep,

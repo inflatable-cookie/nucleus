@@ -94,17 +94,19 @@ export function usePlanningLane(
   inScope: string[] | null,
   onLeave: () => void = () => {},
 ) {
-  const [lane, setLane] = useState(""),
-    [step, setStep] = useState<PlanningStep>("plan");
+  const [selection, setSelection] = useState<{ lane: string; project?: string }>({ lane: "" });
+  const [step, setStep] = useState<PlanningStep>("plan");
+  const { lane, project } = selection;
   const scopeKey = inScope?.join("\n") ?? null;
   useEffect(() => {
     if (lane && inScope && !inScope.includes(lane)) {
-      setLane("");
+      setSelection({ lane: "" });
       setStep("plan");
       onLeave();
     }
   }, [lane, scopeKey]);
-  return { lane, setLane, step, setStep };
+  const setLane = (key: string, project?: string) => setSelection({ lane: key, project });
+  return { lane, project, setLane, step, setStep };
 }
 
 /** Hosts with a DOM (the Paseo settings page, the web board) dismiss an open chooser on an outside press or Escape; native hosts skip the listeners. */

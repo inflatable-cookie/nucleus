@@ -225,6 +225,8 @@ export function MainSurface({
     lanes,
     planningProjects,
     planningLane,
+    planningLaneProject,
+    planningLaneRef,
     setPlanningLane,
     planningStep,
     setPlanningStep,
@@ -311,9 +313,13 @@ export function MainSurface({
       ),
     );
   };
-  const selectPlanningLane = (key: string) => {
+  const selectPlanningLane = (key: string, project?: string) => {
+    if (!project) {
+      setError("Select a project before opening this lane.");
+      return;
+    }
     setPlanningPin(key);
-    setPlanningLane(key);
+    setPlanningLane(key, project);
     setLaneDraft(null);
     setPlanningStep("lane");
   };
@@ -329,9 +335,9 @@ export function MainSurface({
     setMenuOpen(false);
   };
   /** The drained-lane card's press opens its lane in Planning (nucleus#1511). */
-  const openLaneInPlanning = (key: string) => {
+  const openLaneInPlanning = (key: string, project?: string) => {
     openView("planning");
-    selectPlanningLane(key);
+    selectPlanningLane(key, project);
   };
 
   const laneName = (key: string) =>
@@ -561,20 +567,23 @@ export function MainSurface({
                   listSurface: narrow && canvas !== section ? "canvas" : "section",
                 }}
                 leads={boardLeads}
-                onCloseLane={(lane) =>
-                  void act(() =>
-                    changeLaneStatus({ key: lane, status: "done" }),
-                  )
+                onCloseLane={(key, project) =>
+                  void act(() => {
+                    const input = { key, project, status: "done" as const };
+                    return changeLaneStatus(input);
+                  })
                 }
-                onReopenLane={(lane) =>
-                  void act(() =>
-                    changeLaneStatus({ key: lane, status: "active" }),
-                  )
+                onReopenLane={(key, project) =>
+                  void act(() => {
+                    const input = { key, project, status: "active" as const };
+                    return changeLaneStatus(input);
+                  })
                 }
                 busy={busy}
                 step={planningStep}
                 onStep={setPlanningStep}
                 selectedLane={planningLane}
+                selectedLaneProject={planningLaneProject}
                 onOpenLane={selectPlanningLane}
                 lanes={lanes}
                 projects={state?.projects ?? []}
@@ -636,11 +645,11 @@ export function MainSurface({
                   readPlan({ project, version })
                 }
                 lanePanel={(laneContext) =>
-                  planningLaneRecord ? (
+                  planningLaneRecord && planningLaneRef ? (
                     <LaneScreen
-                      key={planningLaneRecord.key}
+                      key={JSON.stringify([planningLaneRef.project, planningLaneRef.key])}
                       lane={planningLaneRecord}
-                      project={laneContext.project}
+                      project={planningLaneRef.project}
                       compact={compact}
                       projects={state?.projects ?? []}
                       plans={planQuery.data ?? []}
@@ -656,7 +665,7 @@ export function MainSurface({
                       onDraft={setLaneDraft}
                       onSaveDocument={async ({ version, text }) => {
                         await saveLaneDocument({
-                          key: planningLaneRecord.key,
+                          ...planningLaneRef,
                           version,
                           text,
                           author: "operator (board)",
@@ -669,7 +678,7 @@ export function MainSurface({
                       onRetryDocument={() => void documentQuery.refetch()}
                       readVersion={(version) =>
                         fetchLaneDocument({
-                          key: planningLaneRecord.key,
+                          ...planningLaneRef,
                           version,
                         })
                       }
@@ -721,10 +730,7 @@ export function MainSurface({
                       }}
                       onSetStatus={(status) =>
                         void act(() =>
-                          changeLaneStatus({
-                            key: planningLaneRecord.key,
-                            status,
-                          }),
+                          changeLaneStatus({ ...planningLaneRef, status }),
                         )
                       }
                       c={c}
