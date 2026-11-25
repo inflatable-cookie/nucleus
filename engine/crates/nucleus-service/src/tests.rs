@@ -89,7 +89,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     (home, service)
 }
 
-fn create_fixture_commit(repository: &Path, message: &str) {
+pub(super) fn create_fixture_commit(repository: &Path, message: &str) {
     git(
         repository,
         &[
@@ -283,7 +283,7 @@ pub(super) fn forge_pull(head: &Head) -> Value {
 
 pub(super) fn forge_checks(head: &Head) -> Value {
     json!({"data":{"repository":{"pullRequest":{
-        "headRefOid":head, "baseRefName":"main", "isDraft":false, "state":"OPEN",
+        "headRefOid":head, "baseRefName":"main", "baseRefOid":head, "isDraft":false, "state":"OPEN",
         "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
         "statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false},"nodes":[]}},
     }}}})

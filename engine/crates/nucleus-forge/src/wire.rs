@@ -208,10 +208,15 @@ impl GraphReply {
             .any(|error| error.kind.as_deref() == Some("RATE_LIMITED"))
     }
 
-    pub(crate) fn checks(self, head: &Head, base: &str) -> Result<Checks, ForgeError> {
+    pub(crate) fn checks(
+        self,
+        head: &Head,
+        base: &str,
+        base_oid: &Head,
+    ) -> Result<Checks, ForgeError> {
         let checks: Checks = self.pull_request()?;
         verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
-        if checks.state != "OPEN" {
+        if checks.state != "OPEN" || checks.base_ref_oid.as_ref() != Some(base_oid) {
             return Err(ForgeError::Incomplete);
         }
         Ok(checks)
@@ -269,10 +274,8 @@ impl Checks {
             .filter(|cursor| page.has_next_page && !cursor.is_empty())
     }
 
-    pub(crate) fn append(&mut self, next: Self, base: &Head) -> Result<(), ForgeError> {
-        if self.base_ref_oid.as_ref() != Some(base)
-            || next.base_ref_oid.as_ref() != Some(base)
-            || self.is_draft != next.is_draft
+    pub(crate) fn append(&mut self, next: Self) -> Result<(), ForgeError> {
+        if self.is_draft != next.is_draft
             || self.mergeable != next.mergeable
             || self.merge_state_status != next.merge_state_status
             || self.review_decision != next.review_decision

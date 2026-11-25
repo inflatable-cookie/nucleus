@@ -578,7 +578,7 @@ impl GitHub {
             let required = &target.branches.required_checks;
             let named = merge || !required.is_empty();
             let page = self.query_pull(target, CHECKS_QUERY, named, None).await?;
-            let mut checks = page.checks(&pull.head.sha, &target.branches.base)?;
+            let mut checks = page.checks(&pull.head.sha, &target.branches.base, &pull.base.sha)?;
             let mut cursors = std::collections::BTreeSet::new();
             while let Some(cursor) = checks.next_cursor() {
                 if cursors.len() + 1 >= MAX_CHECK_PAGES || !cursors.insert(cursor.to_owned()) {
@@ -587,10 +587,11 @@ impl GitHub {
                 let page = self
                     .query_pull(target, CHECKS_QUERY, true, Some(cursor))
                     .await?;
-                checks.append(
-                    page.checks(&pull.head.sha, &target.branches.base)?,
+                checks.append(page.checks(
+                    &pull.head.sha,
+                    &target.branches.base,
                     &pull.base.sha,
-                )?;
+                )?)?;
             }
             checks.state(required, named)
         } else {

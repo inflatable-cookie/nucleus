@@ -41,8 +41,9 @@ the registered checkout and not the repository's integration checkout.
 
 On the Rust engine, `task.add --planning-commit <sha>` checks the requested pin
 against the published integration tip. The registered repository must already
-have the commit available to Git. The worker's allocated checkout starts at the
-recorded pin.
+have the commit available to Git and its tracked files must be clean. Admission
+refuses index flags that hide tracked edits, including assume-unchanged and
+skip-worktree. The worker's allocated checkout starts at the recorded pin.
 
 ## Run each slice under a durable run key
 
