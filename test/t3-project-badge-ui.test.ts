@@ -2,19 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
-import { Store } from "../core/store/store";
 import { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../client/engine-features";
 import { generatedProjectBadge, projectBadgeWebForeground } from "../shared/t3/project-badge";
-import {
-  submissionSchema,
-  summarizeTask,
-  type Task,
-} from "../shared/contracts";
+import { taskSummarySchema } from "../shared/contracts";
 
 /**
  * nucleus#1450: a board task card shows the generated T3 project badge in the colours of
  * the surface's mode, and keeps the folder icon when no badge applies. The card is mounted
- * from a real stored task summary, as the board renders it.
+ * with a schema-checked task summary, as the board renders it.
  * nucleus#1487: the stub style is the browser-safe conversion (sRGB foreground plus the
  * same entry at 14% alpha), because react-native-web drops the pinned `oklch()` and
  * `color-mix()` declarations. The real RN Web emission is covered by
@@ -29,7 +24,6 @@ const load = async () => {
 };
 
 const h = React.createElement;
-const head = "a".repeat(40);
 const dark = {
   accent: "#8caaff",
   accentForeground: "#101521",
@@ -51,28 +45,23 @@ const light = {
   foregroundMuted: "#5b6472",
 } as const;
 
-function seededSummary(store: Store, repoPath: string) {
-  const inserted = store.insert(
-    submissionSchema.parse({
-      submissionId: "badge-card",
-      title: "Badge card",
-      repoPath,
-      planningCommit: head,
-      handoffPath: "badge-card.md",
-      originAgentId: "0b355fd4",
-    }),
-    "host",
-    "handoff",
-    head,
-  );
-  const task: Task = store.update(inserted.id, {
-    notificationAgentId: "56e9c969",
-    originError: "",
-    originLookupError: "",
+function seededSummary(repoPath: string) {
+  return taskSummarySchema.parse({
+    id: "badge-card",
+    title: "Badge card",
+    repoPath,
+    version: 2,
+    hostId: "t3code:env-a",
+    number: null,
+    reference: null,
+    entrypoint: "worker",
     phase: "queued",
+    reason: "",
+    held: false,
+    dependsOn: [],
+    queuePriority: 0,
+    resolution: {},
   });
-  // The host is the summary's own field: a T3 task's identity, as the board reads it.
-  return { ...summarizeTask(task), hostId: "t3code:env-a" };
 }
 
 /** The monogram's text node, and the colour its style resolves to. */
@@ -85,109 +74,94 @@ function monogramNode(
 
 test("a matched T3 project shows its monogram in the dark surface's colour", async () => {
   await load();
-  const store = new Store(":memory:");
+  const summary = seededSummary("/synthetic/repos/biock-aase");
+  const ui = mount(
+    h(queue.TaskCard as never, {
+      task: summary,
+      selected: false,
+      onPress: () => {},
+      c: dark as never,
+      board: true,
+      projectBadge: { monogram: "BA", color: "fuchsia" },
+    }),
+  );
   try {
-    const summary = seededSummary(store, "/synthetic/repos/biock-aase");
-    const ui = mount(
-      h(queue.TaskCard as never, {
-        task: summary,
-        selected: false,
-        onPress: () => {},
-        c: dark as never,
-        board: true,
-        projectBadge: { monogram: "BA", color: "fuchsia" },
-      }),
+    const node = monogramNode(ui, "BA");
+    assert.ok(node, "the monogram is drawn");
+    assert.equal(
+      node.props.style.color,
+      "rgb(237, 106, 255)",
+      "dark surfaces use the converted 400 text value",
     );
-    try {
-      const node = monogramNode(ui, "BA");
-      assert.ok(node, "the monogram is drawn");
-      assert.equal(
-        node.props.style.color,
-        "rgb(237, 106, 255)",
-        "dark surfaces use the converted 400 text value",
-      );
-      assert.equal(node.props.style.fontFamily, "monospace");
-      assert.equal(
-        node.props.style.backgroundColor,
-        "rgba(237, 106, 255, 0.14)",
-        "the tint is the same entry at 14% alpha",
-      );
-      assert.match(ui.text(), /biock-aase/, "the project name stays the label");
-    } finally {
-      ui.update(h("View", null));
-    }
+    assert.equal(node.props.style.fontFamily, "monospace");
+    assert.equal(
+      node.props.style.backgroundColor,
+      "rgba(237, 106, 255, 0.14)",
+      "the tint is the same entry at 14% alpha",
+    );
+    assert.match(ui.text(), /biock-aase/, "the project name stays the label");
   } finally {
-    store.close();
+    ui.update(h("View", null));
   }
 });
 
 test("a light surface uses the 600 text value for the same badge", async () => {
   await load();
-  const store = new Store(":memory:");
+  const summary = seededSummary("/synthetic/repos/biock-aase");
+  const ui = mount(
+    h(queue.TaskCard as never, {
+      task: summary,
+      selected: false,
+      onPress: () => {},
+      c: light as never,
+      board: true,
+      projectBadge: { monogram: "BA", color: "fuchsia" },
+    }),
+  );
   try {
-    const summary = seededSummary(store, "/synthetic/repos/biock-aase");
-    const ui = mount(
-      h(queue.TaskCard as never, {
-        task: summary,
-        selected: false,
-        onPress: () => {},
-        c: light as never,
-        board: true,
-        projectBadge: { monogram: "BA", color: "fuchsia" },
-      }),
+    const node = monogramNode(ui, "BA");
+    assert.equal(
+      node?.props.style.color,
+      "rgb(200, 0, 222)",
+      "light surfaces use the converted 600 text value",
     );
-    try {
-      const node = monogramNode(ui, "BA");
-      assert.equal(
-        node?.props.style.color,
-        "rgb(200, 0, 222)",
-        "light surfaces use the converted 600 text value",
-      );
-      assert.equal(
-        node?.props.style.backgroundColor,
-        "rgba(200, 0, 222, 0.14)",
-      );
-    } finally {
-      ui.update(h("View", null));
-    }
+    assert.equal(
+      node?.props.style.backgroundColor,
+      "rgba(200, 0, 222, 0.14)",
+    );
   } finally {
-    store.close();
+    ui.update(h("View", null));
   }
 });
 
 test("without a badge the card keeps the folder icon and draws no monogram", async () => {
   await load();
-  const store = new Store(":memory:");
+  const summary = seededSummary("/synthetic/repos/biock-aase");
+  const ui = mount(
+    h(queue.TaskCard as never, {
+      task: summary,
+      selected: false,
+      onPress: () => {},
+      c: dark as never,
+      board: true,
+    }),
+  );
   try {
-    const summary = seededSummary(store, "/synthetic/repos/biock-aase");
-    const ui = mount(
-      h(queue.TaskCard as never, {
-        task: summary,
-        selected: false,
-        onPress: () => {},
-        c: dark as never,
-        board: true,
-      }),
+    assert.equal(monogramNode(ui, "BA"), undefined);
+    assert.equal(
+      ui
+        .ofType("Text")
+        .some(
+          (node) =>
+            typeof node.props.style?.backgroundColor === "string" &&
+            node.props.style.backgroundColor.endsWith(", 0.14)"),
+        ),
+      false,
+      "no badge draws no tint",
     );
-    try {
-      assert.equal(monogramNode(ui, "BA"), undefined);
-      assert.equal(
-        ui
-          .ofType("Text")
-          .some(
-            (node) =>
-              typeof node.props.style?.backgroundColor === "string" &&
-              node.props.style.backgroundColor.endsWith(", 0.14)"),
-          ),
-        false,
-        "no badge draws no tint",
-      );
-      assert.match(ui.text(), /biock-aase/);
-    } finally {
-      ui.update(h("View", null));
-    }
+    assert.match(ui.text(), /biock-aase/);
   } finally {
-    store.close();
+    ui.update(h("View", null));
   }
 });
 
@@ -213,94 +187,89 @@ const leadCard = (
 
 test("lead and papercut cards share TaskCard's badge rendering in dark and light surfaces and keep opening actions", async () => {
   await load();
-  const store = new Store(":memory:");
-  try {
-    const repoPath = "/synthetic/repos/biock-aase";
-    const summary = seededSummary(store, repoPath);
-    const repositoryBadges = {
-      [repoPath]: { monogram: "BA", color: "fuchsia" },
-    } as const;
-    const projectForRepository = (path: string) =>
-      path === repoPath ? { name: "Biock Aase" } : undefined;
+  const repoPath = "/synthetic/repos/biock-aase";
+  const summary = seededSummary(repoPath);
+  const repositoryBadges = {
+    [repoPath]: { monogram: "BA", color: "fuchsia" },
+  } as const;
+  const projectForRepository = (path: string) =>
+    path === repoPath ? { name: "Biock Aase" } : undefined;
 
-    for (const [surface, expectedColor, expectedBg] of [
-      [dark, "rgb(237, 106, 255)", "rgba(237, 106, 255, 0.14)"],
-      [light, "rgb(200, 0, 222)", "rgba(200, 0, 222, 0.14)"],
-    ] as const) {
-      const taskUi = mount(
-        h(queue.TaskCard as never, {
-          task: summary,
-          selected: false,
-          onPress: () => {},
-          c: surface as never,
-          board: true,
-          projectBadge: repositoryBadges[repoPath],
-        }),
-      );
-      const taskNode = monogramNode(taskUi, "BA");
-      const opened: string[] = [];
-      const leadUi = mount(
-        h(queue.TriageLeadCard as never, {
-          lead: leadCard(
-            "lead-1",
-            "Lead card",
-            [],
-            [{ origin: "owner/biock-aase", path: repoPath }],
-          ),
-          projectForRepository,
-          repositoryBadges,
-          selected: false,
-          c: surface as never,
-          onSelectLead: (id: string) => opened.push(`lead:${id}`),
-          onSelectPapercut: (id: string) => opened.push(`papercut:${id}`),
-        }),
-      );
-      const cutUi = mount(
-        h(queue.TriageLeadCard as never, {
-          lead: leadCard(
-            "cut-1",
-            "Papercut card",
-            ["papercut"],
-            [{ origin: "owner/biock-aase", path: repoPath }],
-          ),
-          projectForRepository,
-          repositoryBadges,
-          selected: false,
-          c: surface as never,
-          onSelectLead: (id: string) => opened.push(`lead:${id}`),
-          onSelectPapercut: (id: string) => opened.push(`papercut:${id}`),
-        }),
-      );
-      try {
-        for (const cardUi of [leadUi, cutUi]) {
-          const node = monogramNode(cardUi, "BA");
-          assert.ok(node, "the monogram is drawn");
-          assert.deepEqual(
-            node.props.style,
-            taskNode?.props.style,
-            "lead and papercut share TaskCard's badge style",
-          );
-          assert.equal(node.props.style.color, expectedColor);
-          assert.equal(node.props.style.backgroundColor, expectedBg);
-          assert.match(
-            cardUi.text(),
-            /Biock Aase/,
-            "the project name stays visible",
-          );
-        }
-        assert.match(leadUi.text(), /Lead/);
-        assert.match(cutUi.text(), /Papercut/);
-        leadUi.press(/^Lead: Lead card, Status: Unchecked · awaiting a check$/);
-        cutUi.press(/^Papercut: Papercut card, Status: Open · board$/);
-        assert.deepEqual(opened, ["lead:lead-1", "papercut:cut-1"]);
-      } finally {
-        taskUi.update(h("View", null));
-        leadUi.update(h("View", null));
-        cutUi.update(h("View", null));
+  for (const [surface, expectedColor, expectedBg] of [
+    [dark, "rgb(237, 106, 255)", "rgba(237, 106, 255, 0.14)"],
+    [light, "rgb(200, 0, 222)", "rgba(200, 0, 222, 0.14)"],
+  ] as const) {
+    const taskUi = mount(
+      h(queue.TaskCard as never, {
+        task: summary,
+        selected: false,
+        onPress: () => {},
+        c: surface as never,
+        board: true,
+        projectBadge: repositoryBadges[repoPath],
+      }),
+    );
+    const taskNode = monogramNode(taskUi, "BA");
+    const opened: string[] = [];
+    const leadUi = mount(
+      h(queue.TriageLeadCard as never, {
+        lead: leadCard(
+          "lead-1",
+          "Lead card",
+          [],
+          [{ origin: "owner/biock-aase", path: repoPath }],
+        ),
+        projectForRepository,
+        repositoryBadges,
+        selected: false,
+        c: surface as never,
+        onSelectLead: (id: string) => opened.push(`lead:${id}`),
+        onSelectPapercut: (id: string) => opened.push(`papercut:${id}`),
+      }),
+    );
+    const cutUi = mount(
+      h(queue.TriageLeadCard as never, {
+        lead: leadCard(
+          "cut-1",
+          "Papercut card",
+          ["papercut"],
+          [{ origin: "owner/biock-aase", path: repoPath }],
+        ),
+        projectForRepository,
+        repositoryBadges,
+        selected: false,
+        c: surface as never,
+        onSelectLead: (id: string) => opened.push(`lead:${id}`),
+        onSelectPapercut: (id: string) => opened.push(`papercut:${id}`),
+      }),
+    );
+    try {
+      for (const cardUi of [leadUi, cutUi]) {
+        const node = monogramNode(cardUi, "BA");
+        assert.ok(node, "the monogram is drawn");
+        assert.deepEqual(
+          node.props.style,
+          taskNode?.props.style,
+          "lead and papercut share TaskCard's badge style",
+        );
+        assert.equal(node.props.style.color, expectedColor);
+        assert.equal(node.props.style.backgroundColor, expectedBg);
+        assert.match(
+          cardUi.text(),
+          /Biock Aase/,
+          "the project name stays visible",
+        );
       }
+      assert.match(leadUi.text(), /Lead/);
+      assert.match(cutUi.text(), /Papercut/);
+      leadUi.press(/^Lead: Lead card, Status: Unchecked · awaiting a check$/);
+      cutUi.press(/^Papercut: Papercut card, Status: Open · board$/);
+      assert.deepEqual(opened, ["lead:lead-1", "papercut:cut-1"]);
+    } finally {
+      taskUi.update(h("View", null));
+      leadUi.update(h("View", null));
+      cutUi.update(h("View", null));
     }
-  } finally {
-    store.close();
   }
 });
 
