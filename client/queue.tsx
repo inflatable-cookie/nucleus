@@ -261,6 +261,7 @@ export function MainSurface({
     setLaneTaskOffset,
     planningLaneRecord,
     rustLaneTasks,
+    taskCounts,
     planningLeads,
     fetchLaneDocument,
   } = usePlanningData({
@@ -691,6 +692,7 @@ export function MainSurface({
                 onCancel={dropPlanEdit}
                 repositoryBadges={state?.repositoryBadges}
                 tasks={state?.tasks ?? []}
+                taskCounts={taskCounts}
                 queuedCounts={state?.queuedCounts ?? []}
                 readPlanVersion={(project, version) =>
                   readPlan({ project, version })
@@ -772,7 +774,7 @@ export function MainSurface({
                             title: planningLaneRecord.title,
                           }, lead.projectKey);
                       }}
-                      readFinished={(cursor) =>
+                      readFinished={rustBoard ? undefined : (cursor) =>
                         searchOutcomes({
                           lane: planningLaneRecord.key,
                           outcome: "any",

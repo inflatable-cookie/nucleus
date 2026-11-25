@@ -897,7 +897,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       if (path === "/api/engine/tasks/board-task/next")
         return Response.json({ ...card, commands: [] });
       assert.equal(path, "/api/engine/tasks");
-      return Response.json([card, held]);
+      const completed = task("finished-task", "done", "board-fixture#79");
+      completed.attention = "finished";
+      completed.lifecycle.finishedAtMs = now - 3_600_000;
+      return Response.json([card, held, { ...completed, title: "Completed fixture", lanes: ["delivery"] }]);
     }
     if (path === "/api/engine/settings/projects/fixture/removal") {
       assert.ok(operator);
@@ -1737,6 +1740,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Profiles");
   await eventually(() => Boolean(selector("Disable Fixture worker")), "the operator session is restored");
   await click("Back to board");
+  await click("Planning, 1 open lanes");
+  await eventually(() => text().includes("2 tasks live"), "Planning counts both unfinished tasks from the native list");
+  await click("Open lane Delivery");
+  await eventually(() => selector("Recently finished")?.textContent?.includes("Completed fixture") === true,
+    "the terminal card appears in its lane");
+  assert.match(selector("Recently finished")!.textContent!, /1 in total/);
+  await click("Working, 1");
   await click("Projects, All projects");
   await click("Project actions for Fixture project");
   await click("Remove Fixture project from Nucleus");

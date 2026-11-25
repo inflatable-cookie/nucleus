@@ -155,32 +155,53 @@ export function usePlanningData({
   const fetchLaneDocument = useRpc(api.laneDocumentGet);
   const fetchLaneTaskPage = useRpc(api.laneTaskPage);
   const { planQuery, boardLeads } = records;
-  const { lanes, members } = useMemo(() => {
+  const { lanes, members, taskCounts } = useMemo(() => {
     const members = new Map<api.LaneView, RustTask[]>();
-    if (!rust) return { lanes: state?.lanes ?? [], members };
+    const taskCounts = new Map<string, { live: number; attention: number }>();
+    if (!rust) return { lanes: state?.lanes ?? [], members, taskCounts };
     const lanes = (planQuery.data ?? []).flatMap(plan => {
       const project = state?.projects.find(candidate => candidate.key === plan.project);
       const byLane = new Map<string, RustTask[]>();
+      const counts = { live: 0, attention: 0 };
       for (const task of rustTasks ?? []) {
         const origin = task.identity.repository;
-        if (!project || task.phase === "done" || task.phase === "cancelled" ||
-            !projectHasRepository(project, origin, origin)) continue;
+        if (!project || !projectHasRepository(project, origin, origin)) continue;
+        if (task.phase !== "done" && task.phase !== "cancelled") {
+          counts.live++;
+          if (task.attention === "attention") counts.attention++;
+        }
         for (const key of task.lanes ?? []) {
           const rows = byLane.get(key);
           if (rows) rows.push(task);
           else byLane.set(key, [task]);
         }
       }
+      if (rustTasks) taskCounts.set(plan.project, counts);
       return (plan.laneViews ?? []).map(lane => {
         const rows = byLane.get(lane.key) ?? [];
         const liveByPhase: Record<string, number> = {};
-        for (const { phase } of rows) liveByPhase[phase] = (liveByPhase[phase] ?? 0) + 1;
-        const view = { ...lane, liveByPhase };
-        if (rustTasks) members.set(view, rows);
+        const live = [];
+        const recentOutcomes: api.LaneView["recentOutcomes"] = [];
+        for (const task of rows) {
+          if (task.phase === "done" || task.phase === "cancelled") {
+            const at = task.lifecycle.finishedAtMs;
+            recentOutcomes.push({
+              taskId: task.identity.id, title: task.title ?? task.reference ?? task.identity.reference,
+              outcome: task.phase, finishedAt: at == null ? null : new Date(at).toISOString(),
+              prNumber: null, prUrl: null,
+            });
+          } else {
+            live.push(task);
+            liveByPhase[task.phase] = (liveByPhase[task.phase] ?? 0) + 1;
+          }
+        }
+        recentOutcomes.sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""));
+        const view = { ...lane, liveByPhase, terminalCount: recentOutcomes.length, recentOutcomes };
+        if (rustTasks) members.set(view, live);
         return view;
       });
     });
-    return { lanes, members };
+    return { lanes, members, taskCounts };
   }, [rust, planQuery.data, state?.lanes, state?.projects, rustTasks]);
   const [laneTaskOffset, setLaneTaskOffset] = useState(0);
   // A lane opened from Planning keeps the project context it was found in (#866): the
@@ -278,6 +299,7 @@ export function usePlanningData({
     laneTaskOffset,
     setLaneTaskOffset,
     planningLaneRecord,
+    taskCounts,
     rustLaneTasks: planningLaneRecord && members.get(planningLaneRecord),
     planningLeads,
     fetchLaneDocument,
