@@ -333,13 +333,7 @@ export function TaskSummaryBlock({
     </DetailSection>
   );
 }
-/**
- * Task 538: the native operator question a task is waiting on, with its answer
- * controls, beside the summary. It is the same request the question pill mirrors,
- * so an answer here or on the thread resolves it once and Queue observes the same
- * resolution; the operator no longer has to find a thread's pill to unblock a task
- * that is waiting on their answer.
- */
+/** The questions currently reported by the connected host for this task's worker and reviewers. */
 export function PendingQuestions({
   agentId,
   hostId,
@@ -381,10 +375,6 @@ export function PendingQuestions({
   };
   return (
     <DetailSection title="Waiting for your answer" c={c}>
-      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-        Answer here or in the question pill on the thread; both resolve the same
-        native question.
-      </Text>
       {requests.map(({ agentId: askerId, request }) => (
         <View key={`${askerId}:${request.id}`} style={{ gap: space.xs }}>
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
