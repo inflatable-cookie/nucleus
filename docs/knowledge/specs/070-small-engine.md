@@ -310,6 +310,7 @@ Later decisions carry their own attribution.
     - A later ADE gets the same three commands under its own name.
 25. **Subscription groups pause on confirmed provider limits** (planner decision, 2026-11-24).
     - The adapter requires a failed native run started by the reservation's message and a usage-limit classification on its latest failed root error. An active run, an earlier or nested error, unstructured text and an unknown read cannot establish a limit.
+    - A bounded thread can prove a terminal failure. If the compact view omits its error, use the held shell's lookup of the presented run's latest failed root error at the matching revision. This adds no per-pass host request.
     - The scheduler excludes the run's subscription group until the provider reset or, when the provider gives no usable reset, the configured cooldown from the failure time. The deadline survives an engine restart and expires automatically.
     - Profiles settings can also pause a group until an operator edits the setting. Both pauses apply across roles and projects. An otherwise eligible task waits for Capacity until its earliest eligible reset or a settings change.
     - A run that ends on a confirmed limit without a report releases its slot without charging a failed attempt or opening a question. Existing send receipts and verified replay rules still apply.

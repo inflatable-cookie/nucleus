@@ -53,6 +53,14 @@ pub(crate) struct Projection {
     shell_closed: Option<RetainedThread>,
     #[serde(skip)]
     shell_background_work: Option<bool>,
+    #[serde(skip)]
+    shell_failure: Option<ShellFailure>,
+}
+
+struct ShellFailure {
+    run: String,
+    class: String,
+    reset_at_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -458,6 +466,18 @@ impl Projection {
                 .is_some_and(|id| self.terminal_run(id))
         {
             self.shell_background_work = shell.background();
+            // T3 selects the last failed error on the presented run's root node
+            // for this shell row, including when the compact thread omits it.
+            if row["status"] == "failed"
+                && let (Some(run), Some(class)) =
+                    (row["latestRunId"].as_str(), row["lastErrorClass"].as_str())
+            {
+                self.shell_failure = Some(ShellFailure {
+                    run: run.into(),
+                    class: class.into(),
+                    reset_at_ms: timestamp_ms(row["usageLimitResetAt"].as_str()),
+                });
+            }
         }
     }
 
@@ -701,39 +721,55 @@ impl Projection {
     }
 
     pub(crate) fn provider_limit(&self, message_id: &str) -> Option<ProviderLimit> {
-        if self.windowed || self.thread.deleted_at.is_some() {
+        if self.thread.deleted_at.is_some() {
             return None;
         }
-        // A steer can link to a run started by someone else's message.
         let run = self.delivery(message_id).1.filter(|run| {
-            run.user_message_id.as_deref() == Some(message_id)
-                && matches!(run.status, Status::Failed)
+            run.user_message_id.as_deref() == Some(message_id) && run.status == Status::Failed
         })?;
-        // T3's shell chooses the latest failed error on the root execution node.
-        let terminal = self
-            .turn_items
-            .as_ref()?
-            .iter()
-            .filter(|item| {
-                item.kind == "error"
-                    && item.status == "failed"
-                    && item.run_id.as_ref() == Some(&run.id)
-                    && item.node_id == run.root_node_id
-            })
-            .max_by_key(|item| (&item.updated_at, item.ordinal, &item.id))?;
-        let failure = terminal.failure.as_ref()?;
-        if failure["class"] != "usage_limit" {
-            return None;
-        }
+        let root = run
+            .root_node_id
+            .as_deref()
+            .filter(|node| !node.is_empty())?;
+        let (reset_at_ms, ended_at_ms) =
+            if let Some(shell) = self.shell_failure.as_ref().filter(|f| f.run == run.id) {
+                if shell.class != "usage_limit" {
+                    return None;
+                }
+                (
+                    shell.reset_at_ms,
+                    timestamp_ms(run.completed_at.as_deref())?,
+                )
+            } else {
+                let terminal = self
+                    .turn_items
+                    .as_ref()?
+                    .iter()
+                    .filter(|item| {
+                        item.kind == "error"
+                            && item.status == "failed"
+                            && item.run_id.as_ref() == Some(&run.id)
+                            && item.node_id.as_deref() == Some(root)
+                    })
+                    .max_by_key(|item| (&item.updated_at, item.ordinal, &item.id))?;
+                let failure = terminal.failure.as_ref()?;
+                if failure["class"] != "usage_limit" {
+                    return None;
+                }
+                (
+                    timestamp_ms(failure["resetAt"].as_str()),
+                    timestamp_ms(run.completed_at.as_deref())
+                        .or_else(|| timestamp_ms(terminal.updated_at.as_deref()))?,
+                )
+            };
         Some(ProviderLimit {
             instance: run
                 .provider_instance_id
                 .as_ref()
                 .filter(|id| !id.is_empty())?
                 .clone(),
-            ended_at_ms: timestamp_ms(run.completed_at.as_deref())
-                .or_else(|| timestamp_ms(terminal.updated_at.as_deref()))?,
-            reset_at_ms: timestamp_ms(failure["resetAt"].as_str()),
+            ended_at_ms,
+            reset_at_ms,
         })
     }
 
