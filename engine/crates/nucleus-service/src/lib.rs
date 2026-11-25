@@ -228,6 +228,7 @@ enum WaitDetail {
     ShowingForDelivery(Option<&'static str>),
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
+    Workspace(String),
     Archive(String),
     OperatorSnoozed {
         version: i64,
@@ -939,7 +940,7 @@ impl Service {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
-            state.schedule.reset_host_backoff(id);
+            state.schedule.reset_recovery(id);
             if state.store.pending_prerequisite_notice(id)?.is_none() {
                 state.planner_notice_waiters.remove(id);
             }
@@ -974,49 +975,68 @@ impl Service {
         if wait == Some(WaitReason::HostUnknown) && !archive_due {
             return self.schedule_host_observation(&mut state, row, result);
         }
-        state.schedule.reset_host_backoff(id);
-        if state.observe_task_allowance(&current.task, wait)? {
-            self.publish_detail(id, current.version);
-        }
         let now = Instant::now();
-        let (delay, priority) = schedule::retry(wait);
-        let due = match result {
-            Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
-            Err(ServiceError::InboxUnavailable { until }) => *until,
-            _ if wait == Some(WaitReason::ForgeUnknown) => now + self.forge_backoff().max(delay),
-            _ => now + delay,
-        };
-        let priority = if wait == Some(WaitReason::Capacity) {
-            priority
-        } else if row
-            .task
-            .run()
-            .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
-            || (previous == Priority::Effect && result.is_err())
-            || (row.task.phase() == Phase::Merging && wait == Some(WaitReason::ForgeUnknown))
-        {
-            Priority::Effect
-        } else if state.forge_requested.contains(id) {
-            Priority::Wake
+        let checking_workspace = wait == Some(WaitReason::WorkspaceUnknown);
+        let wait = if checking_workspace {
+            if state.schedule.recover_workspace(id, now) {
+                Some(WaitReason::WorkspaceBlocked)
+            } else {
+                wait
+            }
         } else {
-            priority
+            state.schedule.reset_recovery(id);
+            wait
         };
-        match state
-            .group_waits
-            .get(id)
-            .copied()
-            .filter(|_| wait == Some(WaitReason::Capacity))
-        {
-            Some(profiles::GroupPause::Until(reset)) => state.schedule.wake(
-                id,
-                now + Duration::from_millis(reset.saturating_sub(now_ms())),
-                priority,
-            ),
-            Some(profiles::GroupPause::Manual) => state.schedule.park(id),
-            None => state.schedule.wake(id, due, priority),
+        if state.observe_task_allowance(&row.task, wait)? {
+            self.publish_detail(id, row.version);
         }
-        let detail = match result {
-            Err(error) if archive_due => Some(WaitDetail::Archive(error.to_string())),
+        if !checking_workspace {
+            let (delay, priority) = schedule::retry(wait);
+            let due = match result {
+                Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
+                Err(ServiceError::InboxUnavailable { until }) => *until,
+                _ if wait == Some(WaitReason::ForgeUnknown) => {
+                    now + self.forge_backoff().max(delay)
+                }
+                _ => now + delay,
+            };
+            let priority = if wait == Some(WaitReason::Capacity) {
+                priority
+            } else if row
+                .task
+                .run()
+                .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
+                || (previous == Priority::Effect && result.is_err())
+                || (row.task.phase() == Phase::Merging && wait == Some(WaitReason::ForgeUnknown))
+            {
+                Priority::Effect
+            } else if state.forge_requested.contains(id) {
+                Priority::Wake
+            } else {
+                priority
+            };
+            match state
+                .group_waits
+                .get(id)
+                .copied()
+                .filter(|_| wait == Some(WaitReason::Capacity))
+            {
+                Some(profiles::GroupPause::Until(reset)) => state.schedule.wake(
+                    id,
+                    now + Duration::from_millis(reset.saturating_sub(now_ms())),
+                    priority,
+                ),
+                Some(profiles::GroupPause::Manual) => state.schedule.park(id),
+                None => state.schedule.wake(id, due, priority),
+            }
+        }
+        let detail = match (wait, result) {
+            (Some(WaitReason::WorkspaceBlocked), result) => {
+                Some(WaitDetail::Workspace(workspace_cause(result)))
+            }
+            (_, Err(error)) if archive_due && !checking_workspace => {
+                Some(WaitDetail::Archive(error.to_string()))
+            }
             _ => None,
         };
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
@@ -1117,7 +1137,7 @@ impl Service {
                 ) => Some(*until),
                 _ => None,
             };
-            state.schedule.reset_host_backoff(id);
+            state.schedule.reset_recovery(id);
             state.schedule.wake(
                 id,
                 backoff.unwrap_or(now).max(now + T3_RETRY_DELAY),
@@ -1596,7 +1616,7 @@ impl Service {
             state.role_observations.remove(id);
         }
         self.desire_title(state, task, prior.number);
-        state.schedule.reset_host_backoff(id);
+        state.schedule.reset_recovery(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
@@ -1710,6 +1730,29 @@ impl Service {
             detail_only,
         });
     }
+}
+
+fn workspace_cause(result: &Result<Action, ServiceError>) -> String {
+    use longhorn_git_workspace::GitFailure;
+    let cause = match result {
+        Err(ServiceError::Workspace(WorkError::Git {
+            source: GitFailure::NotWorktree { .. },
+            ..
+        })) => "The task path is occupied and could not be verified as a Git checkout".into(),
+        Err(ServiceError::Workspace(WorkError::Git {
+            operation, source, ..
+        })) => {
+            let failure = match source {
+                GitFailure::TimedOut { .. } => "timed out",
+                GitFailure::Unavailable { .. } => "could not complete",
+                _ => "failed",
+            };
+            format!("{operation} {failure}")
+        }
+        Err(ServiceError::Workspace(error)) => error.to_string(),
+        _ => "The task checkout could not be verified".into(),
+    };
+    format!("{cause}. Check the checkout. Hold and release the task to retry.")
 }
 
 fn process_check_detail(

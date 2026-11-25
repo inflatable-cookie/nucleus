@@ -110,6 +110,31 @@ fn review_allocation_can_fetch_a_pull_head_missing_from_the_registered_checkout(
 }
 
 #[test]
+fn successful_status_overflow_is_dirty_and_retained() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = home.path().join("repository");
+    let head = repository(&repo);
+    let worktrees = worktrees(home.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "large")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    for file in 0..2_000 {
+        fs::write(
+            checkout
+                .path()
+                .join(format!("untracked-long-dirty-entry-{file:04}.txt")),
+            "",
+        )
+        .unwrap();
+    }
+    assert!(git(checkout.path(), &["status", "--porcelain=v1"]).len() > 65_536);
+    assert_eq!(checkout.observe().unwrap(), Workspace::Dirty);
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Retained);
+    assert_eq!(fs::read_dir(checkout.path()).unwrap().count(), 2_003);
+}
+
+#[test]
 fn allocation_is_idempotent_and_closeout_only_removes_the_published_clean_checkout() {
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository with spaces");
@@ -228,6 +253,7 @@ fn a_large_index_is_observed_without_truncating_hidden_flags() {
         directory,
         repository,
         source,
+        ..
     } = error
     else {
         panic!("expected a Git diagnostic");

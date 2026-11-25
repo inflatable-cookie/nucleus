@@ -24,7 +24,12 @@ pub(super) fn waiting_for_person(task: &Task, wait: Option<WaitReason>) -> bool 
 fn waiting_for_operator_input(wait: Option<WaitReason>) -> bool {
     matches!(
         wait,
-        Some(WaitReason::Permission | WaitReason::Input | WaitReason::UsagePermission)
+        Some(
+            WaitReason::Permission
+                | WaitReason::Input
+                | WaitReason::UsagePermission
+                | WaitReason::WorkspaceBlocked
+        )
     )
 }
 

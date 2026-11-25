@@ -1,0 +1,1 @@
+Interrupted task checkout creation can recover before dispatch. A workspace that stays unreadable after one recheck shows what to fix on the task card. Git status preserves dirty checkouts even when their change list exceeds the output limit.

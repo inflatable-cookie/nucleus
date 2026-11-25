@@ -68,12 +68,9 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::IdleWithoutTerminalRun
             | WaitReason::Hold,
         ) => (LIVE_CHECK, Priority::Refresh),
-        Some(
-            WaitReason::HostUnknown
-            | WaitReason::WorkspaceUnknown
-            | WaitReason::RetainedThreadBusy
-            | WaitReason::Question,
-        ) => (T3_RETRY_DELAY, Priority::Decision),
+        Some(WaitReason::HostUnknown | WaitReason::RetainedThreadBusy | WaitReason::Question) => {
+            (T3_RETRY_DELAY, Priority::Decision)
+        }
         Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),
         Some(
             WaitReason::Capacity
@@ -90,23 +87,29 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
 
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
-    host_retry: BTreeMap<String, HostRecovery>,
+    recovery: BTreeMap<String, (ObservationKind, Recovery)>,
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HostRecovery {
+enum Recovery {
     CheckAt(Instant),
     Blocked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ObservationKind {
+    Host,
+    Workspace,
 }
 
 impl Schedule {
     pub(crate) fn new() -> Self {
         Self {
             tasks: BTreeMap::new(),
-            host_retry: BTreeMap::new(),
+            recovery: BTreeMap::new(),
             scan_at: Instant::now(),
             cursor: None,
             archive_cursor: None,
@@ -114,9 +117,9 @@ impl Schedule {
     }
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
-        let due = match self.host_retry.get(id) {
-            Some(HostRecovery::CheckAt(after)) => due.max(*after),
-            Some(HostRecovery::Blocked) => return,
+        let due = match self.recovery.get(id).map(|(_, recovery)| recovery) {
+            Some(Recovery::CheckAt(after)) => due.max(*after),
+            Some(Recovery::Blocked) => return,
             None => due,
         };
         self.tasks.entry(id.into()).or_default().wake(due, priority);
@@ -127,20 +130,21 @@ impl Schedule {
     }
 
     pub(crate) fn defer_effect(&mut self, id: &str, due: Instant) {
-        self.reset_host_backoff(id);
+        self.reset_recovery(id);
         let mut pending = Pending::default();
         pending.wake(due, Priority::Effect);
         self.tasks.insert(id.into(), pending);
     }
 
     pub(crate) fn block_host_observation(&mut self, id: &str) {
-        self.host_retry.insert(id.into(), HostRecovery::Blocked);
+        self.recovery
+            .insert(id.into(), (ObservationKind::Host, Recovery::Blocked));
         self.tasks.insert(id.into(), Pending::default());
     }
 
     pub(crate) fn resume_on_host_evidence(&mut self, id: &str) {
-        if self.host_retry.get(id) == Some(&HostRecovery::Blocked) {
-            self.host_retry.remove(id);
+        if self.recovery.get(id) == Some(&(ObservationKind::Host, Recovery::Blocked)) {
+            self.recovery.remove(id);
         }
     }
 
@@ -150,33 +154,54 @@ impl Schedule {
         now: Instant,
         deferred_until: Option<Instant>,
     ) -> bool {
-        let next = match self.host_retry.get(id) {
-            Some(HostRecovery::CheckAt(due)) if *due <= now && deferred_until.is_none() => {
-                HostRecovery::Blocked
-            }
-            Some(HostRecovery::CheckAt(due)) => {
-                HostRecovery::CheckAt((*due).max(deferred_until.unwrap_or(now)))
-            }
-            Some(HostRecovery::Blocked) => HostRecovery::Blocked,
-            None => {
-                HostRecovery::CheckAt((now + T3_RETRY_DELAY).max(deferred_until.unwrap_or(now)))
-            }
-        };
-        self.host_retry.insert(id.into(), next);
-        self.tasks.insert(id.into(), Pending::default());
-        if let HostRecovery::CheckAt(due) = next {
-            self.wake(id, due, Priority::Effect);
-        }
-        next == HostRecovery::Blocked
+        self.recover_observation(id, ObservationKind::Host, now, deferred_until)
     }
 
-    pub(crate) fn reset_host_backoff(&mut self, id: &str) -> bool {
-        self.host_retry.remove(id).is_some()
+    pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant) -> bool {
+        self.recover_observation(id, ObservationKind::Workspace, now, None)
+    }
+
+    fn recover_observation(
+        &mut self,
+        id: &str,
+        kind: ObservationKind,
+        now: Instant,
+        deferred_until: Option<Instant>,
+    ) -> bool {
+        let prior = self
+            .recovery
+            .get(id)
+            .filter(|(recorded, _)| *recorded == kind);
+        let next = match prior.map(|(_, recovery)| recovery) {
+            Some(Recovery::CheckAt(due)) if *due <= now && deferred_until.is_none() => {
+                Recovery::Blocked
+            }
+            Some(Recovery::CheckAt(due)) => {
+                Recovery::CheckAt((*due).max(deferred_until.unwrap_or(now)))
+            }
+            Some(Recovery::Blocked) => Recovery::Blocked,
+            None => Recovery::CheckAt((now + T3_RETRY_DELAY).max(deferred_until.unwrap_or(now))),
+        };
+        self.recovery.insert(id.into(), (kind, next));
+        self.tasks.insert(id.into(), Pending::default());
+        if let Recovery::CheckAt(due) = next {
+            self.wake(id, due, Priority::Effect);
+        }
+        next == Recovery::Blocked
+    }
+
+    pub(crate) fn reset_recovery(&mut self, id: &str) -> bool {
+        self.recovery.remove(id).is_some()
     }
 
     pub(crate) fn host_session_changed(&mut self, now: Instant) {
-        for (id, _) in std::mem::take(&mut self.host_retry) {
-            self.wake(&id, now, Priority::Effect);
+        for (id, (kind, retry)) in std::mem::take(&mut self.recovery) {
+            match kind {
+                ObservationKind::Host => self.wake(&id, now, Priority::Effect),
+                ObservationKind::Workspace => {
+                    self.recovery.insert(id, (kind, retry));
+                }
+            }
         }
     }
 

@@ -879,6 +879,188 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the actual deadline, detail, and existing repair commands together"
+)]
+async fn persistent_workspace_error_stops_after_one_recheck_and_hold_release_retries() {
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(Vec::<serde_json::Value>::new()) }),
+    ))
+    .await;
+    let (_home, service) = fixture(forge);
+    let head = &service.fixture().start;
+    let worktrees = service.worktrees().unwrap();
+    let checkout = worktrees
+        .checkout(&service.fixture().checkout, REPOSITORY, "unreadable")
+        .unwrap();
+    checkout.allocate(head).unwrap();
+    let path = checkout.path().to_owned();
+    let admin = std::path::PathBuf::from(crate::tests::git(
+        &path,
+        &["rev-parse", "--absolute-git-dir"],
+    ));
+    let index = admin.join("index");
+    let valid_index = std::fs::read(&index).unwrap();
+    std::fs::write(&index, b"invalid-index").unwrap();
+    std::fs::write(path.join("keep.txt"), b"local work").unwrap();
+
+    let (shape, _, observation) = reservation("unreadable", Entry::Brief, head);
+    let mut task = Task::new(shape.identity().clone(), shape.brief().text.clone(), None);
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    seed_task(&service, &task).await;
+    let service = Arc::new(service);
+    let operator = Authority::Operator {
+        actor: "operator".into(),
+    };
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: operator.clone(),
+        }],
+    );
+    let card = "/v1/tasks/unreadable";
+    let first = service.pass().await.unwrap();
+    assert!(matches!(
+        &first[0].result,
+        Err(ServiceError::Workspace(nucleus_work::WorkError::Git { .. }))
+    ));
+    let checking = json_body(get_as(&api, card, &BOARD_KEY).await).await;
+    assert_eq!(checking["wait"], "workspace_unknown");
+    assert!(checking["nextCheckAt"].is_u64());
+    {
+        let mut state = service.state.lock().await;
+        let now = tokio::time::Instant::now();
+        let due = state.schedule.due("unreadable").unwrap();
+        state.schedule.host_session_changed(now);
+        state
+            .schedule
+            .wake("unreadable", now, crate::schedule::Priority::Wake);
+        assert_eq!(state.schedule.due("unreadable"), Some(due));
+    }
+    let second = tokio::time::timeout(
+        nucleus_hosts::T3_RETRY_DELAY + std::time::Duration::from_secs(8),
+        service.pass(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        &second[0].result,
+        Err(ServiceError::Workspace(nucleus_work::WorkError::Git { .. }))
+    ));
+    let blocked = json_body(get_as(&api, card, &BOARD_KEY).await).await;
+    assert_eq!(blocked["wait"], "workspace_blocked");
+    assert_eq!(blocked["attention"], "attention");
+    assert!(blocked["nextCheckAt"].is_null());
+    assert!(
+        blocked["waitDetail"]
+            .as_str()
+            .unwrap()
+            .contains("git status failed")
+    );
+    {
+        let mut state = service.state.lock().await;
+        state
+            .schedule
+            .host_session_changed(tokio::time::Instant::now());
+        state.schedule.wake(
+            "unreadable",
+            tokio::time::Instant::now(),
+            crate::schedule::Priority::Effect,
+        );
+        assert!(state.schedule.due("unreadable").is_none());
+    }
+    assert_eq!(std::fs::read(&index).unwrap(), b"invalid-index");
+    assert_eq!(std::fs::read(path.join("keep.txt")).unwrap(), b"local work");
+    assert!(
+        service
+            .task("unreadable")
+            .await
+            .unwrap()
+            .task
+            .run()
+            .is_none()
+    );
+    assert!(service.host.host_calls().is_empty());
+
+    std::fs::write(&index, valid_index).unwrap();
+    service
+        .command(
+            "unreadable",
+            &operator,
+            Command::Hold("Workspace checked".into()),
+        )
+        .await
+        .unwrap();
+    service
+        .command("unreadable", &operator, Command::Release)
+        .await
+        .unwrap();
+    assert!(matches!(
+        service.pass().await.unwrap()[0].result,
+        Ok(Action::Launch { .. })
+    ));
+    assert_eq!(std::fs::read(path.join("keep.txt")).unwrap(), b"local work");
+    assert!(service.host.host_calls().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics() {
+    use longhorn_git_workspace::{GitFailure, GitFailureCode};
+    use nucleus_work::{GitOperation, WorkError};
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (shape, _, _) = reservation("timeout", Entry::Brief, &service.fixture().start);
+    let task = Task::new(shape.identity().clone(), shape.brief().text.clone(), None);
+    seed_task(&service, &task).await;
+    let row = service.task("timeout").await.unwrap();
+    let previous = crate::schedule::Priority::Decision;
+    let error = Err(ServiceError::Workspace(WorkError::Git {
+        operation: GitOperation::Add,
+        command: "git worktree add synthetic-private-path".into(),
+        directory: "synthetic-private-path".into(),
+        repository: "synthetic-repository".into(),
+        source: GitFailure::TimedOut {
+            code: GitFailureCode::CommandUnavailable,
+            after: std::time::Duration::from_mins(10),
+        },
+    }));
+    let elapsed = tokio::time::Instant::now() - nucleus_hosts::T3_RETRY_DELAY;
+    service
+        .state
+        .lock()
+        .await
+        .schedule
+        .recover_workspace("timeout", elapsed);
+    service
+        .schedule_result(&row, &error, previous)
+        .await
+        .unwrap();
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+    );
+    let card = json_body(get_as(&api, "/v1/tasks/timeout", &BOARD_KEY).await).await;
+    assert_eq!(card["wait"], "workspace_blocked");
+    assert_eq!(
+        card["waitDetail"],
+        "git worktree add timed out. Check the checkout. Hold and release the task to retry."
+    );
+    assert!(card["nextCheckAt"].is_null());
+}
+
+#[tokio::test]
 async fn queued_external_merge_acceptance_bypasses_saturation() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
