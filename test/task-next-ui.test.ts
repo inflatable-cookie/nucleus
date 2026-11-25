@@ -9,23 +9,17 @@ import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
 import { acrossViews } from "./support/inbox";
 /** The inbox lists one view at a time; card reads reach every view (support/inbox.ts). */
 const mountInbox = (element: React.ReactElement) => acrossViews(mount(element));
-import { Store } from "../core/store/store";
+import { boardDetailReply, boardNext, boardTasks } from "./support/board-tasks";
 import {
   agentMessageRecordSchema,
   completionSchema,
   eventSchema,
   profileSchema,
   runSchema,
-  submissionSchema,
+  type Task,
   taskControlInputSchema,
   taskSummarySchema,
 } from "../shared/contracts";
-import {
-  collectOwnerVerbFacts,
-  ownerTaskNext,
-} from "../core/verbs/owner-verbs";
-import { createTaskDetailCache } from "../core/telemetry/task-detail";
-import { chooseProfile } from "../core/dispatch/routing";
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { formatLocalDateTime } from "../shared/date-time";
@@ -37,6 +31,21 @@ const load = async () => {
   queue = await import("../client/queue");
   return queue;
 };
+
+function offered(
+  task: Task,
+  action: string,
+  args: Record<string, string>,
+  fill: string[],
+) {
+  return {
+    verb: action,
+    action,
+    available: true,
+    args: { action, taskId: task.id, version: task.version, ...args },
+    fill,
+  };
+}
 
 const h = React.createElement;
 const c = new Proxy({}, { get: () => "#000" }) as never;
@@ -195,27 +204,20 @@ function mountBoard(
 
 test("task detail renders the Next section and submits a derived verb with the operator caller", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "parked",
-        title: "Parked pre-dispatch",
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "parked.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-    const task = store.update(inserted.id, {
+    const initial = boardTasks()("parked", {
+      title: "Parked pre-dispatch",
+      repoPath: "/app",
+      planningCommit: head,
+      handoffPath: "parked.md",
+      originAgentId: "origin",
+    });
+    const task: Task = {
+      ...initial,
       phase: "needs_attention",
       reason: "Waiting for the operator",
-    });
-    const read = createTaskDetailCache(store);
+    };
     const calls: unknown[] = [];
     const invoke = async (method: string, input: unknown) => {
       if (method === "queue.ui-snapshot")
@@ -229,17 +231,37 @@ test("task detail renders the Next section and submits a derived verb with the o
           }),
         ]);
       if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return read(task.id);
-      // The section reads the real registry against the real store, so the
-      // buttons are exactly what `task.next` reports for this task.
+      if (method === "queue.detail") return boardDetailReply(task);
       if (method === "task.next")
-        return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
+        return boardNext(boardDetailReply(task).task, {
+          attention: true,
+          stop: {
+            kind: "attention",
+            reason: "operator_needed",
+            detail: task.reason,
+            since: at,
+            suggestedVerbs: ["restart"],
+            owner: "origin",
+            evidence: null,
+          },
+          verbs: [
+            offered(task, "restart", { role: "worker" }, ["reason"]),
+            {
+              verb: "move",
+              action: "move",
+              available: false,
+              refusal:
+                "move work: Move to work requires the task author; no retained or intended worker exists",
+            },
+          ],
+        });
       if (method === "queue.task") {
         calls.push(input);
-        return store.update(task.id, {
+        return {
+          ...task,
           phase: "queued",
           reason: "Requeued through an owner verb",
-        });
+        };
       }
       if (
         method === "project.qa.list" ||
@@ -298,7 +320,7 @@ test("task detail renders the Next section and submits a derived verb with the o
     await pressVerb(tree, "restart");
     await settle(() => Boolean(tree.query("Reason (required)")));
     tree.type("Reason (required)", "The operator repaired the planning base");
-    const expectedVersion = store.task(task.id).version;
+    const expectedVersion = task.version;
     tree.press("Confirm restart");
     await settle(() => tree.text().includes("Applied restart"));
     const { role: _role, ...submitted } = calls[0] as Record<string, unknown>;
@@ -311,49 +333,45 @@ test("task detail renders the Next section and submits a derived verb with the o
     });
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("queued dependency edits open prefilled, never send an untouched list, and clear only on purpose", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   const calls: Array<Record<string, unknown>> = [];
-  const insert = (submissionId: string, title: string) =>
-    store.insert(
-      submissionSchema.parse({
-        submissionId,
-        title,
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: `${submissionId}.md`,
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-  const prerequisite = insert("dependency-prerequisite", "Prerequisite task");
-  const task = store.update(
-    insert("dependency-form", "Edit prerequisites").id,
-    {
-      dependsOn: [prerequisite.id],
-    },
-  );
-  const read = createTaskDetailCache(store);
+  const makeTask = boardTasks();
+  const prerequisite = makeTask("dependency-prerequisite", {
+    title: "Prerequisite task",
+  });
+  const task = makeTask("dependency-form", {
+    title: "Edit prerequisites",
+    dependsOn: [prerequisite.id],
+  });
+  let started = false;
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot")
       return board([
         summaryOf({ id: task.id, title: task.title, phase: "queued" }),
       ]);
     if (method === "queue.service-state") return serviceState;
-    if (method === "queue.detail") return read(task.id);
+    if (method === "queue.detail") return boardDetailReply(task);
     if (method === "task.next")
-      return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
+      return boardNext(boardDetailReply(task).task, {
+        verbs: [
+          started
+            ? {
+                verb: "set_dependencies",
+                action: "set_dependencies",
+                available: false,
+                refusal: "Dependencies can only change before dispatch begins",
+              }
+            : offered(task, "set_dependencies", {}, ["dependsOn"]),
+        ],
+      });
     if (method === "queue.task") {
       calls.push(taskControlInputSchema.parse(input));
-      return store.task(task.id);
+      return task;
     }
     if (method === "lead.board") return { cards: [], links: [] };
     return [];
@@ -393,14 +411,7 @@ test("queued dependency edits open prefilled, never send an untouched list, and 
     tree.update(h("View", null));
 
     // Once dispatch has begun, `next` refuses the edit and the menu does not offer it.
-    store.update(task.id, { agentIntent: true });
-    const refused = ownerTaskNext(
-      collectOwnerVerbFacts(store, store.task(task.id)),
-    );
-    assert.equal(
-      refused.verbs.find((verb) => verb.verb === "set_dependencies")?.available,
-      false,
-    );
+    started = true;
     const dispatched = mountBoard(invoke);
     mounted = dispatched;
     await settle(() => dispatched.text().includes(task.title));
@@ -411,31 +422,22 @@ test("queued dependency edits open prefilled, never send an untouched list, and 
     assert.equal(dispatched.query("Set dependencies"), undefined);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a verb with fill fields requires them before submit and reports refusals inline", async () => {
   await load();
-  const store = new Store(":memory:");
-  // A fresh store is paused; the verb buttons this test drives are deferred while paused.
-  store.setMeta("paused", false);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "revise-me",
-        title: "Revise me",
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "revise-me.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-    const task = store.update(inserted.id, {
+    const initial = boardTasks()("revise-me", {
+      title: "Revise me",
+      repoPath: "/app",
+      planningCommit: head,
+      handoffPath: "revise-me.md",
+      originAgentId: "origin",
+    });
+    const task: Task = {
+      ...initial,
       phase: "changes_requested",
       workspaceIntent: true,
       agentIntent: true,
@@ -447,41 +449,45 @@ test("a verb with fill fields requires them before submit and reports refusals i
       resumePrNumber: 12,
       prUrl: "https://example.test/pull/12",
       prHead: head,
-      resolution: { ...inserted.resolution, currentRunId: "worker-run" },
+      resolution: { ...initial.resolution, currentRunId: "worker-run" },
       completion: completionSchema.parse({
         eventId: "e1",
-        taskId: inserted.id,
+        taskId: initial.id,
         runId: "worker-run",
         status: "changes_required",
         summary: "Address the review findings",
         prNumber: 12,
         head,
       }),
-    });
+    };
     // The retained revision run is still live and owns the task, so the Next
     // section names it as the participant. A released or finished run is
     // history and is never presented as active (Queue #477 review 5675206214).
-    store.putRun(
-      runSchema.parse({
-        id: "worker-run",
-        taskId: task.id,
-        role: "revision",
-        generation: 1,
-        head,
-        base: head,
-        agentId: "worker-agent",
-        workspaceId: "workspace",
-        profile: profileSchema.parse(workerProfile),
-        status: "running",
-        createdAt: new Date().toISOString(),
-        lastObservedAt: new Date().toISOString(),
-        active: true,
-        idleSince: null,
-        completion: null,
-        released: false,
-      }),
-    );
-    const read = createTaskDetailCache(store);
+    const run = runSchema.parse({
+      id: "worker-run",
+      taskId: task.id,
+      role: "revision",
+      generation: 1,
+      head,
+      base: head,
+      agentId: "worker-agent",
+      workspaceId: "workspace",
+      profile: profileSchema.parse(workerProfile),
+      status: "running",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: new Date().toISOString(),
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    });
+    const activity = {
+      state: "unclassified" as const,
+      role: "worker" as const,
+      since: task.updatedAt,
+      detail: "Changes · no recent activity",
+      lastActivityAt: null,
+    };
     const calls: unknown[] = [];
     let refuse = true;
     const invoke = async (method: string, input: unknown) => {
@@ -502,22 +508,44 @@ test("a verb with fill fields requires them before submit and reports refusals i
           }),
         ]);
       if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return read(task.id);
+      if (method === "queue.detail")
+        return {
+          ...boardDetailReply(task),
+          task: { ...boardDetailReply(task).task, activity },
+          runs: [run],
+        };
       if (method === "task.next")
-        return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
+        return boardNext(boardDetailReply(task).task, {
+          activity,
+          activeRun: {
+            runId: run.id,
+            role: run.role,
+            agentId: run.agentId,
+            profileId: run.profile?.id,
+            profileName: run.profile?.name,
+            status: run.status,
+            released: run.released,
+            lastActivity: null,
+            summary: null,
+          },
+          verbs: [
+            offered(task, "move", { to: "work" }, ["reason", "instruction"]),
+          ],
+        });
       if (method === "queue.task") {
         if (refuse)
           throw new Error(
             "A live worker run still owns this task; settle it first",
           );
         calls.push(input);
-        return store.update(task.id, {
+        return {
+          ...task,
           phase: "working",
           resolution: {
-            ...store.task(task.id).resolution,
+            ...task.resolution,
             pendingRevisionCause: "review",
           },
-        });
+        };
       }
       if (
         method === "project.qa.list" ||
@@ -583,7 +611,7 @@ test("a verb with fill fields requires them before submit and reports refusals i
         .includes("A live worker run still owns this task; settle it first"),
     );
     refuse = false;
-    const expectedVersion = store.task(task.id).version;
+    const expectedVersion = task.version;
     tree.press("Confirm move");
     await settle(() => tree.text().includes("Applied move"));
     assert.deepEqual(calls[0], {
@@ -597,44 +625,36 @@ test("a verb with fill fields requires them before submit and reports refusals i
     });
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("the closeout form sends either a reason alone or the complete qualifying pair", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const title = "Retained source";
     const prUrl = "https://example.test/pull/12";
     const final = "b".repeat(40);
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "retained-source",
-        title,
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "retained-source.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-    const task = store.update(inserted.id, {
+    const initial = boardTasks()("retained-source", {
+      title,
+      repoPath: "/app",
+      planningCommit: head,
+      handoffPath: "retained-source.md",
+      originAgentId: "origin",
+    });
+    const task: Task = {
+      ...initial,
       phase: "needs_attention",
       reason: "Evaluate the external merge",
       prUrl,
       prHead: head,
-    });
+    };
     const args = {
       action: "move",
       to: "closeout",
       taskId: task.id,
       version: task.version,
     };
-    const read = createTaskDetailCache(store);
     const calls: unknown[] = [];
     const invoke = async (method: string, input: unknown) => {
       if (method === "queue.ui-snapshot")
@@ -642,10 +662,10 @@ test("the closeout form sends either a reason alone or the complete qualifying p
           summaryOf({ id: task.id, title, phase: task.phase, prUrl }),
         ]);
       if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return read(task.id);
+      if (method === "queue.detail") return boardDetailReply(task);
       if (method === "task.next")
         return {
-          ...ownerTaskNext(collectOwnerVerbFacts(store, task)),
+          ...boardNext(boardDetailReply(task).task),
           verbs: [
             {
               verb: "move",
@@ -711,7 +731,6 @@ test("the closeout form sends either a reason alone or the complete qualifying p
     assert.equal(calls.length, 2);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -815,195 +834,205 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
     { surface0: "#111111", surface1: "#1b1b1b", foreground: "#eeeeee" },
     { get: (value, key) => value[key as keyof typeof value] ?? "#888888" },
   ) as never;
-  const store = new Store(":memory:");
-  store.setMeta("pool", pool);
-  const setUsage = (expired: boolean) =>
-    store.setMeta("usageLevel", {
-      level: "maximum",
+  let usage: {
+    level: string;
+    setLevel: string;
+    expired: boolean;
+    until: string;
+  };
+  const setUsage = (expired: boolean) => {
+    usage = {
+      level: expired ? "normal" : "maximum",
+      setLevel: "maximum",
+      expired,
       until: expired ? new Date(Date.now() - 1000).toISOString() : until,
-      setAt: at,
-    });
-  try {
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "policy",
-        title: "Policy task",
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "policy.md",
-        originAgentId: "origin",
-        preferredProfileId: "cheap",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-    const task = store.update(inserted.id, {
-      phase: "working",
-      profile: profileSchema.parse(frontier),
-    });
-    const read = createTaskDetailCache(store);
-    const writes: string[] = [];
-    for (const compact of [false, true]) {
-      setUsage(false);
-      const invoke = async (method: string) => {
-        if (method === "queue.ui-snapshot")
-          return {
-            ...board([
-              summaryOf({
-                id: task.id,
-                title: "Policy task",
-                phase: "working",
-              }),
-            ]),
-            profiles: [frontier, cheap, coord, complex],
-            pool,
-            usage: store.usageView(),
-          };
-        if (method === "queue.service-state") return serviceState;
-        if (method === "queue.detail") return read(task.id);
-        if (method === "task.next")
-          return ownerTaskNext(
-            collectOwnerVerbFacts(store, store.task(task.id)),
-          );
-        if (
-          method === "project.qa.list" ||
-          method === "host.run.list" ||
-          method === "host.run.board"
-        )
-          return [];
-        if (method === "lead.board") return { cards: [], links: [] };
-        if (
-          method === "queue.plans" ||
-          method === "papercut.list" ||
-          method === "draft.list" ||
-          method === "decision.list" ||
-          method === "project.owner-candidates"
-        )
-          return [];
-        if (method !== "queue.backup-list") writes.push(method);
-        return {};
-      };
-      const client = new QueryClient();
-      const tree = mountInbox(
-        h(QueryClientProvider, {
-          client,
-          children: h(PluginRpcProvider, {
-            invoke: invoke as never,
-            children: h(queue.MainSurface as never, {
-              theme: { colors: dark },
-              host: { id: "host", label: "Host" },
-              layout: { compact, platform: "ios" as const },
+    };
+  };
+  const initial = boardTasks()("policy", {
+    title: "Policy task",
+    repoPath: "/app",
+    planningCommit: head,
+    handoffPath: "policy.md",
+    originAgentId: "origin",
+    preferredProfileId: "cheap",
+  });
+  const task: Task = {
+    ...initial,
+    phase: "working",
+    profile: profileSchema.parse(frontier),
+  };
+  const writes: string[] = [];
+  for (const compact of [false, true]) {
+    setUsage(false);
+    const invoke = async (method: string) => {
+      if (method === "queue.ui-snapshot")
+        return {
+          ...board([
+            summaryOf({
+              id: task.id,
+              title: "Policy task",
+              phase: "working",
             }),
+          ]),
+          profiles: [frontier, cheap, coord, complex],
+          pool,
+          usage,
+        };
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return boardDetailReply(task);
+      if (method === "task.next")
+        return boardNext(boardDetailReply(task).task, {
+          routingPolicy: {
+            usage,
+            requested: "worker",
+            scope: "general",
+            climbTier: null,
+            profiles: [
+              { profileId: "frontier", source: "dispatched" },
+              { profileId: "cheap", source: "preference" },
+            ].map((profile) => ({
+              ...profile,
+              role: "worker",
+              inPool: true,
+              capability: "frontier",
+              automatic: usage.expired ? "request_tier" : "allowed",
+              gates: [],
+              explanation: "Worker routing policy",
+            })),
+          },
+          verbs: [
+            offered(task, "route", { role: "reviewer", profileId: "" }, [
+              "profileId",
+              "reason",
+            ]),
+          ],
+        });
+      if (
+        method === "project.qa.list" ||
+        method === "host.run.list" ||
+        method === "host.run.board"
+      )
+        return [];
+      if (method === "lead.board") return { cards: [], links: [] };
+      if (
+        method === "queue.plans" ||
+        method === "papercut.list" ||
+        method === "draft.list" ||
+        method === "decision.list" ||
+        method === "project.owner-candidates"
+      )
+        return [];
+      if (method !== "queue.backup-list") writes.push(method);
+      return {};
+    };
+    const client = new QueryClient();
+    const tree = mountInbox(
+      h(QueryClientProvider, {
+        client,
+        children: h(PluginRpcProvider, {
+          invoke: invoke as never,
+          children: h(queue.MainSurface as never, {
+            theme: { colors: dark },
+            host: { id: "host", label: "Host" },
+            layout: { compact, platform: "ios" as const },
           }),
         }),
+      }),
+    );
+    try {
+      await settle(() => tree.text().includes("Policy task"));
+      tree.press(/Policy task/);
+      // nucleus#1537: the routing policy lines sit under Details → Routing and timing.
+      await selectDetailTab(tree, "Details");
+      await settle(() =>
+        Boolean(tree.query("Routing policy for worker profile frontier")),
       );
-      try {
-        await settle(() => tree.text().includes("Policy task"));
-        tree.press(/Policy task/);
-        // nucleus#1537: the routing policy lines sit under Details → Routing and timing.
-        await selectDetailTab(tree, "Details");
-        await settle(() =>
-          Boolean(tree.query("Routing policy for worker profile frontier")),
-        );
-        const line = (role: string, id: string) =>
-          tree
-            .get(`Routing policy for ${role} profile ${id}`)
-            .children.join("");
-        assert.equal(
-          line("worker", "frontier"),
-          `worker · frontier · Recorded worker run used it (history, not today's policy); automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until)}`,
-        );
-        assert.equal(
-          line("worker", "cheap"),
-          `worker · cheap · Worker preference; automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until)}`,
-          "a cheap frontier profile is automatic at Maximum",
-        );
-        assert.equal(
-          tree.get("Routing policy for worker profile frontier").props.style
-            .flexShrink,
-          1,
-          "the line wraps instead of truncating",
-        );
-        // The route chooser: tags read the effective policy; the chosen profile keeps route explicit.
-        await selectDetailTab(tree, "Overview");
-        await pressVerb(tree, "route reviewer");
-        await settle(() => Boolean(tree.query("Profile Frontier Opus")));
-        assert.equal(
-          flat(tree.get("Profile Frontier Opus")),
-          "Frontier Opus",
-          "automatic at Maximum: no tag",
-        );
-        assert.equal(flat(tree.get("Profile Cheap")), "Cheap");
-        // Spec 053: role and scope switches no longer gate, so a coordinator-only or
-        // complex-only entry is offered for the reviewer under the usage policy.
-        assert.equal(
-          flat(tree.get("Profile Coordinator only")),
-          "Coordinator only",
-        );
-        assert.equal(flat(tree.get(`Profile ${longName}`)), longName);
-        // A long label wraps inside the row rather than overflowing the compact dialog.
-        const button = tree.get(`Profile ${longName}`);
-        assert.deepEqual(
-          [button.props.style.maxWidth, button.props.style.flexShrink],
-          ["100%", 1],
-        );
-        const label = tree
-          .ofType("Text")
-          .find((node) => flat(node) === longName)!;
-        assert.equal(
-          label.props.style.flexShrink,
-          1,
-          "the label text shrinks and wraps",
-        );
-        tree.press("Profile Frontier Opus");
-        assert.match(
-          tree.text(),
-          new RegExp(
-            `Route is an explicit request and applies at every usage level\\. Automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until).replace(/[()]/g, "\\$&")}\\.`,
-          ),
-        );
-        // Expiry on an isolated store: fresh reads (next, and a cached detail) show Normal.
-        setUsage(true);
-        await client.refetchQueries({
-          queryKey: ["nucleus", "state"],
-          exact: true,
-        });
-        await client.refetchQueries({
-          queryKey: ["nucleus", "next", task.id],
-          exact: true,
-        });
-        await selectDetailTab(tree, "Details");
-        await settle(() =>
-          line("worker", "frontier").includes("above the task"),
-        );
-        assert.match(
-          line("worker", "frontier"),
-          /automatic selection: Frontier: above the task's Worker bracket, so an explicit route is required \(Maximum ended /,
-        );
-        await selectDetailTab(tree, "Overview");
-        assert.equal(
-          flat(tree.get("Profile Frontier Opus")),
-          "Frontier Opus · request only",
-        );
-        assert.equal(
-          flat(tree.get("Profile Cheap")),
-          "Cheap · request only",
-          "below Maximum a frontier profile needs a request whatever its cost",
-        );
-        assert.equal(
-          read(task.id).routingPolicy.usage.level,
-          "normal",
-          "the cached detail read re-projects too",
-        );
-        assert.deepEqual(writes, [], "nothing was written");
-      } finally {
-        tree.update(h("View", null));
-        client.clear();
-      }
+      const line = (role: string, id: string) =>
+        tree.get(`Routing policy for ${role} profile ${id}`).children.join("");
+      assert.equal(
+        line("worker", "frontier"),
+        `worker · frontier · Recorded worker run used it (history, not today's policy); automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until)}`,
+      );
+      assert.equal(
+        line("worker", "cheap"),
+        `worker · cheap · Worker preference; automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until)}`,
+        "a cheap frontier profile is automatic at Maximum",
+      );
+      assert.equal(
+        tree.get("Routing policy for worker profile frontier").props.style
+          .flexShrink,
+        1,
+        "the line wraps instead of truncating",
+      );
+      // The route chooser: tags read the effective policy; the chosen profile keeps route explicit.
+      await selectDetailTab(tree, "Overview");
+      await pressVerb(tree, "route reviewer");
+      await settle(() => Boolean(tree.query("Profile Frontier Opus")));
+      assert.equal(
+        flat(tree.get("Profile Frontier Opus")),
+        "Frontier Opus",
+        "automatic at Maximum: no tag",
+      );
+      assert.equal(flat(tree.get("Profile Cheap")), "Cheap");
+      // Spec 053: role and scope switches no longer gate, so a coordinator-only or
+      // complex-only entry is offered for the reviewer under the usage policy.
+      assert.equal(
+        flat(tree.get("Profile Coordinator only")),
+        "Coordinator only",
+      );
+      assert.equal(flat(tree.get(`Profile ${longName}`)), longName);
+      // A long label wraps inside the row rather than overflowing the compact dialog.
+      const button = tree.get(`Profile ${longName}`);
+      assert.deepEqual(
+        [button.props.style.maxWidth, button.props.style.flexShrink],
+        ["100%", 1],
+      );
+      const label = tree
+        .ofType("Text")
+        .find((node) => flat(node) === longName)!;
+      assert.equal(
+        label.props.style.flexShrink,
+        1,
+        "the label text shrinks and wraps",
+      );
+      tree.press("Profile Frontier Opus");
+      assert.match(
+        tree.text(),
+        new RegExp(
+          `Route is an explicit request and applies at every usage level\\. Automatic selection: Frontier · Automatic at Maximum until ${formatLocalDateTime(until).replace(/[()]/g, "\\$&")}\\.`,
+        ),
+      );
+      // After expiry, refreshed policy reads show Normal.
+      setUsage(true);
+      await client.refetchQueries({
+        queryKey: ["nucleus", "state"],
+        exact: true,
+      });
+      await client.refetchQueries({
+        queryKey: ["nucleus", "next", task.id],
+        exact: true,
+      });
+      await selectDetailTab(tree, "Details");
+      await settle(() => line("worker", "frontier").includes("above the task"));
+      assert.match(
+        line("worker", "frontier"),
+        /automatic selection: Frontier: above the task's Worker bracket, so an explicit route is required \(Maximum ended /,
+      );
+      await selectDetailTab(tree, "Overview");
+      assert.equal(
+        flat(tree.get("Profile Frontier Opus")),
+        "Frontier Opus · request only",
+      );
+      assert.equal(
+        flat(tree.get("Profile Cheap")),
+        "Cheap · request only",
+        "below Maximum a frontier profile needs a request whatever its cost",
+      );
+      assert.deepEqual(writes, [], "nothing was written");
+    } finally {
+      tree.update(h("View", null));
+      client.clear();
     }
-  } finally {
-    store.close();
   }
 });
 
@@ -1040,159 +1069,130 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
     },
     { get: (value, key) => value[key as keyof typeof value] ?? "#888888" },
   ) as never;
-  const store = new Store(":memory:");
-  store.setMeta("pool", pool);
-  store.setMeta("usageLevel", { level: "maximum", until: null, setAt: at });
+  const usage = {
+    level: "maximum",
+    setLevel: "maximum",
+    expired: false,
+    until: null,
+  };
   const writes: string[] = [];
-  try {
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "group",
-        title: "Group task",
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "group.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
-    const task = store.update(inserted.id, {
-      phase: "needs_attention",
-      reason: "Waiting for the operator",
-    });
-    // The selector agrees: the level lifts the flag, the group still holds automatic selection.
-    assert.equal(
-      chooseProfile(
-        store.task(task.id),
-        [down],
-        store.pool(),
-        {},
-        new Set(),
-        "reviewer",
-        {},
-        "maximum",
-      )?.profile.id,
-      "down",
-    );
-    assert.equal(
-      chooseProfile(
-        store.task(task.id),
-        [down],
-        store.pool(),
-        {},
-        new Set(["down"]),
-        "reviewer",
-        {},
-        "maximum",
-      ),
-      null,
-    );
-    const read = createTaskDetailCache(store);
-    for (const compact of [false, true]) {
-      const invoke = async (method: string) => {
-        if (method === "queue.ui-snapshot")
-          return {
-            ...board([
-              summaryOf({
-                id: task.id,
-                title: "Group task",
-                phase: "needs_attention",
-              }),
-            ]),
-            profiles: [down],
-            pool,
-            availability,
-            usage: store.usageView(),
-          };
-        if (method === "queue.service-state") return serviceState;
-        if (method === "queue.detail") return read(task.id);
-        if (method === "task.next")
-          return ownerTaskNext(
-            collectOwnerVerbFacts(store, store.task(task.id)),
-          );
-        if (
-          method === "project.qa.list" ||
-          method === "host.run.list" ||
-          method === "host.run.board"
-        )
-          return [];
-        if (method === "lead.board") return { cards: [], links: [] };
-        if (
-          method === "queue.plans" ||
-          method === "papercut.list" ||
-          method === "draft.list" ||
-          method === "decision.list" ||
-          method === "project.owner-candidates"
-        )
-          return [];
-        if (method !== "queue.backup-list") writes.push(method);
-        return {};
-      };
-      const client = new QueryClient();
-      const tree = mountInbox(
-        h(QueryClientProvider, {
-          client,
-          children: h(PluginRpcProvider, {
-            invoke: invoke as never,
-            children: h(queue.MainSurface as never, {
-              theme: { colors: dark },
-              host: { id: "host", label: "Host" },
-              layout: { compact, platform: "ios" as const },
+  const initial = boardTasks()("group", {
+    title: "Group task",
+    repoPath: "/app",
+    planningCommit: head,
+    handoffPath: "group.md",
+    originAgentId: "origin",
+  });
+  const task: Task = {
+    ...initial,
+    phase: "needs_attention",
+    reason: "Waiting for the operator",
+  };
+  for (const compact of [false, true]) {
+    const invoke = async (method: string) => {
+      if (method === "queue.ui-snapshot")
+        return {
+          ...board([
+            summaryOf({
+              id: task.id,
+              title: "Group task",
+              phase: "needs_attention",
             }),
+          ]),
+          profiles: [down],
+          pool,
+          availability,
+          usage,
+        };
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return boardDetailReply(task);
+      if (method === "task.next")
+        return boardNext(boardDetailReply(task).task, {
+          verbs: [
+            offered(task, "route", { role: "reviewer", profileId: "" }, [
+              "profileId",
+              "reason",
+            ]),
+          ],
+        });
+      if (
+        method === "project.qa.list" ||
+        method === "host.run.list" ||
+        method === "host.run.board"
+      )
+        return [];
+      if (method === "lead.board") return { cards: [], links: [] };
+      if (
+        method === "queue.plans" ||
+        method === "papercut.list" ||
+        method === "draft.list" ||
+        method === "decision.list" ||
+        method === "project.owner-candidates"
+      )
+        return [];
+      if (method !== "queue.backup-list") writes.push(method);
+      return {};
+    };
+    const client = new QueryClient();
+    const tree = mountInbox(
+      h(QueryClientProvider, {
+        client,
+        children: h(PluginRpcProvider, {
+          invoke: invoke as never,
+          children: h(queue.MainSurface as never, {
+            theme: { colors: dark },
+            host: { id: "host", label: "Host" },
+            layout: { compact, platform: "ios" as const },
           }),
         }),
+      }),
+    );
+    const warning = new RegExp(
+      `Subscription group down is unavailable: Quota exhausted · until ${formatLocalDateTime(retryAt).replace(/[()]/g, "\\$&")}\\. Nothing dispatches to this profile until the group returns, whatever the usage level\\.`,
+    );
+    try {
+      await settle(() => tree.text().includes("Group task"));
+      tree.press(/Group task/);
+      await selectDetailTab(tree, "Overview");
+      await settle(
+        () =>
+          Boolean(tree.query("Task actions menu")) ||
+          Boolean(tree.all(/^Show \d+ more actions$/).length),
       );
-      const warning = new RegExp(
-        `Subscription group down is unavailable: Quota exhausted · until ${formatLocalDateTime(retryAt).replace(/[()]/g, "\\$&")}\\. Nothing dispatches to this profile until the group returns, whatever the usage level\\.`,
+      await pressVerb(tree, "route reviewer");
+      await settle(() =>
+        Boolean(tree.query("Profile Frontier in a paused group")),
       );
-      try {
-        await settle(() => tree.text().includes("Group task"));
-        tree.press(/Group task/);
-        await selectDetailTab(tree, "Overview");
-        await settle(
-          () =>
-            Boolean(tree.query("route reviewer")) ||
-            Boolean(tree.all(/^Show \d+ more actions$/).length),
-        );
-        await pressVerb(tree, "route reviewer");
-        await settle(() =>
-          Boolean(tree.query("Profile Frontier in a paused group")),
-        );
-        assert.equal(
-          flat(tree.get("Profile Frontier in a paused group")),
-          "Frontier in a paused group · group unavailable",
-        );
-        tree.press("Profile Frontier in a paused group");
-        assert.match(tree.text(), warning);
-        assert.doesNotMatch(
-          tree.text(),
-          /Automatic selection: (Frontier · )?Automatic/,
-        );
-        // The worker preference chooser in Routing (⋯ menu) reads the same.
-        tree.press("Task actions menu");
-        await settle(() => Boolean(tree.query("Change routing & profiles")));
-        tree.press("Change routing & profiles");
-        await settle(() => Boolean(tree.query("Change routing")));
-        tree.press("Change routing");
-        const preference = tree.ofType("Text").find(
-          (node) =>
-            // Opening the routing panel replaced the route verb's chooser.
-            flat(node) === "Frontier in a paused group · group unavailable",
-        );
-        assert.ok(
-          preference,
-          "the preference button names the unavailable group",
-        );
-        assert.deepEqual(writes, [], "nothing was written");
-      } finally {
-        tree.update(h("View", null));
-        client.clear();
-      }
+      assert.equal(
+        flat(tree.get("Profile Frontier in a paused group")),
+        "Frontier in a paused group · group unavailable",
+      );
+      tree.press("Profile Frontier in a paused group");
+      assert.match(tree.text(), warning);
+      assert.doesNotMatch(
+        tree.text(),
+        /Automatic selection: (Frontier · )?Automatic/,
+      );
+      // The worker preference chooser in Routing (⋯ menu) reads the same.
+      tree.press("Task actions menu");
+      await settle(() => Boolean(tree.query("Change routing & profiles")));
+      tree.press("Change routing & profiles");
+      await settle(() => Boolean(tree.query("Change routing")));
+      tree.press("Change routing");
+      const preference = tree.ofType("Text").find(
+        (node) =>
+          // Opening the routing panel replaced the route verb's chooser.
+          flat(node) === "Frontier in a paused group · group unavailable",
+      );
+      assert.ok(
+        preference,
+        "the preference button names the unavailable group",
+      );
+      assert.deepEqual(writes, [], "nothing was written");
+    } finally {
+      tree.update(h("View", null));
+      client.clear();
     }
-  } finally {
-    store.close();
   }
 });
 
@@ -1205,25 +1205,18 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
  */
 test("task detail shows the recorded run-bound build output cleanup beside the continuation gates", async () => {
   await load();
-  const store = new Store(":memory:");
-  store.setMeta("paused", false);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const inserted = store.insert(
-      submissionSchema.parse({
-        submissionId: "built-task",
-        title: "Built once",
-        repoPath: "/app",
-        planningCommit: head,
-        handoffPath: "built.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      head,
-    );
+    const initial = boardTasks()("built-task", {
+      title: "Built once",
+      repoPath: "/app",
+      planningCommit: head,
+      handoffPath: "built.md",
+      originAgentId: "origin",
+    });
     const longDetail = `Removed task-local Cargo target output at ${"/app/target/debug/".repeat(90)}`;
-    const task = store.update(inserted.id, {
+    const task: Task = {
+      ...initial,
       phase: "blocked",
       workspaceId: "workspace",
       directory: "/app",
@@ -1232,14 +1225,14 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
       reason: "Blocked after a build",
       completion: completionSchema.parse({
         eventId: "e1",
-        taskId: inserted.id,
+        taskId: initial.id,
         runId: "worker-run",
         status: "blocked",
         summary: "Blocked after a build",
         head,
       }),
       resolution: {
-        ...inserted.resolution,
+        ...initial.resolution,
         buildOutputCleanups: [
           {
             workspaceId: "workspace",
@@ -1261,17 +1254,15 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
           },
         ],
       },
-    });
-    const read = createTaskDetailCache(store);
+    };
     const invoke = async (method: string, input: unknown) => {
       if (method === "queue.ui-snapshot")
         return board([
           summaryOf({ id: task.id, title: "Built once", phase: "blocked" }),
         ]);
       if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return read(task.id);
-      if (method === "task.next")
-        return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
+      if (method === "queue.detail") return boardDetailReply(task);
+      if (method === "task.next") return boardNext(boardDetailReply(task).task);
       if (
         method === "project.qa.list" ||
         method === "host.run.list" ||
@@ -1342,7 +1333,6 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -1352,42 +1342,27 @@ test("task detail shows the recorded run-bound build output cleanup beside the c
  * plain words; Activity bounds long event detail; raw identity sits behind a
  * disclosure in Technical. The cases mount at narrow and wide sizes.
  */
-const evidenceTask = (store: Store) => {
-  const inserted = store.insert(
-    submissionSchema.parse({
-      submissionId: "evidence",
-      title: "Evidence",
-      repoPath: "/app",
-      planningCommit: head,
-      handoffPath: "evidence.md",
-      originAgentId: "origin",
-    }),
-    "host",
-    "handoff",
-    head,
-  );
-  return store.update(inserted.id, {
+const evidenceTask = () =>
+  boardTasks()("evidence", {
+    title: "Evidence",
     phase: "blocked",
     reason: "Blocked for evidence",
   });
-};
-/** Serves the real detail cache with the test's own runs, messages or events laid over it. */
+
 const evidenceInvoke = (
-  store: Store,
-  taskId: string,
+  task: Task,
   overlay: (detail: Record<string, unknown>) => Record<string, unknown>,
 ) => {
-  const read = createTaskDetailCache(store);
+  const taskId = task.id;
+  const detail = boardDetailReply(task);
   return async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot")
       return board([
         summaryOf({ id: taskId, title: "Evidence", phase: "blocked" }),
       ]);
     if (method === "queue.service-state") return serviceState;
-    if (method === "queue.detail")
-      return overlay(read(taskId) as unknown as Record<string, unknown>);
-    if (method === "task.next")
-      return ownerTaskNext(collectOwnerVerbFacts(store, store.task(taskId)));
+    if (method === "queue.detail") return overlay(detail);
+    if (method === "task.next") return boardNext(detail.task);
     if (
       method === "project.qa.list" ||
       method === "host.run.list" ||
@@ -1413,11 +1388,10 @@ for (const compact of [false, true]) {
 
   test(`task 895 and nucleus#1537 (${size}): all three detail sections stay visible and accessible`, async () => {
     await load();
-    const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
-      const task = evidenceTask(store);
-      const read = evidenceInvoke(store, task.id, (detail) => detail);
+      const task = evidenceTask();
+      const read = evidenceInvoke(task, (detail) => detail);
       let detailReads = 0;
       const tree = mountBoard((method, input) => {
         if (method === "queue.refresh") return Promise.resolve({ ok: true });
@@ -1458,16 +1432,14 @@ for (const compact of [false, true]) {
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   });
 
   test(`task 860 (${size}): live runs lead Runs and delivery and earlier runs sit behind a disclosure`, async () => {
     await load();
-    const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
-      const task = evidenceTask(store);
+      const task = evidenceTask();
       const run = (overrides: Record<string, unknown>) =>
         runSchema.parse({
           id: "run",
@@ -1499,7 +1471,7 @@ for (const compact of [false, true]) {
         run({ id: "live-run", generation: 2, agentId: "worker-agent" }),
       ];
       const tree = mountBoard(
-        evidenceInvoke(store, task.id, (detail) => ({ ...detail, runs })),
+        evidenceInvoke(task, (detail) => ({ ...detail, runs })),
         compact,
       );
       mounted = tree;
@@ -1531,16 +1503,14 @@ for (const compact of [false, true]) {
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   });
 
   test(`task 860 and nucleus#1537 (${size}): messages fold into Activity and say what their delivery state is`, async () => {
     await load();
-    const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
-      const task = evidenceTask(store);
+      const task = evidenceTask();
       const message = (
         id: string,
         status: "queued" | "delivered" | "expired",
@@ -1571,7 +1541,7 @@ for (const compact of [false, true]) {
         message("expired-one", "expired"),
       ];
       const tree = mountBoard(
-        evidenceInvoke(store, task.id, (detail) => ({ ...detail, messages })),
+        evidenceInvoke(task, (detail) => ({ ...detail, messages })),
         compact,
       );
       mounted = tree;
@@ -1598,16 +1568,14 @@ for (const compact of [false, true]) {
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   });
 
   test(`task 860 and nucleus#1537 (${size}): Activity reads in words, hides bookkeeping, and keeps every original event behind Show raw events`, async () => {
     await load();
-    const store = new Store(":memory:");
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
-      const task = evidenceTask(store);
+      const task = evidenceTask();
       const long = "Worker report body. ".repeat(20);
       const events = [
         eventSchema.parse({
@@ -1633,7 +1601,7 @@ for (const compact of [false, true]) {
         }),
       ];
       const tree = mountBoard(
-        evidenceInvoke(store, task.id, (detail) => ({ ...detail, events })),
+        evidenceInvoke(task, (detail) => ({ ...detail, events })),
         compact,
       );
       mounted = tree;
@@ -1689,17 +1657,15 @@ for (const compact of [false, true]) {
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   });
 }
 
 test("task 860: a capped run history says the earlier count is the latest window", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = evidenceTask(store);
+    const task = evidenceTask();
     const earlier = Array.from({ length: 200 }, (_, index) =>
       runSchema.parse({
         id: `old-${index}`,
@@ -1721,7 +1687,7 @@ test("task 860: a capped run history says the earlier count is the latest window
       }),
     );
     const tree = mountBoard(
-      evidenceInvoke(store, task.id, (detail) => ({
+      evidenceInvoke(task, (detail) => ({
         ...detail,
         runs: earlier,
       })),
@@ -1735,18 +1701,16 @@ test("task 860: a capped run history says the earlier count is the latest window
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("task 860 and nucleus#1537: a task with no messages or events says so in Activity and names no tool", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = evidenceTask(store);
+    const task = evidenceTask();
     const tree = mountBoard(
-      evidenceInvoke(store, task.id, (detail) => ({
+      evidenceInvoke(task, (detail) => ({
         ...detail,
         messages: [],
         events: [],
@@ -1766,16 +1730,14 @@ test("task 860 and nucleus#1537: a task with no messages or events says so in Ac
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("task 860: Activity names its window when the detail holds the newest 100 events, and an empty read says so", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = evidenceTask(store);
+    const task = evidenceTask();
     const full = Array.from({ length: 100 }, (_, index) =>
       eventSchema.parse({
         id: index + 1,
@@ -1786,7 +1748,7 @@ test("task 860: Activity names its window when the detail holds the newest 100 e
       }),
     );
     const tree = mountBoard(
-      evidenceInvoke(store, task.id, (detail) => ({ ...detail, events: full })),
+      evidenceInvoke(task, (detail) => ({ ...detail, events: full })),
     );
     mounted = tree;
     await settle(() => tree.text().includes("Evidence"));
@@ -1801,18 +1763,16 @@ test("task 860: Activity names its window when the detail holds the newest 100 e
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("task 860 and nucleus#1537: Activity with no recorded events says so, and Details keeps raw identity behind a disclosure", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = evidenceTask(store);
+    const task = evidenceTask();
     const tree = mountBoard(
-      evidenceInvoke(store, task.id, (detail) => ({ ...detail, events: [] })),
+      evidenceInvoke(task, (detail) => ({ ...detail, events: [] })),
     );
     mounted = tree;
     await settle(() => tree.text().includes("Evidence"));
@@ -1833,6 +1793,5 @@ test("task 860 and nucleus#1537: Activity with no recorded events says so, and D
     await settle(() => tree.text().includes("Planning commit"));
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
