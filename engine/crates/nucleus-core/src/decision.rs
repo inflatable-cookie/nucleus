@@ -460,27 +460,24 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
     if matches!(
         task.phase,
         Phase::Queued | Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
-    ) {
-        if let Observed::Known(Forge::Merged { pr, commit }) = &observation.forge {
-            if task.phase != Phase::Closing || !task.approves(&pr.head) {
-                return merged_signal(task, pr, false);
-            }
-            return match &observation.workspace {
-                Observed::Unknown => Signal::Wait(WaitReason::WorkspaceUnknown),
-                Observed::Known(Workspace::Absent) => {
-                    Signal::ReadyToClose(commit.clone(), CloseWorkspace::AlreadyAbsent)
-                }
-                Observed::Known(Workspace::Clean(head)) if *head == pr.head => {
-                    Signal::ReadyToClose(
-                        commit.clone(),
-                        CloseWorkspace::RemoveClean { head: head.clone() },
-                    )
-                }
-                Observed::Known(Workspace::Dirty | Workspace::Clean(_)) => {
-                    Signal::ReadyToClose(commit.clone(), CloseWorkspace::Retain)
-                }
-            };
+    ) && let Observed::Known(Forge::Merged { pr, commit }) = &observation.forge
+    {
+        if task.phase != Phase::Closing || !task.approves(&pr.head) {
+            return merged_signal(task, pr, false);
         }
+        return match &observation.workspace {
+            Observed::Unknown => Signal::Wait(WaitReason::WorkspaceUnknown),
+            Observed::Known(Workspace::Absent) => {
+                Signal::ReadyToClose(commit.clone(), CloseWorkspace::AlreadyAbsent)
+            }
+            Observed::Known(Workspace::Clean(head)) if *head == pr.head => Signal::ReadyToClose(
+                commit.clone(),
+                CloseWorkspace::RemoveClean { head: head.clone() },
+            ),
+            Observed::Known(Workspace::Dirty | Workspace::Clean(_)) => {
+                Signal::ReadyToClose(commit.clone(), CloseWorkspace::Retain)
+            }
+        };
     }
     match task.phase {
         Phase::Queued => Signal::Admitted,

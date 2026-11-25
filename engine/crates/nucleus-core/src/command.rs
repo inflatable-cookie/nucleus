@@ -214,15 +214,14 @@ impl Task {
             summary,
             ..
         }) = report
+            && self.pr.as_ref().is_some_and(|pr| pr.head == head)
         {
-            if self.pr.as_ref().is_some_and(|pr| pr.head == head) {
-                self.threads.applied_review_sequence = Some(self.threads.launch_sequence);
-                self.verdict = Some(Verdict::Reviewed {
-                    head,
-                    decision,
-                    summary,
-                });
-            }
+            self.threads.applied_review_sequence = Some(self.threads.launch_sequence);
+            self.verdict = Some(Verdict::Reviewed {
+                head,
+                decision,
+                summary,
+            });
         }
         if self.phase != phase {
             self.attempts = 0;
