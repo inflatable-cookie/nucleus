@@ -50,7 +50,6 @@ export function backendSourceDigest(sourcePath: string): string {
     add(join(sourcePath, "service"));
     add(join(sourcePath, "shared"));
     add(join(sourcePath, "hosts"));
-    add(join(sourcePath, "bin", "queue-service.mjs"));
     if (!count) throw new Error("Backend source set is empty");
     return hash.digest("hex");
   } catch (error) {

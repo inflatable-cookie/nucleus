@@ -11,7 +11,7 @@ const hostSdk = /^(?:@getpaseo\/|paseo-provenance-client(?:\/|$))/;
 // silently exempt its imports. Exact offending edges live in the ratchet file.
 export function area(path) {
   // This executable is a private service process, not a CLI transport client.
-  if (['bin/host-run-private-server.mjs', 'bin/queue-service.mjs', 'bin/queue-host-run-supervisor.mjs', 'bin/queue-validation-supervisor.mjs'].includes(path)) return 'service';
+  if (['bin/host-run-private-server.mjs', 'bin/queue-host-run-supervisor.mjs', 'bin/queue-validation-supervisor.mjs'].includes(path)) return 'service';
   const host = path.match(/^hosts?\/([^/]+)\/(.*)$/);
   if (host) return `${host[2].startsWith('plugin/') ? 'plugin' : host[2].startsWith('client/') ? 'host-client' : 'host'}:${host[1]}`;
   if (path.startsWith('server/service/') || path.startsWith('service/') || path === 'service/runtime-owner.ts') return 'service';

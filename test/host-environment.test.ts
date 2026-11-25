@@ -6,7 +6,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { hostEnvironment, hostHome } from "../service/host-environment.mjs";
 import { hostEnvironmentNames } from "../scripts/check-host-environment.mjs";
-import { importEdges } from "../scripts/check-folder-imports.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const read = (path: string) => readFileSync(join(root, path), "utf8");
@@ -33,11 +32,8 @@ test("the composition owner maps a private host home into the host's own environ
   }
 });
 
-test("the shared roll helpers and generic entries name no host environment or host module", () => {
+test("generic TypeScript service entries leave host names in composition", () => {
   const neutral = [
-    "shared/service/roll/options.ts",
-    "shared/service/roll/spawn.ts",
-    "service/standalone.ts",
     "service/executor/executor.ts",
     "service/runtime-owner.ts",
   ];
@@ -46,19 +42,6 @@ test("the shared roll helpers and generic entries name no host environment or ho
       hostEnvironmentNames(path, read(path)),
       [],
       `${path} must not name a host environment variable`,
-    );
-  }
-  // Shared roll helpers cannot import a specific host integration.
-  for (const path of [
-    "shared/service/roll/options.ts",
-    "shared/service/roll/spawn.ts",
-  ]) {
-    assert.deepEqual(
-      importEdges(path, read(path)).filter((specifier) =>
-        specifier.includes("hosts/"),
-      ),
-      [],
-      `${path} imports no host integration`,
     );
   }
 });
