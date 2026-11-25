@@ -26,6 +26,7 @@ import { planSaveInput } from "../shared/planning-tab";
 import {
   effectiveSelection,
   projectHasRepository,
+  matchesRepository,
   scopeContains,
 } from "../shared/project-scope";
 import { isOpenTask, type SettingsTarget } from "../shared/queue-navigation";
@@ -201,7 +202,7 @@ export function MainSurface({
     if (!rustTasks.data) return undefined;
     const contains = scopeContains(state?.projects ?? [], scope.projects);
     return groupRustTasks(rustTasks.data.filter(({ identity }) =>
-      contains(identity.repository, normalizeRepositoryOrigin(identity.repository)),
+      contains(identity.repository, identity.repository),
     ));
   }, [rustTasks.data, state?.projects, scope.projects]);
   const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
@@ -212,10 +213,10 @@ export function MainSurface({
     const counts = new Map<string, number>();
     for (const task of rustTasks.data) {
       if (task.phase === "done" || task.phase === "cancelled") continue;
-      const origin = normalizeRepositoryOrigin(task.identity.repository);
+      const origin = task.identity.repository;
       const repo = (state?.projects ?? [])
         .flatMap((project) => project.repositories)
-        .find((candidate) => candidate.origin && normalizeRepositoryOrigin(candidate.origin) === origin);
+        .find((candidate) => matchesRepository(candidate, origin, origin));
       if (repo?.path) counts.set(repo.path, (counts.get(repo.path) ?? 0) + 1);
     }
     return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
@@ -812,7 +813,7 @@ export function MainSurface({
                         const origin = normalizeRepositoryOrigin(identity.repository);
                         const project = projectForRepository(identity.repository, origin);
                         const repo = project?.repositories
-                          .find((candidate) => candidate.origin && normalizeRepositoryOrigin(candidate.origin) === origin);
+                          .find((candidate) => matchesRepository(candidate, identity.repository, identity.repository));
                         return {
                           name: project?.name ?? origin ?? identity.repository,
                           key: project?.key,

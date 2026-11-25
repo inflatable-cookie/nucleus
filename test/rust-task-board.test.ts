@@ -759,8 +759,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closeStream: (() => void) | undefined;
   const snap = <T>(value: T, revision: string) => ({ value, revision, configured: true });
+  let fixtureOrigin = "example/board-fixture";
   const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
-    { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+    { origin: fixtureOrigin, path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
       hostProject: "fixture-bound", hostProjectTitle: boundTitle },
   ] });
@@ -1661,6 +1662,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Working, 1");
   decisionOpen = false;
   emit("decisions");
+  fixtureOrigin = "Example/Board-Fixture";
+  emit("settings");
   await click("Projects, All projects");
   const projectRow = () => selector("Project selector")?.querySelector<HTMLElement>(
     '[role="checkbox"][aria-label^="Project Fixture project,"]',
@@ -1694,6 +1697,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const selected = "rgba(245, 245, 245, 0.1)";
   await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
   assert.equal(style(name).color, activeName);
+  assert.ok(selector("Working, 1"), "the selected project owns its mixed-case repository's working task");
+  assert.ok(selector("#80, Standalone task"), "filtering keeps the task visible");
   await click("Clear project selection");
   await click("Project actions for Fixture project");
   const actions = selector("Actions for Fixture project")!;
