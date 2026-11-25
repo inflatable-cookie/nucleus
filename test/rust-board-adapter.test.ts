@@ -13,9 +13,11 @@ import * as api from "../shared/contracts";
 import { createRustApi, namedProfile } from "../client/web/rust-api";
 import {
   createRustAdapter,
-  projectKeys,
+  projectKey,
+  projectId,
   RustUnsupported,
 } from "../client/web/rust-adapter";
+import { readProjectScope, writeProjectScope } from "../shared/project-scope";
 import { listenForPlanningIssues } from "../client/web/rust-planning";
 import { rustProfileUsage, rustProjectArchive } from "../client/rust-contracts";
 import { profileUsage } from "../client/settings-profile-helpers";
@@ -223,9 +225,9 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.equal(board.paused, false);
   assert.equal(board.dispatchHeld, false);
   assert.equal(board.globalLimit, 4);
-  assert.deepEqual(board.projects.map((project) => [project.key, project.name]), [["p-orbit-main", "Orbit"], ["lantern", "Lantern"]]);
+  assert.deepEqual(board.projects.map((project) => [project.key, project.name]), [[projectKey("Orbit_Main"), "Orbit"], ["lantern", "Lantern"]]);
   assert.deepEqual(board.projects[0]!.repositories.map((repo) => repo.origin), ["example/orbit", "example/orbit-docs"]);
-  assert.deepEqual(board.projectLimitOverrides, { "p-orbit-main": 3, lantern: 1 });
+  assert.deepEqual(board.projectLimitOverrides, { [projectKey("Orbit_Main")]: 3, lantern: 1 });
   assert.deepEqual(board.pool.map((entry) => [entry.profileId, entry.group, entry.roles]), [["w", "team", ["worker", "reviewer"]]]);
   assert.deepEqual(fake.reads, ["GET /settings", "GET /session"]);
   const storage = await adapter.rpc(api.workStorage, {});
@@ -309,13 +311,13 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
   assert.equal(effective.projectLimit, 2);
   await adapter.rpc(api.configureCapacity, { revision, globalLimit: 8, projectLimit: 4 });
   for (const limit of [5, null, 0]) {
-    const projectKey = "p-orbit-main";
-    await adapter.rpc(api.configureProjectDispatchLimit, { projectKey, limit });
+    const key = projectKey("Orbit_Main");
+    await adapter.rpc(api.configureProjectDispatchLimit, { projectKey: key, limit });
     const board = await adapter.rpc(api.uiSnapshot, {});
     assert.ok(!("unchanged" in board));
     assert.equal(board.globalLimit, 8);
     assert.equal(board.projectLimit, 4);
-    assert.deepEqual(board.projectLimitOverrides, limit === null ? { lantern: 1 } : { lantern: 1, [projectKey]: limit });
+    assert.deepEqual(board.projectLimitOverrides, limit === null ? { lantern: 1 } : { lantern: 1, [key]: limit });
   }
   assert.ok(fake.writes.every((write) => write.domain === "dispatch"));
 });
@@ -345,16 +347,98 @@ test("two Limits tabs preserve untouched slots and refuse an edit against an old
 test("retired machinery is refused by name instead of guessed", async () => {
   const adapter = createRustAdapter(createRustApi(engine().fetcher));
   await assert.rejects(adapter.rpc(api.refreshCatalog, {}), RustUnsupported);
-  assert.deepEqual(
-    ["orbit", "Orbit_Main", "orbit.main"].map(projectKeys(["orbit", "Orbit_Main", "orbit.main"]).key),
-    ["orbit", "p-orbit-main", "p-orbit-main-2"],
-  );
+});
+
+test("project keys round-trip independent of the registry, including the encoding prefix", () => {
+  const ids = ["orbit", "p-orbit-main", "Orbit_Main", "orbit.main", "rust-id-41", "A", "9", "_"];
+  assert.equal(new Set(ids.map(projectKey)).size, ids.length);
+  assert.deepEqual(ids.map(id => projectId(projectKey(id))), ids);
+  assert.equal(projectKey("p-orbit-main"), "p-orbit-main");
+});
+
+test("a saved filter keeps its owner across a registry collision and a fresh board mount", async (t) => {
+  const fake = engine();
+  let ids = ["p-orbit-main"];
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    if (!String(url).endsWith("/settings")) return response;
+    const settings = await response.json();
+    const registry = settings.projects.settings.value;
+    const template = registry.projects.lantern;
+    registry.projects = Object.fromEntries(ids.map(id => [id, {
+      ...template, name: id === "p-orbit-main" ? "Original" : "Arrival",
+      repositories: [{ ...template.repositories[0], path: "/work/" + id, origin: "example/" + id }],
+    }]));
+    return Response.json(settings);
+  };
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const storage = new Map<string, string>();
+  const priorScope = readProjectScope(undefined);
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  } });
+  t.after(() => {
+    if (priorStorage) Object.defineProperty(globalThis, "localStorage", priorStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    writeProjectScope(undefined, priorScope);
+  });
+  const key = "nucleus:project-scope";
+  const seed = (selection: string) => storage.set(key, JSON.stringify({ projects: [selection] }));
+  const saved = () => JSON.parse(storage.get(key) ?? "{}").projects;
+  seed("p-orbit-main");
+  const h = React.createElement;
+  const open = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const adapter = createRustAdapter(createRustApi(fetcher));
+    const ui = mount(h(QueryClientProvider, { client, children: h(web.WebContext.Provider, {
+      value: { transport: adapter, settings: false },
+      children: h(EngineFeaturesContext.Provider, { value: RUST_ENGINE_FEATURES, children: h(MainSurface, {
+        theme: { colors: new Proxy({}, { get: () => "#123" }) as never }, layout: { compact: false },
+      }) }),
+    }) }));
+    const close = () => { ui.update(h(React.Fragment)); client.clear(); };
+    return { ui, client, close };
+  };
+  const wait = (test: () => boolean, label: string) => waitFor(test, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, label);
+  let board = open();
+  t.after(() => { board.close(); useNativeStubs(); });
+  await wait(() => Boolean(board.ui.query("Projects, Original")), "restore the previously saved filter");
+  assert.deepEqual(saved(), ["rust:p-orbit-main"]);
+  ids = ["Orbit_Main", "p-orbit-main"];
+  await board.client.refetchQueries({ queryKey: ["nucleus", "state"] });
+  assert.ok(board.ui.query("Projects, Original"));
+  board.close();
+  board = open();
+  await wait(() => Boolean(board.ui.query("Projects, Original")), "reload with both registry entries");
+
+  board.close();
+  seed("p-orbit-main");
+  board = open();
+  await wait(() => board.ui.text().includes("no unique match"), "ambiguous old selection asks for a new pick");
+  assert.deepEqual(saved(), ["unresolved:p-orbit-main"]);
+  board.ui.press("Projects, All projects");
+  board.ui.press(/^Project Arrival,/);
+  await wait(() => Boolean(board.ui.query("Projects, Arrival")), "a new pick binds to the chosen owner");
+  assert.deepEqual(saved(), ["rust:" + projectKey("Orbit_Main")]);
+
+  board.close();
+  seed("p-orbit-main");
+  ids = ["Orbit_Main"];
+  board = open();
+  await wait(() => Boolean(board.ui.query("Projects, Arrival")), "a unique legacy alias migrates to its native owner");
+  assert.deepEqual(saved(), ["rust:" + projectKey("Orbit_Main")]);
 });
 
 test("Projects shows and clears the claimed planner when another thread is most recently verified", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
-  const key = "p-orbit-main";
+  const key = projectKey("Orbit_Main");
   const entry = async () => (await adapter.rpc(api.projectSettings, { project: key })).projects[0]!;
   assert.equal((await entry()).project.planner?.agentId, "claimed-thread");
   assert.equal((await entry()).plannerLive, true);
@@ -383,7 +467,7 @@ test("the archive control writes the Projects domain", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await adapter.rpc(api.uiSnapshot, {});
-  await adapter.rpc(rustProjectArchive, { project: "p-orbit-main", archived: true });
+  await adapter.rpc(rustProjectArchive, { project: projectKey("Orbit_Main"), archived: true });
   const projects = fake.writes.find((write) => write.domain === "projects")!.body.value as {
     projects: Record<string, { archived: boolean }>;
   };
@@ -396,7 +480,7 @@ test("the Rust adapter ports project removal through one native resource", async
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await adapter.rpc(api.uiSnapshot, {});
-  const key = "p-orbit-main";
+  const key = projectKey("Orbit_Main");
   const preview = await adapter.rpc(api.projectManagementPreview, { key });
   assert.equal(preview.project.name, "Orbit");
   assert.deepEqual(preview.tasks, []);
@@ -424,9 +508,9 @@ test("moving a repository in the shared Projects editor reassigns it in the engi
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await adapter.rpc(api.uiSnapshot, {});
-  assert.deepEqual(await adapter.rpc(api.projectMergeCheck, { source: "p-orbit-main" }), { blockers: [], carried: [] });
+  assert.deepEqual(await adapter.rpc(api.projectMergeCheck, { source: projectKey("Orbit_Main") }), { blockers: [], carried: [] });
   const moved = await adapter.rpc(api.projectMerge, {
-    source: "p-orbit-main", target: "lantern", versions: { source: 1, target: 1 },
+    source: projectKey("Orbit_Main"), target: "lantern", versions: { source: 1, target: 1 },
     repository: "example/orbit-docs", reason: "Added to Lantern in Settings",
   });
   assert.deepEqual(moved.project.repositories.map((repo) => repo.origin), ["example/lantern", "example/orbit-docs"]);
@@ -754,7 +838,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
   const wait = (pattern: RegExp) => waitFor(
     () => pattern.test(ui.text()), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, pattern.source,
   );
-  await wait(/p-orbit-main.*"needs":1.*Which path should we take.*"leads":1,"lanes":\["Delivery"\]/);
+  await wait(new RegExp(projectKey("Orbit_Main") + '.*"needs":1.*Which path should we take.*"leads":1,"lanes":\\["Delivery"\\]'));
   const scopedReads = [
     "GET /planning/Orbit_Main/decisions", "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
   ];
@@ -827,7 +911,7 @@ test("unreadable planning records leave healthy siblings readable in lists and d
   assert.match(notices.get("Decisions")?.join() ?? "", /lantern decision bad-decision/);
   badStep = true;
   const intact = await adapter.rpc(api.plans, {});
-  assert.deepEqual(intact.map(plan => plan.project), ["p-orbit-main"]);
+  assert.deepEqual(intact.map(plan => plan.project), [projectKey("Orbit_Main")]);
   assert.match(notices.get("Plans")?.join() ?? "", /lantern plan step bad-step/);
   assert.equal(fake.writes.length, 0);
 });

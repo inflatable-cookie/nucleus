@@ -54,31 +54,39 @@ const iso = (ms: number | null | undefined) =>
 
 const PROJECT_KEY = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
-/**
- * Rust project IDs allow capitals, dots and underscores; the board's project
- * key does not. Keys that already fit pass through. Others get a stable,
- * readable key, and the adapter maps it back for every write.
- */
-export function projectKeys(ids: readonly string[]) {
-  const toKey = new Map<string, string>();
-  const toId = new Map<string, string>();
+// Reserve the prefix even for literal IDs that already look like encoded keys.
+const ENCODED_PROJECT = "rust-id-";
+export function projectKey(id: string) {
+  if (PROJECT_KEY.test(id) && !id.startsWith(ENCODED_PROJECT)) return id;
+  return ENCODED_PROJECT + Array.from(id, char => char.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+}
+
+export function projectId(key: string) {
+  if (!PROJECT_KEY.test(key)) throw new Error("Invalid project key.");
+  if (!key.startsWith(ENCODED_PROJECT)) return key;
+  const hex = key.slice(ENCODED_PROJECT.length);
+  if (!/^(?:[0-9a-f]{2}){1,240}$/.test(hex)) throw new Error("Invalid encoded project key.");
+  const id = String.fromCharCode(...(hex.match(/../g) ?? []).map(pair => parseInt(pair, 16)));
+  if (!/^(?!\.{1,2}$)[a-zA-Z0-9._-]+$/.test(id) || projectKey(id) !== key) throw new Error("Invalid encoded project key.");
+  return id;
+}
+
+/** A persisted legacy slug identifies a project only when it has one possible owner.
+ * The previous allocator also numbered collisions, so reserve those suffixes. */
+function legacyScopeOwners(ids: string[]) {
+  const owners = new Map<string, string>();
+  const ambiguousStems = new Set<string>();
   for (const id of ids) {
-    let key = PROJECT_KEY.test(id)
-      ? id
-      : `p-${
-          id
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "") || "project"
-        }`;
-    for (let n = 2; toId.has(key); n++) key = `${key.replace(/-\d+$/, "")}-${n}`;
-    toKey.set(id, key);
-    toId.set(key, id);
+    const slug = PROJECT_KEY.test(id) ? id :
+      "p-" + (id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project");
+    if (owners.has(slug)) ambiguousStems.add(slug.replace(/-\d+$/, ""));
+    owners.set(slug, id);
   }
-  return {
-    key: (id: string) => toKey.get(id) ?? id,
-    id: (key: string) => toId.get(key) ?? key,
-  };
+  const unambiguous = new Map<string, string>();
+  for (const [slug, id] of owners) {
+    if (!ambiguousStems.has(slug.replace(/-\d+$/, ""))) unambiguous.set(id, slug);
+  }
+  return unambiguous;
 }
 
 /** One Rust project as the board's project record. */
@@ -163,8 +171,7 @@ function capacityValues(
 
 export function createRustAdapter(rust: RustApi = createRustApi()) {
   let revision = 0;
-  let keys = projectKeys([]);
-  const removalPreviews = new Map<string, { id: string; digest: string }>();
+  const keys = { key: projectKey, id: projectId };
   let currentSession: RustBrowserSession | undefined;
   let sessionRead: Promise<RustBrowserSession> | undefined;
   const planning = createRustPlanning(rust, settings, () => keys, session);
@@ -198,7 +205,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   async function readSettings() {
     const all = await rust.settings();
     const registry = all.projects.settings;
-    keys = projectKeys(Object.keys(registry.value.projects));
+    const removed = z.record(z.string(), z.unknown()).optional().parse(registry.value.removed);
+    const legacyScopes = legacyScopeOwners([...new Set([
+      ...Object.keys(registry.value.projects), ...Object.keys(removed ?? {}),
+    ])]);
     const projectIssues = new Map<string, string>();
     const projects = Object.fromEntries(Object.entries(registry.value.projects).flatMap(([id, raw]) => {
       try {
@@ -226,7 +236,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       }
     });
     return {
-      ...all, projectIssues, profileIssues,
+      ...all, projectIssues, profileIssues, legacyScopes,
       projects: { ...all.projects, settings: { ...registry, value: { ...registry.value, projects } } },
       profiles: { ...all.profiles, value: { ...all.profiles.value, profiles } },
     };
@@ -250,15 +260,12 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
 
   async function editProjects(edit: (value: RustProjects) => RustProjects) {
     const current = await rust.domain(projectsView, "projects");
-    keys = projectKeys(Object.keys(current.settings.value.projects));
-    const saved = await rust.saveDomain(
+    return rust.saveDomain(
       projectsView,
       "projects",
       current.settings.revision,
       edit(current.settings.value),
     );
-    keys = projectKeys(Object.keys(saved.settings.value.projects));
-    return saved;
   }
 
   function projectRows(all: RustAllSettings) {
@@ -334,7 +341,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       lanes: [],
       projects: rows
         .filter(({ project }) => !project.archived)
-        .map(({ board }) => board),
+        .map(({ board, id }) => ({ ...board, legacyScopeKey: all.legacyScopes.get(id) ?? null })),
       pendingSubmissions: [],
       projectBadges: undefined,
       // A saved T3 title refines the generated Nucleus project badge once bound.
@@ -515,7 +522,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       const { project, digest, tasks } = await rust.previewProjectRemoval(id);
       const current = boardProject(input.key, project);
       if (!current) throw new Error("The project has no repository for this board.");
-      removalPreviews.set(input.key, { id, digest });
       return {
         project: current, target: null, digest, cancellation: null,
         tasks: tasks.map(({ taskId, version }) => ({ taskId, version })),
@@ -524,9 +530,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "project.manage-remove": async (input: api.ProjectManageInput) => {
       if (input.target || input.cancellationOperationId) throw new RustUnsupported("Project cancellation or reassignment");
-      // A settings refresh can drop the alias after an accepted deletion with a lost reply.
-      const preview = removalPreviews.get(input.key);
-      const id = preview?.digest === input.digest ? preview.id : keys.id(input.key);
+      const id = keys.id(input.key);
       const result = await rust.removeProject(id, { digest: input.digest, reason: input.reason });
       return {
         key: input.key, reason: input.reason, removedAt: new Date(result.removedAtMs).toISOString(),
@@ -598,7 +602,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     }) => {
       if (!input.repository) throw new RustUnsupported("Moving a whole project");
       const current = await rust.domain(projectsView, "projects");
-      keys = projectKeys(Object.keys(current.settings.value.projects));
       const sourceId = keys.id(input.source);
       const targetId = keys.id(input.target);
       const source = current.settings.value.projects[sourceId];
@@ -616,7 +619,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "project.reassign": async (input: { origin: string; project: string }) => {
       const current = await rust.domain(projectsView, "projects");
-      keys = projectKeys(Object.keys(current.settings.value.projects));
       await rust.reassign(current.settings.revision, input.origin, keys.id(input.project));
       return { ok: true };
     },
