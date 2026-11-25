@@ -705,6 +705,13 @@ Later decisions carry their own attribution.
     engine this supersedes Tom’s 2026-10-07 rule “Further reviewer turns
     require explicit operator authorization.” No verdict is ever manufactured.
 
+47. **Review the whole engine and board after the correctness rounds.** Tom, 2026-11-25:
+    "I feel like we might need to do another level-up after a full 24 hours of fixes and tweaks. We need to make sure we're not recreating the mess from the TS version".
+    Pin milestone QA to the round-four merge. At the same commit, independent readers assess
+    accumulated special cases since `1803c1971`, features and states against rulings 11, 34 and 35,
+    Rust module responsibilities, and tests coupled to implementation. The planner reviews one
+    ranked consolidation plan, including the rule and risk for each proposed cut, before implementation.
+
 ## The model
 
 ### Stored state per task
