@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget};
+use crate::{ControllerScope, Service, ServiceError, State, pass::DispatchTarget};
 use nucleus_core::{
     Authority, Phase, RunState, WaitReason,
     acp::{Binding, InboxBinding, session_id},
@@ -264,23 +264,23 @@ impl Service {
                 .map(|record| record.command.clone())
                 .collect();
             if !commands.is_empty() {
-                let receipts = self
-                    .host
-                    .parent_delivery_receipts(binding, provider, commands)
-                    .await;
+                let receipts = if before.is_some() {
+                    self.host
+                        .parent_delivery_receipts(binding, provider, commands)
+                        .await
+                } else {
+                    Err(HostError::Unavailable)
+                };
                 let unavailable = match receipts {
-                    Ok(found)
-                        if before.is_some() && self.host.verified_runtime_identity() == before =>
-                    {
+                    Ok(found) if self.host.verified_runtime_identity() == before => {
                         accepted = found;
                         None
                     }
-                    Err(HostError::Binding) => None,
+                    Ok(_) | Err(HostError::Binding | HostError::ParentReceiptInconclusive) => None,
                     Err(error @ HostError::Deferred { .. }) => {
                         return Err(parent_delivery_retry(error, 0));
                     }
                     Err(error) => Some(error),
-                    Ok(_) => Some(HostError::Uncertain),
                 };
                 if let Some(error) = unavailable {
                     let state = self.state.lock().await;

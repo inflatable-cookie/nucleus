@@ -444,7 +444,7 @@ Later decisions carry their own attribution.
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
       T3 backoff delays native requests while local decisions continue. A retryable preflight or unavailable observation has a due time.
       Only a non-queueable, possibly sent role uses the late-reply grace, after a successful read found no receipt.
-      For a parent command that cannot replay, an unavailable exact read stays pending. A successful exact read with no command match asks the owner to check the task thread and use **Next** to review recovery.
+      For a parent command that cannot replay, a deferral before the exact read stays pending. An inconclusive read once issued, or a successful read with no command match, asks the owner to check the task thread and use **Next** to review recovery.
     - The board's **Needs you** and T3 task rows share one attention rule.
       Operator decisions, unanswered Inbox forms and typed blocks with a
       concrete operator action need the operator. Planner questions, including

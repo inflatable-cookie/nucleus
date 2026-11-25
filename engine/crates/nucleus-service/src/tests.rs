@@ -695,7 +695,13 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
     use nucleus_store::ParentResult;
 
-    for (delivered, unfrozen) in [(false, false), (true, false), (false, true)] {
+    for (delivered, unfrozen, inconclusive) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, true, true),
+        (false, false, true),
+    ] {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
         let identity = task.identity().clone();
@@ -721,11 +727,10 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
                 "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}}
         });
 
-        let transient = Arc::new(AtomicUsize::new(usize::from(unfrozen)));
         let (host, native) = native_fixture(move |request| {
         assert_eq!(request["tag"], "orchestration.subscribeThread");
         assert_eq!(request["payload"]["threadId"], parent);
-        if transient.swap(0, Ordering::Relaxed) == 1 {
+        if inconclusive {
             return serde_json::json!({"_tag":"Exit","requestId":request["id"],"exit":{
                 "_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"FixtureUnavailable"}}]
             }});
@@ -743,7 +748,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
             {"kind":"synchronized"}
         ]})
     }).await;
-        service.host = verified_native_fixture(host, home.path());
+        let host = verified_native_fixture(host, home.path());
         service.fixture_mut().acp_provider = Some("fixture-acp".into());
         let row = {
             let mut state = service.state.lock().await;
@@ -767,11 +772,18 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
                 .unwrap();
             row
         };
-        if unfrozen {
+        if unfrozen && !inconclusive {
+            let failed_host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+            let offline_root = home.path().join("offline");
+            std::fs::create_dir(&offline_root).unwrap();
+            service.host = verified_native_fixture(failed_host, &offline_root);
             let result = service.parent_delivery_fenced(&row).await;
             assert!(matches!(
                 result,
-                Err(ServiceError::ParentDeliveryUnknown { .. })
+                Err(ServiceError::ParentDeliveryUnknown {
+                    source: HostError::Unavailable,
+                    ..
+                })
             ));
             service
                 .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
@@ -781,9 +793,11 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
                 service.parent_delivery_fenced(&row).await,
                 Err(ServiceError::ParentDeliveryUnknown { until, .. }) if until > Instant::now()
             ));
-            assert_eq!(
-                service.host.host_calls()["orchestration.subscribeThread"],
-                1
+            assert!(
+                !service
+                    .host
+                    .host_calls()
+                    .contains_key("orchestration.subscribeThread")
             );
             let state = service.state.lock().await;
             assert!(matches!(
@@ -802,6 +816,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
                 .finish_parent_delivery(&identity.id, row.version, record, ParentResult::Pending, 0)
                 .unwrap();
         }
+        service.host = host;
         for _ in 0..2 {
             let result = service.parent_delivery_fenced(&row).await;
             if delivered {
@@ -817,10 +832,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
         let mut calls = service.host.host_calls();
         calls.remove("auth.websocketTicket");
         calls.remove("websocket.upgrade");
-        assert_eq!(
-            calls,
-            [("orchestration.subscribeThread", 1 + u64::from(unfrozen))].into()
-        );
+        assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
         let records = service
             .state
             .lock()
@@ -840,6 +852,15 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
             row.version
         );
         if !delivered {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), service.pass())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                service.host.host_calls()["orchestration.subscribeThread"],
+                1
+            );
             let state = service.state.lock().await;
             assert_eq!(
                 state.wait_reason(&identity.id),
@@ -1754,7 +1775,7 @@ async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
         "bad-scope"
     );
     assert_eq!(
-        state.scheduler_error.as_deref(),
+        state.scheduler_error,
         Some("the task is outside this engine's configured project")
     );
     assert!(state.last_pass_calls.is_empty());

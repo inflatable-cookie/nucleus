@@ -248,7 +248,7 @@ struct State {
     registry_mode: bool,
     schedule: Schedule,
     last_pass_calls: HostCalls,
-    scheduler_error: Option<String>,
+    scheduler_error: Option<&'static str>,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
@@ -539,7 +539,13 @@ impl Service {
         let (result, calls) = T3::count_pass_calls(self.run_batch(host)).await;
         let mut state = self.state.lock().await;
         state.last_pass_calls = calls;
-        state.scheduler_error = result.as_ref().err().map(ToString::to_string);
+        state.scheduler_error = result.as_ref().err().map(|error| match error {
+            ServiceError::Project => "the task is outside this engine's configured project",
+            ServiceError::Settings(_) | ServiceError::Store(_) => {
+                "could not read or update scheduler storage"
+            }
+            _ => "a scheduler pass could not complete",
+        });
         result
     }
 
