@@ -279,7 +279,12 @@ Later decisions carry their own attribution.
     - Rust CLI task commands and task API paths accept `repo#N` wherever they took only an internal task ID. The engine uses its assigned numbers and the authenticated controller's scope. Bare `#N` requires a project with exactly one repository. When a slug matches multiple visible tasks, use `owner/repo#N`. Internal IDs remain valid.
     - The row uses the phase or its current wait, including Waiting on Tom, Waiting for capacity and named hold targets. Delivery reads Starting until the send lands. An operator snooze shows its cause and wake time. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof and never gates task progress or archival.
-    - One local attention projection feeds the board, `task.next` and the scheduler's T3 row reconciliation. A person needed for a question, decision, role input or approval sees the row, as does a running worker or reviewer. Capacity, prerequisites, holds, report-ready tasks and the gaps between roles wait quietly behind a Nucleus-owned snooze. When Nucleus's own send wakes a waiting row, the snooze is restored once the send lands. Child threads keep their own visibility. Tom, 2026-11-25, on rows reading Done while in Reviewing, Changes or Waiting for capacity: "they're in transient states and don't need attention.. they should be snoozing". The planner first read this as snoozing active roles too, and #781 did so. Tom then corrected it, on running tasks in the snoozed list: "a whole load of active tasks with running agents are in the snoozed list???" A running role keeps the row visible. A missing or cancelled prerequisite needs an owner edit.
+    - One local attention projection feeds the board and `task.next`. A missing or cancelled prerequisite needs an owner edit.
+    - **T3 task rows follow one rule.** Tom, 2026-11-25: "The logic doesn't need to be complicated - if an agent is running, put it in Working, otherwise Snooze it until it's done, then Archive. It needs a little bit of smoothing off so they don't jump between Working and Snoozed when transitioning states. It shouldn't need to be this complicated?" This replaces the attention-based row reconciliation and its special cases.
+      - A row is visible while a worker or reviewer child is running, as the held shell shows it.
+      - Otherwise the row is snoozed until the task finishes. A finished task's row is archived.
+      - Smoothing (planner reading): a row shows as soon as a child is running. It snoozes only after no child has run for two minutes. Handovers and Nucleus's own sends inside that window leave the row as it is.
+      - Questions and decisions do not show the row. They go to the Nucleus Inbox. Operator snoozes are respected.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
     - Before a native message brings a task parent or retained child back into use, the scheduler explicitly unsnoozes its own parent occurrence or unsettles the destination and reads the result back. An operator snooze holds delivery. Nucleus never sends a settle command.
     - A due delivery or visibility check for an actionable row retries an
@@ -463,7 +468,7 @@ Later decisions carry their own attribution.
       concrete operator action need the operator. Planner questions, including
       an Inbox decline handed to the planner, wait for the planner. Scheduled
       rechecks, unexpired deadlines, capacity and dependencies are waiting.
-      A running role keeps its T3 row visible. T3 row visibility follows ruling 22.
+      T3 row visibility follows ruling 22.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
     - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
 
