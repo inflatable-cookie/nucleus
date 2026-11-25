@@ -1016,7 +1016,7 @@ test("unreadable planning records leave healthy siblings readable in lists and d
   const doc = await adapter.rpc(api.laneDocumentGet, { project: "lantern", key: "delivery" });
   assert.equal(doc?.text, "Fixture Markdown");
   const leads = await adapter.rpc(api.leadBoard, {});
-  assert.equal(leads.cards.length, 2);
+  assert.deepEqual(leads.cards.map(card => card.projectKey), [projectKey("Orbit_Main"), "lantern"]);
   assert.ok(leads.activity?.every(activity => activity.id !== "bad-item"));
   assert.equal((await adapter.rpc(api.leadGet, { id: "i-lantern" }))?.title, "An idea");
   assert.equal((await adapter.rpc(api.decisionList, {})).length, 2);
