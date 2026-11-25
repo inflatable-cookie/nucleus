@@ -253,7 +253,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     if (path === "/api/engine/settings") {
       const snapshot = (value: unknown) => ({ configured: true, revision: "1", value });
       json({
-        profiles: snapshot({ profiles: [], pausedGroups: [] }),
+        profiles: { ...snapshot({ profiles: [], pausedGroups: [] }), effectiveGroups: {} },
         dispatch: snapshot({ usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 4,
           projectSlotOverrides: {}, providerLimitCooldownSeconds: 300, mode: "running" }),
         projects: { settings: snapshot({ projects: {} }), resolvedPlanners: {} },
@@ -695,13 +695,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     retention: { keepNewest: 5, maxAgeDays: null },
   };
   const views = {
-    profiles: () => snap({
+    profiles: () => ({ ...snap({
       profiles: [{
         name: "Fixture worker", group: "fixture team",
         selection: { id: "fixture-worker", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default" },
       }],
       pausedGroups,
-    }, "profiles-1"),
+    }, "profiles-1"), effectiveGroups: { "fixture-worker": "fixture team" } }),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
       settings: snap({ projects: projectRemoved ? {} : { fixture: fixtureProject() } },

@@ -2121,21 +2121,9 @@ async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
 #[tokio::test]
 async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_group() {
     use crate::profiles::LaunchSelection;
-    use nucleus_core::Workspace;
 
     let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    let (host, native) = crate::tests::native_fixture(|request| {
-        assert_eq!(request["tag"], "server.getConfig");
-        json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
-            "environment":{"orchestrationProtocolVersion":2},
-            "providers":[
-                {"instanceId":"codex","enabled":true,"status":"ready","models":[{"slug":"base"}]},
-                {"instanceId":"codex-team","driver":"codex","enabled":true,"status":"ready",
-                 "models":[{"slug":"base"},{"slug":"team-only"}]}
-            ]
-        }}})
-    })
-    .await;
+    let (host, native) = crate::tests::native_fixture(subscription_catalog_reply).await;
     service.host = host;
     let service = Arc::new(service);
     let assets = home.path().join("board");
@@ -2179,33 +2167,11 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     let snapshot = read_paired_task(&api, "/api/engine/settings", &cookie).await;
     let groups = json!({"team":"codex-team","explicit":"shared","pinned":"codex-team"});
     assert_eq!(snapshot["profiles"]["effectiveGroups"], groups);
-    assert_eq!(
-        read_paired_task(&api, path, &cookie).await["effectiveGroups"],
-        groups
-    );
+    let profiles = read_paired_task(&api, path, &cookie).await;
+    assert_eq!(profiles["effectiveGroups"], groups);
     assert_eq!(service.host.host_calls(), calls);
 
-    let observation = Observation {
-        host: Observed::Unknown,
-        forge: Observed::Known(Forge::Absent),
-        workspace: Observed::Known(Workspace::Absent),
-    };
-    let mut task = Task::new(
-        Identity {
-            id: "fixture".into(),
-            reference: "fixture".into(),
-            repository: REPOSITORY.into(),
-            base: "main".into(),
-            entry: Entry::Brief,
-            origin_thread: None,
-        },
-        "Fixture brief".into(),
-        None,
-    );
-    assert_eq!(
-        task.reconcile(&observation),
-        Action::Advance(Phase::Working)
-    );
+    let (task, observation) = subscription_launch_task();
     let select = || service.select_launch(&task, &observation, nucleus_core::Role::Worker, &pass);
     let Ok(LaunchSelection::Profile(launch)) = select().await else {
         panic!("eligible team profile")
@@ -2240,6 +2206,43 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
     assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
     native.abort();
+}
+
+fn subscription_catalog_reply(request: &Value) -> Value {
+    assert_eq!(request["tag"], "server.getConfig");
+    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
+        "environment":{"orchestrationProtocolVersion":2},
+        "providers":[
+            {"instanceId":"codex","enabled":true,"status":"ready","models":[{"slug":"base"}]},
+            {"instanceId":"codex-team","driver":"codex","enabled":true,"status":"ready",
+             "models":[{"slug":"base"},{"slug":"team-only"}]}
+        ]
+    }}})
+}
+
+fn subscription_launch_task() -> (Task, Observation) {
+    let observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(nucleus_core::Workspace::Absent),
+    };
+    let mut task = Task::new(
+        Identity {
+            id: "fixture".into(),
+            reference: "fixture".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "Fixture brief".into(),
+        None,
+    );
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    (task, observation)
 }
 
 #[tokio::test]
