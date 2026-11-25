@@ -394,6 +394,46 @@ fn profiles_view(service: &Service, settings: &SettingsSnapshot<Profiles>) -> Va
     view
 }
 
+/// Old board filters stored a slug, with numeric suffixes for collisions.
+fn legacy_slug(id: &str) -> String {
+    let lower = id.to_ascii_lowercase();
+    let slug = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if id.starts_with(|c: char| c.is_ascii_lowercase()) && slug == id {
+        slug
+    } else {
+        format!("p-{}", if slug.is_empty() { "project" } else { &slug })
+    }
+}
+
+fn legacy_scope_keys(projects: &Projects) -> std::collections::BTreeMap<&str, String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    fn stem(slug: &str) -> &str {
+        slug.rsplit_once('-')
+            .filter(|(_, tail)| !tail.is_empty() && tail.bytes().all(|c| c.is_ascii_digit()))
+            .map_or(slug, |(prefix, _)| prefix)
+    }
+    let mut owners = BTreeMap::new();
+    let mut ambiguous = BTreeSet::new();
+    for id in projects.projects.keys().chain(projects.removed.keys()) {
+        let slug = legacy_slug(id);
+        if owners
+            .insert(slug.clone(), id)
+            .is_some_and(|prior| prior != id)
+        {
+            ambiguous.insert(stem(&slug).to_owned());
+        }
+    }
+    owners
+        .into_iter()
+        .filter(|(slug, id)| projects.projects.contains_key(*id) && !ambiguous.contains(stem(slug)))
+        .map(|(slug, id)| (id.as_str(), slug))
+        .collect()
+}
+
 async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -> Value {
     let state = service.state.lock().await;
     let mut resolved = serde_json::Map::new();
@@ -427,8 +467,10 @@ async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -
         verified.insert(id.clone(), json!(planners));
     }
     let mut settings = settings;
+    let keys = json!(legacy_scope_keys(&settings.value));
     settings.value.removed.clear();
-    json!({"settings": settings, "resolvedPlanners": resolved, "verifiedPlanners": verified})
+    json!({"settings": settings, "resolvedPlanners": resolved, "verifiedPlanners": verified,
+           "legacyScopeKeys": keys})
 }
 
 async fn host_view(service: &Service, settings: SettingsSnapshot<Hosts>) -> Value {

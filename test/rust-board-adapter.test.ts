@@ -381,10 +381,12 @@ test("project keys round-trip independent of the registry, including the encodin
 test("a saved filter keeps its owner across a registry collision and a fresh board mount", async (t) => {
   const fake = engine();
   let ids = ["p-orbit-main"];
+  let legacyScopeKeys: Record<string, string> = { "p-orbit-main": "p-orbit-main" };
   const fetcher: typeof fetch = async (url, init) => {
     const response = await fake.fetcher(url, init);
     if (!String(url).endsWith("/settings")) return response;
     const settings = await response.json();
+    settings.projects.legacyScopeKeys = legacyScopeKeys;
     const registry = settings.projects.settings.value;
     const template = registry.projects.lantern;
     registry.projects = Object.fromEntries(ids.map(id => [id, {
@@ -433,6 +435,7 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   await wait(() => Boolean(board.ui.query("Projects, Original")), "restore the previously saved filter");
   assert.deepEqual(saved(), ["rust:p-orbit-main"]);
   ids = ["Orbit_Main", "p-orbit-main"];
+  legacyScopeKeys = {};
   await board.client.refetchQueries({ queryKey: ["nucleus", "state"] });
   assert.ok(board.ui.query("Projects, Original"));
   board.close();
@@ -452,6 +455,12 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   board.close();
   seed("p-orbit-main");
   ids = ["Orbit_Main"];
+  board = open();
+  await wait(() => board.ui.text().includes("no unique match"), "first mount after original owner removal");
+  assert.deepEqual(saved(), ["unresolved:p-orbit-main"]);
+  board.close();
+  seed("p-orbit-main");
+  legacyScopeKeys = { Orbit_Main: "p-orbit-main" };
   board = open();
   await wait(() => Boolean(board.ui.query("Projects, Arrival")), "a unique legacy alias migrates to its native owner");
   assert.deepEqual(saved(), ["rust:" + projectKey("Orbit_Main")]);

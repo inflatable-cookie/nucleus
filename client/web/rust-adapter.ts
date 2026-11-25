@@ -71,24 +71,6 @@ export function projectId(key: string) {
   return id;
 }
 
-/** A persisted legacy slug identifies a project only when it has one possible owner.
- * The previous allocator also numbered collisions, so reserve those suffixes. */
-function legacyScopeOwners(ids: string[]) {
-  const owners = new Map<string, string>();
-  const ambiguousStems = new Set<string>();
-  for (const id of ids) {
-    const slug = PROJECT_KEY.test(id) ? id :
-      "p-" + (id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project");
-    if (owners.has(slug)) ambiguousStems.add(slug.replace(/-\d+$/, ""));
-    owners.set(slug, id);
-  }
-  const unambiguous = new Map<string, string>();
-  for (const [slug, id] of owners) {
-    if (!ambiguousStems.has(slug.replace(/-\d+$/, ""))) unambiguous.set(id, slug);
-  }
-  return unambiguous;
-}
-
 /** One Rust project as the board's project record. */
 export function boardProject(
   key: string,
@@ -205,10 +187,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   async function readSettings() {
     const all = await rust.settings();
     const registry = all.projects.settings;
-    const removed = z.record(z.string(), z.unknown()).optional().parse(registry.value.removed);
-    const legacyScopes = legacyScopeOwners([...new Set([
-      ...Object.keys(registry.value.projects), ...Object.keys(removed ?? {}),
-    ])]);
     const projectIssues = new Map<string, string>();
     const projects = Object.fromEntries(Object.entries(registry.value.projects).flatMap(([id, raw]) => {
       try {
@@ -236,7 +214,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       }
     });
     return {
-      ...all, projectIssues, profileIssues, legacyScopes,
+      ...all, projectIssues, profileIssues,
       projects: { ...all.projects, settings: { ...registry, value: { ...registry.value, projects } } },
       profiles: { ...all.profiles, value: { ...all.profiles.value, profiles } },
     };
@@ -341,7 +319,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       lanes: [],
       projects: rows
         .filter(({ project }) => !project.archived)
-        .map(({ board, id }) => ({ ...board, legacyScopeKey: all.legacyScopes.get(id) ?? null })),
+        .map(({ board, id }) => ({ ...board, legacyScopeKey: all.projects.legacyScopeKeys?.[id] ?? null })),
       pendingSubmissions: [],
       projectBadges: undefined,
       // A saved T3 title refines the generated Nucleus project badge once bound.
