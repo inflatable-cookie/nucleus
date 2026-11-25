@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import { recentProjectActivity } from "./support/project-activity";
+import { boardDetailReply, boardTasks } from "./support/board-tasks";
+import { leadActionHints } from "./support/lead-actions";
 import assert from "node:assert/strict";
 import React from "react";
 import { createRequire } from "node:module";
@@ -19,18 +21,13 @@ import {
   useNativeStubs,
   type HostNode,
 } from "./support/render";
-import { Store } from "../core/store/store";
-import { leadActions } from "../core/planning/lead-actions";
-import type { LeadStatusFacts } from "../shared/lead-status";
 import {
   hostRunRecordSchema,
-  submissionSchema,
   summarizeTask,
   type ProjectQaRun,
 } from "../shared/contracts";
 import { CAPACITY_WAIT_PREFIX } from "../shared/wait-state";
 import { planningRead, space, toneSurface, wash } from "../client/design";
-import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { leadFromPapercut } from "../shared/papercut-lead";
 import type { Papercut } from "../shared/contracts";
 
@@ -380,7 +377,10 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
     };
     return {
       ...detail,
-      actions: leadActions(detail as unknown as LeadStatusFacts),
+      actions: leadActionHints(detail.repositories, {
+        check: "Lead has no brief to check",
+        approve: "Lead has no brief to approve",
+      }),
     };
   }
   if (method === "queue.plans")
@@ -1553,240 +1553,202 @@ test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds
 });
 
 test("030-7 bundled dark-theme task detail offers routing before dispatch with eligible profiles and a required reason", async () => {
-  const store = new Store(":memory:");
+  const task = boardTasks();
+  const queued = task("routing-ui", { title: "Routing UI" });
+  const started = task("started-ui", {
+    title: "Started UI",
+    phase: "working",
+    agentIntent: true,
+    agentId: "worker",
+  });
+  const parked = task("parked-ui", {
+    title: "Parked UI",
+    phase: "verifying",
+    workspaceIntent: true,
+    agentActive: false,
+  });
+  const strong = {
+    id: "strong",
+    name: "Strong",
+    provider: "test",
+    model: "strong",
+    available: true,
+    problem: "",
+    notes: "",
+    supportedThinking: [],
+  };
+  const uiBoard = {
+    ...board,
+    tasks: [
+      summary(queued.id, "Routing UI", [], "queued"),
+      summary(started.id, "Started UI", [], "working"),
+      { ...summary(parked.id, "Parked UI", [], "verifying"), parked: true },
+    ],
+    profiles: [strong],
+    pool: [
+      {
+        profileId: "strong",
+        enabled: true,
+        group: "strong",
+        roles: ["worker"],
+        weight: "default",
+        scopes: ["general"],
+        capability: "frontier",
+      },
+    ],
+  };
+  const replies = new Map([queued, started, parked].map((row) => [
+    row.id, boardDetailReply(row),
+  ]));
+  let routingControl: unknown;
+  let routingRequests = 0,
+    routingCompletions = 0;
+  const rpc = async (method: string, input: unknown) => {
+    if (method !== "queue.task")
+      return method === "queue.ui-snapshot"
+        ? uiBoard
+        : method === "queue.detail"
+          ? replies.get((input as { taskId: string }).taskId)
+          : invoke(method, input);
+    routingRequests++;
+    routingControl = input;
+    // The control answers with a task, like the real RPC, and the fixture counts
+    // the answer so completion is observed rather than assumed from the send.
+    const answered = queued;
+    routingCompletions++;
+    return answered;
+  };
+  const MainSurface = await bundleMainSurface();
+  // Below the wide layout the task detail is a modal with its own close control.
+  const ui = mount(tree(MainSurface, true, rpc));
   try {
-    const queued = store.insert(
-      submissionSchema.parse({
-        submissionId: "routing-ui",
-        title: "Routing UI",
-        repoPath: "/app",
-        planningCommit: "a".repeat(40),
-        handoffPath: "handoff.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      "a".repeat(40),
+    await settle(ui);
+    const routingCard = findCard(ui, (label) => label.includes("Routing UI"));
+    assert.ok(routingCard, "the board never offered the queued task");
+    routingCard.props.onPress();
+    // nucleus#1537: every editing action, routing included, lives in the ⋯ menu.
+    await settleUntil(
+      ui,
+      () => ui.query("Task actions menu") !== undefined,
+      "the task detail never rendered its actions menu",
     );
-    const started = store.insert(
-      submissionSchema.parse({
-        submissionId: "started-ui",
-        title: "Started UI",
-        repoPath: "/app",
-        planningCommit: "a".repeat(40),
-        handoffPath: "handoff.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      "a".repeat(40),
+    ui.press("Task actions menu");
+    await settleUntil(
+      ui,
+      () => ui.query("Change routing & profiles") !== undefined,
+      "the queued task's menu never offered routing",
     );
-    store.update(started.id, {
-      phase: "working",
-      agentIntent: true,
-      agentId: "worker",
-    });
-    const parked = store.insert(
-      submissionSchema.parse({
-        submissionId: "parked-ui",
-        title: "Parked UI",
-        repoPath: "/app",
-        planningCommit: "a".repeat(40),
-        handoffPath: "handoff.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      "a".repeat(40),
+    ui.press("Change routing & profiles");
+    await settleUntil(
+      ui,
+      () => ui.query("Change routing") !== undefined,
+      "the queued task detail never loaded its routing control",
     );
-    store.update(parked.id, {
-      phase: "verifying",
-      workspaceIntent: true,
-      agentActive: false,
-    });
-    const strong = {
-      id: "strong",
-      name: "Strong",
-      provider: "test",
-      model: "strong",
-      available: true,
-      problem: "",
-      notes: "",
-      supportedThinking: [],
-    };
-    const uiBoard = {
-      ...board,
-      tasks: [
-        summary(queued.id, "Routing UI", [], "queued"),
-        summary(started.id, "Started UI", [], "working"),
-        { ...summary(parked.id, "Parked UI", [], "verifying"), parked: true },
-      ],
-      profiles: [strong],
-      pool: [
-        {
-          profileId: "strong",
-          enabled: true,
-          group: "strong",
-          roles: ["worker"],
-          weight: "default",
-          scopes: ["general"],
-          capability: "frontier",
-        },
-      ],
-    };
-    const detail = createTaskDetailCache(store);
-    let routingControl: unknown;
-    let routingRequests = 0,
-      routingCompletions = 0;
-    const rpc = async (method: string, input: unknown) => {
-      if (method !== "queue.task")
-        return method === "queue.ui-snapshot"
-          ? uiBoard
-          : method === "queue.detail"
-            ? detail((input as { taskId: string }).taskId)
-            : invoke(method, input);
-      routingRequests++;
-      routingControl = input;
-      // The control answers with a task, like the real RPC, and the fixture counts
-      // the answer so completion is observed rather than assumed from the send.
-      const answered = queued;
-      routingCompletions++;
-      return answered;
-    };
-    const MainSurface = await bundleMainSurface();
-    // Below the wide layout the task detail is a modal with its own close control.
-    const ui = mount(tree(MainSurface, true, rpc));
-    try {
-      await settle(ui);
-      const routingCard = findCard(ui, (label) => label.includes("Routing UI"));
-      assert.ok(routingCard, "the board never offered the queued task");
-      routingCard.props.onPress();
-      // nucleus#1537: every editing action, routing included, lives in the ⋯ menu.
-      await settleUntil(
-        ui,
-        () => ui.query("Task actions menu") !== undefined,
-        "the task detail never rendered its actions menu",
-      );
-      ui.press("Task actions menu");
-      await settleUntil(
-        ui,
-        () => ui.query("Change routing & profiles") !== undefined,
-        "the queued task's menu never offered routing",
-      );
-      ui.press("Change routing & profiles");
-      await settleUntil(
-        ui,
-        () => ui.query("Change routing") !== undefined,
-        "the queued task detail never loaded its routing control",
-      );
-      assert.ok(ui.get("Change routing"));
-      ui.press("Change routing");
-      assert.ok(ui.get("Strong · request only"));
-      assertDarkTheme(ui);
-      // The required reason gates the save, including a whitespace-only entry.
-      assert.equal(
-        ui.get("Save routing").props.accessibilityState?.disabled,
-        true,
-      );
-      ui.type("Reason (required)", "   ");
-      assert.equal(
-        ui.get("Save routing").props.accessibilityState?.disabled,
-        true,
-        "a blank reason never enables the save",
-      );
-      ui.type("Reason (required)", "Operator changed route");
-      assert.equal(
-        ui.get("Save routing").props.accessibilityState?.disabled,
-        false,
-      );
-      ui.press("Save routing");
-      // Semantic completion: the control answers, the surface applies the answer
-      // (the routing panel closes) and the operation settles (the detail's
-      // buttons are enabled again) before the detail is closed or reopened.
-      await settleUntil(
-        ui,
-        () => routingCompletions === 1,
-        "the routing control was never answered",
-      );
-      await settleUntil(
-        ui,
-        () => {
-          const menu = ui.query("Task actions menu");
-          return (
-            Boolean(menu) &&
-            menu!.props.accessibilityState?.disabled !== true &&
-            ui.query("Reason (required)") === undefined
-          );
-        },
-        "the completed routing control never settled the task detail",
-      );
-      assert.equal(
-        routingRequests,
-        1,
-        "one save sends exactly one routing control",
-      );
-      assert.equal(routingCompletions, 1, "the routing control answers once");
-      assert.equal(
-        (routingControl as { action: string }).action,
-        "set_routing",
-      );
-      assert.equal(
-        (routingControl as { reason?: string }).reason,
-        "Operator changed route",
-      );
-      assert.equal(
-        (routingControl as { relayed?: boolean }).relayed,
-        undefined,
-        "the board claims no relayed authorization",
-      );
-      assert.equal(
-        (routingControl as { note?: string }).note,
-        undefined,
-        "the board appends no authorization note",
-      );
-      assert.ok(
-        ui.query("Task detail"),
-        "the detail stays open across the completed routing control",
-      );
-      assertDarkTheme(ui);
-      ui.press("Close task detail");
-      assert.equal(
-        ui.query("Task detail"),
-        undefined,
-        "closing the detail removes the modal",
-      );
-      findCard(ui, (label) => label.includes("Started UI"))!.props.onPress();
-      await settleUntil(
-        ui,
-        () => ui.query("Close task detail") !== undefined,
-        "the started task detail never reopened",
-      );
-      ui.press("Task actions menu");
-      await settleUntil(
-        ui,
-        () =>
-          ui.query("Cancel or supersede") !== undefined ||
-          ui.query("Extend budget") !== undefined,
-        "the started task's menu never opened",
-      );
-      assert.equal(
-        ui.query("Change routing & profiles"),
-        undefined,
-        "a started task offers no routing change",
-      );
-      ui.press("Close task detail");
-      findCard(ui, (label) => label.includes("Parked UI"))!.props.onPress();
-      await settleUntil(
-        ui,
-        () => ui.text().includes("Parked (no slot held)"),
-        "parked task detail omitted its slot status",
-      );
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
+    assert.ok(ui.get("Change routing"));
+    ui.press("Change routing");
+    assert.ok(ui.get("Strong · request only"));
+    assertDarkTheme(ui);
+    // The required reason gates the save, including a whitespace-only entry.
+    assert.equal(
+      ui.get("Save routing").props.accessibilityState?.disabled,
+      true,
+    );
+    ui.type("Reason (required)", "   ");
+    assert.equal(
+      ui.get("Save routing").props.accessibilityState?.disabled,
+      true,
+      "a blank reason never enables the save",
+    );
+    ui.type("Reason (required)", "Operator changed route");
+    assert.equal(
+      ui.get("Save routing").props.accessibilityState?.disabled,
+      false,
+    );
+    ui.press("Save routing");
+    // Semantic completion: the control answers, the surface applies the answer
+    // (the routing panel closes) and the operation settles (the detail's
+    // buttons are enabled again) before the detail is closed or reopened.
+    await settleUntil(
+      ui,
+      () => routingCompletions === 1,
+      "the routing control was never answered",
+    );
+    await settleUntil(
+      ui,
+      () => {
+        const menu = ui.query("Task actions menu");
+        return (
+          Boolean(menu) &&
+          menu!.props.accessibilityState?.disabled !== true &&
+          ui.query("Reason (required)") === undefined
+        );
+      },
+      "the completed routing control never settled the task detail",
+    );
+    assert.equal(
+      routingRequests,
+      1,
+      "one save sends exactly one routing control",
+    );
+    assert.equal(routingCompletions, 1, "the routing control answers once");
+    assert.equal(
+      (routingControl as { action: string }).action,
+      "set_routing",
+    );
+    assert.equal(
+      (routingControl as { reason?: string }).reason,
+      "Operator changed route",
+    );
+    assert.equal(
+      (routingControl as { relayed?: boolean }).relayed,
+      undefined,
+      "the board claims no relayed authorization",
+    );
+    assert.equal(
+      (routingControl as { note?: string }).note,
+      undefined,
+      "the board appends no authorization note",
+    );
+    assert.ok(
+      ui.query("Task detail"),
+      "the detail stays open across the completed routing control",
+    );
+    assertDarkTheme(ui);
+    ui.press("Close task detail");
+    assert.equal(
+      ui.query("Task detail"),
+      undefined,
+      "closing the detail removes the modal",
+    );
+    findCard(ui, (label) => label.includes("Started UI"))!.props.onPress();
+    await settleUntil(
+      ui,
+      () => ui.query("Close task detail") !== undefined,
+      "the started task detail never reopened",
+    );
+    ui.press("Task actions menu");
+    await settleUntil(
+      ui,
+      () =>
+        ui.query("Cancel or supersede") !== undefined ||
+        ui.query("Extend budget") !== undefined,
+      "the started task's menu never opened",
+    );
+    assert.equal(
+      ui.query("Change routing & profiles"),
+      undefined,
+      "a started task offers no routing change",
+    );
+    ui.press("Close task detail");
+    findCard(ui, (label) => label.includes("Parked UI"))!.props.onPress();
+    await settleUntil(
+      ui,
+      () => ui.text().includes("Parked (no slot held)"),
+      "parked task detail omitted its slot status",
+    );
+    assertDarkTheme(ui);
   } finally {
-    store.close();
+    unmount(ui);
   }
 });
 
@@ -1827,6 +1789,13 @@ test("026-15a bundled inbox records run each action and report in their detail",
       check: item.check,
     },
   ];
+  let actionHints = leadActionHints(actionLead.repositories, {
+    approve: actionLead.check.message,
+  });
+  let dropHints = leadActionHints(dropLead.repositories, {
+    check: "Lead has no brief to check",
+    approve: "Lead has no brief to approve",
+  });
   const papercutPromotions: unknown[] = [];
   const rpc = async (method: string, input: unknown) => {
     if (method === "lead.board") {
@@ -1845,7 +1814,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
       const detail = { ...item, versions: versions(item) };
       return {
         ...detail,
-        actions: leadActions(detail as unknown as LeadStatusFacts),
+        actions: item === dropLead ? dropHints : actionHints,
       };
     }
     if (method === "lead.check") {
@@ -1855,6 +1824,7 @@ test("026-15a bundled inbox records run each action and report in their detail",
         checkedAt: stamp,
         planningCommit: "c".repeat(40),
       };
+      actionHints = { ...actionHints, approve: null };
       return { ...actionLead };
     }
     if (method === "lead.approve") {
@@ -1865,6 +1835,11 @@ test("026-15a bundled inbox records run each action and report in their detail",
         approvedAt: stamp,
         note: "",
         relayed: false,
+      };
+      actionHints = {
+        ...actionHints,
+        approve: "Approved",
+        promote: [{ origin: "owner/app", reason: null }],
       };
       return { ...actionLead };
     }
@@ -1878,11 +1853,29 @@ test("026-15a bundled inbox records run each action and report in their detail",
           at: stamp,
         },
       ];
+      actionHints = {
+        ...actionHints,
+        check: "Only open leads can be checked; this lead is promoted",
+        approve: "Only open leads can be approved; this lead is promoted",
+        drop: "Only open leads can be dropped; this lead is promoted",
+        park: "Only open leads can be parked; this lead is promoted",
+        promote: [{ origin: "owner/app", reason: "Already promoted to a task in owner/app" }],
+      };
       return { taskId: "task-1", reference: "owner/app#1" };
     }
     if (method === "lead.drop") {
       dropLead.state = "dropped";
       dropLead.dropReason = (input as { reason: string }).reason;
+      dropHints = {
+        ...dropHints,
+        check: "Only open leads can be checked; this lead is dropped",
+        approve: "Only open leads can be approved; this lead is dropped",
+        drop: "Only open leads can be dropped; this lead is dropped",
+        reopen: null,
+        park: "Only open leads can be parked; this lead is dropped",
+        promoteTo: "A dropped lead cannot be promoted",
+        promote: [{ origin: "owner/app", reason: "A dropped lead cannot be promoted" }],
+      };
       return { ...dropLead };
     }
     if (method === "papercut.list")
@@ -2241,164 +2234,84 @@ test("decision waits use readable fallback labels in medium and wide lists", asy
 });
 
 test("043 (a) bundled dark-theme task detail names the derived wait, its owner and next action", async () => {
-  const store = new Store(":memory:");
-  try {
-    const task = store.insert(
-      submissionSchema.parse({
-        submissionId: "wait-detail",
-        title: "Wait detail",
-        repoPath: "/app",
-        planningCommit: "a".repeat(40),
-        handoffPath: "handoff.md",
-        originAgentId: "origin",
-      }),
-      "host",
-      "handoff",
-      "a".repeat(40),
-    );
-    // Spec 043 (a2): the capacity wait is a current admission fact, not reason
-    // text. The reason is deliberately unrelated so only the fact can derive it.
-    store.update(task.id, { reason: "Dispatched into the queue" });
-    const capacityReason = `${CAPACITY_WAIT_PREFIX} Global concurrent task-slot limit reached`;
-    const detail = createTaskDetailCache(store, {
-      slotAdmissionReason: () => capacityReason,
-    });
-    const uiBoard = {
-      ...board,
-      tasks: [
-        ...board.tasks,
-        summarizeTask(store.task(task.id), false, false, {
-          slotAdmissionReason: capacityReason,
-        }),
-      ],
-    };
-    const rpc = async (method: string, input: unknown) =>
-      method === "queue.ui-snapshot"
-        ? uiBoard
-        : method === "queue.detail"
-          ? detail((input as { taskId: string }).taskId)
-          : invoke(method, input);
-    const MainSurface = await bundleMainSurface();
-    const ui = mount(tree(MainSurface, false, rpc));
-    try {
-      await settle(ui);
-      const waitCard = findCard(ui, (label) =>
-        label.startsWith("App, Wait detail, Queued, Waiting for capacity"),
-      );
-      assert.ok(waitCard, "the capacity wait card remains available");
-      waitCard!.props.onPress();
-      // The Overview opens first and leads with the wait in plain words: who acts and what Nucleus does.
-      await settleUntil(
-        ui,
-        () => Boolean(ui.query(/^What is happening: /)),
-        "the task detail omitted its wait state",
-      );
-      assert.match(
-        String(ui.query(/^What is happening: /)?.props.accessibilityLabel),
-        /^What is happening: Waiting · nothing to do\. Waiting for a machine-wide task slot$/,
-        "the Overview names the global slot wait without blaming the project limit",
-      );
-      assert.ok(
-        ui
-          .text()
-          .includes(
-            "Nucleus starts it automatically when any task frees a slot",
-          ),
-        "the Overview says what Nucleus does next",
-      );
-      // Details opens beside it, and the header keeps the wait in view on every tab.
-      ui.press("Details");
-      await settleUntil(
-        ui,
-        () => ui.query("Details")?.props.accessibilityState?.selected === true,
-        "the Details tab did not open",
-      );
-      assert.ok(
-        ui.query("Task details"),
-        "Details lists the task's reference facts",
-      );
-      assert.ok(ui.text().includes(task.id), "Details names the task ID");
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
-  } finally {
-    store.close();
-  }
-});
-
-test("051 bundled dark-theme board marks an interactive task, and says when it is the operator's turn", async () => {
-  const store = new Store(":memory:");
-  try {
-    const add = (id: string, title: string) =>
-      store.insert(
-        submissionSchema.parse({
-          submissionId: id,
-          title,
-          repoPath: "/app",
-          planningCommit: "a".repeat(40),
-          handoffPath: "handoff.md",
-          originAgentId: "origin",
-          interactive: true,
-        }),
-        "host",
-        "handoff",
-        "a".repeat(40),
-      );
-    const running = store.update(
-      add("interactive-running", "Interactive running").id,
-      {
-        phase: "working",
-        agentId: "worker-a",
-        reason: "Interactive session: the worker is running",
+  // The current capacity fact provides the wait while the stored reason stays independent.
+  const task = boardTasks()("wait-detail", {
+    title: "Wait detail",
+    reason: "Dispatched into the queue",
+  });
+  const context = {
+    slotAdmissionReason: `${CAPACITY_WAIT_PREFIX} Global concurrent task-slot limit reached`,
+  };
+  const detail = boardDetailReply({
+    ...task,
+    reason: context.slotAdmissionReason,
+    resolution: {
+      ...task.resolution,
+      stop: {
+        reason: "capacity",
+        detail: context.slotAdmissionReason,
+        since: task.updatedAt,
+        suggestedVerbs: [],
+        fact: { code: "slot_capacity" },
       },
+    },
+  }, context);
+  const uiBoard = {
+    ...board,
+    tasks: [
+      ...board.tasks,
+      summarizeTask(task, false, false, context),
+    ],
+  };
+  const rpc = async (method: string, input: unknown) =>
+    method === "queue.ui-snapshot"
+      ? uiBoard
+      : method === "queue.detail"
+        ? detail
+        : invoke(method, input);
+  const MainSurface = await bundleMainSurface();
+  const ui = mount(tree(MainSurface, false, rpc));
+  try {
+    await settle(ui);
+    const waitCard = findCard(ui, (label) =>
+      label.startsWith("App, Wait detail, Queued, Waiting for capacity"),
     );
-    const waiting = add("interactive-waiting", "Interactive waiting");
-    const stop = {
-      reason: "interactive" as const,
-      detail:
-        "Interactive session: waiting for the operator in the worker's thread",
-      since: new Date().toISOString(),
-      suggestedVerbs: [],
-    };
-    store.update(waiting.id, {
-      phase: "working",
-      agentId: "worker-b",
-      reason: stop.detail,
-      resolution: { ...waiting.resolution, stop },
-    });
-    const uiBoard = {
-      ...board,
-      tasks: [
-        ...board.tasks,
-        summarizeTask(store.task(running.id)),
-        summarizeTask(store.task(waiting.id)),
-      ],
-    };
-    const rpc = async (method: string, input: unknown) =>
-      method === "queue.ui-snapshot" ? uiBoard : invoke(method, input);
-    const MainSurface = await bundleMainSurface();
-    const ui = mount(tree(MainSurface, false, rpc));
-    try {
-      await settle(ui);
-      // Both sessions are working, so Working lists them.
-      openView(ui, "Working");
-      assert.equal(
-        countText(ui, "Interactive"),
-        1,
-        "a running session shows the plain badge",
-      );
-      assert.equal(
-        countText(ui, "Interactive · your turn"),
-        1,
-        "an idle session says it waits on the operator",
-      );
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
+    assert.ok(waitCard, "the capacity wait card remains available");
+    waitCard!.props.onPress();
+    // The Overview opens first and leads with the wait in plain words: who acts and what Nucleus does.
+    await settleUntil(
+      ui,
+      () => Boolean(ui.query(/^What is happening: /)),
+      "the task detail omitted its wait state",
+    );
+    assert.match(
+      String(ui.query(/^What is happening: /)?.props.accessibilityLabel),
+      /^What is happening: Waiting · nothing to do\. Waiting for a machine-wide task slot$/,
+      "the Overview names the global slot wait without blaming the project limit",
+    );
+    assert.ok(
+      ui
+        .text()
+        .includes(
+          "Nucleus starts it automatically when any task frees a slot",
+        ),
+      "the Overview says what Nucleus does next",
+    );
+    // Details opens beside it, and the header keeps the wait in view on every tab.
+    ui.press("Details");
+    await settleUntil(
+      ui,
+      () => ui.query("Details")?.props.accessibilityState?.selected === true,
+      "the Details tab did not open",
+    );
+    assert.ok(
+      ui.query("Task details"),
+      "Details lists the task's reference facts",
+    );
+    assert.ok(ui.text().includes(task.id), "Details names the task ID");
+    assertDarkTheme(ui);
   } finally {
-    store.close();
+    unmount(ui);
   }
 });
 
