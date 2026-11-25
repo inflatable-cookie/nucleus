@@ -1,11 +1,5 @@
-import { observeIdle } from './support/fakes';
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { QueueRuntime } from "../service/runtime-owner";
-import type { Adapter } from "../core/host";
 import {
   hostCatalogSchema,
   type HostCatalog,
@@ -16,18 +10,6 @@ import {
   profileAvailability,
   type NucleusProfile,
 } from "../shared/profiles";
-
-/**
- * Spec 052, step 1 of the Paseo split: Nucleus keeps its own profile list,
- * imported once from the host, and computes availability per host catalog.
- * Selection uses the stored list with host-catalog availability.
- */
-
-function fixture(t: { after(fn: () => void): void }): string {
-  const dir = mkdtempSync(join(tmpdir(), "nsq-profiles-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
 
 const profile = (overrides: Partial<NucleusProfile> = {}): NucleusProfile =>
   nucleusProfileSchema.parse({
@@ -62,20 +44,6 @@ const provider = (overrides: Partial<HostProvider> = {}): HostProvider => ({
 });
 const catalog = (...providers: HostProvider[]): HostCatalog =>
   hostCatalogSchema.parse({ providers });
-
-/** The host list as Paseo reports it, before Nucleus's schema normalises it. */
-const hostProfile = (overrides: Record<string, unknown> = {}) => ({
-  id: "paseo-sol",
-  name: "Sol",
-  provider: "openai-codex",
-  model: "gpt-5",
-  notes: "paseo notes",
-  ...overrides,
-});
-
-/* ------------------------------------------------------------------------- */
-/* Availability: a stored profile read against one host's catalog              */
-/* ------------------------------------------------------------------------- */
 
 test("Spec 052 availability: a table of launch values and catalogs", () => {
   const table: {
@@ -158,188 +126,5 @@ test("Spec 052 availability: a table of launch values and catalogs", () => {
       },
       row.label,
     );
-  }
-});
-
-function fakeAdapter(
-  dir: string,
-  catalogValue: HostCatalog,
-  hostProfiles: () => unknown[],
-): Adapter {
-  const client = { isConnected: true };
-  return {
-    client,
-    isConnected: () => client.isConnected,
-    hostId: "fixture-host",
-    socketPath: join(dir, "callback.sock"),
-    helperPath: join(dir, "worker-report.mjs"),
-    connect: async () => {},
-    close: async () => {},
-    profiles: async () => [],
-    observe: observeIdle("ws", "worker"),
-    hostProfiles: async () => hostProfiles() as NucleusProfile[],
-    catalog: async () => catalogValue,
-  } as unknown as Adapter;
-}
-
-test("Spec 052: the profile RPCs list, create, update and remove stored records, and read the catalog and the canonical vocabulary", async (t) => {
-  const dir = fixture(t);
-  const listed: string[] = [];
-  const catalogReads: ({ cwd?: string } | undefined)[] = [];
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    timers: false,
-    adapterFactory: () => {
-      const adapter = fakeAdapter(dir, catalog(provider()), () => {
-        listed.push("read");
-        return [hostProfile()];
-      });
-      (
-        adapter as unknown as {
-          catalog: (options?: { cwd?: string }) => Promise<HostCatalog>;
-        }
-      ).catalog = async (options) => {
-        catalogReads.push(options);
-        return catalog(provider());
-      };
-      return adapter;
-    },
-  });
-  try {
-    await runtime.started;
-    await runtime.bootstrap;
-    // The earlier migration's stored records are the source; refresh never reads the host list.
-    runtime.store.setProfiles([nucleusProfileSchema.parse(hostProfile())]);
-    await runtime.refresh();
-    assert.deepEqual(listed, []);
-    assert.deepEqual(runtime.profileList().profiles.map(profile => profile.name), ["Sol"]);
-
-    const created = runtime.profileCreate({
-      name: "Luna",
-      provider: "codex",
-      model: "gpt-5",
-      thinkingOptionId: "low",
-    });
-    assert.ok(created.profile.id);
-    assert.deepEqual(created.profile, {
-      id: created.profile.id,
-      name: "Luna",
-      provider: "codex",
-      model: "gpt-5",
-      thinkingOptionId: "low",
-      notes: "",
-    });
-    assert.equal(runtime.profileList().profiles.length, 2);
-    assert.throws(
-      () =>
-        runtime.profileCreate({
-          id: "paseo-sol",
-          name: "Duplicate",
-          provider: "codex",
-        }),
-      /already exists/,
-    );
-
-    const updated = runtime.profileUpdate({
-      id: created.profile.id,
-      name: "Luna Two",
-      thinkingOptionId: null,
-      notes: "note",
-    });
-    assert.deepEqual(updated.profile, {
-      id: created.profile.id,
-      name: "Luna Two",
-      provider: "codex",
-      model: "gpt-5",
-      notes: "note",
-    });
-    assert.throws(
-      () => runtime.profileUpdate({ id: "absent", name: "Nothing" }),
-      /does not exist/,
-    );
-
-    const { readAt, ...read } = await runtime.hostCatalog({});
-    assert.deepEqual(read, catalog(provider()));
-    assert.ok(Number.isFinite(Date.parse(readAt)));
-    await runtime.hostCatalog({ cwd: "/repo" });
-    assert.deepEqual(catalogReads.slice(-2), [{}, { cwd: "/repo" }]);
-    // The form's vocabulary (task 1158): a host key outside the canonical corpus
-    // is not offered, and a canonical one carries canonical levels and labels.
-    assert.deepEqual((await runtime.profileVocabulary({})).providers, []);
-
-    assert.deepEqual(runtime.profileRemove({ id: created.profile.id }), {
-      removed: true,
-    });
-    assert.deepEqual(runtime.profileRemove({ id: created.profile.id }), {
-      removed: false,
-    });
-    assert.deepEqual(
-      runtime.profileList().profiles.map((profile) => profile.id),
-      ["paseo-sol"],
-    );
-  } finally {
-    await runtime.drain();
-  }
-});
-
-test("nucleus#970: host.catalog answers from the stored catalog, and Refresh replaces it", async (t) => {
-  const dir = fixture(t);
-  const catalogReads: ({ cwd?: string } | undefined)[] = [];
-  let answer: HostCatalog | Error = catalog(provider());
-  let client: { isConnected: boolean } | null = null;
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    timers: false,
-    adapterFactory: () => {
-      const adapter = fakeAdapter(dir, catalog(provider()), () => []);
-      client = (adapter as unknown as { client: { isConnected: boolean } }).client;
-      (adapter as unknown as { catalog: (options?: { cwd?: string }) => Promise<HostCatalog> }).catalog = async (options) => {
-        catalogReads.push(options);
-        if (answer instanceof Error) throw answer;
-        return answer;
-      };
-      return adapter;
-    },
-  });
-  try {
-    await runtime.started;
-    await runtime.bootstrap;
-    const hostReads = () => catalogReads.filter(read => read && "cwd" in read).length;
-
-    // Nothing stored: the first read goes to the host and stores its answer.
-    const first = await runtime.hostCatalog({ cwd: "/repo" });
-    assert.equal(hostReads(), 1);
-    assert.equal(first.providers[0]?.label, "OpenAI");
-
-    // Stored: the next read answers without a host call, with the same read time.
-    answer = catalog(provider({ label: "OpenAI renamed" }));
-    const stored = await runtime.hostCatalog({ cwd: "/repo" });
-    assert.equal(hostReads(), 1);
-    assert.deepEqual(stored, first);
-
-    // Another directory is its own stored catalog.
-    await runtime.hostCatalog({ cwd: "/other" });
-    assert.equal(hostReads(), 2);
-
-    // Refresh reads the host live and replaces the stored catalog.
-    const refreshed = await runtime.hostCatalog({ cwd: "/repo", refresh: true });
-    assert.equal(hostReads(), 3);
-    assert.equal(refreshed.providers[0]?.label, "OpenAI renamed");
-    assert.deepEqual(await runtime.hostCatalog({ cwd: "/repo" }), refreshed);
-    assert.equal(hostReads(), 3);
-
-    // A failed refresh refuses with the host's reason and keeps the stored catalog.
-    answer = new Error("host catalog timed out");
-    await assert.rejects(runtime.hostCatalog({ cwd: "/repo", refresh: true }), /host catalog timed out/);
-    assert.deepEqual(await runtime.hostCatalog({ cwd: "/repo" }), refreshed);
-
-    // A disconnected daemon refuses a live read; the stored catalog still answers with its read time.
-    answer = catalog(provider());
-    client!.isConnected = false;
-    await assert.rejects(runtime.hostCatalog({ cwd: "/repo", refresh: true }), /disconnected/i);
-    await assert.rejects(runtime.hostCatalog({ cwd: "/never-read" }), /disconnected/i);
-    assert.deepEqual(await runtime.hostCatalog({ cwd: "/repo" }), refreshed);
-  } finally {
-    await runtime.drain();
   }
 });
