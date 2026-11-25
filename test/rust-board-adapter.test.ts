@@ -55,7 +55,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
   };
   let offeredGroups: Record<string, string> = {};
   let projects = { projects: {
-    Orbit_Main: { name: "Orbit", archived: false, repositories: [
+    Orbit_Main: { name: "Orbit", archived: false, plannerClaim: { thread: "claimed-thread", occurrence: "claim-1" } as { thread: string; occurrence: string } | undefined, repositories: [
       { origin: "example/orbit", path: "/work/orbit", base: "main", requiredChecks: ["ci"], hungToolMinutes: 30, hostProjectTitle: "Orbit" },
       { origin: "example/orbit-docs", path: "/work/orbit-docs", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     ] },
@@ -85,7 +85,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
       }
       return { ...snap(profiles, "profiles"), effectiveGroups: Object.fromEntries(groups) };
     },
-    projects: () => ({ settings: snap(projects, "projects"), resolvedPlanners: { Orbit_Main: "thread-1" } }),
+    projects: () => ({ settings: snap(projects, "projects"), resolvedPlanners: { Orbit_Main: "thread-1" }, verifiedPlanners: { Orbit_Main: ["thread-1", "claimed-thread"] } }),
     hosts: () => ({ settings: snap({ t3: { endpoint: "http://127.0.0.1:3773/", credentialRef: "T3" } }, "hosts"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
     storage: () => ({
       settings: snap({ enabled: true, workRoot: null, scratchRoot: null, logRoot: null, retention: { keepNewest: 5, maxAgeDays: null } }, "storage"),
@@ -103,6 +103,13 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     if (path === "/profiles/usage") return json(usage);
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     if (path === "/tasks") return json([]);
+    if (path === "/settings/projects/Orbit_Main/clear-planner") {
+      assert.equal(init?.method, "POST");
+      assert.deepEqual(JSON.parse(String(init.body)), { revision: String(revisions.projects) });
+      projects.projects.Orbit_Main.plannerClaim = undefined;
+      revisions.projects = (revisions.projects ?? 1) + 1;
+      return json(views.projects!());
+    }
     if (path === "/settings/projects/Orbit_Main/removal") {
       const project = projects.projects.Orbit_Main;
       if (init?.method !== "POST") {
@@ -282,6 +289,17 @@ test("retired machinery is refused by name instead of guessed", async () => {
     ["orbit", "Orbit_Main", "orbit.main"].map(projectKeys(["orbit", "Orbit_Main", "orbit.main"]).key),
     ["orbit", "p-orbit-main", "p-orbit-main-2"],
   );
+});
+
+test("Projects shows and clears the claimed planner when another thread is most recently verified", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const key = "p-orbit-main";
+  const entry = async () => (await adapter.rpc(api.projectSettings, { project: key })).projects[0]!;
+  assert.equal((await entry()).project.planner?.agentId, "claimed-thread");
+  assert.equal((await entry()).plannerLive, true);
+  await adapter.rpc(api.projectSetPlanner, { key, agentId: null, setBy: "operator" });
+  assert.equal((await entry()).project.planner, undefined);
 });
 
 test("the archive control writes the Projects domain", async () => {

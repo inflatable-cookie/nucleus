@@ -37,6 +37,55 @@ fn fixture_storage(home: &Path) -> EngineStorage {
     storage
 }
 
+#[test]
+fn project_tell_rate_limit_follows_the_recipient_across_projects() {
+    use nucleus_core::QuestionDelivery;
+    use nucleus_store::{TellDispatch, TellRows, TellSubmission};
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&fixture_storage(home.path())).unwrap();
+    for index in 0..21 {
+        let id = format!("message-{index}");
+        let target = format!("project-{index}");
+        let submission = TellSubmission {
+            key: &id,
+            sender: "sender",
+            from_project: "origin",
+            direct: None,
+            text: "Hello",
+            recorded_at: 100,
+            no_live_planners: &[],
+        };
+        store
+            .record_tell(&submission, &[(target, id.clone())])
+            .unwrap();
+        let send = || TellDispatch::Send {
+            notice: QuestionDelivery {
+                thread: "recipient".into(),
+                command: id.clone(),
+                payload: String::new(),
+                last_send_at_ms: None,
+            },
+            handle: format!("nreply_{index}"),
+        };
+        let result = store.settle_tells(TellRows::Receipt(&id), send(), 100);
+        if index < 20 {
+            result.unwrap();
+        } else {
+            assert!(matches!(result, Err(StoreError::TellRateLimit(_))));
+            assert!(
+                store
+                    .tell_reply_route("nreply_20", "recipient", 101)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(store.tell_batch(&id).unwrap()[0].retry_at, Some(3_600_100));
+            store
+                .settle_tells(TellRows::Receipt(&id), send(), 3_600_100)
+                .unwrap();
+        }
+    }
+}
+
 fn task(id: &str, reference: &str) -> Task {
     Task::new(
         Identity {

@@ -136,6 +136,8 @@ pub enum ServiceError {
     BriefPolicy(#[from] nucleus_core::profiles::BriefPolicyError),
     #[error("tell requires project recipients and between 1 and 4000 characters of text")]
     TellInput,
+    #[error("This reply route is unavailable. Nothing was sent.")]
+    TellReply,
     #[error("tell requires a verified planner binding with a sending project")]
     TellPlannerRequired,
     #[error("no project matches {0:?}. Use a registered project ID or name.")]

@@ -20,6 +20,9 @@ pub(super) enum Action {
         #[arg(long = "project")]
         additional_projects: Vec<String>,
     },
+    /// Receive new project messages in this verified planner thread.
+    #[command(name = "planner.claim")]
+    PlannerClaim,
     /// Read the project's plan and lane documents.
     #[command(name = "plan.get")]
     PlanGet { project: Option<String> },
@@ -237,7 +240,23 @@ impl Action {
                 if project.trim() == "all" && !additional_projects.is_empty() {
                     return Err("use all or a list of projects".into());
                 }
-                let to = if additional_projects.is_empty() {
+                let to = if project.starts_with('{') {
+                    #[derive(serde::Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct Route {
+                        to: Reply,
+                    }
+                    #[derive(serde::Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct Reply {
+                        reply: String,
+                    }
+                    let route: Route = serde_json::from_str(&project)?;
+                    if !additional_projects.is_empty() {
+                        return Err("a reply takes one recipient".into());
+                    }
+                    json!({ "reply": route.to.reply })
+                } else if additional_projects.is_empty() {
                     json!(project)
                 } else {
                     json!(
@@ -252,6 +271,7 @@ impl Action {
                     Some(json!({"to": to, "text": text})),
                 ));
             }
+            A::PlannerClaim => return Ok((Method::POST, "/v1/planning/claim".into(), None)),
             A::LaneGet { .. } => return Err("use an authenticated report ticket".into()),
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
             A::PlanSet { args } => {
@@ -514,6 +534,26 @@ mod tests {
         assert_eq!(
             body.unwrap(),
             serde_json::json!({"to": ["One", "Two", "Three"], "text": "An update"})
+        );
+    }
+
+    #[test]
+    fn project_tell_cli_accepts_the_delivered_reply_command() {
+        let parsed = Cli::try_parse_from([
+            "nucleus",
+            "tell",
+            r#"{"to":{"reply":"nreply_example"}}"#,
+            "Answer",
+        ])
+        .unwrap();
+        let Action::Planning(action) = parsed.action else {
+            panic!("expected tell");
+        };
+        let (_, path, body) = action.request().unwrap();
+        assert_eq!(path, "/v1/planning/tell");
+        assert_eq!(
+            body.unwrap(),
+            serde_json::json!({"to":{"reply":"nreply_example"}, "text":"Answer"})
         );
     }
 

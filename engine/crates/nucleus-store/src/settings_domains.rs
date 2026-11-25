@@ -296,9 +296,21 @@ const fn default_hung_tool_minutes() -> u32 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planner_claim: Option<PlannerClaim>,
     pub name: String,
     pub archived: bool,
     pub repositories: Vec<RepositorySettings>,
+}
+
+/// A project message preference. The occurrence lets a restart finish its replacement notice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlannerClaim {
+    pub thread: String,
+    pub occurrence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for ProjectSettings {
@@ -306,6 +318,8 @@ impl<'de> Deserialize<'de> for ProjectSettings {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct SavedProject {
+            #[serde(default, rename = "plannerClaim")]
+            planner_claim: Option<PlannerClaim>,
             name: String,
             #[serde(default, rename = "slots")]
             _retired_slots: Option<serde::de::IgnoredAny>,
@@ -316,6 +330,7 @@ impl<'de> Deserialize<'de> for ProjectSettings {
         }
         let saved = SavedProject::deserialize(deserializer)?;
         Ok(Self {
+            planner_claim: saved.planner_claim,
             name: saved.name,
             archived: saved.archived,
             repositories: saved.repositories,

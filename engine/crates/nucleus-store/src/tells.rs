@@ -23,6 +23,13 @@ CREATE INDEX IF NOT EXISTS project_tells_due ON project_tell_deliveries (retry_a
   WHERE retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS project_tells_command ON project_tell_deliveries (command)
   WHERE command IS NOT NULL;
+CREATE TABLE IF NOT EXISTS tell_reply_handles (
+  handle TEXT PRIMARY KEY, delivery TEXT NOT NULL, recipient TEXT NOT NULL, issued_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS tell_reply_recipient ON tell_reply_handles (recipient, issued_at);
+CREATE TABLE IF NOT EXISTS tell_direct_targets (
+  delivery TEXT PRIMARY KEY, thread TEXT NOT NULL, gone INTEGER NOT NULL DEFAULT 0
+) STRICT;
 CREATE TABLE IF NOT EXISTS project_tell_requests (
   key TEXT PRIMARY KEY,
   recorded_at INTEGER NOT NULL,
@@ -32,12 +39,15 @@ CREATE TABLE IF NOT EXISTS project_tell_requests (
 
 const WINDOW_MS: i64 = 3_600_000;
 const RECIPIENT_LIMIT: u32 = 20;
-const DELIVERY_COLUMNS: &str =
-    "id, request_key, sender, from_project, to_project, text, recorded_at, state, retry_at";
+const SELECT_DELIVERY: &str =
+    "SELECT id, request_key, sender, from_project, to_project, text, recorded_at, state, retry_at,
+    CASE WHEN gone = 0 THEN thread END, CASE WHEN gone = 1 THEN thread END
+    FROM project_tell_deliveries LEFT JOIN tell_direct_targets ON delivery = id";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TellState {
     Pending,
+    Refused,
     InFlight(QuestionDelivery),
     Accepted(QuestionDelivery),
     Delivered { at_ms: i64, thread: String },
@@ -48,7 +58,7 @@ impl TellState {
     pub const fn attempt(&self) -> Option<&QuestionDelivery> {
         match self {
             Self::InFlight(notice) | Self::Accepted(notice) => Some(notice),
-            Self::Pending | Self::Delivered { .. } => None,
+            Self::Refused | Self::Pending | Self::Delivered { .. } => None,
         }
     }
 
@@ -65,6 +75,8 @@ impl TellState {
 pub struct TellDelivery {
     pub id: String,
     pub request_key: String,
+    pub direct: Option<String>,
+    pub gone_sender: Option<String>,
     pub sender: String,
     pub from_project: String,
     pub to_project: String,
@@ -77,6 +89,7 @@ pub struct TellDelivery {
 pub struct TellSubmission<'a> {
     pub key: &'a str,
     pub sender: &'a str,
+    pub direct: Option<&'a str>,
     pub from_project: &'a str,
     pub text: &'a str,
     pub recorded_at: i64,
@@ -95,6 +108,10 @@ pub struct StoredTell {
 }
 
 pub enum TellDispatch {
+    Send {
+        notice: QuestionDelivery,
+        handle: String,
+    },
     /// Defer a read or retry using the existing deadline's backoff.
     Defer,
     /// A meaningful transition starts a new backoff.
@@ -109,6 +126,40 @@ pub enum TellRows<'a> {
 }
 
 impl Store {
+    /// Did a durable claim replacement already enqueue its notice?
+    ///
+    /// # Errors
+    /// Returns a storage error if the request index cannot be read.
+    pub fn has_tell_request(&self, key: &str) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_tell_requests WHERE key = ?1)",
+            [key],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Resolve an unexpired handle only for its addressed thread.
+    ///
+    /// # Errors
+    /// Returns a storage error if the recorded route cannot be read.
+    pub fn tell_reply_route(
+        &self,
+        handle: &str,
+        actor: &str,
+        now: i64,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT d.from_project, d.sender FROM tell_reply_handles h
+             JOIN project_tell_deliveries d ON d.id = h.delivery
+             WHERE h.handle = ?1 AND h.recipient = ?2 AND h.issued_at > ?3",
+                params![handle, actor, now.saturating_sub(7 * 24 * WINDOW_MS)],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
+    }
+
     /// Recover an identical request's original recipient set and current receipts.
     ///
     /// # Errors
@@ -153,9 +204,9 @@ impl Store {
 
     fn tell_deliveries(&self, encoded_ids: &str) -> Result<Vec<TellDelivery>, StoreError> {
         let ids: Vec<String> = serde_json::from_str(encoded_ids)?;
-        let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {DELIVERY_COLUMNS} FROM project_tell_deliveries WHERE id = ?1"
-        ))?;
+        let mut query = self
+            .connection
+            .prepare_cached(&format!("{SELECT_DELIVERY} WHERE id = ?1"))?;
         Ok(ids
             .iter()
             .map(|id| query.query_row([id], delivery))
@@ -179,12 +230,22 @@ impl Store {
             let prior = tx
                 .query_row(
                     &format!(
-                        "SELECT {DELIVERY_COLUMNS} FROM project_tell_deliveries
+                        "{SELECT_DELIVERY}
                     WHERE to_project = ?1 AND from_project = ?2 AND text = ?3
+                    AND (?6 IS NULL OR request_key = ?7) AND sender = ?5
+                    AND thread IS ?6
                     AND (recorded_at > ?4 OR retry_at IS NOT NULL)
                     ORDER BY retry_at IS NOT NULL DESC, recorded_at DESC, id LIMIT 1"
                     ),
-                    params![project, tell.from_project, tell.text, cutoff],
+                    params![
+                        project,
+                        tell.from_project,
+                        tell.text,
+                        cutoff,
+                        tell.sender,
+                        tell.direct,
+                        tell.key
+                    ],
                     delivery,
                 )
                 .optional()?;
@@ -192,16 +253,28 @@ impl Store {
                 output.push(prior);
                 continue;
             }
-            let count: u32 = tx.query_row(
-                "SELECT count(*) FROM project_tell_deliveries WHERE to_project = ?1 AND recorded_at > ?2",
-                params![project, cutoff],
-                |row| row.get(0),
-            )?;
-            if count >= RECIPIENT_LIMIT {
-                return Err(StoreError::TellRateLimit(project.clone()));
+            // Direct replies have a thread recipient. Project broadcasts keep the project admission cap.
+            // Replacement notices are durable internal requests and obey the delivery cap below.
+            if !tell.key.starts_with("claim-") {
+                let count: u32 = if let Some(thread) = tell.direct {
+                    tx.query_row(
+                        "SELECT count(*) FROM tell_direct_targets t JOIN project_tell_deliveries d ON d.id=t.delivery
+                         WHERE t.thread=?1 AND d.recorded_at>?2", params![thread, cutoff], |row| row.get(0)
+                    )?
+                } else {
+                    tx.query_row(
+                        "SELECT count(*) FROM project_tell_deliveries WHERE to_project = ?1 AND recorded_at > ?2",
+                        params![project, cutoff], |row| row.get(0)
+                    )?
+                };
+                if count >= RECIPIENT_LIMIT {
+                    return Err(StoreError::TellRateLimit(project.clone()));
+                }
             }
             let row = TellDelivery {
                 id: id.clone(),
+                direct: tell.direct.map(str::to_owned),
+                gone_sender: None,
                 request_key: tell.key.into(),
                 sender: tell.sender.into(),
                 from_project: tell.from_project.into(),
@@ -226,6 +299,12 @@ impl Store {
                     tell.key
                 ],
             )?;
+            if let Some(thread) = tell.direct {
+                tx.execute(
+                    "INSERT INTO tell_direct_targets (delivery, thread) VALUES (?1, ?2)",
+                    params![id, thread],
+                )?;
+            }
             output.push(row);
         }
         let ids: Vec<_> = output.iter().map(|row| &row.id).collect();
@@ -245,6 +324,19 @@ impl Store {
         Ok(output)
     }
 
+    /// Route a pending reply through its saved destination project after the exact sender is gone.
+    ///
+    /// # Errors
+    /// Returns a storage error if the route cannot be updated.
+    pub fn fallback_reply(&self, id: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE tell_direct_targets SET gone = 1 WHERE delivery = ?1 AND EXISTS (
+                SELECT 1 FROM project_tell_deliveries WHERE id = ?1 AND state = ?2)",
+            params![id, serde_json::to_string(&TellState::Pending)?],
+        )?;
+        Ok(())
+    }
+
     /// Read the next scheduled delivery and its durable due time.
     ///
     /// # Errors
@@ -254,7 +346,7 @@ impl Store {
             .connection
             .query_row(
                 &format!(
-                    "SELECT {DELIVERY_COLUMNS} FROM project_tell_deliveries
+                    "{SELECT_DELIVERY}
                 WHERE retry_at IS NOT NULL ORDER BY retry_at, id LIMIT 1"
                 ),
                 [],
@@ -279,28 +371,60 @@ impl Store {
             TellRows::Attempt(command) => ("command", std::slice::from_ref(command)),
         };
         let tx = self.connection.transaction()?;
-        match transition {
-            TellDispatch::Advance(state) => {
-                let due = (!matches!(state, TellState::Delivered { .. }))
-                    .then_some(now.saturating_add(5_000));
-                let encoded = serde_json::to_string(&state)?;
-                let command = state.attempt().map(|notice| &notice.command);
-                let mut update = tx.prepare(&format!(
-                    "UPDATE project_tell_deliveries SET state = ?2, retry_at = ?3,
-                     delay_ms = 5000, command = ?4 WHERE {column} = ?1"
-                ))?;
-                for id in ids {
-                    update.execute(params![id, encoded, due, command])?;
+        let next_state = match transition {
+            TellDispatch::Send { notice, handle } => {
+                let id = ids.first().ok_or(StoreError::PlanningInput)?;
+                let oldest: Option<i64> = tx.query_row(
+                    "SELECT max(first_at) FROM (
+                       SELECT min(issued_at) AS first_at FROM tell_reply_handles
+                       WHERE recipient = ?1 AND issued_at > ?2 AND delivery <> ?3
+                       GROUP BY delivery ORDER BY first_at DESC LIMIT 1 OFFSET ?4)",
+                    params![
+                        notice.thread,
+                        now.saturating_sub(WINDOW_MS),
+                        id,
+                        RECIPIENT_LIMIT - 1
+                    ],
+                    |row| row.get(0),
+                )?;
+                if let Some(oldest) = oldest {
+                    for id in ids {
+                        tx.execute(
+                            "UPDATE project_tell_deliveries SET retry_at = ?2 WHERE id = ?1",
+                            params![id, oldest.saturating_add(WINDOW_MS)],
+                        )?;
+                    }
+                    tx.commit()?;
+                    return Err(StoreError::TellRateLimit(notice.thread));
                 }
+                tx.execute(
+                    "INSERT INTO tell_reply_handles (handle, delivery, recipient, issued_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![handle, id, notice.thread, now],
+                )?;
+                Some(TellState::InFlight(notice))
             }
-            TellDispatch::Defer => {
-                let mut update = tx.prepare(&format!(
-                    "UPDATE project_tell_deliveries SET retry_at = ?2 + delay_ms,
+            TellDispatch::Advance(state) => Some(state),
+            TellDispatch::Defer => None,
+        };
+        if let Some(state) = next_state {
+            let due = (!matches!(state, TellState::Delivered { .. } | TellState::Refused))
+                .then_some(now.saturating_add(5_000));
+            let encoded = serde_json::to_string(&state)?;
+            let command = state.attempt().map(|notice| &notice.command);
+            let mut update = tx.prepare(&format!(
+                "UPDATE project_tell_deliveries SET state = ?2, retry_at = ?3,
+                     delay_ms = 5000, command = ?4 WHERE {column} = ?1"
+            ))?;
+            for id in ids {
+                update.execute(params![id, encoded, due, command])?;
+            }
+        } else {
+            let mut update = tx.prepare(&format!(
+                "UPDATE project_tell_deliveries SET retry_at = ?2 + delay_ms,
                         delay_ms = min(delay_ms * 2, 300000) WHERE {column} = ?1"
-                ))?;
-                for id in ids {
-                    update.execute(params![id, now])?;
-                }
+            ))?;
+            for id in ids {
+                update.execute(params![id, now])?;
             }
         }
         tx.commit()?;
@@ -314,6 +438,8 @@ fn delivery(row: &Row<'_>) -> rusqlite::Result<TellDelivery> {
         rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error))
     })?;
     Ok(TellDelivery {
+        direct: row.get(9)?,
+        gone_sender: row.get(10)?,
         id: row.get(0)?,
         request_key: row.get(1)?,
         sender: row.get(2)?,

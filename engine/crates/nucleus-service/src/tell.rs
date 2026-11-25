@@ -29,10 +29,11 @@ pub(crate) struct TellRequest {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub(crate) enum TellTarget {
     One(String),
     Projects(Vec<String>),
+    Reply { reply: String },
 }
 
 #[derive(Serialize)]
@@ -70,6 +71,7 @@ struct PlannedTell {
     planner: EnrolledPlanner,
     ids: Vec<String>,
     text: String,
+    handle: String,
     prior: Option<TellState>,
 }
 
@@ -81,6 +83,7 @@ struct PlannedTell {
 )]
 enum TellOutcome {
     Queued,
+    Refused,
     Uncertain { detail: &'static str },
     Delivered { delivered_at_ms: i64 },
 }
@@ -93,6 +96,7 @@ impl From<TellDelivery> for TellReceipt {
             to: row.to_project,
             recorded_at_ms: row.recorded_at,
             outcome: match row.state {
+                TellState::Refused => TellOutcome::Refused,
                 TellState::Pending | TellState::Accepted(_) => TellOutcome::Queued,
                 TellState::InFlight(_) => TellOutcome::Uncertain {
                     detail: "Delivery is unconfirmed. Nucleus will check the recorded attempt without resending it.",
@@ -119,6 +123,7 @@ impl Service {
             return Err(ServiceError::TellInput);
         }
         let selectors = match &input.to {
+            TellTarget::Reply { .. } => None,
             TellTarget::One(project) if project.trim() == "all" => None,
             TellTarget::One(project) => Some(BTreeSet::from([project.trim()])),
             TellTarget::Projects(projects) => {
@@ -140,37 +145,36 @@ impl Service {
             }
             None => return Err(ServiceError::TellPlannerRequired),
         };
+        let now = tell_clock();
+        let direct_route = if let TellTarget::Reply { reply } = &input.to {
+            let (project, thread) = state
+                .store
+                .tell_reply_route(reply, actor, now)?
+                .ok_or(ServiceError::TellReply)?;
+            Some((project, thread))
+        } else {
+            None
+        };
         let key = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&(actor, &from, &selectors, text))
-                    .map_err(nucleus_store::StoreError::from)?
+                match &input.to {
+                    TellTarget::Reply { reply } => serde_json::to_vec(&(actor, reply, text)),
+                    _ => serde_json::to_vec(&(actor, &from, &selectors, text)),
+                }
+                .map_err(nucleus_store::StoreError::from)?
             )
         );
-        let now = tell_clock();
+
         if let Some(replay) = state.store.tell_replay(&key, now)? {
             return Ok(replay.into());
         }
-        let (routed, unrouted): (Vec<_>, Vec<_>) = tell_projects(&state, selectors)?
-            .into_iter()
-            .map(str::to_owned)
-            .partition(|project| tell_planner(&state, project, actor).is_some());
-        // A stored route whose process-local proof expired is still a candidate.
-        // Ask the enrollment worker before freezing the broadcast's recipient set.
-        let candidates: BTreeSet<_> = unrouted
-            .iter()
-            .flat_map(|id| state.planner_candidates_for(id))
-            .filter(|candidate| candidate != actor)
-            .collect();
-        let mut pending = None;
-        for candidate in candidates {
-            if let Some(wait) = self.request_tell_enrollment(&mut state, &candidate) {
-                pending = Some(wait);
-            }
-        }
-        if let Some(wait) = pending {
-            return Err(wait);
-        }
+        let (routed, unrouted, direct) = if let Some((project, thread)) = direct_route {
+            (vec![project], Vec::new(), Some(thread))
+        } else {
+            let (routed, unrouted) = self.project_recipients(&mut state, selectors, actor)?;
+            (routed, unrouted, None)
+        };
         let recipients = routed
             .into_iter()
             .map(|project| Ok((project, new_id("tell")?)))
@@ -186,6 +190,7 @@ impl Service {
             &TellSubmission {
                 key: &key,
                 sender: actor,
+                direct: direct.as_deref(),
                 from_project: &from,
                 text,
                 recorded_at: now,
@@ -201,6 +206,135 @@ impl Service {
             no_live_planners,
         }
         .into())
+    }
+
+    fn project_recipients(
+        &self,
+        state: &mut State,
+        selectors: Option<BTreeSet<&str>>,
+        actor: &str,
+    ) -> Result<(Vec<String>, Vec<String>), ServiceError> {
+        let (routed, unrouted): (Vec<_>, Vec<_>) = tell_projects(state, selectors)?
+            .into_iter()
+            .map(str::to_owned)
+            .partition(|project| tell_planner(state, project, actor, None).is_some());
+        // A stored route whose process-local proof expired is still a candidate.
+        // Ask the enrollment worker before freezing the broadcast's recipient set.
+        let candidates: BTreeSet<_> = unrouted
+            .iter()
+            .flat_map(|id| state.planner_candidates_for(id))
+            .filter(|candidate| candidate != actor)
+            .collect();
+        let mut pending = None;
+        for candidate in candidates {
+            if let Some(wait) = self.request_tell_enrollment(state, &candidate) {
+                pending = Some(wait);
+            }
+        }
+        if let Some(wait) = pending {
+            return Err(wait);
+        }
+        Ok((routed, unrouted))
+    }
+
+    pub(crate) async fn claim_planner(&self, scope: &ControllerScope) -> Result<(), ServiceError> {
+        let actor = scope.actor().ok_or(ServiceError::TellPlannerRequired)?;
+        let _write = self.project_writes.write().await;
+        let mut state = self.state.lock().await;
+        let project = self.planning_planner_project(&mut state, actor, None)?;
+        self.record_claim_notice(&mut state, &project)?;
+        let file = self.settings.clone();
+        let claimed = actor.to_owned();
+        let id = project.clone();
+        let occurrence = new_id("claim")?;
+        let saved = tokio::task::spawn_blocking(move || {
+            let before = file.read::<nucleus_store::Projects>()?;
+            file.edit(
+                &before.revision,
+                |projects: &mut nucleus_store::Projects| {
+                    let entry = projects
+                        .projects
+                        .get_mut(&id)
+                        .filter(|p| {
+                            !p.archived
+                                && p.repositories
+                                    .iter()
+                                    .any(|repo| repo.planner_threads.contains(&claimed))
+                        })
+                        .ok_or(nucleus_store::StorageError::SettingsConflict)?;
+                    if entry
+                        .planner_claim
+                        .as_ref()
+                        .is_none_or(|claim| claim.thread != claimed)
+                    {
+                        entry.planner_claim = Some(nucleus_store::PlannerClaim {
+                            thread: claimed,
+                            occurrence,
+                            replaced: entry.planner_claim.take().map(|claim| claim.thread),
+                        });
+                    }
+                    Ok(())
+                },
+            )
+        })
+        .await
+        .map_err(|_| ServiceError::Input)??;
+        state.settings.projects = Some(saved.0.value);
+        if saved.1 {
+            self.settings_changes.send_replace(());
+            self.tell_wake.notify_one();
+        }
+        self.record_claim_notice(&mut state, &project)
+    }
+
+    fn record_claim_notice(&self, state: &mut State, project: &str) -> Result<(), ServiceError> {
+        let Some(claim) = state
+            .settings
+            .projects
+            .as_ref()
+            .and_then(|s| s.projects.get(project))
+            .and_then(|p| p.planner_claim.as_ref())
+        else {
+            return Ok(());
+        };
+        let Some(previous) = &claim.replaced else {
+            return Ok(());
+        };
+        if !state.store.has_tell_request(&claim.occurrence)? {
+            let submission = TellSubmission {
+                key: &claim.occurrence,
+                sender: &claim.thread,
+                direct: Some(previous),
+                from_project: project,
+                text: "Another thread claimed this project. New project messages go to that planner.",
+                recorded_at: tell_clock(),
+                no_live_planners: &[],
+            };
+            state
+                .store
+                .record_tell(&submission, &[(project.to_owned(), new_id("tell")?)])?;
+            self.tell_wake.notify_one();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn recover_claim_notices(&self, state: &mut State) -> Result<(), ServiceError> {
+        let projects: Vec<_> = state
+            .settings
+            .projects
+            .iter()
+            .flat_map(|all| all.projects.iter())
+            .filter(|(_, p)| {
+                p.planner_claim
+                    .as_ref()
+                    .is_some_and(|claim| claim.replaced.is_some())
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in projects {
+            self.record_claim_notice(state, &id)?;
+        }
+        Ok(())
     }
 
     pub(super) async fn watch_tells(&self) {
@@ -227,7 +361,11 @@ impl Service {
         loop {
             self.host.wait_for_requests().await;
             self.storage.database().verify()?;
-            let next = self.state.lock().await.store.next_tell()?;
+            let next = {
+                let mut state = self.state.lock().await;
+                self.recover_claim_notices(&mut state)?;
+                state.store.next_tell()?
+            };
             if let Some(row) = next {
                 let delay = row
                     .retry_at
@@ -254,35 +392,63 @@ impl Service {
                 let transition = self.reconcile_tell(row, attempt).await?;
                 self.save_tell(tell_rows(row), transition).await
             }
-            TellState::Delivered { .. } => Err(ServiceError::Input),
+            TellState::Refused | TellState::Delivered { .. } => Err(ServiceError::Input),
         }
     }
 
-    async fn send_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
-        let candidates = self
-            .state
-            .lock()
-            .await
-            .planner_candidates_for(&row.to_project);
-        for actor in candidates.into_iter().filter(|actor| actor != &row.sender) {
+    async fn resolve_tell(&self, row: &TellDelivery) -> Result<Option<PlannedTell>, ServiceError> {
+        let candidates = if let Some(target) = &row.direct {
+            let state = self.state.lock().await;
+            if state
+                .settings
+                .planner_route(target)
+                .is_none_or(|(project, _)| project != row.to_project)
+            {
+                return Ok(None);
+            }
+            vec![target.clone()]
+        } else {
+            let state = self.state.lock().await;
+            let mut choices = state.planner_candidates_for(&row.to_project);
+            choices.sort_by_key(|thread| {
+                Some(thread.as_str()) != claimed_thread(&state, &row.to_project)
+            });
+            choices
+        };
+        for actor in candidates
+            .into_iter()
+            .filter(|actor| actor != &row.sender && Some(actor) != row.gone_sender.as_ref())
+        {
             if self.check_registered_planner(&actor).await? {
                 break;
             }
         }
-        let route = {
-            let state = self.state.lock().await;
-            tell_planner(&state, &row.to_project, &row.sender)
-                .map(|proof| Self::plan_tell(&state, row, proof))
-                .transpose()?
-        };
+        let state = self.state.lock().await;
+        // Losing the in-memory proof while a binding still exists requires another observation.
+        if let Some(thread) = &row.direct
+            && state
+                .settings
+                .planner_route(thread)
+                .is_some_and(|(id, _)| id == row.to_project)
+            && target_planner(&state, row).is_none()
+        {
+            return Err(HostError::Uncertain.into());
+        }
+        target_planner(&state, row)
+            .map(|proof| Self::plan_tell(&state, row, proof))
+            .transpose()
+    }
+
+    async fn send_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
         let Some(PlannedTell {
             planner,
             ids,
             text,
+            handle,
             prior,
-        }) = route
+        }) = self.resolve_tell(row).await?
         else {
-            return self.save_tell(tell_rows(row), TellDispatch::Defer).await;
+            return self.unavailable_tell(row).await;
         };
         let ids: Vec<_> = ids.iter().map(String::as_str).collect();
         let rows = TellRows::Receipts(&ids);
@@ -313,7 +479,7 @@ impl Service {
                 self.planner_routes_changed(&mut state);
             }
             drop(state);
-            return self.save_tell(rows, TellDispatch::Defer).await;
+            return self.unavailable_tell(row).await;
         }
         let Some(authorization) = observed.authorization else {
             return self.save_tell(rows, TellDispatch::Defer).await;
@@ -329,11 +495,24 @@ impl Service {
             return self.save_tell(rows, TellDispatch::Defer).await;
         }
         let dispatch = authorization.record(&mut attempt)?;
-        self.save_tell(
-            rows,
-            TellDispatch::Advance(TellState::InFlight(attempt.clone())),
-        )
-        .await?;
+        let saved = self
+            .save_tell(
+                rows,
+                TellDispatch::Send {
+                    notice: attempt.clone(),
+                    handle,
+                },
+            )
+            .await;
+        if matches!(
+            saved,
+            Err(ServiceError::Store(
+                nucleus_store::StoreError::TellRateLimit(_)
+            ))
+        ) {
+            return Ok(());
+        }
+        saved?;
         let result = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
         if matches!(result, Err(HostError::Deferred { .. })) {
             return self
@@ -346,6 +525,20 @@ impl Service {
             NoticeSend::Prepared => return Err(HostError::Protocol.into()),
         };
         self.save_tell(rows, TellDispatch::Advance(next)).await
+    }
+
+    async fn unavailable_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
+        if row.direct.is_some() && !row.request_key.starts_with("claim-") {
+            self.storage.database().verify()?;
+            self.state.lock().await.store.fallback_reply(&row.id)?;
+            return Ok(());
+        }
+        let outcome = if row.direct.is_some() {
+            TellDispatch::Advance(TellState::Refused)
+        } else {
+            TellDispatch::Defer
+        };
+        self.save_tell(tell_rows(row), outcome).await
     }
 
     fn plan_tell(
@@ -364,8 +557,7 @@ impl Service {
                 .map(|target| {
                     (
                         target,
-                        tell_planner(state, &target.to_project, &row.sender)
-                            .map(|proof| proof.identity.id.as_str()),
+                        target_planner(state, target).map(|proof| proof.identity.id.as_str()),
                     )
                 }),
         );
@@ -381,8 +573,21 @@ impl Service {
             .iter()
             .find(|target| target.state.thread() == Some(planner.identity.id.as_str()))
             .map(|target| target.state.clone());
-        let text = notice_text(&row.from_project, &names, &row.text);
+        let handle = new_id("nreply")?.replacen('-', "_", 1);
+        let fallback = members.iter().any(|member| {
+            member.direct.is_none()
+                && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
+        });
+        let text = notice_text(
+            &row.from_project,
+            &names,
+            &row.text,
+            &handle,
+            fallback,
+            row.gone_sender.as_deref(),
+        );
         Ok(PlannedTell {
+            handle,
             planner: planner.clone(),
             ids,
             text,
@@ -438,7 +643,10 @@ impl Service {
             let Some((project, repo)) = state.live_planner_route(&target.thread) else {
                 return Ok(false);
             };
-            if target.thread == row.sender
+            if (matches!(row.state, TellState::Pending)
+                && target_planner(&state, row)
+                    .is_none_or(|planner| planner.identity.id != target.thread))
+                || target.thread == row.sender
                 || project != row.to_project
                 || repo.host_project.as_deref() != Some(target.project_id.as_str())
                 || !state
@@ -483,15 +691,54 @@ fn tell_rows(row: &TellDelivery) -> TellRows<'_> {
         })
 }
 
-fn tell_planner<'a>(state: &'a State, project: &str, sender: &str) -> Option<&'a EnrolledPlanner> {
+fn target_planner<'a>(state: &'a State, row: &TellDelivery) -> Option<&'a EnrolledPlanner> {
+    if let Some(thread) = &row.direct {
+        return state
+            .enrolled_planners
+            .get(thread)
+            .filter(|_| state.live_planner_project(thread) == Some(&row.to_project));
+    }
+    tell_planner(
+        state,
+        &row.to_project,
+        &row.sender,
+        row.gone_sender.as_deref(),
+    )
+}
+
+fn claimed_thread<'a>(state: &'a State, project: &str) -> Option<&'a str> {
+    state
+        .settings
+        .projects
+        .as_ref()?
+        .projects
+        .get(project)?
+        .planner_claim
+        .as_ref()
+        .map(|claim| claim.thread.as_str())
+}
+
+fn tell_planner<'a>(
+    state: &'a State,
+    project: &str,
+    sender: &str,
+    gone: Option<&str>,
+) -> Option<&'a EnrolledPlanner> {
     state
         .enrolled_planners
         .values()
         .filter(|proof| {
             proof.identity.id != sender
+                && Some(proof.identity.id.as_str()) != gone
                 && state.live_planner_project(&proof.identity.id) == Some(project)
         })
-        .max_by_key(|proof| (proof.verified_at, proof.identity.id.as_str()))
+        .max_by_key(|proof| {
+            (
+                claimed_thread(state, project) == Some(&proof.identity.id),
+                proof.verified_at,
+                proof.identity.id.as_str(),
+            )
+        })
 }
 
 fn group_by_thread<'a, Project>(
@@ -518,14 +765,30 @@ fn project_name<'a>(state: &'a State, id: &'a str) -> &'a str {
         .map_or(id, |project| project.name.as_str())
 }
 
-fn notice_text(from: &str, project_names: &[&str], text: &str) -> String {
+fn notice_text(
+    from: &str,
+    project_names: &[&str],
+    text: &str,
+    handle: &str,
+    fallback: bool,
+    gone: Option<&str>,
+) -> String {
+    let routing = if let Some(sender) = gone {
+        format!(
+            "\nFallback delivery. The original sender ({sender}) is gone from this project. This reply goes to its project planner.\n"
+        )
+    } else if fallback {
+        "\nFallback delivery. Use nucleus planner.claim to receive project messages, or pass this on.\n".into()
+    } else {
+        String::new()
+    };
     let recipients = if project_names.len() > 1 {
         format!(" for {}", project_names.join(", "))
     } else {
         String::new()
     };
     format!(
-        "Nucleus message from project {from}{recipients}\n\n{text}\n\nReply with a tell to project {from}. This message carries information only."
+        "Nucleus message from project {from}{recipients}\n\n{text}\n{routing}\nInformation only. Only this thread can use the reply route for seven days. It reaches the sender, or their project planner if the sender is gone.\nReply: nucleus tell '{{\"to\":{{\"reply\":\"{handle}\"}}}}' 'YOUR MESSAGE'"
     )
 }
 
@@ -589,7 +852,19 @@ mod tests {
         assert_eq!(groups.len(), 2);
         let notices: Vec<_> = groups
             .into_iter()
-            .map(|(thread, names)| (thread, notice_text("sender", &names, "One update")))
+            .map(|(thread, names)| {
+                (
+                    thread,
+                    notice_text(
+                        "sender",
+                        &names,
+                        "One update",
+                        "nreply_fixture",
+                        false,
+                        None,
+                    ),
+                )
+            })
             .collect();
         assert_eq!(notices[1].0, "same-thread");
         assert!(

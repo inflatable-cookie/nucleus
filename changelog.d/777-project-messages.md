@@ -1,0 +1,1 @@
+Claim project messages with `nucleus planner.claim`. Project notices identify fallback delivery, and their reply commands return to the originating thread for seven days. Operators can clear a claim in Projects.

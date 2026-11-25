@@ -523,8 +523,11 @@ function OpenedProject({
             options={plannerOptions(entry, candidates.data, planner)}
             onChange={choosePlanner}
           /> : (
-            // Rust engine (ruling 8): the planner resolves live and is never typed in.
-            <Field c={c} label="Planner" value={planner ?? "None resolved"} disabled onChange={() => {}} />
+            <View style={{ gap: space.xs }}>
+              <FieldCaption c={c} text="Planner" help="New messages go to the thread that ran nucleus planner.claim. Clearing it restores fallback delivery." />
+              <Text selectable style={muted(c)}>{planner ?? "Unclaimed"}</Text>
+              {planner && <Button small c={c} text="Clear" label="Clear claimed planner" disabled={disabled} onPress={() => choosePlanner(NONE)} />}
+            </View>
           )}
           {Boolean(candidates.error) && (
             <Text
