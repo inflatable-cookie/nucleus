@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 
-// Keep this walk aligned with the bridge boundary checked by layout.test.ts.
+// This walk enforces the legacy build's bridge import boundary.
 //
 // The bridge runs inside the plugin host, so its import graph must never load
 // a runtime module (Store, engine, Git, hook or routing runtime, SQLite). The
