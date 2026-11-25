@@ -69,7 +69,8 @@ so each task has one row. The parent has no model. It shows the
 task's lifecycle text and holds its turn while a role runs, so the row reads as
 working exactly when the task is.
 
-Set up the Rust ACP provider with `nucleus t3 install`. The engine registers
+Set up the Rust ACP provider with
+`nucleus t3 install --serve-launcher /absolute/path/to/serve-engine`. The engine registers
 `nucleus-rust` and keeps its ACP launcher under the engine home. Check the
 registration with `nucleus t3 status`. See the [T3 setup guide](engine/README.md#set-up-t3)
 for connection and credential setup.

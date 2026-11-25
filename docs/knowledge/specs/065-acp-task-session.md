@@ -1,6 +1,8 @@
 # 065 — A host-agnostic ACP task session
 
-Status: implemented
+Status: historical TypeScript implementation. The Rust engine retains the ACP
+session design. For the installed `nucleus-rust` provider and its launcher,
+see [T3 setup](../../../engine/README.md#set-up-t3).
 Owner: Nucleus runtime maintainers
 Created: 2026-11-17
 Decision: 5e9a3193 (a generic ACP agent in core, parenting per host) and
@@ -358,6 +360,6 @@ Nucleus provider in T3, are the host adapter's work
 ([t3code host adapter](t3code-host-adapter.md), "Native parenting"): it holds the
 turn while a child is active, releases it when no child is, and re-enters with a
 `holdPattern` prompt before the next child. Registering the provider
-is one operator setting (`nucleus-acp` is the installed command path); a drift
+used one operator setting (`nucleus-acp` was the TypeScript launcher); a drift
 in the client's ACP revision is the adapter's compatibility check, not the
 agent's.
