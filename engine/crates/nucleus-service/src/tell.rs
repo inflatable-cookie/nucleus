@@ -158,6 +158,20 @@ impl Service {
                 tell_planner(&state, project, actor).map(|planner| planner.identity.id.as_str()),
             )
         }));
+        // A stored route whose process-local proof expired is still a candidate.
+        // Ask the enrollment worker before freezing the broadcast's recipient set.
+        let candidates: BTreeSet<_> = unrouted
+            .iter()
+            .flat_map(|id| state.planner_candidates_for(id))
+            .filter(|candidate| candidate != actor)
+            .collect();
+        if !candidates.is_empty() {
+            let mut pending = ServiceError::PlannerEnrollmentPending;
+            for candidate in candidates {
+                pending = self.request_enrollment(&mut state, &candidate);
+            }
+            return Err(pending);
+        }
         let recipients = groups
             .into_values()
             .flatten()

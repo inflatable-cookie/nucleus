@@ -117,7 +117,7 @@ impl Store {
         let Some((recorded, ids, no_live_planners)) = self
             .connection
             .query_row(
-                "SELECT recorded_at, deliveries, no_live_planners FROM project_tell_requests WHERE key = ?1",
+                "SELECT recorded_at, deliveries, no_live_planners FROM project_tell_requests WHERE key = ?1 AND json_array_length(deliveries) > 0",
                 [key],
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
             )
