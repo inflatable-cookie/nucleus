@@ -1160,6 +1160,31 @@ fn restoring_a_review_entry_with_planner_acceptance_is_refused() {
 }
 
 #[test]
+fn configure_refuses_a_stale_revision_and_preserves_retention_on_retry() {
+    let home = tempfile::tempdir().unwrap();
+    let cli = SettingsFile::open(home.path()).unwrap();
+    let stale = cli.read::<EngineSettings>().unwrap();
+    let board = SettingsFile::open(home.path()).unwrap();
+    board
+        .edit::<EngineSettings>(&stale.revision, |settings| {
+            settings.retention.keep_newest = 17;
+            Ok(())
+        })
+        .unwrap();
+    let enable = |settings: &mut EngineSettings| settings.enabled = true;
+    assert!(matches!(
+        cli.configure(&stale, enable),
+        Err(StorageError::SettingsConflict)
+    ));
+    let current = cli.read::<EngineSettings>().unwrap();
+    assert!(!current.value.enabled);
+    cli.configure(&current, enable).unwrap();
+    let saved = board.load().unwrap();
+    assert!(saved.enabled);
+    assert_eq!(saved.retention.keep_newest, 17);
+}
+
+#[test]
 fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
     let root = tempfile::tempdir().expect("scratch directory");
     let file = SettingsFile::open(root.path()).expect("open empty fixture home");

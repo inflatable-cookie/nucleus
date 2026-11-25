@@ -251,6 +251,15 @@ impl SettingsFile {
         let config = self.load()?;
         let scratch = scratch_path(&self.layout, &config);
         let directory = storage_dir(config.work_volume.as_ref(), root.to_path_buf(), &scratch)?;
+        self.edit_in(revision, &directory, edit)
+    }
+
+    fn edit_in<S: SettingsValue>(
+        &self,
+        revision: &str,
+        directory: &StorageDirectory,
+        edit: impl FnOnce(&mut S) -> Result<(), StorageError>,
+    ) -> Result<(SettingsSnapshot<S>, bool), StorageError> {
         let outcome = self
             .store
             .mutate_checked(&SettingsDomain::<S>::new()?, MUTATION, |current| {
@@ -280,6 +289,31 @@ impl SettingsFile {
         let (was_configured, value, publication) = outcome.into_parts();
         let changed = publication.is_some();
         Ok((snapshot(value, was_configured || changed)?, changed))
+    }
+
+    /// Apply startup flags at the revision read by the CLI. An offline profile move
+    /// verifies the destination using the proposed roots and volume pin.
+    ///
+    /// # Errors
+    /// Returns an error if the proposal is stale or its storage cannot be verified.
+    pub fn configure(
+        &self,
+        snapshot: &SettingsSnapshot<EngineSettings>,
+        patch: impl Fn(&mut EngineSettings),
+    ) -> Result<(), StorageError> {
+        let mut proposed = snapshot.value.clone();
+        patch(&mut proposed);
+        proposed.verify_for_save(self)?;
+        let directory = storage_dir(
+            proposed.work_volume.as_ref(),
+            self.layout.storage_roots().state().to_owned(),
+            &scratch_path(&self.layout, &proposed),
+        )?;
+        self.edit_in(&snapshot.revision, &directory, |current| {
+            patch(current);
+            Ok(())
+        })?;
+        Ok(())
     }
 
     /// Read the storage settings. A missing domain uses the disabled default.
