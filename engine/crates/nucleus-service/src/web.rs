@@ -46,6 +46,7 @@ use crate::{
 };
 
 mod board;
+mod github_accounts;
 mod inbox;
 mod planning;
 mod settings;
@@ -211,6 +212,7 @@ fn routes(
         .route("/v1/tasks/{id}/next", get(next))
         .route("/v1/health", get(settings::health))
         .route("/v1/settings", get(settings::all))
+        .merge(github_accounts::routes("/v1/settings/github-accounts"))
         .route(
             "/v1/settings/{domain}",
             get(settings::get).put(settings::put),
@@ -1237,6 +1239,7 @@ enum ApiError {
     Invalid,
     BriefBodyTooLarge,
     SettingsOperator,
+    GitHubAccountsOperator,
     ProjectOpenTasks,
     BoardUnavailable,
     BoardOperator,
@@ -1271,6 +1274,10 @@ impl IntoResponse for ApiError {
             Self::SettingsOperator => (
                 StatusCode::FORBIDDEN,
                 "settings writes require an operator".into(),
+            ),
+            Self::GitHubAccountsOperator => (
+                StatusCode::FORBIDDEN,
+                "GitHub account settings require an operator".into(),
             ),
             Self::ProjectOpenTasks => (
                 StatusCode::CONFLICT,
