@@ -176,7 +176,7 @@ Settled notices, frozen completion cohorts, history and third-party holds are ne
 rewritten. An archived or missing recipient Nucleus already records (a creator
 nomination or its own subscription) can still be unsubscribed on that recorded
 workspace binding; subscribing needs a live identity. The board's task detail has Change owner (this task, or every open task
-of the project that thread owns); agents use `bin/nucleus-reparent.mjs` (named `bin/northstar-reparent.mjs` before the 2026-11 rename).
+of the project that thread owns).
 
 `queue.owner-inventory` is that helper's one read-only companion (nucleus#1447):
 the unfinished tasks one thread owns, grouped by project, with a named project's

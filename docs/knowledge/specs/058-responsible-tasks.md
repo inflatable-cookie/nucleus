@@ -1231,9 +1231,9 @@ Before rollout step 4's deletion batches:
   external PR go through Nucleus's revision worker like any task.
 - Review entry itself stays (Tom, 2026-11-02): "if someone submits a PR, I want to be able to add
   that as a task at the review stage, then if changes are needed, a worker is spawned within the
-  task workspace to execute it." Intake at the review stage (`nucleus-review-entry.mjs --lead`, named `northstar-review-entry.mjs` before the 2026-11 rename),
-  the retained reviewer and the revision worker in the task workspace are product; the deletion
-  removes only the owner-recorded revision path.
+  task workspace to execute it." Intake at the review stage, the retained reviewer and the
+  revision worker in the task workspace remain product behavior. This ruling removes the
+  owner-recorded revision path.
 - The extra-replacement grant goes; the per-task worker replacement ceiling stays as a loop breaker,
   and a relayed `restart fresh` from the operator is the way past it.
 - Brief-frontmatter `mergeHold` stays, as a hold a planner places with a stated reason. There is
