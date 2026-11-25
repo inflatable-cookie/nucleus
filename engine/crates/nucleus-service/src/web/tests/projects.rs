@@ -855,11 +855,18 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
     assert!(product.get("slots").is_none());
     assert_eq!(product["repositories"][0]["hostProject"], "alpha-native");
     assert!(product["repositories"][1]["hostProject"].is_null());
+    let refused = submit(&registry.api, "alpha-planner", "unbound", Some(BETA_REPO)).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
     assert_eq!(
-        submit(&registry.api, "alpha-planner", "unbound", Some(BETA_REPO))
-            .await
-            .status(),
-        StatusCode::FORBIDDEN
+        json_body(refused).await["error"],
+        "repository example/second has no verified T3 checkout in project Imported product; open a T3 thread in its checkout and run one planning command"
+    );
+    let missing = caller_request(&registry.api, Method::POST, "/v1/planning/missing/tasks", "alpha-planner",
+        json!({"id": "missing", "repository": BETA_REPO, "brief": "---\nqueue:\n  complexity: low\n---\nTest"})).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(missing).await["error"],
+        "no project named missing; repository example/second belongs to project Imported product"
     );
     registry.enroll("beta-planner").await;
     let beta = registry.task("beta-planner", "second").await;
@@ -1951,7 +1958,7 @@ async fn project_tell_refuses_unverified_and_ambiguous_requests_without_host_rea
         json_body(unknown).await["error"]
             .as_str()
             .unwrap()
-            .contains("no project matches")
+            .contains("no project named")
     );
     {
         let mut state = registry.service.state.lock().await;

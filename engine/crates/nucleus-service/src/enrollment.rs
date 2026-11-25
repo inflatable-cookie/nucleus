@@ -205,6 +205,55 @@ impl Service {
         selector: Option<&str>,
         origin: Option<&str>,
     ) -> Result<PlanningRepository, ServiceError> {
+        self.resolve_admission_route(state, scope, selector, origin)
+            .map_err(|error| {
+                let Some((id, project, repo)) =
+                    origin.and_then(|origin| state.settings.project_for_origin(origin))
+                else {
+                    return error;
+                };
+                // Describe a repository only inside the caller's established project.
+                if project.archived
+                    || scope
+                        .actor()
+                        .is_some_and(|actor| state.live_planner_project(actor) != Some(id))
+                {
+                    return error;
+                }
+                match error {
+                    ServiceError::TellUnknownProject(selector) => ServiceError::RepositoryOwner {
+                        selector,
+                        repository: repo.origin.clone(),
+                        project: project.name.clone(),
+                    },
+                    ServiceError::Project | ServiceError::ControllerProject
+                        if repo.host_project.is_none()
+                            && selector.is_none_or(|name| {
+                                state
+                                    .settings
+                                    .resolve_planning_project(self.project.as_ref(), name)
+                                    .ok()
+                                    == Some(id)
+                            }) =>
+                    {
+                        ServiceError::UnboundCheckout {
+                            repository: repo.origin.clone(),
+                            project: project.name.clone(),
+                            planner: scope.actor().is_some(),
+                        }
+                    }
+                    other => other,
+                }
+            })
+    }
+
+    fn resolve_admission_route(
+        &self,
+        state: &mut State,
+        scope: &ControllerScope,
+        selector: Option<&str>,
+        origin: Option<&str>,
+    ) -> Result<PlanningRepository, ServiceError> {
         if let Some(project) = &self.project {
             let id = state.settings.planning_project_id(project);
             if let Some(name) = selector
