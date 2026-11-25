@@ -5,7 +5,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { profilesSnapshot } from "../client/web/rust-api";
+import { profilesSnapshot, type storageView } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
   rustProjectActivity,
@@ -682,6 +682,17 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
       hostProject: "fixture-bound", hostProjectTitle: boundTitle },
   ] });
+  const scratchOverride = "/custom/run-scratch";
+  let activePlacement: "internal" | "barge" = "internal";
+  let storage: ReturnType<typeof storageView.parse>["settings"]["value"] = {
+    enabled: true,
+    placement: "internal",
+    workRoot: null,
+    scratchRoot: scratchOverride,
+    buildsRoot: null,
+    logRoot: null,
+    retention: { keepNewest: 5, maxAgeDays: null },
+  };
   const views = {
     profiles: () => snap({
       profiles: [{
@@ -697,11 +708,29 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       resolvedPlanners: { fixture: "fixture-planner" },
     }),
     hosts: () => ({ settings: snap({ t3: null }, "hosts-1"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
-    storage: () => ({
-      settings: snap({ enabled: true, workRoot: null, scratchRoot: null, logRoot: null, retention: { keepNewest: 5, maxAgeDays: null } }, "storage-1"),
-      active: { databaseRoot: "/e/db", workRoot: "/e/work", backupRoot: "/e/backups", scratchRoot: "/e/scratch", logRoot: "/e/logs" },
-      backups: { complete: true, issues: 0, verified: [] },
-    }),
+    storage: () => {
+      const barge = activePlacement === "barge";
+      return {
+        settings: snap(storage, "storage-" + storage.placement),
+        active: {
+          home: "/e",
+          placement: activePlacement,
+          databaseRoot: "/e/db",
+          workRoot: barge ? "/pool/worktrees/nucleus" : "/e/work",
+          buildsRoot: barge ? "/pool/builds/nucleus" : "/e/builds",
+          scratchRoot: scratchOverride,
+          backupRoot: "/e/backups",
+          logRoot: "/e/logs",
+          ...(barge ? {
+            bargePaths: {
+              worktrees: "/pool/worktrees/nucleus",
+              builds: "/pool/builds/nucleus",
+            },
+          } : {}),
+        },
+        backups: { complete: true, issues: 0, verified: [] },
+      };
+    },
   };
   let hostThemeAvailable = true;
   const fetcher: typeof fetch = async (input, init) => {
@@ -812,6 +841,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         const body = JSON.parse(String(init.body));
         writes.push({ path, body });
         if (domain === "dispatch") dispatch = body.value;
+        if (domain === "storage") storage = body.value;
         if (domain === "profiles") pausedGroups = body.value.pausedGroups;
         if (domain === "projects") projectArchived = body.value.projects.fixture.archived;
         stream?.enqueue(new TextEncoder().encode("event: settings\ndata: {}\n\n"));
@@ -1131,6 +1161,43 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   emit("theme");
   assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
+  await click("Storage");
+  await eventually(() => Boolean(selector("Placement, Internal")), "Storage shows Internal placement");
+  const pathField = (label: string) => {
+    const inputs = dom.window.document.querySelectorAll<HTMLInputElement>(`input[aria-label="${label}"]`);
+    assert.equal(inputs.length, 1, label + " has one path control");
+    return inputs[0]!;
+  };
+  assert.match(selector("Placement in force")!.textContent!, /^In force: Internal ·/);
+  assert.equal(pathField("Worktrees").placeholder, "/e/work");
+  assert.equal(pathField("Build output").placeholder, "/e/builds");
+  await eventually(() => pathField("Run scratch").value === scratchOverride, "the saved scratch override is restored");
+  assert.ok(!selector("Storage help text"), "the explanation opens from the help control");
+  await click("Storage help");
+  const storageHelp = () => selector("Storage help text")?.textContent ?? "";
+  await eventually(() => storageHelp().includes("With Barge, each default comes from its storage class."), "Storage help opens in the bundle");
+  assert.match(storageHelp(), /defaults for worktrees, scratch and build output/);
+  assert.match(storageHelp(), /Internal uses the platform defaults/);
+  assert.match(storageHelp(), /absolute path to override a default/);
+  assert.match(storageHelp(), /clears individual path overrides and keeps Worktrees/);
+  await click("Storage help");
+  await click("Placement, Internal");
+  await click("Placement: Barge");
+  await eventually(() => Boolean(selector("Placement, Barge")), "Storage shows the saved Barge placement");
+  assert.match(selector("Placement in force")!.textContent!, /^In force: Internal ·/);
+  const storageWrite = writes.find(({ path }) => path.endsWith("/settings/storage"));
+  assert.equal(storageWrite?.body.value.placement, "barge");
+  assert.equal(storageWrite?.body.value.scratchRoot, scratchOverride);
+  activePlacement = "barge";
+  emit("storage");
+  await eventually(() => selector("Placement in force")?.textContent?.startsWith("In force: Barge ·") === true,
+    "the board refreshes the active placement");
+  assert.equal(pathField("Worktrees").placeholder, "/pool/worktrees/nucleus");
+  assert.equal(pathField("Build output").placeholder, "/pool/builds/nucleus");
+  assert.equal(pathField("Run scratch").placeholder, scratchOverride);
+  assert.equal(pathField("Run scratch").value, scratchOverride);
+  t.diagnostic("Storage help covered Internal defaults, saved and active Barge placement, and the retained scratch override.");
+
   await click("Profiles");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
   const toggle = selector("Disable Fixture worker");
