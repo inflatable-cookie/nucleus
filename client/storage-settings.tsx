@@ -89,13 +89,7 @@ const draftOf = (state: WorkStorageState): Record<string, string> =>
     classesOf(state).map((item) => [item.field, state.overrides[item.field] ?? ""]),
   );
 
-/**
- * Settings → Storage (nucleus#1526): every location Nucleus writes on the work
- * volume is one path setting with a portable default derived from the work root.
- * The service validates each path on save — canonical, absolute, inside the work
- * root, on the pinned volume, no symlinks — and explains a refusal here. A saved
- * change applies the next time the service starts.
- */
+/** Storage edits saved path overrides and shows the roots in use by the service. */
 export function StoragePanel({
   c,
   state,
@@ -143,9 +137,14 @@ export function StoragePanel({
     (loadError
       ? `Couldn't load the storage paths: ${errorText(loadError)}`
       : null);
+  const workLabel = state?.home ? "Worktrees" : "Work root";
+  const placementHelp = state?.placement
+    ? "Placement sets the defaults for worktrees, scratch and build output. Internal uses the platform defaults. With Barge, each default comes from its storage class. "
+    : "";
   const help =
-    "Nucleus keeps its work on one volume. Every path here has a portable default under the work root, and each one must be absolute, inside the work root, on that volume and free of symlinks. " +
-    "Saved changes apply the next time the service starts; a refused path is not written. The environment variables NUCLEUS_WORK_ROOT, NUCLEUS_LOCAL_WORKSPACE_ROOT, NUCLEUS_BACKUP_ROOT, NUCLEUS_PROJECT_QA_ROOT, NUCLEUS_SCRATCH_ROOT and NUCLEUS_CUSTODIAN_ROOT override these values without changing this file.";
+    placementHelp +
+    "Enter an absolute path to override a default. " +
+    `Reset paths clears individual path overrides and keeps ${workLabel}.`;
   async function persist(input: WorkStorageInput) {
     setSaving(true);
     setFailure("");
@@ -222,7 +221,7 @@ export function StoragePanel({
           small
           text="Reset paths"
           disabled={saving || !state}
-          hint="Restore every class default under the work root"
+          hint="Clear individual path overrides"
           onPress={() => void reset()}
         />
       </View>
@@ -252,7 +251,7 @@ export function StoragePanel({
         <>
           <Field
             c={c}
-            label={state.home ? "Worktrees" : "Work root"}
+            label={workLabel}
             value={workRoot}
             onChange={(value) => {
               setWorkRoot(value);
@@ -317,7 +316,7 @@ export function StoragePanel({
               disabled={saving}
               options={[
                 { value: "internal", label: "Internal" },
-                { value: "barge", label: "Barge pool" },
+                { value: "barge", label: "Barge" },
               ]}
               onChange={(value) =>
                 void persist({ placement: value === "barge" ? "barge" : "internal" }).catch(() => {})
@@ -328,7 +327,7 @@ export function StoragePanel({
             <Text style={muted(c)} accessibilityLabel="Placement in force">
               {[
                 state.activePlacement
-                  ? `In force: ${state.activePlacement === "barge" ? "Barge pool" : "internal"}`
+                  ? `In force: ${state.activePlacement === "barge" ? "Barge" : "Internal"}`
                   : null,
                 state.home ? `home ${state.home}` : null,
               ]
