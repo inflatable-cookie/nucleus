@@ -69,6 +69,9 @@ turns require explicit operator authorization. Ordinary author defects use the
 bounded revision budget. Pause, holds and authentic exact-head approval remain
 required.
 
+For the Rust engine, Tom superseded the reviewer-turn authorization rule on
+2026-11-25. See [Spec 070, ruling 46](../specs/070-small-engine.md#rulings).
+
 ## Project-a completion after retirement
 
 The Project-a owner may convert unfinished Project-a tasks to plain completion briefs
