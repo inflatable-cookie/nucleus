@@ -242,8 +242,8 @@ Host environment for a spawned service is composed once in
 spawner and the installer's startup proof read, so the shared roll options and the
 host-independent owner name no host. `hostHome` pins a private host home for a
 fixture or probe; the Paseo bridge maps it to Paseo's own variable and keeps its
-`paseoHome` option, and `nucleus integrate paseo` keeps Paseo's registration
-format.
+`paseoHome` option. The archived TypeScript package used `nucleus integrate paseo`
+for registration.
 
 The plugin registration entry (`hosts/paseo/plugin/index.ts`) binds the shared structural
 bridge action port through `service/install/bridge-process-actions.ts`. That is

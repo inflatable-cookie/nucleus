@@ -54,8 +54,8 @@ module. The environment a spawned service reads from its host is composed once i
 `service/host-environment.mjs`: the standalone entry, the roll owner, the spawner
 and the installer's isolated startup proof ask it instead of naming a host
 variable, and `hostHome` pins a private host home for a fixture or proof. Each host integration keeps its own names: Paseo's bridge supplies its own home
-override, and `nucleus integrate` routes `paseo` and `t3code` (or `t3`)
-to each host's registration step. The remaining legacy BB host channel and
+override. The archived TypeScript package used `nucleus integrate` for host
+registration. The remaining legacy BB host channel and
 Paseo bridge can start the TypeScript daemon. The Paseo bridge starts its roll
 owner through an injected process binding. The TypeScript ACP entrypoint
 serves the protocol for fixtures.

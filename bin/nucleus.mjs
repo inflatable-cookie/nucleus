@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Internal implementation; agents use the installed `nucleus` command.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { DATA_HOME_ENTRIES, dataHome, isDataHomeError, resolveDataHome } from '../shared/data-home.mjs';
@@ -16,14 +16,6 @@ function describeDataHome() {
 }
 
 const [command, ...args] = process.argv.slice(2);
-function hasRunTicketCredential() {
-  const path = process.env.NUCLEUS_TICKET;
-  if (!path) return false;
-  try {
-    const ticket = JSON.parse(readFileSync(path, 'utf8'));
-    return typeof ticket.token === 'string' && ticket.token.length > 0;
-  } catch { return true; }
-}
 try {
   if (command === 'helper') {
     const [name, ...helperArgs] = args;
@@ -59,19 +51,6 @@ try {
   else if (command === 'data-home') {
     // The one resolver, printed for the operator: which folder, why, and the path inventory.
     console.log(JSON.stringify({ ...resolveDataHome(), entries: DATA_HOME_ENTRIES }, null, 2));
-  }
-  else if (command === 'recover-previous') {
-    if (args.length || hasRunTicketCredential()) throw Error('Recovery is an operator-only maintenance command');
-    const { recoverPrevious } = await import('../service/transport/install.mjs');
-    console.log(JSON.stringify(await recoverPrevious()));
-  }
-  else if (['install', 'integrate', 'version'].includes(command)) {
-    const service = await import('../service/transport/install.mjs');
-    console.log(JSON.stringify(await (command === 'install' ? service.install(args[0], args[1] === '--sha256' ? args[2] : undefined) : service[command](...args))));
-  }
-  else if (command === 'channel' || command === 'rollback') {
-    const service = await import('../service/transport/main-channel.mjs');
-    console.log(JSON.stringify(await (command === 'channel' ? service.configureChannel(...args) : service.requestRollback())));
   }
   else if (command === 't3') {
     // The T3Code host's operator install route (nucleus#1330): connect, report and
