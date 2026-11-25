@@ -192,8 +192,8 @@ impl Service {
         let Some(id) = state.live_planner_project(actor) else {
             return Err(self.request_enrollment(state, actor));
         };
-        if selector
-            .is_some_and(|name| state.settings.resolve_planning_project(None, name) != Some(id))
+        if let Some(name) = selector
+            && state.settings.resolve_planning_project(None, name)? != id
         {
             return Err(ServiceError::ControllerProject);
         }
@@ -224,10 +224,15 @@ impl Service {
     ) -> Result<PlanningRepository, ServiceError> {
         if let Some(project) = &self.project {
             let id = state.settings.planning_project_id(project);
-            if selector.is_some_and(|name| {
-                state.settings.resolve_planning_project(Some(project), name) != Some(id)
-            }) || origin
-                .is_some_and(|requested| !project.repository.eq_ignore_ascii_case(requested))
+            if let Some(name) = selector
+                && state
+                    .settings
+                    .resolve_planning_project(Some(project), name)?
+                    != id
+            {
+                return Err(ServiceError::Project);
+            }
+            if origin.is_some_and(|requested| !project.repository.eq_ignore_ascii_case(requested))
                 || state.settings.fixture_slots(project).is_none()
             {
                 return Err(ServiceError::Project);
@@ -261,12 +266,7 @@ impl Service {
         }
 
         let project_id = selector
-            .map(|name| {
-                state
-                    .settings
-                    .resolve_planning_project(None, name)
-                    .ok_or(ServiceError::Project)
-            })
+            .map(|name| state.settings.resolve_planning_project(None, name))
             .transpose()?;
         let origin = origin
             .or_else(|| state.settings.only_bound_repository(project_id?))

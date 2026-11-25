@@ -638,6 +638,8 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
         ITEMS,
         "/v1/planning/eXaCt%20T3%20aLpHa/items",
         "/v1/planning-current/items?project=EXACT+t3+ALPHA",
+        "/v1/planning/nucleus-fixture/items",
+        "/v1/planning-current/items?project=inflatable-cookie%2Fnucleus-fixture",
     ] {
         assert_eq!(json_body(read(path).await).await, json!([added]));
     }
@@ -648,7 +650,7 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
     let task = caller_request(
         api,
         Method::POST,
-        "/v1/planning-current/tasks?project=EXACT+T3+ALPHA",
+        "/v1/planning-current/tasks?project=inflatable-cookie%2Fnucleus-fixture",
         actor,
         json!({"id":"by-name","brief":"---\nqueue:\n  complexity: low\n---\nUse the verified repository."}),
     )
@@ -704,6 +706,43 @@ async fn planning_records_need_a_live_binding_but_not_a_cached_checkout() {
         "The registered T3 checkout changed or is unavailable. Retry shortly."
     );
     assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn colliding_repository_names_require_the_owner_and_preserve_planner_scope() {
+    let registry = registry_with_options("example/nucleus-fixture", false).await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let api = &registry.api;
+    let read = |path| caller_request(api, Method::GET, path, "alpha-planner", Value::Null);
+    {
+        // A project name has precedence. Give both projects distinct display
+        // names so this selector exercises the two repository basenames.
+        let mut state = registry.service.state.lock().await;
+        let beta = state
+            .live_planner_project("beta-planner")
+            .unwrap()
+            .to_owned();
+        state
+            .settings
+            .projects
+            .as_mut()
+            .unwrap()
+            .projects
+            .get_mut(&beta)
+            .unwrap()
+            .name = "Beta project".into();
+    }
+    let collision = get_as(api, "/v1/planning/nucleus-fixture/items", &BOARD_KEY).await;
+    assert_eq!(collision.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(collision).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("ambiguous")
+    );
+    let foreign = read("/v1/planning-current/items?project=example%2Fnucleus-fixture").await;
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
