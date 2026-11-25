@@ -633,6 +633,23 @@ Later decisions carry their own attribution.
       and weekly, as in Spec 028) under the retention settings, not only before
       upgrades and rolls.
 
+44. **GitHub requests are throttled.** Tom, 2026-11-25, after a burst of
+    closing tasks tripped GitHub's secondary rate limit: "We need to throttle
+    github requests sensibly". The planner's reading follows GitHub's guidance
+    for automated clients:
+    - One shared GitHub client per account serves every task. It allows one
+      request in flight at a time.
+    - Writes (merge, review, branch delete) are spaced at least one second
+      apart.
+    - Rate limits come from GitHub's response headers. A retry deadline or
+      reset time pauses that account's requests until the deadline, as today.
+      A secondary limit backs off for at least a minute.
+    - Reads that GitHub can answer as unchanged use conditional requests.
+      Per-commit verification facts, such as whether a merge commit is on the
+      base, are reused rather than read again on every pass.
+    - Throttling delays work. It never fails work and never reorders a task's
+      own steps.
+
 ## The model
 
 ### Stored state per task
