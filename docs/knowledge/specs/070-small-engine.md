@@ -708,7 +708,10 @@ Cargo builds" rule for the `engine/` workspace only:
    before the quality pass, in this order:
    - a dependency audit separating the TypeScript code the Rust board reuses from engine-only code, together with
      the parity inventory;
-   - replacing or retiring `nucleus worktree`;
+   - retiring `nucleus worktree` (Tom, 2026-11-25: "Yes, retire"). Its only callers are Paseo `paseo.json`
+     setup and teardown hooks in consumer repositories, and Paseo is dropped (ruling 5). Rust task checkouts prepare
+     themselves, and pinned sibling sources come from `effigy bootstrap:deps` (ruling 33). Each consumer removes
+     its hooks in a small task before the command is deleted;
    - retiring the TypeScript decision bridge and importers;
    - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated");
    - deletion in batches of at most three modules;
