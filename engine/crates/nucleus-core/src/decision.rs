@@ -154,6 +154,7 @@ pub enum WaitReason {
     Stopping,
     ForgeUnknown,
     WorkspaceUnknown,
+    WorkspaceBlocked,
     ChecksPending,
     ChecksUnreported,
     Prerequisite,

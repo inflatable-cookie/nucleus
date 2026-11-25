@@ -17,7 +17,7 @@ use nucleus_hosts::{
     StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
-use nucleus_work::Checkout;
+use nucleus_work::{Checkout, WorkError};
 use tokio::sync::RwLockReadGuard;
 
 use crate::{
@@ -229,10 +229,17 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         let binding = route.binding(&checkout)?;
+        let workspace = checkout.observe();
         let mut observation = Observation {
             host: Observed::Unknown,
             forge,
-            workspace: seen(checkout.observe()),
+            workspace: if matches!(workspace, Err(WorkError::Initializing))
+                && self.initialization_due(task).await
+            {
+                Observed::Known(Workspace::Absent)
+            } else {
+                seen(workspace.as_ref().cloned())
+            },
         };
         // The operator's global stop settles a live run through stop custody too.
         if task.run().is_some_and(nucleus_core::Run::revoked)
@@ -255,6 +262,8 @@ impl Service {
                 .await?
             {
                 observation.workspace = workspace;
+            } else if matches!(workspace, Err(WorkError::Initializing)) {
+                return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
         let (host_state, mut host_error) = run_host.unwrap_or((Observed::Unknown, None));
@@ -288,7 +297,7 @@ impl Service {
                     return Err(error);
                 }
                 if observation.workspace == Observed::Unknown {
-                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                    return Err(workspace.err().unwrap_or(WorkError::MissingCheckout).into());
                 }
                 let _fence = self.effect(row).await?;
                 let _projects = self.project_writes.read().await;
@@ -336,6 +345,14 @@ impl Service {
                 self.commit(&mut state, row, &admitted, &event("queue_admitted"), None)?;
                 state.capacity_waiters.insert((order, identity.id.clone()));
                 Ok(action)
+            }
+            Action::Wait(WaitReason::WorkspaceUnknown) if let Err(error) = workspace => {
+                Err(error.into())
+            }
+            Action::Wait(WaitReason::WorkspaceUnknown)
+                if observation.workspace == Observed::Known(Workspace::Absent) =>
+            {
+                Err(WorkError::MissingCheckout.into())
             }
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
                 Err(ServiceError::Host(error))
@@ -494,6 +511,17 @@ impl Service {
         }
         self.checkout_binding(identity, &route, checkout)?;
         let base_head = self.verify_route(identity, &route).await?;
+        if checkout.path().exists() && self.initialization_due(task).await {
+            if !self
+                .dispatch_mode()
+                .await
+                .allows_launch(task.first_launch())
+                || !self.launch_capacity(identity, false).await?
+            {
+                return Ok(None);
+            }
+            checkout.remove_initialization()?;
+        }
         let workspace = if let Some((head, pull)) = review {
             seen(checkout.allocate_review(head, pull))
         } else {
@@ -508,6 +536,16 @@ impl Service {
             Observed::Known(checkout.allocate(start)?)
         };
         Ok(Some(workspace))
+    }
+
+    async fn initialization_due(&self, task: &Task) -> bool {
+        // A possible send binds its role durably, even after the run settles.
+        (task.first_launch() || task.phase() == Phase::Reviewing)
+            && task.run().is_none()
+            && task.threads().get(Role::Worker).is_none()
+            && task.threads().get(Role::Reviewer).is_none()
+            && self.state.lock().await.wait_reason(&task.identity().id)
+                == Some(WaitReason::WorkspaceUnknown)
     }
 
     pub(super) async fn workspace_capacity(

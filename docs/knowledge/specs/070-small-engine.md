@@ -464,6 +464,18 @@ Later decisions carry their own attribution.
     On restart a reservation preserves its existing visibility through the
     first decision. Positive child activity keeps the parent visible.
 
+37. **Workspace observation has one recheck.** A workspace observation error
+    schedules one read after fifteen seconds. If the read still fails, the
+    card shows the cause and the task waits for its owner. After fixing the
+    checkout, hold and release the task to retry. Successful Git status output
+    beyond the capture limit proves the checkout is dirty.
+    Before any role has been dispatched or a worker bound, the engine can
+    recover an owned Git initialization with no published index. Under the
+    task fence it removes the registration, compares the branch against its
+    observed head before deleting it, and allocates at the verified start.
+    Linked worktree creation follows the ten-minute `gitBulk` timeout from
+    `core/git/git-command.ts` and `core/workspaces/workspace-lifecycle.ts`.
+
 ## The model
 
 ### Stored state per task

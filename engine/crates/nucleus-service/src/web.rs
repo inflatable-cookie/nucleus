@@ -1051,22 +1051,16 @@ impl Summary {
             }
             _ => None,
         };
-        let wait = if archive_detail.is_some() {
-            Some(WaitReason::Stopping)
-        } else if wait == Some(WaitReason::HostObservationBlocked) && !task.phase().is_terminal() {
-            wait
-        } else if task.run().is_some_and(nucleus_core::Run::revoked) {
-            Some(WaitReason::Stopping)
-        } else if task.phase() == Phase::Done {
-            None
-        } else if task.hold().is_some() {
-            Some(WaitReason::Hold)
-        } else if task.operator_decline().is_some() {
-            Some(WaitReason::OperatorDeclined)
-        } else if task.question().is_some() {
-            Some(WaitReason::Question)
-        } else {
-            wait
+        let wait = match wait {
+            _ if archive_detail.is_some() => Some(WaitReason::Stopping),
+            Some(WaitReason::WorkspaceUnknown | WaitReason::WorkspaceBlocked) => wait,
+            Some(WaitReason::HostObservationBlocked) if !task.phase().is_terminal() => wait,
+            _ if task.run().is_some_and(nucleus_core::Run::revoked) => Some(WaitReason::Stopping),
+            _ if task.phase() == Phase::Done => None,
+            _ if task.hold().is_some() => Some(WaitReason::Hold),
+            _ if task.operator_decline().is_some() => Some(WaitReason::OperatorDeclined),
+            _ if task.question().is_some() => Some(WaitReason::Question),
+            _ => wait,
         };
         let wait_detail = archive_detail.or_else(|| {
             if wait != state.wait_reason(id) || task.hold().is_some() || task.question().is_some() {
@@ -1077,11 +1071,20 @@ impl Summary {
                 | crate::WaitDetail::ShowingForDelivery(message) => *message,
                 crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
-                crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
+                crate::WaitDetail::OperatorSnoozed { message, .. }
+                | crate::WaitDetail::Workspace(message) => Some(message.as_str()),
                 crate::WaitDetail::Archive(_) => None,
             }
         });
-        let mut view = Self {
+        let next_check_at = state
+            .schedule
+            .due(id)
+            .filter(|_| wait.is_some() && task.operator_decline().is_none())
+            .map(|due| {
+                let delay = due.saturating_duration_since(tokio::time::Instant::now());
+                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
+            });
+        Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
             number: row.number,
@@ -1101,21 +1104,14 @@ impl Summary {
             state_since_ms,
             latest_event_at_ms: times.latest_event,
             created_at_ms,
-            next_check_at: None,
+            next_check_at,
             wait,
             wait_detail: wait_detail.map(str::to_owned),
             question: task.question().cloned(),
             hold: task.hold().cloned(),
             dependency_status,
             dependency_edits,
-        };
-        if view.wait.is_some() && task.operator_decline().is_none() {
-            view.next_check_at = state.schedule.due(id).map(|due| {
-                let delay = due.saturating_duration_since(tokio::time::Instant::now());
-                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
-            });
-        }
-        Ok(view)
+        })
     }
 }
 

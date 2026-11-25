@@ -544,6 +544,15 @@ async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_blo
         let head = service.fixture().start.clone();
         let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
         service.forge = forge;
+        let worktrees = service.worktrees().unwrap();
+        let checkout = worktrees
+            .checkout(&service.fixture().checkout, REPOSITORY, "worker")
+            .unwrap();
+        checkout.allocate(&head).unwrap();
+        let admin =
+            std::path::PathBuf::from(git(checkout.path(), &["rev-parse", "--absolute-git-dir"]));
+        std::fs::write(admin.join("index"), b"unreadable checkout").unwrap();
+        assert!(checkout.observe().is_err());
         let (mut task, credential, _) = reservation("worker", Entry::Brief, &head);
         let instance = task.run().unwrap().launch().instance.clone();
         task.record_send(&instance, 1).unwrap();
@@ -603,6 +612,10 @@ async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_blo
             assert_eq!(next.task.phase(), Phase::Reviewing);
         }
         assert!(next.task.run().is_none());
+        assert_eq!(
+            std::fs::read(admin.join("index")).unwrap(),
+            b"unreadable checkout"
+        );
         server.abort();
     }
 }
@@ -879,6 +892,153 @@ pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {
     native_fixture_with_traffic(response, None).await
+}
+
+#[tokio::test]
+async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
+    let (forge, forge_server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(Vec::<Value>::new()) }),
+    ))
+    .await;
+    let (_home, mut service) = fixture(forge);
+    let repo = service.fixture().checkout.clone();
+    let old_head = service.fixture().start.clone();
+    let worktrees = service.worktrees().unwrap();
+    let checkout = worktrees.checkout(&repo, REPOSITORY, "partial").unwrap();
+    checkout.allocate(&old_head).unwrap();
+    let path = checkout.path().to_owned();
+    let admin = std::path::PathBuf::from(git(&path, &["rev-parse", "--absolute-git-dir"]));
+    std::fs::remove_file(admin.join("index")).unwrap();
+    std::fs::write(admin.join("index.lock"), "").unwrap();
+    std::fs::write(admin.join("locked"), "initializing").unwrap();
+    std::fs::write(path.join("partial-file"), "interrupted").unwrap();
+    drop(worktrees);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Advance the base",
+        ],
+    );
+    let new_head: Head = git(&repo, &["rev-parse", "HEAD"]).parse().unwrap();
+    assert_ne!(old_head, new_head);
+    service.fixture_mut().start = new_head.clone();
+
+    let (mut task, _, mut observation) = reservation("partial", Entry::Brief, &old_head);
+    observation.host = Observed::Known(Host::Current {
+        instance: task.run().unwrap().launch().instance.clone(),
+        state: nucleus_core::RunState::ReadyToSend,
+    });
+    assert!(task.discard_paused_reservation(&observation));
+    assert!(task.dispatch_started());
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&task, &event("fixture"))
+        .unwrap();
+    let first = service.pass().await.unwrap();
+    assert!(matches!(
+        first[0].result,
+        Err(ServiceError::Workspace(
+            nucleus_work::WorkError::Initializing
+        ))
+    ));
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]), old_head.as_str());
+    assert!(admin.join("index.lock").exists());
+    assert!(service.host.host_calls().is_empty());
+
+    let second = tokio::time::timeout(
+        nucleus_hosts::T3_RETRY_DELAY + Duration::from_secs(8),
+        service.pass(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        matches!(
+            second[0].result,
+            Ok(Action::Launch {
+                role: nucleus_core::Role::Worker,
+                ..
+            })
+        ),
+        "{:?}",
+        second[0].result
+    );
+    let row = service.task("partial").await.unwrap();
+    assert!(row.task.run().is_some());
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]), new_head.as_str());
+    assert!(admin.join("index").is_file());
+    assert!(!admin.join("locked").exists());
+    assert!(!admin.join("index.lock").exists());
+    assert!(!path.join("partial-file").exists());
+    assert!(service.host.host_calls().is_empty());
+    forge_server.abort();
+}
+
+#[tokio::test]
+async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(Vec::<Value>::new()) }),
+    ))
+    .await;
+    let (_home, service) = fixture(forge);
+    let worktrees = service.worktrees().unwrap();
+    let checkout = worktrees
+        .checkout(&service.fixture().checkout, REPOSITORY, "sent")
+        .unwrap();
+    let head = &service.fixture().start;
+    checkout.allocate(head).unwrap();
+    let admin =
+        std::path::PathBuf::from(git(checkout.path(), &["rev-parse", "--absolute-git-dir"]));
+    std::fs::remove_file(admin.join("index")).unwrap();
+    std::fs::write(admin.join("index.lock"), "").unwrap();
+    std::fs::write(admin.join("locked"), "initializing").unwrap();
+    let (mut task, _, mut observation) = reservation("sent", Entry::Brief, head);
+    let instance = task.run().unwrap().launch().instance.clone();
+    task.record_send(&instance, 2).unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: nucleus_core::RunState::Gone,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Relaunch(nucleus_core::Role::Worker)
+    );
+    assert!(task.run().is_none());
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .observe_wait(&task, Some(WaitReason::WorkspaceUnknown))
+            .unwrap();
+    }
+    let row = service.task("sent").await.unwrap();
+    let result = service
+        .advance_due_task(&row, &service.host.fixture_pass())
+        .await;
+    assert!(matches!(
+        result,
+        Err(ServiceError::Workspace(
+            nucleus_work::WorkError::Initializing
+        ))
+    ));
+    assert_eq!(service.task("sent").await.unwrap(), row);
+    assert!(admin.join("locked").exists());
+    assert!(admin.join("index.lock").exists());
+    assert_eq!(git(checkout.path(), &["rev-parse", "HEAD"]), head.as_str());
+    assert!(service.host.host_calls().is_empty());
+    server.abort();
 }
 
 #[tokio::test]

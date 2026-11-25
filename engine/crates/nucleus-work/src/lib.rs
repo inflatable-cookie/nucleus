@@ -13,6 +13,8 @@ use nucleus_store::{EngineStorage, StorageDirectory, StorageError};
 use sha2::{Digest, Sha256};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
+// TypeScript gitBulk uses GIT_SLOW_TIMEOUT_MS for linked worktree creation.
+const WORKTREE_TIMEOUT: Duration = Duration::from_mins(10);
 // Keep Git's bounded command runner without collecting one filename per entry.
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
 // which confirms that the whole scan completed successfully.
@@ -29,6 +31,12 @@ pub enum WorkError {
     InvalidTaskId,
     #[error("path is occupied by a different checkout")]
     WrongCheckout,
+    #[error("Git has not finished initializing the task checkout")]
+    Initializing,
+    #[error("the task checkout has no published Git index")]
+    MissingIndex,
+    #[error("the task checkout is missing")]
+    MissingCheckout,
     #[error("the task branch already exists at another head")]
     WrongBranchHead,
     #[error("worktree path is not usable with Git")]
@@ -39,6 +47,7 @@ pub enum WorkError {
     Storage(#[from] StorageError),
     #[error("{command} failed in {directory:?} for repository {repository:?}: {source}")]
     Git {
+        operation: GitOperation,
         command: String,
         directory: PathBuf,
         repository: PathBuf,
@@ -47,6 +56,16 @@ pub enum WorkError {
     },
     #[error("worktree head could not be read")]
     Head(#[from] InvalidHead),
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum GitOperation {
+    #[error("git worktree add")]
+    Add,
+    #[error("git status")]
+    Status,
+    #[error("the Git checkout operation")]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,8 +155,7 @@ impl Checkout<'_> {
         &self.branch
     }
 
-    /// Observe the owned checkout, including ignored files that would be lost
-    /// if it were removed. An error maps to `Unknown` in the pass loop.
+    /// Observe the owned checkout and any changes that prevent clean removal.
     ///
     /// # Errors
     /// Returns an error if the checkout cannot be inspected or belongs elsewhere.
@@ -154,18 +172,20 @@ impl Checkout<'_> {
             return Err(WorkError::WrongCheckout);
         }
         let identity = self.owned_identity()?;
-        let status = self.git(
+        let admin = self.admin_directory(&identity)?;
+        if initializing(&admin)? {
+            return Err(WorkError::Initializing);
+        }
+        if missing(&admin.join("index"))? {
+            return Err(WorkError::MissingIndex);
+        }
+        let dirty = self.status_dirty(
             &self.path,
-            &[
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--ignore-submodules=none",
-            ],
+            &["--untracked-files=all", "--ignore-submodules=none"],
         )?;
         // Flags that hide working-tree changes invalidate ordinary status evidence.
         // Git uses S for skip-worktree and lowercase tags for assume-unchanged.
-        if status.is_empty()
+        if !dirty
             && self
                 .git_named(
                     &self.path,
@@ -213,17 +233,38 @@ impl Checkout<'_> {
         self.observe()
     }
 
+    /// Remove a verified interrupted initialization and its observed branch tip.
+    /// The caller holds the task fence and verifies that no role has been sent.
+    ///
+    /// # Errors
+    /// Returns an error if the registration, initialization marker, index or
+    /// branch has changed, or if Git refuses to remove the checkout or branch.
+    pub fn remove_initialization(&self) -> Result<(), WorkError> {
+        self.worktrees.root.verify()?;
+        let identity = self.owned_identity()?;
+        let admin = self.admin_directory(&identity)?;
+        let backlink = fs::read_to_string(admin.join("gitdir"))?;
+        if !initializing(&admin)?
+            || !missing(&admin.join("index"))?
+            || admin.join(backlink.trim_end_matches('\n')).canonicalize()? != self.path.join(".git")
+        {
+            return Err(WorkError::WrongCheckout);
+        }
+        self.remove(&["--force", "--force"])?;
+        let branch = format!("refs/heads/{}", self.branch);
+        self.git(
+            &self.repository,
+            &["update-ref", "-d", &branch, identity.head_oid()],
+        )?;
+        Ok(())
+    }
+
     /// Check that the registered integration checkout has no tracked changes.
     ///
     /// # Errors
     /// Returns an error if Git cannot inspect the checkout.
     pub fn integration_clean(&self) -> Result<bool, WorkError> {
-        Ok(self
-            .git(
-                &self.repository,
-                &["status", "--porcelain", "--untracked-files=no"],
-            )?
-            .is_empty())
+        Ok(!self.status_dirty(&self.repository, &["--untracked-files=no"])?)
     }
 
     /// Prove ancestry using the registered Git object store.
@@ -288,12 +329,19 @@ impl Checkout<'_> {
                 if self.owned_identity()?.head_oid() != published.as_str() {
                     return Ok(Retirement::Retained);
                 }
-                let path = self.path.to_str().ok_or(WorkError::InvalidPath)?;
-                self.git(&self.repository, &["worktree", "remove", "--", path])?;
+                self.remove(&[])?;
                 Ok(Retirement::Removed)
             }
             Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
         }
+    }
+
+    fn remove(&self, flags: &[&str]) -> Result<(), WorkError> {
+        let mut args = vec!["worktree", "remove"];
+        args.extend_from_slice(flags);
+        args.extend(["--", self.path.to_str().ok_or(WorkError::InvalidPath)?]);
+        self.git(&self.repository, &args)?;
+        Ok(())
     }
 
     fn owned_identity(&self) -> Result<WorktreeIdentity, WorkError> {
@@ -309,12 +357,45 @@ impl Checkout<'_> {
         Ok(checkout)
     }
 
+    fn admin_directory(&self, identity: &WorktreeIdentity) -> Result<PathBuf, WorkError> {
+        let link = fs::read_to_string(self.path.join(".git"))?;
+        let directory = link
+            .trim_end_matches('\n')
+            .strip_prefix("gitdir: ")
+            .ok_or(WorkError::WrongCheckout)?;
+        let directory = self.path.join(directory).canonicalize()?;
+        if directory.parent() != Some(identity.common_dir().join("worktrees").as_path()) {
+            return Err(WorkError::WrongCheckout);
+        }
+        Ok(directory)
+    }
+
+    fn status_dirty(&self, directory: &Path, flags: &[&str]) -> Result<bool, WorkError> {
+        let mut args = vec!["--no-optional-locks", "status", "--porcelain=v1"];
+        args.extend_from_slice(flags);
+        match self.git_named(directory, &args, "git status".into()) {
+            Ok(status) => Ok(!status.is_empty()),
+            // Longhorn reports overflow only after Git succeeds.
+            Err(WorkError::Git { source, .. })
+                if source.code() == GitFailureCode::OutputTooLarge =>
+            {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn git_identity(&self, directory: &Path) -> Result<WorktreeIdentity, WorkError> {
         self.worktrees
             .git
             .worktree_identity(directory)
             .map_err(|error| {
-                self.git_failure(directory, "git rev-parse / symbolic-ref".into(), error)
+                self.git_failure(
+                    directory,
+                    GitOperation::Other,
+                    "git rev-parse / symbolic-ref".into(),
+                    error,
+                )
             })
     }
 
@@ -328,23 +409,52 @@ impl Checkout<'_> {
         args: &[&str],
         command: String,
     ) -> Result<String, WorkError> {
+        let (operation, timeout) = match args {
+            ["worktree", "add", ..] => (GitOperation::Add, WORKTREE_TIMEOUT),
+            ["--no-optional-locks", "status", ..] => (GitOperation::Status, GIT_TIMEOUT),
+            _ => (GitOperation::Other, GIT_TIMEOUT),
+        };
         self.worktrees
             .git
-            .run(
-                directory,
-                args,
-                GitFailureCode::CommandUnavailable,
-                GIT_TIMEOUT,
-            )
-            .map_err(|error| self.git_failure(directory, command, error))
+            .run(directory, args, GitFailureCode::CommandUnavailable, timeout)
+            .map_err(|error| self.git_failure(directory, operation, command, error))
     }
 
-    fn git_failure(&self, directory: &Path, command: String, source: GitFailure) -> WorkError {
+    fn git_failure(
+        &self,
+        directory: &Path,
+        operation: GitOperation,
+        command: String,
+        source: GitFailure,
+    ) -> WorkError {
         WorkError::Git {
+            operation,
             command,
             directory: directory.into(),
             repository: self.repository.clone(),
             source,
         }
     }
+}
+
+fn missing(path: &Path) -> Result<bool, WorkError> {
+    match path.symlink_metadata() {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn initializing(admin: &Path) -> Result<bool, WorkError> {
+    let lock = admin.join("locked");
+    if missing(&lock)? {
+        return Ok(false);
+    }
+    let meta = lock.symlink_metadata()?;
+    Ok(meta.is_file()
+        && meta.len() <= 13
+        && matches!(
+            fs::read(&lock)?.as_slice(),
+            b"initializing" | b"initializing\n"
+        ))
 }

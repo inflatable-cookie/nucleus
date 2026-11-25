@@ -133,6 +133,7 @@ fn wait_label(wait: Option<WaitReason>, detail: Option<&WaitDetail>) -> Option<&
         Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
         Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
         Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
+        Some(WaitReason::WorkspaceBlocked) => "Workspace needs attention",
         Some(WaitReason::ChecksPending) => "Waiting for checks",
         Some(WaitReason::ChecksUnreported) => "Waiting for required checks to report",
         Some(WaitReason::AssignmentTooLarge) => "Assignment too large",
