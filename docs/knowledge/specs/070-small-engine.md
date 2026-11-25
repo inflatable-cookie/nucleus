@@ -534,6 +534,24 @@ Later decisions carry their own attribution.
       per-org reviewer token from the keychain. That baseline becomes this
       ruling's reviewer fallback path.
 
+39. **Releases use Effigy's pipeline. Homebrew waits.** The planner proposed a
+    release baseline on 2026-11-25. Tom: "I think to begin with we hold off on
+    homebrew until we've got Nucleus _properly_ ready for other people to use..
+    there are a few things to do before then. The rest is good though".
+    - A release is one archive per platform holding the engine binary, the
+      board assets and the Nucleus skill. Installing it unpacks into the engine
+      home. Activating the live engine is a separate operator step.
+    - macOS on Apple Silicon comes first. Linux follows later and has no
+      keychain account storage (ruling 38).
+    - Releases publish to GitHub Releases. A Homebrew tap waits until Nucleus
+      is ready for other people to use.
+    - Each binary carries a SHA-256 sidecar. Apple signing and notarisation
+      wait for outside users. Local builds sign with the stable local identity
+      described in the [engine README](../../../engine/README.md#stage-an-engine-release).
+    - Effigy's `release:run` pipeline certifies a commit with Nucleus's gates
+      (QA, dependency checks, docs QA) and stops for operator approval before
+      it tags or publishes.
+
 ## The model
 
 ### Stored state per task

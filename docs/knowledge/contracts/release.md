@@ -34,7 +34,10 @@ See [engine store recovery](../operations/restore.md).
 Publishing, changing repository visibility and editing CI or release workflows
 require operator authorization. Keep fixtures synthetic and private evidence out
 of the published tree. Preserve the original tag and assets of a published
-release. The Rust public packaging procedure remains an operator decision.
+release. The Rust release model is [Spec 070 ruling 39](../specs/070-small-engine.md#rulings):
+per-platform archives on GitHub Releases through Effigy's pipeline, with
+operator approval before tagging. A Homebrew tap waits until Nucleus is ready
+for other people to use.
 
 ## Historical TypeScript runtime package
 
