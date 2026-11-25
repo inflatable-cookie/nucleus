@@ -908,3 +908,44 @@ async fn readback_rejects_wrong_id_author_head_or_verdict() {
     }
     thread.join().unwrap();
 }
+
+#[tokio::test]
+async fn ancestry_proofs_follow_the_current_pull_ref_and_branch_tip() {
+    let target = branches().target(PR_URL).unwrap();
+    let reference =
+        |head| json!({"ref":"refs/pull/7/head","object":{"type":"commit","sha":sha(head)}});
+    let branch = |head| json!({"name":"main","commit":{"sha":sha(head)}});
+    let (forge, calls) = server(vec![
+        Some(reference('b')),
+        Some(json!({"status":"ahead"})),
+        Some(reference('b')),
+        Some(reference('c')),
+        Some(reference('c')),
+        Some(json!({"status":"diverged"})),
+        Some(branch('b')),
+        Some(branch('c')),
+        Some(json!({"status":"behind"})),
+    ]);
+    for (head, expected) in [('b', true), ('b', true), ('b', false), ('c', false)] {
+        assert_eq!(
+            forge
+                .pull_descends_from(&target, &sha('a'), &sha(head))
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+    forge.verify_merge_base(&target, &sha('a')).await.unwrap();
+    assert!(matches!(
+        forge.verify_merge_base(&target, &sha('a')).await,
+        Err(ForgeError::UnpublishedMerge)
+    ));
+    let calls = calls.join().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.method_and_path.contains("/compare/"))
+            .count(),
+        3
+    );
+}

@@ -7,7 +7,11 @@ pub use review::{
     AuthenticatedGitHubUser, ReviewBinding, ReviewError, ReviewWrite, VerifiedReview,
 };
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::VecDeque,
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use nucleus_core::{Action, CheckState, Forge, Head, Observation, Observed, Task, decide};
 use reqwest::{
@@ -60,8 +64,6 @@ pub enum ForgeError {
         "the merged pull request source could not be verified against the task’s recorded head"
     )]
     UnverifiedSource,
-    #[error("the pull request source history is unavailable")]
-    SourceUnavailable,
     #[error("GitHub reported a different pull request base")]
     BaseChanged,
     #[error("GitHub refused the original head and the readback still shows it")]
@@ -263,6 +265,7 @@ impl PullTarget {
 }
 
 pub struct GitHub {
+    ancestors: Mutex<VecDeque<Url>>,
     client: Client,
     origin: String,
 }
@@ -323,7 +326,11 @@ impl GitHub {
             .retry(reqwest::retry::never())
             .timeout(Duration::from_secs(15))
             .build()?;
-        Ok(Self { client, origin })
+        Ok(Self {
+            client,
+            origin,
+            ancestors: Mutex::default(),
+        })
     }
 
     /// Find the open PR on a task branch before a worker report is available.
@@ -405,6 +412,40 @@ impl GitHub {
         Ok(())
     }
 
+    /// Confirm the advertised PR ref before using an immutable ancestry proof.
+    ///
+    /// # Errors
+    /// Returns an error when GitHub cannot verify the ref or comparison.
+    pub async fn pull_descends_from(
+        &self,
+        target: &PullTarget,
+        recorded: &Head,
+        merged: &Head,
+    ) -> Result<bool, ForgeError> {
+        #[derive(Deserialize)]
+        struct Reference {
+            #[serde(rename = "ref")]
+            name: String,
+            object: Object,
+        }
+        #[derive(Deserialize)]
+        struct Object {
+            #[serde(rename = "type")]
+            kind: String,
+            sha: Head,
+        }
+        let name = format!("pull/{}/head", target.number);
+        let url = self.repository_url(&target.branches, &format!("git/ref/{name}"))?;
+        let reference: Reference = decode(self.client.get(url).send().await?).await?;
+        if reference.name != format!("refs/{name}") || reference.object.kind != "commit" {
+            return Err(ForgeError::Identity);
+        }
+        if reference.object.sha != *merged {
+            return Ok(false);
+        }
+        self.contains(&target.branches, recorded, merged).await
+    }
+
     /// Read a branch head through the authenticated canonical repository.
     ///
     /// # Errors
@@ -472,11 +513,24 @@ impl GitHub {
             status: Relation,
         }
         let url = self.repository_url(branches, &format!("compare/{ancestor}...{tip}"))?;
-        let comparison: Comparison = decode(self.client.get(url).send().await?).await?;
-        Ok(matches!(
-            comparison.status,
-            Relation::Ahead | Relation::Identical
-        ))
+        let facts = || {
+            self.ancestors
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if facts().contains(&url) {
+            return Ok(true);
+        }
+        let comparison: Comparison = decode(self.client.get(url.clone()).send().await?).await?;
+        let contains = matches!(comparison.status, Relation::Ahead | Relation::Identical);
+        if contains {
+            let mut facts = facts();
+            if facts.len() == 256 {
+                facts.pop_front();
+            }
+            facts.push_back(url);
+        }
+        Ok(contains)
     }
 
     fn repository_url(&self, branches: &Branches, path: &str) -> Result<Url, ForgeError> {

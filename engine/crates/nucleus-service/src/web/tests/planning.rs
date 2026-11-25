@@ -161,42 +161,7 @@ async fn assert_direct_admission_numbers(api: &Router) {
     assert_eq!(tasks.as_array().expect("task summaries").len(), 3);
 }
 
-fn published_descendant(root: &std::path::Path) -> nucleus_core::Head {
-    crate::tests::git(
-        root,
-        &[
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "descendant",
-        ],
-    );
-    let replacement: nucleus_core::Head = crate::tests::git(root, &["rev-parse", "HEAD"])
-        .parse()
-        .unwrap();
-    crate::tests::git(
-        root,
-        &["update-ref", "refs/pull/1/head", replacement.as_str()],
-    );
-    crate::tests::git(
-        root,
-        &["remote", "set-url", "origin", root.to_str().unwrap()],
-    );
-    replacement
-}
-
-async fn recover_rewritten_source(
-    service: &Service,
-    api: &Router,
-    original: &nucleus_core::Head,
-    restored: &nucleus_core::Head,
-) {
-    let root = &service.fixture().checkout;
-    crate::tests::git(root, &["update-ref", "refs/pull/1/head", original.as_str()]);
+async fn recover_rewritten_source(service: &Service, api: &Router, restored: &AtomicBool) {
     service.pass().await.expect("observe source mismatch");
     let card = json_body(get_as(api, "/v1/tasks/external", &BOARD_KEY).await).await;
     assert_eq!(card["wait"], "external_merge_blocked");
@@ -206,7 +171,7 @@ async fn recover_rewritten_source(
         "the merged pull request source could not be verified against the task’s recorded head. Hold and release the task to recheck."
     );
     assert!(card["nextCheckAt"].is_null());
-    crate::tests::git(root, &["update-ref", "refs/pull/1/head", restored.as_str()]);
+    restored.store(true, Ordering::Relaxed);
     let owner = Authority::Operator {
         actor: "operator".into(),
     };
@@ -220,42 +185,74 @@ async fn recover_rewritten_source(
         .unwrap();
 }
 
+fn external_review_forge(
+    head: &nucleus_core::Head,
+    replacement: &nucleus_core::Head,
+    latest: Arc<AtomicBool>,
+    restored: Arc<AtomicBool>,
+    calls: Arc<AtomicUsize>,
+) -> Router {
+    let remote = restored;
+    let original = head.clone();
+    let descendant = replacement.clone();
+    let changed = latest;
+    let moved = replacement.clone();
+    let first = head.clone();
+    Router::new()
+        .route(
+            &format!("/repos/{REPOSITORY}/git/ref/pull/1/head"),
+            get(move || async move {
+                let sha = if remote.load(Ordering::Relaxed) {
+                    descendant
+                } else {
+                    original
+                };
+                Json(json!({"ref":"refs/pull/1/head","object":{"type":"commit","sha":sha}}))
+            }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/compare/{head}...{replacement}"),
+            get(|| async { Json(json!({"status":"ahead"})) }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/pulls/1"),
+            get(move || {
+                calls.fetch_add(1, Ordering::Relaxed);
+                let seen = if changed.load(Ordering::Relaxed) {
+                    &moved
+                } else {
+                    &first
+                };
+                let mut pull = forge_pull(seen);
+                pull["head"]["ref"] = json!("existing-topic");
+                pull["merged"] = json!(true);
+                pull["state"] = json!("closed");
+                pull["merge_commit_sha"] = json!("f".repeat(40));
+                std::future::ready(Json(pull))
+            }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/branches/main"),
+            get(|| async { Json(json!({"name":"main","commit":{"sha":"f".repeat(40)}})) }),
+        )
+}
+
 #[tokio::test]
 async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
-    let replacement = published_descendant(&service.fixture().checkout);
+    let replacement: nucleus_core::Head = "b".repeat(40).parse().unwrap();
+    let restored = Arc::new(AtomicBool::new(false));
     let latest = Arc::new(AtomicBool::new(false));
-    let changed = Arc::clone(&latest);
     let reads = Arc::new(AtomicUsize::new(0));
-    let calls = Arc::clone(&reads);
-    let moved = replacement.clone();
-    let first = head.clone();
-    let (forge, server) = serve_forge(
-        Router::new()
-            .route(
-                &format!("/repos/{REPOSITORY}/pulls/1"),
-                get(move || {
-                    calls.fetch_add(1, Ordering::Relaxed);
-                    let seen = if changed.load(Ordering::Relaxed) {
-                        &moved
-                    } else {
-                        &first
-                    };
-                    let mut pull = forge_pull(seen);
-                    pull["head"]["ref"] = json!("existing-topic");
-                    pull["merged"] = json!(true);
-                    pull["state"] = json!("closed");
-                    pull["merge_commit_sha"] = json!("f".repeat(40));
-                    std::future::ready(Json(pull))
-                }),
-            )
-            .route(
-                &format!("/repos/{REPOSITORY}/branches/main"),
-                get(|| async { Json(json!({"name":"main","commit":{"sha":"f".repeat(40)}})) }),
-            ),
-    )
-    .await;
+    let app = external_review_forge(
+        &head,
+        &replacement,
+        latest.clone(),
+        restored.clone(),
+        reads.clone(),
+    );
+    let (forge, server) = serve_forge(app).await;
     service.forge = forge;
     let service = Arc::new(service);
     let api = router(
@@ -297,7 +294,7 @@ async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes()
             crate::schedule::Priority::Wake,
         );
     }
-    recover_rewritten_source(&service, &api, &head, &replacement).await;
+    recover_rewritten_source(&service, &api, &restored).await;
     let _ = service.pass().await.expect("observe replacement head");
     let row = service.task("external").await.expect("reconciled task");
     assert_eq!(row.task.pull_request().expect("PR").head, replacement);

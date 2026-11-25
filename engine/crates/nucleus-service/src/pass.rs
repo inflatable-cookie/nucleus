@@ -372,7 +372,7 @@ impl Service {
                     .await
             }
             Action::Merge { head } if let Some(target) = target.as_ref() => {
-                self.merge(row, &checkout, target, observation, &head).await
+                self.merge(row, target, observation, &head).await
             }
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
                 self.close(row, &checkout, &binding, target, workspace)
@@ -463,8 +463,7 @@ impl Service {
                     self.forge.observe(&target).await
                 };
                 let forge = capture_forge(self, observed)?;
-                self.verify_external_merge(task, checkout, &target, &forge)
-                    .await?;
+                self.verify_external_merge(task, &target, &forge).await?;
                 Ok((forge, Some(target)))
             }
             None => Ok((Forge::Absent, None)),
@@ -474,7 +473,6 @@ impl Service {
     async fn verify_external_merge(
         &self,
         task: &Task,
-        checkout: &Checkout<'_>,
         target: &PullTarget,
         forge: &Forge,
     ) -> Result<(), ServiceError> {
@@ -488,9 +486,12 @@ impl Service {
         let source = recorded_source(task).ok_or(ForgeError::UnverifiedSource)?;
         if source.url != pr.url
             || (source.head != pr.head
-                && !checkout
-                    .pull_descends_from(target.number(), &source.head, &pr.head)
-                    .map_err(|_| ForgeError::SourceUnavailable)?)
+                && !capture_forge(
+                    self,
+                    self.forge
+                        .pull_descends_from(target, &source.head, &pr.head)
+                        .await,
+                )?)
         {
             return Err(ForgeError::UnverifiedSource.into());
         }
@@ -1746,7 +1747,6 @@ impl Service {
     async fn merge(
         &self,
         row: &TaskRow,
-        checkout: &Checkout<'_>,
         target: &PullTarget,
         mut observation: Observation,
         head: &Head,
@@ -1807,8 +1807,7 @@ impl Service {
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
         let observed = observed?;
-        self.verify_external_merge(task, checkout, &target, &observed)
-            .await?;
+        self.verify_external_merge(task, &target, &observed).await?;
         let observed = Observed::Known(observed);
         if attempt.write == MergeWrite::Unknown
             && !matches!(observed, Observed::Known(Forge::Merged { .. }))
@@ -1885,8 +1884,7 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         let forge = capture_forge(self, self.forge.observe(target).await)?;
-        self.verify_external_merge(task, checkout, target, &forge)
-            .await?;
+        self.verify_external_merge(task, target, &forge).await?;
         let mut observed = Observation {
             host: Observed::Unknown,
             forge: Observed::Known(forge),

@@ -196,8 +196,9 @@ head, the responsible planner or operator board can run `closeout.now` with
 `accept: ["unreviewed_merge"]` and a reason. Nucleus verifies the task's own
 PR and confirms that the merge commit is on its base branch. The actual merged
 head must match or descend from the recorded source. To prove a descendant,
-Nucleus fetches the exact PR source ref and checks that it matches the merged
-head reported by GitHub before checking ancestry. Nucleus records that head
+Nucleus reads the exact PR source ref from GitHub and checks that it matches
+the reported merged head. It reuses proven ancestry between two commit SHAs
+in the same repository. Each verification reads the current ref and base tip. Nucleus records that head
 in an `external_merge_source` disposition with the actor, authority, reason and
 missing evidence. The disposition applies only to closeout of that merge and
 carries no authority to merge code. A review-entry task that parked before
