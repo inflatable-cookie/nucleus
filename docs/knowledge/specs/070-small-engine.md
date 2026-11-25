@@ -430,6 +430,13 @@ Later decisions carry their own attribution.
     sections. Reviewer assignments show both verdict forms, approve and
     request changes, with the same exact PR head and space for findings.
 
+    The planner set a **65,536 UTF-8 byte** limit on new and replacement task
+    briefs on 2026-11-25. This covers `task.add`, `amend` and the final brief
+    produced by `item.promote`, including added frontmatter. A refusal names
+    the limit and the submitted size. Older briefs remain readable and can
+    be amended to fit. Use a short brief and link supporting material in lane
+    documents. The host limit still applies to the composed assignment.
+
 33. **Sibling sources are pinned, not linked.** Tom, 2026-11-24, to the Acowtancy planner (relayed to the Nucleus planner): "We should be pinning them properly rather than using siblings - longhorn has a newer release (we cut 0.6.0 today and working towards 0.7.0), poodle is fairly stable on its current version..". A task worktree's sibling sources are materialized at the revision the repository pins in its `effigy.toml` `[sources]`, not linked to the operator's local checkout. This differs from TypeScript's `nucleus worktree prepare` symlinks on purpose. A stale pin is the consuming repository's to update.
 
 34. **Archiving a Done task is housekeeping.** Tom, 2026-11-24: "it shouldn't matter that the workers are archived already. We're just archiving task containers! It's all getting too fiddly." Custody is proven once, when a task's checkout is removed. After that, archiving its threads proves nothing further. The archive step archives each of the task's threads that the held shell shows as present, unarchived and idle. A thread that is already archived, absent or deleted counts as done, with no read. A thread showing activity waits with a plain cause. The task is closed when none of its threads remain unarchived. This replaces family-closure receipts and archive proofs.

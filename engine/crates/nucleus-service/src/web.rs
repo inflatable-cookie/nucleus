@@ -1266,6 +1266,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::ReportInput(_)
                     | ServiceError::ComplexityRequired
                     | ServiceError::LeadComplexity
+                    | ServiceError::BriefTooLarge { .. }
                     | ServiceError::BriefPolicy(_)
                     | ServiceError::DependencyInput(_)
                     | ServiceError::TaskReferenceAmbiguous
