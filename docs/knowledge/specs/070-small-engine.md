@@ -604,11 +604,12 @@ Every action is idempotent:
 `queue.dependsOn` resolves on admission, promotion and eligible brief amendments.
 Use a task ID, `owner/repo#N`, `repo#N` or `#N` in the target task's repository.
 The engine stores task IDs. Before dispatch an authorized planner or operator
-can replace the list with `nucleus engine set-dependencies <task> --version <n>
-[<prerequisite> ...]`. An empty list clears it. A self-reference, an ambiguous
+can replace the list with `nucleus set-dependencies <task> --version <n>
+[<prerequisite> ...]`. Read the current version and available edits with
+`nucleus next <task>`. An empty list clears it. A self-reference, an ambiguous
 reference or a dependency cycle refuses the write.
 
-After dispatch, use `nucleus engine set-prerequisite-wait <task> --version <n>
+After dispatch, use `nucleus set-prerequisite-wait <task> --version <n>
 --reason <text> [<prerequisite> ...]` to park subsequent work before merge.
 An empty list clears the wait. The current run keeps its binding and can settle.
 An already-open wait stays editable if review settles into the merging phase

@@ -28,12 +28,12 @@ is the archived TypeScript release for macOS on Apple silicon.
 1. **Connect T3Code.** Follow the [T3 setup](engine/README.md#set-up-t3) to register
    the `nucleus-rust` ACP provider. Open the [local web board](engine/README.md#board)
    with `nucleus ui`.
-2. **Configure.** New installations start paused with an empty worker pool. In
-   Settings, add worker and reviewer profiles and set dispatch limits. Paused
-   state survives restarts.
-3. **Resume and submit.** Resume from the board header. Agents submit approved
-   work through the queue and then steer it; the
-   [Nucleus skill](skills/nucleus/SKILL.md) teaches planning, submission,
+2. **Configure.** Fresh profiles start with dispatch running and no worker or
+   reviewer profiles. Add those profiles and set dispatch limits in Settings.
+   Use **Pause** in the board’s queue controls if needed. The choice survives
+   restarts.
+3. **Submit.** Agents submit approved work through the queue and then steer it.
+   The [Nucleus skill](skills/nucleus/SKILL.md) teaches planning, submission,
    task controls and review entry.
 
 ## Where to read more
