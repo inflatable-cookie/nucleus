@@ -542,7 +542,13 @@ fn row_attention_for_effect(
         (state.wait_reason(id), state.wait_detail(id)),
         (None | Some(WaitReason::Starting), _) | (Some(WaitReason::HostUnknown), None)
     );
-    let about_to_send = starting
+    let retrying_send = state.wait_reason(id) == Some(WaitReason::HostUnknown)
+        && matches!(
+            state.wait_detail(id),
+            Some(WaitDetail::BeforeSend(_) | WaitDetail::ShowingForDelivery(_))
+        )
+        && state.role_observation(task) == Some(RunState::ReadyToSend);
+    let about_to_send = (starting || retrying_send)
         && task.hold().is_none()
         && task.run().is_some_and(|run| {
             !run.revoked()
@@ -556,6 +562,16 @@ fn row_attention_for_effect(
     ) && state.schedule.effect_ready(id, tokio::time::Instant::now());
     if attention == TaskAttention::Waiting && (about_to_send || showing_delivery) {
         return Ok(Some(TaskAttention::Active));
+    }
+    // A transition can make the next effect due before the scheduler records a wait.
+    if attention == TaskAttention::Waiting
+        && state.wait_reason(id).is_none()
+        && state
+            .schedule
+            .due(id)
+            .is_some_and(|due| due <= tokio::time::Instant::now())
+    {
+        return Ok(None);
     }
     // After a cold start a recorded send alone gives no evidence that a child is quiet.
     let awaiting_child_read = attention == TaskAttention::Waiting

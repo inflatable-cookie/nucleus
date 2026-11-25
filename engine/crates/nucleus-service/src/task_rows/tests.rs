@@ -692,6 +692,17 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         )
         .await
         .unwrap();
+    // The send is due, with a brief preflight deferral and an awake destination.
+    service
+        .schedule_result(
+            &row,
+            &Err(service.parent_not_sent("waiting for shell confirmation")),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    assert!(fixture.sync().await.is_empty());
+    assert!(fixture.sync().await.is_empty());
     service
         .schedule_result(
             &row,

@@ -2234,7 +2234,7 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     let instance = task.next_launch_instance().unwrap();
     let inputs = RunRequest {
         binding: binding.clone(),
-        parent: None,
+        parent: Some("parent".into()),
         dispatch: Dispatch::Continue {
             profile: Some(RoleProfile {
                 instance_id: "fixture-provider".into(),
@@ -2248,13 +2248,18 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     .inputs(&instance, THREAD.into(), 3)
     .unwrap();
     let _ = task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
-    task.record_send(&instance, 4).unwrap();
 
     let mut window = snapshot(&binding, "unrelated-running-review", "running", false);
     window["hasMoreHistory"] = json!(true);
     window["historyCursor"] = json!("earlier-items");
     window["projection"]["providerThreads"] = Value::Null;
+    window["projection"]["thread"]["parentThreadId"] = json!("parent");
+    let child = window["projection"]["thread"].clone();
     let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(window.clone()),
+        ),
         (
             "orchestration.subscribeThread",
             Response::Snapshot(window.clone()),
@@ -2267,7 +2272,19 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
         ("orchestration.dispatchCommand", Response::Success),
     ])
     .await;
+    host.rpc.use_held_shell();
+    let until_ms = 4_102_444_800_000;
+    host.rpc.fixture_shell(&json!({"kind":"snapshot","snapshot":{
+        "snapshotSequence":16,"threads":[child,{"id":"parent", "snoozedUntil":"2100-01-01T00:00:00Z"}],"projects":[]
+    }}));
     let pass = host.pass(checkout.path());
+    let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
+    assert!(permit.parent_row().is_none());
+    assert!(
+        matches!(pass.send(permit.record(&mut task.clone()).unwrap()).await,
+        Err(HostError::RetainedParentSnoozed { until }) if until == until_ms)
+    );
+    task.record_send(&instance, 4).unwrap();
     assert_eq!(
         pass.observe_retained_role(&binding, THREAD).await.unwrap(),
         Host::Retained {
@@ -2282,7 +2299,10 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
             state: RunState::ReadyToSend
         }
     );
-    assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
+    let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
+    let mut dispatch = permit.record(&mut task).unwrap();
+    dispatch.allow_owned_parent_snoozes(vec![until_ms]);
+    assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
     let requests = native.await.unwrap();
     let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
     assert_eq!(wire["commandId"], instance);

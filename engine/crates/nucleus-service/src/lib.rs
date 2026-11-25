@@ -566,6 +566,10 @@ impl Service {
                 Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
             };
             self.schedule_result(&row, &result, priority).await?;
+            // The commit can wake the watcher while this task's send fence is still held.
+            if matches!(result, Ok(Action::Launch { .. })) {
+                self.title_wake.notify_one();
+            }
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
