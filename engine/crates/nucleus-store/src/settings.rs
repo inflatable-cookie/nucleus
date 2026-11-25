@@ -613,7 +613,14 @@ impl EngineStorage {
         let listing =
             list_operational_backups(&root, &application, BackupArchiveLimits::default(), 128);
         response.complete = listing.is_complete();
-        response.issues = listing.diagnostics().len();
+        response.issues = listing
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.kind != longhorn_config::BackupRetentionDiagnosticKind::Unmanaged
+                    || !diagnostic.path.as_deref().is_some_and(schema_backup)
+            })
+            .count();
         response.verified = listing
             .candidates()
             .iter()
@@ -624,6 +631,40 @@ impl EngineStorage {
             .collect();
         Ok(response)
     }
+}
+
+fn schema_backup(path: &Path) -> bool {
+    let Some((version, suffix)) = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("engine-before-v"))
+        .and_then(|n| n.strip_suffix(".sqlite"))
+        .and_then(|n| n.split_once('-'))
+    else {
+        return false;
+    };
+    let Ok(version) = version.parse::<i32>() else {
+        return false;
+    };
+    if !(1..crate::SCHEMA_VERSION).contains(&version)
+        || suffix.len() != 6
+        || !suffix.bytes().all(|b| b.is_ascii_alphanumeric())
+        || !path.symlink_metadata().is_ok_and(|m| m.is_file())
+    {
+        return false;
+    }
+    rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .and_then(|db| {
+        db.query_row(
+            "SELECT application_id,user_version FROM pragma_application_id, pragma_user_version",
+            [],
+            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
+        )
+    })
+    .is_ok_and(|header| header == (crate::APPLICATION_ID, version))
 }
 
 fn identity() -> Result<StorageIdentity, StorageError> {
