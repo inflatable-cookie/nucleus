@@ -9,7 +9,7 @@ use nucleus_core::{
     Report, Review, RunState, Task, WaitReason,
 };
 use nucleus_forge::GitHub;
-use nucleus_hosts::Binding;
+use nucleus_hosts::{Binding, ParentWrite};
 use nucleus_store::TaskAdmissionFacts;
 use serde_json::{Value, json};
 use tower::ServiceExt;
