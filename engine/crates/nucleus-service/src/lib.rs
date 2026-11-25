@@ -79,8 +79,8 @@ pub enum ServiceError {
     },
     #[error("the next task row visibility change is scheduled")]
     RowVisibilityDeferred { until: Instant },
-    #[error("T3 parent message delivery could not be confirmed: {0}")]
-    ParentDeliveryUnknown(HostError),
+    #[error("T3 parent message delivery could not be confirmed: {source}")]
+    ParentDeliveryUnknown { source: HostError, until: Instant },
     #[error(
         "Nucleus couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
     )]
@@ -922,7 +922,7 @@ impl Service {
             Ok(Action::Wait(reason)) => Some(*reason),
             Err(ServiceError::ArchiveEvidence(_)) => Some(WaitReason::Stopping),
             Err(ServiceError::ParentDeliveryHeld) => Some(WaitReason::HostObservationBlocked),
-            Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
+            Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown { .. }) => {
                 Some(WaitReason::HostUnknown)
             }
             Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
@@ -1127,7 +1127,7 @@ impl Service {
             result,
             Err(ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. })
         ) || (wait == Some(WaitReason::HostUnknown)
-            && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+            && !matches!(result, Err(ServiceError::ParentDeliveryUnknown { .. }))
             && (showing
                 || match row.task.run() {
                     None => matches!(result, Err(ServiceError::Host(_))),
@@ -1195,7 +1195,7 @@ impl Service {
                 ServiceError::Host(
                     HostError::Deferred { until } | HostError::RoleReplyPending { until },
                 )
-                | ServiceError::ParentDeliveryUnknown(HostError::Deferred { until }),
+                | ServiceError::ParentDeliveryUnknown { until, .. },
             ) => Some(*until),
             _ => None,
         };
@@ -1205,26 +1205,8 @@ impl Service {
             .run()
             .filter(|run| run.report().is_none())
             .and_then(nucleus_core::Run::last_send_at_ms);
-        let parent_due = if matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
-            state
-                .store
-                .parent_deliveries(id, row.version, None)?
-                .into_iter()
-                .filter(|value| value.result == nucleus_store::ParentResult::Pending)
-                .map(|value| value.due_ms)
-                .min()
-        } else {
-            None
-        };
-        let blocked = if let Some(due) = parent_due {
-            let delay = u64::try_from(due)
-                .unwrap_or_default()
-                .saturating_sub(now_ms());
-            state.schedule.wake(
-                id,
-                (now + Duration::from_millis(delay)).max(deferred.unwrap_or(now)),
-                Priority::Effect,
-            );
+        let blocked = if let Err(ServiceError::ParentDeliveryUnknown { until, .. }) = result {
+            state.schedule.wake(id, *until, Priority::Effect);
             false
         } else {
             state.schedule.recover_host_observation(id, now, deferred)
@@ -1235,7 +1217,7 @@ impl Service {
             WaitReason::HostUnknown
         });
         let delivery_pending =
-            sent.is_some() || matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)));
+            sent.is_some() || matches!(result, Err(ServiceError::ParentDeliveryUnknown { .. }));
         let cause = match (blocked, delivery_pending, result) {
             (_, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
                 process_check_detail(*failure, blocked)
@@ -1249,11 +1231,12 @@ impl Service {
             (false, false, _) => "Waiting for T3.",
         };
         let prior = state.wait_reason(id);
-        let detail = if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
-            WaitDetail::ConfirmingDelivery(cause)
-        } else {
-            WaitDetail::Observation(cause)
-        };
+        let detail =
+            if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown { .. })) {
+                WaitDetail::ConfirmingDelivery(cause)
+            } else {
+                WaitDetail::Observation(cause)
+            };
         let changed = state.observe_wait_detail(&row.task, wait, Some(detail))?;
         if blocked && prior != wait {
             state.wake_capacity(Instant::now());

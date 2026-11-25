@@ -47,15 +47,21 @@ pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
 }
 
 pub(super) fn parent_due(record: &ParentDelivery) -> Result<(), ServiceError> {
-    let remaining = record.due_ms.saturating_sub(ms(crate::now_ms()));
-    if record.result == ParentResult::Pending && remaining > 0 {
-        let until = tokio::time::Instant::now()
-            + std::time::Duration::from_millis(remaining.unsigned_abs());
-        return Err(ServiceError::ParentDeliveryUnknown(HostError::Deferred {
-            until,
-        }));
+    if record.result == ParentResult::Pending && record.due_ms > ms(crate::now_ms()) {
+        return Err(parent_delivery_retry(HostError::Uncertain, record.due_ms));
     }
     Ok(())
+}
+
+fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
+    let remaining = due_ms.saturating_sub(ms(crate::now_ms())).max(0);
+    let until =
+        tokio::time::Instant::now() + std::time::Duration::from_millis(remaining.unsigned_abs());
+    let until = match source {
+        HostError::Deferred { until: deferred } => until.max(deferred),
+        _ => until,
+    };
+    ServiceError::ParentDeliveryUnknown { source, until }
 }
 
 pub(super) fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
@@ -234,6 +240,11 @@ impl Service {
         binding: &nucleus_hosts::Binding,
         records: &[ParentDelivery],
     ) -> Result<(), ServiceError> {
+        // A frozen send's deadline paces replay. Capacity release can still
+        // trigger its first receipt read on a replacement runtime.
+        for record in records.iter().filter(|record| record.wire.is_none()) {
+            parent_due(record)?;
+        }
         let before = self.host.verified_runtime_identity();
         let mut accepted = Vec::new();
         if let Some(provider) = self.acp_provider() {
@@ -253,20 +264,37 @@ impl Service {
                 .map(|record| record.command.clone())
                 .collect();
             if !commands.is_empty() {
-                match self
+                let receipts = self
                     .host
                     .parent_delivery_receipts(binding, provider, commands)
-                    .await
-                {
+                    .await;
+                let unavailable = match receipts {
                     Ok(found)
                         if before.is_some() && self.host.verified_runtime_identity() == before =>
                     {
                         accepted = found;
+                        None
                     }
+                    Err(HostError::Binding) => None,
                     Err(error @ HostError::Deferred { .. }) => {
-                        return Err(ServiceError::Host(error));
+                        return Err(parent_delivery_retry(error, 0));
                     }
-                    _ => {}
+                    Err(error) => Some(error),
+                    Ok(_) => Some(HostError::Uncertain),
+                };
+                if let Some(error) = unavailable {
+                    let state = self.state.lock().await;
+                    let due = retry_ms();
+                    for record in records {
+                        state.store.finish_parent_delivery(
+                            &row.task.identity().id,
+                            row.version,
+                            record,
+                            ParentResult::Pending,
+                            due,
+                        )?;
+                    }
+                    return Err(parent_delivery_retry(error, due));
                 }
             }
         }
@@ -361,6 +389,7 @@ impl Service {
             None
         };
         let result = self.host.write_parent(write).await;
+        let retry = retry_ms();
         if let Some((record, replay)) = &attempt {
             let (outcome, due) = match &result {
                 Ok(()) => (ParentResult::Accepted, 0),
@@ -369,7 +398,7 @@ impl Service {
                     (ParentResult::Pending, 0)
                 }
                 Err(ParentSendError::NotSent(_)) if !replay => (ParentResult::Refused, 0),
-                Err(_) => (ParentResult::Pending, retry_ms()),
+                Err(_) => (ParentResult::Pending, retry),
             };
             self.finish_parent_delivery(row, record, outcome, due)
                 .await?;
@@ -378,7 +407,7 @@ impl Service {
             Ok(()) => Ok(true),
             Err(ParentSendError::Rejected) => Err(HostError::ParentHoldRejected.into()),
             Err(ParentSendError::Unknown(error)) if attempt.is_some() => {
-                Err(ServiceError::ParentDeliveryUnknown(error))
+                Err(parent_delivery_retry(error, retry))
             }
             Err(ParentSendError::Unknown(error)) => Err(error.into()),
             Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })) => {

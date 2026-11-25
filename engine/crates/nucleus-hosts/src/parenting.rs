@@ -519,7 +519,10 @@ impl T3 {
         commands: Vec<String>,
     ) -> Result<Vec<String>, HostError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self.observe_parent(binding, &thread).await?.0 else {
+        let Some(projection) = self
+            .read_thread(binding, &thread, ThreadRead::Exact)
+            .await?
+        else {
             return Ok(Vec::new());
         };
         projection.require_parent_provider(provider)?;

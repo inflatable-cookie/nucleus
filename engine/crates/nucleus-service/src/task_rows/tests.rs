@@ -636,7 +636,7 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
     fixture.native.lock().unwrap().fail_next = true;
     assert!(matches!(
         service.deliver_parent(&row, write, None, false).await,
-        Err(ServiceError::ParentDeliveryUnknown(_))
+        Err(ServiceError::ParentDeliveryUnknown { .. })
     ));
     fixture.restart();
     let service = &fixture.service;

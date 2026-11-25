@@ -689,10 +689,14 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 }
 
 #[tokio::test]
-async fn a_replaced_runtime_has_one_read_and_never_resends() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the receipt and its visible wait in the same fixture"
+)]
+async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
     use nucleus_store::ParentResult;
 
-    for delivered in [false, true] {
+    for (delivered, unfrozen) in [(false, false), (true, false), (false, true)] {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
         let identity = task.identity().clone();
@@ -718,9 +722,15 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
                 "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}}
         });
 
+        let transient = Arc::new(AtomicUsize::new(usize::from(unfrozen)));
         let (host, native) = native_fixture(move |request| {
         assert_eq!(request["tag"], "orchestration.subscribeThread");
         assert_eq!(request["payload"]["threadId"], parent);
+        if transient.swap(0, Ordering::Relaxed) == 1 {
+            return serde_json::json!({"_tag":"Exit","requestId":request["id"],"exit":{
+                "_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"FixtureUnavailable"}}]
+            }});
+        }
         let messages = if delivered { serde_json::json!([{"id":message,"runId":"exact-run"}]) }
             else { serde_json::json!([{"id":"unrelated-message","runId":"another-run"}]) };
         serde_json::json!({"_tag":"Chunk", "requestId":request["id"], "values":[
@@ -749,7 +759,7 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
                         command,
                         refresh: false,
                         runtime: Some("retired-host".into()),
-                        wire: Some(frozen.to_string()),
+                        wire: (!unfrozen).then(|| frozen.to_string()),
                         legacy_prompt: None,
                         due_ms: 0,
                         result: ParentResult::Pending,
@@ -758,18 +768,60 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
                 .unwrap();
             row
         };
+        if unfrozen {
+            let result = service.parent_delivery_fenced(&row).await;
+            assert!(matches!(
+                result,
+                Err(ServiceError::ParentDeliveryUnknown { .. })
+            ));
+            service
+                .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
+                .await
+                .unwrap();
+            assert!(matches!(
+                service.parent_delivery_fenced(&row).await,
+                Err(ServiceError::ParentDeliveryUnknown { until, .. }) if until > Instant::now()
+            ));
+            assert_eq!(
+                service.host.host_calls()["orchestration.subscribeThread"],
+                1
+            );
+            let state = service.state.lock().await;
+            assert!(matches!(
+                state.wait_detail(&identity.id),
+                Some(crate::WaitDetail::ConfirmingDelivery(_))
+            ));
+            let records = state
+                .store
+                .parent_deliveries(&identity.id, row.version, None)
+                .unwrap();
+            let record = &records[0];
+            assert_eq!(record.result, ParentResult::Pending);
+            assert!(record.due_ms > i64::try_from(crate::now_ms()).unwrap());
+            state
+                .store
+                .finish_parent_delivery(&identity.id, row.version, record, ParentResult::Pending, 0)
+                .unwrap();
+        }
         for _ in 0..2 {
             let result = service.parent_delivery_fenced(&row).await;
             if delivered {
                 assert!(result.is_ok());
             } else {
                 assert!(matches!(result, Err(ServiceError::ParentDeliveryHeld)));
+                service
+                    .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
+                    .await
+                    .unwrap();
             }
         }
         let mut calls = service.host.host_calls();
         calls.remove("auth.websocketTicket");
         calls.remove("websocket.upgrade");
-        assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
+        assert_eq!(
+            calls,
+            [("orchestration.subscribeThread", 1 + u64::from(unfrozen))].into()
+        );
         let records = service
             .state
             .lock()
@@ -788,6 +840,16 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
             service.task(&identity.id).await.unwrap().version,
             row.version
         );
+        if !delivered {
+            let state = service.state.lock().await;
+            assert_eq!(
+                state.wait_reason(&identity.id),
+                Some(WaitReason::HostObservationBlocked)
+            );
+            assert!(matches!(state.wait_detail(&identity.id),
+                Some(crate::WaitDetail::Observation(cause)) if cause.contains("use Next")));
+            assert!(state.schedule.due(&identity.id).is_none());
+        }
         native.abort();
     }
 }
@@ -1216,7 +1278,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     if lose_launch_reply {
         assert!(matches!(
             outcomes[0].result,
-            Err(ServiceError::ParentDeliveryUnknown(_))
+            Err(ServiceError::ParentDeliveryUnknown { .. })
         ));
     } else {
         assert!(matches!(
