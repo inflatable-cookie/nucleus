@@ -603,20 +603,22 @@ impl Service {
         priority: Priority,
         host: &nucleus_hosts::T3Pass<'_>,
     ) -> Result<Option<Result<Action, ServiceError>>, ServiceError> {
-        let row = match self.task(id).await {
-            Ok(row) => row,
-            Err(ServiceError::Missing) => return Ok(None),
-            Err(error @ ServiceError::Store(StoreError::UnreadableTask(_))) => {
-                self.state.lock().await.set_wait(id, None);
-                return Ok(Some(Err(error)));
-            }
-            Err(error) => return Err(error),
-        };
-        let defer_refresh = {
+        self.storage.database().verify()?;
+        let (row, defer_refresh) = {
             let mut state = self.state.lock().await;
+            let row = match self.lookup(&state, id) {
+                Ok(row) => row,
+                Err(ServiceError::Missing) => return Ok(None),
+                Err(error @ ServiceError::Store(StoreError::UnreadableTask(_))) => {
+                    state.set_wait(id, None);
+                    return Ok(Some(Err(error)));
+                }
+                Err(error) => return Err(error),
+            };
             self.track(&mut state, &row.task);
             state.group_waits.remove(id);
-            priority == Priority::Refresh && state.fresh_running_hint(&row.task)
+            let defer = priority == Priority::Refresh && state.fresh_running_hint(&row.task);
+            (row, defer)
         };
         let result = if defer_refresh {
             Ok(Action::Wait(WaitReason::Running))
