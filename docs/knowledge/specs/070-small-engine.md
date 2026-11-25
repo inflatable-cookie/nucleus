@@ -518,7 +518,10 @@ Later decisions carry their own attribution.
       An uncertain POST is reconciled from the original marker by the operator
       credential. After 30 seconds, a complete inventory without the marker
       permits one journaled resubmission with the original identity, body and marker.
-      Further uncertain delivery uses readback. Nucleus verifies the review ID, author, head, state and body
+      A definite GitHub throttle preserves the attempt and its retry deadline
+      across restarts. A throttled resubmission checks again for the original
+      review before writing. Further uncertain delivery uses readback.
+      Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.
     - An account is added through an OAuth sign-in from Settings, and its token

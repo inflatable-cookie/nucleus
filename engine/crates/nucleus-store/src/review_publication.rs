@@ -1,4 +1,4 @@
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::SystemTime};
 
 use nucleus_core::{Head, Review};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -25,6 +25,8 @@ pub struct ReviewIntent {
 pub enum ReviewPublicationOutcome {
     Pending,
     Resubmitted,
+    Deferred(SystemTime),
+    ResubmissionDeferred(SystemTime),
     Submitted(NonZeroU64),
     Verified(NonZeroU64),
     AccessRefused,
@@ -52,7 +54,7 @@ impl Store {
         read(&self.connection, task, instance)
     }
 
-    /// Claim the first write or the single resubmission of the observed pending record.
+    /// Claim the next eligible write, preserving the attempt after a definite throttle.
     ///
     /// # Errors
     /// Returns an error if the claim cannot be committed.
@@ -62,28 +64,32 @@ impl Store {
         intent: &ReviewIntent,
         previous: Option<&ReviewPublication>,
         at: i64,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<Option<ReviewPublicationOutcome>, StoreError> {
+        use ReviewPublicationOutcome::{Deferred, Pending, ResubmissionDeferred, Resubmitted};
+
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if previous.is_some_and(|record| {
-            record.intent != *intent || record.outcome != ReviewPublicationOutcome::Pending
-        }) || read(&tx, task, &intent.instance)?.as_ref() != previous
+        if previous.is_some_and(|record| record.intent != *intent)
+            || read(&tx, task, &intent.instance)?.as_ref() != previous
         {
-            return Ok(false);
+            return Ok(None);
         }
+        let outcome = match previous.map(|record| record.outcome) {
+            None => Pending,
+            Some(Pending) => Resubmitted,
+            Some(Deferred(until)) if SystemTime::now() >= until => Pending,
+            Some(ResubmissionDeferred(until)) if SystemTime::now() >= until => Resubmitted,
+            _ => return Ok(None),
+        };
         let pending = ReviewPublication {
             intent: intent.clone(),
-            outcome: if previous.is_some() {
-                ReviewPublicationOutcome::Resubmitted
-            } else {
-                ReviewPublicationOutcome::Pending
-            },
+            outcome,
             recorded_at: at,
         };
         append(&tx, task, &audit(&pending, at)?)?;
         tx.commit()?;
-        Ok(true)
+        Ok(Some(outcome))
     }
 
     /// Settle or record the receipt of the original write without replacing its intent.
@@ -98,7 +104,8 @@ impl Store {
         at: i64,
     ) -> Result<(), StoreError> {
         use ReviewPublicationOutcome::{
-            AccessRefused, Pending, Refused, Resubmitted, Submitted, Verified,
+            AccessRefused, Deferred, Pending, Refused, ResubmissionDeferred, Resubmitted,
+            Submitted, Verified,
         };
 
         let tx = self
@@ -112,7 +119,9 @@ impl Store {
         }
         match (recorded.outcome, outcome) {
             (Pending | Resubmitted, Submitted(_) | Verified(_) | AccessRefused | Refused)
-            | (Resubmitted, Pending) => {}
+            | (Resubmitted, Pending | ResubmissionDeferred(_))
+            | (Pending, Deferred(_))
+            | (ResubmissionDeferred(_), Verified(_)) => {}
             (Submitted(sent), Verified(verified)) if sent == verified => {}
             _ => return Err(StoreError::ReviewPublicationConflict),
         }

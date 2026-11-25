@@ -1,4 +1,4 @@
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::SystemTime};
 
 use nucleus_core::{
     Action, Forge, Observation, Observed, Phase, PullRequest, Report, Review, Run, Verdict,
@@ -197,20 +197,12 @@ impl Service {
             return Ok(action);
         }
 
-        if let Some(record) = &publication {
-            if self
-                .reconcile_review(id, target, record, &request.body)
+        if let Some(record) = &publication
+            && self
+                .reconcile_before_retry(id, target, record, &request.body)
                 .await?
-            {
-                return self.apply(row, observation, action).await;
-            }
-            // Only a complete, marker-free inventory reaches this point.
-            let age = event("review_publication")
-                .at
-                .saturating_sub(record.recorded_at);
-            if record.outcome != ReviewPublicationOutcome::Pending || age < REVIEW_GRACE_MS {
-                return Err(PublicationError::UnknownDelivery.into());
-            }
+        {
+            return self.apply(row, observation, action).await;
         }
         let Some(publication) = self
             .start_review(id, target, &request, publication.as_ref())
@@ -225,6 +217,33 @@ impl Service {
             return Err(PublicationError::UnknownDelivery.into());
         }
         self.apply(row, observation, action).await
+    }
+
+    async fn reconcile_before_retry(
+        &self,
+        task: &str,
+        target: &PullTarget,
+        record: &ReviewPublication,
+        body: &ReviewBody,
+    ) -> Result<bool, ServiceError> {
+        use ReviewPublicationOutcome::{Deferred, Pending, ResubmissionDeferred};
+
+        if let Deferred(until) | ResubmissionDeferred(until) = record.outcome
+            && SystemTime::now() < until
+        {
+            return Err(ForgeError::Deferred { until }.into());
+        }
+        if self.reconcile_review(task, target, record, body).await? {
+            return Ok(true);
+        }
+        let age = event("review_publication")
+            .at
+            .saturating_sub(record.recorded_at);
+        match record.outcome {
+            Deferred(_) | ResubmissionDeferred(_) => Ok(false),
+            Pending if age >= REVIEW_GRACE_MS => Ok(false),
+            _ => Err(PublicationError::UnknownDelivery.into()),
+        }
     }
 
     async fn start_review(
@@ -247,7 +266,7 @@ impl Service {
             return Err(PublicationError::Unverified.into());
         }
         let at = event("review_publication").at;
-        {
+        let claim = {
             let mut state = self.state.lock().await;
             if state
                 .settings
@@ -258,13 +277,12 @@ impl Service {
                 return Ok(None);
             }
             self.storage.database().verify()?;
-            if !state
+            state
                 .store
                 .claim_review_publication(task, &intent, previous, at)?
-            {
-                return Err(PublicationError::UnknownDelivery.into());
-            }
-        }
+                .ok_or(PublicationError::UnknownDelivery)?
+        };
+        let resubmission = claim == ReviewPublicationOutcome::Resubmitted;
         let mut write = reviewer_client
             .as_ref()
             .unwrap_or(&self.forge)
@@ -279,14 +297,10 @@ impl Service {
             {
                 Ok(Some(retried)) => write = retried,
                 Ok(None) => {
-                    return self
-                        .defer_refused_review(task, &intent, previous.is_some())
-                        .await;
+                    return self.defer_refused_review(task, &intent, resubmission).await;
                 }
                 Err(_) if self.dispatch_mode().await == DispatchMode::Stopped => {
-                    return self
-                        .defer_refused_review(task, &intent, previous.is_some())
-                        .await;
+                    return self.defer_refused_review(task, &intent, resubmission).await;
                 }
                 Err(error) => {
                     self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
@@ -298,17 +312,24 @@ impl Service {
         if matches!(write, ReviewWrite::Unauthenticated)
             && self.dispatch_mode().await == DispatchMode::Stopped
         {
-            return self
-                .defer_refused_review(task, &intent, previous.is_some())
-                .await;
+            return self.defer_refused_review(task, &intent, resubmission).await;
         }
         let outcome = match write {
-            ReviewWrite::Verified(_) if previous.is_some() => ReviewPublicationOutcome::Resubmitted,
+            ReviewWrite::Verified(_) if resubmission => ReviewPublicationOutcome::Resubmitted,
             ReviewWrite::Verified(review) => ReviewPublicationOutcome::Submitted(review.id),
             ReviewWrite::Unauthenticated | ReviewWrite::AccessRefused => {
                 ReviewPublicationOutcome::AccessRefused
             }
             ReviewWrite::Refused => ReviewPublicationOutcome::Refused,
+            ReviewWrite::Deferred { until } => {
+                let deferred = if resubmission {
+                    ReviewPublicationOutcome::ResubmissionDeferred(until)
+                } else {
+                    ReviewPublicationOutcome::Deferred(until)
+                };
+                self.record_review(task, &intent, deferred).await?;
+                return Err(ForgeError::Deferred { until }.into());
+            }
             ReviewWrite::Unknown => return Err(PublicationError::UnknownDelivery.into()),
         };
         self.record_review(task, &intent, outcome).await?;
@@ -430,13 +451,15 @@ impl Service {
         body: &ReviewBody,
     ) -> Result<bool, ServiceError> {
         use ReviewPublicationOutcome::{
-            AccessRefused, Pending, Refused, Resubmitted, Submitted, Verified,
+            AccessRefused, Deferred, Pending, Refused, ResubmissionDeferred, Resubmitted,
+            Submitted, Verified,
         };
 
         let intent = &publication.intent;
         let binding = binding(intent);
         let review = match publication.outcome {
-            Pending | Resubmitted => {
+            Deferred(_) => return Ok(false),
+            Pending | Resubmitted | ResubmissionDeferred(_) => {
                 self.forge
                     .find_review(target, &binding, &body.marker, &body.text)
                     .await?
