@@ -151,7 +151,7 @@ function capacityValues(
   ) as Record<keyof typeof capacityBounds, number>;
   return {
     ...fallback,
-    globalLimit: Math.max(1, Math.min(64, dispatch.globalSlots)),
+    globalLimit: dispatch.globalSlots,
     projectLimit: dispatch.projectDefaultSlots,
     hostCallLimit: 1,
     operatorDefaultHostKind: DEFAULT_HOST_KIND,
@@ -262,7 +262,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       stoppedThreads: 0,
       resumedThreads: 0,
       ...capacityValues(dispatch),
-      globalLimit: dispatch.globalSlots,
       usage: usageView(dispatch),
       projectLimitOverrides: Object.fromEntries(
         rows.flatMap(({ id, board, project }) => {
@@ -365,14 +364,18 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      return { effective: capacityValues(dispatch.value), changes: [] };
+      return { revision: dispatch.revision, effective: capacityValues(dispatch.value), changes: [] };
     },
-    "queue.capacity": async (input: api.CapacityAuthorityValues) => {
-      await editDispatch((value) => ({
-        ...value,
-        globalSlots: input.globalLimit,
-        projectDefaultSlots: input.projectLimit,
-      }));
+    "queue.capacity": async (input: api.CapacityInput) => {
+      if (!("revision" in input)) throw new Error("Refresh Limits before saving.");
+      const current = await rust.domain(dispatchSnapshot, "dispatch");
+      if (current.revision !== input.revision)
+        throw new Error("Dispatch limits changed. Review the current values and edit again.");
+      await rust.saveDomain(dispatchSnapshot, "dispatch", input.revision, {
+        ...current.value,
+        globalSlots: input.globalLimit ?? current.value.globalSlots,
+        projectDefaultSlots: input.projectLimit ?? current.value.projectDefaultSlots,
+      });
       return { ok: true };
     },
     "queue.usage": async (input: {

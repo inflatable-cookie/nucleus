@@ -267,9 +267,10 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await adapter.rpc(api.uiSnapshot, {});
-  const { effective } = await adapter.rpc(api.capacityState, {});
+  const { effective, revision } = await adapter.rpc(api.capacityState, {});
+  assert.ok(revision);
   assert.equal(effective.projectLimit, 2);
-  await adapter.rpc(api.configureCapacity, { ...effective, globalLimit: 8, projectLimit: 4 });
+  await adapter.rpc(api.configureCapacity, { revision, globalLimit: 8, projectLimit: 4 });
   for (const limit of [5, null, 0]) {
     const projectKey = "p-orbit-main";
     await adapter.rpc(api.configureProjectDispatchLimit, { projectKey, limit });
@@ -280,6 +281,28 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
     assert.deepEqual(board.projectLimitOverrides, limit === null ? { lantern: 1 } : { lantern: 1, [projectKey]: limit });
   }
   assert.ok(fake.writes.every((write) => write.domain === "dispatch"));
+});
+
+test("two Limits tabs preserve untouched slots and refuse an edit against an older view", async () => {
+  const fake = engine();
+  const first = createRustAdapter(createRustApi(fake.fetcher));
+  const second = createRustAdapter(createRustApi(fake.fetcher));
+  const before = await second.rpc(api.capacityState, {});
+  assert.ok(before.revision);
+  const initial = await first.rpc(api.capacityState, {});
+  assert.ok(initial.revision);
+  await first.rpc(api.configureCapacity, { revision: initial.revision, globalLimit: 96 });
+  await assert.rejects(second.rpc(api.configureCapacity, {
+    revision: before.revision, projectLimit: 3,
+  }), /limits changed/);
+  assert.equal(fake.writes.length, 1);
+  const refreshed = await second.rpc(api.capacityState, {});
+  assert.equal(refreshed.effective.globalLimit, 96);
+  assert.ok(refreshed.revision);
+  await second.rpc(api.configureCapacity, { revision: refreshed.revision, projectLimit: 3 });
+  const saved = await first.rpc(api.capacityState, {});
+  assert.equal(saved.effective.globalLimit, 96);
+  assert.equal(saved.effective.projectLimit, 3);
 });
 
 test("retired machinery is refused by name instead of guessed", async () => {
