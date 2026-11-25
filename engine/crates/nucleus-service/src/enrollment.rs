@@ -5,7 +5,7 @@ use nucleus_store::{
     ProjectSettings, Projects, RepositorySettings, StorageError, ThreadProvenance,
 };
 use sha2::{Digest, Sha256};
-use tokio::time::Instant;
+use tokio::{sync::watch, time::Instant};
 
 use crate::{ControllerScope, Service, ServiceError, State, project::discover_repository};
 
@@ -17,10 +17,12 @@ pub(super) struct Enrollments(BTreeMap<String, Contact>);
 
 enum Contact {
     Requested {
+        finished: watch::Sender<()>,
         binding: Option<Box<PlannerBinding>>,
         requested_ms: u64,
     },
     Checking {
+        finished: watch::Sender<()>,
         requested_ms: u64,
         binding: Option<Box<PlannerBinding>>,
         observed: Option<Box<ThreadHint>>,
@@ -277,55 +279,44 @@ impl Service {
     ) -> Option<ServiceError> {
         let checked = matches!(
             state.enrollments.0.get(actor),
-            Some(Contact::Refused { .. })
+            Some(Contact::Refused { until, .. }) if Instant::now() < *until
         );
         let result = self.request_enrollment(state, actor);
         (!checked).then_some(result)
     }
 
     pub(super) fn request_enrollment(&self, state: &mut State, actor: &str) -> ServiceError {
+        let now = Instant::now();
+        match state.enrollments.0.get(actor) {
+            Some(Contact::Refused { until, failure }) if now < *until => return (*failure).into(),
+            Some(Contact::Requested { finished, .. } | Contact::Checking { finished, .. }) => {
+                return ServiceError::PlannerEnrollmentPending(finished.subscribe());
+            }
+            _ => {}
+        }
         let binding = state.planner_binding(actor).map(Box::new);
         let contacts = &mut state.enrollments.0;
-        let now = Instant::now();
-        match contacts.get(actor) {
-            Some(&Contact::Refused { until, failure }) => {
-                if now >= until {
-                    contacts.insert(
-                        actor.into(),
-                        Contact::Requested {
-                            binding,
-                            requested_ms: crate::now_ms(),
-                        },
-                    );
-                    self.enrollment_wake.notify_one();
-                }
-                failure.into()
-            }
-            Some(Contact::Requested { .. } | Contact::Checking { .. }) => {
-                ServiceError::PlannerEnrollmentPending
-            }
-            None => {
-                if contacts.len() >= MAX_PENDING {
-                    contacts.retain(
-                        |_, contact| !matches!(contact, Contact::Refused { until, .. } if now >= *until),
-                    );
-                }
-                if contacts.len() >= MAX_PENDING {
-                    return ServiceError::PlannerEnrollmentUnavailable(
-                        "The T3 enrollment queue is full. Retry shortly.",
-                    );
-                }
-                contacts.insert(
-                    actor.into(),
-                    Contact::Requested {
-                        binding,
-                        requested_ms: crate::now_ms(),
-                    },
+        if contacts.len() >= MAX_PENDING {
+            contacts.retain(
+                |_, contact| !matches!(contact, Contact::Refused { until, .. } if now >= *until),
+            );
+            if contacts.len() >= MAX_PENDING {
+                return ServiceError::PlannerEnrollmentUnavailable(
+                    "The T3 enrollment queue is full. Retry shortly.",
                 );
-                self.enrollment_wake.notify_one();
-                ServiceError::PlannerEnrollmentPending
             }
         }
+        let (finished, wait) = watch::channel(());
+        contacts.insert(
+            actor.into(),
+            Contact::Requested {
+                binding,
+                requested_ms: crate::now_ms(),
+                finished,
+            },
+        );
+        self.enrollment_wake.notify_one();
+        ServiceError::PlannerEnrollmentPending(wait)
     }
 
     pub(super) async fn watch_enrollments(&self) {
@@ -349,6 +340,7 @@ impl Service {
             .iter_mut()
             .find(|(_, contact)| matches!(contact, Contact::Requested { .. }))?;
         let Contact::Requested {
+            finished,
             binding,
             requested_ms,
         } = contact
@@ -356,6 +348,7 @@ impl Service {
             return None;
         };
         *contact = Contact::Checking {
+            finished: finished.clone(),
             requested_ms: *requested_ms,
             binding: binding.take(),
             observed: None,
@@ -431,6 +424,7 @@ impl Service {
             state.enrollments.0.insert(
                 actor.into(),
                 Contact::Checking {
+                    finished: watch::channel(()).0,
                     requested_ms,
                     binding: None,
                     observed: None,

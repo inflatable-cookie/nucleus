@@ -11,7 +11,7 @@ use nucleus_store::{
     },
 };
 use serde::Deserialize;
-use tokio::sync::MutexGuard;
+use tokio::sync::{MutexGuard, RwLockReadGuard};
 
 use crate::enrollment::PlanningRepository;
 use crate::{
@@ -56,18 +56,45 @@ impl Service {
         scope: &ControllerScope,
     ) -> Result<(MutexGuard<'_, State>, String), ServiceError> {
         self.storage.database().verify()?;
-        let mut state = self.state.lock().await;
-        let project = if let Some(actor) = scope.actor() {
-            self.planning_planner_project(&mut state, actor, selector)?
-        } else {
-            let selector = selector.ok_or(ServiceError::Project)?;
-            state
-                .settings
-                .resolve_planning_project(self.project.as_ref(), selector)
-                .ok_or(ServiceError::Project)?
-                .to_owned()
-        };
-        Ok((state, project))
+        scope
+            .with_enrollment(|| async {
+                let mut state = self.state.lock().await;
+                let project = if let Some(actor) = scope.actor() {
+                    self.planning_planner_project(&mut state, actor, selector)?
+                } else {
+                    let selector = selector.ok_or(ServiceError::Project)?;
+                    state
+                        .settings
+                        .resolve_planning_project(self.project.as_ref(), selector)
+                        .ok_or(ServiceError::Project)?
+                        .to_owned()
+                };
+                Ok((state, project))
+            })
+            .await
+    }
+
+    async fn admission_route(
+        &self,
+        scope: &ControllerScope,
+        project: Option<&str>,
+        repository: Option<&str>,
+    ) -> Result<
+        (
+            RwLockReadGuard<'_, ()>,
+            MutexGuard<'_, State>,
+            PlanningRepository,
+        ),
+        ServiceError,
+    > {
+        scope
+            .with_enrollment(|| async {
+                let projects = self.project_writes.read().await;
+                let mut state = self.state.lock().await;
+                let route = self.planning_repository(&mut state, scope, project, repository)?;
+                Ok((projects, state, route))
+            })
+            .await
     }
 
     pub(crate) async fn add_planned_task(
@@ -79,10 +106,9 @@ impl Service {
     ) -> Result<TaskRow, ServiceError> {
         let policy = check_brief(&input.brief)?;
         self.storage.database().verify()?;
-        let _projects = self.project_writes.read().await;
-        let mut state = self.state.lock().await;
-        let route =
-            self.planning_repository(&mut state, scope, project, input.repository.as_deref())?;
+        let (_projects, state, route) = self
+            .admission_route(scope, project, input.repository.as_deref())
+            .await?;
         let id = match input.id {
             Some(id) => id,
             None => new_id("t")?,
@@ -165,9 +191,7 @@ impl Service {
         scope: &ControllerScope,
     ) -> Result<(bool, TaskRow), ServiceError> {
         self.storage.database().verify()?;
-        let _projects = self.project_writes.read().await;
-        let mut state = self.state.lock().await;
-        let route = self.planning_repository(&mut state, scope, project, repository)?;
+        let (_projects, state, route) = self.admission_route(scope, project, repository).await?;
         let item = state
             .store
             .item(&route.project_id, id)?

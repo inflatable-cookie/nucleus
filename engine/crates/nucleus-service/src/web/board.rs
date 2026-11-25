@@ -396,7 +396,8 @@ async fn authorize_browser(
         (session, refresh, board.revocations.subscribe())
     };
     request.extensions_mut().insert(session.authority);
-    request.extensions_mut().insert(session.scope.clone());
+    let scope = session.scope.for_request();
+    request.extensions_mut().insert(scope.clone());
     request.extensions_mut().insert(BrowserSession {
         // A public cache key, distinct from the cookie and its stored digest.
         id: Sha256::new()
@@ -404,7 +405,7 @@ async fn authorize_browser(
             .chain_update(key)
             .finalize()
             .into(),
-        scope: session.scope,
+        scope,
         expires: Instant::now()
             + IDLE.min(Duration::from_millis(
                 session.expires_at.saturating_sub(now),

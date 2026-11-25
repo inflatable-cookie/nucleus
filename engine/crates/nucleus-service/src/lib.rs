@@ -99,7 +99,7 @@ pub enum ServiceError {
     #[error("the controller cannot access this project")]
     ControllerProject,
     #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
-    PlannerEnrollmentPending,
+    PlannerEnrollmentPending(watch::Receiver<()>),
     #[error("{0}")]
     PlannerEnrollmentRefused(&'static str),
     #[error("{0}")]
