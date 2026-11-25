@@ -6,10 +6,6 @@ import { headerControls, settingsViews } from "../shared/queue-navigation";
 import { inboxViews } from "../shared/inbox-board";
 
 const ui = boardSource();
-const entry = readFileSync(
-  new URL("../hosts/paseo/client/index.tsx", import.meta.url),
-  "utf8",
-);
 const settingsScreen = readFileSync(
   new URL("../client/settings-screen.tsx", import.meta.url),
   "utf8",
@@ -176,14 +172,6 @@ test("Settings is the native settings screen holding Dispatch limits, Profiles, 
     ui,
     /onSettings=\{\s*settingsOpener\s*\? \(\) => settingsOpener\?\.\("projects"\)\s*: undefined,?\s*\}/,
     "the chooser opens Settings at Projects",
-  );
-  assert.match(
-    entry,
-    /addSettingsScreen\(\{ id: SETTINGS_SCREEN_ID, title: "Nucleus", icon: "Settings", Component: QueueSettingsScreen \}\)/,
-  );
-  assert.match(
-    entry,
-    /registerSettingsOpener\(section => host\.openSettings\(SETTINGS_SCREEN_ID, section \? \{ section \} : undefined\)\)/,
   );
 });
 

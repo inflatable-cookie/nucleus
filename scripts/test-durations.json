@@ -452,7 +452,6 @@
   "git-fetch.test.ts": 0.7,
   "recovery-effects.test.ts": 0.7,
   "role-reassignment.test.ts": 0.7,
-  "task-detail-questions.test.ts": 0.7,
   "control-telemetry.test.ts": 0.7,
   "qa-caller-provenance.test.ts": 0.7,
   "papercut-lead-migration.test.ts": 0.7,
