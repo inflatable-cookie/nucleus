@@ -1,6 +1,10 @@
 # T3Code host adapter
 
-Status: native adapter, CLI-helper reporting, board questions and per-project host opt-in are implemented.
+Status: historical TypeScript adapter. This document records the former
+`nucleus` provider, plugin settings and `nucleus-acp.mjs` launcher.
+For the current `nucleus-rust` provider use the [T3 setup guide](../../../engine/README.md#set-up-t3).
+The Rust CLI manages its `nucleus-rust-acp` launcher under the engine home.
+
 Owner: Nucleus runtime maintainers
 
 ## Boundary

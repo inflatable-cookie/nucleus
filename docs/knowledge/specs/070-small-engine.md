@@ -794,12 +794,11 @@ A task never moves between engines.
 
 ### Standalone board
 
-Build the browser assets with `effigy engine:board-build -- /absolute/asset-directory`,
-or use `web/engine` from a packaged runtime. Pass that directory to
-`nucleus-engine serve --board-assets`. Axum serves the board at `/` and Settings
-at `/settings` on the engine's loopback listener. The browser subscribes to task
-and Settings changes on that listener, regardless of whether the TypeScript
-service is running. The TypeScript transition board still proxies Rust task views.
+Build browser assets with `effigy engine:board-build -- /absolute/asset-directory`
+or stage them with the executable using `effigy engine:stage`. Pass the matching
+directory to `nucleus serve --board-assets`. Axum serves the board at `/` and
+Settings at `/settings` on the engine’s loopback listener. The browser subscribes
+to changes on the same origin.
 
 The standalone board is the TypeScript web board itself: the same navigation,
 cards, task dialog, Inbox list, planning screens and Settings sections. One
@@ -867,10 +866,12 @@ the result. `GET /api/engine/theme` reads the cache and never calls the host. A
 change emits a `theme` event. The board resolves its palette through the shared
 TypeScript theme converter, which has no dependency on the legacy RPC client.
 
-`nucleus-engine ui` prints a two-minute, one-use link for the authenticated
-controller. Pairing consumes the token and issues an eight-hour HttpOnly session
-cookie with the same authority. The board discards the link fragment before
-pairing. The controller credential stays with the CLI and service.
+`nucleus ui` prints a two-minute, one-use pairing link. The board discards
+the link fragment and exchanges the token for an HttpOnly, SameSite=Strict
+session cookie. The paired browser can reconnect after a service restart.
+Its session expires after 30 idle days and renews at most once per day.
+`nucleus ui --revoke` revokes sessions and pending links. The controller
+credential stays with the CLI and service.
 
 ## Planning model (milestone 3)
 

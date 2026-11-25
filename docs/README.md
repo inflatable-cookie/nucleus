@@ -8,7 +8,7 @@ Nucleus is and how to install it.
 - How the system is shaped: [knowledge/architecture.md](knowledge/architecture.md)
 - Durable rules: [knowledge/contracts/](knowledge/contracts/README.md)
 - Detailed design per capability: [knowledge/specs/](knowledge/specs/README.md)
-- How the plugin is rolled out: [knowledge/contracts/release.md](knowledge/contracts/release.md)
+- How to stage the engine and board: [knowledge/contracts/release.md](knowledge/contracts/release.md)
 - Everything, by topic, including operations runbooks: [knowledge/README.md](knowledge/README.md)
 - Project front page: [README.md](../README.md)
 - The Nucleus skill for planners and workers: [skills/nucleus/SKILL.md](../skills/nucleus/SKILL.md)

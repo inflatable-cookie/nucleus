@@ -1,6 +1,10 @@
 # Repository hooks
 
-Owner: operator and Chatterbox
+The manifest and runner below describe the retired TypeScript engine.
+Rust uses project settings and GitHub checks at the reviewed head for merge.
+See [Spec 070, ruling 13](../specs/070-small-engine.md#rulings).
+
+Historical owner: operator and Chatterbox
 Updated: 2026-11-21
 Governing specs: `docs/knowledge/specs/001-generic-repository-hooks.md`,
 `docs/knowledge/specs/002-durable-hook-retry-and-isolated-writes.md`,

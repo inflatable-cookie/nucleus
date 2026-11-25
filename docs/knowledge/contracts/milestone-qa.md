@@ -8,8 +8,7 @@ own milestone selectors against one pinned commit and delivers a qualification
 record. The repository runner executes the selectors and retains their evidence.
 
 The runner-neutral procedure is the Northstar milestone-qa skill; this file
-holds only what Nucleus adds — the task shape, the export path and what still
-reads old runs.
+holds only what Nucleus adds — the task shape, the export path and where to read old runs.
 
 ## The task
 
@@ -74,8 +73,8 @@ retained handle).
 
 ## Export as each slice finishes
 
-Write each slice into the task's lane document with `lane.document.edit` as soon
-as it settles, sending the `version` you last read. The lane document is durable,
+Write each slice into the task's lane document as soon as it settles, using the
+run-ticket form of `lane.put` with the version you last read. The lane document is durable,
 versioned and digest-fenced, so a worker that dies mid-milestone leaves every
 finished slice behind and its successor re-runs only what is missing. Keep
 evidence that outlives the run in the lane or runner logs.
@@ -118,41 +117,8 @@ archives the workspace after custody and Git publication checks pass.
 
 ## Legacy history and upgrades
 
-`project.qa.get` reads a saved run by ID or the latest run for a repository.
-`project.qa.list` lists the latest saved run per repository.
-`project.qa.request-status` reads stored request identities. These reads use
-durable history, so an offline checkout does not prevent an exact-ID read.
-Result records, step logs and failure logs keep their established retention.
-The live store's evidence lives on its configured `projectQaRoot` (default
-`<workRoot>/archives/nucleus-project-qa/`), and custody and retention also read the
-retired `<workRoot>/queue/project-qa/` location while an existing install's files
-are still there (nucleus#1526).
-Lane document versions remain the qualification record for report-only tasks.
-
-`project.qa.run` also refuses the old `--wait` form and points callers to this
-recipe. Stored schedules are inert. Clear a leftover schedule with
-`repository.set` and `{"qa":{"schedule":null}}`. A schedule-only clear preserves
-the repository's validation evidence commands. Enabling a schedule is refused.
-
-The roll checks stored QA custody before warm standby takes the live socket and
-again before the replacement opens the writable store. The cold start does the
-same check. The latest-run index cannot hide an older unresolved run. Custody
-is live evidence: an unfinished run, an unresolved request, an unsettled host
-reservation, an active fence, a live QA process or a checkout still on disk
-defers takeover. A finished run's dead pid, cleanup flag or checkout path on a
-root that no longer exists holds nothing. The check reads store and filesystem
-evidence and leaves records, processes and checkouts in their current custody.
-
-Settle an older occurrence on the compatibility build, the build that refused
-new launches and still recovered legacy runs. Use that build's
-`project.qa.fence-status` and `project.qa.request-status` to inspect it, then
-use its existing cancellation, teardown retry or retention path as applicable.
-Wait for a fence to expire or clear it there with the existing authority.
-Retry the roll after settlement. An installed bridge that predates the
-deferral status shows the startup refusal as a failed roll and suppresses that
-candidate until main advances. After compatibility cleanup, that owner retries
-when it sees the next main revision. The refusal names the custody issue.
-
-The board, Planning and task detail show report-only milestones through the
-ordinary task workflow. Generic host runs and merge-time validation still use
-their own run records and retention.
+New qualifications are report-only tasks. The lane document version records the
+result and Effigy run keys locate the logs. The retired TypeScript engine kept
+a separate QA store and schedules. Its [historical reads and retention
+policy](https://github.com/inflatable-cookie/nucleus/blob/737246d22/docs/knowledge/contracts/milestone-qa.md#legacy-history-and-upgrades)
+remain available for interpreting older records.

@@ -1,5 +1,7 @@
 # Durable telemetry contract
 
+This contract records the TypeScript telemetry model. For the current task detail,
+activity, status and event API, see the [Rust board](../../../engine/README.md#board).
 
 Nucleus telemetry describes generic lifecycle facts. It does not infer work type,
 document structure, project vocabulary or success from task titles.

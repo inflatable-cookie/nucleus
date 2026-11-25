@@ -1,10 +1,10 @@
-# Nucleus engine build plan
+# Nucleus engine
 
-[Spec 070](../docs/knowledge/specs/070-small-engine.md) owns the model. Milestone 1
-runs one synthetic task from work through closeout on T3. The Rust engine is off
-by default and uses its own settings and database. Fixture mode scopes dispatch
-to the authorized fixture repository. The planner checks the run by hand. The
-board switch starts in milestone 2.
+The Rust engine runs approved tasks on T3 and serves the local web board.
+[Spec 070](../docs/knowledge/specs/070-small-engine.md) owns its model and
+authority rules. See [staging](#stage-an-engine-release), [T3 setup](#set-up-t3)
+and [board pairing](#board) to operate an installation. Fixture mode scopes
+dispatch to its configured repository.
 
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
@@ -39,7 +39,9 @@ tag `v0.6.0` and require Rust 1.97.1.
 updates and config backups. `longhorn-storage-layout` resolves their roots and
 the separate engine data root. `longhorn-git-workspace` compares exact worktree
 and repository identity and supplies the bounded Git executor. `nucleus-work` owns allocation
-and uses explicit `git worktree add/remove` without force. `longhorn-redact` and
+and retirement. Normal retirement retains dirty work. Recovery of an interrupted
+initial allocation can force removal only after verifying its exact Git registration,
+initialization lock and absent index under the unsent task fence. `longhorn-redact` and
 `longhorn-support-log` cover adapter diagnostics. `longhorn-operation` leaves
 persistence, deduplication and restart recovery to the caller, so it adds no
 needed behavior here. Use `longhorn-update-install` when verified distribution
@@ -61,8 +63,8 @@ replaced during that interval can redirect allocation. The work root belongs
 to the operator on the single-user host. A follow-up will anchor the destination
 to a verified directory handle through the Git write.
 
-Run `nucleus configure --enable` to enable the engine. The transition
-home is `~/.nucleus/engine`. It contains the database, settings, backups, logs,
+Run `nucleus configure --enable` to enable the engine. The default
+engine home is `~/.nucleus/engine`. It contains the database, settings, backups, logs,
 keys and launchers. Use `--home` to keep using an explicit portable profile.
 
 Worktrees, scratch and builds use platform defaults in the default profile.
@@ -92,7 +94,8 @@ refuses an existing release directory.
 
 Point the CLI runtime link and the service and ACP launchers at the staged
 `nucleus`. Pass the matching `board-assets/` to the service and keep the
-previous launcher definitions, executable and board assets for rollback.
+matching release files for recovery. Schema upgrades follow the
+[forward-only recovery policy](../docs/knowledge/specs/070-small-engine.md#parent-delivery-storage-and-upgrade).
 Staging leaves running processes and launcher definitions untouched.
 
 ### Move an existing engine home
@@ -615,13 +618,9 @@ the feed on attach. Decisions never read these display records.
 Review rounds count applied reviewer verdicts in history. Replays and
 unsuccessful launches stay in the same round.
 
-The existing web board enables the Rust task views when its server environment
-sets `NUCLEUS_BOARD_ENGINE_URL` to the engine's loopback HTTP origin and
-`NUCLEUS_BOARD_ENGINE_KEY` to a controller key. Use the assigned planner's
-controller for a planner board. Both preflight and writes use that same
-controller. Paired browsers receive only the capability flag and talk to
-same-origin task routes. Those routes forward the task reads, commands and
-event stream; planning and other legacy features keep their existing routes.
+Axum serves the bundled TypeScript board and its same-origin API. Browser
+sessions carry operator authority for the board. The CLI and task callbacks
+use their own credentials.
 
 On the standalone Rust board, `nucleus ui` pairs a new browser once.
 A paired browser can reopen the plain loopback URL after a service restart.
@@ -629,24 +628,6 @@ Sessions expire after 30 idle days and renew at most once per day. The private
 `web-sessions.json` beside the engine database holds token digests and expiry
 times. An operator can revoke all browser sessions and pending links with
 `nucleus ui --revoke`.
-
-The TypeScript service reads an owner-only `rust-engine-pilot.json` beside its
-own settings at startup. Set `"drain": true` to send all new work to Rust.
-The single-repository pilot accepts its existing `repository` setting until
-the global switch. The transition board uses the Rust loopback HTTP origin
-from `endpoint` and the owner-only `boardKeyFile`. The pilot manifest still
-validates `inboxKeyFile` and `inboxEngine` as compatibility fields after the
-TypeScript decision bridge retires.
-
-After the global switch, fresh TypeScript admissions direct the planner to
-`nucleus task.add`.
-Already accepted TypeScript operations and existing tasks keep their original
-engine. The same board shows both engines' task rows. If the Rust service is
-unavailable, its board section can retry while the TypeScript board stays usable.
-An invalid pilot file is logged, and the TypeScript service starts with the pilot off.
-
-Delete the pilot manifest reader, single-repository compatibility path and
-global drain gate when the TypeScript engine is retired.
 
 ### Task numbers after cutover
 
@@ -665,24 +646,6 @@ when supplied. `report` reads the role's owner-only ticket and the report from s
 For the live proof, bind a separate key to the idle fixture origin thread with
 `--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. Use that key
 to submit and answer as the bound fixture planner.
-
-| Keep | Reshape | Remove from Rust tasks |
-| --- | --- | --- |
-| `client/web` shell and T3 theme, sidebar shades, board layout and common controls | `client/queue.tsx` and `client/board` read the new list. Queued, Working, Reviewing, Merging and Closing map to phase groups. Done and Cancelled appear in history. | Incident, wait and recovery record cards. A task shows its current wait and hold. |
-| Task panel shell and activity layout | `client/task` shows brief, current role/thread, PR/head, verdict, hold and history. `next-section` shows the reason and the five commands. | Explicit-command and proof buttons, effect retry, specialised routing and closeout controls. Use `move`, `cancel`, `amend` and `hold`/`release`. |
-| Inbox layout and shared question controls | The Inbox shows the task's one question and lets the assigned planner submit `answer`. | Ladder rungs, escalations and recovery ownership. One question goes to the assigned planner. |
-| Settings shell and Storage form controls | Settings and Storage read the Rust domains. `client/web` transport and live channel adapt at the data boundary. | Legacy per-task tuning and recovery settings. Planning records and legacy features keep their current route while the old engine drains. |
-
-### Delete at TS retirement
-
-Milestone 4 removes the remaining TypeScript transition paths:
-
-- The per-repository pilot manifest compatibility and the TypeScript admission
-  selector. The global no-new-work switch covers the drain.
-- The TypeScript archive command and ACP launcher. See [Milestone 4](../docs/knowledge/specs/070-small-engine.md#migration).
-- The TypeScript Inbox bridge and board proxy.
-- The TypeScript Settings screens and their RPC wiring. The Rust-backed
-  Settings screens become the only Settings surface.
 
 ## Settings migration
 
@@ -710,8 +673,7 @@ exact-head approval still govern the merge.
 On startup both the old explicit `--t3` fixture endpoint and the saved reference
 are supported. Apply saved connection and storage changes on the next start.
 Storage reports the running process's active paths and the verified archive
-inventory separately from saved intent. The legacy Settings shell stays on its
-existing transport until the dedicated Rust Settings UI lands. The Settings
+inventory separately from saved intent. The paired Settings UI reads and writes these engine domains. The Settings
 domain stores the budget allowance and hung-tool threshold. Applying them to
 run accounting, planner budget questions and native tool termination requires
 scheduler and host follow-up. An exhausted allowance extends automatically once,
