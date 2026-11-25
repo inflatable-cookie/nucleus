@@ -1,3 +1,3 @@
-# Internal CLI implementation
+# Internal helpers
 
-These files implement the installed `nucleus` command and internal service helpers. Agents use `nucleus` from any directory; do not invoke checkout scripts directly.
+These files include internal TypeScript service and reporting helpers. The installed `nucleus` command uses the Rust engine. Agents can run it from any directory.

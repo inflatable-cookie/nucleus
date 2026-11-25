@@ -3,10 +3,8 @@
  * report --help`, the service-written helper's own `--help` and the shape a
  * refused report repeats.
  *
- * Self-contained on purpose: the service interpolates these strings into the
- * worker-report helper it writes into the data home, and `bin/nucleus.mjs`
- * prints them without spawning that helper, so `--help` works even when the
- * installed helper is older than this CLI.
+ * The service interpolates these strings into the standalone worker-report
+ * helper it writes into the data home.
  */
 
 /** One accepted report shape, as a single line a refusal can repeat. */
