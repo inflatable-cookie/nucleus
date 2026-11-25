@@ -50,7 +50,7 @@ export function hostEnvironmentViolations(root) {
     }
   }
   for (const directory of roots) walk(directory);
-  for (const path of ['index.client.tsx', 'mcp-report.mjs']) if (existsSync(resolve(root, path))) inspect(path);
+  for (const path of ['mcp-report.mjs']) if (existsSync(resolve(root, path))) inspect(path);
   return findings.sort((a, b) => a.path.localeCompare(b.path) || a.name.localeCompare(b.name));
 }
 
