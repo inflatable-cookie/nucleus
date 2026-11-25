@@ -689,32 +689,40 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 }
 
 #[tokio::test]
-async fn an_unconfirmed_hold_gets_readback_only_until_its_exact_message_is_observed() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
-    let identity = task.identity().clone();
-    let task = Task::new(identity.clone(), "Fixture".into(), None);
-    let binding = {
-        let work = service.worktrees().unwrap();
-        let checkout = work
-            .checkout(
-                &service.fixture().checkout,
-                &identity.repository,
-                &identity.id,
-            )
-            .unwrap();
-        service.binding(&checkout).unwrap()
-    };
-    let parent = nucleus_hosts::parent_thread(std::path::Path::new(&binding.worktree_path));
-    let command = format!("{parent}-hold-1");
-    let message = format!("{command}-message");
-    let delivered = Arc::new(AtomicUsize::new(0));
-    let wire = Arc::clone(&delivered);
-    let (host, native) = native_fixture(move |request| {
+async fn a_replaced_runtime_has_one_read_and_never_resends() {
+    use nucleus_store::ParentResult;
+
+    for delivered in [false, true] {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+        let identity = task.identity().clone();
+        let task = Task::new(identity.clone(), "Fixture".into(), None);
+        let binding = {
+            let work = service.worktrees().unwrap();
+            let checkout = work
+                .checkout(
+                    &service.fixture().checkout,
+                    &identity.repository,
+                    &identity.id,
+                )
+                .unwrap();
+            service.binding(&checkout).unwrap()
+        };
+        let parent = nucleus_hosts::parent_thread(std::path::Path::new(&binding.worktree_path));
+        let command = format!("{parent}-hold-acp-1:fixture-acp");
+        let message = format!("{command}-message");
+        let frozen = serde_json::json!({
+            "binding":binding, "method":"continue", "provider":"fixture-acp",
+            "payload":{"type":"message.dispatch","threadId":parent,"commandId":command,
+                "messageId":message,"text":"Original prompt",
+                "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}}
+        });
+
+        let (host, native) = native_fixture(move |request| {
         assert_eq!(request["tag"], "orchestration.subscribeThread");
         assert_eq!(request["payload"]["threadId"], parent);
-        let messages = if wire.load(Ordering::Relaxed) == 0 { serde_json::json!([]) }
-            else { serde_json::json!([{"id":message,"runId":"exact-run"}]) };
+        let messages = if delivered { serde_json::json!([{"id":message,"runId":"exact-run"}]) }
+            else { serde_json::json!([{"id":"unrelated-message","runId":"another-run"}]) };
         serde_json::json!({"_tag":"Chunk", "requestId":request["id"], "values":[
             {"kind":"snapshot","snapshotSequence":1,"projection":{
                 "thread":{"id":parent,"projectId":binding.project_id,
@@ -726,38 +734,62 @@ async fn an_unconfirmed_hold_gets_readback_only_until_its_exact_message_is_obser
             {"kind":"synchronized"}
         ]})
     }).await;
-    service.host = host;
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
-    let runtime = service.host.runtime_identity().unwrap();
-    let row = {
-        let mut state = service.state.lock().await;
-        let version = state.store.create(&task, &event("fixture")).unwrap();
-        for (kind, scope) in [
-            ("native_turn_intent", runtime.clone()),
-            ("host_observation_blocked", format!("{runtime}/engine")),
-        ] {
-            let mut audit = event(kind);
-            audit.detail = serde_json::json!({"version":version,"session":scope,"command":command,"deliveryPending":true})
-                .to_string();
+        service.host = verified_native_fixture(host, home.path());
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let row = {
+            let mut state = service.state.lock().await;
+            state.store.create(&task, &event("fixture")).unwrap();
+            let row = service.lookup(&state, &identity.id).unwrap();
             state
                 .store
-                .claim_task_effect(&identity.id, &audit, false)
+                .freeze_parent_delivery(
+                    &identity.id,
+                    &nucleus_store::ParentDelivery {
+                        version: row.version,
+                        command,
+                        refresh: false,
+                        runtime: Some("retired-host".into()),
+                        wire: Some(frozen.to_string()),
+                        legacy_prompt: None,
+                        due_ms: 0,
+                        result: ParentResult::Pending,
+                    },
+                )
                 .unwrap();
+            row
+        };
+        for _ in 0..2 {
+            let result = service.parent_delivery_fenced(&row).await;
+            if delivered {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(result, Err(ServiceError::ParentDeliveryHeld)));
+            }
         }
-        service.lookup(&state, &identity.id).unwrap()
-    };
-    assert!(service.parent_delivery_fenced(&row).await.unwrap());
-    delivered.store(1, Ordering::Relaxed);
-    assert!(!service.parent_delivery_fenced(&row).await.unwrap());
-    let calls = service.host.host_calls();
-    assert!(!service.parent_delivery_fenced(&row).await.unwrap());
-    assert_eq!(service.host.host_calls(), calls);
-    assert_eq!(calls["orchestration.subscribeThread"], 2);
-    assert_eq!(
-        service.task(&identity.id).await.unwrap().version,
-        row.version
-    );
-    native.abort();
+        let mut calls = service.host.host_calls();
+        calls.remove("auth.websocketTicket");
+        calls.remove("websocket.upgrade");
+        assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
+        let records = service
+            .state
+            .lock()
+            .await
+            .store
+            .parent_deliveries(&identity.id, row.version, None)
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        let expected = if delivered {
+            ParentResult::Accepted
+        } else {
+            ParentResult::Held
+        };
+        assert_eq!(records[0].result, expected);
+        assert_eq!(
+            service.task(&identity.id).await.unwrap().version,
+            row.version
+        );
+        native.abort();
+    }
 }
 
 #[tokio::test]
@@ -886,6 +918,20 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
     let now = Instant::now();
     assert!(state.schedule.effect_ready("z-first", now));
     assert!(!state.schedule.effect_ready("a-second", now));
+}
+
+pub(super) fn verified_native_fixture(host: T3, root: &std::path::Path) -> T3 {
+    let descriptor = root.join("native-runtime.json");
+    std::fs::write(
+        &descriptor,
+        json!({
+            "origin": host.endpoint(), "pid": std::process::id(),
+            "startedAt": "2020-01-01T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    host.with_runtime_descriptor(descriptor)
 }
 
 pub(super) async fn native_fixture(
@@ -1095,8 +1141,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
                 if let Some(parent) = launches.first().filter(|launch| stage > 0 && launch["threadId"] == thread) {
                     let mut runs = vec![json!({
                         "id":"old-run","status":if stage == 2 {"completed"} else {"running"},
-                        "rootNodeId":"old-node","userMessageId":
-                            if stage == 3 { json!("different-message") } else { parent["initialMessage"]["messageId"].clone() },
+                        "rootNodeId":"old-node","userMessageId":parent["initialMessage"]["messageId"],
                     })];
                     let messages: Vec<_> = messages.lock().unwrap().iter()
                         .map(|hold| json!({"id":hold["messageId"]})).collect();
@@ -1140,7 +1185,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Success","value":value}})
     }).await;
     host.fixture_project_shell(&shell, "fixture-acp");
-    service.host = host;
+    service.host = verified_native_fixture(host, home.path());
     let oldest = "z-oldest";
     let newest = ["m-next", "a-last"];
     let head = &project.start;
@@ -1290,8 +1335,30 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         ));
         assert!(service.host.host_calls().is_empty());
         assert_eq!(service.task(oldest).await.unwrap(), preparing);
-        service.host = T3::new(&endpoint, "fixture").unwrap();
+        assert!(
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .pending_parent_preparation(oldest, preparing.version)
+                .unwrap()
+        );
+        let descriptor = home.path().join("replacement-runtime.json");
+        std::fs::write(
+            &descriptor,
+            json!({
+                "origin": endpoint, "pid": std::process::id(), "startedAt":"2020-01-02T00:00:00Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        service.host = T3::new(&endpoint, "fixture")
+            .unwrap()
+            .with_runtime_descriptor(descriptor);
         service.host.fixture_project_shell(&shell, "fixture-acp");
+        // Capacity wakes the recovery read after the exact native message becomes visible.
+        old_present.store(1, Ordering::Relaxed);
     }
 
     let CommandOutcome::Applied(revoked) = service
@@ -1334,28 +1401,13 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
     };
     if lose_launch_reply {
-        assert!(matches!(
-            released[0].result,
-            Err(ServiceError::ParentDeliveryUnknown(_))
-        ));
-        assert_eq!(service.task(oldest).await.unwrap(), preparing);
+        assert!(
+            matches!(released[0].result, Ok(Action::Launch { .. })),
+            "{:?}",
+            released[0].result
+        );
         assert_eq!(launches.lock().unwrap().len(), 1);
         assert!(holds.lock().unwrap().is_empty());
-        old_present.store(3, Ordering::Relaxed);
-        assert!(matches!(
-            advance(&service).await,
-            Err(ServiceError::ParentDeliveryUnknown(_))
-        ));
-        assert!(
-            service
-                .state
-                .lock()
-                .await
-                .store
-                .pending_parent_preparation(oldest, preparing.version)
-                .unwrap()
-        );
-        old_present.store(1, Ordering::Relaxed);
     } else {
         assert_eq!(
             service.task(oldest).await.unwrap().task.phase(),
@@ -1400,10 +1452,12 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     };
     assert_eq!(wire["payload"]["parentRunId"], run);
     assert_eq!(wire["payload"]["parentNodeId"], node);
-    assert!(matches!(
-        advance(&service).await.unwrap(),
-        Action::Launch { .. }
-    ));
+    if !lose_launch_reply {
+        assert!(matches!(
+            advance(&service).await.unwrap(),
+            Action::Launch { .. }
+        ));
+    }
     assert_eq!(launches.lock().unwrap().len(), 1);
     assert_eq!(holds.lock().unwrap().len(), usize::from(!lose_launch_reply));
     assert_eq!(

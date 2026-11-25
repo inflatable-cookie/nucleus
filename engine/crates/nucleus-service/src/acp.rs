@@ -10,7 +10,8 @@ use nucleus_core::{
     Authority, Phase, RunState, WaitReason,
     acp::{Binding, InboxBinding, session_id},
 };
-use nucleus_store::{AcpSession, TaskRow};
+use nucleus_hosts::{FrozenParentWrite, HostError, ParentSendError, ParentWrite, T3_RETRY_DELAY};
+use nucleus_store::{AcpSession, ParentDelivery, ParentResult, StoreError, TaskRow};
 use rustix::fs::{Mode, OFlags, open};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -33,11 +34,6 @@ pub(super) struct WriteAccess {
     pub controller: [u8; 32],
 }
 
-enum ParentClaim {
-    Fresh(i64),
-    Replay,
-}
-
 pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
     let run = row
         .task
@@ -48,6 +44,42 @@ pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
             .unwrap_or(run.launch().started_at)
             .saturating_add(nucleus_hosts::LATE_REPLY_MS),
     )
+}
+
+pub(super) fn parent_due(record: &ParentDelivery) -> Result<(), ServiceError> {
+    let remaining = record.due_ms.saturating_sub(ms(crate::now_ms()));
+    if record.result == ParentResult::Pending && remaining > 0 {
+        let until = tokio::time::Instant::now()
+            + std::time::Duration::from_millis(remaining.unsigned_abs());
+        return Err(ServiceError::ParentDeliveryUnknown(HostError::Deferred {
+            until,
+        }));
+    }
+    Ok(())
+}
+
+pub(super) fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
+    record.wire.is_some() && runtime.is_some() && record.runtime.as_deref() == runtime
+}
+
+fn ms(timestamp: u64) -> i64 {
+    i64::try_from(timestamp).unwrap_or(i64::MAX)
+}
+
+fn retry_ms() -> i64 {
+    ms(crate::now_ms()
+        .saturating_add(u64::try_from(T3_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX)))
+}
+
+fn delivery_prompt(record: &ParentDelivery) -> Result<Option<String>, StoreError> {
+    if let Some(wire) = &record.wire {
+        let frozen: FrozenParentWrite = serde_json::from_str(wire)?;
+        Ok(frozen.prompt().map(str::to_owned))
+    } else {
+        Ok(Some(record.legacy_prompt.clone().unwrap_or_else(|| {
+            nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
+        })))
+    }
 }
 
 fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
@@ -66,10 +98,6 @@ fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
 }
 
 impl Service {
-    pub(super) fn turn_failure_scope(&self, session: &str) -> String {
-        format!("{session}/{}", self.turn_epoch)
-    }
-
     pub(super) fn acp_turn_view(
         &self,
         state: &State,
@@ -132,82 +160,135 @@ impl Service {
         {
             return Ok((None, false));
         }
-        // After settlement, a remembered child can acquire its own re-entry hold.
-        // It cannot extend the old prompt across a handoff to the next role.
-        let carry = active_child && task.run().is_some();
-        let Some(session) = self.host.runtime_identity() else {
-            return Ok((None, carry));
-        };
-        let command =
-            state
-                .store
-                .task_turn_command(id, "native_turn_intent", row.version, &session)?;
-        if let Some(command) = &command
-            && (state.store.task_turn_failed(id, command)?
-                || (nucleus_hosts::is_parent_reentry(command) && !active_in_shell))
-        {
+        // A remembered child can acquire a new re-entry hold after settlement.
+        // Carrying the prior prompt requires a current role.
+        let delivery = state
+            .store
+            .parent_deliveries(id, row.version, None)?
+            .into_iter()
+            .find(|delivery| !delivery.refresh && !delivery.command.is_empty());
+        if delivery.as_ref().is_some_and(|delivery| {
+            delivery.result == ParentResult::Failed
+                || (nucleus_hosts::is_parent_reentry(&delivery.command) && !active_in_shell)
+        }) {
             return Ok((None, false));
         }
-        let prompt = match command {
-            Some(command) => state.store.task_turn_prompt(id, &command)?,
-            None => None,
-        };
-        // An explicit prompt belongs to its own native turn.
-        let carry = carry && prompt.is_none();
+        let prompt = delivery
+            .filter(|delivery| {
+                matches!(
+                    delivery.result,
+                    ParentResult::Pending | ParentResult::Accepted
+                )
+            })
+            .map(|delivery| delivery_prompt(&delivery))
+            .transpose()?
+            .flatten();
+        let carry = active_child && task.run().is_some() && prompt.is_none();
         Ok((prompt, carry))
     }
 
-    pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
-        let Some(runtime) = self.host.runtime_identity() else {
-            return Ok(false);
-        };
-        let identity = row.task.identity();
-        let id = &identity.id;
-        let pending = {
-            let state = self.state.lock().await;
-            let pending = state.store.task_delivery_fence(id, row.version, &runtime)?;
-            if let Some([command]) = pending.as_deref()
-                && nucleus_hosts::is_pinned_parent_hold(command)
-                && state
-                    .store
-                    .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
-                    .as_ref()
-                    == Some(command)
-            {
-                // The launch owner can reconcile its current frozen hold directly.
-                return Ok(false);
-            }
-            pending
-        };
-        let Some(commands) = pending else {
-            return Ok(false);
-        };
-        let Some(provider) = self.acp_provider().filter(|_| !commands.is_empty()) else {
-            return Ok(true);
-        };
+    pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        let state = self.state.lock().await;
+        let records = state.store.parent_deliveries(id, row.version, None)?;
+        if records
+            .iter()
+            .any(|value| value.result == ParentResult::Held)
+        {
+            return Err(ServiceError::ParentDeliveryHeld);
+        }
+        if !records
+            .iter()
+            .any(|value| value.result == ParentResult::Pending)
+        {
+            return Ok(());
+        }
+        let runtime = self.host.verified_runtime_identity();
+        let uncertain: Vec<_> = records
+            .into_iter()
+            .filter(|value| {
+                value.result == ParentResult::Pending && !can_replay(value, runtime.as_deref())
+            })
+            .collect();
+        if uncertain.is_empty()
+            || (row.task.phase() == Phase::Working
+                && row.task.first_launch()
+                && !state.forge_requested.contains(id)
+                && !self.initial_dispatch_allowed(&state, row.task.identity())?)
+        {
+            return Ok(());
+        }
+        drop(state);
         let _fence = self.effect(row).await?;
+        let identity = row.task.identity();
         let route = self.project_for(identity).await?;
         let work = self.worktrees()?;
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
-        let binding = route.binding(&checkout)?;
-        if !matches!(
-            self.host
-                .parent_deliveries_observed(&binding, provider, &commands)
-                .await,
-            Ok(true)
-        ) || self.host.runtime_identity().as_deref() != Some(runtime.as_str())
-        {
-            return Ok(true);
+        self.resolve_parent_deliveries(row, &route.binding(&checkout)?, &uncertain)
+            .await
+    }
+
+    pub(super) async fn resolve_parent_deliveries(
+        &self,
+        row: &TaskRow,
+        binding: &nucleus_hosts::Binding,
+        records: &[ParentDelivery],
+    ) -> Result<(), ServiceError> {
+        let before = self.host.verified_runtime_identity();
+        let mut accepted = Vec::new();
+        if let Some(provider) = self.acp_provider() {
+            let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
+            let commands: Vec<_> = records
+                .iter()
+                .filter(|record| {
+                    record
+                        .command
+                        .strip_prefix(&thread)
+                        .is_some_and(|suffix| suffix.starts_with('-'))
+                        && record.wire.as_deref().is_none_or(|wire| {
+                            serde_json::from_str::<FrozenParentWrite>(wire)
+                                .is_ok_and(|frozen| frozen.matches(binding, provider))
+                        })
+                })
+                .map(|record| record.command.clone())
+                .collect();
+            if !commands.is_empty() {
+                match self
+                    .host
+                    .parent_delivery_receipts(binding, provider, commands)
+                    .await
+                {
+                    Ok(found)
+                        if before.is_some() && self.host.verified_runtime_identity() == before =>
+                    {
+                        accepted = found;
+                    }
+                    Err(error @ HostError::Deferred { .. }) => {
+                        return Err(ServiceError::Host(error));
+                    }
+                    _ => {}
+                }
+            }
         }
-        let mut state = self.state.lock().await;
-        for command in commands {
-            let mut audit = event("native_turn_observed");
-            audit.detail =
-                serde_json::json!({"version":row.version,"session":runtime,"command":command})
-                    .to_string();
-            state.store.claim_task_effect(id, &audit, false)?;
+        let state = self.state.lock().await;
+        for record in records {
+            let result = if accepted.contains(&record.command) {
+                ParentResult::Accepted
+            } else {
+                ParentResult::Held
+            };
+            state.store.finish_parent_delivery(
+                &row.task.identity().id,
+                row.version,
+                record,
+                result,
+                0,
+            )?;
         }
-        Ok(false)
+        if accepted.len() != records.len() {
+            return Err(ServiceError::ParentDeliveryHeld);
+        }
+        Ok(())
     }
 
     pub(super) async fn record_native_turn(
@@ -226,161 +307,143 @@ impl Service {
         let mut state = self.state.lock().await;
         let recorded = state.store.claim_task_effect(id, &intent, false)?.is_some();
         if recorded {
-            if kind == "native_turn_failed" {
-                state.wake_capacity(tokio::time::Instant::now());
-                self.wake.notify_one();
-            }
             self.publish(id, row.version);
         }
         Ok(recorded)
     }
 
-    async fn claim_parent_intent(
-        &self,
-        row: &TaskRow,
-        kind: &str,
-        session: &str,
-        command: &str,
-        prompt: &str,
-    ) -> Result<Option<ParentClaim>, ServiceError> {
-        let id = &row.task.identity().id;
-        let mut state = self.state.lock().await;
-        let retry_of =
-            match state
-                .store
-                .task_turn_attempt(id, kind, row.version, session, command)?
-            {
-                Some((sequence, true)) => Some(sequence),
-                Some((_, false)) if nucleus_hosts::is_pinned_parent_hold(command) => {
-                    return Ok(Some(ParentClaim::Replay));
-                }
-                Some((_, false)) => return Ok(None),
-                None => None,
-            };
-        let mut intent = event(kind);
-        intent.detail = serde_json::json!({
-            "command": command, "version": row.version, "session": session, "retryOf": retry_of,
-            "prompt": prompt,
-        })
-        .to_string();
-        let starting =
-            row.task.run().is_none() && matches!(kind, "native_turn_intent" | "native_turn_replay");
-        let wait = Some(WaitReason::Starting);
-        let entered = starting && state.wait_label_changed(&row.task, wait, None);
-        let attempt = state.store.claim_task_effect(id, &intent, entered)?;
-        if attempt.is_some() {
-            if starting {
-                state.apply_observed_wait(&row.task, wait, entered);
-                self.publish(id, row.version);
-            } else {
-                self.publish_detail(id, row.version);
-            }
-        }
-        Ok(attempt.map(ParentClaim::Fresh))
-    }
-
     pub(super) async fn deliver_parent(
         &self,
         row: &TaskRow,
-        mut write: nucleus_hosts::ParentWrite,
-        session: &str,
-        intent_kind: Option<&str>,
+        mut write: ParentWrite,
+        prior: Option<ParentDelivery>,
+        refresh: bool,
     ) -> Result<bool, ServiceError> {
-        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
-        let message = write.starts_turn();
-        let pinned_thread = if nucleus_hosts::is_pinned_parent_hold(&command) {
-            let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
-            Some(thread)
-        } else {
-            None
-        };
-        self.wake_parent_delivery(row, &write).await?;
-        if let Err(cause) = self.host.verify_parent_write(&mut write).await {
-            return Err(if message {
-                self.parent_not_sent(cause)
-            } else {
-                cause.into()
-            });
-        }
-        let attempt = if let Some(kind) = intent_kind {
-            let frozen = self
-                .state
-                .lock()
-                .await
-                .store
-                .task_turn_prompt(&row.task.identity().id, &command)?;
-            if let Some(prompt) = frozen {
-                write.set_prompt(prompt);
-            }
-            let prompt = write.prompt().ok_or(ServiceError::Input)?;
-            match self
-                .claim_parent_intent(row, kind, session, &command, prompt)
-                .await?
-            {
-                Some(ParentClaim::Fresh(sequence)) => Some(sequence),
-                Some(ParentClaim::Replay) => None,
-                None => return Ok(false),
-            }
-        } else {
-            None
-        };
-        match self.host.write_verified_parent(write).await {
-            Ok(()) => Ok(true),
-            Err(nucleus_hosts::ParentSendError::Rejected) => {
-                Err(nucleus_hosts::HostError::ParentHoldRejected.into())
-            }
-            Err(nucleus_hosts::ParentSendError::Unknown(error)) if message => {
-                Err(ServiceError::ParentDeliveryUnknown(error))
-            }
-            Err(nucleus_hosts::ParentSendError::Unknown(error)) => Err(error.into()),
-            Err(nucleus_hosts::ParentSendError::NotSent(
-                nucleus_hosts::HostError::OperatorSnoozed { until },
-            )) => {
-                let thread = pinned_thread.ok_or(ServiceError::Input)?;
-                // Keep the current intent so an operator wake resumes this exact ID.
-                Err(ServiceError::OperatorSnoozed { thread, until })
-            }
-            Err(nucleus_hosts::ParentSendError::NotSent(error)) => {
-                if let Some(sequence) = attempt {
-                    self.record_parent_refusal(
+        let runtime = self.host.verified_runtime_identity();
+        let existing = prior
+            .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
+        if let Some(record) = &existing {
+            match record.result {
+                ParentResult::Accepted | ParentResult::Failed => return Ok(false),
+                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
+                ParentResult::Pending if !can_replay(record, runtime.as_deref()) => {
+                    self.resolve_parent_deliveries(
                         row,
-                        &command,
-                        session,
-                        Some(sequence),
-                        &error.to_string(),
+                        write.binding(),
+                        std::slice::from_ref(record),
                     )
                     .await?;
+                    return Ok(false);
                 }
-                Err(if message {
-                    self.parent_not_sent(error)
-                } else {
-                    error.into()
-                })
+                ParentResult::Pending => parent_due(record)?,
+                ParentResult::Refused => {}
             }
+            if let Some(wire) = &record.wire {
+                write.use_frozen(serde_json::from_str(wire).map_err(StoreError::from)?)?;
+                if write.command_id() != Some(record.command.as_str()) {
+                    return Err(ServiceError::ParentDeliveryHeld);
+                }
+            }
+        }
+        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
+        let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
+        if nucleus_hosts::is_pinned_parent_hold(&command) {
+            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
+        }
+        self.wake_parent_delivery(row, &write).await?;
+        write.require_runtime(runtime.clone());
+        let attempt = if write.starts_turn() {
+            Some(
+                self.begin_parent_delivery(row, &write, refresh, runtime, existing)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let result = self.host.write_parent(write).await;
+        if let Some((record, replay)) = &attempt {
+            let (outcome, due) = match &result {
+                Ok(()) => (ParentResult::Accepted, 0),
+                Err(ParentSendError::Rejected) => (ParentResult::Failed, 0),
+                Err(ParentSendError::NotSent(HostError::OperatorSnoozed { .. })) => {
+                    (ParentResult::Pending, 0)
+                }
+                Err(ParentSendError::NotSent(_)) if !replay => (ParentResult::Refused, 0),
+                Err(_) => (ParentResult::Pending, retry_ms()),
+            };
+            self.finish_parent_delivery(row, record, outcome, due)
+                .await?;
+        }
+        match result {
+            Ok(()) => Ok(true),
+            Err(ParentSendError::Rejected) => Err(HostError::ParentHoldRejected.into()),
+            Err(ParentSendError::Unknown(error)) if attempt.is_some() => {
+                Err(ServiceError::ParentDeliveryUnknown(error))
+            }
+            Err(ParentSendError::Unknown(error)) => Err(error.into()),
+            Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })) => {
+                Err(ServiceError::OperatorSnoozed { thread, until })
+            }
+            Err(ParentSendError::NotSent(error)) => Err(self.parent_not_sent(error)),
         }
     }
 
-    pub(super) async fn record_parent_refusal(
+    async fn begin_parent_delivery(
         &self,
         row: &TaskRow,
-        command: &str,
-        session: &str,
-        attempt: Option<i64>,
-        reason: &str,
-    ) -> Result<(), ServiceError> {
+        write: &ParentWrite,
+        refresh: bool,
+        runtime: Option<String>,
+        existing: Option<ParentDelivery>,
+    ) -> Result<(ParentDelivery, bool), ServiceError> {
         let id = &row.task.identity().id;
-        let mut audit = event("native_turn_not_sent");
-        audit.detail = serde_json::json!({
-            "command": command, "version": row.version, "session": session,
-            "attempt": attempt, "reason": reason,
-        })
-        .to_string();
-        self.state
-            .lock()
-            .await
-            .store
-            .claim_task_effect(id, &audit, false)?;
+        let mut state = self.state.lock().await;
+        if let Some(record) = existing.filter(|record| record.result == ParentResult::Pending) {
+            state.store.finish_parent_delivery(
+                id,
+                row.version,
+                &record,
+                ParentResult::Pending,
+                retry_ms(),
+            )?;
+            return Ok((record, true));
+        }
+        let record = ParentDelivery {
+            version: row.version,
+            command: write.command_id().ok_or(ServiceError::Input)?.into(),
+            refresh,
+            runtime,
+            wire: Some(serde_json::to_string(write.freeze()).map_err(StoreError::from)?),
+            legacy_prompt: None,
+            due_ms: retry_ms(),
+            result: ParentResult::Pending,
+        };
+        if !state.store.freeze_parent_delivery(id, &record)? {
+            return Err(StoreError::StaleTask.into());
+        }
+        if !refresh && row.task.run().is_none() {
+            state.observe_wait(&row.task, Some(WaitReason::Starting))?;
+            self.publish(id, row.version);
+        } else {
+            self.publish_detail(id, row.version);
+        }
+        Ok((record, false))
+    }
+
+    pub(super) async fn finish_parent_delivery(
+        &self,
+        row: &TaskRow,
+        record: &ParentDelivery,
+        result: ParentResult,
+        due_ms: i64,
+    ) -> Result<(), ServiceError> {
+        self.state.lock().await.store.finish_parent_delivery(
+            &row.task.identity().id,
+            row.version,
+            record,
+            result,
+            due_ms,
+        )?;
         Ok(())
     }
 
@@ -389,29 +452,6 @@ impl Service {
             reason: reason.to_string(),
             retry_at: self.host.request_retry_at(),
         }
-    }
-
-    pub(super) async fn record_failed_parent_turn(
-        &self,
-        row: &TaskRow,
-        session: &str,
-        command: &str,
-    ) -> Result<(), ServiceError> {
-        if self
-            .record_native_turn(
-                row,
-                "native_turn_failed",
-                &self.turn_failure_scope(session),
-                command,
-            )
-            .await?
-        {
-            let id = &row.task.identity().id;
-            eprintln!(
-                "{id}: T3 parent turn failed ({command}); waiting for a task, session, or engine change"
-            );
-        }
-        Ok(())
     }
 
     pub(super) async fn queue_acp_refresh(&self, id: &str) -> Result<bool, ServiceError> {
@@ -436,6 +476,11 @@ impl Service {
             let mut state = self.state.lock().await;
             state.planner_notice_waiters.remove(id);
             state.acp_refresh_requests.remove(id) == Some(row.version)
+                || state
+                    .store
+                    .parent_deliveries(id, row.version, None)?
+                    .iter()
+                    .any(|value| value.refresh && value.result == ParentResult::Pending)
         };
         if refresh && let Err(error) = self.refresh_acp_parent(row).await {
             if matches!(
@@ -461,22 +506,19 @@ impl Service {
         let provider = self.acp_provider().ok_or(ServiceError::AcpBinding)?;
         let identity = task.identity();
         let id = &identity.id;
-        let session = self
-            .host
-            .runtime_identity()
-            .ok_or(nucleus_hosts::HostError::Uncertain)?;
-        let kind = "acp_row_refresh_intent";
-        {
-            let state = self.state.lock().await;
-            if let Some(prior) = state
-                .store
-                .task_turn_command(id, kind, row.version, &session)?
-                && !state
-                    .store
-                    .task_turn_attempt(id, kind, row.version, &session, &prior)?
-                    .is_some_and(|(_, refused)| refused)
-            {
-                return Ok(false);
+        let prior = self
+            .state
+            .lock()
+            .await
+            .store
+            .parent_deliveries(id, row.version, None)?
+            .into_iter()
+            .find(|value| value.refresh);
+        if let Some(record) = &prior {
+            match record.result {
+                ParentResult::Pending => parent_due(record)?,
+                ParentResult::Refused => {}
+                _ => return Ok(false),
             }
         }
         let route = self.project_for(identity).await?;
@@ -505,7 +547,7 @@ impl Service {
             return Ok(false);
         };
         self.ensure_parent_reader(id, checkout.path()).await?;
-        self.deliver_parent(row, write, &session, Some(kind)).await
+        self.deliver_parent(row, write, prior, true).await
     }
 
     pub(super) async fn bind_acp(

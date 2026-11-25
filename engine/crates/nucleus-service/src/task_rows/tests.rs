@@ -54,8 +54,8 @@ struct Fixture {
     native: Arc<Mutex<NativeRow>>,
     binding: Binding,
     thread: String,
-    _home: tempfile::TempDir,
-    _server: NativeServer,
+    home: tempfile::TempDir,
+    server: tokio::task::JoinHandle<()>,
 }
 
 impl Fixture {
@@ -121,15 +121,15 @@ impl Fixture {
             }
         }).await;
         host.use_held_shell();
-        service.host = host;
+        service.host = super::super::tests::verified_native_fixture(host, home.path());
         service.fixture_mut().acp_provider = Some(PROVIDER.into());
         Self {
             service: Arc::new(service),
             native,
             binding,
             thread,
-            _home: home,
-            _server: NativeServer(server),
+            home,
+            server,
         }
     }
 
@@ -201,16 +201,17 @@ impl Fixture {
     }
 
     fn restart(&mut self) {
-        let service = Arc::get_mut(&mut self.service).unwrap();
+        let service = &self.service;
         let settings = service.settings.clone();
         let project = service.fixture().clone();
+        let callback = service.callback;
+        let report_command = service.report_command.clone();
         let offset = service
             .visibility_time_offset
             .load(std::sync::atomic::Ordering::Relaxed);
-        let host = std::mem::replace(
-            &mut service.host,
-            nucleus_hosts::T3::new("http://127.0.0.1:9", "unused-fixture-key").unwrap(),
-        );
+        let host = nucleus_hosts::T3::new(service.host.endpoint(), "fixture").unwrap();
+        let host = super::super::tests::verified_native_fixture(host, self.home.path());
+        host.use_held_shell();
         let placeholder = fixture(GitHub::new("fixture").unwrap());
         let old = std::mem::replace(&mut self.service, Arc::new(placeholder.1));
         drop(old);
@@ -220,8 +221,8 @@ impl Fixture {
                 project,
                 host,
                 GitHub::new("fixture").unwrap(),
-                "127.0.0.1:9".parse().unwrap(),
-                std::env::current_exe().unwrap(),
+                callback,
+                report_command,
             )
             .unwrap(),
         );
@@ -315,8 +316,45 @@ impl Fixture {
             .collect()
     }
 
+    async fn prepare_hold(&self, prompt: &str, prior: Option<&str>) -> ParentWrite {
+        let step = self
+            .service
+            .host
+            .prepare_parent(
+                &self.binding,
+                PROVIDER,
+                "Fixture",
+                prompt,
+                prior.map(|command| nucleus_hosts::ParentAttempt {
+                    command,
+                    released: false,
+                    replay_launch: false,
+                }),
+                std::future::pending(),
+            )
+            .await
+            .unwrap();
+        let nucleus_hosts::ParentStep::Write(write) = step else {
+            panic!("prepare a pinned parent hold")
+        };
+        write
+    }
+
+    async fn parent_record(&self, row: &TaskRow) -> nucleus_store::ParentDelivery {
+        let mut records = self
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .parent_deliveries(ID, row.version, None)
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        records.pop().unwrap()
+    }
+
     async fn assert_operator_snooze_receipt(&self, row: &TaskRow) {
-        for kind in ["native_turn_intent", "acp_row_refresh_intent"] {
+        for refresh in [false, true] {
             let write = self
                 .service
                 .host
@@ -326,7 +364,7 @@ impl Fixture {
                 .unwrap();
             let error = self
                 .service
-                .deliver_parent(row, write, "fixture", Some(kind))
+                .deliver_parent(row, write, None, refresh)
                 .await
                 .unwrap_err();
             assert!(matches!(error, ServiceError::ParentNotSent { .. }));
@@ -387,11 +425,9 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     );
 }
 
-struct NativeServer(tokio::task::JoinHandle<()>);
-
-impl Drop for NativeServer {
+impl Drop for Fixture {
     fn drop(&mut self) {
-        self.0.abort();
+        self.server.abort();
     }
 }
 
@@ -511,11 +547,10 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
         panic!("the bound shell can prepare a pinned hold");
     };
     let command = write.command_id().unwrap().to_owned();
-    let runtime = service.host.runtime_identity().unwrap();
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
     let error = service
-        .deliver_parent(&row, write, &runtime, Some("native_turn_intent"))
+        .deliver_parent(&row, write, None, false)
         .await
         .unwrap_err();
     assert!(matches!(error, ServiceError::OperatorSnoozed { .. }));
@@ -550,6 +585,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
             Some(nucleus_hosts::ParentAttempt {
                 command: &command,
                 released: false,
+                replay_launch: false,
             }),
             std::future::pending(),
         )
@@ -560,7 +596,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
     };
     assert_eq!(retry.command_id(), Some(command.as_str()));
     service
-        .deliver_parent(&row, retry, &runtime, Some("native_turn_intent"))
+        .deliver_parent(&row, retry, Some(fixture.parent_record(&row).await), false)
         .await
         .unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch"]);
@@ -568,24 +604,23 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
         fixture.native.lock().unwrap().commands[0]["commandId"],
         command
     );
-    let history = service.history(ID, None, 100).await.unwrap();
     assert_eq!(
-        history
-            .iter()
-            .filter(|event| event.content.kind == "native_turn_intent")
-            .count(),
-        1
+        fixture.parent_record(&row).await.result,
+        nucleus_store::ParentResult::Accepted
     );
     assert!(
-        history
+        service
+            .history(ID, None, 100)
+            .await
+            .unwrap()
             .iter()
-            .all(|event| event.content.kind != "native_turn_replay")
+            .all(|entry| !entry.content.kind.starts_with("native_turn_"))
     );
 }
 
 #[tokio::test]
 async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
-    let fixture = Fixture::new(&pending_task()).await;
+    let mut fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
@@ -596,69 +631,42 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
         service.lookup(&state, ID).unwrap()
     };
     fixture.publish_shell();
-    let prepare = |prompt, prior| {
-        service.host.prepare_parent(
-            &fixture.binding,
-            PROVIDER,
-            "Fixture",
-            prompt,
-            prior,
-            std::future::pending(),
-        )
-    };
-    let nucleus_hosts::ParentStep::Write(write) =
-        prepare("Original task prompt", None).await.unwrap()
-    else {
-        panic!("prepare a pinned parent hold");
-    };
+    let write = fixture.prepare_hold("Original task prompt", None).await;
     let command = write.command_id().unwrap().to_owned();
-    let session = service.host.runtime_identity().unwrap();
     fixture.native.lock().unwrap().fail_next = true;
     assert!(matches!(
-        service
-            .deliver_parent(&row, write, &session, Some("native_turn_intent"))
-            .await,
+        service.deliver_parent(&row, write, None, false).await,
         Err(ServiceError::ParentDeliveryUnknown(_))
     ));
+    fixture.restart();
+    let service = &fixture.service;
+    fixture.publish_shell();
     let reopened = nucleus_store::Store::open(&service.storage).unwrap();
-    let original = reopened
-        .task_turn_command(ID, "native_turn_intent", row.version, &session)
-        .unwrap()
-        .unwrap();
-    assert_eq!(original, command);
+    let original = due_frozen_delivery(&reopened, &row);
+    assert_eq!(original.command, command);
     let retry = || {
-        prepare(
+        fixture.prepare_hold(
             "A later render must not change the frozen prompt",
-            Some(nucleus_hosts::ParentAttempt {
-                command: &command,
-                released: false,
-            }),
+            Some(&command),
         )
     };
-    let nucleus_hosts::ParentStep::Write(refused) = retry().await.unwrap() else {
-        panic!("retry the known command after a lost reply");
-    };
+    let refused = retry().await;
     service
         .host
         .fixture_project_shell(&json!({"projects":[],"threads":[]}), PROVIDER);
     assert!(matches!(
         service
-            .deliver_parent(&row, refused, &session, Some("native_turn_intent"))
+            .deliver_parent(&row, refused, Some(original), false)
             .await,
         Err(ServiceError::ParentNotSent { .. })
     ));
     assert_eq!(fixture.commands().len(), 1);
-    assert!(matches!(
-        reopened.task_turn_attempt(ID, "native_turn_intent", row.version, &session, &command),
-        Ok(Some((_, false)))
-    ));
+    let original = due_frozen_delivery(&reopened, &row);
     fixture.publish_shell();
-    let nucleus_hosts::ParentStep::Write(write) = retry().await.unwrap() else {
-        panic!("retry the known command after a lost reply");
-    };
+    let write = retry().await;
     assert!(
         service
-            .deliver_parent(&row, write, &session, Some("native_turn_intent"))
+            .deliver_parent(&row, write, Some(original), false)
             .await
             .unwrap()
     );
@@ -667,19 +675,37 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
         assert_eq!(native.commands.len(), 2);
         assert_eq!(native.commands[0], native.commands[1]);
     }
-    let history = service.history(ID, None, 100).await.unwrap();
     assert_eq!(
-        history
-            .iter()
-            .filter(|event| event.content.kind == "native_turn_intent")
-            .count(),
-        1
+        fixture.parent_record(&row).await.result,
+        nucleus_store::ParentResult::Accepted
     );
     assert!(
-        history
+        service
+            .history(ID, None, 100)
+            .await
+            .unwrap()
             .iter()
-            .all(|event| event.content.kind != "native_turn_replay")
+            .all(|entry| !entry.content.kind.starts_with("native_turn_"))
     );
+}
+
+fn due_frozen_delivery(
+    store: &nucleus_store::Store,
+    row: &TaskRow,
+) -> nucleus_store::ParentDelivery {
+    use nucleus_store::ParentResult::Pending;
+    let mut original = store
+        .parent_deliveries(ID, row.version, None)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(original.result, Pending);
+    assert!(original.due_ms > 0);
+    store
+        .finish_parent_delivery(ID, row.version, &original, Pending, 0)
+        .unwrap();
+    original.due_ms = 0;
+    original
 }
 
 #[tokio::test]
@@ -744,25 +770,7 @@ async fn restart_preserves_a_prerequisite_snooze_before_the_first_dispatch_decis
     fixture.sync().await;
     let receipt = fixture.observed_snooze().await;
 
-    let prior = &fixture.service;
-    let host = nucleus_hosts::T3::new(prior.host.endpoint(), "fixture").unwrap();
-    host.use_held_shell();
-    let settings = prior.settings.clone();
-    let project = prior.fixture().clone();
-    let callback = prior.callback;
-    let report_command = prior.report_command.clone();
-    drop(fixture.service);
-    fixture.service = Arc::new(
-        Service::open(
-            &settings,
-            project,
-            host,
-            GitHub::new("fixture").unwrap(),
-            callback,
-            report_command,
-        )
-        .unwrap(),
-    );
+    fixture.restart();
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert!(fixture.sync().await.is_empty());
     let row = fixture.service.task(ID).await.unwrap();
@@ -1170,7 +1178,6 @@ async fn an_imminent_delivery_stays_visible_across_checking_and_sends_once() {
     let service = &fixture.service;
     let row = create_visibility_row(&fixture, &task).await;
     fixture.elapse_flip_interval();
-    let session = service.host.runtime_identity().unwrap();
     let prepare = || {
         service
             .host
@@ -1178,12 +1185,7 @@ async fn an_imminent_delivery_stays_visible_across_checking_and_sends_once() {
     };
     let fence = service.effect(&row).await.unwrap();
     let result = service
-        .deliver_parent(
-            &row,
-            prepare().await.unwrap().unwrap(),
-            &session,
-            Some("native_turn_intent"),
-        )
+        .deliver_parent(&row, prepare().await.unwrap().unwrap(), None, false)
         .await
         .map(|_| Action::Nothing);
     assert!(matches!(result, Err(ServiceError::ParentNotSent { .. })));
@@ -1236,12 +1238,7 @@ async fn an_imminent_delivery_stays_visible_across_checking_and_sends_once() {
 
     let _fence = service.effect(&row).await.unwrap();
     let sent = service
-        .deliver_parent(
-            &row,
-            prepare().await.unwrap().unwrap(),
-            &session,
-            Some("native_turn_intent"),
-        )
+        .deliver_parent(&row, prepare().await.unwrap().unwrap(), None, false)
         .await
         .unwrap();
     assert!(sent);
@@ -1258,7 +1255,6 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     let service = &fixture.service;
     let row = create_visibility_row(&fixture, &task).await;
     fixture.elapse_flip_interval();
-    let session = service.host.runtime_identity().unwrap();
     let prepare = || {
         service
             .host
@@ -1266,12 +1262,7 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     };
     let fence = service.effect(&row).await.unwrap();
     let result = service
-        .deliver_parent(
-            &row,
-            prepare().await.unwrap().unwrap(),
-            &session,
-            Some("native_turn_intent"),
-        )
+        .deliver_parent(&row, prepare().await.unwrap().unwrap(), None, false)
         .await;
     assert!(matches!(result, Err(ServiceError::ParentNotSent { .. })));
     fixture.publish_shell();
@@ -1279,7 +1270,7 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
     let refusal = service
-        .deliver_parent(&row, write, &session, Some("native_turn_intent"))
+        .deliver_parent(&row, write, None, false)
         .await
         .map(|_| Action::Nothing);
     assert!(matches!(refusal, Err(ServiceError::ParentNotSent { .. })));
@@ -1308,6 +1299,45 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     assert_eq!(
         fixture.commands(),
         ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+}
+
+#[tokio::test]
+async fn an_active_role_publishes_its_frozen_parent_prompt() {
+    let head: nucleus_core::Head = "1".repeat(40).parse().unwrap();
+    let (mut task, _, _) = reservation(ID, Entry::Brief, &head);
+    let launch = task.run().unwrap().launch().clone();
+    task.record_send(&launch.instance, 1).unwrap();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    fixture.child(&launch.thread, true);
+    fixture.native.lock().unwrap().child.as_mut().unwrap()["worktreePath"] =
+        json!(fixture.binding.worktree_path);
+    fixture.publish_shell();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, ID).unwrap()
+    };
+
+    let mut changes = service.changes();
+    let prompt = "Continue the active worker.";
+    let write = fixture.prepare_hold(prompt, None).await;
+    let _fence = service.effect(&row).await.unwrap();
+    assert!(
+        service
+            .deliver_parent(&row, write, None, false)
+            .await
+            .unwrap()
+    );
+    let change = changes.try_recv().unwrap();
+    assert_eq!(change.task_id, ID);
+    assert_eq!(change.version, row.version);
+    assert!(change.detail_only);
+    let state = service.state.lock().await;
+    assert_eq!(
+        service.acp_turn_view(&state, &row).unwrap(),
+        (Some(prompt.into()), false)
     );
 }
 

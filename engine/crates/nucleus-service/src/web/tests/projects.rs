@@ -917,13 +917,12 @@ async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
         .task(&tasks[0].identity().id)
         .await
         .expect("allocated task");
-    let runtime = service.host.runtime_identity().expect("fixture runtime");
     assert!(
         service
             .record_native_turn(
                 &parked,
                 "native_turn_failed",
-                &service.turn_failure_scope(&runtime),
+                "fixture/epoch",
                 "fixture-command",
             )
             .await
