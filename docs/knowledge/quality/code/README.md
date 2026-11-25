@@ -1,5 +1,9 @@
 # Code-module quality tables
 
+These dated tables rate the earlier TypeScript engine and board at the revisions
+listed below. They are retained for comparison. The Rust crates and the current
+browser board require their own assessment.
+
 - nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
   deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
   is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer
