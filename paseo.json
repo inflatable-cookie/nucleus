@@ -1,7 +1,6 @@
 {
   "worktree": {
-    "setup": "if command -v nucleus >/dev/null 2>&1; then nucleus worktree prepare; else echo \"Nucleus unavailable; skipping worktree prepare\"; fi && effigy setup && if command -v nucleus >/dev/null 2>&1; then nucleus worktree link; else echo \"Nucleus unavailable; skipping worktree link\"; fi",
-    "teardown": "if command -v nucleus >/dev/null 2>&1; then nucleus worktree unlink; else echo \"Nucleus unavailable; skipping worktree unlink\"; fi"
+    "setup": "effigy setup"
   },
   "scripts": {
     "qa": {
