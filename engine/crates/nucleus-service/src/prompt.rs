@@ -361,6 +361,9 @@ impl Prompt<'_> {
             text,
             "\nSend actual JSON on stdin to `{command}`. Exit status zero means accepted."
         );
+        if self.role == Role::Worker {
+            text.push_str("Stop any server or watcher you started before reporting.\n");
+        }
         if let Some(report) = report_only {
             self.write_report_only(text, report);
             return;
