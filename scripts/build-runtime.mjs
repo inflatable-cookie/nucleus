@@ -1,7 +1,4 @@
 import { copyNodeRuntime } from './copy-node-runtime.mjs';
-import { checkPackageBbPlugin } from './check-publication.mjs';
-import { findBbCli } from '../shared/bb-cli.mjs';
-import { buildBoard } from './bb/build-board.mjs';
 import { buildEngineBoard, buildWeb } from './build-web.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
@@ -30,45 +27,6 @@ function installedCommands(text) {
 }
 
 export { buildWeb };
-
-/**
- * Build this repository's BB plugin with BB's own build command and copy the result
- * into the Nucleus package under `bb-plugin/`, beside `paseo-plugin.json`.
- *
- * `bb plugin build` writes `hosts/bb/plugin/dist` (gitignored, so the tracked tree
- * stays clean). The package gets the built `dist/`, the plugin package manifest and
- * `nucleus-build.json`, which is the identity the plugin announces and the service
- * pins a connection to.
- *
- * The shared board is bundled first (`scripts/bb/build-board.mjs`, Spec 062 phase 6):
- * the plugin's `app.tsx` imports that generated module, and BB's build has no
- * react-native alias to produce it from the sources itself.
- *
- * The packaged manifest names the built bundles (`./dist/server.js`, `./dist/app.js`)
- * instead of the sources: BB's install validates that the entry files exist, and the
- * package ships no sources or `node_modules` to build them from.
- */
-export async function buildBbPlugin({ out, buildId, revision }) {
-  const pluginDir = join(root, 'hosts', 'bb', 'plugin');
-  const found = findBbCli();
-  if (!found.cli) {
-    throw Error(`The release build produces the BB plugin with bb plugin build, and no installed BB was found; looked for the bb command at ${found.tried.join(', ')}`);
-  }
-  // The board bundle is generated (gitignored) and `app.tsx` imports it; without it
-  // `bb plugin build` fails rather than shipping an app without the board.
-  await buildBoard();
-  execFileSync(found.cli, ['plugin', 'build', pluginDir], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  const packaged = join(out, 'bb-plugin');
-  await mkdir(packaged, { recursive: true });
-  await cp(join(pluginDir, 'dist'), join(packaged, 'dist'), { recursive: true });
-  const manifest = JSON.parse(await readFile(join(pluginDir, 'package.json'), 'utf8'));
-  manifest.bb = { ...manifest.bb, server: './dist/server.js', app: './dist/app.js' };
-  await writeFile(join(packaged, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
-  await writeFile(join(packaged, 'nucleus-build.json'), JSON.stringify({ buildId, revision }, null, 2) + '\n');
-  const findings = checkPackageBbPlugin(out, { buildId });
-  if (findings.length) throw Error(`The packaged BB plugin failed the publication check: ${findings.join('; ')}`);
-  return buildId;
-}
 
 export async function buildRuntime(destination) {
   if (process.versions.electron) throw Error('Runtime builds require standalone Node; Electron helpers cannot be packaged');
@@ -329,10 +287,6 @@ export async function buildRuntime(destination) {
   }
   await installSkillInstructions(join(out, 'skills'));
   await copyFile(join(root, 'hosts/paseo/plugin/paseo-plugin.json'), join(out, 'paseo-plugin.json'));
-  // Spec 062, phase 7: the release build produces the built BB plugin and ships it
-  // beside the Paseo plugin, with the Nucleus build identity it came from. The
-  // publication check below fails the build if any of it is missing.
-  const bbPluginBuildId = await buildBbPlugin({ out, buildId: identity.buildId, revision });
   await writeFile(join(out, 'index.server.ts'), "export { default } from './server/index.server.mjs';\n");
   await build({ absWorkingDir: root, entryPoints: ['index.client.tsx'], outfile: join(out, 'client/index.client.js'), bundle: true, platform: 'neutral', format: 'esm', external: ['react', 'react/*', 'react-native', 'react-native/*', 'zod', 'zod/*', '@tanstack/react-query', '@tanstack/react-query/*', '@getpaseo/plugin', '@getpaseo/plugin/*'] });
   await buildWeb(join(out, 'web/dist'));
@@ -343,7 +297,7 @@ export async function buildRuntime(destination) {
   let bytes = 0;
   async function size(dir) { for (const e of await readdir(dir, { withFileTypes: true })) { const p=join(dir,e.name); if(e.isDirectory()) await size(p); else bytes+=(await stat(p)).size; } }
   await size(out);
-  const receipt = { ...identity, bbPlugin: { directory: 'bb-plugin', buildId: bbPluginBuildId }, nodeLibraries, platform: process.platform, arch: process.arch, nodeVersion: process.version, bytes, buildMs: Math.round(performance.now() - started), entries: entries.map(outputPath) };
+  const receipt = { ...identity, nodeLibraries, platform: process.platform, arch: process.arch, nodeVersion: process.version, bytes, buildMs: Math.round(performance.now() - started), entries: entries.map(outputPath) };
   if (sourceState().trim() || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim() !== revision) throw Error('Sources changed during the build; discard this incomplete package');
   await writeFile(join(out, 'build.json'), JSON.stringify(receipt, null, 2)+'\n');
   const files = {};

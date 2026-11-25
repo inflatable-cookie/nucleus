@@ -1634,6 +1634,9 @@ layer and not on the isolated server, and the trial in Tom's own BB is his insta
 
 ### The operator install route (landed 2026-11-17)
 
+The packaging and install flow below is historical. The package stopped shipping
+BB under [Spec 070 ruling 5](070-small-engine.md#rulings).
+
 The plugin installed into the operator's own BB: it ships in the Nucleus package, one command installs it,
 and it is pinned to the service build it came from.
 
