@@ -15,6 +15,23 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 #[derive(Default)]
 pub(super) struct Enrollments(BTreeMap<String, Contact>);
 
+#[derive(Default)]
+struct EnrollmentTiming {
+    identity: Option<u64>,
+    checkout: Option<u64>,
+    saved: Option<u64>,
+    state_wait: Duration,
+}
+
+impl EnrollmentTiming {
+    async fn lock_state<'a>(&mut self, service: &'a Service) -> tokio::sync::MutexGuard<'a, State> {
+        let start = Instant::now();
+        let state = service.state.lock().await;
+        self.state_wait += start.elapsed();
+        state
+    }
+}
+
 enum Contact {
     Requested {
         finished: watch::Sender<()>,
@@ -459,16 +476,19 @@ impl Service {
         binding: Option<&PlannerBinding>,
         requested_ms: u64,
     ) -> Result<(), ServiceError> {
-        let mut identity_ms = None;
-        let result = self
-            .resolve_enrollment(actor, binding, &mut identity_ms)
-            .await;
+        let mut timing = EnrollmentTiming::default();
+        let result = self.resolve_enrollment(actor, binding, &mut timing).await;
         let outcome = result
             .as_ref()
             .map_or_else(|error| format!("failed: {error}"), |()| "bound".to_owned());
-        let identity_ms = identity_ms.map_or_else(|| "unresolved".to_owned(), |ms| ms.to_string());
+        let stamp =
+            |ms: Option<u64>| ms.map_or_else(|| "unresolved".to_owned(), |ms| ms.to_string());
         eprintln!(
-            "T3 planner enrollment for {actor:?}: requested_ms={requested_ms} identity_resolved_ms={identity_ms} finished_ms={} {outcome}",
+            "T3 planner enrollment for {actor:?}: requested_ms={requested_ms} identity_resolved_ms={} checkout_verified_ms={} binding_saved_ms={} state_lock_wait_ms={} finished_ms={} {outcome}",
+            stamp(timing.identity),
+            stamp(timing.checkout),
+            stamp(timing.saved),
+            timing.state_wait.as_millis(),
             crate::now_ms()
         );
         result
@@ -478,14 +498,14 @@ impl Service {
         &self,
         actor: &str,
         binding: Option<&PlannerBinding>,
-        identity_ms: &mut Option<u64>,
+        timing: &mut EnrollmentTiming,
     ) -> Result<(), ServiceError> {
         if !self.host.projects_synchronized() {
             return Err(ServiceError::PlannerEnrollmentUnavailable(
                 "The T3 project snapshot has not synchronized. Retry shortly.",
             ));
         }
-        let epoch = self.state.lock().await.planner_authority_epoch;
+        let epoch = timing.lock_state(self).await.planner_authority_epoch;
         let planner = self.host.planner_identity(actor).await.map_err(|error| {
             if binding.is_some() {
                 return ServiceError::Host(error);
@@ -494,7 +514,7 @@ impl Service {
                 "T3 could not prove the exact calling thread. Retry shortly.",
             )
         })?;
-        *identity_ms = Some(crate::now_ms());
+        timing.identity = Some(crate::now_ms());
         let refused = match planner.as_ref() {
             None => Some("The T3 planner thread is archived or gone."),
             Some(planner) if planner.is_child() => {
@@ -509,7 +529,7 @@ impl Service {
         };
         if let Some(reason) = refused {
             if let Some(binding) = binding {
-                self.revoke_planner(epoch, actor, binding).await?;
+                self.revoke_planner(epoch, actor, binding, timing).await?;
             }
             return Err(ServiceError::PlannerEnrollmentRefused(reason));
         }
@@ -546,12 +566,15 @@ impl Service {
                         "Nucleus could not inspect the registered Git checkout. Retry shortly.",
                     )
                 })??;
+        timing.checkout = Some(crate::now_ms());
         repository.host_project = Some(planner.project_id.clone());
         repository.host_project_title = registered.title.filter(|title| {
             !title.trim().is_empty() && title.len() <= 240 && !title.chars().any(char::is_control)
         });
-        self.save_enrollment(epoch, planner, repository, binding)
-            .await
+        self.save_enrollment(epoch, planner, repository, binding, timing)
+            .await?;
+        timing.saved = Some(crate::now_ms());
+        Ok(())
     }
 
     async fn save_enrollment(
@@ -560,9 +583,10 @@ impl Service {
         planner: PlannerIdentity,
         repository: RepositorySettings,
         binding: Option<&PlannerBinding>,
+        timing: &mut EnrollmentTiming,
     ) -> Result<(), ServiceError> {
         let _projects = self.project_writes.write().await;
-        let mut state = self.state.lock().await;
+        let mut state = timing.lock_state(self).await;
         if let Some(Contact::Checking {
             observed: Some(hint),
             ..
@@ -665,9 +689,10 @@ impl Service {
         epoch: u64,
         actor: &str,
         binding: &PlannerBinding,
+        timing: &mut EnrollmentTiming,
     ) -> Result<(), ServiceError> {
         let _projects = self.project_writes.write().await;
-        let mut state = self.state.lock().await;
+        let mut state = timing.lock_state(self).await;
         if state.planner_authority_epoch != epoch
             || state.planner_binding(actor).as_ref() != Some(binding)
             || matches!(
