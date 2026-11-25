@@ -12,7 +12,6 @@ const hostSdk = /^(?:@getpaseo\/|paseo-provenance-client(?:\/|$))/;
 export function area(path) {
   // This executable is a private service process, not a CLI transport client.
   if (['bin/host-run-private-server.mjs', 'bin/queue-service.mjs', 'bin/queue-host-run-supervisor.mjs', 'bin/queue-validation-supervisor.mjs', 'bin/queue-effigy-admission-hook.mjs'].includes(path)) return 'service';
-  if (path === 'index.server.ts') return 'plugin:paseo';
   if (path === 'index.client.tsx') return 'host-client:paseo';
   const host = path.match(/^hosts?\/([^/]+)\/(.*)$/);
   if (host) return `${host[2].startsWith('plugin/') ? 'plugin' : host[2].startsWith('client/') ? 'host-client' : 'host'}:${host[1]}`;
@@ -56,8 +55,6 @@ export function edgeRule(from, target, specifier) {
   if (!specifier.startsWith('.') && !specifier.startsWith('/')) return null; // platform/library dependency
   if (a === 'shared') return b === 'shared' ? null : 'shared-neutral';
   if (a === 'core') return b === 'core' || b === 'shared' ? null : 'core-neutral';
-  // Only the registration entry binds process actions; the forwarder cannot load them.
-  if (from === 'hosts/paseo/plugin/index.ts' && target === 'service/install/bridge-process-actions.ts') return null;
   if (a.startsWith('plugin:')) return b === 'shared' || a === b ? null : 'plugin-forwarder';
   if (a.startsWith('host:')) return b === 'shared' || a === b || /^core\/host\/index\.ts$/.test(target) ? null : 'host-interface';
   if (a.startsWith('host-client:')) return b === 'shared' || a === b || b === 'client' ? null : 'host-client';
@@ -69,7 +66,7 @@ export function edgeRule(from, target, specifier) {
   // host's public index instead of duplicating the nightly's wire client. No other
   // host, service or core module is in reach from `bin/`.
   if (from === 'bin/t3-install.ts' && target === 'hosts/t3code/index.ts') return null;
-  if (a === 'bin') return b === 'bin' || b === 'shared' || /^service\/transport\/(?:index|install|main-channel)\.(?:ts|mjs|js)$/.test(target) ? null : 'cli-transport';
+  if (a === 'bin') return b === 'bin' || b === 'shared' || /^service\/transport\/index\.(?:ts|mjs|js)$/.test(target) ? null : 'cli-transport';
   return null;
 }
 
@@ -85,7 +82,7 @@ export function folderViolations(root) {
     }
   }
   for (const dir of sourceRoots) walk(dir);
-  for (const path of ['index.server.ts', 'index.client.tsx', 'mcp-report.mjs']) if (existsSync(resolve(root, path))) paths.push(path);
+  for (const path of ['index.client.tsx', 'mcp-report.mjs']) if (existsSync(resolve(root, path))) paths.push(path);
   const violations = [];
   for (const from of paths) {
     for (const specifier of importEdges(from, readFileSync(resolve(root, from), 'utf8'))) {

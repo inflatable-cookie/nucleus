@@ -36,33 +36,9 @@ test("folder imports match the known violations; remove resolved edges, never ad
 test("folder rules cover processes, public host indexes and host SDK confinement", () => {
   for (const [from, to, specifier, expected] of [
     [
-      "hosts/paseo/plugin/index.ts",
-      "service/install/bridge-process-actions.ts",
-      "../../../server/service/bridge-process-actions",
-      null,
-    ],
-    [
-      "index.server.ts",
-      "service/install/bridge-process-actions.ts",
-      "./server/service/bridge-process-actions",
-      "plugin-forwarder",
-    ],
-    [
       "hosts/paseo/plugin/bridge.ts",
-      "service/install/bridge-process-actions.ts",
-      "./bridge-process-actions",
-      "plugin-forwarder",
-    ],
-    [
-      "hosts/paseo/plugin/other.ts",
-      "service/install/bridge-process-actions.ts",
-      "../../../server/service/bridge-process-actions",
-      "plugin-forwarder",
-    ],
-    [
-      "index.server.ts",
-      "server/service/install.mjs",
-      "./server/service/install.mjs",
+      "service/standalone.ts",
+      "../../../service/standalone",
       "plugin-forwarder",
     ],
     [
@@ -85,7 +61,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
     ],
     ["shared/rpc.ts", "core/store/index.ts", "../core/store", "shared-neutral"],
     [
-      "hosts/paseo/plugin/index.ts",
+      "hosts/paseo/plugin/bridge.ts",
       "core/store/index.ts",
       "../../../core/store",
       "plugin-forwarder",
@@ -127,7 +103,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       null,
     ],
     [
-      "service/install/install.mjs",
+      "service/standalone.ts",
       "hosts/paseo/index.mjs",
       "../../hosts/paseo/index.mjs",
       null,
