@@ -44,6 +44,7 @@ pub enum ReviewError {
 #[derive(Debug)]
 pub enum ReviewWrite {
     Verified(VerifiedReview),
+    Unauthenticated,
     AccessRefused,
     Refused,
     Unknown,
@@ -158,9 +159,10 @@ impl GitHub {
                 Ok(verified) if verified.body == body => ReviewWrite::Verified(verified),
                 _ => ReviewWrite::Unknown,
             },
-            Err(ForgeError::Status(
-                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND,
-            )) => ReviewWrite::AccessRefused,
+            Err(ForgeError::Status(StatusCode::UNAUTHORIZED)) => ReviewWrite::Unauthenticated,
+            Err(ForgeError::Status(StatusCode::FORBIDDEN | StatusCode::NOT_FOUND)) => {
+                ReviewWrite::AccessRefused
+            }
             Err(ForgeError::Status(StatusCode::UNPROCESSABLE_ENTITY)) => ReviewWrite::Refused,
             Err(_) => ReviewWrite::Unknown,
         }
@@ -202,7 +204,7 @@ impl GitHub {
         body: &str,
     ) -> Result<Option<VerifiedReview>, ReviewError> {
         let url = format!("{}/{}/reviews", self.origin, target.path());
-        let mut marked = false;
+        let mut foreign_marker = false;
         for page in 1..=MAX_PAGES {
             let response = self
                 .client
@@ -222,7 +224,7 @@ impl GitHub {
                 {
                     continue;
                 }
-                marked = true;
+                foreign_marker = true;
                 if review.user.as_ref().map(|user| user.id) == Some(binding.author) {
                     let verified = binding.verify(review)?;
                     if verified.body != body {
@@ -232,7 +234,7 @@ impl GitHub {
                 }
             }
             if last_page {
-                return if marked {
+                return if foreign_marker {
                     Err(ReviewError::Mismatched)
                 } else {
                     Ok(None)
