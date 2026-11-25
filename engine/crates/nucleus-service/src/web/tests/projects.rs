@@ -1165,7 +1165,8 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
             json!({}),
         )
     };
-    let (created, ()) = tokio::join!(biased; promote(), registry.finish_requested("alpha-planner"));
+    registry.enroll("alpha-planner").await;
+    let created = promote().await;
     let status = created.status();
     let task = json_body(created).await;
     assert_eq!(status, StatusCode::CREATED, "{task}");
