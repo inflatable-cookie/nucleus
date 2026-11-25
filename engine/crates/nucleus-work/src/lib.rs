@@ -2,6 +2,8 @@
 
 use std::{
     fs,
+    io::{ErrorKind, Read, Write},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -10,11 +12,16 @@ use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy, Worktre
 use longhorn_redact::Redactor;
 use nucleus_core::{Head, InvalidHead, Workspace};
 use nucleus_store::{EngineStorage, StorageDirectory, StorageError};
+use rustix::fs::{CWD, Mode, OFlags, RenameFlags, open, renameat_with};
 use sha2::{Digest, Sha256};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 // TypeScript gitBulk uses GIT_SLOW_TIMEOUT_MS for linked worktree creation.
 const WORKTREE_TIMEOUT: Duration = Duration::from_mins(10);
+const QUARANTINE: &str = "quarantine";
+const QUARANTINE_MARKER: &str = ".nucleus-quarantine";
+const QUARANTINE_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const QUARANTINE_REF: &str = "--format=%(refname)%00%(objectname)%00%(symref)%00%(worktreepath)";
 // Keep Git's bounded command runner without collecting one filename per entry.
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
 // which confirms that the whole scan completed successfully.
@@ -37,6 +44,10 @@ pub enum WorkError {
     MissingIndex,
     #[error("the task checkout is missing")]
     MissingCheckout,
+    #[error("a previous quarantine still needs its checkout or branch checked")]
+    QuarantinePending,
+    #[error("could not rename the checkout into quarantine: {0}")]
+    QuarantineMove(#[source] std::io::Error),
     #[error("the task branch already exists at another head")]
     WrongBranchHead,
     #[error("worktree path is not usable with Git")]
@@ -77,6 +88,7 @@ pub enum Retirement {
 
 pub struct Worktrees<'a> {
     root: StorageDirectory,
+    scratch: StorageDirectory,
     git: Git<'a>,
 }
 
@@ -85,6 +97,65 @@ pub struct Checkout<'a> {
     repository: PathBuf,
     path: PathBuf,
     branch: String,
+}
+
+fn quarantine_stamp(name: &str, directory: &fs::Metadata) -> String {
+    format!(
+        "nucleus checkout quarantine {name} {}:{}\n",
+        directory.dev(),
+        directory.ino()
+    )
+}
+
+fn owns_quarantine(marker: &Path, expected: &str) -> bool {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let Ok(file) = open(marker, flags, Mode::empty()).map(fs::File::from) else {
+        return false;
+    };
+    let Ok(info) = file.metadata() else {
+        return false;
+    };
+    let mut stamp = Vec::new();
+    info.is_file()
+        && info.len() == expected.len() as u64
+        && file.take(info.len() + 1).read_to_end(&mut stamp).is_ok()
+        && stamp == expected.as_bytes()
+}
+
+/// Expire owned checkout quarantines after seven days on the configured scratch volume.
+///
+/// # Errors
+/// Returns an error if the root or a verified removal cannot be completed.
+pub fn prune_quarantines(scratch: &StorageDirectory, now_ms: u64) -> Result<(), WorkError> {
+    let root = scratch.path().join(QUARANTINE);
+    if missing(&root)? {
+        return Ok(());
+    }
+    scratch.verify()?;
+    let device = scratch.path().metadata()?.dev();
+    let root_info = root.symlink_metadata()?;
+    if !root_info.is_dir() || root_info.dev() != device {
+        return Err(WorkError::WrongCheckout);
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if let Some(name) = name.to_str()
+            && let Some((_, at)) = name.rsplit_once('-')
+            && let Ok(at) = at.parse::<u64>()
+            && now_ms.saturating_sub(at) > QUARANTINE_RETENTION_MS
+            && let Ok(info) = entry.metadata()
+            && info.is_dir()
+            && info.dev() == device
+            && owns_quarantine(
+                &entry.path().join(QUARANTINE_MARKER),
+                &quarantine_stamp(name, &info),
+            )
+        {
+            fs::remove_dir_all(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Derive the path used for a task checkout without opening the filesystem.
@@ -108,6 +179,7 @@ impl<'a> Worktrees<'a> {
         root.ensure()?;
         Ok(Self {
             root,
+            scratch: storage.scratch().clone(),
             git: Git::new(policy, redactor),
         })
     }
@@ -233,14 +305,24 @@ impl Checkout<'_> {
         self.observe()
     }
 
-    /// Remove a verified interrupted initialization and its observed branch tip.
+    /// Quarantine an interrupted initialization and retire its observed branch tip.
     /// The caller holds the task fence and verifies that no role has been sent.
     ///
     /// # Errors
     /// Returns an error if the registration, initialization marker, index or
-    /// branch has changed, or if Git refuses to remove the checkout or branch.
-    pub fn remove_initialization(&self) -> Result<(), WorkError> {
+    /// branch has changed, or if the original directory cannot be renamed.
+    pub fn quarantine_initialization(&self, time_ms: u64) -> Result<(), WorkError> {
         self.worktrees.root.verify()?;
+        self.worktrees.scratch.ensure_child(Path::new(QUARANTINE))?;
+        let root = self.worktrees.scratch.path().join(QUARANTINE);
+        let pending = root.join(format!(".{}.pending", self.branch));
+        if !missing(&pending)? {
+            return Err(WorkError::QuarantinePending);
+        }
+        let metadata = self.path.symlink_metadata()?;
+        if !metadata.is_dir() || self.path.canonicalize()? != self.path {
+            return Err(WorkError::WrongCheckout);
+        }
         let identity = self.owned_identity()?;
         let admin = self.admin_directory(&identity)?;
         let backlink = fs::read_to_string(admin.join("gitdir"))?;
@@ -250,12 +332,35 @@ impl Checkout<'_> {
         {
             return Err(WorkError::WrongCheckout);
         }
+
+        let name = format!("{}-{time_ms}", &self.branch["ns-".len()..]);
+        let destination = root.join(&name);
+        let mut marker = fs::File::create_new(&pending)?;
+        marker.write_all(quarantine_stamp(&name, &metadata).as_bytes())?;
+        marker.sync_all()?;
+        if let Err(error) =
+            renameat_with(CWD, &self.path, CWD, &destination, RenameFlags::NOREPLACE)
+        {
+            let _ = fs::remove_file(&pending);
+            return Err(WorkError::QuarantineMove(error.into()));
+        }
+        fs::hard_link(&pending, destination.join(QUARANTINE_MARKER))?;
+        if !missing(&self.path)? {
+            return Err(WorkError::WrongCheckout);
+        }
+        // The task fence excludes allocation. Git validates the named registration.
         self.remove(&["--force", "--force"])?;
         let branch = format!("refs/heads/{}", self.branch);
-        self.git(
-            &self.repository,
-            &["update-ref", "-d", &branch, identity.head_oid()],
-        )?;
+        let head = identity.head_oid();
+        let found = self.git(&self.repository, &["for-each-ref", QUARANTINE_REF, &branch])?;
+        if !found.is_empty() {
+            if found != format!("{branch}\0{head}\0\0") {
+                return Err(WorkError::WrongBranchHead);
+            }
+            let delete = ["update-ref", "--no-deref", "-d", &branch, head];
+            self.git(&self.repository, &delete)?;
+        }
+        fs::remove_file(pending)?;
         Ok(())
     }
 
@@ -440,7 +545,7 @@ impl Checkout<'_> {
 fn missing(path: &Path) -> Result<bool, WorkError> {
     match path.symlink_metadata() {
         Ok(_) => Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
         Err(error) => Err(error.into()),
     }
 }

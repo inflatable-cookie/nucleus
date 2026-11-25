@@ -107,10 +107,10 @@ updates and exits.
 ### Orphan worktree after a timed-out create
 
 Use exact checkout and branch evidence before adopting or repairing a partial
-create. Before a role starts, the engine can recover partially initialized
-owned Git state under the task fence. Compare the branch with the observed
-head before removal and allocate from the verified start. Workspace observation
-errors receive the bounded recheck in [Spec 070 ruling 37](../specs/070-small-engine.md#rulings).
+create. Before any role is sent, the engine can quarantine a partially
+initialized checkout under the task fence and allocate from the verified
+start. Workspace observation errors receive the bounded recheck in
+[Spec 070 ruling 37](../specs/070-small-engine.md#rulings).
 After the owner fixes a persistent failure, a hold and release can recheck the
 checkout. See the [worktree implementation](../../../engine/crates/nucleus-work/src/lib.rs).
 
