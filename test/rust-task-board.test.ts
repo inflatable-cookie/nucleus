@@ -1570,9 +1570,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   decisionQuestion = "Decision detail after reconnect";
   resumeEvents();
   reconnectGate = undefined;
-  await eventually(() => Boolean(channel("connected")) &&
+  await eventually(() => Boolean(channel("connected")) && recordTimers.size === 0 &&
     selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
-    "stream reconnection refreshes the open decision");
+    "stream reconnection refreshes the open decision and stops its fallback timer");
   assert.equal(count(decisionRoute) - beforeRecovery, 2);
 
   const afterRecovery = count(decisionRoute);
