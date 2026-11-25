@@ -688,8 +688,7 @@ Milestone 4 removes the remaining TypeScript transition paths:
 
 - The per-repository pilot manifest compatibility and the TypeScript admission
   selector. The global no-new-work switch covers the drain.
-- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim now
-  forwards every call to the Rust engine.
+- The TypeScript archive command and ACP launcher. See [Milestone 4](../docs/knowledge/specs/070-small-engine.md#migration).
 - The TypeScript Inbox bridge and board proxy.
 - The TypeScript Settings screens and their RPC wiring. The Rust-backed
   Settings screens become the only Settings surface.

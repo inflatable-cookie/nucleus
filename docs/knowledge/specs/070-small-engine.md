@@ -780,7 +780,11 @@ production Rust delta.
      archived checkout and a Paseo-only setup that requires a private sibling source. Rust tasks allocate Git checkouts.
      Repositories use Effigy's pinned source declarations for sibling dependencies (ruling 33);
    - retiring the TypeScript decision bridge and importers;
-   - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated");
+   - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated")
+     and the disabled TypeScript `nucleus-acp` launcher. The read-only
+     TypeScript database backup stays on disk. The old ACP entrypoint stops
+     starting the TypeScript service and roll owner. The Rust T3 provider and its
+     `nucleus-rust-acp` launcher stay installed;
    - deletion in batches of at most three modules;
    - the documentation rewrite.
 

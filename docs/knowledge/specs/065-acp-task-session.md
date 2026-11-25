@@ -298,9 +298,9 @@ service unreachable at session/new, the refusal codes, a closed stdin, and the l
 missing-binding answer.
 
 `shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`
-reads the environment and launches it; `bin/nucleus-acp.mjs` is the installed
-command, written to `~/.local/bin/nucleus-acp` by the installer as the absolute
-command path an ACP client registers.
+reads the environment and launches it. The legacy TypeScript ACP script
+serves isolated fixtures. See [Spec 070](070-small-engine.md) for the installed
+Rust provider and its startup contract.
 
 The agent tests also cover the hold rule: a re-entry prompt shows nothing, forwards
 nothing, holds the turn until the service releases it, and leaves the operator's

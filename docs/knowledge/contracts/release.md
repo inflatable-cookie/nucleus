@@ -22,8 +22,7 @@ rolling and `nucleus link` are retired (Tom, 2026-11-09).
 
 The roll owner (`service/roll/owner.ts`) checks the configured main channel every
 30 seconds and on an own-repository sync hint. It is a separate detached process,
-not a host: a local T3Code launch (`bin/nucleus-acp.mjs`) starts it, and a Paseo
-bridge that is present starts it too (nucleus#1454). One owner per data home holds
+started by the legacy Paseo bridge. One owner per data home holds
 the `queue-roll-owner.json` heartbeat; a second starter reports it running and
 starts nothing, so there is one fetch, build and activation loop. The owner builds
 the observed main revision while waiting 60 seconds after the latest change.

@@ -1,0 +1,1 @@
+Retire the TypeScript archive command and ACP launcher after migration. The old ACP entrypoint can no longer start the TypeScript service. The read-only database backup stays available, and T3 continues to use the Rust launcher.

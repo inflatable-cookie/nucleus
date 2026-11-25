@@ -97,9 +97,9 @@ owner to the rules it enforces.
   client, `entry.ts` the environment and launch, `surface.ts` the interface the
   engine holds. The service half is core: `binding.ts` mints and verifies,
   `sessions.ts` serves the hold, release and lifecycle API on the callback socket,
-  and `lifecycle.ts` owns the one line a session shows. `bin/nucleus-acp.mjs` is
-  the installed command an ACP-capable app registers as a provider; the runtime
-  attaches the surface once the callback socket it names is served.
+  and `lifecycle.ts` owns the one line a session shows. The legacy ACP
+  script serves isolated fixtures. The Rust provider is the installed ACP
+  entrypoint under [Spec 070](specs/070-small-engine.md).
 - `service/runtime-owner.ts` owns the process lease, store, daemon adapter,
   callbacks, pre-insertion policy validation and reconciliation, with bounded
   construct, start, health and drain phases so an unreachable Paseo SDK never

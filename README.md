@@ -147,29 +147,16 @@ T3Code owns subscription usage display through its own features and plugins;
 Nucleus adds no subscription usage gauge. Its usage level remains a Nucleus
 dispatch setting, separate from monitoring provider subscription windows.
 
-On T3Code a task is one thread on the Nucleus ACP provider, and its worker,
-reviewer, recovery, coordinator and executor threads are that thread's native
-subagent children: T3 draws them inside the parent's card, so one row per task is
-what you see with no setting to turn on. The parent has no model. It shows the
+On T3Code a task is one thread on the Nucleus ACP provider. Its worker and
+reviewer are native subagent children. T3 draws them inside the parent's card,
+so each task has one row. The parent has no model. It shows the
 task's lifecycle text and holds its turn while a role runs, so the row reads as
 working exactly when the task is.
 
-That needs the Nucleus ACP provider registered in T3 once, and one command does
-it:
-
-```sh
-nucleus t3 install   # find the running T3Code, connect, register the provider
-nucleus t3 status    # what the server, bearer, provider and projects report
-nucleus t3 uninstall # remove the provider and this environment's sessions
-```
-
-`install` mints a scoped bearer for the service and registers the installed
-`nucleus-acp` command as an ACP provider named `nucleus` through T3's own
-settings route, only touching that one instance. Nucleus checks for it at connect
-and before every launch and reports the answer as `service.health`'s
-`t3code.nativeParenting` line. Without it, a role cannot be created as a child:
-the task waits visibly with that reason and the `nucleus t3 install` fix, and no
-top-level thread is launched in its place.
+Set up the Rust ACP provider with `nucleus t3 install`. The engine registers
+`nucleus-rust` and keeps its ACP launcher under the engine home. Check the
+registration with `nucleus t3 status`. See the [T3 setup guide](engine/README.md#set-up-t3)
+for connection and credential setup.
 
 The task's row is snoozed while the task waits on nothing Nucleus is running and
 needs no one — a hold with a release condition, a prerequisite wait, capacity —
