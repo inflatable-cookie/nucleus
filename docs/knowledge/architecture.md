@@ -66,10 +66,8 @@ owner to the rules it enforces.
   store revision; terminal history is read only by detail and telemetry.
 - Board components reach the host only through `client/shell/` (data calls,
   the workspace, icons, navigation, composer pills, agent inventory).
-  `hosts/paseo/client/shell.tsx` is the one Paseo binding, with `index.client.tsx`
-  the thin root entry forwarding to the host client index;
-  `test/shell-boundary.test.ts` enforces it. A web shell binds the same
-  interface at `client/shell/index.ts` (vision, "The UI for other hosts").
+  The browser shell in `client/web/shell.tsx` implements that interface.
+  `test/shell-boundary.test.ts` checks the shared import boundary.
 - Every popover (help tips, dropdown menus, button and card status
   tips) renders through `client/popover.tsx` into one overlay layer, a
   `PopoverHost` at the root of the Settings screen and of the board, positioned

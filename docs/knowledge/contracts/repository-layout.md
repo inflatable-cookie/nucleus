@@ -65,7 +65,6 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `hosts/paseo/adapter/` | SDK adapter, asks, messages, questions, workspace and workspace-id mapping. | Paseo, service process |
 | `hosts/paseo/vocabulary.ts` | Paseo's translation table from the canonical profile vocabulary. | Paseo, service process |
 | `hosts/paseo/plugin/` | Public plugin-backend index, registration, bridge and manifest source. | Paseo plugin process |
-| `hosts/paseo/client/` | Public client index, contribution registration and shell implementation. | Paseo browser/native UI |
 | `hosts/t3code/` | Public service index, native thread adapter, minimal RPC client, durable intent state and the profile vocabulary table. | T3Code, service process |
 | `client/` | Host-neutral board UI, controls, settings and planning surfaces. | Neutral, browser/native UI |
 | `client/board/` | Board cards, pipeline, header and data subscriptions. | Neutral |
@@ -180,8 +179,7 @@ transport helpers must be classified explicitly while their old paths remain.
 The active executable is the Rust engine. Its browser entry is
 `client/web/engine-index.tsx`, and [engine staging](../../../engine/README.md#stage-an-engine-release)
 builds the executable and board assets together. The source root still carries
-the archived TypeScript client entry `index.client.tsx` and the report wrapper
-`mcp-report.mjs`. The historical compiled package layout is recorded in the
+the report wrapper `mcp-report.mjs`. The historical compiled package layout is recorded in the
 [release contract](release.md#historical-typescript-runtime-package).
 
 `core/store/` now owns store persistence, schema, projections, sibling storage and
