@@ -630,7 +630,7 @@ fn identity() -> Result<StorageIdentity, StorageError> {
     StorageIdentity::new(APP_ID).map_err(|_| StorageError::Layout)
 }
 
-fn default_home() -> Result<PathBuf, StorageError> {
+pub(crate) fn default_home() -> Result<PathBuf, StorageError> {
     std::env::home_dir()
         .filter(|home| home.is_absolute())
         .map(|home| home.join(".nucleus/engine"))

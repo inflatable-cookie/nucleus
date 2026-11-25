@@ -220,6 +220,7 @@ pub struct Service {
     title_wake: Notify,
     enrollment_wake: Notify,
     housekeeping_wake: Notify,
+    backup_failed: std::sync::atomic::AtomicBool,
     tell_wake: Notify,
     #[cfg(test)]
     visibility_time: AtomicU64,
@@ -464,6 +465,7 @@ impl Service {
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
             housekeeping_wake: Notify::new(),
+            backup_failed: std::sync::atomic::AtomicBool::default(),
             tell_wake: Notify::new(),
             #[cfg(test)]
             visibility_time: AtomicU64::new(0),
@@ -923,9 +925,38 @@ impl Service {
     }
 
     async fn watch_housekeeping(&self) {
+        let mut backup_due = Instant::now();
         loop {
             self.housekeeping_wake.notified().await;
-            if let Err(error) = self.prune_archived_threads().await {
+            let backup = async {
+                if Instant::now() < backup_due {
+                    return;
+                }
+                let home = self.storage.home().to_owned();
+                let database = self.storage.database().clone();
+                let isolated = self.storage.backup().clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let root = EngineStorage::scheduled_directory(&home, &isolated)?;
+                    Store::scheduled_backup(&database, &root, now_ms())
+                })
+                .await;
+                let failed = match result {
+                    Ok(Ok(())) => false,
+                    Ok(Err(error)) => {
+                        eprintln!("scheduled database backup: {error}");
+                        true
+                    }
+                    Err(error) => {
+                        eprintln!("scheduled database backup worker: {error}");
+                        true
+                    }
+                };
+                self.backup_failed.store(failed, Ordering::Release);
+                self.storage_changes.send_replace(());
+                backup_due = Instant::now() + Duration::from_hours(1);
+            };
+            let (pruned, ()) = tokio::join!(self.prune_archived_threads(), backup);
+            if let Err(error) = pruned {
                 eprintln!("archived thread housekeeping: {error}");
             }
         }

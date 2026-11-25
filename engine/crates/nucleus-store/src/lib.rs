@@ -1,6 +1,7 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod allowance;
+mod backups;
 mod barge;
 mod board_state;
 pub use board_state::BoardTimes;
@@ -334,14 +335,43 @@ impl Store {
         directory: &StorageDirectory,
         version: i32,
     ) -> Result<(), StoreError> {
+        let backup = Self::verified_copy(
+            path,
+            directory,
+            version,
+            &format!(".engine-before-v{version}-"),
+            "quick_check",
+        )?;
+        let name = backup.path().file_name().and_then(|name| name.to_str());
+        let published = directory.path().join(
+            name.and_then(|name| name.strip_prefix('.'))
+                .ok_or(StoreError::UpgradeBackup)?,
+        );
+        backup
+            .persist_noclobber(published)
+            .map_err(|error| StorageError::from(error.error))?;
+        std::fs::File::open(directory.path())
+            .and_then(|root| root.sync_all())
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn verified_copy(
+        path: &Path,
+        directory: &StorageDirectory,
+        version: i32,
+        prefix: &str,
+        check: &str,
+    ) -> Result<tempfile::NamedTempFile, StoreError> {
         directory.ensure()?;
         let backup = tempfile::Builder::new()
-            .prefix(&format!(".engine-before-v{version}-"))
+            .prefix(prefix)
             .suffix(".sqlite")
             .tempfile_in(directory.path())
             .map_err(StorageError::from)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW;
         let source = Connection::open_with_flags(path, flags)?;
+        source.execute_batch("BEGIN")?;
         {
             let mut output = Connection::open_with_flags(
                 backup.path(),
@@ -358,23 +388,12 @@ impl Store {
         if copy.pragma_query_value(None, "application_id", |row| row.get::<_, i32>(0))?
             != APPLICATION_ID
             || copy.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))? != version
-            || copy.pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0))? != "ok"
+            || copy.pragma_query_value(None, check, |row| row.get::<_, String>(0))? != "ok"
         {
             return Err(StoreError::UpgradeBackup);
         }
         backup.as_file().sync_all().map_err(StorageError::from)?;
-        let name = backup.path().file_name().and_then(|name| name.to_str());
-        let published = directory.path().join(
-            name.and_then(|name| name.strip_prefix('.'))
-                .ok_or(StoreError::UpgradeBackup)?,
-        );
-        backup
-            .persist_noclobber(published)
-            .map_err(|error| StorageError::from(error.error))?;
-        std::fs::File::open(directory.path())
-            .and_then(|root| root.sync_all())
-            .map_err(StorageError::from)?;
-        Ok(())
+        Ok(backup)
     }
 
     // Rebuild with the expanded phase constraint. Foreign keys are checked
