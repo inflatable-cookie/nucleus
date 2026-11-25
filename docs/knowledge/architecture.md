@@ -87,6 +87,8 @@ owner to the rules it enforces.
 
 ### Runtime and store
 
+The TypeScript engine and its runtime are retired. This section records their former ownership. The active runtime is documented in the [Rust engine guide](../../engine/README.md).
+
 - `shared/acp/` and `core/acp/` are the host-agnostic ACP task session
   ([Spec 065](specs/065-acp-task-session.md)). The neutral half is shared, because
   a launched agent holds no store: `agent.ts` the stdio protocol with no model,

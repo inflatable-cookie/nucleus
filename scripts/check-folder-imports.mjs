@@ -10,8 +10,6 @@ const hostSdk = /^(?:@getpaseo\/|paseo-provenance-client(?:\/|$))/;
 // Legacy locations are classified by responsibility, so moving a file does not
 // silently exempt its imports. Exact offending edges live in the ratchet file.
 export function area(path) {
-  // This executable is a private service process, not a CLI transport client.
-  if (['bin/queue-validation-supervisor.mjs'].includes(path)) return 'service';
   const host = path.match(/^hosts?\/([^/]+)\/(.*)$/);
   if (host) return `${host[2].startsWith('plugin/') ? 'plugin' : host[2].startsWith('client/') ? 'host-client' : 'host'}:${host[1]}`;
   if (path.startsWith('server/service/') || path.startsWith('service/')) return 'service';
@@ -55,7 +53,7 @@ export function edgeRule(from, target, specifier) {
   if (a === 'shared') return b === 'shared' ? null : 'shared-neutral';
   if (a === 'core') return b === 'core' || b === 'shared' ? null : 'core-neutral';
   if (a.startsWith('plugin:')) return b === 'shared' || a === b ? null : 'plugin-forwarder';
-  if (a.startsWith('host:')) return b === 'shared' || a === b || /^core\/host\/index\.ts$/.test(target) ? null : 'host-interface';
+  if (a.startsWith('host:')) return b === 'shared' || a === b ? null : 'host-interface';
   if (a.startsWith('host-client:')) return b === 'shared' || a === b || b === 'client' ? null : 'host-client';
   if (a === 'client') return b === 'shared' || b === 'client' ? null : 'client-neutral';
   if (a === 'service') return b.startsWith('host:') && !/^hosts?\/[^/]+\/index\.(?:ts|mjs)$/.test(target) ? 'host-public-index' : b.startsWith('plugin:') || b.startsWith('host-client:') || b === 'client' ? 'service-process' : null;

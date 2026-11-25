@@ -20,6 +20,8 @@ lives in shared code so Git does not load the service.
 
 ## Target runtime layout
 
+The TypeScript core and service rows record the retired engine. The board still uses the shared and browser modules. The [Rust engine guide](../../../engine/README.md) owns the current service layout.
+
 `core/` is host-neutral code running in the service process. `service/` is the
 standalone process's composition and transport layer. `hosts/` owns each app's
 integration, with separate entries for service, plugin backend and browser code.

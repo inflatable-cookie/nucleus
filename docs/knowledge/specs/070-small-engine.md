@@ -785,7 +785,9 @@ production Rust delta.
      TypeScript database backup stays on disk. The old ACP entrypoint stops
      starting the TypeScript service and roll owner. The Rust T3 provider and its
      `nucleus-rust-acp` launcher stay installed;
-   - deletion in batches of at most three modules;
+   - deletion in batches of at most three modules. The retired Engine dependency cycle
+     uses one review after its external imports and board inputs clear. Each commit
+     builds the shipped board, and the complete deletion passes typecheck and affected tests;
    - the documentation rewrite.
 
 A task never moves between engines.
