@@ -10,6 +10,8 @@ axum = "0.8.9"
 futures-util = "0.3"
 getrandom = "0.3"
 hex = "0.4"
+longhorn-core.workspace = true
+longhorn-credential-keyring.workspace = true
 longhorn-git-workspace.workspace = true
 longhorn-redact.workspace = true
 nucleus-core = { path = "../nucleus-core" }
@@ -17,7 +19,9 @@ nucleus-forge = { path = "../nucleus-forge" }
 nucleus-hosts = { path = "../nucleus-hosts" }
 nucleus-store = { path = "../nucleus-store" }
 nucleus-work = { path = "../nucleus-work" }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 rustix = { version = "1", features = ["fs", "process"] }
+secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -28,6 +32,7 @@ toml = "0.9"
 tokio = { version = "1", features = ["macros", "process", "sync", "time"] }
 
 [dev-dependencies]
+longhorn-git-workspace = { workspace = true, features = ["fixture-server"] }
 axum = { version = "0.8.9", features = ["ws"] }
 nucleus-forge = { path = "../nucleus-forge", features = ["loopback-fixture"] }
 nucleus-hosts = { path = "../nucleus-hosts", features = ["loopback-fixture"] }

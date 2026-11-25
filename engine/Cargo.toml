@@ -18,6 +18,7 @@ publish = false
 
 [workspace.dependencies]
 longhorn-config = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.6.0" }
+longhorn-credential-keyring = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.6.0" }
 longhorn-core = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.6.0" }
 longhorn-git-workspace = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.6.0" }
 longhorn-redact = { git = "https://github.com/inflatable-cookie/longhorn.git", tag = "v0.6.0" }
