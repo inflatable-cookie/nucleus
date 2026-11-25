@@ -2,10 +2,9 @@
 
 use std::{path::Path, time::Duration};
 
-use nucleus_core::{Role, RunState, Task, WaitReason};
+use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
-    ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
-    SendOutcome,
+    ParentSendError, ParentWrite, RowChange, RowObservation, RowVisibility, SendOutcome,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -32,20 +31,19 @@ fn plan_row(
     visibility: RowVisibility,
     receipt: Option<RowSnooze>,
     now: u64,
-    children: RowChildren,
+    message_at: Option<u64>,
 ) -> Plan {
-    if visibility.settled && children != RowChildren::Active {
+    if visibility.settled {
         return Plan::Idle(None);
     }
-    let attention = if children == RowChildren::Active {
-        TaskAttention::Active
-    } else {
-        attention
-    };
     let shown = visibility.snoozed_until_ms;
-    let cleared = receipt
-        .as_ref()
-        .is_some_and(|receipt| clear_observed(receipt, shown));
+    let cleared = receipt.as_ref().is_some_and(|prior| {
+        // A later message clears the snooze even when the shell missed its horizon.
+        clear_observed(prior, shown)
+            || shown.is_none()
+                && message_at
+                    .is_some_and(|at| at > prior.until_ms.saturating_sub(HORIZON_MS) && at <= now)
+    });
     if cleared && attention != TaskAttention::Waiting {
         return Plan::Forget;
     }
@@ -99,9 +97,6 @@ fn plan_row(
         {
             return Plan::Idle(Some(until - RENEW_BEFORE_MS + 1));
         }
-    }
-    if children != RowChildren::Quiet {
-        return Plan::Idle(None);
     }
     let until = now + HORIZON_MS;
     let episode = receipt
@@ -241,12 +236,17 @@ impl Service {
         let (row, prior, plan, attention) = {
             let state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            let children = self.host.row_children(thread, &visibility_roles(&row.task));
-            let Some(attention) = row_attention_for_effect(&state, &row, children)? else {
+            let Some(attention) = row_attention_for_effect(&state, &row)? else {
                 return Ok(None);
             };
             let prior = state.store.row_snooze(id, thread)?;
-            let plan = plan_row(attention, visibility, prior.clone(), now, children);
+            let plan = plan_row(
+                attention,
+                visibility,
+                prior.clone(),
+                now,
+                self.host.row_message_at(thread),
+            );
             (row, prior, plan, attention)
         };
         if let Plan::Idle(deadline) = plan {
@@ -278,8 +278,7 @@ impl Service {
         };
         let (change, receipt) = {
             let mut state = self.state.lock().await;
-            let children = self.host.row_children(thread, &visibility_roles(&row.task));
-            if row_attention_for_effect(&state, &row, children)? != Some(attention) {
+            if row_attention_for_effect(&state, &row)? != Some(attention) {
                 return Ok(retry);
             }
             match plan {
@@ -304,19 +303,15 @@ impl Service {
                 }
             }
         };
-        let roles = visibility_roles(task);
         let command = snooze_command(id, thread, change, &receipt);
         let result = self
             .host
-            .write_row_visibility(&binding, &command, change, Some(&target), &roles, None)
+            .write_row_visibility(&binding, &command, change, Some(&target), None)
             .await;
         match result {
             Err(ParentSendError::NotSent(error)) => {
                 self.restore_row_snooze(id, thread, prior.as_ref()).await?;
-                match error {
-                    nucleus_hosts::HostError::RowChildBusy => Ok(retry),
-                    _ => Err(error.into()),
-                }
+                Err(error.into())
             }
             Err(error) => Err(nucleus_hosts::HostError::from(error).into()),
             Ok(outcome) => {
@@ -486,14 +481,7 @@ impl Service {
         };
         let result = self
             .host
-            .write_row_visibility(
-                binding,
-                &command,
-                change,
-                None,
-                &[],
-                Some((observed, provider)),
-            )
+            .write_row_visibility(binding, &command, change, None, Some((observed, provider)))
             .await;
         if let Err(ParentSendError::NotSent(error)) = result {
             if let Some(prior) = &cleared {
@@ -543,67 +531,27 @@ pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
 fn row_attention_for_effect(
     state: &State,
     row: &TaskRow,
-    children: RowChildren,
 ) -> Result<Option<TaskAttention>, ServiceError> {
+    let id = &row.task.identity().id;
+    let wait = state.wait_reason(id);
     let attention = state.task_attention(row)?;
-    let task = &row.task;
-    let id = &task.identity().id;
-    if attention == TaskAttention::Waiting && children == RowChildren::Active {
-        return Ok(Some(TaskAttention::Active));
-    }
-    // A restored reservation is not a dispatch decision. Keep its native horizon
-    // until the first scheduler result, unless an active child is already visible.
-    if attention == TaskAttention::Waiting
-        && !state.waits.contains_key(id)
-        && task
-            .run()
-            .is_some_and(|run| !run.revoked() && run.report().is_none())
-        && state.role_observation(task).is_none()
-    {
+    if attention == TaskAttention::Finished {
         return Ok(None);
     }
-    let starting = matches!(
-        (state.wait_reason(id), state.wait_detail(id)),
-        (None | Some(WaitReason::Starting), _) | (Some(WaitReason::HostUnknown), None)
-    );
-    let retrying_send = state.wait_reason(id) == Some(WaitReason::HostUnknown)
-        && matches!(
-            state.wait_detail(id),
-            Some(WaitDetail::BeforeSend(_) | WaitDetail::ShowingForDelivery(_))
-        )
-        && state.role_observation(task) == Some(RunState::ReadyToSend);
-    let about_to_send = (starting || retrying_send)
-        && task.hold().is_none()
-        && task.run().is_some_and(|run| {
-            !run.revoked()
-                && run.report().is_none()
-                && (run.last_send_at_ms().is_none()
-                    || state.role_observation(task) == Some(RunState::ReadyToSend))
-        });
-    let showing_delivery = matches!(
+    if attention == TaskAttention::Attention
+        || crate::attention::waiting_for_person(&row.task, wait)
+    {
+        return Ok(Some(TaskAttention::Attention));
+    }
+    // Let the pending parent send finish its explicit wake before restoring the snooze.
+    if matches!(
         state.wait_detail(id),
         Some(WaitDetail::ShowingForDelivery(_) | WaitDetail::ConfirmingDelivery(_))
-    ) && state.schedule.effect_ready(id, tokio::time::Instant::now());
-    if attention == TaskAttention::Waiting && (about_to_send || showing_delivery) {
-        return Ok(Some(TaskAttention::Active));
-    }
-    // A transition can make the next effect due before the scheduler records a wait.
-    if attention == TaskAttention::Waiting
-        && state.wait_reason(id).is_none()
-        && state
-            .schedule
-            .due(id)
-            .is_some_and(|due| due <= tokio::time::Instant::now())
+    ) && state.schedule.effect_ready(id, tokio::time::Instant::now())
     {
         return Ok(None);
     }
-    // After a cold start a recorded send alone gives no evidence that a child is quiet.
-    let awaiting_child_read = attention == TaskAttention::Waiting
-        && row.task.run().is_some_and(|run| {
-            !run.revoked() && run.report().is_none() && run.last_send_at_ms().is_some()
-        })
-        && state.role_observation(&row.task).is_none();
-    Ok((attention != TaskAttention::Finished && !awaiting_child_read).then_some(attention))
+    Ok(Some(TaskAttention::Waiting))
 }
 
 fn earliest(left: Option<u64>, right: Option<u64>) -> Option<u64> {

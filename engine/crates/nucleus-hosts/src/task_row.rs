@@ -98,10 +98,11 @@ pub enum RowChildren {
 }
 
 impl T3 {
-    /// Read activity from the held shell for recorded and attached role children.
+    /// Last delivered user message from the synchronized shell, without a native read.
     #[must_use]
-    pub fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
-        self.rpc.row_children(parent, roles)
+    pub fn row_message_at(&self, thread: &str) -> Option<u64> {
+        let row = self.rpc.thread_row(thread)?;
+        timestamp_ms(row["latestUserMessageAt"].as_str()?).ok()
     }
 
     #[cfg(feature = "loopback-fixture")]
@@ -143,7 +144,6 @@ impl T3 {
         command: &str,
         change: RowChange,
         shell: Option<&TitleTarget>,
-        quiet_roles: &[&str],
         parent: Option<(RowObservation, &str)>,
     ) -> Result<SendOutcome, ParentSendError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
@@ -177,13 +177,6 @@ impl T3 {
                 None,
                 || {
                     self.rpc.with_shell(|view| {
-                        if matches!(change, RowChange::SnoozeUntil(_))
-                            && view.is_none_or(|view| {
-                                view.row_children(&thread, quiet_roles) != RowChildren::Quiet
-                            })
-                        {
-                            return Err(HostError::RowChildBusy);
-                        }
                         if let Some(target) = shell {
                             let current = view
                                 .and_then(|view| target.row_in(view))
