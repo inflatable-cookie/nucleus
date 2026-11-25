@@ -579,6 +579,15 @@ impl Rpc {
         id: &str,
         policy: ThreadRead,
     ) -> Result<ThreadObservation, HostError> {
+        self.observe_thread_with(id, policy, || {}).await
+    }
+
+    pub(crate) async fn observe_thread_with(
+        &self,
+        id: &str,
+        policy: ThreadRead,
+        before_read: impl FnOnce() + Send,
+    ) -> Result<ThreadObservation, HostError> {
         let _admission = self
             .admission
             .enter(matches!(policy, ThreadRead::Exact))
@@ -618,8 +627,9 @@ impl Rpc {
                 "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
             Read::Thread,
             || {
-                self.check_thread_read(self.thread_row(id).as_deref(), policy)
-                    .map(|()| true)
+                self.check_thread_read(self.thread_row(id).as_deref(), policy)?;
+                before_read();
+                Ok(true)
             },
         ))
         .await?;

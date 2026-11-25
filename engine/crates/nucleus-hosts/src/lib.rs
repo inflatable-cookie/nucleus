@@ -105,6 +105,8 @@ pub enum HostError {
     Deferred { until: tokio::time::Instant },
     #[error("waiting for T3 to confirm the role assignment")]
     RoleReplyPending { until: tokio::time::Instant },
+    #[error("the exact parent receipt read did not establish delivery")]
+    ParentReceiptInconclusive,
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
@@ -623,7 +625,20 @@ impl T3 {
         id: &str,
         policy: ThreadRead,
     ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
-        let rpc::ThreadObservation { reply, fence } = self.rpc.observe_thread(id, policy).await?;
+        self.observe_thread_with(binding, id, policy, || {}).await
+    }
+
+    async fn observe_thread_with(
+        &self,
+        binding: &Binding,
+        id: &str,
+        policy: ThreadRead,
+        before_read: impl FnOnce() + Send,
+    ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
+        let rpc::ThreadObservation { reply, fence } = self
+            .rpc
+            .observe_thread_with(id, policy, before_read)
+            .await?;
         let projection = match reply {
             ThreadReply::Closed { row, sequence } => {
                 Some(Projection::closed(&row, sequence, binding, id)?)
