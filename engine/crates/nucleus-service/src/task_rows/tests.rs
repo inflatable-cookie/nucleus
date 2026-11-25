@@ -55,7 +55,7 @@ struct Fixture {
     binding: Binding,
     thread: String,
     _home: tempfile::TempDir,
-    server: tokio::task::JoinHandle<()>,
+    _server: NativeServer,
 }
 
 impl Fixture {
@@ -129,7 +129,7 @@ impl Fixture {
             binding,
             thread,
             _home: home,
-            server,
+            _server: NativeServer(server),
         }
     }
 
@@ -387,9 +387,11 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     );
 }
 
-impl Drop for Fixture {
+struct NativeServer(tokio::task::JoinHandle<()>);
+
+impl Drop for NativeServer {
     fn drop(&mut self) {
-        self.server.abort();
+        self.0.abort();
     }
 }
 
@@ -739,19 +741,25 @@ async fn restart_preserves_a_prerequisite_snooze_before_the_first_dispatch_decis
         .unwrap();
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.sync().await;
     let receipt = fixture.observed_snooze().await;
 
     let prior = &fixture.service;
     let host = nucleus_hosts::T3::new(prior.host.endpoint(), "fixture").unwrap();
     host.use_held_shell();
+    let settings = prior.settings.clone();
+    let project = prior.fixture().clone();
+    let callback = prior.callback;
+    let report_command = prior.report_command.clone();
+    drop(fixture.service);
     fixture.service = Arc::new(
         Service::open(
-            &prior.settings,
-            prior.fixture().clone(),
+            &settings,
+            project,
             host,
             GitHub::new("fixture").unwrap(),
-            prior.callback,
-            prior.report_command.clone(),
+            callback,
+            report_command,
         )
         .unwrap(),
     );
