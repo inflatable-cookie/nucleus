@@ -1389,11 +1389,14 @@ fn version_eleven_decodes_delivery_history_once() {
 }
 
 #[test]
-fn schema_twelve_preserves_the_existing_visibility_flip_window() {
+fn schema_twelve_preserves_existing_snooze_ownership() {
     use nucleus_store::{RowSnooze, SnoozeOutcome};
-
     let root = tempfile::tempdir().unwrap();
     let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).unwrap();
+    store
+        .create(&task("row", "row"), &event("admitted"))
+        .unwrap();
     let receipt = RowSnooze {
         episode: 1_000,
         until_ms: 900_000,
@@ -1402,71 +1405,11 @@ fn schema_twelve_preserves_the_existing_visibility_flip_window() {
         clear_attempted_for: None,
         ended: false,
     };
-    let id = "row";
-    let thread = "fixture-parent";
-    let mut store = Store::open(&storage).unwrap();
-    store.create(&task(id, id), &event("admitted")).unwrap();
-    assert_eq!(
-        store.claim_row_flip(id, thread, &receipt, 1_000).unwrap(),
-        None
-    );
-    assert_eq!(
-        store.claim_row_flip(id, thread, &receipt, 2_000).unwrap(),
-        None
-    );
-    assert_eq!(
-        store.claim_row_flip(id, thread, &receipt, 3_000).unwrap(),
-        Some(121_000)
-    );
+    store.save_row_snooze("row", "parent", &receipt).unwrap();
     drop(store);
     revert_parent_schema(&storage);
-
-    let mut migrated = Store::open(&storage).unwrap();
-    let backup = std::fs::read_dir(storage.backup().path())
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    for path in [storage.database().path().join("engine.sqlite"), backup] {
-        let db =
-            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        let record = db
-            .query_row(
-                "SELECT attempted_at, prior_at, deferred FROM task_row_flips WHERE task_id = ?1",
-                [id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, bool>(2)?,
-                    ))
-                },
-            )
-            .unwrap();
-        assert_eq!(record, (2_000, 1_000, true));
-    }
-    assert_eq!(
-        migrated
-            .claim_row_flip(id, thread, &receipt, 120_999)
-            .unwrap(),
-        Some(121_000)
-    );
-    assert_eq!(
-        migrated
-            .history(id, None, 20)
-            .unwrap()
-            .iter()
-            .filter(|event| event.content.kind == "native_row_flip_deferred")
-            .count(),
-        1
-    );
-    assert_eq!(
-        migrated
-            .claim_row_flip(id, thread, &receipt, 121_000)
-            .unwrap(),
-        None
-    );
+    let migrated = Store::open(&storage).unwrap();
+    assert_eq!(migrated.row_snooze("row", "parent").unwrap(), Some(receipt));
 }
 
 fn revert_parent_schema(storage: &EngineStorage) {

@@ -287,16 +287,7 @@ Later decisions carry their own attribution.
       - Tom, 2026-11-25: "we could use "Waiting" while in the Working group to show when a thread is waiting for something imminent". During the two-minute window the row stays in T3's Working group and reads Waiting. It returns to Working when a child runs again. Otherwise it snoozes when the window ends.
       - Tom, 2026-11-25: "Questions and decisions need to bring the row back". A task with an open question or decision for a person is visible until it is answered, in addition to its Inbox entry. Operator snoozes are respected.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
-    - Before a native message brings a task parent or retained child back into use, the scheduler explicitly unsnoozes its own parent occurrence or unsettles the destination and reads the result back. An operator snooze holds delivery. Nucleus never sends a settle command.
-    - A due delivery or visibility check for an actionable row retries an
-      owned snooze clear with its original command ID while the same horizon
-      is visible. A native receipt or an observed clear or replacement
-      retires the claim. A later Nucleus-owned snooze starts a new effect.
-      An operator snooze holds delivery.
-    - When Nucleus wakes a parent to deliver, the row stays shown through
-      imminent delivery. A reservation that must wait for capacity or another
-      prerequisite follows the ordinary snooze rule. An active child remains
-      visible, and a due send can wake a Nucleus-owned snooze.
+    - A native message can wake the exact Nucleus-owned snooze on its destination. A settled destination is explicitly unsettled before delivery. Operator snoozes defer delivery. Nucleus never sends a settle command.
     - A retained role can send directly to its own thread. The scheduler uses
       the exact parent read under the task fence to keep the parent visible
       at that send. It records Starting with the first role send intent and
@@ -456,7 +447,7 @@ Later decisions carry their own attribution.
     - An operator-owned future snooze is the delivery exception carried forward from #1445 and the TypeScript `wakeBeforeDelivery`. T3's ordinary message dispatch clears its destination's snooze. Before a parent hold or retained continuation enters the wire, the synchronized shell's future horizon must be absent or match the existing Nucleus ownership record. The operator's horizon stays visible as a timed wait outside **Needs you**. A shell wake or horizon expiry resumes the same command.
     - When an exact role run is active and its task parent has no pending or active turn, the first re-entry hold keys on the role launch instance. After that hold ends, the next occurrence also keys on the exact ended native parent run. Recheck on role activity and on engine startup. An uncertain reply retries the existing intent and command. An authenticated report still permits re-entry while the bound role has an active run or positively observed background work. A stopped role does not request re-entry.
     - An authenticated report or an observed terminal role releases its ACP hold. The next engine change for that task rechecks the current hold even if the completion notification was missed. A queued successor owns its own prompt.
-    - A parent send that explicitly wakes its row can finish before the watcher restores its snooze. A pinned role can send across its own parent snooze. Operator snoozes still defer delivery. Nucleus permits two explicit visibility writes per row in a rolling two-minute window. A snooze can clear as soon as work resumes. A third flip waits until the oldest write leaves the window, with one recorded deferral.
+    - Parent delivery respects operator snoozes and can send across a Nucleus-owned snooze. Task-row visibility follows ruling 22.
     - A report-ready or prerequisite-release notice can make one fresh attempt
       after T3 proves it rejected the exact command. See [Commands](#commands).
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.

@@ -1241,8 +1241,7 @@ impl Card {
                 return None;
             }
             match state.wait_detail(id)? {
-                crate::WaitDetail::BeforeSend(message)
-                | crate::WaitDetail::ShowingForDelivery(message) => *message,
+                crate::WaitDetail::BeforeSend(message) => *message,
                 crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
                 crate::WaitDetail::OperatorSnoozed { message, .. }

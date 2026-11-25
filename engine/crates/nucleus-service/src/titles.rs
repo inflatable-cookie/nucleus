@@ -120,11 +120,7 @@ fn wait_label(wait: Option<WaitReason>, detail: Option<&WaitDetail>) -> Option<&
         Some(WaitReason::UsagePermission) => "Waiting on Tom",
         Some(WaitReason::HostUnknown) => match detail {
             Some(WaitDetail::OperatorSnoozed { .. }) => "You snoozed this thread",
-            Some(
-                WaitDetail::BeforeSend(None)
-                | WaitDetail::ShowingForDelivery(None)
-                | WaitDetail::ConfirmingDelivery(_),
-            ) => "Starting",
+            Some(WaitDetail::BeforeSend(None) | WaitDetail::ConfirmingDelivery(_)) => "Starting",
             _ => "Waiting for T3",
         },
         Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
@@ -222,31 +218,45 @@ fn inbox_title(decisions: usize, running: usize, mode: DispatchMode) -> String {
 }
 
 impl Service {
-    pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) {
+    pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) -> bool {
         if self.acp_provider().is_none() {
-            return;
+            return false;
         }
         let id = &task.identity().id;
-        let label = match state.effective_wait(task) {
-            Ok(wait) => task_state_label(task, wait, state.wait_detail(id)),
-            Err(error) => {
-                eprintln!("{id}: {error}");
-                return;
-            }
-        };
         let path = nucleus_work::checkout_path(
             self.storage.work().path(),
             &task.identity().repository,
             id,
         );
         let thread = nucleus_hosts::parent_thread(&path);
+        let (activity, _, handover) = self.role_window(&thread, task);
+        let label = if !task.phase().is_terminal() && activity == nucleus_hosts::RowChildren::Active
+        {
+            "Working".into()
+        } else if !task.phase().is_terminal() && handover.is_some() {
+            "Waiting".into()
+        } else {
+            match state.effective_wait(task) {
+                Ok(wait) => task_state_label(task, wait, state.wait_detail(id)),
+                Err(error) => {
+                    eprintln!("{id}: {error}");
+                    return false;
+                }
+            }
+        };
         match state
             .store
             .desire_title(id, &thread, &task_title(task, number, &label))
         {
-            Ok(true) => self.title_wake.notify_one(),
-            Ok(false) => {}
-            Err(error) => eprintln!("{id}: {error}"),
+            Ok(true) => {
+                self.title_wake.notify_one();
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                eprintln!("{id}: {error}");
+                false
+            }
         }
     }
 
@@ -573,7 +583,7 @@ mod tests {
                 &task_state_label(
                     &task,
                     Some(WaitReason::HostUnknown),
-                    Some(&WaitDetail::ShowingForDelivery(None))
+                    Some(&WaitDetail::BeforeSend(None))
                 )
             ),
             "Starting: #1 Add a greeting"

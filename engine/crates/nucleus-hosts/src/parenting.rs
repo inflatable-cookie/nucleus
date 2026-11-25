@@ -881,7 +881,7 @@ impl T3 {
                     }
                     if let (Some(delivery), Some(thread)) = (&write.delivery, thread_id.as_deref())
                     {
-                        self.check_delivery_shell(thread, delivery)?;
+                        self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
                     }
                     if let Some((_, thread, provider)) = &hold
                         && self.rpc.uses_held_shell()
@@ -931,6 +931,7 @@ impl T3 {
         &self,
         thread: &str,
         delivery: &ParentDelivery,
+        owned: &[u64],
     ) -> Result<(), HostError> {
         let (row, observed) = self.rpc.thread_row_with_revision(thread);
         let refuse = |predicate| HostError::ParentPreflight {
@@ -959,7 +960,7 @@ impl T3 {
         let visibility = visibility
             .read()
             .map_err(|_| refuse("held shell visibility is invalid"))?;
-        verify_delivery_visibility(visibility, delivery.row.sequence, observed)
+        verify_delivery_visibility(visibility, delivery.row.sequence, observed, owned)
     }
 }
 
@@ -1001,6 +1002,7 @@ fn verify_delivery_visibility(
     visibility: RowVisibility,
     prepared: u64,
     observed: Option<u64>,
+    owned: &[u64],
 ) -> Result<(), HostError> {
     if visibility.settled {
         return Err(HostError::ParentPreflight {
@@ -1011,6 +1013,7 @@ fn verify_delivery_visibility(
     }
     if let Some(until) = visibility.snoozed_until_ms
         && until > clock_ms()?
+        && !owned.contains(&until)
     {
         return Err(HostError::ParentSnoozed {
             until,

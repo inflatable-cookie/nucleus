@@ -219,6 +219,34 @@ impl ThreadSnapshots {
         })
     }
 
+    pub(crate) fn row_children(&self, parent: &str, roles: &[&str]) -> (RowChildren, u64) {
+        roles
+            .iter()
+            .copied()
+            .chain(self.children(parent))
+            .filter_map(|id| self.rows.get(id))
+            .fold((RowChildren::Quiet, 0), |(activity, latest), row| {
+                let ended = row["latestRunCompletedAt"]
+                    .as_str()
+                    .and_then(|at| crate::task_row::timestamp_ms(at).ok())
+                    .unwrap_or(0);
+                let child = if closed_row(row) {
+                    RowChildren::Quiet
+                } else if row["activeRunId"].is_string()
+                    || matches!(row["status"].as_str(), Some("running" | "waiting"))
+                {
+                    RowChildren::Active
+                } else if row["status"].is_string()
+                    && row.get("activeRunId").is_some_and(Value::is_null)
+                {
+                    RowChildren::Quiet
+                } else {
+                    RowChildren::Unknown
+                };
+                (activity.max(child), latest.max(ended))
+            })
+    }
+
     pub(crate) fn project(&self, id: &str) -> Option<RegisteredProject> {
         RegisteredProject::read(self.projects.get(id)?)
     }
