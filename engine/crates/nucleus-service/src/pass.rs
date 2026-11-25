@@ -1707,15 +1707,7 @@ impl Service {
             launch: false,
         };
         if let Some(_permit) = self.dispatch_gate(&row.task, target).await? {
-            let command = dispatch.command_id().map(str::to_owned);
-            let written = host.write_control(dispatch).await;
-            if matches!(written, Err(HostError::Deferred { .. }))
-                && let Some(command) = command
-            {
-                self.record_native_turn(row, "native_turn_not_sent", "stop", &command)
-                    .await?;
-            }
-            written?;
+            host.write_control(dispatch).await?;
         }
         Ok(Action::Wait(WaitReason::Stopping))
     }

@@ -191,20 +191,6 @@ impl ThreadHint {
         u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
     }
 
-    /// A run change is a reason to check delivery again.
-    #[must_use]
-    pub fn has_delivery_change(&self, prior: Option<&Self>) -> bool {
-        if self.closed {
-            return prior.is_none_or(|prior| !prior.closed);
-        }
-        self.change.as_ref().is_some_and(|current| {
-            (current[2].is_string() || current[3].is_string())
-                && prior
-                    .and_then(|hint| hint.change.as_ref())
-                    .is_none_or(|prior| (1..=8).any(|field| current[field] != prior[field]))
-        })
-    }
-
     /// An event can invalidate a prior authority proof. It cannot grant one.
     #[must_use]
     pub fn is_identity_change(&self, prior: Option<&crate::PlannerIdentity>) -> bool {

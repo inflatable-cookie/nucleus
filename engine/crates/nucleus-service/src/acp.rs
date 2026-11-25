@@ -319,27 +319,6 @@ impl Service {
         Ok(())
     }
 
-    pub(super) async fn record_native_turn(
-        &self,
-        row: &TaskRow,
-        kind: &str,
-        session: &str,
-        command: &str,
-    ) -> Result<bool, ServiceError> {
-        let mut intent = event(kind);
-        intent.detail = serde_json::json!({
-            "command":command, "version":row.version, "session":session,
-        })
-        .to_string();
-        let id = &row.task.identity().id;
-        let mut state = self.state.lock().await;
-        let recorded = state.store.claim_task_effect(id, &intent, false)?.is_some();
-        if recorded {
-            self.publish(id, row.version);
-        }
-        Ok(recorded)
-    }
-
     pub(super) async fn deliver_parent(
         &self,
         row: &TaskRow,
