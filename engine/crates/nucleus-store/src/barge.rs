@@ -30,9 +30,13 @@ struct FailureDetails {
 }
 
 pub(crate) fn class_path(class: &'static str) -> Result<PathBuf, StorageError> {
+    project_class(class, "nucleus")
+}
+
+pub(crate) fn project_class(class: &'static str, project: &str) -> Result<PathBuf, StorageError> {
     let refusal = |reason| StorageError::BargePlacement { class, reason };
     let output = Command::new("barge")
-        .args(["--json", "path", class, "--project", "nucleus"])
+        .args(["--json", "path", class, "--project", project])
         .output()
         .map_err(|error| refusal(format!("could not run barge ({error})")))?;
     if !output.status.success() {
@@ -53,7 +57,7 @@ pub(crate) fn class_path(class: &'static str) -> Result<PathBuf, StorageError> {
     if reply.data.fallback {
         return Err(refusal("the configured volume is absent".into()));
     }
-    if !reply.data.path.is_absolute() || !reply.data.path.ends_with("nucleus") {
+    if !reply.data.path.is_absolute() || !reply.data.path.ends_with(project) {
         return Err(refusal("invalid Nucleus project path".into()));
     }
     Ok(reply.data.path)
