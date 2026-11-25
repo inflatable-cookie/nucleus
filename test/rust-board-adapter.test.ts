@@ -1564,12 +1564,30 @@ test("the paired Profiles panel adds, edits, and duplicates using the shared con
   );
 });
 
-test("Planning preserves native lane titles longer than the editor suggestion", async () => {
+test("Planning preserves native lane titles, aims and closing notes", async () => {
   const title = "a".repeat(201);
-  const lane: RustLane = { key: "long", version: 1, title, aim: "Ship", document: "Hello", status: "open" };
+  const aim = "a".repeat(2001);
+  const note = "n".repeat(4001);
+  const lane: RustLane = { key: "long", version: 1, title, aim, document: "Hello", status: "done", note };
   const adapter = createRustAdapter(createRustApi(engine({ lantern: lane }).fetcher));
   const plans = await adapter.rpc(api.plans, {});
-  assert.equal(plans.find(plan => plan.project === "lantern")?.laneViews?.[0]?.title, title);
+  const view = plans.find(plan => plan.project === "lantern")?.laneViews?.[0];
+  assert.deepEqual([view?.title, view?.aim, view?.note], [title, aim, note]);
+});
+
+
+test("retained items preserve all valid native lane keys", async () => {
+  const fake = engine();
+  const lanes = Array.from({ length: 33 }, (_, index) => "lane-" + index);
+  const adapter = createRustAdapter(createRustApi(async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    if (!String(url).endsWith("/planning/lantern/items")) return response;
+    const items = await response.json();
+    items[0].lanes = lanes;
+    return Response.json(items);
+  }));
+  const leads = await adapter.rpc(api.leadBoard, {});
+  assert.deepEqual(leads.cards.find(card => card.projectKey === "lantern")?.lanes, lanes);
 });
 
 
