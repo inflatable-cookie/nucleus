@@ -360,11 +360,11 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/drop`),
         json("POST", { reason }),
       ),
-    promoteItem: (project: string, id: string, complexity?: CapabilityLevel) =>
+    promoteItem: (project: string, id: string, value: { repository?: string; complexity?: CapabilityLevel }) =>
       board.read(
-        z.object({ identity: z.object({ id: z.string() }) }).loose(),
+        z.object({ identity: z.object({ id: z.string() }), reference: z.string() }),
         planning(project, `/items/${encodeURIComponent(id)}/promote`),
-        json("POST", { complexity }),
+        json("POST", value),
       ),
     decisions: (project: string) =>
       board.read(z.array(decision), planning(project, "/decisions")),

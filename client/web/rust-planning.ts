@@ -227,6 +227,7 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
 
 function leadDetail(item: RustItem, project: RustProject) {
   const open = item.state === "open";
+  const bound = new Set(project.repositories.filter((repo) => repo.hostProject).map((repo) => repo.origin.toLowerCase()));
   return {
     ...boardLeadRecord(item, project),
     actions: {
@@ -239,7 +240,9 @@ function leadDetail(item: RustItem, project: RustProject) {
       promoteTo: RUST_ONLY,
       promote: repositories(project, item.repositories).map((repo) => ({
         origin: repo.origin,
-        reason: open ? null : "Only an open item can be promoted.",
+        reason: !open
+          ? "Only an open item can be promoted."
+          : bound.has(repo.origin.toLowerCase()) ? null : "Bind this repository to T3Code before promoting.",
       })),
     },
     versions: [],
@@ -366,10 +369,10 @@ export function createRustPlanning(
     throw new Error(`${id} is not in any project.`);
   }
 
-  async function promote(input: { id: string; complexity?: api.CapabilityLevel }) {
-    const { row } = await itemOwner(input.id);
-    const task = await rust.promoteItem(row.id, input.id, input.complexity);
-    return { taskId: task.identity.id, reference: String((task as { identity: { reference?: string } }).identity.reference ?? task.identity.id) };
+  async function promote({ id, repository, complexity }: { id: string; repository?: string; complexity?: api.CapabilityLevel }) {
+    const { row } = await itemOwner(id);
+    const task = await rust.promoteItem(row.id, id, { repository, complexity });
+    return { taskId: task.identity.id, reference: task.reference };
   }
 
   const handlers = {

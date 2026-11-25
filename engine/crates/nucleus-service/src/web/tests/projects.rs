@@ -1046,6 +1046,68 @@ async fn first_contact_refuses_child_closed_task_session_and_missing_checkout() 
 }
 
 #[tokio::test]
+async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
+    let registry = registry_with_options(BETA_REPO, true).await;
+    registry.enroll("alpha-planner").await;
+    let api = registry_board_api(&registry);
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let items = "/api/engine/planning/product/items";
+    let add = json!({"kind":"lead", "title":"Fixture idea", "lanes":[],
+        "body":"---\nqueue:\n  complexity: low\n---\nUse the selected repository."});
+    let added = browser_request(&api, Method::POST, items, Some(&operator), Some(&add)).await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let item = json_body(added).await;
+    let id = item["id"].as_str().unwrap();
+    let path = format!("{items}/{id}/promote");
+    let selected = json!({"repository": BETA_REPO});
+    let rejected =
+        browser_request(&api, Method::POST, &path, Some(&operator), Some(&selected)).await;
+    assert_eq!(
+        rejected.status(),
+        StatusCode::BAD_REQUEST,
+        "an unbound choice cannot fall back to Alpha"
+    );
+
+    registry.enroll("beta-planner").await;
+    let promote = || browser_request(&api, Method::POST, &path, Some(&operator), Some(&selected));
+    let created = promote().await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    assert_eq!(created["reference"], "second#1");
+    assert_eq!(created["identity"]["repository"], BETA_REPO);
+    assert_eq!(created["identity"]["base"], "trunk");
+    let retried = promote().await;
+    assert_eq!(retried.status(), StatusCode::OK);
+    let retried = json_body(retried).await;
+    assert_eq!(retried["identity"]["id"], created["identity"]["id"]);
+    assert_eq!(retried["reference"], "second#1");
+
+    let added = caller_request(
+        &api,
+        Method::POST,
+        "/v1/planning/product/items",
+        "alpha-planner",
+        add,
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let item = json_body(added).await;
+    let id = item["id"].as_str().unwrap();
+    let promoted = caller_request(
+        &api,
+        Method::POST,
+        &format!("/v1/planning/product/items/{id}/promote"),
+        "alpha-planner",
+        selected,
+    )
+    .await;
+    assert_eq!(promoted.status(), StatusCode::CREATED);
+    let promoted = json_body(promoted).await;
+    assert_eq!(promoted["identity"]["repository"], BETA_REPO);
+    assert_eq!(promoted["reference"], "second#2");
+}
+
+#[tokio::test]
 async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
     use nucleus_store::planning::{ItemContent, ItemKind, WriteAt};
     use sha2::{Digest, Sha256};

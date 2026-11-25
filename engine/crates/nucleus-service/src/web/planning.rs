@@ -405,9 +405,10 @@ async fn drop_item(
     Ok(Json(saved))
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Promotion {
+    repository: Option<String>,
     complexity: Option<Complexity>,
 }
 
@@ -419,12 +420,23 @@ async fn promote(
     Extension(caller): Extension<Authority>,
     input: Result<Option<Json<Promotion>>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    let complexity = input
+    let Promotion {
+        repository,
+        complexity,
+    } = input
         .map_err(|_| ApiError::Invalid)?
-        .and_then(|Json(input)| input.complexity);
+        .map(|Json(input)| input)
+        .unwrap_or_default();
     let (created, row) = api
         .service
-        .promote_planning_item(project.as_deref(), &id, complexity, &caller, &scope)
+        .promote_planning_item(
+            project.as_deref(),
+            &id,
+            repository.as_deref(),
+            complexity,
+            &caller,
+            &scope,
+        )
         .await?;
     api.service.planning_changes.send_replace(());
     let status = if created {
