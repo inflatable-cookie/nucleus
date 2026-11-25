@@ -104,10 +104,12 @@ function boardPlan(key: string, plan: RustPlanView) {
 export function boardItem(
   item: RustItem,
   project: RustProject,
+  projectKey: string,
 ): api.BoardLead | null {
   if (item.state !== "open" && item.state !== "parked") return null;
   return {
     id: item.id,
+    projectKey,
     title: item.title,
     preview: item.body.slice(0, PREVIEW),
     repositories: repositories(project, item.repositories),
@@ -557,7 +559,7 @@ export function createRustPlanning(
         const raw = await planningRead(row, "items", rawList);
         return collectRows(raw ?? [], `${row.id} item`, issues, value => {
           const record = item.parse(value);
-          const card = boardItem(record, row.project);
+          const card = boardItem(record, row.project, row.board.key);
           const at = record.updatedAtMs ?? record.createdAtMs;
           return {
             card: card && api.boardLeadSchema.parse(card),

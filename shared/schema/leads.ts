@@ -278,6 +278,7 @@ export const LEAD_PREVIEW_MAX = 400;
 export const boardLeadSchema = z
   .object({
     id: z.string(),
+    projectKey: z.string().optional(),
     title: z.string(),
     /** First characters of the body for the card snippet; never the whole body. */
     preview: z.string().max(LEAD_PREVIEW_MAX),
