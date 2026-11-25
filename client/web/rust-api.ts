@@ -117,6 +117,11 @@ export const hostsView = z.object({
     status: z.enum(["unknown", "reachable", "unavailable"]),
   }),
 });
+const backupInventory = z.object({
+  complete: z.boolean(),
+  issues: integer,
+  verified: z.array(z.object({ id: z.string(), createdAt: z.string() })),
+});
 export const storageView = z.object({
   settings: snapshot(storage),
   active: z.object({
@@ -136,13 +141,8 @@ export const storageView = z.object({
       })
       .optional(),
   }).loose(),
-  backups: z
-    .object({
-      complete: z.boolean(),
-      issues: integer,
-      verified: z.array(z.object({ id: z.string(), createdAt: z.string() })),
-    })
-    .optional(),
+  backups: backupInventory.optional(),
+  configBackups: backupInventory.optional(),
 });
 export const allSettings = z.object({
   profiles: profilesSnapshot,

@@ -350,28 +350,29 @@ pub(super) async fn get(
         Domain::Storage => {
             let settings = read(file).await?;
             let engine = Arc::clone(&service);
-            let backups = task::spawn_blocking(move || {
-                let mut scheduled = engine.storage.scheduled_list()?;
-                if let Ok(config) = engine.storage.backups() {
-                    scheduled.verified.extend(config.verified);
-                    scheduled.issues += config.issues;
-                }
-                scheduled.issues += usize::from(
-                    engine
-                        .backup_failed
-                        .load(std::sync::atomic::Ordering::Acquire),
-                );
-                Ok::<_, StorageError>(scheduled)
+            let (scheduled, config) = task::spawn_blocking(move || {
+                let scheduled = engine.storage.scheduled_list().map(|mut copies| {
+                    copies.issues += usize::from(
+                        engine
+                            .backup_failed
+                            .load(std::sync::atomic::Ordering::Acquire),
+                    );
+                    copies
+                });
+                (scheduled, engine.storage.backups())
             })
             .await
             .map_err(|_| ServiceError::Input)?;
             let mut view = storage_view(&service, &settings);
-            if let Ok(backups) = backups {
-                view["active"]["backupRoot"] = json!(backups.root);
-                view["backups"] = json!(backups);
-            } else {
-                view["active"]["backupRoot"] = json!("Scheduled archives unavailable");
-                view["backups"] = json!({"complete":false,"verified":[],"issues":1});
+            view["active"]["backupRoot"] = scheduled.as_ref().map_or_else(
+                |_| json!("Scheduled archives unavailable"),
+                |copies| json!(copies.root),
+            );
+            for (field, inventory) in [("backups", scheduled), ("configBackups", config)] {
+                view[field] = inventory.map_or_else(
+                    |_| json!({"complete":false,"verified":[],"issues":1}),
+                    |copies| json!(copies),
+                );
             }
             view
         }
