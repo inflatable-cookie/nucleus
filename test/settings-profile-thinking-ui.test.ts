@@ -1,14 +1,11 @@
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { mkdtempSync, rmSync } from "node:fs";
-import { realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
-import { T3CodeHost } from "../hosts/t3code/adapter";
+import { t3HostCatalog } from "../hosts/t3code/catalog";
+import { configProvider } from "../hosts/t3code/config";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
 import { paseoVocabulary } from "../hosts/paseo/vocabulary";
 import {
@@ -16,7 +13,6 @@ import {
   mergeCanonicalCatalogs,
 } from "../shared/profile-vocabulary";
 import type { HostCatalog } from "../shared/host";
-import { t3Fake } from "./support/t3code-fake";
 import { nightlyProviders, paseoCatalog } from "./support/pool-shapes";
 import { HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, waitFor } from "./support/budgets";
 
@@ -29,23 +25,8 @@ useNativeStubs();
 const h = React.createElement;
 const colors = new Proxy({}, { get: () => "#123" }) as never;
 
-async function t3Catalog(t: TestContext): Promise<HostCatalog> {
-  const root = mkdtempSync(join(tmpdir(), "profile-thinking-ui-"));
-  const server = await t3Fake(t, await realpath(root));
-  server.controls.providers = nightlyProviders();
-  const host = new T3CodeHost({
-    endpoint: server.endpoint,
-    bearer: "synthetic-bearer",
-    statePath: join(root, "state.json"),
-    timeoutMs: 1_000,
-    probeThreadId: "synthetic-probe",
-  });
-  t.after(() => {
-    host.close();
-    rmSync(root, { recursive: true, force: true });
-  });
-  await host.connect();
-  return host.catalog();
+function t3Catalog(): HostCatalog {
+  return t3HostCatalog(configProvider.array().parse(nightlyProviders()));
 }
 
 async function editor(
@@ -89,10 +70,10 @@ async function editor(
 const controls = (ui: Awaited<ReturnType<typeof editor>>, name: string) =>
   ui.all(new RegExp(`^${name}, `));
 
-test("a model whose host carries thinking as a feature shows exactly one Thinking and one Mode control and no thinking or reasoning field", async (t) => {
+test("a model whose host carries thinking as a feature shows exactly one Thinking and one Mode control and no thinking or reasoning field", async () => {
   const merged = mergeCanonicalCatalogs([
     canonicalCatalog(paseoVocabulary, paseoCatalog()),
-    canonicalCatalog(t3codeVocabulary, await t3Catalog(t)),
+    canonicalCatalog(t3codeVocabulary, t3Catalog()),
   ]);
   // Muse 1.3 grind after migration: T3 carries Pi's level as its `thinking` option.
   const ui = await editor(merged, {
@@ -147,10 +128,10 @@ test("a model with no modes still shows its one Mode control, as Host default", 
   assert.equal(controls(ui, "Thinking").length, 1);
 });
 
-test("a thinking carrier the migration kept shows under the one Thinking control, and choosing a level replaces it and keeps other options", async (t) => {
+test("a thinking carrier the migration kept shows under the one Thinking control, and choosing a level replaces it and keeps other options", async () => {
   const merged = mergeCanonicalCatalogs([
     canonicalCatalog(paseoVocabulary, paseoCatalog()),
-    canonicalCatalog(t3codeVocabulary, await t3Catalog(t)),
+    canonicalCatalog(t3codeVocabulary, t3Catalog()),
   ]);
   // The migration left this clash as stored: level low, T3's Pi carrier max.
   const calls: Array<{ method: string; input: any }> = [];
