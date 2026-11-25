@@ -39,6 +39,7 @@ test("Rust board settings retain imported profile fields across edits", () => {
   };
   const saved = { profiles: [profile], pausedGroups: ["fixture-group"] };
   const settings = profilesSnapshot.parse({
+    effectiveGroups: {},
     revision: "fixture-revision", configured: true, value: saved,
   });
   assert.deepEqual(settings.value, saved);

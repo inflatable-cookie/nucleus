@@ -29,11 +29,8 @@ type Handler = (input: never) => Promise<unknown>;
 const ACTIVE_ROLES = ["worker", "reviewer"] as const;
 type ActiveRole = (typeof ACTIVE_ROLES)[number];
 
-/**
- * The subscription group the engine charges: the named group, else the T3
- * instance the launch runs on (a pinned one, or the provider's own).
- */
-function subscriptionGroup(profile: RustNamedProfile) {
+// The pool editor requires a nonempty group field even while a model has no offer.
+function poolGroupDefault(profile: RustNamedProfile) {
   const provider = profile.selection.provider;
   return (
     profile.group ??
@@ -46,12 +43,18 @@ function subscriptionGroup(profile: RustNamedProfile) {
 }
 
 /** A Rust profile as the board's stored profile and its dispatch settings. */
-export function boardProfile(profile: RustNamedProfile): {
+export function boardProfile(
+  profile: RustNamedProfile,
+  effectiveGroups: Readonly<Record<string, string>> = {},
+): {
   profile: NucleusProfile;
   pool: api.PoolEntry;
   view: api.Profile;
 } {
   const { selection } = profile;
+  const effectiveGroup = Object.hasOwn(effectiveGroups, selection.id)
+    ? effectiveGroups[selection.id]
+    : undefined;
   // The coordinator role is retired (ruling 1); omitted roles allow both.
   const roles = (profile.roles ?? ACTIVE_ROLES).filter(
     (role): role is ActiveRole => role !== "coordinator",
@@ -75,7 +78,7 @@ export function boardProfile(profile: RustNamedProfile): {
     pool: {
       profileId: selection.id,
       enabled: profile.enabled ?? true,
-      group: subscriptionGroup(profile),
+      group: effectiveGroup ?? poolGroupDefault(profile),
       roles: roles.length ? roles : [...ACTIVE_ROLES],
       capability: selection.capability,
       weight: selection.weight,
@@ -142,14 +145,17 @@ export function createRustProfiles(rust: RustApi) {
   // this board so the second edit reads the revision the first edit saved.
   let writes = Promise.resolve();
 
-  function editProfiles(edit: (value: RustProfilesValue) => RustProfilesValue) {
+  function editProfiles(edit: (
+    value: RustProfilesValue,
+    effectiveGroups: Record<string, string>,
+  ) => RustProfilesValue) {
     const next = writes.then(async () => {
       const current = await rust.domain(profilesSnapshot, "profiles");
       return rust.saveDomain(
         profilesSnapshot,
         "profiles",
         current.revision,
-        edit(current.value),
+        edit(current.value, current.effectiveGroups),
       );
     });
     writes = next.then(
@@ -326,16 +332,16 @@ export function createRustProfiles(rust: RustApi) {
       }));
       return { removed };
     },
-    // The board shows defaults for unset fields (both roles, general scope, the
-    // provider as subscription). A value equal to that display leaves the stored
+    // The board shows defaults for unset fields (both roles, general scope and
+    // the resolved subscription). A value equal to that display leaves the stored
     // field as it was, so an unrelated edit never pins a default or drops an
     // imported value; a changed value is written.
     "queue.profile": async (input: api.PoolEntry) => {
-      const saved = await editProfiles((value) => ({
+      const saved = await editProfiles((value, groups) => ({
         ...value,
         profiles: value.profiles.map((entry) => {
           if (entry.selection.id !== input.profileId) return entry;
-          const shown = boardProfile(entry).pool;
+          const shown = boardProfile(entry, groups).pool;
           const roles = input.roles.filter(
             (role): role is ActiveRole => role !== "coordinator",
           );
@@ -357,7 +363,7 @@ export function createRustProfiles(rust: RustApi) {
       const entry = saved.value.profiles.find(
         (profile) => profile.selection.id === input.profileId,
       );
-      return { ok: true, entry: entry ? boardProfile(entry).pool : undefined };
+      return { ok: true, entry: entry ? boardProfile(entry, saved.effectiveGroups).pool : undefined };
     },
     "queue.availability": async (
       input:
