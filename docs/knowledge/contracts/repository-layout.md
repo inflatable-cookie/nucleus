@@ -164,8 +164,8 @@ transport helpers must be classified explicitly while their old paths remain.
 
 The active executable is the Rust engine. Its browser entry is
 `client/web/engine-index.tsx`, and [engine staging](../../../engine/README.md#stage-an-engine-release)
-builds the executable and board assets together. The source root still carries
-the report wrapper `mcp-report.mjs`. The historical compiled package layout is recorded in the
+builds the executable and board assets together. The historical compiled package
+layout is recorded in the
 [release contract](release.md#historical-typescript-runtime-package).
 
 `core/store/` now owns store persistence, schema, projections, sibling storage and

@@ -19,7 +19,6 @@ import activeTests from './active-tests.json' with { type: 'json' };
 
 /** Trees whose code is parsed for import edges. Root entry files are listed separately. */
 const GRAPH_ROOTS = ['core', 'service', 'hosts', 'shared', 'client', 'bin', 'scripts', 'test'];
-const ROOT_FILES = ['mcp-report.mjs'];
 const CODE = /\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)$/;
 const ACTIVE_TESTS_PATH = 'scripts/active-tests.json';
 const TEST = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
@@ -36,7 +35,7 @@ export const MAX_AFFECTED = 60;
 const TIERS = ['changed test', 'imports', 'names', 'reads directory'];
 
 export function isGraphNode(path) {
-  return CODE.test(path) && (ROOT_FILES.includes(path) || GRAPH_ROOTS.some(root => path.startsWith(`${root}/`)));
+  return CODE.test(path) && GRAPH_ROOTS.some(root => path.startsWith(`${root}/`));
 }
 
 export function isTestFile(path) {

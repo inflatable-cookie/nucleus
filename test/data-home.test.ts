@@ -9,7 +9,7 @@ import {
   CURRENT_DATA_HOME_LEAF, DATA_HOME_ENTRIES, DATA_HOME_ENV, STORE_MARKERS,
   dataHome, holdsStore, isDataHomeError, resolveDataHome,
 } from '../shared/data-home.mjs';
-import { SERVICE_EXECUTOR_FAULT_FILE, SERVICE_INFO_FILE, SERVICE_ROLL_FILE, SERVICE_SOCKET_FILE, SERVICE_STARTUP_FAILURE_FILE, serviceInfoPath } from '../service/transport/identity';
+import { SERVICE_EXECUTOR_FAULT_FILE, SERVICE_INFO_FILE, SERVICE_ROLL_FILE, SERVICE_SOCKET_FILE, SERVICE_STARTUP_FAILURE_FILE, serviceInfoPath } from '../shared/service/discovery';
 
 /**
  * The one data-home resolver. The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME`
