@@ -59,6 +59,7 @@ export const laneOutcomeSummarySchema = z.object({
 }).strict();
 
 export const laneViewSchema = laneSchema.extend({
+  project: z.string().min(1).optional(),
   liveByPhase: z.record(z.string(), z.number()),
   liveByRepository: z.record(z.string(), z.number()),
   terminalCount: z.number().int().nonnegative(),
@@ -78,8 +79,12 @@ export const laneUpsertInputSchema = z.object({
 
 export type LaneUpsertInput = z.infer<typeof laneUpsertInputSchema>;
 
-export const laneStatusInputSchema = z.object({
+export const laneAddressSchema = z.object({
+  project: z.string().min(1),
   key: laneKeySchema,
+}).strict();
+
+export const laneStatusInputSchema = laneAddressSchema.extend({
   status: laneStatusSchema,
   note: z.string().max(4000).optional(),
 }).strict();

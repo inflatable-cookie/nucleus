@@ -170,15 +170,16 @@ export function projectPlanningCounts(
 }
 
 export function projectLanes(project: Project, lanes: LaneView[]) {
-  return lanes.filter((lane) =>
-    (lane.repositories ?? []).some((member) =>
+  return lanes.filter((lane) => {
+    if (lane.project) return lane.project === project.key;
+    return (lane.repositories ?? []).some((member) =>
       (project.repositories ?? []).some((repo) =>
         member.origin && repo.origin
           ? member.origin === repo.origin
           : Boolean(member.path && member.path === repo.path),
       ),
-    ),
-  );
+    );
+  });
 }
 
 export type RoadmapStep = {

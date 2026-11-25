@@ -21,6 +21,7 @@ import { profileUsage } from "../client/settings-profile-helpers";
 import { nightlyProviders } from "./support/pool-shapes";
 import type {
   RustCachedCatalog,
+  RustLane,
   RustBrowserSession,
   RustProfileUsage,
 } from "../client/web/rust-api";
@@ -32,7 +33,7 @@ import type {
  * including a field this client does not know, and records every write.
  */
 
-function engine() {
+function engine(laneByProject: Record<string, RustLane> = {}) {
   let session: RustBrowserSession = {
     id: "operator-session",
     canEditSettings: true,
@@ -137,10 +138,28 @@ function engine() {
       (session.planningProjects !== null && !session.planningProjects.includes(project)))) {
       return Response.json({ error: "controller is not authorized for this project" }, { status: 403 });
     }
+    const [, laneProject, laneKey, laneAction] =
+      /^\/planning\/([^/]+)\/lanes\/([^/]+)(?:\/(status))?$/.exec(path) ?? [];
+    if (laneProject && laneKey && laneByProject[laneProject]?.key === laneKey) {
+      const lane = laneByProject[laneProject]!;
+      const input = JSON.parse(String(init?.body));
+      if (init?.method === "PUT" && !laneAction) {
+        if (input.version !== lane.version) {
+          return Response.json({ error: "Lane version changed" }, { status: 409 });
+        }
+        lane.version++;
+        lane.document = input.document;
+        return json(lane);
+      }
+      if (init?.method === "POST" && laneAction === "status") {
+        lane.status = input.status;
+        return json(lane);
+      }
+    }
     if (collection === "plan") return json({
       version: 1,
       lanes: [{ key: "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
-      documents: [{
+      documents: [laneByProject[project ?? ""] ?? {
         key: "delivery", version: 1, title: "Delivery", aim: "Ship the change",
         document: "Fixture Markdown", status: "open",
       }],
@@ -625,6 +644,113 @@ test("Rust board loads scoped collections on entry and shares them across views"
   push({ queryKey: ["nucleus"] });
   await waitFor(() => fake.planningReads().length === 7, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "reconnect refresh");
   assert.deepEqual(fake.planningReads().slice(4).sort(), scopedReads);
+});
+
+test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
+  const lane = (name: string): RustLane => ({
+    key: "delivery",
+    version: 1,
+    title: `${name} delivery`,
+    aim: `Ship the ${name} change`,
+    document: `# ${name} document`,
+    status: "open",
+  });
+  const lanes = { Orbit_Main: lane("Orbit"), lantern: lane("Lantern") };
+  const fake = engine(lanes);
+  fake.setSession({
+    id: "scoped-planner-session", canEditSettings: false,
+    planningProjects: ["Orbit_Main", "lantern"],
+  });
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const logStart = fake.reads.length;
+  const missing = { key: "delivery" };
+  await assert.rejects(adapter.rpc(api.laneDocumentGet, missing as never), /project/);
+  await assert.rejects(adapter.rpc(api.laneDocumentEdit, {
+    ...missing, version: 1, text: "Wrong lane", author: "fixture",
+  } as never), /project/);
+  await assert.rejects(adapter.rpc(api.laneStatus, { ...missing, status: "done" } as never), /project/);
+  assert.deepEqual(fake.reads.slice(logStart), []);
+  await assert.rejects(adapter.rpc(api.laneDocumentGet, {
+    ...missing, project: "missing",
+  }), /no accessible plan/);
+  assert.deepEqual(fake.planningReads(), []);
+
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const h = React.createElement;
+  const ui = mount(h(QueryClientProvider, {
+    client,
+    children: h(web.WebContext.Provider, {
+      value: { transport: adapter, settings: false },
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(MainSurface, {
+          theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
+          layout: { compact: false },
+        }),
+      }),
+    }),
+  }));
+  t.after(() => {
+    ui.update(h(React.Fragment));
+    client.clear();
+    useNativeStubs();
+  });
+  const visible = async (label: string | RegExp) => {
+    await waitFor(() => Boolean(ui.query(label)), 4000, String(label)).catch((error) => {
+      throw new Error(`${String(error)}; board text: ${ui.text()}; calls: ${fake.reads.join(", ")}`);
+    });
+  };
+
+  ui.press(/^Planning(?:,|$)/);
+  await visible("Project row Orbit");
+  ui.press("Project row Orbit");
+  await visible("Open lane Orbit delivery");
+  ui.press("Open lane Orbit delivery");
+  await visible("Read full document for Orbit delivery");
+  assert.match(ui.text(), /Orbit document/);
+
+  ui.press("Project row Lantern");
+  await visible("Open lane Lantern delivery");
+  const beforeOpen = fake.reads.length;
+  ui.press("Open lane Lantern delivery");
+  await visible("Read full document for Lantern delivery");
+  assert.match(ui.text(), /Lantern document/);
+  assert.doesNotMatch(ui.text(), /Orbit document/);
+  assert.deepEqual(fake.reads.slice(beforeOpen).filter(path => path.includes("/planning/")), [
+    "GET /planning/lantern/plan",
+  ]);
+
+  ui.press("Edit the Lantern delivery document");
+  await visible("Lane document text");
+  assert.equal(ui.get("Lane document text").props.value, "# Lantern document");
+  ui.type("Lane document text", "# Revised Lantern document");
+  ui.press("Save the Lantern delivery document");
+  await waitFor(
+    () => ui.text().includes("Revised Lantern document"),
+    HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS,
+    "the selected lane displays its saved document",
+  );
+  assert.equal(lanes.lantern.version, 2);
+
+  await assert.rejects(adapter.rpc(api.laneDocumentEdit, {
+    ...missing, project: "lantern", version: 1, text: "Stale", author: "fixture",
+  }), /Lane version changed/);
+  ui.press("Mark done Lantern delivery");
+  ui.press("Mark Lantern delivery done");
+  await waitFor(() => lanes.lantern.status === "done", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "Lantern lane closes");
+  assert.deepEqual(lanes.Orbit_Main, lane("Orbit"));
+  assert.equal(lanes.lantern.document, "# Revised Lantern document");
+  assert.equal(lanes.lantern.version, 2);
+  assert.deepEqual(fake.reads.filter(path => /^(PUT|POST) \/planning\//.test(path)), [
+    "PUT /planning/lantern/lanes/delivery",
+    "PUT /planning/lantern/lanes/delivery",
+    "POST /planning/lantern/lanes/delivery/status",
+  ]);
 });
 
 test("a project refusal settles lists until the paired session changes", async () => {

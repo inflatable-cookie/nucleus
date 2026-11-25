@@ -895,6 +895,7 @@ export function LaneFinderResults({
   onRetry,
   onOpenLane,
   selectedLane,
+  selectedLaneProject,
   c,
 }: {
   rows: LaneFinderRow[];
@@ -906,8 +907,9 @@ export function LaneFinderResults({
   /** Whether the search already spans every project, so the copy never offers a scope that is already in force. */
   allProjects?: boolean;
   onRetry?: () => void;
-  onOpenLane: (lane: string) => void;
+  onOpenLane: (lane: string, project?: string) => void;
   selectedLane: string;
+  selectedLaneProject?: string;
   c: Colors;
 }) {
   const r = roles(c);
@@ -993,16 +995,18 @@ export function LaneFinderResults({
         ))}
       {rows.map((row) => (
         <Pressable
-          key={row.key}
+          key={JSON.stringify([row.project, row.key])}
           accessibilityRole="button"
           accessibilityLabel={`Open lane ${row.title}, ${row.places.map((place) => place.name).join(" and ")}, ${statusWord[row.status]}`}
-          onPress={() => onOpenLane(row.key)}
+          onPress={() => onOpenLane(row.key, row.project)}
           style={{
             gap: space.xxs,
             padding: space.sm,
             borderRadius: radius.card,
             backgroundColor:
-              selectedLane === row.key ? r.selected : r.raised,
+              selectedLane === row.key && selectedLaneProject === row.project
+                ? r.selected
+                : r.raised,
           }}
         >
           <View
@@ -1101,6 +1105,7 @@ export function PlanningTab({
   edits,
   saveErrors,
   selectedLane,
+  selectedLaneProject,
   step,
   compact,
   busy,
@@ -1130,6 +1135,7 @@ export function PlanningTab({
   edits: Record<string, PlanEdit>;
   saveErrors?: Record<string, string>;
   selectedLane: string;
+  selectedLaneProject?: string;
   step: PlanningStep;
   compact: boolean;
   busy: boolean;
@@ -1156,13 +1162,13 @@ export function PlanningTab({
   /** Reads the plans again after a failed read. */
   onRetryPlans?: () => void;
   onStep: (step: PlanningStep) => void;
-  onOpenLane: (lane: string) => void;
+  onOpenLane: (lane: string, project?: string) => void;
   onOpenTask?: (id: string) => void;
   onEdit: (project: string, edit: PlanEdit) => void;
   onSave: (project: string, edit: PlanEdit) => void;
   onCancel: (project: string) => void;
-  onCloseLane?: (lane: string) => void;
-  onReopenLane?: (lane: string) => void;
+  onCloseLane?: (lane: string, project: string) => void;
+  onReopenLane?: (lane: string, project: string) => void;
   c: Colors;
 }) {
   const [query, setQuery] = useState("");
@@ -1210,26 +1216,19 @@ export function PlanningTab({
   const ordered = (["active", "idle", "dormant"] as const).flatMap((group) =>
     sections.filter((section) => groupOf(section) === group),
   );
-  const lists = (section: PlanSection, lane: string) =>
-    projectLanes(section.project, lanes).some((item) => item.key === lane) ||
-    Boolean(section.latest?.entries.some((entry) => entry.lane === lane));
   const laneOpen = Boolean(selectedLane) && step === "lane";
   const chosenSection = sections.find(
     (section) => section.project.key === chosen,
   );
   // The roadmap shown: the operator's pick, else the plan an open lane belongs to,
   // else (with a detail pane) the first project listed.
+  const laneSection = selectedLaneProject
+    ? sections.find((section) => section.project.key === selectedLaneProject)
+    : undefined;
   const selectedSection =
     chosenSection ??
-    (laneOpen
-      ? ordered.find((section) => lists(section, selectedLane))
-      : undefined) ??
+    (laneOpen ? laneSection : undefined) ??
     (twoPane || sections.length === 1 ? ordered[0] : undefined);
-  const laneSection = selectedLane
-    ? selectedSection && lists(selectedSection, selectedLane)
-      ? selectedSection
-      : ordered.find((section) => lists(section, selectedLane))
-    : undefined;
   const badgeFor = (project: Project) =>
     [project.primary, ...project.repositories]
       .map((repo) => (repo ? repositoryBadges?.[repo.path] : undefined))
@@ -1291,24 +1290,7 @@ export function PlanningTab({
     pickProject(key);
     return true;
   };
-  const editorProps = {
-    leads,
-    lanes,
-    edits,
-    saveErrors,
-    selectedLane,
-    busy,
-    onOpenLane,
-    onOpenTask,
-    onEdit,
-    onSave,
-    onCancel,
-    onCloseLane,
-    onReopenLane,
-    projects,
-    plans,
-    c,
-  };
+
   const startEdit = (section: PlanSection) => {
     const groups = planningPlan(section.latest, section.saved);
     onEdit(section.project.key, {
@@ -1316,9 +1298,32 @@ export function PlanningTab({
       version: section.latest?.version ?? 0,
     });
   };
-  const roadmapFor = (section: PlanSection) =>
-    edits[section.project.key] ? (
-      <PlanEditor section={section} {...editorProps} onRetry={onRetryPlans} />
+  const roadmapFor = (section: PlanSection) => {
+    const project = section.project.key;
+    const openLane = (lane: string) => onOpenLane(lane, project);
+    const closeLane = onCloseLane && ((lane: string) => onCloseLane(lane, project));
+    const reopenLane = onReopenLane && ((lane: string) => onReopenLane(lane, project));
+    return edits[project] ? (
+      <PlanEditor
+        section={section}
+        leads={leads}
+        lanes={lanes.filter((lane) => !lane.project || lane.project === project)}
+        edits={edits}
+        saveErrors={saveErrors}
+        selectedLane={selectedLaneProject === project ? selectedLane : ""}
+        busy={busy}
+        onOpenLane={openLane}
+        onOpenTask={onOpenTask}
+        onEdit={onEdit}
+        onSave={onSave}
+        onCancel={onCancel}
+        onCloseLane={closeLane}
+        onReopenLane={reopenLane}
+        onRetry={onRetryPlans}
+        projects={projects}
+        plans={plans}
+        c={c}
+      />
     ) : (
       <ProjectRoadmapView
         // Each project's roadmap keeps its own History and Finished state.
@@ -1333,20 +1338,23 @@ export function PlanningTab({
         stacked={!twoPane}
         readPlanVersion={readPlanVersion}
         busy={busy}
-        onOpenLane={onOpenLane}
+        onOpenLane={openLane}
         onEditPlan={section.latest ? () => startEdit(section) : undefined}
         onRetry={onRetryPlans}
         onOpenTask={onOpenTask}
-        onReopenLane={onReopenLane}
+        onReopenLane={reopenLane}
         c={c}
       />
     );
+  };
   const backToList = () => {
     setChosen(null);
     onStep("plan");
   };
-  const laneTitle =
-    lanes.find((lane) => lane.key === selectedLane)?.title ?? selectedLane;
+  const laneTitle = lanes.find((lane) =>
+    lane.key === selectedLane &&
+    (!lane.project || lane.project === selectedLaneProject),
+  )?.title ?? selectedLane;
   const laneCrumb = (
     <Breadcrumb
       c={c}
@@ -1433,6 +1441,7 @@ export function PlanningTab({
       onRetry={onRetryLanes}
       onOpenLane={onOpenLane}
       selectedLane={selectedLane}
+      selectedLaneProject={selectedLaneProject}
       c={c}
     />
   ) : drilled ? (

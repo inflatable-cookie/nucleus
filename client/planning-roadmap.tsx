@@ -796,17 +796,15 @@ export function ProjectRoadmapView({
   const [finished, setFinished] = useState(false);
   const { project, latest, error } = section;
   const name = project.name;
+  const scopedLanes = lanes.filter((lane) => !lane.project || lane.project === project.key);
   const roadmap = roadmapView({
     entries: latest?.entries ?? [],
     unplanned: [],
     done: latest?.done,
-    lanes,
+    lanes: scopedLanes,
     leads,
   });
-  const laneFor = (key: string) => lanes.find((lane) => lane.key === key);
-  const projectKeys = new Set(
-    projectLanes(project, lanes).map((lane) => lane.key),
-  );
+  const laneFor = (key: string) => scopedLanes.find((lane) => lane.key === key);
   // "Not in the plan yet" is against the latest save as stored: a lane that joined the
   // live projection after it is not planned until a save names it.
   const planned = new Set([
@@ -815,9 +813,8 @@ export function ProjectRoadmapView({
     ),
     ...(latest?.done ?? []).map((entry) => entry.lane),
   ]);
-  const unplanned = lanes.filter(
+  const unplanned = projectLanes(project, scopedLanes).filter(
     (lane) =>
-      projectKeys.has(lane.key) &&
       !planned.has(lane.key) &&
       (lane.status === "active" || lane.status === "paused"),
   );
@@ -1018,15 +1015,15 @@ export function ProjectRoadmapView({
           project={project}
           latest={latest}
           saved={section.saved}
-          lanes={lanes}
+          lanes={scopedLanes}
           unplanned={unplanned}
           readPlanVersion={readPlanVersion}
           c={c}
         />
       )}
-      {latest && <Banner plan={latest} lanes={lanes} group={group} c={c} />}
+      {latest && <Banner plan={latest} lanes={scopedLanes} group={group} c={c} />}
       {!latest && group === "dormant" && (
-        <Banner lanes={lanes} group={group} c={c} />
+        <Banner lanes={scopedLanes} group={group} c={c} />
       )}
       {latest && Boolean(latest.entries.length) && (
         <View
