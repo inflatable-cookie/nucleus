@@ -9,13 +9,12 @@ use nucleus_hosts::{
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
-use crate::{Service, ServiceError, State, WaitDetail, event, now_ms, pass::DispatchTarget};
+use crate::{Service, ServiceError, State, WaitDetail, now_ms, pass::DispatchTarget};
 
 const HORIZON_MS: u64 = 48 * 60 * 60 * 1_000;
 const RENEW_BEFORE_MS: u64 = HORIZON_MS / 2;
 const HANDOVER_MS: u64 = 120_000;
 const RECHECK_MS: u64 = 15_000;
-const UNSETTLE_NOT_SENT: &str = "native_row_unsettle_not_sent";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Plan {
@@ -335,9 +334,8 @@ impl Service {
                 &binding,
                 &command,
                 change,
-                Some(&target),
+                &target,
                 (&visibility_roles(task), ended),
-                None,
             )
             .await;
         let outcome = match result {
@@ -409,30 +407,14 @@ impl Service {
         Ok(receipt)
     }
 
-    pub(super) async fn claim_row_unsettle(
-        &self,
-        id: &str,
-        command: &str,
-    ) -> Result<bool, ServiceError> {
-        let mut intent = event("native_row_unsettle");
-        intent.detail = command.into();
-        Ok(self
-            .state
-            .lock()
-            .await
-            .store
-            .claim_task_effect_after(id, &intent, false, Some(UNSETTLE_NOT_SENT))?
-            .is_some())
-    }
-
-    /// Clear one visibility barrier before the next delivery plan.
+    /// Hold delivery while an operator snooze covers the parent.
     pub(super) async fn wake_parent_delivery(
         &self,
         row: &TaskRow,
         write: &ParentWrite,
     ) -> Result<(), ServiceError> {
-        if let Some((initial, provider)) = write.delivery_row() {
-            self.wake_task_parent(row, write.binding(), provider, initial)
+        if let Some(initial) = write.delivery_row() {
+            self.check_parent_snooze(row, write.binding(), initial)
                 .await?;
         }
         Ok(())
@@ -442,7 +424,16 @@ impl Service {
         &self,
         row: &TaskRow,
         binding: &nucleus_hosts::Binding,
-        provider: &str,
+        _provider: &str,
+        observed: RowObservation,
+    ) -> Result<(), ServiceError> {
+        self.check_parent_snooze(row, binding, observed).await
+    }
+
+    pub(super) async fn check_parent_snooze(
+        &self,
+        row: &TaskRow,
+        binding: &nucleus_hosts::Binding,
         observed: RowObservation,
     ) -> Result<(), ServiceError> {
         let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
@@ -452,9 +443,6 @@ impl Service {
             .snoozed_until_ms
             .filter(|&until| until > now_ms());
         let receipt = self.snooze_for_delivery(id, &thread, visibility).await?;
-        if !visibility.settled && shown.is_none() {
-            return Ok(());
-        }
         let owned = receipt.filter(|receipt| receipt.owns(shown));
         if let Some(until) = shown
             && owned.is_none()
@@ -469,47 +457,7 @@ impl Service {
                 retry_at: self.host.request_retry_at().max(Some(retry)),
             });
         }
-        if !visibility.settled {
-            return Ok(());
-        }
-        let occurrence = visibility
-            .settled_at_ms
-            .map_or_else(|| format!("version-{}", row.version), |at| at.to_string());
-        let command = format!("task-{id}-{thread}-unsettle-{occurrence}");
-        if !self.claim_row_unsettle(id, &command).await? {
-            return Err(self.parent_not_sent(format!(
-                "unsettle already claimed (revision {})",
-                observed.sequence
-            )));
-        }
-        let change = RowChange::Unsettle;
-        let result = self
-            .host
-            .write_row_visibility(
-                binding,
-                &command,
-                change,
-                None,
-                (&[], 0),
-                Some((observed, provider)),
-            )
-            .await;
-        if let Err(ParentSendError::NotSent(error)) = result {
-            let mut refusal = event(UNSETTLE_NOT_SENT);
-            refusal.detail = command;
-            self.state
-                .lock()
-                .await
-                .store
-                .record_task_effect(id, &refusal)?;
-            return Err(self.parent_not_sent(format!(
-                "{change:?} refused before send (prepared {observed:?}): {error}"
-            )));
-        }
-        Err(self.parent_not_sent(format!(
-            "{change:?} is waiting for shell confirmation (revision {}, write {result:?})",
-            observed.sequence
-        )))
+        Ok(())
     }
 }
 
