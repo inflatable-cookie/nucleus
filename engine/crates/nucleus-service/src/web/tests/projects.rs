@@ -715,6 +715,24 @@ async fn colliding_repository_names_require_the_owner_and_preserve_planner_scope
     registry.enroll("beta-planner").await;
     let api = &registry.api;
     let read = |path| caller_request(api, Method::GET, path, "alpha-planner", Value::Null);
+    {
+        // A project name has precedence. Give both projects distinct display
+        // names so this selector exercises the two repository basenames.
+        let mut state = registry.service.state.lock().await;
+        let beta = state
+            .live_planner_project("beta-planner")
+            .unwrap()
+            .to_owned();
+        state
+            .settings
+            .projects
+            .as_mut()
+            .unwrap()
+            .projects
+            .get_mut(&beta)
+            .unwrap()
+            .name = "Beta project".into();
+    }
     let collision = get_as(api, "/v1/planning/nucleus-fixture/items", &BOARD_KEY).await;
     assert_eq!(collision.status(), StatusCode::BAD_REQUEST);
     assert!(
