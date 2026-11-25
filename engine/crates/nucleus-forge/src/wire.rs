@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use nucleus_core::{CheckState, Forge, Head, PullRequest};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::Deserialize;
 
 use crate::{AuthenticatedGitHubUser, ForgeError};
 
@@ -10,7 +10,9 @@ pub(crate) struct Pull {
     pub(crate) number: i32,
     pub(crate) html_url: String,
     pub(crate) merged: bool,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) user: Option<AuthenticatedGitHubUser>,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) merge_commit_sha: Option<Head>,
     pub(crate) state: PullState,
     pub(crate) base: GitRef,
@@ -47,6 +49,7 @@ pub(crate) struct GitRef {
     #[serde(rename = "ref")]
     pub(crate) branch: String,
     pub(crate) sha: Head,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) repo: Option<RepoName>,
 }
 
@@ -69,19 +72,9 @@ struct GraphError {
 }
 
 #[derive(Deserialize)]
-struct Data<T> {
-    repository: Option<Repository<T>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Repository<T> {
-    pull_request: Option<T>,
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Checks {
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     base_ref_oid: Option<Head>,
     head_ref_oid: Head,
     base_ref_name: String,
@@ -89,6 +82,7 @@ pub(crate) struct Checks {
     state: String,
     mergeable: String,
     merge_state_status: String,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     review_decision: Option<String>,
     // GitHub may return null. Omitting a selected field is incomplete evidence.
     #[serde(deserialize_with = "Deserialize::deserialize")]
@@ -98,6 +92,7 @@ pub(crate) struct Checks {
 #[derive(Deserialize)]
 struct Rollup {
     state: String,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     contexts: Option<CheckContexts>,
 }
 
@@ -112,6 +107,7 @@ struct CheckContexts {
 #[serde(rename_all = "camelCase")]
 struct CheckPage {
     has_next_page: bool,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     end_cursor: Option<String>,
 }
 
@@ -120,6 +116,7 @@ struct CheckPage {
 enum NamedCheck {
     CheckRun {
         name: String,
+        #[serde(deserialize_with = "Deserialize::deserialize")]
         conclusion: Option<String>,
         #[serde(rename = "isRequired")]
         required: bool,
@@ -184,6 +181,7 @@ struct MergedPull {
     head_ref_oid: Head,
     base_ref_name: String,
     state: String,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     merge_commit: Option<MergeCommit>,
 }
 
@@ -215,8 +213,18 @@ impl GraphReply {
         head: &Head,
         base: &str,
         base_oid: &Head,
+        named: bool,
     ) -> Result<Checks, ForgeError> {
-        let checks: Checks = self.pull_request()?;
+        let mut pull = self.pull_request()?;
+        // The query omits contexts only when its @include directive is false.
+        if !named
+            && let Some(rollup) = pull
+                .get_mut("statusCheckRollup")
+                .and_then(serde_json::Value::as_object_mut)
+        {
+            rollup.entry("contexts").or_insert(serde_json::Value::Null);
+        }
+        let checks: Checks = serde_json::from_value(pull).map_err(|_| ForgeError::Incomplete)?;
         verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
         if checks.state != "OPEN" || checks.base_ref_oid.as_ref() != Some(base_oid) {
             return Err(ForgeError::Incomplete);
@@ -225,7 +233,8 @@ impl GraphReply {
     }
 
     pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
-        let merged: MergedPull = self.pull_request()?;
+        let merged: MergedPull =
+            serde_json::from_value(self.pull_request()?).map_err(|_| ForgeError::Incomplete)?;
         verify_graph_pull(head, base, &merged.head_ref_oid, &merged.base_ref_name)?;
         if merged.state != "MERGED" {
             return Err(ForgeError::Incomplete);
@@ -236,14 +245,15 @@ impl GraphReply {
             .ok_or(ForgeError::Incomplete)
     }
 
-    fn pull_request<T: DeserializeOwned>(self) -> Result<T, ForgeError> {
+    fn pull_request(self) -> Result<serde_json::Value, ForgeError> {
         if !self.errors.is_empty() {
             return Err(ForgeError::GraphQlRejected);
         }
-        let data = self.data.ok_or(ForgeError::Incomplete)?;
-        let data: Data<T> = serde_json::from_value(data).map_err(|_| ForgeError::Incomplete)?;
-        data.repository
-            .and_then(|repository| repository.pull_request)
+        self.data
+            .and_then(|mut data| {
+                data.pointer_mut("/repository/pullRequest")
+                    .map(serde_json::Value::take)
+            })
             .ok_or(ForgeError::Incomplete)
     }
 }

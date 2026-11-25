@@ -52,9 +52,12 @@ pub enum ReviewWrite {
 #[derive(Deserialize)]
 struct WireReview {
     id: NonZeroU64,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     user: Option<AuthenticatedGitHubUser>,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     commit_id: Option<Head>,
     state: String,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     body: Option<String>,
 }
 

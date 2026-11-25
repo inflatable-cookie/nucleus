@@ -101,17 +101,14 @@ fn checks(head: char, state: &str) -> Value {
     json!({"data": {"repository": {"pullRequest": {
         "headRefOid": sha(head), "baseRefName": "main", "baseRefOid": sha('b'), "isDraft": false,
         "state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-        "reviewDecision": null, "statusCheckRollup": {"state": state, "contexts": {"pageInfo": {"hasNextPage": false}, "nodes": []}},
-        "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false}}
+        "reviewDecision": null, "statusCheckRollup": {"state": state, "contexts": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}},
+        "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false, "endCursor": null}}
     }}}})
 }
 
 fn merged_without_commit() -> Value {
     let mut merged = pull('a', true);
-    merged
-        .as_object_mut()
-        .expect("REST pull")
-        .remove("merge_commit_sha");
+    merged["merge_commit_sha"] = Value::Null;
     merged
 }
 
@@ -536,7 +533,7 @@ async fn decoder_errors_do_not_reveal_diagnostic_values() {
     body["state"] = json!(TOKEN);
     let (forge, calls) = server(vec![Some(body)]);
     let error = forge.observe(&target).await.expect_err("invalid state");
-    assert!(matches!(error, ForgeError::Decode { .. }));
+    assert!(matches!(error, ForgeError::Incomplete));
     assert!(!format!("{error:?}").contains(TOKEN));
     assert!(!error.to_string().contains(TOKEN));
     calls.join().expect("HTTP requests");
@@ -646,7 +643,7 @@ async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
     for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Unreported)] {
         let mut response = checks('a', "SUCCESS");
         response["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"] = json!({
-            "pageInfo": {"hasNextPage": false},
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
             "nodes": [{"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS", "isRequired": required}],
         });
         let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
@@ -736,7 +733,7 @@ async fn classifies_only_positive_rebase_or_required_failure_evidence() {
         wire["statusCheckRollup"]["contexts"] = if nodes.is_null() {
             nodes
         } else {
-            json!({"pageInfo":{"hasNextPage":incomplete},"nodes":nodes})
+            json!({"pageInfo":{"hasNextPage":incomplete,"endCursor":null},"nodes":nodes})
         };
         let (forge, server) = server(vec![Some(pull('a', false)), Some(response)]);
         assert!(
@@ -878,6 +875,44 @@ async fn a_successful_partial_inventory_stays_unknown_at_either_paging_bound() {
 }
 
 #[tokio::test]
+async fn a_missing_review_decision_stops_before_another_page_or_merge_put() {
+    let task = task_with_approval();
+    let target = branches().target(PR_URL).unwrap();
+    for paged in [false, true] {
+        let cursor = paged.then_some("next");
+        let mut first = check_page('a', 'b', cursor, &json!([]));
+        first["data"]["repository"]["pullRequest"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reviewDecision");
+        let mut pages = vec![Some(pull('a', false)), Some(first)];
+        if paged {
+            pages.push(Some(check_page('a', 'b', None, &json!([]))));
+        }
+        let (forge, calls) = server(pages);
+        assert!(matches!(
+            forge.merge(&task, &target).await,
+            Err(ForgeError::Incomplete)
+        ));
+        if paged {
+            // Independently read the available second page. Its explicit null is valid.
+            let second = forge
+                .query_pull(&target, CHECKS_QUERY, true, cursor)
+                .await
+                .unwrap();
+            assert!(second.checks(&sha('a'), "main", &sha('b'), true).is_ok());
+        }
+        let requests = calls.join().unwrap();
+        assert_eq!(requests.len(), if paged { 3 } else { 2 });
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.method_and_path.starts_with("PUT "))
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
     let task = task_with_approval();
     let mut moved = pull('a', false);
@@ -951,6 +986,33 @@ fn formal_review(id: u64, user: u64, head: char, state: &str, body: &str) -> Val
         "id": id, "user": {"id": user, "login": "reviewer"},
         "commit_id": sha(head), "state": state, "body": body,
     })
+}
+
+#[tokio::test]
+async fn a_review_inventory_with_a_missing_body_is_incomplete() {
+    let head = sha('a');
+    let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
+        author: 42.try_into().unwrap(),
+        head: &head,
+        decision: Review::Changes,
+    };
+    let mut review = formal_review(7, 42, 'a', "CHANGES_REQUESTED", "text");
+    review.as_object_mut().unwrap().remove("body");
+    let (forge, calls) = server(vec![Some(json!([review]))]);
+    let result = forge
+        .find_review(
+            &branches().target(PR_URL).unwrap(),
+            &binding,
+            "marker",
+            "text",
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ReviewError::Forge(ForgeError::Incomplete))
+    ));
+    assert_eq!(calls.join().unwrap().len(), 1);
 }
 
 #[tokio::test]
