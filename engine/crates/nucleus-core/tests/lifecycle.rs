@@ -606,6 +606,9 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
 fn external_merge_acceptance_is_exact_and_entry_controls_authority() {
     let same_head = merged('a', Workspace::Dirty);
     let changed_head = merged('b', Workspace::Dirty);
+    let operator = Authority::Operator {
+        actor: "fixture-operator".into(),
+    };
     for entry in [Entry::Brief, Entry::ReviewEntry] {
         let mut task = task(entry);
         if entry == Entry::Brief {
@@ -618,6 +621,17 @@ fn external_merge_acceptance_is_exact_and_entry_controls_authority() {
         assert_eq!(
             task.command(Command::Move(Phase::Done), &planner(), &same_head),
             Err(CommandError::MergeAuthorityRequired)
+        );
+        assert_eq!(
+            task.command(
+                Command::Answer(Answer::Accept {
+                    head: sha('a'),
+                    reason: " \n ".into()
+                }),
+                &operator,
+                &same_head
+            ),
+            Err(CommandError::AcceptanceReasonRequired),
         );
         let answer = Command::Answer(Answer::Accept {
             head: sha('a'),
@@ -642,14 +656,8 @@ fn external_merge_acceptance_is_exact_and_entry_controls_authority() {
                 task.command(answer.clone(), &planner(), &same_head),
                 Err(CommandError::OperatorRequired)
             );
-            task.command(
-                answer,
-                &Authority::Operator {
-                    actor: "fixture-operator".into(),
-                },
-                &same_head,
-            )
-            .expect("operator acceptance");
+            task.command(answer, &operator, &same_head)
+                .expect("operator acceptance");
         } else {
             task.command(answer, &planner(), &same_head)
                 .expect("planner acceptance");
