@@ -172,6 +172,10 @@ impl Board {
                 super::planning::project_routes(),
             )
             .route(
+                "/api/engine/settings/projects/{project}/clear-planner",
+                post(settings::clear_planner),
+            )
+            .route(
                 "/api/engine/settings/projects/reassign",
                 post(settings::reassign),
             )

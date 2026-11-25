@@ -361,6 +361,7 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
         projects: BTreeMap::from([(
             "product".into(),
             nucleus_store::ProjectSettings {
+                planner_claim: None,
                 name: "Imported product".into(),
                 archived: false,
                 repositories: [ALPHA_REPO, BETA_REPO]
@@ -1937,6 +1938,7 @@ async fn project_tell_retries_an_empty_snapshot_and_reuses_real_receipts() {
                 projects.projects.insert(
                     "unbound".into(),
                     nucleus_store::ProjectSettings {
+                        planner_claim: None,
                         name: "Unbound project".into(),
                         archived: false,
                         repositories: Vec::new(),
@@ -2900,4 +2902,166 @@ async fn seed_removal_planning(registry: &Registry, id: &str) {
             &json!({"question":"Ship?","options":[{"id":"yes","label":"Ship"},{"id":"no","label":"Wait"}]})).await.status(),
         StatusCode::CREATED
     );
+}
+
+async fn claim(registry: &Registry, actor: &str) {
+    let response = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/planning/claim",
+        actor,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+fn received_notice(registry: &Registry) -> (String, String, String) {
+    let notices = registry.notices.lock().unwrap();
+    let sent = notices.sends.last().unwrap();
+    let text = sent["text"].as_str().unwrap();
+    let route = text
+        .split_once("Reply: nucleus tell '")
+        .unwrap()
+        .1
+        .split_once('\'')
+        .unwrap()
+        .0;
+    let value: Value = serde_json::from_str(route).unwrap();
+    let handle = value["to"]["reply"].as_str().unwrap();
+    assert!(handle.starts_with("nreply_"));
+    (
+        sent["threadId"].as_str().unwrap().into(),
+        text.into(),
+        handle.into(),
+    )
+}
+
+#[tokio::test]
+async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    claim(&registry, "alpha-planner").await;
+    registry.enroll("next-planner").await;
+    registry.enroll("beta-planner").await;
+    let message = registry
+        .tell("beta-planner", json!("Exact T3 Alpha"), "A question")
+        .await;
+    assert_eq!(message.status(), StatusCode::OK);
+    registry.advance_tell().await.unwrap();
+    let (thread, text, handle) = received_notice(&registry);
+    assert_eq!(thread, "alpha-planner");
+    assert!(!text.contains("Fallback delivery"));
+    registry.notices.lock().unwrap().started = true;
+    registry.advance_tell().await.unwrap();
+
+    let registry = registry.reopen();
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    let reply = json!({"reply": handle});
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let foreign = registry.tell("next-planner", reply.clone(), "answer").await;
+    let unknown = registry
+        .tell("alpha-planner", json!({"reply":"nreply_unknown"}), "answer")
+        .await;
+    assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(foreign).await, json_body(unknown).await);
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+
+    let sent = registry
+        .tell("alpha-planner", reply.clone(), "answer")
+        .await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    registry.advance_tell().await.unwrap();
+    let (thread, _, next_handle) = received_notice(&registry);
+    assert_eq!(thread, "beta-planner");
+    assert_ne!(handle, next_handle);
+    registry.advance_tell().await.unwrap();
+    let state = registry.service.state.lock().await;
+    assert!(
+        state
+            .store
+            .tell_reply_route(&handle, "alpha-planner", i64::MAX)
+            .unwrap()
+            .is_none()
+    );
+    drop(state);
+
+    claim(&registry, "next-planner").await;
+    claim(&registry, "next-planner").await;
+    registry.advance_tell().await.unwrap();
+    let (thread, notice, _) = received_notice(&registry);
+    assert_eq!(thread, "alpha-planner");
+    assert!(notice.contains("Another thread claimed this project"));
+    registry.advance_tell().await.unwrap();
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_none()
+    );
+    let follow = registry
+        .tell("beta-planner", json!({"reply": next_handle}), "Follow-up")
+        .await;
+    assert_eq!(follow.status(), StatusCode::OK);
+    registry.advance_tell().await.unwrap();
+    assert_eq!(received_notice(&registry).0, "alpha-planner");
+}
+
+#[tokio::test]
+async fn project_tell_archived_claim_falls_back_but_reply_refuses_archived_sender() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    claim(&registry, "alpha-planner").await;
+    registry.enroll("next-planner").await;
+    registry.enroll("beta-planner").await;
+    assert_eq!(
+        registry
+            .tell("alpha-planner", json!("second"), "Before closure")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    registry.advance_tell().await.unwrap();
+    let (_, _, handle) = received_notice(&registry);
+    registry.notices.lock().unwrap().started = true;
+    registry.advance_tell().await.unwrap();
+    registry.archived.store(true, Ordering::Relaxed);
+    let route = json!({"reply":handle});
+    assert_eq!(
+        registry
+            .tell("beta-planner", route.clone(), "After closure")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    registry.advance_tell().await.unwrap();
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        registry
+            .tell("beta-planner", json!("Exact T3 Alpha"), "Project message")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    registry.advance_tell().await.unwrap();
+    let (thread, text, _) = received_notice(&registry);
+    assert_eq!(thread, "next-planner");
+    assert!(text.contains("Fallback delivery"));
 }

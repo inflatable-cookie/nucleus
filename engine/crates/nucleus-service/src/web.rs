@@ -31,7 +31,6 @@ use nucleus_core::{
     Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use serde_json::Value;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -217,6 +216,10 @@ fn routes(
             "/v1/settings/{domain}",
             get(settings::get).put(settings::put),
         )
+        .route(
+            "/v1/settings/projects/{project}/clear-planner",
+            post(settings::clear_planner),
+        )
         .route("/v1/settings/projects/reassign", post(settings::reassign))
         .route(
             "/v1/settings/projects/{project}/removal",
@@ -237,6 +240,7 @@ fn routes(
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
     let mut routes = controller
         .merge(tasks)
+        .route("/v1/planning/claim", post(claim_planner))
         .route("/v1/planning/tell", post(tell))
         .merge(inbox::routes())
         .merge(planning::report_lane_routes())
@@ -251,6 +255,18 @@ fn routes(
             authorize_address,
         ))
         .with_state(api)
+}
+
+async fn claim_planner(
+    State(api): State<Api>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let supplied = credential(&headers)?;
+    let caller = request_controller(&api, &supplied, &headers).ok_or(ApiError::Unauthorized)?;
+    tokio::spawn(async move { api.service.claim_planner(&caller.scope).await })
+        .await
+        .map_err(|_| ServiceError::Input)??;
+    Ok(Json(json!({"claimed": true})))
 }
 
 async fn tell(
@@ -1291,6 +1307,7 @@ impl IntoResponse for ApiError {
                         StatusCode::NOT_FOUND
                     }
                     ServiceError::Input
+                    | ServiceError::TellReply
                     | ServiceError::TellInput
                     | ServiceError::TellAmbiguousProject(_)
                     | ServiceError::TellArchivedProject(_)

@@ -75,6 +75,7 @@ const repository = z.object({
   plannerThreads: z.array(z.string()).optional(),
 }).loose();
 const project = z.object({
+  plannerClaim: z.object({ thread: z.string(), occurrence: z.string(), replaced: z.string().optional() }).optional(),
   name: z.string(),
   archived: z.boolean(),
   repositories: z.array(repository),
@@ -104,6 +105,7 @@ export const profilesSnapshot = snapshot(profiles).extend({
 export const dispatchSnapshot = snapshot(dispatch);
 export const projectsView = z.object({
   settings: snapshot(projects),
+  verifiedPlanners: z.record(z.string(), z.array(z.string())).optional(),
   resolvedPlanners: z.record(z.string(), z.string().nullable()),
 });
 export const hostsView = z.object({
@@ -290,6 +292,8 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
       value: unknown,
     ) =>
       board.read(schema, `/settings/${domain}`, json("PUT", { revision, value })),
+    clearPlanner: (id: string, revision: string) => board.read(projectsView,
+      `/settings/projects/${encodeURIComponent(id)}/clear-planner`, json("POST", { revision })),
     reassign: (revision: string, origin: string, toProject: string) =>
       board.read(
         projectsView,

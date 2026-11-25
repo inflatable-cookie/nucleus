@@ -541,6 +541,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
                 registry.projects.insert(
                     project.into(),
                     ProjectSettings {
+                        planner_claim: None,
                         name: project.into(),
                         archived: false,
                         repositories: vec![],

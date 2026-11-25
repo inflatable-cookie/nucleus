@@ -524,6 +524,36 @@ pub(super) struct Reassign {
     to_project: String,
 }
 
+#[derive(Deserialize)]
+pub(super) struct ClearClaim {
+    revision: String,
+}
+
+pub(super) async fn clear_planner(
+    State(api): State<Api>,
+    Path(project): Path<String>,
+    Extension(authority): Extension<Authority>,
+    input: Result<Json<ClearClaim>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    require_operator(&authority)?;
+    let revision = body(input)?.revision;
+    let service = api.service;
+    let saved = task::spawn(async move {
+        save_projects(&service, revision, move |projects| {
+            projects
+                .projects
+                .get_mut(&project)
+                .ok_or(StorageError::SettingsConflict)?
+                .planner_claim = None;
+            Ok(())
+        })
+        .await
+    })
+    .await
+    .map_err(|_| ServiceError::Input)??;
+    Ok(Json(saved))
+}
+
 pub(super) async fn reassign(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
@@ -685,6 +715,9 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
             current.restore_origin(&repo.origin)?;
         }
         if let Some(project) = current.projects.get_mut(&id) {
+            if edits.planner_claim.is_some() && edits.planner_claim != project.planner_claim {
+                return Err(changed_route());
+            }
             project.name = edits.name;
             project.archived = edits.archived;
             for (repo, edit) in project
@@ -708,6 +741,9 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
             }
             project.repositories.extend(edits.repositories);
         } else {
+            if edits.planner_claim.is_some() {
+                return Err(changed_route());
+            }
             current.projects.insert(id, edits);
         }
     }
@@ -870,6 +906,7 @@ async fn save_projects(
     // This is the same lock direct and ACP planner commands use to apply a decision.
     // An in-flight scheduler refresh carries the previous epoch and cannot publish.
     let mut state = service.state.lock().await;
+    service.recover_claim_notices(&mut state)?;
     let result = edit(&service.settings, revision, patch).await;
     match result {
         Ok((saved, changed)) => {

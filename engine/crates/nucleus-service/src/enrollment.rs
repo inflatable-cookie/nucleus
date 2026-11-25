@@ -16,8 +16,12 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 pub(super) struct Enrollments(BTreeMap<String, Contact>);
 
 enum Contact {
-    Requested(Option<Box<PlannerBinding>>),
+    Requested {
+        binding: Option<Box<PlannerBinding>>,
+        requested_ms: u64,
+    },
     Checking {
+        requested_ms: u64,
         binding: Option<Box<PlannerBinding>>,
         observed: Option<Box<ThreadHint>>,
     },
@@ -286,12 +290,18 @@ impl Service {
         match contacts.get(actor) {
             Some(&Contact::Refused { until, failure }) => {
                 if now >= until {
-                    contacts.insert(actor.into(), Contact::Requested(binding));
+                    contacts.insert(
+                        actor.into(),
+                        Contact::Requested {
+                            binding,
+                            requested_ms: crate::now_ms(),
+                        },
+                    );
                     self.enrollment_wake.notify_one();
                 }
                 failure.into()
             }
-            Some(Contact::Requested(_) | Contact::Checking { .. }) => {
+            Some(Contact::Requested { .. } | Contact::Checking { .. }) => {
                 ServiceError::PlannerEnrollmentPending
             }
             None => {
@@ -305,7 +315,13 @@ impl Service {
                         "The T3 enrollment queue is full. Retry shortly.",
                     );
                 }
-                contacts.insert(actor.into(), Contact::Requested(binding));
+                contacts.insert(
+                    actor.into(),
+                    Contact::Requested {
+                        binding,
+                        requested_ms: crate::now_ms(),
+                    },
+                );
                 self.enrollment_wake.notify_one();
                 ServiceError::PlannerEnrollmentPending
             }
@@ -331,11 +347,16 @@ impl Service {
             .enrollments
             .0
             .iter_mut()
-            .find(|(_, contact)| matches!(contact, Contact::Requested(_)))?;
-        let Contact::Requested(binding) = contact else {
+            .find(|(_, contact)| matches!(contact, Contact::Requested { .. }))?;
+        let Contact::Requested {
+            binding,
+            requested_ms,
+        } = contact
+        else {
             return None;
         };
         *contact = Contact::Checking {
+            requested_ms: *requested_ms,
             binding: binding.take(),
             observed: None,
         };
@@ -343,20 +364,29 @@ impl Service {
     }
 
     pub(super) async fn complete_enrollment(&self, actor: &str) {
-        let binding = {
+        let (binding, requested_ms) = {
             let state = self.state.lock().await;
-            let Some(Contact::Checking { binding, .. }) = state.enrollments.0.get(actor) else {
+            let Some(Contact::Checking {
+                binding,
+                requested_ms,
+                ..
+            }) = state.enrollments.0.get(actor)
+            else {
                 return;
             };
-            binding
-                .clone()
-                .or_else(|| state.planner_binding(actor).map(Box::new))
+            (
+                binding
+                    .clone()
+                    .or_else(|| state.planner_binding(actor).map(Box::new)),
+                *requested_ms,
+            )
         };
-        let result = self.verify_enrollment(actor, binding.as_deref()).await;
+        let result = self
+            .verify_enrollment(actor, binding.as_deref(), requested_ms)
+            .await;
         let mut state = self.state.lock().await;
         let failure = match result {
             Ok(()) => {
-                eprintln!("T3 planner enrollment for {actor:?}: verified and bound.");
                 state.enrollments.0.remove(actor);
                 return;
             }
@@ -375,10 +405,6 @@ impl Service {
                 "Nucleus could not save the Projects binding. Retry shortly.",
             ),
         };
-        eprintln!(
-            "T3 planner enrollment for {actor:?}: {}",
-            ServiceError::from(failure)
-        );
         state.enrollments.0.insert(
             actor.into(),
             Contact::Refused {
@@ -390,6 +416,7 @@ impl Service {
 
     /// A persisted route is a candidate until checked against the exact thread and checkout.
     pub(super) async fn check_registered_planner(&self, actor: &str) -> Result<bool, ServiceError> {
+        let requested_ms = crate::now_ms();
         let binding = {
             let mut state = self.state.lock().await;
             let Some(binding) = state.planner_binding(actor) else {
@@ -397,20 +424,23 @@ impl Service {
             };
             if matches!(
                 state.enrollments.0.get(actor),
-                Some(Contact::Requested(_) | Contact::Checking { .. })
+                Some(Contact::Requested { .. } | Contact::Checking { .. })
             ) {
                 return Err(HostError::Uncertain.into());
             }
             state.enrollments.0.insert(
                 actor.into(),
                 Contact::Checking {
+                    requested_ms,
                     binding: None,
                     observed: None,
                 },
             );
             binding
         };
-        let result = self.verify_enrollment(actor, Some(&binding)).await;
+        let result = self
+            .verify_enrollment(actor, Some(&binding), requested_ms)
+            .await;
         let mut state = self.state.lock().await;
         state.enrollments.0.remove(actor);
         if result.is_ok() {
@@ -433,6 +463,28 @@ impl Service {
         &self,
         actor: &str,
         binding: Option<&PlannerBinding>,
+        requested_ms: u64,
+    ) -> Result<(), ServiceError> {
+        let mut identity_ms = None;
+        let result = self
+            .resolve_enrollment(actor, binding, &mut identity_ms)
+            .await;
+        let outcome = result
+            .as_ref()
+            .map_or_else(|error| format!("failed: {error}"), |()| "bound".to_owned());
+        let identity_ms = identity_ms.map_or_else(|| "unresolved".to_owned(), |ms| ms.to_string());
+        eprintln!(
+            "T3 planner enrollment for {actor:?}: requested_ms={requested_ms} identity_resolved_ms={identity_ms} finished_ms={} {outcome}",
+            crate::now_ms()
+        );
+        result
+    }
+
+    async fn resolve_enrollment(
+        &self,
+        actor: &str,
+        binding: Option<&PlannerBinding>,
+        identity_ms: &mut Option<u64>,
     ) -> Result<(), ServiceError> {
         if !self.host.projects_synchronized() {
             return Err(ServiceError::PlannerEnrollmentUnavailable(
@@ -448,6 +500,7 @@ impl Service {
                 "T3 could not prove the exact calling thread. Retry shortly.",
             )
         })?;
+        *identity_ms = Some(crate::now_ms());
         let refused = match planner.as_ref() {
             None => Some("The T3 planner thread is archived or gone."),
             Some(planner) if planner.is_child() => {
@@ -731,6 +784,7 @@ fn register(
     projects.projects.insert(
         id,
         ProjectSettings {
+            planner_claim: None,
             name,
             archived: false,
             repositories: vec![repository],

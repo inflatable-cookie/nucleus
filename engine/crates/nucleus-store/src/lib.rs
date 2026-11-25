@@ -41,8 +41,8 @@ pub use settings::{
     SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
 };
 pub use settings_domains::{
-    DispatchMode, DispatchSettings, Hosts, NamedProfile, PoolRole, Profiles, ProjectSettings,
-    Projects, RepositorySettings, T3Settings,
+    DispatchMode, DispatchSettings, Hosts, NamedProfile, PlannerClaim, PoolRole, Profiles,
+    ProjectSettings, Projects, RepositorySettings, T3Settings,
 };
 pub use task_rows::{RowSnooze, SnoozeOutcome};
 pub use tells::{

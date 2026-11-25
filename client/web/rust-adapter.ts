@@ -312,6 +312,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     } as api.UiBoard;
   }
 
+  const plannerRevisions = new Map<string, string>();
   async function projectSettings(input: { project?: string }) {
     const all = await settings();
     const rows = projectRows(all).filter(
@@ -320,7 +321,8 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     return {
       defaultSlots: all.dispatch.value.projectDefaultSlots,
       projects: rows.map(({ id, project, board }) => {
-        const planner = all.projects.resolvedPlanners[id] ?? null;
+        plannerRevisions.set(id, all.projects.settings.revision);
+        const planner = project.plannerClaim?.thread;
         return {
           project: {
             ...board,
@@ -343,7 +345,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
             value: all.dispatch.value.projectDefaultSlots,
             override: null,
           },
-          plannerLive: planner ? true : null,
+          plannerLive: planner ? all.projects.verifiedPlanners?.[id]?.includes(planner) ?? null : null,
           plannerTicket: null,
           problems: [],
           archived: project.archived,
@@ -488,6 +490,17 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         key: input.key, reason: input.reason, removedAt: new Date(result.removedAtMs).toISOString(),
         repositories: result.repositories,
       } satisfies api.ProjectTombstone;
+    },
+    "project.set-planner": async (input: { key: string; agentId: string | null }) => {
+      if (input.agentId !== null) throw new RustUnsupported("Use nucleus planner.claim in the planner thread");
+      const id = keys.id(input.key);
+      const revision = plannerRevisions.get(id);
+      if (!revision) throw new Error("Reopen the project to clear its planner.");
+      const saved = await rust.clearPlanner(id, revision);
+      const row = saved.settings.value.projects[id];
+      const project = row && boardProject(input.key, row);
+      if (!project) throw new Error("Project is no longer registered.");
+      return project;
     },
     "rust.project.archive": async (input: { project: string; archived: boolean }) => {
       const id = keys.id(input.project);
