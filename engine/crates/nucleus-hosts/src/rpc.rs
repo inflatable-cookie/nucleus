@@ -645,12 +645,6 @@ impl Rpc {
                     };
                     return Ok(ThreadObservation { reply, fence });
                 }
-                if matches!(policy, ThreadRead::Listed) && fence.row.is_none() {
-                    return Ok(ThreadObservation {
-                        reply: ThreadReply::Missing,
-                        fence,
-                    });
-                }
                 if !matches!(policy, ThreadRead::Exact)
                     && let Some(reply) = shell.get(id)
                 {
@@ -726,9 +720,7 @@ impl Rpc {
 
     fn check_thread_read(&self, row: Option<&Value>, policy: ThreadRead) -> Result<(), HostError> {
         if row.is_some_and(closed_row)
-            || (row.is_none()
-                && (matches!(policy, ThreadRead::Listed)
-                    || (self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))))
+            || (row.is_none() && self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))
         {
             return Err(HostError::Uncertain);
         }

@@ -1,26 +1,22 @@
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     ffi::OsStr,
     io,
-    os::{
-        fd::{AsRawFd, OwnedFd},
-        unix::ffi::OsStrExt,
-    },
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
 
-use futures_util::future::{try_join, try_join3};
+use futures_util::future::try_join3;
 use rustix::{
-    fs::{FileType, Mode, OFlags, Stat, fstat, open, stat},
+    fs::{FileType, Mode, stat},
     io::Errno,
     process::{Pid, geteuid, test_kill_process},
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
-    sync::Mutex,
     time,
 };
 
@@ -32,7 +28,7 @@ use crate::{
 };
 
 const DEADLINE: Duration = Duration::from_secs(5);
-const MAX_OUTPUT: u64 = 8 * 1024 * 1024;
+const MAX_PROBE_OUTPUT: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum ProcessEvidenceFailure {
@@ -40,7 +36,7 @@ pub enum ProcessEvidenceFailure {
     Timeout,
     #[error("the census exceeded its output limit")]
     Truncated,
-    #[error("the mount or directory witness could not be verified")]
+    #[error("the checkout or scratch directory could not be verified")]
     Scope,
     #[error("the process listing was incomplete")]
     Incomplete,
@@ -59,7 +55,7 @@ pub(crate) const fn coverage_error(error: HostError) -> HostError {
 
 #[derive(Clone, Copy)]
 pub(crate) enum Activity {
-    Busy,
+    Busy(u32),
     Quiet,
     Unknown(Option<u32>),
 }
@@ -69,15 +65,6 @@ pub(crate) enum Activity {
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
     runtime: Option<(u32, HashMap<u32, RuntimeProcess>)>,
-    scoped: Mutex<HashMap<(PathBuf, Option<PathBuf>), ScopedResult>>,
-}
-
-type ScopedResult = Result<OpenOwners, HostError>;
-
-#[derive(Default)]
-struct OpenOwners {
-    cwd: HashSet<u32>,
-    files: HashSet<u32>,
 }
 
 #[derive(Default)]
@@ -100,7 +87,6 @@ impl Inventory {
                 },
             )]),
             runtime: None,
-            scoped: Mutex::default(),
         }
     }
 
@@ -154,7 +140,7 @@ impl Inventory {
         scratch: &Path,
     ) -> Result<Self, HostError> {
         let user = geteuid().as_raw();
-        let (listing, _) = capture(
+        let (listing, _) = read_listing(
             "/usr/sbin/lsof",
             &[
                 "-a",
@@ -167,12 +153,20 @@ impl Inventory {
                 "-F0pfn",
             ],
             Some(scratch),
+            u64::MAX,
         )
-        .await?;
+        .await?
+        .successful()?;
         // The later inventory includes any new PID lsof did not see. A zombie
         // has already released its cwd and cannot access the checkout.
-        let (processes, probe_pid) =
-            capture("/bin/ps", &["-axo", "pid=,ppid=,uid=,stat="], Some(scratch)).await?;
+        let (processes, probe_pid) = read_listing(
+            "/bin/ps",
+            &["-axo", "pid=,ppid=,uid=,stat="],
+            Some(scratch),
+            u64::MAX,
+        )
+        .await?
+        .successful()?;
         let mut inventory = Self::from_listings(&listing, &processes, user, probe_pid)?;
         inventory.complete_missing(scratch).await;
         if let Some(server) = server
@@ -212,6 +206,7 @@ impl Inventory {
                 "/usr/sbin/lsof",
                 &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
                 Some(scratch),
+                u64::MAX,
             )
             .await
             && let Some(paths) = listing.cwd_followup()
@@ -260,27 +255,28 @@ impl Inventory {
         Ok(Self {
             processes: live,
             runtime: None,
-            scoped: Mutex::default(),
         })
     }
 
     pub(crate) fn activity(
         &self,
         path: &Path,
+        scratch: Option<&Path>,
         runtime: &HashSet<u32>,
     ) -> Result<Activity, HostError> {
         verify_root(path)?;
+        if let Some(scratch) = scratch {
+            verify_root(scratch)?;
+        }
         let mut missing: Option<u32> = None;
         for (&pid, process) in &self.processes {
             if runtime.contains(&pid) {
                 continue;
             }
-            if process
-                .cwd
-                .as_ref()
-                .is_some_and(|cwd| cwd.starts_with(path))
-            {
-                return Ok(Activity::Busy);
+            if process.cwd.as_ref().is_some_and(|cwd| {
+                cwd.starts_with(path) || scratch.is_some_and(|root| cwd.starts_with(root))
+            }) {
+                return Ok(Activity::Busy(pid));
             }
             if process.cwd.is_none() || process.ambiguous_path {
                 missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
@@ -291,6 +287,26 @@ impl Inventory {
         } else {
             Activity::Quiet
         })
+    }
+
+    pub(crate) fn writer(
+        &self,
+        checkout: &Path,
+        scratch: Option<&Path>,
+        runtime: &HashSet<u32>,
+    ) -> Result<Option<u32>, HostError> {
+        match self
+            .activity(checkout, scratch, runtime)
+            .map_err(coverage_error)?
+        {
+            Activity::Busy(pid) => Ok(Some(pid)),
+            Activity::Quiet => Ok(None),
+            Activity::Unknown(pid) => Err(HostError::ProcessCoverage(
+                pid.map_or(ProcessEvidenceFailure::Incomplete, |pid| {
+                    ProcessEvidenceFailure::Cwd { pid }
+                }),
+            )),
+        }
     }
 
     pub(crate) fn standing_pids(&self, thread: &str) -> HashSet<u32> {
@@ -322,45 +338,6 @@ impl Inventory {
                 })
             })
             .collect()
-    }
-
-    pub(crate) async fn activity_for(
-        &self,
-        checkout: &Path,
-        run_scratch: Option<&Path>,
-        temporary: &Path,
-        runtime: &HashSet<u32>,
-    ) -> Result<Activity, HostError> {
-        let cwd = self.activity(checkout, runtime)?;
-        if matches!(cwd, Activity::Busy) {
-            return Ok(Activity::Busy);
-        }
-        match (
-            cwd,
-            run_scratch.map_or(Ok(Activity::Quiet), |path| self.activity(path, runtime))?,
-        ) {
-            (_, Activity::Busy) => return Ok(Activity::Busy),
-            (Activity::Unknown(pid), _) | (_, Activity::Unknown(pid)) => {
-                return Ok(Activity::Unknown(pid));
-            }
-            _ => {}
-        }
-        let mut scoped = self.scoped.lock().await;
-        let key = (checkout.to_path_buf(), run_scratch.map(Path::to_path_buf));
-        let scan = match scoped.entry(key) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                entry.insert(scoped_activity(checkout, run_scratch, temporary).await)
-            }
-        };
-        let paths = scan.as_ref().map_err(|error| *error)?;
-        Ok(
-            if !paths.files.is_empty() || paths.cwd.iter().any(|pid| !runtime.contains(pid)) {
-                Activity::Busy
-            } else {
-                Activity::Quiet
-            },
-        )
     }
 }
 
@@ -461,193 +438,6 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-struct Witness<'a> {
-    path: &'a Path,
-    fd: OwnedFd,
-}
-
-impl<'a> Witness<'a> {
-    fn open(path: &'a Path) -> Result<Self, HostError> {
-        let fd = open(
-            path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|_| HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))?;
-        Ok(Self { path, fd })
-    }
-}
-
-async fn scoped_activity(
-    checkout: &Path,
-    run_scratch: Option<&Path>,
-    temporary: &Path,
-) -> ScopedResult {
-    let mut witnesses = vec![Witness::open(checkout)?];
-    if let Some(path) = run_scratch.filter(|path| *path != checkout) {
-        witnesses.push(Witness::open(path)?);
-    }
-    let mounts = scoped_mounts(&witnesses, temporary).await?;
-    let mut args: Vec<&OsStr> = ["-n", "-P", "-F0pfn", "+f", "--"]
-        .into_iter()
-        .map(OsStr::new)
-        .collect();
-    args.extend(mounts.values().map(|mount| mount.as_os_str()));
-    let listing = read_listing("/usr/sbin/lsof", &args, Some(temporary)).await?;
-    // Keep the directory descriptors open while lsof runs. They are dropped
-    // with the witnesses before the pass can authorize worktree removal.
-    if mounts != scoped_mounts(&witnesses, temporary).await? {
-        return Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope));
-    }
-    scoped_listing(&listing, &witnesses)
-        .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
-}
-
-fn identity(metadata: Stat) -> (i128, u64) {
-    (i128::from(metadata.st_dev), metadata.st_ino)
-}
-
-async fn scoped_mounts(
-    witnesses: &[Witness<'_>],
-    temporary: &Path,
-) -> Result<HashMap<i128, PathBuf>, HostError> {
-    let mut paths = vec![OsStr::new("-P"), OsStr::new("--")];
-    paths.extend(witnesses.iter().map(|witness| witness.path.as_os_str()));
-    let (anchors, listed) = try_join(
-        read_listing("/bin/df", &paths, Some(temporary)),
-        read_listing("/bin/df", &["-P"], Some(temporary)),
-    )
-    .await?;
-    select_mounts(&anchors, &listed, witnesses)
-        .ok_or(HostError::ProcessCoverage(ProcessEvidenceFailure::Scope))
-}
-
-fn select_mounts(
-    anchors: &Listing,
-    listed: &Listing,
-    witnesses: &[Witness<'_>],
-) -> Option<HashMap<i128, PathBuf>> {
-    let roots = witnesses
-        .iter()
-        .map(|witness| {
-            let open = identity(fstat(&witness.fd).ok()?);
-            (identity(stat(witness.path).ok()?) == open).then_some(open)
-        })
-        .collect::<Option<Vec<_>>>()?;
-    // lsof can reject two names for the same device. Use the name df
-    // resolves for the witnessed directory, including APFS aliases.
-    let anchors = mount_points(anchors)?;
-    if anchors.len() != roots.len() {
-        return None;
-    }
-    let mut selected = HashMap::new();
-    for (path, &(device, _)) in anchors.into_iter().zip(&roots) {
-        if identity(stat(path).ok()?).0 != device {
-            return None;
-        }
-        selected.entry(device).or_insert_with(|| path.into());
-    }
-    for mount in mount_points(listed)? {
-        let device = identity(stat(mount).ok()?).0;
-        // Comparing ancestor identities also finds a nested mount below
-        // the physical spelling of a logical APFS directory.
-        if mount
-            .ancestors()
-            .skip(1)
-            .any(|path| stat(path).is_ok_and(|metadata| roots.contains(&identity(metadata))))
-        {
-            selected.entry(device).or_insert_with(|| mount.into());
-        }
-    }
-    Some(selected)
-}
-
-fn mount_points(listed: &Listing) -> Option<Vec<&Path>> {
-    if listed.exit != Some(0) {
-        return None;
-    }
-    let lines = listed
-        .output
-        .strip_suffix(b"\n")?
-        .split(|&byte| byte == b'\n');
-    lines
-        .skip(1)
-        .map(|mut line| {
-            // The filesystem label can contain spaces. The percentage column
-            // precedes the complete mount path, which may contain spaces too.
-            loop {
-                let end = line.iter().position(u8::is_ascii_whitespace)?;
-                let word = &line[..end];
-                line = line[end..].trim_ascii_start();
-                if word
-                    .strip_suffix(b"%")
-                    .is_some_and(|value| !value.is_empty() && value.iter().all(u8::is_ascii_digit))
-                {
-                    break;
-                }
-            }
-            // df display escapes are ambiguous. An unrepresentable mount
-            // cannot provide negative evidence.
-            let path = Path::new(OsStr::from_bytes(line));
-            (path.is_absolute() && !line.contains(&b'\\')).then_some(path)
-        })
-        .collect::<Option<Vec<_>>>()
-        .filter(|mounts| !mounts.is_empty())
-}
-
-fn scoped_listing(listing: &Listing, witnesses: &[Witness<'_>]) -> Option<OpenOwners> {
-    if listing.exit != Some(0) {
-        return None;
-    }
-    let fields = listing.output.strip_suffix(b"\0\n")?;
-    let mut seen = vec![false; witnesses.len()];
-    let mut pid = None;
-    let mut fd = None;
-    let mut owners = OpenOwners::default();
-    for field in fields.split(|&byte| byte == 0) {
-        let field = field.strip_prefix(b"\n").unwrap_or(field);
-        match field {
-            [b'p', value @ ..] if fd.is_none() => {
-                pid = Some(std::str::from_utf8(value).ok()?.parse::<u32>().ok()?);
-            }
-            [b'f', value @ ..] if pid.is_some() && fd.is_none() && !value.is_empty() => {
-                fd = Some(value);
-            }
-            [b'n', name @ ..] if name.starts_with(b"/") => {
-                let descriptor = fd.take()?;
-                let path = decode_lsof_path(name)?;
-                let witness = witnesses.iter().position(|witness| {
-                    pid == Some(std::process::id())
-                        && std::str::from_utf8(descriptor)
-                            .ok()
-                            .and_then(|fd| fd.parse().ok())
-                            == Some(witness.fd.as_raw_fd())
-                        && path == witness.path
-                });
-                if let Some(index) = witness {
-                    if std::mem::replace(&mut seen[index], true) {
-                        return None;
-                    }
-                } else if witnesses
-                    .iter()
-                    .any(|witness| path.starts_with(witness.path))
-                {
-                    if descriptor == b"cwd" {
-                        owners.cwd.insert(pid?);
-                    } else {
-                        owners.files.insert(pid?);
-                    }
-                }
-            }
-            _ => return None,
-        }
-    }
-    if fd.is_some() || !seen.into_iter().all(|found| found) {
-        return None;
-    }
-    Some(owners)
-}
-
 struct Listing {
     exit: Option<i32>,
     output: Vec<u8>,
@@ -670,11 +460,18 @@ pub(crate) async fn capture(
     args: &[&str],
     scratch: Option<&Path>,
 ) -> Result<(Vec<u8>, u32), HostError> {
-    let listing = read_listing(command, args, scratch).await?;
-    if listing.exit == Some(0) && !listing.output.is_empty() {
-        Ok((listing.output, listing.pid))
-    } else {
-        Err(HostError::Uncertain)
+    read_listing(command, args, scratch, MAX_PROBE_OUTPUT)
+        .await?
+        .successful()
+}
+
+impl Listing {
+    fn successful(self) -> Result<(Vec<u8>, u32), HostError> {
+        if self.exit == Some(0) && !self.output.is_empty() {
+            Ok((self.output, self.pid))
+        } else {
+            Err(HostError::Uncertain)
+        }
     }
 }
 
@@ -682,6 +479,7 @@ async fn read_listing(
     command: &str,
     args: &[impl AsRef<OsStr>],
     scratch: Option<&Path>,
+    stdout_limit: u64,
 ) -> Result<Listing, HostError> {
     let mut process = Command::new(command);
     if let Some(scratch) = scratch {
@@ -702,7 +500,11 @@ async fn read_listing(
     let stderr = child.stderr.take().ok_or(HostError::Protocol)?;
     let (status, stdout, stderr) = time::timeout(
         DEADLINE,
-        try_join3(child.wait(), bounded(stdout), bounded(stderr)),
+        try_join3(
+            child.wait(),
+            bounded(stdout, stdout_limit),
+            bounded(stderr, MAX_PROBE_OUTPUT),
+        ),
     )
     .await
     .map_err(|_| HostError::Timeout)?
@@ -723,10 +525,13 @@ async fn read_listing(
     }
 }
 
-async fn bounded(reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
+async fn bounded(reader: impl AsyncRead + Unpin, limit: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    let count = reader.take(MAX_OUTPUT + 1).read_to_end(&mut bytes).await?;
-    if u64::try_from(count).unwrap_or(u64::MAX) > MAX_OUTPUT {
+    let count = reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if u64::try_from(count).unwrap_or(u64::MAX) > limit {
         return Err(io::Error::new(
             io::ErrorKind::FileTooLarge,
             "process listing exceeded the output limit",
@@ -756,7 +561,7 @@ mod tests {
         )
         .expect("parse inventory");
         assert!(matches!(
-            inventory.activity(&path, &HashSet::new()),
+            inventory.activity(&path, None, &HashSet::new()),
             Ok(Activity::Unknown(Some(2)))
         ));
     }
@@ -773,12 +578,12 @@ mod tests {
         let mut inventory = Inventory::quiet_fixture();
         inventory.processes.insert(exited, ProcessPaths::default());
         assert!(matches!(
-            inventory.activity(&checkout, &HashSet::new()),
+            inventory.activity(&checkout, None, &HashSet::new()),
             Ok(Activity::Unknown(Some(pid))) if pid == exited
         ));
         inventory.complete_missing(&checkout).await;
         assert!(matches!(
-            inventory.activity(&checkout, &HashSet::new()),
+            inventory.activity(&checkout, None, &HashSet::new()),
             Ok(Activity::Quiet)
         ));
     }
@@ -820,208 +625,6 @@ mod tests {
         assert!(!covered.contains_key(&13));
     }
 
-    #[test]
-    fn a_missing_witness_is_incomplete() {
-        let checkout = tempfile::tempdir().expect("checkout");
-        let scratch = tempfile::tempdir().expect("scratch");
-        let witnesses = [
-            Witness::open(checkout.path()).expect("open checkout"),
-            Witness::open(scratch.path()).expect("open scratch"),
-        ];
-        let listing = Listing {
-            exit: Some(0),
-            output: format!(
-                "p{}\0\nf{}\0n{}\0\n",
-                std::process::id(),
-                witnesses[0].fd.as_raw_fd(),
-                checkout.path().display(),
-            )
-            .into_bytes(),
-            pid: 0,
-        };
-        assert!(scoped_listing(&listing, &witnesses).is_none());
-    }
-
-    #[test]
-    fn mount_scope_includes_nested_devices_and_rejects_display_escapes() {
-        let root = Witness::open(Path::new("/")).expect("root witness");
-        let listing = Listing {
-            exit: Some(0),
-            output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nroot 20 1 19 5% /\ndevfs 10 10 0 100% /dev\n".to_vec(),
-            pid: 0,
-        };
-        let anchor = Listing {
-            exit: Some(0),
-            output: b"Filesystem 512-blocks Used Available Capacity Mounted on
-root 20 1 19 5% /
-"
-            .to_vec(),
-            pid: 0,
-        };
-        let mounts = select_mounts(&anchor, &listing, &[root]).expect("mount scope");
-        assert!(mounts.values().any(|path| path == Path::new("/dev")));
-        assert_eq!(mounts.len(), 2);
-        let undecodable = Listing {
-            output: b"Filesystem 512-blocks Used Available Capacity Mounted on\nsource with spaces 20 1 19 5% /Volume\\040Alias\n".to_vec(),
-            ..listing
-        };
-        assert!(mount_points(&undecodable).is_none());
-    }
-
-    #[test]
-    fn directory_witnesses_on_mount_aliases_use_one_selector() {
-        let volume = tempfile::tempdir().expect("scratch volume");
-        let data = volume.path().join("Data");
-        let alias = volume.path().join("logical");
-        std::fs::create_dir_all(data.join("Users")).expect("data directory");
-        std::os::unix::fs::symlink(&data, &alias).expect("mount alias");
-        let logical = alias.join("Users");
-        let physical = data.join("Users");
-        let witnesses = [
-            Witness::open(&logical).expect("logical witness"),
-            Witness::open(&physical).expect("physical witness"),
-        ];
-        let mounts = Listing {
-            exit: Some(0),
-            output: format!(
-                "Filesystem 512-blocks Used Available Capacity Mounted on\nvolume 20 1 19 5% {}\nvolume 20 1 19 5% {}\n",
-                data.display(), alias.display()
-            ).into_bytes(),
-            pid: 0,
-        };
-        let selected = select_mounts(&mounts, &mounts, &witnesses).expect("same device");
-        let device = identity(stat(&physical).unwrap()).0;
-        assert_eq!(selected, HashMap::from([(device, data)]));
-
-        let listing = Listing {
-            exit: Some(0),
-            output: format!(
-                "p{}\0\nf{}\0n{}\0\nf{}\0n{}\0\n",
-                std::process::id(),
-                witnesses[0].fd.as_raw_fd(),
-                logical.display(),
-                witnesses[1].fd.as_raw_fd(),
-                physical.display()
-            )
-            .into_bytes(),
-            pid: 0,
-        };
-        assert!(scoped_listing(&listing, &witnesses).is_some());
-    }
-
-    #[tokio::test]
-    async fn a_standing_runtime_releases_both_scopes_but_its_tool_holds() {
-        let private = || {
-            tempfile::Builder::new()
-                .permissions(Permissions::from_mode(0o700))
-                .tempdir()
-                .expect("private scope")
-        };
-        let checkout = private();
-        let scratch = private();
-        let checkout = checkout.path().canonicalize().expect("canonical checkout");
-        let scratch = scratch.path().canonicalize().expect("canonical scratch");
-        let mut listing = String::from("p10\0\nfcwd\0n/\0\np24\0\nfcwd\0n/\0\n");
-        for pid in 20..=23 {
-            use std::fmt::Write;
-            writeln!(listing, "p{pid}\0\nfcwd\0n{}\0", checkout.display()).expect("cwd entry");
-        }
-        let census =
-            b"10 1 501 S\n20 10 501 S\n21 20 501 S\n22 20 501 S\n23 20 501 S\n24 21 501 S\n";
-        let mut inventory =
-            Inventory::from_listings(listing.as_bytes(), census, 501, 0).expect("processes");
-        let runtime = [
-            (20, 10, "codex app-server"),
-            (21, 20, "/plugins/node_repl"),
-            (22, 20, "/plugins/node_repl"),
-            (23, 20, "/plugins/cua-driver mcp"),
-        ]
-        .into_iter()
-        .filter_map(|(pid, parent, command)| {
-            RuntimeProcess::from_command(parent, command).map(|facts| (pid, facts))
-        })
-        .collect();
-        inventory.runtime = Some((10, runtime));
-        inventory.scoped.get_mut().insert(
-            (checkout.clone(), Some(scratch.clone())),
-            Ok(OpenOwners {
-                cwd: HashSet::from([21, 22, 23]),
-                files: HashSet::new(),
-            }),
-        );
-        let runtime = inventory.standing_pids("fixture-thread");
-        assert!(matches!(
-            inventory
-                .activity_for(&checkout, Some(&scratch), &scratch, &runtime)
-                .await,
-            Ok(Activity::Quiet)
-        ));
-        inventory.scoped.get_mut().insert(
-            (checkout.clone(), Some(scratch.clone())),
-            Ok(OpenOwners {
-                cwd: HashSet::from([21, 22, 23]),
-                files: HashSet::from([21]),
-            }),
-        );
-        assert!(matches!(
-            inventory
-                .activity_for(&checkout, Some(&scratch), &scratch, &runtime)
-                .await,
-            Ok(Activity::Busy)
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_large_checkout_distinguishes_closed_files_from_a_nested_open_file() {
-        let checkout = tempfile::tempdir().expect("checkout");
-        let scratch = tempfile::tempdir().expect("scratch");
-        let checkout = checkout.path().canonicalize().expect("canonical checkout");
-        let scratch = scratch.path().canonicalize().expect("canonical scratch");
-        let nested = checkout.join("nested");
-        std::fs::create_dir(&nested).expect("nested directory");
-        for index in 0..80_001 {
-            std::fs::File::create(nested.join(format!("closed-{index}"))).expect("closed file");
-        }
-        let path = nested.join("tool-file");
-        std::fs::File::create(&path).expect("file initially closed");
-        assert!(matches!(
-            scoped_activity(&checkout, Some(&scratch), &scratch).await,
-            Ok(owners) if owners.cwd.is_empty() && owners.files.is_empty()
-        ));
-        let held = std::fs::File::open(&path).expect("open file outside process cwd");
-        assert!(matches!(
-            scoped_activity(&checkout, Some(&scratch), &scratch).await,
-            Ok(owners) if owners.files.contains(&std::process::id())
-        ));
-        drop(held);
-    }
-
-    #[tokio::test]
-    async fn positive_cwd_evidence_wins_when_open_file_coverage_is_truncated() {
-        let checkout = tempfile::Builder::new()
-            .permissions(Permissions::from_mode(0o700))
-            .tempdir()
-            .expect("checkout");
-        let checkout = checkout.path().canonicalize().expect("canonical checkout");
-        let mut inventory = Inventory::cwd_fixture(&checkout);
-        inventory.scoped.get_mut().insert(
-            (checkout.clone(), None),
-            Err(HostError::ProcessCoverage(
-                ProcessEvidenceFailure::Truncated,
-            )),
-        );
-        assert!(matches!(
-            inventory
-                .activity_for(&checkout, None, &checkout, &HashSet::new())
-                .await,
-            Ok(Activity::Busy)
-        ));
-        assert!(matches!(
-            bounded(tokio::io::repeat(0)).await.unwrap_err().kind(),
-            io::ErrorKind::FileTooLarge
-        ));
-    }
-
     #[tokio::test]
     async fn escaped_unicode_checkout_cwd_is_busy() {
         let directory = tempfile::Builder::new()
@@ -1053,8 +656,8 @@ root 20 1 19 5% /
             Some(checkout.as_path())
         );
         assert!(matches!(
-            inventory.activity(&checkout, &HashSet::new()),
-            Ok(Activity::Busy)
+            inventory.activity(&checkout, None, &HashSet::new()),
+            Ok(Activity::Busy(_))
         ));
         child.kill().await.expect("stop fixture child");
     }
@@ -1078,8 +681,8 @@ root 20 1 19 5% /
             Some(expected.as_path())
         );
         assert!(matches!(
-            inventory.activity(&checkout, &HashSet::new()),
-            Ok(Activity::Busy)
+            inventory.activity(&checkout, None, &HashSet::new()),
+            Ok(Activity::Busy(_))
         ));
 
         for field in [
@@ -1093,7 +696,7 @@ root 20 1 19 5% /
             let inventory =
                 Inventory::from_listings(&listing, b"1 0 501 S\n", 501, 0).expect("inventory");
             assert!(matches!(
-                inventory.activity(&checkout, &HashSet::new()),
+                inventory.activity(&checkout, None, &HashSet::new()),
                 Ok(Activity::Unknown(Some(1)))
             ));
         }

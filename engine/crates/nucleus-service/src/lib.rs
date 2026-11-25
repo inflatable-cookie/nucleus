@@ -694,7 +694,7 @@ impl Service {
             if self.acp_provider().is_some()
                 || (task.phase() == Phase::Done && task.report_task().is_some())
             {
-                return self.archive_done(row).await;
+                return self.archive_done_in_pass(row, host).await;
             }
             return Ok(Action::Nothing);
         }
@@ -1869,7 +1869,10 @@ fn task_wait(
     let pre_wire = |cause| (Some(Wait::HostUnknown), Some(WaitDetail::BeforeSend(cause)));
     let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
     match result {
-        Err(ServiceError::ArchiveEvidence(_)) => (Some(Wait::Stopping), None),
+        Err(ServiceError::ArchiveEvidence(cause)) => (
+            Some(Wait::Stopping),
+            Some(WaitDetail::Blocked(cause.clone())),
+        ),
         Err(ServiceError::ParentRecoveryPlanner { retry_at }) => observation(
             Wait::Question,
             if retry_at.is_some() {

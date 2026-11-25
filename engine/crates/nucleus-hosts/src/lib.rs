@@ -57,8 +57,8 @@ pub fn thread_link(thread: &str) -> Option<String> {
     .then(|| format!("t3-thread://v1/{thread}"))
 }
 
+use process::Inventory;
 pub use process::ProcessEvidenceFailure;
-use process::{Activity, Inventory};
 pub use projection::RunActivity;
 use projection::{MissingReceipt, Projection};
 pub use provider_setup::{
@@ -316,6 +316,14 @@ pub trait TaskHost: Send + Sync {
     /// # Errors
     /// Returns an error when the launch is unsupported or cannot be encoded.
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError>;
+
+    /// Name a local process whose cwd prevents retirement of this task's checkout or scratch.
+    /// # Errors
+    /// Returns an error when the pass cannot establish workspace custody.
+    fn retirement_writer(
+        &self,
+        checkout: &Path,
+    ) -> impl Future<Output = Result<Option<u32>, HostError>> + Send;
 
     fn observe_retained(
         &self,
@@ -793,25 +801,7 @@ impl T3Pass<'_> {
         {
             return Ok(false);
         }
-        if self.evidence.sent.load(Ordering::Acquire) {
-            // A fresh launch may have started processes after this inventory.
-            return Err(HostError::Uncertain);
-        }
-        let inventory = self
-            .evidence
-            .processes
-            .get_or_init(|| async {
-                let server = self
-                    .host
-                    .runtime_descriptor
-                    .as_deref()
-                    .and_then(|path| ServerRuntime::read(path, self.host.rpc.endpoint()));
-                let scratch = self.scratch.ok_or(HostError::Configuration)?;
-                Inventory::capture(server, scratch).await
-            })
-            .await
-            .as_ref()
-            .map_err(|&error| process::coverage_error(error))?;
+        let inventory = self.process_inventory().await?;
         let checkout = Path::new(&binding.worktree_path);
         let mut runtime = inventory.standing_pids(thread);
         for sibling in self
@@ -828,26 +818,42 @@ impl T3Pass<'_> {
                 runtime.extend(helpers);
             }
         }
-        let activity = match self.scratch {
-            Some(scratch) => inventory
-                .activity_for(checkout, self.run_scratch.as_deref(), scratch, &runtime)
-                .await
-                .map_err(process::coverage_error)?,
-            None => inventory.activity(checkout, &runtime)?,
-        };
-        match activity {
-            Activity::Busy => Ok(false),
-            Activity::Quiet => Ok(true),
-            Activity::Unknown(pid) => Err(HostError::ProcessCoverage(
-                pid.map_or(ProcessEvidenceFailure::Incomplete, |pid| {
-                    ProcessEvidenceFailure::Cwd { pid }
-                }),
-            )),
+        Ok(inventory
+            .writer(checkout, self.run_scratch.as_deref(), &runtime)?
+            .is_none())
+    }
+
+    async fn process_inventory(&self) -> Result<&Inventory, HostError> {
+        if self.evidence.sent.load(Ordering::Acquire) {
+            // A fresh launch may have started processes after this inventory.
+            return Err(HostError::Uncertain);
         }
+        self.evidence
+            .processes
+            .get_or_init(|| async {
+                let server = self
+                    .host
+                    .runtime_descriptor
+                    .as_deref()
+                    .and_then(|path| ServerRuntime::read(path, self.host.rpc.endpoint()));
+                let scratch = self.scratch.ok_or(HostError::Configuration)?;
+                Inventory::capture(server, scratch).await
+            })
+            .await
+            .as_ref()
+            .map_err(|&error| process::coverage_error(error))
     }
 }
 
 impl TaskHost for T3Pass<'_> {
+    async fn retirement_writer(&self, checkout: &Path) -> Result<Option<u32>, HostError> {
+        self.process_inventory().await?.writer(
+            checkout,
+            self.run_scratch.as_deref(),
+            &std::collections::HashSet::new(),
+        )
+    }
+
     async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {
         self.evidence
             .profiles
