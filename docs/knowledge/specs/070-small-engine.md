@@ -710,7 +710,7 @@ Cargo builds" rule for the `engine/` workspace only:
      the parity inventory;
    - replacing or retiring `nucleus worktree`;
    - retiring the TypeScript decision bridge and importers;
-   - a decision on the read-only archive tool;
+   - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated");
    - deletion in batches of at most three modules;
    - the documentation rewrite.
 
