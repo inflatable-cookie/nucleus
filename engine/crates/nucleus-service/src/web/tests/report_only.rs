@@ -467,6 +467,68 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
 }
 
 #[tokio::test]
+async fn archive_preserves_compare_errors_and_the_forge_retry_deadline() {
+    let branch_reads = Arc::new(AtomicUsize::new(0));
+    let reads = Arc::clone(&branch_reads);
+    let comparisons = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&comparisons);
+    let api = Router::new()
+        .route(
+            &format!("/repos/{REPOSITORY}/branches"),
+            get(move || async move {
+                reads.fetch_add(1, Ordering::Relaxed);
+                Json(json!([
+                    {"name": "main", "commit": {"sha": "a".repeat(40)}},
+                    {"name": "other", "commit": {"sha": "b".repeat(40)}}
+                ]))
+            }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/compare/{{pair}}"),
+            get(move || async move {
+                if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    StatusCode::NOT_FOUND.into_response()
+                } else {
+                    (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "120")]).into_response()
+                }
+            }),
+        );
+    let (forge, server) = serve_forge(api).await;
+    let (_home, service) = fixture(forge);
+    let project = service.fixture();
+    let (task, _, _) = reservation(TASK, Entry::Brief, &project.start);
+    let worktrees = service.worktrees().unwrap();
+    let checkout = worktrees
+        .checkout(&project.checkout, REPOSITORY, TASK)
+        .unwrap();
+    let verify = || service.is_published_checkout(task.identity(), &checkout, &project.start);
+    assert!(matches!(
+        verify().await,
+        Err(ServiceError::Forge(nucleus_forge::ForgeError::Status(
+            StatusCode::NOT_FOUND
+        )))
+    ));
+    let Err(ServiceError::Forge(nucleus_forge::ForgeError::Deferred { until })) = verify().await
+    else {
+        panic!("expected the compare throttle");
+    };
+    let deadline = until
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    assert_eq!(
+        u128::from(service.forge_until.load(Ordering::Relaxed)),
+        deadline
+    );
+    assert!(matches!(verify().await,
+        Err(ServiceError::Forge(nucleus_forge::ForgeError::Deferred { until: next }))
+        if next.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() == deadline));
+    assert_eq!(branch_reads.load(Ordering::Relaxed), 2);
+    assert_eq!(comparisons.load(Ordering::Relaxed), 2);
+    server.abort();
+}
+
+#[tokio::test]
 async fn cancelled_checkout_only_retires_clean_published_work() {
     let fixture = ReportFixture::new().await;
     fixture.admit().await;

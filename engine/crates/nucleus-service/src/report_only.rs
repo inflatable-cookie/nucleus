@@ -6,7 +6,7 @@ use nucleus_core::{
     Action, Authority, CommandError, Head, Host, Identity, Phase, ReportAcceptance, ReportArtifact,
     RetainedThread, Role, Task, WaitReason, Workspace,
 };
-use nucleus_forge::Branches;
+use nucleus_forge::{Branches, ForgeError};
 use nucleus_hosts::{HostError, NoticeHost, NoticeSend, NoticeWrite, T3, TaskHost};
 use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
@@ -551,12 +551,26 @@ impl Service {
         checkout: &Checkout<'_>,
         head: &Head,
     ) -> Result<bool, ServiceError> {
+        self.check_forge_ready()?;
         let branches = report_branches(identity, checkout)?;
-        let mut advertised = self.forge.published_branches(&branches).await?;
+        self.verify_published_head(checkout, head, &branches, &identity.base)
+            .await
+            .inspect_err(|error| crate::pass::record_forge_failure(self, error))
+            .map_err(Into::into)
+    }
+
+    async fn verify_published_head(
+        &self,
+        checkout: &Checkout<'_>,
+        head: &Head,
+        branches: &Branches,
+        base: &str,
+    ) -> Result<bool, ForgeError> {
+        let mut advertised = self.forge.published_branches(branches).await?;
         advertised.sort_by_key(|(branch, _)| {
             if branch == checkout.branch() {
                 0
-            } else if branch == &identity.base {
+            } else if branch == base {
                 1
             } else {
                 2
@@ -565,9 +579,9 @@ impl Service {
         for (branch, tip) in advertised {
             let contained = match checkout.contains(head, &tip) {
                 Ok(contained) => contained,
-                Err(_) => self.forge.contains(&branches, head, &tip).await?,
+                Err(_) => self.forge.contains(branches, head, &tip).await?,
             };
-            if contained && self.forge.branch_head(&branches, &branch).await? == tip {
+            if contained && self.forge.branch_head(branches, &branch).await? == tip {
                 return Ok(true);
             }
         }
