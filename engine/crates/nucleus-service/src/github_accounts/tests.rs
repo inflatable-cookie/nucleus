@@ -32,6 +32,14 @@ fn fixture_account() -> GitHubAccount {
     }
 }
 
+fn fixture_legacy(organisation: &str) -> Result<SecretString, AccountError> {
+    if organisation == "fixture-org" {
+        Ok(SecretString::from("fixture-legacy".to_owned()))
+    } else {
+        Err(AccountError::NoLegacyGrant)
+    }
+}
+
 async fn flow_status(accounts: &GitHubAccounts, id: &str, status: &str) -> Value {
     timeout(Duration::from_secs(12), async {
         loop {
@@ -148,13 +156,6 @@ async fn verifies_confirms_refreshes_and_unlinks_the_device_account() {
 
 #[tokio::test]
 async fn imports_only_after_confirmation_and_preserves_an_existing_grant() {
-    fn legacy(organisation: &str) -> Result<SecretString, AccountError> {
-        if organisation == "fixture-org" {
-            Ok(SecretString::from("fixture-legacy".to_owned()))
-        } else {
-            Err(AccountError::NoLegacyGrant)
-        }
-    }
     let (_root, settings) = fixture_settings();
     let server = FixtureServer::spawn(vec![FixtureRoute::new(
         "/user",
@@ -163,7 +164,7 @@ async fn imports_only_after_confirmation_and_preserves_an_existing_grant() {
     )])
     .expect("loopback");
     let mut accounts = GitHubAccounts::with_fixture(settings.clone(), &server.base_url());
-    accounts.legacy = Some(legacy);
+    accounts.legacy = Some(fixture_legacy);
     accounts
         .seed_reviewer_fixture(&fixture_account(), "fixture-existing")
         .expect("seed reviewer");
@@ -299,9 +300,6 @@ async fn a_locked_selected_account_never_uses_installed_gh() {
 
 #[tokio::test]
 async fn a_legacy_copy_is_verified_before_settings_commit_and_confirmation_is_exclusive() {
-    fn legacy(_: &str) -> Result<SecretString, AccountError> {
-        Ok(SecretString::from("fixture-legacy".to_owned()))
-    }
     let (_root, settings) = fixture_settings();
     let server = FixtureServer::spawn(vec![FixtureRoute::script(
         "/user",
@@ -312,7 +310,7 @@ async fn a_legacy_copy_is_verified_before_settings_commit_and_confirmation_is_ex
     )])
     .expect("loopback");
     let mut accounts = GitHubAccounts::with_fixture(settings.clone(), &server.base_url());
-    accounts.legacy = Some(legacy);
+    accounts.legacy = Some(fixture_legacy);
     let accounts = Arc::new(accounts);
     let revision = accounts.view().await.expect("settings").revision;
     let id = accounts

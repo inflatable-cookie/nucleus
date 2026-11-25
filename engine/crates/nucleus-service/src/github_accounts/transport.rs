@@ -15,17 +15,21 @@ const USER_URL: &str = "https://api.github.com/user";
 const RESPONSE_LIMIT: usize = 64 * 1024;
 
 pub(super) struct Transport {
-    #[cfg(test)]
-    device: String,
+    device: DeviceEndpoint,
     token: String,
     user: String,
+}
+
+enum DeviceEndpoint {
+    GitHub,
+    #[cfg(test)]
+    Loopback(String),
 }
 
 impl Transport {
     pub(super) fn github() -> Self {
         Self {
-            #[cfg(test)]
-            device: longhorn_git_workspace::GITHUB_DEVICE_CODE_URL.into(),
+            device: DeviceEndpoint::GitHub,
             token: GITHUB_ACCESS_TOKEN_URL.into(),
             user: USER_URL.into(),
         }
@@ -34,7 +38,7 @@ impl Transport {
     #[cfg(test)]
     pub(super) fn loopback(origin: &str) -> Self {
         Self {
-            device: format!("{origin}/login/device/code"),
+            device: DeviceEndpoint::Loopback(format!("{origin}/login/device/code")),
             token: format!("{origin}/login/oauth/access_token"),
             user: format!("{origin}/user"),
         }
@@ -54,12 +58,12 @@ impl Transport {
         cancel: &AtomicBool,
         mut show_code: impl FnMut(String, String),
     ) -> Result<TokenGrant, AccountError> {
-        let endpoints = DeviceFlowEndpoints::github();
-        #[cfg(test)]
-        let endpoints = if self.device.starts_with("http://127.0.0.1:") {
-            DeviceFlowEndpoints::loopback_for_tests(&self.device, &self.token)?
-        } else {
-            endpoints
+        let endpoints = match &self.device {
+            DeviceEndpoint::GitHub => DeviceFlowEndpoints::github(),
+            #[cfg(test)]
+            DeviceEndpoint::Loopback(url) => {
+                DeviceFlowEndpoints::loopback_for_tests(url, &self.token)?
+            }
         };
         let grant = run_device_flow(client_id, &endpoints, cancel, &mut |progress| {
             if let GithubAuthProgress::AwaitingVerification {

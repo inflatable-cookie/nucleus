@@ -99,7 +99,7 @@ the local keychain for that engine profile. An unset role uses installed
 attention before a review can publish. The existing operator forge credential
 still owns PR reads and merges.
 
-Sign-in uses the public GitHub App registration `inflatable-cookie-nucleus`
+Sign-in uses the public [Nucleus Agents GitHub App](https://github.com/apps/nucleus-agents)
 with client ID `Iv23liRsqJ59EsNDdtiu`. Device-issued grants refresh with that
 public ID. Repository access is limited to the permissions shared by the
 app installation and the signed-in user. Phase 1 applies account selection to

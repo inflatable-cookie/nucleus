@@ -28,10 +28,10 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use transport::Transport;
 
-const CONFIRM_WINDOW: Duration = Duration::from_secs(300);
+const CONFIRM_WINDOW: Duration = Duration::from_mins(5);
 const FLOW_WINDOW: Duration = Duration::from_secs(MAX_DEVICE_WAIT.as_secs() + 30);
 const SERVICE_NAME: &str = "nucleus.github-accounts";
-// Public registration for inflatable-cookie-nucleus. Device-issued grants refresh without a client secret.
+// Public registration for Nucleus Agents. Device-issued grants refresh without a client secret.
 const GITHUB_APP_CLIENT_ID: &str = "Iv23liRsqJ59EsNDdtiu";
 type LegacyReader = fn(&str) -> Result<SecretString, AccountError>;
 
@@ -258,7 +258,7 @@ impl GitHubAccounts {
             store: Arc::new(KeyringCredentialStore::new(SERVICE_NAME)),
             storage_available: cfg!(any(target_os = "macos", target_os = "windows")),
             client_id: Some(GITHUB_APP_CLIENT_ID.to_owned()),
-            legacy: legacy_reader(),
+            legacy: LEGACY_READER,
             transport: Transport::github(),
             mutations: Mutex::new(()),
             flow: Mutex::new(None),
@@ -768,16 +768,10 @@ fn find_account<'a>(
         .ok_or(AccountError::MissingAccount)
 }
 
-fn legacy_reader() -> Option<LegacyReader> {
-    #[cfg(target_os = "macos")]
-    {
-        Some(read_macos_legacy)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
+#[cfg(target_os = "macos")]
+const LEGACY_READER: Option<LegacyReader> = Some(read_macos_legacy);
+#[cfg(not(target_os = "macos"))]
+const LEGACY_READER: Option<LegacyReader> = None;
 
 #[cfg(target_os = "macos")]
 fn read_macos_legacy(organisation: &str) -> Result<SecretString, AccountError> {
