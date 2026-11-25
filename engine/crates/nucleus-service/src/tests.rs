@@ -275,7 +275,7 @@ async fn forge_fixture_for_branch(
 
 pub(super) fn forge_pull(head: &Head) -> Value {
     json!({
-        "number":1, "html_url":PR, "merged":false, "state":"open", "merge_commit_sha":null,
+        "number":1, "html_url":PR, "merged":false, "state":"open", "merge_commit_sha":null, "user":{"id":11,"login":"fixture-author"},
         "head":{"ref":"ns-reviewer", "sha":head, "repo":{"full_name":REPOSITORY}},
         "base":{"ref":"main", "sha":head, "repo":{"full_name":REPOSITORY}},
     })
@@ -285,7 +285,7 @@ pub(super) fn forge_checks(head: &Head) -> Value {
     json!({"data":{"repository":{"pullRequest":{
         "headRefOid":head, "baseRefName":"main", "baseRefOid":head, "isDraft":false, "state":"OPEN",
         "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN", "reviewDecision":null,
-        "statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false},"nodes":[]}},
+        "statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}},
     }}}})
 }
 

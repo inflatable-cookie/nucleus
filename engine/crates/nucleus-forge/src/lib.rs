@@ -578,7 +578,8 @@ impl GitHub {
             let required = &target.branches.required_checks;
             let named = merge || !required.is_empty();
             let page = self.query_pull(target, CHECKS_QUERY, named, None).await?;
-            let mut checks = page.checks(&pull.head.sha, &target.branches.base, &pull.base.sha)?;
+            let mut checks =
+                page.checks(&pull.head.sha, &target.branches.base, &pull.base.sha, named)?;
             let mut cursors = std::collections::BTreeSet::new();
             while let Some(cursor) = checks.next_cursor() {
                 if cursors.len() + 1 >= MAX_CHECK_PAGES || !cursors.insert(cursor.to_owned()) {
@@ -591,6 +592,7 @@ impl GitHub {
                     &pull.head.sha,
                     &target.branches.base,
                     &pull.base.sha,
+                    true,
                 )?)?;
             }
             checks.state(required, named)
@@ -772,6 +774,7 @@ fn classify_write(reply: Result<(StatusCode, Vec<u8>), ForgeError>) -> MergeWrit
     #[derive(Deserialize)]
     struct Receipt {
         merged: bool,
+        #[serde(deserialize_with = "Deserialize::deserialize")]
         sha: Option<Head>,
     }
 
@@ -1022,10 +1025,16 @@ async fn response_bytes(mut response: Response) -> Result<Vec<u8>, ForgeError> {
 }
 
 fn decode_json<T: DeserializeOwned>(data: &[u8]) -> Result<T, ForgeError> {
-    serde_json::from_slice(data).map_err(|error| ForgeError::Decode {
-        category: error.classify(),
-        line: error.line(),
-        column: error.column(),
+    serde_json::from_slice(data).map_err(|error| {
+        if error.is_data() {
+            ForgeError::Incomplete
+        } else {
+            ForgeError::Decode {
+                category: error.classify(),
+                line: error.line(),
+                column: error.column(),
+            }
+        }
     })
 }
 
