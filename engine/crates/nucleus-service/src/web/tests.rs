@@ -20,6 +20,8 @@ use crate::{
     tests::{REPOSITORY, code_task_at_merge, fixture, forge_pull, reservation, serve_forge},
 };
 
+#[path = "tests/briefs.rs"]
+mod briefs;
 #[path = "tests/dependencies.rs"]
 mod dependencies;
 #[path = "tests/planning.rs"]
@@ -1160,7 +1162,8 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let next = "/v1/tasks/reviewer/next";
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"work":"Use the fixture greeting"}});
-    let amend = json!({"amend":"Use the fixture wording"});
+    let replacement = briefs::brief_with_bytes(crate::MAX_BRIEF_BYTES);
+    let amend = json!({"amend":replacement});
     let changed_forge = changed_open_head(&head);
     service
         .observe_commands(&prior, &changed_forge)
@@ -1222,6 +1225,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     );
     let answered = service.task("reviewer").await.expect("question answered");
     assert_eq!(answered.version, 3);
+    assert!(answered.task.brief().text.len() > crate::MAX_BRIEF_BYTES);
     assert!(
         answered
             .task

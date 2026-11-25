@@ -125,6 +125,8 @@ pub enum ServiceError {
     ComplexityRequired,
     #[error("a lead names its complexity in its brief (queue.complexity); edit the lead")]
     LeadComplexity,
+    #[error("brief is {bytes} UTF-8 bytes and exceeds the {MAX_BRIEF_BYTES}-byte limit")]
+    BriefTooLarge { bytes: usize },
     #[error("{0}")]
     BriefPolicy(#[from] nucleus_core::profiles::BriefPolicyError),
     #[error("tell requires project recipients and between 1 and 4000 characters of text")]
@@ -1201,6 +1203,9 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
+        if let Command::Amend(text) = &command {
+            check_brief_size(text.len())?;
+        }
         if matches!(
             command,
             Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
@@ -1571,6 +1576,20 @@ impl Service {
             detail_only,
         });
     }
+}
+
+/// The decoded UTF-8 byte limit for a new or replacement task brief.
+pub const MAX_BRIEF_BYTES: usize = 65_536;
+
+/// Check the size of a submitted brief. An existing stored brief remains readable.
+///
+/// # Errors
+/// Returns the actual size and limit when the submitted brief is too large.
+pub fn check_brief_size(bytes: usize) -> Result<(), ServiceError> {
+    if bytes > MAX_BRIEF_BYTES {
+        return Err(ServiceError::BriefTooLarge { bytes });
+    }
+    Ok(())
 }
 
 fn workspace_cause(result: &Result<Action, ServiceError>) -> String {

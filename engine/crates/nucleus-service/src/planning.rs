@@ -7,7 +7,7 @@ use nucleus_store::{
     StoreError, TaskAdmissionFacts, TaskRow,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, ItemKind, ItemSource,
-        ItemState, MAX_TEXT_BYTES, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
+        ItemState, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
     },
 };
 use serde::Deserialize;
@@ -15,8 +15,8 @@ use tokio::sync::MutexGuard;
 
 use crate::enrollment::PlanningRepository;
 use crate::{
-    ControllerScope, Service, ServiceError, State, event, now_ms, profiles::usage,
-    schedule::Priority,
+    ControllerScope, Service, ServiceError, State, check_brief_size, event, now_ms,
+    profiles::usage, schedule::Priority,
 };
 
 fn admission_wait(blocked: bool, permission: bool) -> Option<WaitReason> {
@@ -426,7 +426,8 @@ pub(crate) fn new_id(prefix: &str) -> Result<String, ServiceError> {
 }
 
 fn check_brief(brief: &str) -> Result<BriefPolicy, ServiceError> {
-    if brief.trim().is_empty() || brief.len() > MAX_TEXT_BYTES {
+    check_brief_size(brief.len())?;
+    if brief.trim().is_empty() {
         return Err(ServiceError::Input);
     }
     let policy = BriefPolicy::parse(brief)?;
