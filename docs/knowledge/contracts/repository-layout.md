@@ -221,8 +221,7 @@ adapter contract and adapter-facing value types extracted before relocation.
 
 The archived TypeScript CLI connected directly to its service socket and also
 had an explicit `--via-paseo` compatibility route. The installed Rust CLI uses
-the engine endpoint. The TypeScript plugin registration lookup lives in
-`shared/plugin-discovery.mjs`.
+the engine endpoint.
 
 `core/qa/` owns project QA, validation, proof and Effigy admission policy, including
 supervision files and failure-log collection. Detached QA and validation entrypoints

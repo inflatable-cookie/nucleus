@@ -914,11 +914,8 @@ being replaced is the everyday case, and it keeps its answer:
   retrying handover it reports the stage and elapsed time immediately. Build
   preparation still serves calls. No CLI control is sent until caller identity
   has been resolved.
-- **Both direct surfaces share it.** The CLI client (`localQueueClient`) and
-  the Paseo plugin bridge (`ServiceBridge.forward`) recover through one module
-  (`shared/service/roll-recovery.ts`), so the operator's shell and the board
-  answer the same way. The web board and other callers without a key keep
-  today's behavior.
+- **Legacy TypeScript clients shared recovery.** The local CLI and Paseo bridge
+  recovered reads through the same service-roll policy.
 
 Proofs: `test/roll-call-recovery.test.ts` (the real socket with a proxy that
 loses one response: the applied outcome returns from the replacement exactly

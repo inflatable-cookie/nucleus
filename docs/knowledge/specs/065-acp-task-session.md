@@ -297,8 +297,8 @@ refused credential ending the turn, the real socket's 401 status on the wire, a
 service unreachable at session/new, the refusal codes, a closed stdin, and the launched entry point's
 missing-binding answer.
 
-`shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`
-reads the environment and launches it in the remaining TypeScript fixture.
+The archived TypeScript agent used a socket client and an environment-based
+entrypoint.
 See [Spec 070](070-small-engine.md) for the installed Rust provider and its
 startup contract.
 
