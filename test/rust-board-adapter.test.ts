@@ -1182,6 +1182,31 @@ test("a project refusal settles lists until the paired session changes", async (
   assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main", "d-lantern"]);
 });
 
+test("the selected item's project scopes detail, drop and promotion", async () => {
+  const fake = engine();
+  const writes: string[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    const match = /\/planning\/([^/]+)\/items(?:\/shared\/(drop|promote))?$/.exec(path);
+    if (!match) return fake.fetcher(url, init);
+    const item = { id: "shared", title: match[1] + " item", kind: "papercut", author: "planner",
+      state: "open", body: "Repair this", lanes: [], version: 1, createdAtMs: 10 };
+    if (!match[2]) return Response.json([item]);
+    writes.push(path);
+    return Response.json(match[2] === "drop" ? { ...item, state: "dropped" }
+      : { identity: { id: "task" }, reference: "repo#23" });
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const id = "shared", project = "lantern";
+  await assert.rejects(adapter.rpc(api.leadGet, { id }), /ambiguous/);
+  await assert.rejects(adapter.rpc(api.papercutPromoteTask, { id, board: true }), /ambiguous/);
+  assert.equal(writes.length, 0);
+  assert.equal((await adapter.rpc(api.papercutGet, { project, id }))?.title, "lantern item");
+  await adapter.rpc(api.leadDrop, { project, id, reason: "Resolved" });
+  await adapter.rpc(api.papercutPromoteTask, { project, id, board: true });
+  assert.deepEqual(writes, ["/api/engine/planning/lantern/items/shared/drop", "/api/engine/planning/lantern/items/shared/promote"]);
+});
+
 test("papercut editing refuses ambiguous and out-of-scope records before a write", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
