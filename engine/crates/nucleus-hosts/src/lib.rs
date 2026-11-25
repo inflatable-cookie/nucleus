@@ -27,7 +27,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 pub use assignment::{T3_ASSIGNMENT_LIMIT, assignment_units};
@@ -103,6 +103,8 @@ pub enum HostError {
     Timeout,
     #[error("the host deferred requests until {until:?}")]
     Deferred { until: tokio::time::Instant },
+    #[error("waiting for T3 to confirm the role assignment")]
+    RoleReplyPending { until: tokio::time::Instant },
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
@@ -927,12 +929,15 @@ impl TaskHost for T3Pass<'_> {
                 active_child: None,
             });
         }
-        if state == RunState::ReadyToSend
-            && !queued_continuation(run, &wire)
-            && (awaiting_reply(run, now_ms)
-                || (worker_continuation(run, &wire) && run.last_send_at_ms().is_some()))
-        {
-            return Err(HostError::Uncertain);
+        if state == RunState::ReadyToSend && !queued_continuation(run, &wire) {
+            if worker_continuation(run, &wire) && run.last_send_at_ms().is_some() {
+                return Err(HostError::Uncertain);
+            }
+            if let Some(remaining) = role_reply_wait(run, now_ms) {
+                return Err(HostError::RoleReplyPending {
+                    until: tokio::time::Instant::now() + remaining,
+                });
+            }
         }
         let background_pending = match &thread {
             Some(thread) if state == RunState::Ended => {
@@ -1013,7 +1018,7 @@ impl TaskHost for T3Pass<'_> {
         let continuation = wire.method == Method::Continue;
         let worker = worker_continuation(run, &wire);
         let queued = queued_continuation(run, &wire);
-        if !queued && (worker || awaiting_reply(run, clock_ms()?)) {
+        if !queued && (worker || role_reply_wait(run, clock_ms()?).is_some()) {
             return Err(HostError::Uncertain);
         }
         let parent_row = if !queued && let Some(parent) = &wire.parent {
@@ -1177,7 +1182,9 @@ impl TaskHost for T3Pass<'_> {
         }
         match state {
             RunState::ReadyToSend if worker_continuation(run, &wire) => Ok(StopProgress::Waiting),
-            RunState::ReadyToSend if !awaiting_reply(run, now_ms) => Ok(StopProgress::ReplayDue),
+            RunState::ReadyToSend if role_reply_wait(run, now_ms).is_none() => {
+                Ok(StopProgress::ReplayDue)
+            }
             RunState::Ended | RunState::Gone
                 if self
                     .quiet(&wire.binding, &launch.thread, thread.as_ref())
@@ -1313,9 +1320,10 @@ fn missing_receipt(run: &Run, wire: &Wire) -> MissingReceipt {
     }
 }
 
-fn awaiting_reply(run: &Run, now_ms: u64) -> bool {
-    run.last_send_at_ms()
-        .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS)
+fn role_reply_wait(run: &Run, now_ms: u64) -> Option<Duration> {
+    let sent = run.last_send_at_ms()?;
+    let remaining = LATE_REPLY_MS.saturating_sub(now_ms.saturating_sub(sent));
+    (remaining > 0).then(|| Duration::from_millis(remaining))
 }
 
 fn available(provider: &Value, profile: &RoleProfile) -> bool {

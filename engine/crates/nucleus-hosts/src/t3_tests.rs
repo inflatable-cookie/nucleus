@@ -2205,6 +2205,44 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
 }
 
 #[tokio::test]
+async fn fresh_role_grace_requires_a_successful_missing_delivery_read() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (mut task, _, instance) = reserve(binding.clone());
+    task.record_send(&instance, 4).unwrap();
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::Failure(json!({"_tag":"FixtureUnavailable"})),
+        ),
+        ("orchestration.subscribeThread", missing_thread(THREAD)),
+        (
+            "orchestration.subscribeThread",
+            Response::Snapshot(snapshot(&binding, &instance, "running", false)),
+        ),
+    ])
+    .await;
+    let pass = host.pass(checkout.path());
+    let run = task.run().unwrap();
+    assert!(matches!(
+        pass.observe_run(run, 5).await,
+        Err(HostError::Uncertain)
+    ));
+    let now = tokio::time::Instant::now();
+    assert!(matches!(pass.observe_run(run, 5).await,
+        Err(HostError::RoleReplyPending { until }) if until > now + std::time::Duration::from_secs(590)
+    ));
+    assert!(matches!(
+        pass.observe_run(run, 5).await.unwrap().host,
+        Host::Current {
+            state: RunState::Running,
+            ..
+        }
+    ));
+    assert_eq!(native.await.unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

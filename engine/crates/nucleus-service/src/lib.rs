@@ -1192,7 +1192,9 @@ impl Service {
         let id = &row.task.identity().id;
         let deferred = match result {
             Err(
-                ServiceError::Host(HostError::Deferred { until })
+                ServiceError::Host(
+                    HostError::Deferred { until } | HostError::RoleReplyPending { until },
+                )
                 | ServiceError::ParentDeliveryUnknown(HostError::Deferred { until }),
             ) => Some(*until),
             _ => None,
@@ -1203,12 +1205,6 @@ impl Service {
             .run()
             .filter(|run| run.report().is_none())
             .and_then(nucleus_core::Run::last_send_at_ms);
-        let reply_due = sent.and_then(|sent| {
-            sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
-                .checked_sub(now_ms())
-                .filter(|&remaining| remaining > 0)
-                .map(|remaining| now + Duration::from_millis(remaining))
-        });
         let parent_due = if matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
             state
                 .store
@@ -1231,9 +1227,7 @@ impl Service {
             );
             false
         } else {
-            state
-                .schedule
-                .recover_host_observation(id, now, deferred.max(reply_due))
+            state.schedule.recover_host_observation(id, now, deferred)
         };
         let wait = Some(if blocked {
             WaitReason::HostObservationBlocked
