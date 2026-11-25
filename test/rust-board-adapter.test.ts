@@ -753,6 +753,25 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   ]);
 });
 
+test("promotion sends the selected repository and displays the public task reference", async () => {
+  for (const repository of ["example/orbit", "example/orbit-docs"]) {
+    const fake = engine();
+    const sent: unknown[] = [];
+    const reference = `${repository.split("/").at(-1)}#42`;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input) !== "/api/engine/planning/Orbit_Main/items/i-Orbit_Main/promote")
+        return fake.fetcher(input, init);
+      assert.equal(init?.method, "POST");
+      sent.push(JSON.parse(String(init.body)));
+      return Response.json({ identity: { id: "t-internal", reference: "admission alias" }, reference });
+    };
+    const adapter = createRustAdapter(createRustApi(fetcher));
+    assert.deepEqual(await adapter.rpc(api.leadPromoteTask, { id: "i-Orbit_Main", repository, board: true }),
+      { taskId: "t-internal", reference });
+    assert.deepEqual(sent, [{ repository }]);
+  }
+});
+
 test("a project refusal settles lists until the paired session changes", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
