@@ -33,6 +33,7 @@ check = [{ task = "check:types" }, { task = "check:publication" }]
 "check:publication" = "npm run publication:check"
 "engine:fmt" = "cargo fmt --manifest-path engine/Cargo.toml --all -- --check"
 "engine:board-build" = "node scripts/build-web.mjs {args}"
+"engine:deny" = "oxide exec --manifest-path engine/Cargo.toml -- cargo deny --manifest-path engine/Cargo.toml --all-features --locked check --config engine/deny.toml --show-stats {args}"
 "engine:check" = "oxide check --manifest-path engine/Cargo.toml {args}"
 "engine:clippy" = "oxide clippy --manifest-path engine/Cargo.toml --all-targets --all-features {args} -- -D warnings"
 "engine:nextest" = "oxide exec --manifest-path engine/Cargo.toml -- cargo nextest run --manifest-path engine/Cargo.toml {args}"
@@ -46,6 +47,7 @@ fmt = "node scripts/format-changed-typescript.mjs"
 # Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.
 qa = [
   { task = "engine:fmt" },
+  { task = "engine:deny" },
   { task = "engine:check" },
   { task = "engine:clippy" },
   { task = "check" },
