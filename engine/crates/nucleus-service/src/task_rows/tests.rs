@@ -206,9 +206,10 @@ impl Fixture {
     }
 
     fn elapse_visibility_ms(&self, ms: u64) {
-        self.service
-            .visibility_time_offset
-            .fetch_add(ms, std::sync::atomic::Ordering::Relaxed);
+        self.service.visibility_time.store(
+            self.service.visibility_now() + ms,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     fn restart(&mut self) {
@@ -217,8 +218,8 @@ impl Fixture {
         let project = service.fixture().clone();
         let callback = service.callback;
         let report_command = service.report_command.clone();
-        let offset = service
-            .visibility_time_offset
+        let visibility_time = service
+            .visibility_time
             .load(std::sync::atomic::Ordering::Relaxed);
         let host = nucleus_hosts::T3::new(service.host.endpoint(), "fixture").unwrap();
         let host = super::super::tests::verified_native_fixture(host, self.home.path());
@@ -237,7 +238,9 @@ impl Fixture {
             )
             .unwrap(),
         );
-        self.elapse_visibility_ms(offset);
+        self.service
+            .visibility_time
+            .store(visibility_time, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn observed_visibility(&self) -> RowObservation {
@@ -1427,6 +1430,8 @@ async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
 async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
     let task = pending_task();
     let mut fixture = Fixture::new(&task).await;
+    // Freeze the visibility clock before either write enters the rolling window.
+    fixture.elapse_visibility_ms(0);
     let row = create_visibility_row(&fixture, &task).await;
     fixture.elapse_visibility_ms(30_000);
     assert!(matches!(
@@ -1468,6 +1473,7 @@ async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
         ["thread.snooze", "thread.unsnooze", "thread.snooze"]
     );
     for _ in 0..3 {
+        let before = tokio::time::Instant::now();
         let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
             fixture.wake(&row, fixture.observed_visibility()),
         ))
@@ -1475,8 +1481,9 @@ async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
         let Err(ServiceError::RowVisibilityDeferred { until }) = result else {
             panic!("clear must wait for the oldest remaining attempt: {result:?}");
         };
-        let delay = until.saturating_duration_since(tokio::time::Instant::now());
-        assert!(delay > Duration::ZERO && delay <= Duration::from_secs(30));
+        let after = tokio::time::Instant::now();
+        let delay = Duration::from_secs(30);
+        assert!((before + delay..=after + delay).contains(&until));
         assert!(calls.is_empty());
     }
     assert_eq!(fixture.commands().len(), 3);

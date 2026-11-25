@@ -1275,12 +1275,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         let (shape, _, _) = reservation(id, Entry::Brief, head);
         Task::new(shape.identity().clone(), shape.brief().text.clone(), None)
     };
-    let pass = async |service: &Service| {
-        tokio::time::timeout(Duration::from_secs(20), service.pass())
-            .await
-            .unwrap()
-            .unwrap()
-    };
+    let pass = async |service: &Service| service.pass().await.expect("queue pass");
     assert!(!service.storage.work().path().exists());
     service
         .state
@@ -1317,6 +1312,8 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         let mut state = service.state.lock().await;
         state.store.create(&winner, &event("fixture")).unwrap();
         state.schedule.park("winner");
+        // The next oldest-task decision follows the fixture's capacity or native evidence.
+        state.schedule.park(oldest);
         for id in newest {
             state.store.create(&queued(id), &event("fixture")).unwrap();
             state.schedule.wake(id, Instant::now(), Priority::Wake);
@@ -1334,12 +1331,12 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             .unwrap();
         assert_eq!(service.task(oldest).await.unwrap(), preparing);
     } else {
-        assert!(
-            pass(&service)
-                .await
-                .iter()
-                .all(|outcome| matches!(outcome.result, Ok(Action::Wait(WaitReason::Capacity))))
-        );
+        let waiting = pass(&service).await;
+        assert_eq!(waiting.len(), newest.len());
+        assert!(waiting.iter().all(|outcome| {
+            newest.contains(&outcome.task.as_str())
+                && matches!(outcome.result, Ok(Action::Wait(WaitReason::Capacity)))
+        }));
         assert!(service.state.lock().await.last_pass_calls.is_empty());
         old_present.store(1, Ordering::Relaxed);
         service

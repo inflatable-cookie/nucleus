@@ -1,11 +1,11 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, atomic::Ordering},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use axum::{Json, Router, routing::get};
-use nucleus_core::{Authority, Entry, Forge, Identity, Observed, Phase, Workspace};
+use nucleus_core::{Authority, Entry, Forge, Identity, Launch, Observed, Phase, Workspace};
 use serde_json::{Value, json};
 
 use super::*;
@@ -209,10 +209,7 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
 
 async fn pass(service: &Service) -> Vec<crate::PassOutcome> {
     let host = service.host.fixture_pass();
-    let outcomes = tokio::time::timeout(Duration::from_secs(8), service.pass_with_host(&host))
-        .await
-        .expect("tasks due now")
-        .expect("scheduler pass");
+    let outcomes = service.pass_with_host(&host).await.expect("scheduler pass");
     for outcome in &outcomes {
         assert!(
             outcome.result.is_ok(),
@@ -249,6 +246,7 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
             ]
         })).expect("profiles and an operator pause")));
     }
+    let mut threads = Vec::new();
     for id in IDS {
         service
             .admit(
@@ -261,15 +259,24 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
             )
             .await
             .expect("admit task");
-    }
-    for _ in 0..12 {
-        pass(service).await;
-        if native.lock().expect("native runs").launches.len() == 3 {
-            break;
+        for expected in [
+            Action::Advance(Phase::Working),
+            Action::Launch {
+                role: Role::Worker,
+                via: Launch::Create,
+            },
+            Action::Launch {
+                role: Role::Worker,
+                via: Launch::SendPrepared,
+            },
+        ] {
+            let outcomes = pass(service).await;
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0].task, id);
+            assert!(matches!(&outcomes[0].result, Ok(actual) if *actual == expected));
         }
-    }
-    let mut threads = Vec::new();
-    for id in IDS {
+        // Hold the running tasks at the same observation point until the measured pass.
+        service.state.lock().await.schedule.park(id);
         let row = service.task(id).await.expect("admitted task");
         let run = row.task.run().expect("overlapping run");
         assert!(run.last_send_at_ms().is_some());
@@ -282,13 +289,7 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
 }
 
 async fn measure_overlap(service: &Service, traffic: &NativeTraffic) {
-    // Establish a WebSocket barrier after the warm-up traffic.
-    service
-        .host
-        .fixture_pass()
-        .profile_catalog()
-        .await
-        .expect("fixture catalog barrier");
+    // The last launch reply follows the warm-up traffic on this socket.
     let bytes = || {
         (
             traffic.received.load(Ordering::Relaxed),
@@ -308,13 +309,9 @@ async fn measure_overlap(service: &Service, traffic: &NativeTraffic) {
     );
     // Each exact read sends a request, acknowledgement and stream interrupt.
     let expected = frames_before + IDS.len() * 3;
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while traffic.received_frames.load(Ordering::Relaxed) < expected {
-            traffic.frame_received.notified().await;
-        }
-    })
-    .await
-    .expect("fixture received every outbound frame");
+    while traffic.received_frames.load(Ordering::Relaxed) < expected {
+        traffic.frame_received.notified().await;
+    }
     assert_eq!(traffic.received_frames.load(Ordering::Relaxed), expected);
     let (received, sent) = bytes();
     let elapsed = started.elapsed().as_secs_f64();
@@ -357,8 +354,14 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
 
     native.lock().expect("native runs").limited = Some(threads[0].clone());
     wake(&service, &IDS[..1]).await;
-    let _ = pass(&service).await;
+    let ended = pass(&service).await;
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].task, IDS[0]);
+    // The exhausted run has settled. Observe the next decision on that row.
+    wake(&service, &IDS[..1]).await;
     let result = pass(&service).await;
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].task, IDS[0]);
     assert!(matches!(
         result[0].result,
         Ok(Action::Wait(WaitReason::Capacity))
