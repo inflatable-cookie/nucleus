@@ -79,8 +79,12 @@ export const laneUpsertInputSchema = z.object({
 
 export type LaneUpsertInput = z.infer<typeof laneUpsertInputSchema>;
 
-export const laneStatusInputSchema = z.object({
+export const laneAddressSchema = z.object({
+  project: z.string().min(1),
   key: laneKeySchema,
+}).strict();
+
+export const laneStatusInputSchema = laneAddressSchema.extend({
   status: laneStatusSchema,
   note: z.string().max(4000).optional(),
 }).strict();

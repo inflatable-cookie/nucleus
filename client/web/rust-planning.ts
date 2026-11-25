@@ -21,7 +21,6 @@ import { isRustHttpError } from "./rust-board";
 type Keys = { key: (id: string) => string; id: (key: string) => string };
 type PlanningScope = {
   denied: Set<string>;
-  laneProjects: Map<string, string>;
 };
 type ProjectRow = {
   id: string;
@@ -293,7 +292,7 @@ export function createRustPlanning(
     const [caller, view] = await Promise.all([session(), settings()]);
     let scope = scopes.get(caller);
     if (!scope) {
-      scope = { denied: new Set(), laneProjects: new Map() };
+      scope = { denied: new Set() };
       scopes.set(caller, scope);
     }
     const access = scope;
@@ -339,16 +338,13 @@ export function createRustPlanning(
     }
   }
 
-  async function laneOwner(key: string) {
-    const rows = await projects();
-    for (const row of rows) {
-      const owner = row.scope.laneProjects.get(key);
-      if (owner && row.id !== owner) continue;
-      const plan = await readProject(row, rust.plan);
-      const lane = plan?.documents.find((document) => document.key === key);
-      if (lane) return { row, lane };
-    }
-    throw new Error(`Lane ${key} is not in any project's plan.`);
+  async function projectLane(project: string, key: string) {
+    const row = (await projects()).find((entry) => entry.board.key === project);
+    if (!row) throw new Error(`Project ${project} has no accessible plan.`);
+    const plan = await readProject(row, rust.plan);
+    const lane = plan?.documents.find((document) => document.key === key);
+    if (!lane) throw new Error(`Lane ${key} is not in project ${project}'s accessible plan.`);
+    return { row, lane };
   }
 
   async function decisionOwner(id: string) {
@@ -386,9 +382,7 @@ export function createRustPlanning(
         const plan = boardPlan(row.board.key, current);
         const laneViews = current.documents.flatMap((lane) => {
           const view = boardLane(lane, row.project, row.board.key);
-          if (!view) return [];
-          if (!row.scope.laneProjects.has(lane.key)) row.scope.laneProjects.set(lane.key, row.id);
-          return [view];
+          return view ? [view] : [];
         });
         return [{ ...plan, savedEntries: plan.entries, laneViews }];
       });
@@ -427,8 +421,8 @@ export function createRustPlanning(
       });
       return boardPlan(row.board.key, await rust.plan(row.id));
     },
-    "lane.document.get": async (input: { key: string }) => {
-      const { lane } = await laneOwner(input.key);
+    "lane.document.get": async (input: { key: string; project: string }) => {
+      const { lane } = await projectLane(input.project, input.key);
       if (!lane.version) return null;
       return {
         key: lane.key,
@@ -441,10 +435,11 @@ export function createRustPlanning(
     },
     "lane.document.edit": async (input: {
       key: string;
+      project: string;
       version: number;
       text: string;
     }) => {
-      const { row, lane } = await laneOwner(input.key);
+      const { row, lane } = await projectLane(input.project, input.key);
       const saved = await rust.putLane(row.id, lane.key, {
         version: input.version,
         title: lane.title,
@@ -462,10 +457,11 @@ export function createRustPlanning(
     },
     "lane.status": async (input: {
       key: string;
+      project: string;
       status: "active" | "paused" | "done" | "abandoned";
       note?: string;
     }) => {
-      const { row } = await laneOwner(input.key);
+      const { row } = await projectLane(input.project, input.key);
       const status =
         input.status === "done"
           ? { status: "done" as const, note: input.note ?? "" }
