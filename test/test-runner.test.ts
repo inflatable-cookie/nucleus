@@ -182,10 +182,6 @@ test("each physical test isolates its default data home before product imports a
     "A test must never open this sentinel as SQLite.",
   );
   const dataModule = new URL("../shared/data-home.mjs", import.meta.url).href;
-  const workModule = new URL(
-    "../core/workspaces/work-root.mjs",
-    import.meta.url,
-  ).href;
   for (const name of ["first", "second"]) {
     writeFileSync(
       join(root, "test", `${name}.test.mjs`),
@@ -193,9 +189,8 @@ test("each physical test isolates its default data home before product imports a
         "import { test } from 'node:test';",
         "import { writeFileSync } from 'node:fs';",
         `import { dataHome } from ${JSON.stringify(dataModule)};`,
-        `import { getWorkRoot } from ${JSON.stringify(workModule)};`,
         `test('isolated default', () => writeFileSync(${JSON.stringify(join(root, `${name}.json`))}, JSON.stringify({`,
-        "  home: dataHome(), work: getWorkRoot(),",
+        "  home: dataHome(),",
         "  rootOverride: process.env.NUCLEUS_WORK_ROOT ?? null, pin: process.env.NUCLEUS_WORK_VOLUME_ID ?? null,",
         "})));",
       ].join("\n"),
@@ -253,7 +248,6 @@ test("each physical test isolates its default data home before product imports a
   );
   for (const observed of [first, second]) {
     assert.ok(observed.home.startsWith(`${tmpdir()}/nt-`));
-    assert.equal(observed.work, join(observed.home, "work"));
     assert.equal(observed.rootOverride, null);
     assert.equal(observed.pin, null);
   }
