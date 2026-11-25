@@ -1766,12 +1766,13 @@ impl Service {
             return Err(ForgeError::Deferred { until }.into());
         }
         let observed = capture_forge(self, attempt.observed);
-        if let Ok(forge) = &observed {
-            self.verify_external_merge(task, checkout, &target, forge)
-                .await?;
-        }
         if attempt.write == MergeWrite::HeadMismatch {
-            observation.forge = seen(observed);
+            // Persist the refused approval first. The next pass verifies a merged
+            // readback against the base and source without that approval.
+            observation.forge = match observed {
+                Ok(Forge::Merged { .. }) => Observed::Unknown,
+                other => seen(other),
+            };
             if matches!(
                 &observation.forge,
                 Observed::Known(Forge::Open {
@@ -1798,7 +1799,10 @@ impl Service {
             }
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
-        let observed = Observed::Known(observed?);
+        let observed = observed?;
+        self.verify_external_merge(task, checkout, &target, &observed)
+            .await?;
+        let observed = Observed::Known(observed);
         if attempt.write == MergeWrite::Unknown
             && !matches!(observed, Observed::Known(Forge::Merged { .. }))
         {
@@ -2970,6 +2974,95 @@ mod tests {
                 }
                 assert!(service.forge_until.load(Ordering::Relaxed) > now_ms());
             }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn external_merge_at_the_refused_head_requires_verified_source_acceptance() {
+        for merged_during_readback in [false, true] {
+            let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+            let head = service.fixture().start.clone();
+            let (task, _) = code_task_at_merge("worker", &head);
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .create(&task, &event("fixture"))
+                .unwrap();
+
+            let merged = Arc::new(AtomicBool::new(false));
+            let published = Arc::new(AtomicBool::new(false));
+            let puts = Arc::new(AtomicUsize::new(0));
+            let (read_merge, write_merge) = (merged.clone(), merged.clone());
+            let (read_base, writes) = (published.clone(), puts.clone());
+            let checks = forge_checks(&head);
+            let mut pull = forge_pull(&head);
+            pull["head"]["ref"] = json!("ns-worker");
+            let path = format!("/repos/{REPOSITORY}/pulls/1");
+            let commit = "f".repeat(40);
+            let tip = "b".repeat(40);
+            let comparison = format!("/repos/{REPOSITORY}/compare/{commit}...{tip}");
+            let app = Router::new()
+                .route(&path, get(move || async move {
+                    let mut pull = pull;
+                    if read_merge.load(Ordering::Relaxed) {
+                        pull["merged"] = json!(true);
+                        pull["state"] = json!("closed");
+                        pull["merge_commit_sha"] = json!(commit);
+                    }
+                    Json(pull)
+                }))
+                .route("/graphql", post(move || async move { Json(checks) }))
+                .route(&format!("{path}/merge"), put(move || async move {
+                    writes.fetch_add(1, Ordering::Relaxed);
+                    write_merge.store(merged_during_readback, Ordering::Relaxed);
+                    StatusCode::CONFLICT
+                }))
+                .route(&format!("/repos/{REPOSITORY}/branches/main"), get(move || async move {
+                    Json(json!({"name":"main", "commit":{"sha":tip}}))
+                }))
+                .route(&comparison, get(move || async move {
+                    Json(json!({"status": if read_base.load(Ordering::Relaxed) { "ahead" } else { "diverged" }}))
+                }));
+            let (forge, server) = serve_forge(app).await;
+            service.forge = forge;
+            let host = service.host.fixture_pass();
+            let approved = service.task("worker").await.unwrap();
+            assert!(matches!(
+                Box::pin(service.advance(&approved, &host)).await,
+                Ok(Action::Wait(WaitReason::ForgeUnknown))
+                    | Err(ServiceError::Forge(ForgeError::UnpublishedMerge))
+            ));
+            let refused = service.task("worker").await.unwrap();
+            assert!(refused.task.verdict().is_none());
+            assert!(refused.task.question().is_none());
+
+            merged.store(true, Ordering::Relaxed);
+            assert!(matches!(
+                Box::pin(service.advance(&refused, &host)).await,
+                Err(ServiceError::Forge(ForgeError::UnpublishedMerge))
+            ));
+            assert!(
+                service
+                    .task("worker")
+                    .await
+                    .unwrap()
+                    .task
+                    .question()
+                    .is_none()
+            );
+            published.store(true, Ordering::Relaxed);
+            let question = Action::Ask(nucleus_core::Question::Accept { head });
+            assert_eq!(
+                Box::pin(service.advance(&refused, &host)).await.unwrap(),
+                question
+            );
+            let asked = service.task("worker").await.unwrap();
+            assert!(asked.task.verdict().is_none());
+            assert!(asked.task.question().is_some());
+            assert_eq!(puts.load(Ordering::Relaxed), 1);
             server.abort();
         }
     }
