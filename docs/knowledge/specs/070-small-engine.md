@@ -450,6 +450,18 @@ Later decisions carry their own attribution.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
     - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
 
+36. **Queue admission checks capacity.** The scheduler takes eligible tasks in
+    admission order and checks dispatch mode, prerequisites, and global,
+    project and checkout capacity under the task fence before entering Working.
+    This also applies to report-only work. A first worker without a run or a
+    retained role returns to Queued if capacity closes before reservation.
+    Queue-only phase changes preserve the exact native parent intent.
+    Admission creates no T3 parent. The TypeScript path uses
+    `Dispatch.dispatchQueued` and `WorkerLauncher.launchAgentOnce`, then
+    `T3Nesting.create` calls `launchParent` during native preparation.
+    On restart a reservation preserves its existing visibility through the
+    first decision. Positive child activity keeps the parent visible.
+
 ## The model
 
 ### Stored state per task

@@ -237,6 +237,14 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
     }
 }
 
+pub(crate) fn capacity_blocked(task: &Task) -> Action {
+    if task.phase == Phase::Working && task.first_launch() {
+        Action::Advance(Phase::Queued)
+    } else {
+        Action::Wait(WaitReason::Capacity)
+    }
+}
+
 fn signal(task: &Task, observation: &Observation) -> Signal {
     if let Some(run) = task.run().filter(|run| run.revoked()) {
         return match observation.current(&run.launch.instance) {

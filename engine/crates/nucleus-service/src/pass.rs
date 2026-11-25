@@ -283,6 +283,53 @@ impl Service {
             }
         }
         match action {
+            Action::Advance(Phase::Working) if task.phase() == Phase::Queued => {
+                let _fence = self.effect(row).await?;
+                let _projects = self.project_writes.read().await;
+                let route = self.project_for(identity).await?;
+                let Some(slots) = route.slots else {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                };
+                if observation.workspace == Observed::Known(Workspace::Absent)
+                    && !self.workspace_capacity(identity, &route, slots).await?
+                {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let configured = self.state.lock().await.settings.profiles.is_some();
+                if !configured {
+                    let Some(fixture) = self
+                        .project
+                        .as_ref()
+                        .filter(|project| project.mode == crate::ProjectMode::Fixture)
+                    else {
+                        return Ok(Action::Wait(WaitReason::Capacity));
+                    };
+                    let catalog = host.profile_catalog().await?;
+                    if ![&fixture.worker, &fixture.reviewer]
+                        .into_iter()
+                        .all(|profile| catalog.supports(profile))
+                    {
+                        return Err(HostError::Configuration.into());
+                    }
+                }
+                let mut state = self.state.lock().await;
+                if state.store.dependency_blocked(&identity.id)? {
+                    return Ok(Action::Wait(WaitReason::Prerequisite));
+                }
+                if !state
+                    .settings
+                    .dispatch
+                    .as_ref()
+                    .is_none_or(|dispatch| dispatch.mode.allows_launch(task.first_launch()))
+                    || !self.launch_capacity_in(&state, identity, false)?
+                {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let mut admitted = task.clone();
+                admitted.reconcile(&observation);
+                self.commit_queue_phase(&mut state, row, &admitted, "queue_admitted")?;
+                Ok(action)
+            }
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
                 Err(ServiceError::Host(error))
             }
@@ -1754,25 +1801,25 @@ impl Service {
     }
 }
 
-fn prior_preparation_command(
+pub(super) fn prior_preparation_command(
     state: &crate::State,
     row: &TaskRow,
     session: &str,
 ) -> Result<Option<String>, ServiceError> {
     let id = &row.task.identity().id;
-    let prior = state
-        .store
-        .task_turn_command(id, "native_turn_intent", row.version, session)?;
-    if let Some(command) = &prior
-        && (state.store.task_turn_failed(id, command)?
-            || state
-                .store
-                .task_turn_attempt(id, "native_turn_intent", row.version, session, command)?
-                .is_some_and(|(_, refused)| refused))
+    let Some((version, command)) = state.store.queue_parent_intent(id, row.version, session)?
+    else {
+        return Ok(None);
+    };
+    if state.store.task_turn_failed(id, &command)?
+        || state
+            .store
+            .task_turn_attempt(id, "native_turn_intent", version, session, &command)?
+            .is_some_and(|(_, refused)| refused)
     {
         return Ok(None);
     }
-    Ok(prior)
+    Ok(Some(command))
 }
 
 fn freeze_launch(

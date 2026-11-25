@@ -832,7 +832,8 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
             .schedule
             .take_ready(
                 tokio::time::Instant::now(),
-                &std::collections::BTreeSet::new()
+                &std::collections::BTreeSet::new(),
+                None
             )
             .is_none()
     );
@@ -1180,7 +1181,7 @@ async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
     }
     let next = state
         .schedule
-        .take_ready(now, &std::collections::BTreeSet::new())
+        .take_ready(now, &std::collections::BTreeSet::new(), None)
         .expect("move wake");
     assert_eq!(next.id, "worker");
     assert_eq!(next.priority, crate::schedule::Priority::Wake);

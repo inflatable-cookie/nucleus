@@ -522,7 +522,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
             .lock()
             .await
             .schedule
-            .take_ready(Instant::now(), &BTreeSet::new())
+            .take_ready(Instant::now(), &BTreeSet::new(), None)
             .map(|task| task.id),
         Some(id.into())
     );
@@ -628,7 +628,10 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             .unwrap();
         let mut state = service.state.lock().await;
         let due = state.schedule.due("unsent").unwrap();
-        let scheduled = state.schedule.take_ready(due, &BTreeSet::new()).unwrap();
+        let scheduled = state
+            .schedule
+            .take_ready(due, &BTreeSet::new(), None)
+            .unwrap();
         assert_eq!(scheduled.id, "unsent");
         assert_eq!(
             service.lookup(&state, "unsent").unwrap().version,
@@ -767,7 +770,11 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
         let mut state = service.state.lock().await;
         let due = state.schedule.due("runless").expect("still eligible");
         assert_eq!(
-            state.schedule.take_ready(due, &BTreeSet::new()).unwrap().id,
+            state
+                .schedule
+                .take_ready(due, &BTreeSet::new(), None)
+                .unwrap()
+                .id,
             "runless"
         );
         assert_eq!(

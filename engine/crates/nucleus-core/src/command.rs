@@ -686,7 +686,20 @@ impl Task {
     /// Whether the next launch would be this task's first.
     #[must_use]
     pub fn first_launch(&self) -> bool {
-        self.phase == Phase::Queued && self.threads.get(Role::Worker).is_none()
+        matches!(self.phase, Phase::Queued | Phase::Working)
+            && self.run.is_none()
+            && self.identity.entry == crate::Entry::Brief
+            && self.threads.get(Role::Worker).is_none()
+            && self.threads.get(Role::Reviewer).is_none()
+    }
+
+    /// Apply the same capacity decision to legacy tasks and new admissions.
+    pub fn reconcile_capacity(&mut self) -> Action {
+        let action = crate::decision::capacity_blocked(self);
+        if let Action::Advance(phase) = action {
+            self.phase = phase;
+        }
+        action
     }
 
     /// A native reservation is durable even if its first send was never attempted.

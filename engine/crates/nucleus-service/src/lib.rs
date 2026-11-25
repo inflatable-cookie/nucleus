@@ -543,12 +543,7 @@ impl Service {
             let next = match first.take() {
                 Some(first) => Some(first),
                 None if self.host.request_retry_at().is_some() => None,
-                None => self
-                    .state
-                    .lock()
-                    .await
-                    .schedule
-                    .take_ready(Instant::now(), &visited),
+                None => self.state.lock().await.take_ready(Instant::now(), &visited),
             };
             let Some(DueTask { id, priority }) = next else {
                 break;
@@ -611,7 +606,6 @@ impl Service {
         if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
-        self.refresh_acp_if_requested(row).await?;
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
         }
@@ -649,36 +643,15 @@ impl Service {
         if row.task.phase() == Phase::ReportReady {
             return Box::pin(self.notify_report_ready(row)).await;
         }
-        if row.task.phase() == Phase::Queued
-            && row.task.run().is_none()
-            && row.task.hold().is_none()
-            && row.task.question().is_none()
+        if task.first_launch()
+            && task.hold().is_none()
+            && task.question().is_none()
+            && (!self.dispatch_mode().await.allows_launch(true)
+                || !self.launch_capacity(task.identity(), false).await?)
         {
-            let (enabled, configured) = {
-                let state = self.state.lock().await;
-                (
-                    self.resolve_project(&state, row.task.identity())
-                        .is_ok_and(|route| route.slots.is_some()),
-                    state.settings.profiles.is_some(),
-                )
-            };
-            let fixture = self
-                .project
-                .as_ref()
-                .filter(|project| project.mode == ProjectMode::Fixture);
-            if !enabled || (!configured && fixture.is_none()) {
-                return Ok(Action::Wait(WaitReason::Capacity));
-            }
-            if let Some(fixture) = fixture.filter(|_| !configured) {
-                let catalog = host.profile_catalog().await?;
-                if ![&fixture.worker, &fixture.reviewer]
-                    .into_iter()
-                    .all(|profile| catalog.supports(profile))
-                {
-                    return Err(HostError::Configuration.into());
-                }
-            }
+            return Ok(Action::Wait(WaitReason::Capacity));
         }
+        self.refresh_acp_if_requested(row).await?;
         self.advance(row, host).await
     }
 
@@ -849,8 +822,16 @@ impl Service {
         identity: &Identity,
         recovery: bool,
     ) -> Result<bool, ServiceError> {
-        let state = self.state.lock().await;
-        let route = self.resolve_project(&state, identity)?;
+        self.launch_capacity_in(&*self.state.lock().await, identity, recovery)
+    }
+
+    fn launch_capacity_in(
+        &self,
+        state: &State,
+        identity: &Identity,
+        recovery: bool,
+    ) -> Result<bool, ServiceError> {
+        let route = self.resolve_project(state, identity)?;
         let fallback_slots = self.project.as_ref().map_or_else(
             || nucleus_store::DispatchSettings::default().global_slots,
             |project| project.launch_budget.slots,
@@ -886,16 +867,17 @@ impl Service {
                     schedule,
                     allowance_clock,
                     thread_tasks,
+                    capacity_waiters,
                     ..
                 } = &mut *state;
                 if !thread_tasks.is_empty() {
                     allowance_clock.checkpoint(store, now)?;
                 }
-                schedule.seed(store, now, self.acp_provider().is_some())?;
-                if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
+                schedule.seed(store, now, self.acp_provider().is_some(), capacity_waiters)?;
+                if let Some(ready) = state.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
-                next = schedule.next();
+                next = state.schedule.next();
             }
             tokio::select! {
                 () = self.wake.notified() => {},
@@ -930,7 +912,7 @@ impl Service {
             _ => None,
         };
         let mut state = self.state.lock().await;
-        let current = self.lookup(&state, id)?;
+        let mut current = self.lookup(&state, id)?;
         let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
@@ -956,6 +938,13 @@ impl Service {
             }
             return Ok(());
         }
+        if wait == Some(WaitReason::Capacity)
+            && current.task.reconcile_capacity() == Action::Advance(Phase::Queued)
+        {
+            current.version =
+                self.commit_queue_phase(&mut state, row, &current.task, "queue_capacity")?;
+        }
+        let row = &current;
         if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
             return Ok(());
         }
@@ -1174,9 +1163,7 @@ impl Service {
             && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
             && let Some(runtime) = self.host.runtime_identity()
         {
-            state
-                .store
-                .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
+            pass::prior_preparation_command(state, row, &runtime)?
                 .as_deref()
                 .is_some_and(nucleus_hosts::is_pinned_parent_hold)
         } else {
@@ -1532,6 +1519,22 @@ impl Service {
         Ok(version)
     }
 
+    fn commit_queue_phase(
+        &self,
+        state: &mut State,
+        prior: &TaskRow,
+        task: &Task,
+        kind: &str,
+    ) -> Result<i64, ServiceError> {
+        let mut audit = event(kind);
+        let origin = state
+            .store
+            .queue_origin(&task.identity().id, prior.version)?;
+        audit.detail =
+            serde_json::json!({"origin":origin, "version":prior.version + 1}).to_string();
+        self.commit(state, prior, task, &audit, None)
+    }
+
     fn commit(
         &self,
         state: &mut State,
@@ -1742,7 +1745,8 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
     }
     match audit.kind.as_str() {
         "command" | "reported" => Priority::Wake,
-        "run_reserved"
+        "queue_admitted"
+        | "run_reserved"
         | "host_send"
         | "run_revoked"
         | "review_rejected_awaiting_archive"
@@ -1779,8 +1783,13 @@ impl State {
     }
 
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
-        if reason != Some(WaitReason::Capacity) {
+        if reason == Some(WaitReason::Capacity) {
+            if !self.capacity_waiters.iter().any(|waiting| waiting == id) {
+                self.capacity_waiters.push_back(id.into());
+            }
+        } else {
             self.group_waits.remove(id);
+            self.capacity_waiters.retain(|waiting| waiting != id);
         }
         let entry = self.waits.entry(id.into()).or_insert_with(|| TaskWait {
             reason: None,
@@ -1794,11 +1803,6 @@ impl State {
         }
         entry.since = Instant::now();
         entry.detail = None;
-        if prior == Some(WaitReason::Capacity) {
-            self.capacity_waiters.retain(|waiting| waiting != id);
-        } else if reason == Some(WaitReason::Capacity) {
-            self.capacity_waiters.push_back(id.into());
-        }
         true
     }
 
@@ -1871,6 +1875,14 @@ impl State {
         if entered || self.waits.contains_key(&task.identity().id) {
             self.apply_observed_wait(task, reason, entered);
         }
+    }
+
+    fn take_ready(&mut self, now: Instant, visited: &BTreeSet<String>) -> Option<DueTask> {
+        self.schedule.take_ready(
+            now,
+            visited,
+            self.capacity_waiters.front().map(String::as_str),
+        )
     }
 
     fn wake_capacity(&mut self, now: Instant) {

@@ -139,7 +139,11 @@ impl Service {
             affected_tests,
         };
         let number = state.store.create_with_facts(&task, &admitted, facts)?;
-        state.apply_task_wait(&task, admission_wait(blocked, requested_permission), true);
+        let wait = admission_wait(blocked, requested_permission);
+        state.apply_task_wait(&task, wait, true);
+        if wait.is_none() && task.first_launch() {
+            state.capacity_waiters.push_back(task.identity().id.clone());
+        }
         if requested_permission {
             self.decision_changed();
         }
@@ -235,7 +239,11 @@ impl Service {
             stamp(caller),
             facts,
         )?;
-        state.apply_task_wait(&task, admission_wait(blocked, requested_permission), true);
+        let wait = admission_wait(blocked, requested_permission);
+        state.apply_task_wait(&task, wait, true);
+        if wait.is_none() && task.first_launch() {
+            state.capacity_waiters.push_back(task.identity().id.clone());
+        }
         if requested_permission {
             self.decision_changed();
         }

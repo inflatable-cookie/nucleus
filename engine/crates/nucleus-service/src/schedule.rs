@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     time::Duration,
 };
 
@@ -185,13 +185,14 @@ impl Schedule {
         store: &Store,
         now: Instant,
         parenting: bool,
+        capacity_waiters: &mut VecDeque<String>,
     ) -> Result<(), ServiceError> {
         if now < self.scan_at {
             return Ok(());
         }
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
         let more = ids.len() == SCAN_PAGE as usize;
-        self.cursor = ids.last().filter(|_| more).cloned();
+        self.cursor = ids.last().filter(|_| more).map(|(id, _)| id.clone());
         let archival =
             store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
         let more_archival = archival.len() == SCAN_PAGE as usize;
@@ -202,8 +203,11 @@ impl Schedule {
             } else {
                 SCAN_INTERVAL
             };
-        for id in ids {
-            self.tasks.entry(id).or_insert_with(|| {
+        for (id, first_worker) in ids {
+            self.tasks.entry(id.clone()).or_insert_with(|| {
+                if first_worker && !capacity_waiters.contains(&id) {
+                    capacity_waiters.push_back(id);
+                }
                 let mut pending = Pending::default();
                 pending.wake(now, Priority::Decision);
                 pending
@@ -223,12 +227,18 @@ impl Schedule {
         &mut self,
         now: Instant,
         visited: &BTreeSet<String>,
+        first_waiting: Option<&str>,
     ) -> Option<DueTask> {
         let ((priority, _), id) = self
             .tasks
             .iter()
             .filter_map(|(id, pending)| pending.ready(now).map(|ready| (ready, id)))
             .min()?;
+        let (priority, id) = first_waiting
+            .and_then(|first| self.tasks.get_key_value(first))
+            .and_then(|(first, due)| due.ready(now).map(|(priority, _)| (priority, first)))
+            .filter(|(first, _)| priority != Priority::Effect || *first == Priority::Effect)
+            .unwrap_or((priority, id));
         // Start a fresh pass instead of observing the same task again with the
         // census shared by this pass. Lower priority work stays in the queue.
         if visited.contains(id) {
@@ -274,9 +284,9 @@ mod tests {
         let due = now + T3_RETRY_DELAY;
         assert!(!schedule.recover_host_observation("worker", now, None));
         schedule.wake("worker", now, Priority::Effect);
-        assert!(schedule.take_ready(now, &BTreeSet::new()).is_none());
+        assert!(schedule.take_ready(now, &BTreeSet::new(), None).is_none());
         assert_eq!(
-            schedule.take_ready(due, &BTreeSet::new()).unwrap().id,
+            schedule.take_ready(due, &BTreeSet::new(), None).unwrap().id,
             "worker"
         );
         let deferred = due + T3_RETRY_DELAY;
@@ -284,10 +294,17 @@ mod tests {
         assert_eq!(schedule.due("worker"), Some(deferred));
         assert!(schedule.recover_host_observation("worker", deferred, None));
         schedule.wake("worker", deferred, Priority::Effect);
-        assert!(schedule.take_ready(deferred, &BTreeSet::new()).is_none());
+        assert!(
+            schedule
+                .take_ready(deferred, &BTreeSet::new(), None)
+                .is_none()
+        );
         schedule.host_session_changed(deferred);
         assert_eq!(
-            schedule.take_ready(deferred, &BTreeSet::new()).unwrap().id,
+            schedule
+                .take_ready(deferred, &BTreeSet::new(), None)
+                .unwrap()
+                .id,
             "worker"
         );
     }
@@ -303,7 +320,7 @@ mod tests {
         }
         assert_eq!(
             pending
-                .take_ready(later, &BTreeSet::new())
+                .take_ready(later, &BTreeSet::new(), None)
                 .map(|task| task.id),
             Some("later-id".into())
         );
@@ -317,7 +334,10 @@ mod tests {
             pending.wake(id, now, Priority::Refresh);
         }
         let mut visited = BTreeSet::new();
-        let first = pending.take_ready(now, &visited).expect("first refresh").id;
+        let first = pending
+            .take_ready(now, &visited, None)
+            .expect("first refresh")
+            .id;
         assert_eq!(first, "refresh-a");
         visited.insert(first);
         let later = now + Duration::from_secs(1);
@@ -327,10 +347,13 @@ mod tests {
         pending.wake("decision", now, Priority::Decision);
         for expected in ["write", "refresh-b", "decision", "refresh-c"] {
             assert_eq!(
-                pending.take_ready(later, &visited).expect("ready task").id,
+                pending
+                    .take_ready(later, &visited, None)
+                    .expect("ready task")
+                    .id,
                 expected
             );
         }
-        assert!(pending.take_ready(later, &visited).is_none());
+        assert!(pending.take_ready(later, &visited, None).is_none());
     }
 }

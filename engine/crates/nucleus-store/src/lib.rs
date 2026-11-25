@@ -333,20 +333,25 @@ impl Store {
     /// Read one bounded page of active task IDs from the active index.
     /// # Errors
     /// Returns an error if the database cannot read the page.
-    pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
+    pub fn active_ids(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<(String, bool)>, StoreError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
+            "WITH cursor AS (SELECT coalesce((SELECT rowid FROM tasks WHERE id = ?2), 0) AS seq),
+             due AS (SELECT rowid AS admitted, id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
              AND (run IS NOT NULL OR phase NOT IN ('report_ready','blocked','error')
                   OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
-             AND id > ?2
-             UNION SELECT b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
-               WHERE b.task_id > ?2 AND t.phase NOT IN ('done','cancelled')
-             UNION SELECT n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
-               WHERE n.task_id > ?2 AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
-             UNION SELECT w.task_id FROM task_prerequisite_waits w
+             AND rowid > (SELECT seq FROM cursor)
+             UNION SELECT t.rowid, b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
+               WHERE t.rowid > (SELECT seq FROM cursor) AND t.phase NOT IN ('done','cancelled')
+             UNION SELECT t.rowid, n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
+               WHERE t.rowid > (SELECT seq FROM cursor) AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
+             UNION SELECT t.rowid, w.task_id FROM task_prerequisite_waits w
                JOIN tasks t ON t.id = w.task_id
-               WHERE w.task_id > ?2 AND w.released_at_ms IS NULL
+               WHERE t.rowid > (SELECT seq FROM cursor) AND w.released_at_ms IS NULL
                  AND t.phase NOT IN ('done','cancelled')
                  AND NOT EXISTS (
                     SELECT 1 FROM task_dependencies d
@@ -354,9 +359,14 @@ impl Store {
                     WHERE d.task_id = w.task_id AND d.after_dispatch = 1
                       AND coalesce(p.phase, '') != 'done'
                  )
-             ORDER BY id LIMIT ?1",
+             ORDER BY admitted LIMIT ?1)
+             SELECT due.id, t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
+               AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
+             FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
-        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| row.get(0))?;
+        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
         Ok(ids.collect::<Result<_, _>>()?)
     }
 
@@ -727,6 +737,44 @@ impl Store {
              ORDER BY sequence DESC LIMIT 1",
                 params![id, kind, version, session],
                 |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Source version before consecutive queue-only phase changes.
+    ///
+    /// # Errors
+    /// Returns an error if the journal cannot be read.
+    pub fn queue_origin(&self, id: &str, version: i64) -> Result<i64, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT coalesce((SELECT json_extract(detail, '$.origin') FROM events
+             WHERE task_id = ?1 AND kind IN ('queue_admitted', 'queue_capacity') AND json_valid(detail)
+             AND json_extract(detail, '$.version') = ?2 ORDER BY sequence DESC LIMIT 1), ?2)",
+            params![id, version],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Locate an exact native occurrence through queue-only phase changes.
+    ///
+    /// # Errors
+    /// Returns an error if the journal cannot be read.
+    pub fn queue_parent_intent(
+        &self,
+        id: &str,
+        version: i64,
+        session: &str,
+    ) -> Result<Option<(i64, String)>, StoreError> {
+        let origin = self.queue_origin(id, version)?;
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT json_extract(detail, '$.version'), json_extract(detail, '$.command')
+             FROM events WHERE task_id = ?1 AND kind = 'native_turn_intent' AND json_valid(detail)
+             AND json_extract(detail, '$.version') BETWEEN ?2 AND ?3
+             AND json_extract(detail, '$.session') = ?4 ORDER BY sequence DESC LIMIT 1",
+                params![id, origin, version, session],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?)
     }
