@@ -12,13 +12,12 @@ contending on the shared changelog.
 
 Owner: Nucleus maintainers
 
-Nucleus runs from the standalone package under `~/.local/share/nucleus/current`.
-Paseo loads plugin `nucleus` there; the bridge starts the service with
-that package’s `runtime/node` ([service boundary](service-boundary.md)).
-The local main channel is opt-in; release installs stay pinned. Linked-checkout
+The archived TypeScript package ran from `~/.local/share/nucleus/current`.
+Its Paseo bridge loaded the package’s `runtime/node` ([service boundary](service-boundary.md)).
+The local main channel was opt-in, and release installs stayed pinned. Linked-checkout
 rolling and `nucleus link` are retired (Tom, 2026-11-09).
 
-## Rolling the main channel
+## Historical TypeScript main-channel rolls
 
 The roll owner (`service/roll/owner.ts`) checks the configured main channel every
 30 seconds and on an own-repository sync hint. It is a separate detached process,
