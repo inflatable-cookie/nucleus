@@ -53,18 +53,25 @@ pub(super) fn report_reminder(
             "Report the review you actually performed at exact head {head}."
         );
     }
-    text.push_str(
+    let continue_work = launch.role == Role::Worker && task.report_task().is_none();
+    if continue_work {
+        text.push_str("Continue the assignment in this checkout and report when it is done. Ask the planner only about a failure you cannot resolve, missing access, or a scope decision.\n");
+    } else {
+        text.push_str(
         "Use your findings and evidence from this thread. Do not redo the assignment, repeat checks, or claim work you did not perform. If the work was incomplete, report what was actually done and what prevented completion.\n",
     );
+    }
     let _ = writeln!(
         text,
         "Use the report JSON format from the earlier assignment. Submit it on stdin to `{callback}`. Exit status zero means accepted."
     );
-    text.push_str(if task.report_task().is_some() {
+    if !continue_work {
+        text.push_str(if task.report_task().is_some() {
         " If you cannot report an existing delivery, report blocked or error with the concrete reason.\n"
     } else {
         " If you cannot report a completed result, use a planner question with the concrete reason and next step.\n"
     });
+    }
     let total = text.encode_utf16().count();
     Assignment {
         text,

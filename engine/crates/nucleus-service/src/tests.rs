@@ -308,6 +308,32 @@ pub(super) struct Due(
     pub(super) Option<nucleus_core::RunState>,
 );
 
+#[test]
+fn report_reminder_continues_ordinary_work_and_preserves_the_review_verdict() {
+    let head = "a".repeat(40).parse().unwrap();
+    for (entry, continuation) in [(Entry::Brief, true), (Entry::ReviewEntry, false)] {
+        let (task, _, _) = reservation("fixture", entry, &head);
+        let reminder = crate::prompt::report_reminder(
+            &task,
+            task.run().unwrap(),
+            Path::new("nucleus"),
+            Path::new("ticket"),
+        );
+        assert_eq!(
+            reminder
+                .text
+                .contains("Continue the assignment in this checkout"),
+            continuation
+        );
+        assert_eq!(
+            reminder
+                .text
+                .contains("review you actually performed at exact head"),
+            !continuation
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
     let head: Head = "a".repeat(40).parse().unwrap();
