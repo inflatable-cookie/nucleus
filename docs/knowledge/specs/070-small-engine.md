@@ -516,7 +516,7 @@ Later decisions carry their own attribution.
       An uncertain POST is reconciled from the original marker by the operator
       credential. After 30 seconds, a complete inventory without the marker
       permits one journaled resubmission with the original identity, body and marker.
-      Planner reading of Tom’s “we don’t want messages getting lost” and ruling 34:
+      Planner ruling, 2026-11-25:
       GitHub 5xx responses, including 502, leave delivery uncertain. Before each
       attempt the engine looks for the same marker. If an inventory begun at
       least ten minutes after the second attempt is complete and marker-free,
