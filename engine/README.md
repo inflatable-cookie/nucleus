@@ -109,7 +109,7 @@ Staging signs the copied executable with the fixed identifier
 same certificate across releases so Keychain can recognize the engine.
 
 At activation, point the CLI runtime link and the service and ACP launchers
-at the staged `nucleus`. Pass its `board-assets/` to the service. The managed
+at the staged `nucleus`. The [registry launcher](#registry-serve-launcher) uses its matching board assets. The managed
 skill link at `<engine-home>/skills/nucleus` points to that release's skill
 directory. Configure each provider to discover the stable link once. On later
 rolls, update the stable target with the runtime and keep the provider's skill
@@ -132,8 +132,7 @@ directories, collect each domain into the corresponding directory in the new
 home. Avoid moving roots that still hold active checkouts, sessions or report
 tickets. Keep their overrides through the move until those users settle.
 
-On the copied profile, run `nucleus configure --enable
---clear-legacy-volume`, with `--placement barge` if desired. Use `--reset-roots`
+On the copied profile, run `nucleus configure --home /absolute/copied-home --enable --clear-legacy-volume`, with `--placement barge` if desired. Use `--reset-roots`
 to remove old overrides and pass any overrides to keep in the same command.
 Refresh the owner-only serve and ACP launchers for the new absolute paths and
 scratch root. Verify the database and settings under the new home, then verify
@@ -523,14 +522,31 @@ T3 setup. Set the T3 origin with `--t3` or the profile's Hosts setting. The
 provider's launcher is `bin/nucleus-rust-acp` under the engine home. The startup
 lock lives beside `bin`.
 
-Prepare an owner-only executable serve launcher that sets
-`NUCLEUS_RUST_NATIVE_INBOX=1` and starts this profile's `nucleus serve`
-with `--acp-provider nucleus-rust`. Use the same
-loopback endpoint and the same controller key for serve and install. Supply
-the key in a separate owner-only file containing 64 lowercase hex digits.
-The serve launcher can load service credentials from private files and redirect
-logs under the Storage log root. The installed provider uses the same binary
-for `ensure` and `acp`.
+### Registry serve launcher
+
+Point the owner-only serve launcher at the staged release and the enabled
+profile. Substitute the engine and T3 loopback addresses for this installation.
+Keep the four input files owner-readable only. The controller and caller keys
+each contain 64 hex digits and must be distinct. Give the installed CLI the same
+caller key and give T3 setup the same controller key and engine endpoint.
+
+```sh
+#!/bin/sh
+set -eu
+engine_home=/absolute/engine-home
+release=/absolute/builds-root/releases/COMMIT
+keys=/absolute/private-credentials
+NUCLEUS_ENGINE_CONTROL_KEY=$(cat "$keys/operator.key")
+NUCLEUS_ENGINE_T3_CALLER_KEY=$(cat "$keys/t3-caller.key")
+NUCLEUS_ENGINE_T3_BEARER=$(cat "$keys/t3-runtime-bearer")
+NUCLEUS_ENGINE_GITHUB_TOKEN=$(cat "$keys/github-token")
+export NUCLEUS_ENGINE_CONTROL_KEY NUCLEUS_ENGINE_T3_CALLER_KEY
+export NUCLEUS_ENGINE_T3_BEARER NUCLEUS_ENGINE_GITHUB_TOKEN
+export NUCLEUS_RUST_NATIVE_INBOX=1
+exec "$release/nucleus" serve --home "$engine_home" --actor operator \
+  --endpoint 127.0.0.1:4319 --t3 http://127.0.0.1:3773 \
+  --acp-provider nucleus-rust --board-assets "$release/board-assets"
+```
 
 Use `t3 auth session issue` to mint a short-lived session with
 `--scope providers:manage --scope orchestration:read` and supply its bearer as

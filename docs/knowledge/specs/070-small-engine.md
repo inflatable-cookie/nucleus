@@ -828,15 +828,16 @@ warning once per name. It validates the readiness of each recognized command.
 
 | Command | Effect |
 |---|---|
-| `move to=<phase>` | Ends any live run (revokes its credential, stops its turn), clears `attempts` and `question`, and sets the phase. Always applies, apart from the two gates. |
+| `move REF PHASE` | Ends any live run and moves the task when preflight allows it. Return a delivered report to work with `move REF work --instruction TEXT`. |
+| `complete REF --version V --lane KEY --artifact-version N --digest DIGEST --reason TEXT` | Accepts the exact delivered report for a report-only task. |
 | `answer` | Answers the open question. Work guidance becomes a new brief version, retry clears the capped count, and authorized acceptance binds to the exact observed head. |
 | `cancel` | Ends any live run and sets `cancelled`. Leaves the worktree if it is dirty. |
 | `amend` | Replaces the brief and records the new version. |
 | `hold` / `release` | Pause or unpause one task. |
 
-There are no other control verbs, explicit commands, record kinds or warnings to
-accept. `next` shows the phase, what the engine is waiting on, the open question and
-the commands above.
+`nucleus next REF` lists the commands available at the current version. For
+prerequisites, use `set-dependencies` before dispatch or `set-prerequisite-wait`
+after dispatch. See [milestone report acceptance](../contracts/milestone-qa.md).
 
 ### Hard gates
 

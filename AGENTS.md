@@ -5,10 +5,9 @@ hosts the task's ACP thread and its worker and reviewer. The engine reconciles
 mechanical faults from evidence. Questions about the work go to the task's
 planner. A planning document cannot authorize execution.
 Merging through Nucleus requires exact-head review, qualified owner acceptance
-or recorded operator source acceptance. The operator-source rule came through
-a 2026-10-20 agent relay. A responsible planner or the operator board may
-explicitly accept an observed external merge for closeout (Tom, 2026-11-23).
-See [Spec 067](docs/knowledge/specs/067-explicit-resolution.md#external-merge-source-acceptance).
+or recorded operator source acceptance. A responsible planner may accept an external merge of an ordinary brief.
+Review-entry tasks need operator acceptance. Record the observed head and reason.
+See the [external-merge contract](docs/knowledge/contracts/orchestration.md#owner-acceptance).
 
 ## Where things live
 
