@@ -507,18 +507,6 @@ pub(super) fn import_projects(source: &Path, apply: Option<&Path>) -> Result<()>
     Ok(())
 }
 
-pub(super) fn import_limits(source: &Path, apply: Option<&Path>) -> Result<()> {
-    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
-        .map(PathBuf::from)
-        .ok_or("set NUCLEUS_SCRATCH_ROOT to the configured scratch root")?;
-    let settings = apply
-        .map(|home| super::open_settings(Some(home)))
-        .transpose()?;
-    let report = legacy::import_limits(&scratch, source, settings.as_ref())?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -619,6 +607,12 @@ mod tests {
         let controller = Cli::try_parse_from(input.into_iter().chain(["QA", "Qualification"]))
             .expect("controller edit");
         assert!(matches!(controller.action, Action::Planning(action) if !action.uses_ticket()));
+    }
+
+    #[test]
+    fn active_cli_rejects_the_retired_limits_import() {
+        let result = Cli::try_parse_from(["nucleus", "limits.import", "copy.sqlite"]);
+        assert!(matches!(result, Err(error) if error.kind() == ErrorKind::InvalidSubcommand));
     }
 
     #[test]

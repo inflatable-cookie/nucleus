@@ -122,15 +122,6 @@ enum Action {
         #[arg(long, value_name = "PROFILE_HOME")]
         apply: Option<PathBuf>,
     },
-    /// Import dispatch limits from a fenced TypeScript copy.
-    #[command(name = "limits.import")]
-    ImportLimits {
-        /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
-        source: PathBuf,
-        /// Apply once to an explicit, stopped profile. Omit to print the values.
-        #[arg(long, value_name = "PROFILE_HOME")]
-        apply: Option<PathBuf>,
-    },
     /// Set up the Nucleus Rust provider in a local T3 environment.
     T3(t3_setup::Args),
     /// Admit a task. Read the brief from stdin.
@@ -351,9 +342,6 @@ async fn main() -> Result<()> {
         } => planning::import_items(&source, repositories, keep, apply.as_deref(), profiles_only),
         Action::ImportProjects { source, apply } => {
             planning::import_projects(&source, apply.as_deref())
-        }
-        Action::ImportLimits { source, apply } => {
-            planning::import_limits(&source, apply.as_deref())
         }
         Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
