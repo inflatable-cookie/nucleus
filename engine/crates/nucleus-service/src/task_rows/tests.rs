@@ -190,6 +190,17 @@ impl Fixture {
         calls
     }
 
+    async fn record_capacity_wait(&self, row: &TaskRow) {
+        self.service
+            .schedule_result(
+                row,
+                &Ok(Action::Wait(WaitReason::Capacity)),
+                Priority::Effect,
+            )
+            .await
+            .unwrap();
+    }
+
     fn elapse_flip_interval(&self) {
         self.elapse_visibility_ms(120_000);
     }
@@ -1115,10 +1126,8 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
     sent.unwrap();
-    service
-        .schedule_result(&row, &Ok(Action::Nothing), Priority::Effect)
-        .await
-        .unwrap();
+    // Record a wait so the watcher can confirm ownership even when a decision is due.
+    fixture.record_capacity_wait(&row).await;
     assert!(!calls.contains_key("orchestration.subscribeThread"));
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
@@ -1129,7 +1138,8 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     drop(fence);
     fixture.elapse_flip_interval();
     fixture.sync().await;
-    fixture.sync().await;
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
     let fence = service.effect(&row).await.unwrap();
     {
         let mut native = fixture.native.lock().unwrap();
@@ -1562,16 +1572,11 @@ async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
     let service = &fixture.service;
     fixture.elapse_flip_interval();
     let row = service.task(ID).await.unwrap();
-    service
-        .schedule_result(
-            &row,
-            &Ok(Action::Wait(WaitReason::Capacity)),
-            Priority::Effect,
-        )
-        .await
-        .unwrap();
+    fixture.record_capacity_wait(&row).await;
     fixture.sync().await;
     assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
     let before = fixture.commands();
     let mut finished = row.task.clone();
     finished
@@ -1600,7 +1605,7 @@ async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
                 .is_none()
         );
     }
-    fixture.sync().await;
+    assert!(fixture.sync().await.is_empty());
     assert_eq!(fixture.commands(), before);
 }
 
