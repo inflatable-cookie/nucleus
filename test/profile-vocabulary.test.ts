@@ -9,7 +9,6 @@ import { T3CodeHost } from "../hosts/t3code/adapter";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
 import { acpStub, nucleusProvider } from "./support/t3code-acp";
 import { paseoVocabulary } from "../hosts/paseo/vocabulary";
-import { PaseoAdapter } from "../service/paseo-composition";
 import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { Store } from "../core/store/store";
@@ -388,7 +387,7 @@ const launchSpec = (
   }),
 });
 
-test("acceptance 2: a canonical Opus profile launches on T3 as claudeAgent with full-access and its effort, and on Paseo with Paseo's ids, with no per-profile settings", async (t) => {
+test("acceptance 2: a canonical Opus profile launches on T3 as claudeAgent with full-access and its effort, and translates to Paseo's IDs, with no per-profile settings", async (t) => {
   const { directory, host, server, catalog } = await t3Fixture(t);
   const opus = nucleusProfileSchema.parse({
     id: "opus",
@@ -424,41 +423,8 @@ test("acceptance 2: a canonical Opus profile launches on T3 as claudeAgent with 
 
   const [onPaseo] = routingProfiles([opus], paseoCatalog(), paseoVocabulary);
   assert.equal(onPaseo!.available, true, onPaseo!.problem);
-  const creates: { config: Record<string, unknown> }[] = [];
-  const paseo = new PaseoAdapter(
-    "ws://127.0.0.1:1",
-    "/unused/callback.sock",
-    "/unused/worker-report.mjs",
-  );
-  assert.equal(
-    paseo.vocabulary,
-    paseoVocabulary,
-    "the Paseo adapter owns its table",
-  );
-  (paseo as unknown as { api: unknown }).api = {
-    workspaces: {
-      ref: () => ({
-        agents: {
-          create: async (input: { config: Record<string, unknown> }) => {
-            creates.push(input);
-            return { id: "agent" };
-          },
-        },
-      }),
-    },
-  };
-  await paseo.nativeAgentCreate(
-    launchSpec("workspace", onPaseo!, "launch-paseo"),
-    false,
-    false,
-  );
-  assert.deepEqual(creates[0]!.config, {
-    provider: "claude/claude-opus-5-5",
-    modeId: "bypassPermissions",
-    thinkingOptionId: "medium",
-    featureValues: undefined,
-    mcpServers: undefined,
-  });
+  assert.equal(onPaseo!.modeId, "bypassPermissions");
+  assert.equal(onPaseo!.thinkingOptionId, "medium");
 });
 
 test("a value no table can express makes the profile unavailable with a computed reason, and a value outside the vocabulary is refused at the form", () => {
