@@ -1,11 +1,6 @@
 // Where an installed BB lives, and the launchers inside it.
 //
-// One list, two readers: the private BB proofs (`scripts/acceptance/`) start an
-// isolated server from the app bundle these paths name, and `nucleus bb`
-// (`service/bb-install.ts`) runs that install's own CLI to install, inspect and
-// remove this integration's plugin. Plain JavaScript because the release build
-// (`scripts/build-runtime.mjs`) reads it from a `node` process that has no
-// TypeScript loader.
+// The private BB sidebar proof uses these launchers to start an isolated server.
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
