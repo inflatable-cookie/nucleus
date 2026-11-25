@@ -79,12 +79,6 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       null,
     ],
     [
-      "bin/queue-client.mjs",
-      "hosts/t3code/cli/index.mjs",
-      "../hosts/t3code/cli/index.mjs",
-      null,
-    ],
-    [
       "service/runtime/index.ts",
       "hosts/paseo/adapter/client.ts",
       "../../hosts/paseo/adapter/client",
