@@ -74,12 +74,27 @@ export const decisionSchema = z.object({
 
 export type Decision = z.infer<typeof decisionSchema>;
 
+const identifiedDecisionChoiceSchema = z.object({
+  id: z.string(), label: z.string(), consequence: z.string(),
+}).strict();
+
 /** `stale` is derived at read time: every linked task, lead and papercut is terminal, and none closed it. */
 /** `projectKey`: the Queue project the asking repository belongs to, derived on read; null for General or an unregistered repository. */
 // A view without `projectKey` (a reader or fixture from before #578, or a server
 // mid-roll) parses as no project, so its decisions still show.
 /** `askerLabel`: who asked, for the board — the task reference and role, the planner or agent name, or `operator`. Never a bare agent or thread ID. */
-export const decisionViewSchema = decisionSchema.extend({ stale: z.boolean(), projectKey: z.string().nullable().default(null), askerLabel: z.string().min(1).max(240) }).strict();
+export const decisionViewSchema = decisionSchema.extend({
+  choices: z.union([
+    z.array(identifiedDecisionChoiceSchema).min(2),
+    decisionSchema.shape.choices.unwrap(),
+  ]).optional(),
+  answer: z.union([
+    decisionAnswerSchema.extend({ optionId: z.string(), text: z.string(), note: z.string() }),
+    decisionAnswerSchema,
+  ]).nullable().default(null),
+  stale: z.boolean(), projectKey: z.string().nullable().default(null),
+  askerLabel: z.string().min(1).max(240),
+}).strict();
 
 export type DecisionView = z.infer<typeof decisionViewSchema>;
 
