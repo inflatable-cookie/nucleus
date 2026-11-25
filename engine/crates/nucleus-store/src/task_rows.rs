@@ -13,6 +13,7 @@ pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_row_snoozes (
 CREATE TABLE IF NOT EXISTS task_row_flips (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id),
     attempted_at INTEGER NOT NULL,
+    prior_at INTEGER,
     deferred INTEGER NOT NULL DEFAULT 0
 ) STRICT";
 
@@ -76,7 +77,7 @@ impl Store {
     }
 
     /// Claim one visibility write and its ownership receipt together. Returns
-    /// the next eligible time if the task already attempted a write recently.
+    /// the next eligible time if the task already attempted two writes in 120 seconds.
     ///
     /// # Errors
     /// Returns an error if the claim or its audit event cannot be saved.
@@ -91,14 +92,14 @@ impl Store {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous: Option<(i64, bool)> = tx
+        let oldest: Option<(i64, bool)> = tx
             .query_row(
-                "SELECT attempted_at, deferred FROM task_row_flips WHERE task_id = ?1",
+                "SELECT prior_at, deferred FROM task_row_flips WHERE task_id = ?1 AND prior_at IS NOT NULL",
                 [task],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        if let Some((at, deferred)) = previous
+        if let Some((at, deferred)) = oldest
             && now < at.saturating_add(FLIP_INTERVAL_MS)
         {
             let due = at.saturating_add(FLIP_INTERVAL_MS);
@@ -113,7 +114,7 @@ impl Store {
                     detail: serde_json::json!({
                         "thread": thread,
                         "action": if receipt.clear_attempted_for.is_some() { "clear" } else { "snooze" },
-                        "attemptedAt": at,
+                        "oldestAttemptAt": at,
                         "eligibleAt": due,
                     }).to_string(),
                 })?;
@@ -123,7 +124,8 @@ impl Store {
         }
         tx.execute(
             "INSERT INTO task_row_flips (task_id, attempted_at) VALUES (?1, ?2)
-             ON CONFLICT(task_id) DO UPDATE SET attempted_at = excluded.attempted_at, deferred = 0",
+             ON CONFLICT(task_id) DO UPDATE SET prior_at = task_row_flips.attempted_at,
+                 attempted_at = excluded.attempted_at, deferred = 0",
             params![task, now],
         )?;
         save(&tx, task, thread, receipt)?;

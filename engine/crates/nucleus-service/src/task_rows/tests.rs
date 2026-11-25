@@ -191,15 +191,22 @@ impl Fixture {
     }
 
     fn elapse_flip_interval(&self) {
+        self.elapse_visibility_ms(120_000);
+    }
+
+    fn elapse_visibility_ms(&self, ms: u64) {
         self.service
             .visibility_time_offset
-            .fetch_add(120_000, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn restart(&mut self) {
         let service = Arc::get_mut(&mut self.service).unwrap();
         let settings = service.settings.clone();
         let project = service.fixture().clone();
+        let offset = service
+            .visibility_time_offset
+            .load(std::sync::atomic::Ordering::Relaxed);
         let host = std::mem::replace(
             &mut service.host,
             nucleus_hosts::T3::new("http://127.0.0.1:9", "unused-fixture-key").unwrap(),
@@ -218,6 +225,14 @@ impl Fixture {
             )
             .unwrap(),
         );
+        self.elapse_visibility_ms(offset);
+    }
+
+    fn observed_visibility(&self) -> RowObservation {
+        RowObservation {
+            visibility: self.service.host.row_visibility_hint(&self.thread).unwrap(),
+            sequence: 1,
+        }
     }
 
     async fn wake(&self, row: &TaskRow, observed: RowObservation) -> Result<(), ServiceError> {
@@ -1323,39 +1338,13 @@ async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
     let task = pending_task();
     let mut fixture = Fixture::new(&task).await;
     let row = create_visibility_row(&fixture, &task).await;
-    let observed = RowObservation {
-        visibility: fixture
-            .service
-            .host
-            .row_visibility_hint(&fixture.thread)
-            .unwrap(),
-        sequence: 1,
-    };
-    fixture.child("monitor", true);
-    assert!(fixture.sync().await.is_empty());
-    assert_eq!(fixture.deferred_flips().await, 1);
-
-    fixture.restart();
-    for active in [false, true, false, true] {
-        fixture.child("monitor", active);
-        assert!(fixture.sync().await.is_empty());
-        let (result, calls) =
-            nucleus_hosts::T3::count_pass_calls(Box::pin(fixture.wake(&row, observed))).await;
-        assert!(matches!(
-            result,
-            Err(ServiceError::RowVisibilityDeferred { until })
-                if until.saturating_duration_since(tokio::time::Instant::now()) <= Duration::from_mins(2)
-        ));
-        assert!(calls.is_empty());
-    }
-    assert_eq!(fixture.commands(), ["thread.snooze"]);
-    assert_eq!(fixture.deferred_flips().await, 1);
-
-    fixture.elapse_flip_interval();
+    fixture.elapse_visibility_ms(30_000);
     assert!(matches!(
-        fixture.wake(&row, observed).await,
+        fixture.wake(&row, fixture.observed_visibility()).await,
         Err(ServiceError::ParentNotSent { .. })
     ));
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    assert_eq!(fixture.deferred_flips().await, 0);
     fixture
         .service
         .schedule_result(
@@ -1365,19 +1354,57 @@ async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
         )
         .await
         .unwrap();
+
     for active in [false, true, false] {
         fixture.child("monitor", active);
         assert!(fixture.sync().await.is_empty());
     }
-    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
-    assert_eq!(fixture.deferred_flips().await, 2);
+    assert_eq!(fixture.deferred_flips().await, 1);
 
-    fixture.elapse_flip_interval();
+    fixture.restart();
+    for active in [true, false, true, false] {
+        fixture.child("monitor", active);
+        assert!(fixture.sync().await.is_empty());
+    }
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    assert_eq!(fixture.deferred_flips().await, 1);
+
+    // The snooze has aged out, but the first clear is still in the window.
+    fixture.elapse_visibility_ms(90_000);
     fixture.sync().await;
     assert!(fixture.sync().await.is_empty());
     assert_eq!(
         fixture.commands(),
         ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+    for _ in 0..3 {
+        let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            fixture.wake(&row, fixture.observed_visibility()),
+        ))
+        .await;
+        let Err(ServiceError::RowVisibilityDeferred { until }) = result else {
+            panic!("clear must wait for the oldest remaining attempt: {result:?}");
+        };
+        let delay = until.saturating_duration_since(tokio::time::Instant::now());
+        assert!(delay > Duration::ZERO && delay <= Duration::from_secs(30));
+        assert!(calls.is_empty());
+    }
+    assert_eq!(fixture.commands().len(), 3);
+    assert_eq!(fixture.deferred_flips().await, 2);
+
+    fixture.elapse_visibility_ms(30_000);
+    assert!(matches!(
+        fixture.wake(&row, fixture.observed_visibility()).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(
+        fixture.commands(),
+        [
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.snooze",
+            "thread.unsnooze"
+        ]
     );
     assert_eq!(fixture.deferred_flips().await, 2);
 }
