@@ -39,6 +39,40 @@ fn schema_seven_migrates_in_place() {
 }
 
 #[test]
+fn restored_pending_project_import_keeps_its_journal_and_fences_startup() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let storage = fixture_storage(scratch.path());
+    let mut store = Store::open(&storage).expect("store");
+    store
+        .create(&task("1", "fixture#1"), &event("admitted"))
+        .expect("admit");
+    drop(store);
+
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
+    let pending = r#"{"revision":"before-publication","registry":{"projects":{}}}"#;
+    db.execute(
+        "INSERT INTO legacy_project_import (singleton, pending) VALUES (1, ?1)",
+        [pending],
+    )
+    .expect("interrupted publication");
+    assert!(matches!(
+        Store::open(&storage),
+        Err(StoreError::ProjectImportPending)
+    ));
+    let saved: String = db
+        .query_row("SELECT pending FROM legacy_project_import", [], |row| {
+            row.get(0)
+        })
+        .expect("preserved journal");
+    assert_eq!(saved, pending);
+
+    db.execute("UPDATE legacy_project_import SET pending = NULL", [])
+        .expect("fixture completed publication");
+    let reopened = Store::open(&storage).expect("completed publication opens");
+    assert_eq!(row(&reopened, "1").number, Some(1));
+}
+
+#[test]
 fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
     let scratch = tempfile::tempdir().expect("scratch");
     let storage = fixture_storage(scratch.path());

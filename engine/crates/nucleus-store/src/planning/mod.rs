@@ -1,7 +1,6 @@
 //! Project-scoped planning records and their append-only history.
 
 pub(super) mod decisions;
-pub mod legacy;
 mod model;
 mod removal;
 

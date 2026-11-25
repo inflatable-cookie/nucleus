@@ -54,6 +54,11 @@ const SCHEMA_VERSION: i32 = 12;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation";
+const LEGACY_PROJECT_IMPORT_JOURNAL: &str = "
+CREATE TABLE IF NOT EXISTS legacy_project_import (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  pending TEXT CHECK (json_valid(pending))
+) STRICT";
 const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
@@ -188,24 +193,18 @@ impl Store {
     pub fn open(storage: &EngineStorage) -> Result<Self, StoreError> {
         let directory = storage.database();
         directory.ensure()?;
-        Self::open_database_with_backup(
-            &directory.path().join(DATABASE_FILE),
-            Some(storage.backup()),
-        )
-    }
-
-    fn open_database(path: &Path) -> Result<Self, StoreError> {
-        Self::open_database_with_backup(path, None)
-    }
-
-    fn open_database_with_backup(
-        path: &Path,
-        backup: Option<&StorageDirectory>,
-    ) -> Result<Self, StoreError> {
-        let mut connection = Self::connect_database(path, OpenFlags::SQLITE_OPEN_CREATE)?;
+        let path = directory.path().join(DATABASE_FILE);
+        let mut connection = Self::connect_database(&path, OpenFlags::SQLITE_OPEN_CREATE)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Self::prepare_schema(&tx, true, path, backup)?;
-        Self::check_legacy_project_import(&tx)?;
+        Self::prepare_schema(&tx, &path, storage.backup())?;
+        let pending_project_import = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM legacy_project_import WHERE pending IS NOT NULL)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if pending_project_import {
+            return Err(StoreError::ProjectImportPending);
+        }
         tx.commit()?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", true)?;
@@ -226,18 +225,16 @@ impl Store {
 
     fn prepare_schema(
         tx: &Transaction<'_>,
-        may_initialize: bool,
         path: &Path,
-        backup: Option<&StorageDirectory>,
+        backup: &StorageDirectory,
     ) -> Result<(), StoreError> {
         let application = tx.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match (application, version) {
             (0, 0)
-                if may_initialize
-                    && tx.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
-                        row.get::<_, i64>(0)
-                    })? == 0 =>
+                if tx.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+                    row.get::<_, i64>(0)
+                })? == 0 =>
             {
                 tx.execute_batch(TASK_SCHEMA)?;
                 tx.execute_batch(include_str!("schema.sql"))?;
@@ -254,11 +251,7 @@ impl Store {
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
             (APPLICATION_ID, 1..SCHEMA_VERSION) => {
-                Self::backup_before_upgrade(
-                    path,
-                    backup.ok_or(StoreError::UpgradeBackup)?,
-                    version,
-                )?;
+                Self::backup_before_upgrade(path, backup, version)?;
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -305,7 +298,7 @@ impl Store {
         }
         // This independent table is additive to every supported task schema.
         tx.execute(usage::PROVIDER_PAUSES, [])?;
-        tx.execute(planning::legacy::PROJECT_IMPORT_JOURNAL, [])?;
+        tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
         tx.execute_batch(task_rows::SCHEMA)?;
         tx.execute(inbox::COMMAND_RECEIPTS, [])?;
