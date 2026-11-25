@@ -7,8 +7,9 @@ use axum::{
 };
 use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
 use nucleus_store::planning::{
-    Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent, ItemKind,
-    ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES, Plan, RecordKind,
+    Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent,
+    ItemDisposition, ItemKind, ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES,
+    Plan, RecordKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -399,6 +400,8 @@ async fn park_item(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DropItem {
+    #[serde(default)]
+    disposition: ItemDisposition,
     reason: Option<String>,
 }
 
@@ -410,14 +413,25 @@ async fn drop_item(
     Extension(caller): Extension<Authority>,
     input: Result<Json<DropItem>, JsonRejection>,
 ) -> Result<Json<Item>, ApiError> {
-    let DropItem { reason } = body(input)?;
+    let DropItem {
+        reason,
+        disposition,
+    } = body(input)?;
     let (mut state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let saved = state
         .store
-        .set_item_state(&project, &id, ItemState::Dropped { reason }, stamp(&caller))
+        .set_item_state(
+            &project,
+            &id,
+            ItemState::Dropped {
+                reason,
+                disposition,
+            },
+            stamp(&caller),
+        )
         .map_err(ServiceError::from)?;
     api.service.planning_changes.send_replace(());
     Ok(Json(saved))

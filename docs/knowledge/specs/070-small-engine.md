@@ -1123,8 +1123,12 @@ Planning is plain record-keeping in the Rust service. It never calls a host (rul
 |---|---|
 | Lane | key, title, aim, document (Markdown), status `open`, `done` or `dropped`, with a closing note |
 | Plan | the project's ordered lane keys, each with horizon `now`, `next` or `later`, a "done when" line and a status note |
-| Item | kind `lead` or `papercut`, title, body, lanes, state `open`, `parked` (with a reason and an optional revisit date), `promoted` (with the task ID) or `dropped`, and the author |
+| Item | kind `lead` or `papercut`, title, body, lanes, state `open`, `parked` (with a reason and an optional revisit date), `promoted` (with the task ID) or `dropped` (completed or deprecated, with an optional note), and the author |
 | Decision | an operator question with options and the answer, shown in the Inbox |
+
+The board and `item.drop --disposition completed|deprecated` preserve the closing
+disposition and the separate reason. Older dropped records and calls that omit
+the disposition default to deprecated.
 
 **Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
 

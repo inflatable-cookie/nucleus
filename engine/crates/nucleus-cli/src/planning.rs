@@ -111,6 +111,8 @@ pub(super) enum Action {
         args: Vec<String>,
         #[arg(long)]
         reason: Option<String>,
+        #[arg(long, value_parser = ["completed", "deprecated"], default_value = "deprecated")]
+        disposition: String,
     },
     /// Admit a task from an item's current body.
     #[command(
@@ -342,13 +344,17 @@ impl Action {
                     Some(json!({ "reason": reason, "revisitAt": revisit_at })),
                 )
             }
-            A::ItemDrop { args, reason } => {
+            A::ItemDrop {
+                args,
+                reason,
+                disposition,
+            } => {
                 let (project, [id]) = project_and_args(args)?;
                 (
                     Method::POST,
                     project,
                     format!("items/{}/drop", segment(&id)?),
-                    Some(json!({ "reason": reason })),
+                    Some(json!({ "reason": reason, "disposition": disposition })),
                 )
             }
             A::ItemPromote { args, complexity } => {

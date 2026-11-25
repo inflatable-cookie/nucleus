@@ -17,6 +17,50 @@ pub(super) async fn put_as(api: &Router, path: &str, key: &[u8; 32], body: &Valu
 }
 
 #[tokio::test]
+async fn dropped_items_keep_the_disposition_and_note_on_readback() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let api = router(
+        Arc::new(service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let items = format!("{PROJECT}/items");
+    for disposition in [Some("completed"), Some("deprecated"), None] {
+        let created = json_body(
+            post_as(
+                &api,
+                &items,
+                &PLANNER_KEY,
+                &json!({
+                    "kind":"papercut","title":"Review defaults","body":"A stored item."
+                }),
+            )
+            .await,
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+        let mut wire = json!({"reason":"Reviewed on main."});
+        if let Some(value) = disposition {
+            wire["disposition"] = json!(value);
+        }
+        let response = post_as(&api, &format!("{items}/{id}/drop"), &PLANNER_KEY, &wire).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+        let row = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(row["state"], "dropped");
+        assert_eq!(row["disposition"], disposition.unwrap_or("deprecated"));
+        assert_eq!(row["reason"], wire["reason"]);
+    }
+    let historical = json!({"state":"dropped","reason":"Original note"});
+    let restored: nucleus_store::planning::ItemState = serde_json::from_value(historical).unwrap();
+    assert_eq!(json!(restored)["disposition"], "deprecated");
+}
+
+#[tokio::test]
 async fn board_lane_dispositions_survive_native_validation_and_readback() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let api = router(
