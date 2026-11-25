@@ -648,21 +648,12 @@ An invalid pilot file is logged, and the TypeScript service starts with the pilo
 Delete the pilot manifest reader, single-repository compatibility path and
 global drain gate when the TypeScript engine is retired.
 
-### Seed task numbers at cutover
+### Task numbers after cutover
 
-Wait until the TypeScript allocator is fenced for the repository and any
-accepted admissions for it have settled. Make a standalone SQLite backup
-inside `NUCLEUS_SCRATCH_ROOT`. Set `NUCLEUS_ENGINE_LEGACY_NUMBERS_COPY` to the
-backup's path on the next authorized Rust service roll.
-
-Before serving requests, Rust reads the copy and uses the greater of the
-stored next number or one above the largest assigned legacy number. Existing
-Rust tasks get consecutive numbers in admission order. A single-pilot
-`serve --project` seeds only the validated repository. Registry startup from
-a globally fenced copy seeds every canonical repository in one transaction. Run the same startup again to resume a cutover. Assigned numbers stay
-stable. The loopback task view shows the public reference separately from the
-identity used by runs and callbacks.
-
+Rust imported the fenced TypeScript counters during cutover. It now allocates
+from the saved per-repository counters on each admission. The loopback task
+view shows the public reference separately from the identity used by runs and
+callbacks.
 
 The fixture uses the `nucleus` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with

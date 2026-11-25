@@ -23,9 +23,7 @@ use nucleus_service::{
     Controller, DependencyCommand, Project, ReportTicket, Service,
     router_with_board_and_t3_callers, router_with_t3_callers,
 };
-use nucleus_store::{
-    Hosts, SettingsFile, StoragePlacement, TaskNumberSeed, planning::legacy::read_task_number_seed,
-};
+use nucleus_store::{Hosts, SettingsFile, StoragePlacement};
 use reqwest::{Client, Method, RequestBuilder, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -95,33 +93,6 @@ enum Action {
     },
     #[command(flatten)]
     Planning(planning::Action),
-    /// Import legacy planning items and profiles from a TypeScript `SQLite` copy.
-    #[command(name = "item.import")]
-    ImportItems {
-        /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
-        source: PathBuf,
-        /// Map a legacy owner/repo to a Rust project ID.
-        #[arg(long = "repository", required_unless_present = "profiles_only", value_parser = planning::repository_mapping)]
-        repositories: Vec<(String, String)>,
-        /// Keep the resulting scratch database. The default rolls back after rehearsal.
-        #[arg(long)]
-        keep: bool,
-        /// Append to an existing, stopped Rust profile at this explicit home.
-        #[arg(long, value_name = "PROFILE_HOME", conflicts_with = "keep")]
-        apply: Option<PathBuf>,
-        /// Apply profiles and pool settings without opening the planning database.
-        #[arg(long, requires = "apply")]
-        profiles_only: bool,
-    },
-    /// Import project containers and reconcile Planning from a fenced TypeScript copy.
-    #[command(name = "project.import")]
-    ImportProjects {
-        /// A standalone `SQLite` copy under `NUCLEUS_SCRATCH_ROOT`.
-        source: PathBuf,
-        /// Apply to an explicit, stopped profile. Omit to rehearse in fresh scratch.
-        #[arg(long, value_name = "PROFILE_HOME")]
-        apply: Option<PathBuf>,
-    },
     /// Set up the Nucleus Rust provider in a local T3 environment.
     T3(t3_setup::Args),
     /// Admit a task. Read the brief from stdin.
@@ -333,16 +304,6 @@ async fn main() -> Result<()> {
         }
         Action::Report { ticket } => report(&ticket).await,
         Action::Planning(action) if action.uses_ticket() => action.run_ticket().await,
-        Action::ImportItems {
-            source,
-            repositories,
-            keep,
-            apply,
-            profiles_only,
-        } => planning::import_items(&source, repositories, keep, apply.as_deref(), profiles_only),
-        Action::ImportProjects { source, apply } => {
-            planning::import_projects(&source, apply.as_deref())
-        }
         Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
     }
@@ -455,24 +416,16 @@ async fn serve(
     }
     let callback = endpoint;
     let command = env::current_exe()?.canonicalize()?;
-    let (service, repository) = match routing {
+    let service = match routing {
         Routing::Legacy(file) => {
             let project: Project = from_reader(File::open(file)?)?;
-            let repository = project.repository.clone();
-            (
-                Service::open(&settings, project, host, forge, callback, command)?,
-                Some(repository),
-            )
+            Service::open(&settings, project, host, forge, callback, command)?
         }
-        Routing::Registry(provider) => (
-            Service::open_projects(&settings, provider, host, forge, callback, command)?,
-            None,
-        ),
+        Routing::Registry(provider) => {
+            Service::open_projects(&settings, provider, host, forge, callback, command)?
+        }
     };
     let service = service.with_inbox_from_env()?;
-    if let Some(seed) = legacy_number_seed(repository.as_deref())? {
-        service.seed_task_numbers(&seed).await?;
-    }
     let service = Arc::new(service);
     let api = match board_assets {
         Some(path) => router_with_board_and_t3_callers(
@@ -513,19 +466,6 @@ async fn serve(
     watcher.abort();
     cycle.abort();
     Ok(result?)
-}
-
-fn legacy_number_seed(repository: Option<&str>) -> Result<Option<TaskNumberSeed>> {
-    let Some(source) = env::var_os("NUCLEUS_ENGINE_LEGACY_NUMBERS_COPY") else {
-        return Ok(None);
-    };
-    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
-        .ok_or("set NUCLEUS_SCRATCH_ROOT for the fenced legacy number snapshot")?;
-    Ok(Some(read_task_number_seed(
-        Path::new(&scratch),
-        Path::new(&source),
-        repository,
-    )?))
 }
 
 async fn report(path: &Path) -> Result<()> {

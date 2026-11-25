@@ -89,7 +89,7 @@ pub enum StoreError {
     #[error("project {0:?} has already received 20 tells in the last hour. Send later.")]
     TellRateLimit(String),
     #[error(
-        "the offline project import is pending; finish project.import before starting the engine"
+        "the offline project import is pending. Recover the Projects settings before starting this profile"
     )]
     ProjectImportPending,
     #[error("seed this repository's task numbers from the fenced legacy snapshot")]

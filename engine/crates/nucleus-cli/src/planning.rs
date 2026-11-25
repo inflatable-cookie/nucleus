@@ -1,16 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    env, io,
-    path::{Path, PathBuf},
-};
+use std::{io, path::PathBuf};
 
 use clap::Subcommand;
 use nucleus_core::{Head, profiles::Complexity};
-use nucleus_store::planning::{
-    DecisionOption, MAX_TEXT_BYTES, PlanLane,
-    legacy::{self, ImportMode},
-    valid_key,
-};
+use nucleus_store::planning::{DecisionOption, MAX_TEXT_BYTES, PlanLane, valid_key};
 use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
@@ -455,62 +447,8 @@ fn decision_option(value: &str) -> std::result::Result<DecisionOption, String> {
     })
 }
 
-pub(super) fn repository_mapping(input: &str) -> std::result::Result<(String, String), String> {
-    let (repository, project) = input.split_once('=').ok_or("expected owner/repo=project")?;
-    Ok((repository.into(), project.into()))
-}
-
-pub(super) fn import_items(
-    source: &Path,
-    repositories: Vec<(String, String)>,
-    keep: bool,
-    apply: Option<&Path>,
-    profiles_only: bool,
-) -> Result<()> {
-    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
-        .map(PathBuf::from)
-        .ok_or("set NUCLEUS_SCRATCH_ROOT to the configured scratch root")?;
-    let mut mapping = BTreeMap::new();
-    for (repository, project) in repositories {
-        if mapping.insert(repository, project).is_some() {
-            return Err("supply only one project per legacy repository".into());
-        }
-    }
-    let report = if let Some(home) = apply {
-        let settings = super::open_settings(Some(home))?;
-        if profiles_only {
-            legacy::apply_profiles(&scratch, source, &settings)?
-        } else {
-            legacy::apply_items(&scratch, source, &mapping, &settings)?
-        }
-    } else {
-        let mode = if keep {
-            ImportMode::Keep
-        } else {
-            ImportMode::Rehearse
-        };
-        legacy::import_items(&scratch, source, &mapping, mode)?
-    };
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
-pub(super) fn import_projects(source: &Path, apply: Option<&Path>) -> Result<()> {
-    let scratch = env::var_os("NUCLEUS_SCRATCH_ROOT")
-        .map(PathBuf::from)
-        .ok_or("set NUCLEUS_SCRATCH_ROOT to the configured scratch root")?;
-    let settings = apply
-        .map(|home| super::open_settings(Some(home)))
-        .transpose()?;
-    let report = legacy::import_projects(&scratch, source, settings.as_ref())?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use clap::{Parser, error::ErrorKind};
 
     use super::Action as Planning;
@@ -616,43 +554,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_planning_apply_requires_a_profile_and_conflicts_with_keep() {
-        let args = [
-            "nucleus-engine",
-            "item.import",
-            "copy.sqlite",
-            "--repository",
-            "example/repo=project",
-            "--apply",
-        ];
-        assert!(Cli::try_parse_from(args).is_err());
-        let parsed = Cli::try_parse_from(args.into_iter().chain(["/scratch/profile"]))
-            .expect("explicit profile");
-        assert!(matches!(
-            parsed.action,
-            Action::ImportItems { apply: Some(home), keep: false, .. }
-                if home == Path::new("/scratch/profile")
-        ));
-        let result = Cli::try_parse_from(args.into_iter().chain(["/scratch/profile", "--keep"]));
-        assert!(matches!(result, Err(error) if error.kind() == ErrorKind::ArgumentConflict));
-    }
-
-    #[test]
-    fn legacy_profiles_only_requires_apply_and_skips_repository_mapping() {
-        let args = ["nucleus-engine", "item.import", "copy.sqlite"];
-        assert!(Cli::try_parse_from(args.into_iter().chain(["--profiles-only"])).is_err());
-        assert!(
-            Cli::try_parse_from(args.into_iter().chain(["--apply", "/scratch/profile"])).is_err()
-        );
-        let parsed = Cli::try_parse_from(args.into_iter().chain([
-            "--profiles-only",
-            "--apply",
-            "/scratch/profile",
-        ]))
-        .expect("profiles-only apply");
-        assert!(matches!(
-            parsed.action,
-            Action::ImportItems { profiles_only: true, repositories, .. } if repositories.is_empty()
-        ));
+    fn active_cli_rejects_the_retired_planning_imports() {
+        for command in ["project.import", "item.import"] {
+            let result = Cli::try_parse_from(["nucleus", command, "copy.sqlite"]);
+            assert!(matches!(result, Err(error) if error.kind() == ErrorKind::InvalidSubcommand));
+        }
     }
 }
