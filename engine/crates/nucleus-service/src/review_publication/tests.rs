@@ -260,16 +260,13 @@ async fn record_report(service: &Service, decision: Review) -> String {
 
 fn restart_service(service: Service) -> Service {
     let project = service.fixture().clone();
-    drop(service.state);
-    Service::open(
-        &service.settings,
-        project,
-        service.host,
-        service.forge,
-        service.callback,
-        service.report_command,
-    )
-    .unwrap()
+    let settings = service.settings.clone();
+    let forge = service.forge.with_review_bearer("fixture-token").unwrap();
+    let callback = service.callback;
+    let report_command = service.report_command.clone();
+    drop(service);
+    let host = nucleus_hosts::T3::new("http://127.0.0.1:9", "unused-fixture-key").unwrap();
+    Service::open(&settings, project, host, forge, callback, report_command).unwrap()
 }
 
 async fn advance(service: &Service) -> Result<Action, ServiceError> {
