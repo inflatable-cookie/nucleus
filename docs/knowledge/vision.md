@@ -2,17 +2,20 @@
 
 Owner: operator and planner
 
-Make Northstar orchestration quieter and more reliable through a durable local
-Nucleus service, with Paseo providing the agent host and a thin native bridge.
+Nucleus carries approved coding work through dispatch, independent review,
+exact-head merge and closeout. The Rust service owns task state and delivery.
+T3 hosts the task threads, and a local browser board gives the operator control
+over dispatch, projects and settings. The skill belongs to Nucleus, so
+Northstar can guide work without depending on an agent host.
 
-Automate the routine work of dispatch, state observation, review, merge and closeout while keeping operator planning conversations focused. Durable task ownership and recoverable side effects matter more than hiding uncertainty.
+The task’s planner resolves questions about the work. The engine reconciles
+mechanical failures against evidence and preserves uncertain sends. Planning
+documents do not grant execution authority.
 
-Agents submit approved work through the queue API. The operator controls pause/drain, task-slot limits, profile eligibility, cost gates and subscription availability. Small per-task coordinators resolve operational ambiguity and supply evidence; the task project's Chatterbox owns the disposition through Nucleus's controls, and the Nucleus owner fixes product defects rather than serving as a mandatory relay (2026-10-13, below).
-
-The standalone Nucleus service is a Paseo adapter for Northstar, not a dependency
-introduced into Northstar core. The Paseo plugin is its thin native UI and RPC
-bridge. Neither grants execution authority from document promotion, invents
-planning decisions, or bypasses exact-head review.
+[Spec 070](specs/070-small-engine.md#rulings) governs the current engine. The
+dated decisions below record the earlier design, including its Paseo bridge,
+coordinators and planner ladder. Where the design changed, Spec 070 names the
+replacement.
 
 ## Frontier profiles
 

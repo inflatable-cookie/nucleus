@@ -1,10 +1,10 @@
 # Nucleus engine
 
-[Spec 070](../docs/knowledge/specs/070-small-engine.md) owns the model. Milestone 1
-runs one synthetic task from work through closeout on T3. The Rust engine is off
-by default and uses its own settings and database. Fixture mode scopes dispatch
-to the authorized fixture repository. The planner checks the run by hand. The
-board switch starts in milestone 2.
+The Rust engine runs approved tasks on T3 and serves the local web board.
+[Spec 070](../docs/knowledge/specs/070-small-engine.md) owns its model and
+authority rules. See [staging](#stage-an-engine-release), [T3 setup](#set-up-t3)
+and [board pairing](#board) to operate an installation. Fixture mode scopes
+dispatch to its configured repository.
 
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
