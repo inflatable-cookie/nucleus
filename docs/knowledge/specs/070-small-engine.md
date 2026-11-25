@@ -1143,7 +1143,7 @@ the disposition default to deprecated.
 
 **What gets simpler**
 
-- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A planner's promotion is the authorization (Tom confirmed, 2026-11-24). The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
+- **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. A promoted papercut without a frontmatter title takes its task title from the linked item. A planner's promotion is the authorization (Tom confirmed, 2026-11-24). The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
 - **A task needs no item.** `task.add` takes a brief and puts it straight on the board (ruling 12).
   An existing PR may be supplied with its URL and expected head to start at
   review. The scheduler reads that exact PR in the configured repository and

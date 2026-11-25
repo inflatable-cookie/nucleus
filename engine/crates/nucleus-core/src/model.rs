@@ -635,6 +635,9 @@ pub(crate) struct WorkContinuation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "StoredTask")]
 pub struct Task {
+    /// Display metadata from the linked planning item, read alongside the task.
+    #[serde(skip)]
+    pub papercut_title: Option<String>,
     pub(crate) identity: Identity,
     pub(crate) brief: Brief,
     pub(crate) phase: Phase,
@@ -730,6 +733,7 @@ impl TryFrom<StoredTask> for Task {
             return Err("stored run does not match its task reservation".into());
         }
         Ok(Self {
+            papercut_title: None,
             identity: stored.identity,
             brief: stored.brief,
             phase: stored.phase,
@@ -755,6 +759,7 @@ impl Task {
         };
         Self {
             identity,
+            papercut_title: None,
             brief: Brief::new(brief, 1),
             phase,
             threads: Threads::default(),

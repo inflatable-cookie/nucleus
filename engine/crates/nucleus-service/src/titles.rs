@@ -150,6 +150,7 @@ pub(super) fn brief_title(task: &Task) -> String {
         .brief()
         .declared_title()
         .filter(|title| !title.trim().is_empty())
+        .or_else(|| task.papercut_title.clone())
         .or_else(|| presentation::brief_title(&task.brief().text).map(str::to_owned))
         .unwrap_or_else(|| "Task".into());
     text.split_whitespace().collect::<Vec<_>>().join(" ")
