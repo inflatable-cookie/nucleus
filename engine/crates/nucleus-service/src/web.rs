@@ -1143,6 +1143,7 @@ impl Summary {
         };
         let wait = match wait {
             _ if archive_detail.is_some() => Some(WaitReason::Stopping),
+            Some(WaitReason::ExternalMergeBlocked) if task.hold().is_none() => wait,
             Some(WaitReason::WorkspaceUnknown | WaitReason::WorkspaceBlocked) => wait,
             Some(WaitReason::HostObservationBlocked) if !task.phase().is_terminal() => wait,
             _ if task.run().is_some_and(nucleus_core::Run::revoked) => Some(WaitReason::Stopping),
@@ -1153,7 +1154,10 @@ impl Summary {
             _ => wait,
         };
         let wait_detail = archive_detail.or_else(|| {
-            if wait != state.wait_reason(id) || task.hold().is_some() || task.question().is_some() {
+            if wait != state.wait_reason(id)
+                || task.hold().is_some()
+                || (task.question().is_some() && wait != Some(WaitReason::ExternalMergeBlocked))
+            {
                 return None;
             }
             match state.wait_detail(id)? {
@@ -1162,7 +1166,7 @@ impl Summary {
                 crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
                 crate::WaitDetail::OperatorSnoozed { message, .. }
-                | crate::WaitDetail::Workspace(message) => Some(message.as_str()),
+                | crate::WaitDetail::Blocked(message) => Some(message.as_str()),
                 crate::WaitDetail::Archive(_) => None,
             }
         });

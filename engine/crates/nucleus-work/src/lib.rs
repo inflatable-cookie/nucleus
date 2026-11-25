@@ -384,6 +384,49 @@ impl Checkout<'_> {
         Ok(common.trim() == ancestor.as_str())
     }
 
+    /// Fetch the named PR source and verify its advertised head and local ancestry.
+    ///
+    /// # Errors
+    /// Returns an error when the remote reference or commit history is unavailable.
+    pub fn pull_descends_from(
+        &self,
+        pull: i32,
+        recorded: &Head,
+        merged: &Head,
+    ) -> Result<bool, WorkError> {
+        let reference = format!("refs/pull/{pull}/head");
+        self.git(
+            &self.repository,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--refmap=",
+                "origin",
+                &reference,
+            ],
+        )?;
+        let advertised = self.git(
+            &self.repository,
+            &["ls-remote", "--refs", "origin", &reference],
+        )?;
+        if advertised.trim_end() != format!("{merged}\t{reference}") {
+            return Ok(false);
+        }
+        // An unrelated history gives a nonempty difference. Git read failures remain errors.
+        let difference = self.git(
+            &self.repository,
+            &[
+                "rev-list",
+                "-1",
+                recorded.as_str(),
+                "--not",
+                merged.as_str(),
+            ],
+        )?;
+        Ok(difference.is_empty())
+    }
+
     /// Verify that the pinned commit can be checked out locally.
     ///
     /// # Errors

@@ -223,6 +223,15 @@ impl Service {
         {
             return self.stop_run(row, &checkout, observation, host).await;
         }
+        if task.hold().is_none()
+            && let Some(
+                error @ ServiceError::Forge(
+                    ForgeError::UnpublishedMerge | ForgeError::UnverifiedSource,
+                ),
+            ) = forge_error
+        {
+            return Err(error);
+        }
         if task.phase() == Phase::Reviewing
             && task.run().is_none()
             && task.question().is_none()
@@ -356,7 +365,7 @@ impl Service {
                     .await
             }
             Action::Merge { head } if let Some(target) = target.as_ref() => {
-                self.merge(row, target, observation, &head).await
+                self.merge(row, &checkout, target, observation, &head).await
             }
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
                 self.close(row, &checkout, &binding, target, workspace)
@@ -427,22 +436,12 @@ impl Service {
         let route = self.project_for(identity).await?;
         route.binding(checkout)?;
         let review_entry = task.identity().entry == nucleus_core::Entry::ReviewEntry;
-        let (branches, reported) = if review_entry {
-            (
-                Branches::for_review_entry(&identity.repository, &identity.base)?,
-                None,
-            )
+        let branches = if review_entry {
+            Branches::for_review_entry(&identity.repository, &identity.base)?
         } else {
-            let reported = task.run().and_then(|run| match run.report() {
-                Some(Report::Work(report)) if !run.revoked() => Some(&report.pull_request),
-                _ => None,
-            });
-            (
-                Branches::new(&identity.repository, &identity.base, checkout.branch())?,
-                reported,
-            )
+            Branches::new(&identity.repository, &identity.base, checkout.branch())?
         };
-        let target = match reported.or_else(|| task.pull_request()) {
+        let target = match recorded_source(task) {
             Some(pr) => Some(branches.target(&pr.url)?),
             None if review_entry => return Err(ForgeError::Identity.into()),
             None if task.phase() == Phase::Queued => None,
@@ -457,10 +456,41 @@ impl Service {
                     self.forge.observe(&target).await
                 };
                 let forge = capture_forge(self, observed)?;
+                self.verify_external_merge(task, checkout, &target, &forge)
+                    .await?;
                 Ok((forge, Some(target)))
             }
             None => Ok((Forge::Absent, None)),
         }
+    }
+
+    async fn verify_external_merge(
+        &self,
+        task: &Task,
+        checkout: &Checkout<'_>,
+        target: &PullTarget,
+        forge: &Forge,
+    ) -> Result<(), ServiceError> {
+        let Forge::Merged { pr, commit } = forge else {
+            return Ok(());
+        };
+        if matches!(task.verdict(), Some(nucleus_core::Verdict::Reviewed { head, decision: nucleus_core::Review::Approve, .. }) if head == &pr.head)
+        {
+            return Ok(());
+        }
+        let source = recorded_source(task).ok_or(ForgeError::UnverifiedSource)?;
+        if source.url != pr.url
+            || (source.head != pr.head
+                && !checkout
+                    .pull_descends_from(target.number(), &source.head, &pr.head)
+                    .map_err(|_| ForgeError::SourceUnavailable)?)
+        {
+            return Err(ForgeError::UnverifiedSource.into());
+        }
+        Ok(capture_forge(
+            self,
+            self.forge.verify_merge_base(target, commit).await,
+        )?)
     }
 
     #[cfg(test)]
@@ -1709,6 +1739,7 @@ impl Service {
     async fn merge(
         &self,
         row: &TaskRow,
+        checkout: &Checkout<'_>,
         target: &PullTarget,
         mut observation: Observation,
         head: &Head,
@@ -1735,6 +1766,10 @@ impl Service {
             return Err(ForgeError::Deferred { until }.into());
         }
         let observed = capture_forge(self, attempt.observed);
+        if let Ok(forge) = &observed {
+            self.verify_external_merge(task, checkout, &target, forge)
+                .await?;
+        }
         if attempt.write == MergeWrite::HeadMismatch {
             observation.forge = seen(observed);
             if matches!(
@@ -1829,9 +1864,12 @@ impl Service {
         workspace: CloseWorkspace,
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
+        let forge = capture_forge(self, self.forge.observe(target).await)?;
+        self.verify_external_merge(task, checkout, target, &forge)
+            .await?;
         let mut observed = Observation {
             host: Observed::Unknown,
-            forge: Observed::Known(capture_forge(self, self.forge.observe(target).await)?),
+            forge: Observed::Known(forge),
             workspace: seen(checkout.observe()),
         };
         let action = decide(task, &observed);
@@ -2011,6 +2049,17 @@ fn seen<T, E>(value: Result<T, E>) -> Observed<T> {
 
 fn seen_from<T>(value: Option<T>) -> Observed<T> {
     value.map_or(Observed::Unknown, Observed::Known)
+}
+
+fn recorded_source(task: &Task) -> Option<&nucleus_core::PullRequest> {
+    if task.identity().entry != nucleus_core::Entry::ReviewEntry
+        && let Some(run) = task.run()
+        && !run.revoked()
+        && let Some(Report::Work(report)) = run.report()
+    {
+        return Some(&report.pull_request);
+    }
+    task.pull_request()
 }
 
 fn superseded(head: Option<&Head>, forge: &Observed<Forge>) -> bool {

@@ -154,6 +154,7 @@ pub enum WaitReason {
     Stopping,
     ForgeUnknown,
     ReviewPublicationBlocked,
+    ExternalMergeBlocked,
     WorkspaceUnknown,
     WorkspaceBlocked,
     ChecksPending,

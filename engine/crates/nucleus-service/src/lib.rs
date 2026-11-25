@@ -243,7 +243,7 @@ enum WaitDetail {
     ShowingForDelivery(Option<&'static str>),
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
-    Workspace(String),
+    Blocked(String),
     Archive(String),
     OperatorSnoozed {
         version: i64,
@@ -1043,7 +1043,7 @@ impl Service {
         if checking_workspace {
             if state.schedule.recover_workspace(id, now) {
                 wait = Some(WaitReason::WorkspaceBlocked);
-                detail = Some(WaitDetail::Workspace(workspace_cause(result)));
+                detail = Some(WaitDetail::Blocked(workspace_cause(result)));
             }
         } else {
             state.schedule.reset_workspace(id);
@@ -1059,7 +1059,11 @@ impl Service {
         }
         let owner_action = matches!(
             wait,
-            Some(WaitReason::HostObservationBlocked | WaitReason::ReviewPublicationBlocked)
+            Some(
+                WaitReason::HostObservationBlocked
+                    | WaitReason::ReviewPublicationBlocked
+                    | WaitReason::ExternalMergeBlocked
+            )
         ) || matches!(
             result,
             Err(ServiceError::ParentRecoveryPlanner { retry_at: None })
@@ -1763,6 +1767,14 @@ fn task_wait(
             let (wait, cause) = error.wait();
             observation(wait, cause)
         }
+        Err(ServiceError::Forge(
+            error @ (ForgeError::UnpublishedMerge | ForgeError::UnverifiedSource),
+        )) => (
+            Some(Wait::ExternalMergeBlocked),
+            Some(WaitDetail::Blocked(format!(
+                "{error}. Hold and release the task to recheck."
+            ))),
+        ),
         Err(ServiceError::Forge(_)) => (Some(Wait::ForgeUnknown), None),
         Err(ServiceError::InboxUnavailable { .. }) => (Some(Wait::Question), None),
         Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
