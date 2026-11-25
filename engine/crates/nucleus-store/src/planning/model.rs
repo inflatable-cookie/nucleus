@@ -103,6 +103,14 @@ pub enum ItemKind {
     Papercut,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemDisposition {
+    Completed,
+    #[default]
+    Deprecated,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemContent {
     pub title: String,
@@ -127,6 +135,8 @@ pub enum ItemState {
         task_id: String,
     },
     Dropped {
+        #[serde(default)]
+        disposition: ItemDisposition,
         reason: Option<String>,
     },
 }
