@@ -28,11 +28,9 @@ setup = "npm ci"
 "proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
-"proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
 # nucleus#1395's private proof: a card lost with its ACP turn is offered again on the
 # next held turn, across a replaced callback socket, on a private nightly server.
 "proof:t3code:reoffer" = "node --import tsx scripts/acceptance/t3code-reoffer-private.ts {args}"
-"proof:t3code:parent-gap" = "node --import tsx scripts/acceptance/t3code-parent-gap-private.ts {args}"
 "proof:t3code:prepared-parent" = "node --import tsx scripts/acceptance/t3code-prepared-parent-private.ts {args}"
 # nucleus#1366's private snooze proof: the one row rule against the installed nightly.
 "proof:t3code:inbox" = "node --import tsx scripts/acceptance/t3code-inbox-private.ts {args}"

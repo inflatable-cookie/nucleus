@@ -1473,7 +1473,7 @@ resent. Only a refused credential (401) ends the turn, because no retry can succ
 On the installed nightly `0.1.11-nightly.20261119.4941`, `effigy proof:t3code:reoffer -- --expect=held`
 proves the Inbox's open decision through a roll and a 40-second sustained outage: the
 same live card, a live run, the same binding, session and pin, and one fault line for
-the outage. `effigy proof:t3code:parent-gap` proves the task parent: a reviewer child
+the outage. The pre-cutover task-parent proof covered a reviewer child
 running under a held parent through a 4-second roll, a 40-second sustained outage (one
 fault line), and a second child created under the same held parent after the first is
 interrupted, with the same binding and session. One run of that proof failed the
