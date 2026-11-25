@@ -25,6 +25,8 @@ pub struct ReviewIntent {
 pub enum ReviewPublicationOutcome {
     Pending,
     Resubmitted,
+    FinalAttempt,
+    FinalAttemptDeferred(SystemTime),
     Deferred(SystemTime),
     ResubmissionDeferred(SystemTime),
     Submitted(NonZeroU64),
@@ -65,7 +67,10 @@ impl Store {
         previous: Option<&ReviewPublication>,
         at: i64,
     ) -> Result<Option<ReviewPublicationOutcome>, StoreError> {
-        use ReviewPublicationOutcome::{Deferred, Pending, ResubmissionDeferred, Resubmitted};
+        use ReviewPublicationOutcome::{
+            Deferred, FinalAttempt, FinalAttemptDeferred, Pending, ResubmissionDeferred,
+            Resubmitted,
+        };
 
         let tx = self
             .connection
@@ -78,6 +83,8 @@ impl Store {
         let outcome = match previous.map(|record| record.outcome) {
             None => Pending,
             Some(Pending) => Resubmitted,
+            Some(Resubmitted) => FinalAttempt,
+            Some(FinalAttemptDeferred(until)) if SystemTime::now() >= until => FinalAttempt,
             Some(Deferred(until)) if SystemTime::now() >= until => Pending,
             Some(ResubmissionDeferred(until)) if SystemTime::now() >= until => Resubmitted,
             _ => return Ok(None),
@@ -104,8 +111,8 @@ impl Store {
         at: i64,
     ) -> Result<(), StoreError> {
         use ReviewPublicationOutcome::{
-            AccessRefused, Deferred, Pending, Refused, ResubmissionDeferred, Resubmitted,
-            Submitted, Verified,
+            AccessRefused, Deferred, FinalAttempt, FinalAttemptDeferred, Pending, Refused,
+            ResubmissionDeferred, Resubmitted, Submitted, Verified,
         };
 
         let tx = self
@@ -118,10 +125,14 @@ impl Store {
             return Ok(());
         }
         match (recorded.outcome, outcome) {
-            (Pending | Resubmitted, Submitted(_) | Verified(_) | AccessRefused | Refused)
+            (
+                Pending | Resubmitted | FinalAttempt,
+                Submitted(_) | Verified(_) | AccessRefused | Refused,
+            )
             | (Resubmitted, Pending | ResubmissionDeferred(_))
+            | (FinalAttempt, FinalAttemptDeferred(_))
             | (Pending, Deferred(_))
-            | (ResubmissionDeferred(_), Verified(_)) => {}
+            | (Deferred(_) | ResubmissionDeferred(_) | FinalAttemptDeferred(_), Verified(_)) => {}
             (Submitted(sent), Verified(verified)) if sent == verified => {}
             _ => return Err(StoreError::ReviewPublicationConflict),
         }

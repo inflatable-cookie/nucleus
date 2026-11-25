@@ -313,7 +313,7 @@ async fn formal_review_reconciles_once_under_the_original_account_and_fences_mer
             ))
         ));
     }
-    assert_eq!(remote.reads.load(Ordering::Relaxed), 1);
+    assert_eq!(remote.reads.load(Ordering::Relaxed), 2);
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
     let store = Store::open(&service.storage).unwrap();
     let retained = store.review_publication(TASK, &instance).unwrap().unwrap();
@@ -433,7 +433,7 @@ async fn aged_claim(service: &Service, instance: &str) -> (ReviewIntent, ReviewB
         body_digest: body.digest.clone(),
     };
     let mut state = service.state.lock().await;
-    let at = event("fixture").at - REVIEW_GRACE_MS;
+    let at = event("fixture").at - FINAL_RETRY_DELAY_MS - REVIEW_GRACE_MS;
     assert!(
         state
             .store
@@ -484,6 +484,79 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
         json!({"body":body.text, "event":"APPROVE","commit_id":intent.head})
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
+    for visible in [true, false] {
+        let remote = ForgeFixture::new(10, Delivery::Lost);
+        remote.visible.store(visible, Ordering::Relaxed);
+        let (_home, mut service, server) = create_service(&remote).await;
+        let instance = record_report(&service, Review::Approve).await;
+        let (intent, body) = aged_claim(&service, &instance).await;
+        {
+            let mut state = service.state.lock().await;
+            let previous = state
+                .store
+                .review_publication(TASK, &instance)
+                .unwrap()
+                .unwrap();
+            let at = event("fixture").at - FINAL_RETRY_DELAY_MS;
+            assert_eq!(
+                state
+                    .store
+                    .claim_review_publication(TASK, &intent, Some(&previous), at)
+                    .unwrap(),
+                Some(ReviewPublicationOutcome::Resubmitted)
+            );
+        }
+        service = restart_service(service, &remote);
+        let result = advance(&service).await;
+        // The simulated gateway also advertises an empty quota. Its account-wide
+        // deferral keeps the immediate readback off the wire. Reopen the service
+        // to observe exactly what the persisted final claim permits.
+        assert!(matches!(
+            result,
+            Err(ServiceError::Forge(ForgeError::Deferred { .. }))
+        ));
+        service = restart_service(service, &remote);
+        let result = advance(&service).await;
+        if visible {
+            assert_eq!(result.unwrap(), Action::Advance(Phase::Merging));
+        } else {
+            let error = result.unwrap_err();
+            assert!(matches!(
+                error,
+                ServiceError::ReviewPublication(PublicationError::AttemptsExhausted)
+            ));
+            let (wait, cause) = PublicationError::AttemptsExhausted.wait();
+            assert_eq!(wait, WaitReason::ReviewPublicationBlocked);
+            assert!(cause.contains("Move to review"));
+            service = restart_service(service, &remote);
+            assert!(matches!(
+                advance(&service).await,
+                Err(ServiceError::ReviewPublication(
+                    PublicationError::AttemptsExhausted
+                ))
+            ));
+            remote.visible.store(true, Ordering::Relaxed);
+            assert_eq!(
+                advance(&service).await.unwrap(),
+                Action::Advance(Phase::Merging)
+            );
+        }
+        let posts = remote.posts.lock().unwrap();
+        assert_eq!(
+            posts.as_slice(),
+            &[(
+                OPERATOR.to_owned(),
+                json!({
+                    "body": body.text, "event": "APPROVE", "commit_id": intent.head,
+                })
+            )]
+        );
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -602,7 +675,7 @@ async fn assert_throttled_publication(resubmission: bool) {
     // Each resubmission reconciles the original, including after the successful POST.
     assert_eq!(
         remote.reads.load(Ordering::Relaxed),
-        if resubmission { 4 } else { 0 }
+        if resubmission { 4 } else { 3 }
     );
     assert!(posts.iter().all(|post| post == &posts[0]));
     server.abort();
