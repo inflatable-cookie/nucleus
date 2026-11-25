@@ -24,6 +24,28 @@ async fn large_json(response: Response) -> Value {
     serde_json::from_slice(&bytes).expect("brief response JSON")
 }
 
+async fn assert_task_transport_limits(api: &Router, command_path: &str, exact: &str) {
+    let hold = post_as(api, command_path, &BOARD_KEY, &json!({"hold": exact})).await;
+    assert_eq!(hold.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(hold).await["error"], "invalid request");
+
+    let text = "x".repeat(BRIEF_BODY_LIMIT);
+    for (path, input) in [
+        (command_path, json!({"amend": text})),
+        (
+            "/v1/tasks",
+            json!({"id":"too-big", "reference":"too-big", "brief":text}),
+        ),
+    ] {
+        let response = post_as(api, path, &BOARD_KEY, &input).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            json_body(response).await["error"],
+            "request exceeds the 458752-byte brief JSON body limit"
+        );
+    }
+}
+
 #[tokio::test]
 async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
     let (home, service) = fixture(GitHub::new("fixture").expect("client"));
@@ -98,9 +120,7 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
         MAX_BRIEF_BYTES + 1,
     )
     .await;
-    let hold = post_as(&api, path, &BOARD_KEY, &json!({"hold": exact})).await;
-    assert_eq!(hold.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(json_body(hold).await["error"], "invalid request");
+    assert_task_transport_limits(&api, path, &exact).await;
     assert_eq!(service.task("legacy-large").await.unwrap(), before);
 
     let response = browser_request(

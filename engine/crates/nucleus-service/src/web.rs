@@ -1,8 +1,14 @@
-use std::{convert::Infallible, sync::Arc};
+use std::{
+    convert::Infallible,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use axum::{
     Extension, Json, Router,
-    body::{Body, to_bytes},
+    body::Body,
     extract::{
         DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, Request, State,
         rejection::JsonRejection,
@@ -19,7 +25,7 @@ use axum::{
     },
     routing::{get, post, put},
 };
-use futures_util::{Stream, stream};
+use futures_util::{Stream, TryStreamExt, stream};
 use nucleus_core::{
     Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
     Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
@@ -32,8 +38,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    CommandOutcome, DependencyCommand, DependencyEdits, DependencyStatus, Preflight, Service,
-    ServiceError, State as EngineState,
+    CommandOutcome, DependencyCommand, DependencyEdits, DependencyStatus, MAX_BRIEF_BYTES,
+    Preflight, Service, ServiceError, State as EngineState,
     acp::{MintedSession, SessionAccess, WriteAccess},
     now_ms,
     presentation::{HistoryEvent, RunView},
@@ -48,6 +54,8 @@ pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
 
 const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
+// A JSON escape can use six bytes for one brief byte. The ordinary limit covers metadata.
+const BRIEF_BODY_LIMIT: usize = 6 * MAX_BRIEF_BYTES + DEFAULT_BODY_LIMIT;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -536,10 +544,9 @@ async fn admit(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
-    mut request: Request,
+    request: Request,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    DefaultBodyLimit::max(planning::PLANNING_BODY_LIMIT).apply(&mut request);
-    let input = body(Json::<Admission>::from_request(request, &api).await)?;
+    let input: Admission = brief_json(request, &api).await?;
     let task = api
         .service
         .admit_in_scope(
@@ -806,18 +813,19 @@ async fn command(
     Extension(scope): Extension<ControllerScope>,
     TaskPath(id): TaskPath,
     session: Option<Extension<WriteAccess>>,
-    request: Request,
+    mut request: Request,
 ) -> Result<Response, ApiError> {
-    let (parts, incoming) = request.into_parts();
-    let bytes = to_bytes(incoming, planning::PLANNING_BODY_LIMIT)
-        .await
-        .map_err(|_| ApiError::Invalid)?;
-    let size = bytes.len();
-    let mut request = Request::from_parts(parts, Body::from(bytes));
-    // Only amendments can use the larger envelope. The bytes are already bounded.
-    DefaultBodyLimit::disable().apply(&mut request);
-    let input = body(Json::<TaskCommand>::from_request(request, &api).await)?;
-    if size > DEFAULT_BODY_LIMIT && !matches!(&input, TaskCommand::Lifecycle(Command::Amend(_))) {
+    // Measure the raw body, including JSON escapes and whitespace, during the same extraction.
+    let size = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&size);
+    let incoming = std::mem::take(request.body_mut());
+    *request.body_mut() = Body::from_stream(incoming.into_data_stream().inspect_ok(move |chunk| {
+        counted.fetch_add(chunk.len(), Ordering::Relaxed);
+    }));
+    let input: TaskCommand = brief_json(request, &api).await?;
+    if size.load(Ordering::Relaxed) > DEFAULT_BODY_LIMIT
+        && !matches!(&input, TaskCommand::Lifecycle(Command::Amend(_)))
+    {
         return Err(ApiError::Invalid);
     }
     let outcome = match input {
@@ -1227,6 +1235,7 @@ enum ApiError {
     Unauthorized,
     Address,
     Invalid,
+    BriefBodyTooLarge,
     SettingsOperator,
     ProjectOpenTasks,
     BoardUnavailable,
@@ -1255,6 +1264,10 @@ impl IntoResponse for ApiError {
                 "request must use the engine's loopback address and origin".into(),
             ),
             Self::Invalid => (StatusCode::BAD_REQUEST, "invalid request".into()),
+            Self::BriefBodyTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("request exceeds the {BRIEF_BODY_LIMIT}-byte brief JSON body limit"),
+            ),
             Self::SettingsOperator => (
                 StatusCode::FORBIDDEN,
                 "settings writes require an operator".into(),
@@ -1346,4 +1359,19 @@ fn body<T>(input: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     input
         .map(|Json(value)| value)
         .map_err(|_| ApiError::Invalid)
+}
+
+async fn brief_json<T: serde::de::DeserializeOwned>(
+    mut request: Request,
+    api: &Api,
+) -> Result<T, ApiError> {
+    DefaultBodyLimit::max(BRIEF_BODY_LIMIT).apply(&mut request);
+    let input = Json::<T>::from_request(request, api).await;
+    if input
+        .as_ref()
+        .is_err_and(|error| error.status() == StatusCode::PAYLOAD_TOO_LARGE)
+    {
+        return Err(ApiError::BriefBodyTooLarge);
+    }
+    body(input)
 }

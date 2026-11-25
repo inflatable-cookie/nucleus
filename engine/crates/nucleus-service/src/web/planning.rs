@@ -19,7 +19,7 @@ use crate::{
 };
 
 // A JSON string can use six bytes to escape one input byte.
-pub(super) const PLANNING_BODY_LIMIT: usize = 6 * MAX_TEXT_BYTES + 64 * 1024;
+const PLANNING_BODY_LIMIT: usize = 6 * MAX_TEXT_BYTES + 64 * 1024;
 
 pub(super) fn routes() -> Router<Api> {
     Router::new()

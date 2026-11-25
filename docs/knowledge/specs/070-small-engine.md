@@ -437,6 +437,9 @@ Later decisions carry their own attribution.
     be amended to fit. Task answers can still append recorded guidance. Use a
     short brief and link supporting material in lane documents. The host limit
     still applies to the composed assignment.
+    The task and command endpoints allow a separate 458,752-byte JSON
+    envelope for escaped briefs. Ordinary task commands keep their 64 KiB
+    request limit.
 
 33. **Sibling sources are pinned, not linked.** Tom, 2026-11-24, to the Acowtancy planner (relayed to the Nucleus planner): "We should be pinning them properly rather than using siblings - longhorn has a newer release (we cut 0.6.0 today and working towards 0.7.0), poodle is fairly stable on its current version..". A task worktree's sibling sources are materialized at the revision the repository pins in its `effigy.toml` `[sources]`, not linked to the operator's local checkout. This differs from TypeScript's `nucleus worktree prepare` symlinks on purpose. A stale pin is the consuming repository's to update.
 
