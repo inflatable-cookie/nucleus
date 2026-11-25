@@ -1898,10 +1898,17 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
-        let mut targets = host.terminal_orphans(checkout.path(), scratch).await?;
-        if targets.is_empty() {
-            return Ok(());
-        }
+        let run_scratch = self.existing_run_scratch(task);
+        let mut roots = std::iter::once(checkout.path()).chain(run_scratch.as_deref());
+        let (root, mut targets) = loop {
+            let Some(root) = roots.next() else {
+                return Ok(());
+            };
+            let targets = host.terminal_orphans(root, scratch).await?;
+            if !targets.is_empty() {
+                break (root, targets);
+            }
+        };
         let parent = nucleus_hosts::parent_thread(checkout.path());
         let roles: Vec<_> = [
             Some(parent.as_str()),
@@ -1933,8 +1940,7 @@ impl Service {
                     .to_string();
             state.store.claim_task_effect(id, &intent, false)?;
             drop(state);
-            targets =
-                nucleus_hosts::verify_orphans(&targets, checkout.path(), scratch, force).await?;
+            targets = nucleus_hosts::verify_orphans(&targets, root, scratch, force).await?;
             if targets.is_empty() {
                 break;
             }
@@ -2305,12 +2311,10 @@ mod tests {
         service.task(id).await.unwrap()
     }
 
-    #[tokio::test]
-    async fn a_process_in_settled_run_scratch_holds_checkout_retirement() {
+    async fn settled_cleanup_task(service: &Service, home: &Path) -> (TaskRow, PathBuf) {
         use std::os::unix::fs::DirBuilderExt as _;
 
-        let (home, service) = fixture(GitHub::new("fixture").unwrap());
-        let scratch = home.path().canonicalize().unwrap().join("assigned-scratch");
+        let scratch = home.canonicalize().unwrap().join("assigned-scratch");
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&scratch)
@@ -2372,6 +2376,15 @@ mod tests {
             .unwrap();
         let row = service.task(id).await.unwrap();
         assert!(row.task.run().is_none());
+        (row, scratch)
+    }
+
+    #[tokio::test]
+    async fn a_process_in_settled_run_scratch_holds_checkout_retirement() {
+        let (home, service) = fixture(GitHub::new("fixture").unwrap());
+        let (row, scratch) = settled_cleanup_task(&service, home.path()).await;
+        let id = &row.task.identity().id;
+        let head = service.fixture().start.clone();
         let bound = service.existing_run_scratch(&row.task);
         assert_eq!(bound.as_deref(), Some(scratch.as_path()));
         let work = service.worktrees().unwrap();
@@ -2405,6 +2418,15 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
+        exercise_terminal_orphan_cleanup(false).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_stops_only_the_settled_scratch_orphan_tree() {
+        exercise_terminal_orphan_cleanup(true).await;
+    }
+
+    async fn exercise_terminal_orphan_cleanup(in_scratch: bool) {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         service.host = crate::tests::verified_native_fixture(
             T3::new("http://127.0.0.1:9", "fixture").unwrap(),
@@ -2414,7 +2436,12 @@ mod tests {
         service.fixture_mut().acp_provider = Some("fixture".into());
         service.state.lock().await.settings.dispatch =
             Some(nucleus_store::DispatchSettings::default());
-        let terminal = cancelled_cleanup_task(&service).await;
+        let (terminal, scratch) = if in_scratch {
+            let (row, scratch) = settled_cleanup_task(&service, home.path()).await;
+            (row, Some(scratch))
+        } else {
+            (cancelled_cleanup_task(&service).await, None)
+        };
         let id = &terminal.task.identity().id;
         assert_eq!(terminal.task.phase(), Phase::Cancelled);
         let work = service.worktrees().unwrap();
@@ -2432,13 +2459,14 @@ mod tests {
                 .spawn()
                 .unwrap()
         };
-        let mut host_child = spawn(base);
+        let orphan_dir = scratch.as_deref().unwrap_or(base);
+        let mut host_child = spawn(orphan_dir);
         let mut outside = spawn(home.path());
         // The launching shell exits. One child handles TERM and the orphan root and second child ignore it.
         let script = r#"/bin/sh -c '/bin/sleep 60 >/dev/null 2>&1 & soft=$!; trap "" TERM; /bin/sleep 60 >/dev/null 2>&1 & echo "$$ $! $soft"; exec >/dev/null 2>&1; wait' </dev/null &"#;
         let output = tokio::process::Command::new("/bin/sh")
             .args(["-c", script])
-            .current_dir(base)
+            .current_dir(orphan_dir)
             .output()
             .await
             .unwrap();
