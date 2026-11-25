@@ -65,8 +65,7 @@ impl Service {
                     let selector = selector.ok_or(ServiceError::Project)?;
                     state
                         .settings
-                        .resolve_planning_project(self.project.as_ref(), selector)
-                        .ok_or(ServiceError::Project)?
+                        .resolve_planning_project(self.project.as_ref(), selector)?
                         .to_owned()
                 };
                 Ok((state, project))

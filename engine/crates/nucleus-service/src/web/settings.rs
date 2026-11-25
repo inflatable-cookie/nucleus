@@ -70,6 +70,13 @@ pub(crate) enum CachedHost {
     Unavailable,
 }
 
+fn repository_matches(origin: &str, selector: &str) -> bool {
+    origin.eq_ignore_ascii_case(selector)
+        || origin
+            .rsplit_once('/')
+            .is_some_and(|(_, name)| name.eq_ignore_ascii_case(selector))
+}
+
 impl RuntimeSettings {
     pub(crate) fn planner_route(&self, actor: &str) -> Option<(&str, &RepositorySettings)> {
         self.projects
@@ -162,8 +169,12 @@ impl RuntimeSettings {
         &'a self,
         binding: Option<&'a Project>,
         selector: &str,
-    ) -> Option<&'a str> {
-        self.match_planning_project(binding, selector).ok()
+    ) -> Result<&'a str, ServiceError> {
+        self.match_planning_project(binding, selector)
+            .map_err(|error| match error {
+                ProjectMatchError::Unknown => ServiceError::TellUnknownProject(selector.into()),
+                ProjectMatchError::Ambiguous => ServiceError::TellAmbiguousProject(selector.into()),
+            })
     }
 
     pub(crate) fn match_planning_project<'a>(
@@ -176,19 +187,35 @@ impl RuntimeSettings {
                 if let Some((id, _)) = registry.projects.get_key_value(selector) {
                     return Ok(id);
                 }
-                let selector = selector.to_lowercase();
-                let mut matches = registry
+                let name = selector.to_lowercase();
+                let mut names = registry
                     .projects
                     .iter()
-                    .filter(|(_, project)| project.name.to_lowercase() == selector);
-                let (id, _) = matches.next().ok_or(ProjectMatchError::Unknown)?;
-                if matches.next().is_some() {
+                    .filter(|(_, project)| project.name.to_lowercase() == name);
+                if let Some((id, _)) = names.next() {
+                    return if names.next().is_none() {
+                        Ok(id)
+                    } else {
+                        Err(ProjectMatchError::Ambiguous)
+                    };
+                }
+                let mut owners = registry.projects.iter().filter(|(_, project)| {
+                    project
+                        .repositories
+                        .iter()
+                        .any(|repo| repository_matches(&repo.origin, selector))
+                });
+                let (owner, _) = owners.next().ok_or(ProjectMatchError::Unknown)?;
+                if owners.next().is_some() {
                     return Err(ProjectMatchError::Ambiguous);
                 }
-                Ok(id)
+                Ok(owner)
             }
             None => binding
-                .filter(|binding| binding.host_project == selector)
+                .filter(|binding| {
+                    binding.host_project == selector
+                        || repository_matches(&binding.repository, selector)
+                })
                 .map(|binding| binding.host_project.as_str())
                 .ok_or(ProjectMatchError::Unknown),
         }
