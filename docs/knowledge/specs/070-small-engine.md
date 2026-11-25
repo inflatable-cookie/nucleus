@@ -457,7 +457,8 @@ Later decisions carry their own attribution.
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
       T3 backoff delays native requests while local decisions continue. A retryable preflight or unavailable observation has a due time.
       Only a non-queueable, possibly sent role uses the late-reply grace, after a successful read found no receipt.
-      For a parent command that cannot replay, a deferral before the exact read stays pending. An inconclusive read once issued, or a successful read with no command match, asks the owner to check the task thread and use **Next** to review recovery.
+      For a parent command that cannot replay, a deferral before the exact read stays pending. An inconclusive read once issued, or a successful read with no command match, sends one notice to the responsible planner. The notice asks them to check the earlier turn and use **Next** to review available actions. Next reads the task and leaves the held occurrence in place.
+      An unavailable planner route stays due. Once the routing check confirms there is no responsible planner, the card asks the operator to review recovery. The held delivery opens no Inbox form.
     - The board's **Needs you** and T3 task rows share one attention rule.
       Operator decisions, unanswered Inbox forms and typed blocks with a
       concrete operator action need the operator. Planner questions, including
@@ -644,9 +645,9 @@ stay pending while a planner route is unavailable. A binding change wakes the
 waiting notice, and the next due pass can also retry routing. The scheduler
 unsettles a settled planner and reads it again before recording a concrete send
 intent. An uncertain question or operator-decline send keeps its exact attempt.
-For report-ready and prerequisite-release notices, a structured T3 rejection
-of the exact command reopens the notice once. The fresh attempt uses a new
-command ID, the stored report or release data and a currently verified planner.
+For report-ready, prerequisite-release and held parent recovery notices, a
+structured T3 rejection of the exact command reopens the notice once. The fresh
+attempt uses a new command ID, the same notice text and a currently verified planner.
 A second rejection spends the retry. Uncertain replies and previously spent
 notices stay closed, including legacy `report_ready_planner_unavailable` records.
 

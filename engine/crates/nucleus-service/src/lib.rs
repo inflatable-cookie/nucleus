@@ -85,6 +85,8 @@ pub enum ServiceError {
         "Nucleus couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
     )]
     ParentDeliveryHeld,
+    #[error("Earlier T3 delivery could not be verified. The task is waiting for its planner.")]
+    ParentRecoveryPlanner { retry_at: Option<Instant> },
     #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
     OperatorSnoozed { thread: String, until: u64 },
     #[error("run scratch is already reserved for another run")]
@@ -605,6 +607,36 @@ impl Service {
             let scratch = self.existing_run_scratch(&row.task);
             Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
         };
+        let result = if matches!(result, Err(ServiceError::ParentDeliveryHeld)) {
+            let text = format!(
+                "Nucleus could not verify an earlier T3 delivery for {} (task {id}). Check its task thread for the earlier turn, then use Next to review the available recovery actions.",
+                row.reference()
+            );
+            match Box::pin(self.advance_planner_notice(
+                &row,
+                report_only::PlannerNotice::ParentRecovery,
+                &text,
+            ))
+            .await
+            {
+                Ok(report_only::NoticeProgress::Spent) => {
+                    Err(ServiceError::ParentRecoveryPlanner { retry_at: None })
+                }
+                Ok(report_only::NoticeProgress::NoPlanner) => result,
+                Err(error @ ServiceError::Store(_)) => return Err(error),
+                status => {
+                    let retry_at = match status {
+                        Err(ServiceError::Host(HostError::Deferred { until })) => until,
+                        _ => self.host.request_retry_at().unwrap_or_else(Instant::now),
+                    };
+                    Err(ServiceError::ParentRecoveryPlanner {
+                        retry_at: Some(retry_at.max(Instant::now() + T3_RETRY_DELAY)),
+                    })
+                }
+            }
+        } else {
+            result
+        };
         self.schedule_result(&row, &result, priority).await?;
         // The commit can wake the watcher while this task's send fence is still held.
         if matches!(result, Ok(Action::Launch { .. })) {
@@ -997,7 +1029,11 @@ impl Service {
         if state.observe_task_allowance(&row.task, wait)? {
             self.publish_detail(id, row.version);
         }
-        let owner_action = wait == Some(WaitReason::HostObservationBlocked);
+        let owner_action = wait == Some(WaitReason::HostObservationBlocked)
+            || matches!(
+                result,
+                Err(ServiceError::ParentRecoveryPlanner { retry_at: None })
+            );
         if owner_action {
             state.schedule.park(id);
         } else if !checking_workspace {
@@ -1022,7 +1058,10 @@ impl Service {
                 Err(
                     ServiceError::InboxUnavailable { until }
                     | ServiceError::Host(HostError::RoleReplyPending { until })
-                    | ServiceError::ParentDeliveryUnknown { until, .. },
+                    | ServiceError::ParentDeliveryUnknown { until, .. }
+                    | ServiceError::ParentRecoveryPlanner {
+                        retry_at: Some(until),
+                    },
                 ) => *until,
                 _ if wait == Some(WaitReason::ForgeUnknown) => {
                     now + self.forge_backoff().max(delay)
@@ -1636,9 +1675,17 @@ fn task_wait(
     let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
     match result {
         Err(ServiceError::ArchiveEvidence(_)) => (Some(Wait::Stopping), None),
+        Err(ServiceError::ParentRecoveryPlanner { retry_at }) => observation(
+            Wait::Question,
+            if retry_at.is_some() {
+                "Earlier delivery could not be verified. Checking the planner route."
+            } else {
+                "Earlier delivery could not be verified. Waiting for the planner to review recovery."
+            },
+        ),
         Err(ServiceError::ParentDeliveryHeld) => observation(
             Wait::HostObservationBlocked,
-            "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery.",
+            "No responsible planner is available. Check the earlier delivery in the task thread, then use Next to review recovery.",
         ),
         Ok(Action::Wait(Wait::HostObservationBlocked))
         | Err(ServiceError::Host(HostError::ParentHoldRejected)) => observation(

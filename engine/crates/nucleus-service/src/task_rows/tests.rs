@@ -496,7 +496,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     assert_eq!(blocked["wait"], "host_observation_blocked");
     assert_eq!(
         blocked["waitDetail"],
-        "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
+        "No responsible planner is available. Check the earlier delivery in the task thread, then use Next to review recovery."
     );
     assert!(blocked["nextCheckAt"].is_null());
     fixture.elapse_flip_interval();
