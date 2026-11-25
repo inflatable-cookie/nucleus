@@ -592,6 +592,8 @@ pub struct Threads {
     pub(crate) applied_review_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) settled_scratch: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) earlier_scratch: std::collections::BTreeMap<u64, PathBuf>,
 }
 
 impl Threads {

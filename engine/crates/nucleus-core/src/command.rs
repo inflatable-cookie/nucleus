@@ -391,6 +391,11 @@ impl Task {
         let head = observation.pr().map_or("none", |pr| pr.head.as_str());
         let label = format!("task-{id}-{phase}-{head}-{}", self.attempts);
         let bearer = launch_credential(seed, &instance);
+        if let Some(path) = self.threads.settled_scratch.take() {
+            self.threads
+                .earlier_scratch
+                .insert(self.threads.launch_sequence, path);
+        }
         self.threads.launch_sequence = sequence;
         self.run = Some(Run {
             launch: PreparedLaunch {
@@ -446,6 +451,11 @@ impl Task {
         launch.input = inputs.input;
         launch.scratch = inputs.scratch;
         self.threads.bind(&launch);
+        if let Some(path) = &prior.launch.scratch {
+            self.threads
+                .earlier_scratch
+                .insert(self.threads.launch_sequence, path.clone());
+        }
         self.threads.launch_sequence = sequence;
         self.run = Some(Run {
             launch,
@@ -479,6 +489,19 @@ impl Task {
     /// Returns an error when the launch sequence is exhausted.
     pub fn next_launch_instance(&self) -> Result<String, CommandError> {
         Ok(self.launch_instance(self.next_launch_sequence()?))
+    }
+
+    /// Earlier run instances and their durable scratch bindings, newest first.
+    pub fn earlier_run_scratch(&self) -> impl Iterator<Item = (String, Option<&std::path::Path>)> {
+        (1..self.threads.launch_sequence).rev().map(|sequence| {
+            (
+                self.launch_instance(sequence),
+                self.threads
+                    .earlier_scratch
+                    .get(&sequence)
+                    .map(std::path::PathBuf::as_path),
+            )
+        })
     }
 
     /// Last run and its recorded scratch directory for checkout retirement.
