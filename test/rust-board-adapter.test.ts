@@ -16,6 +16,7 @@ import {
   projectKeys,
   RustUnsupported,
 } from "../client/web/rust-adapter";
+import { listenForPlanningIssues } from "../client/web/rust-planning";
 import { rustProfileUsage, rustProjectArchive } from "../client/rust-contracts";
 import { profileUsage } from "../client/settings-profile-helpers";
 import { nightlyProviders } from "./support/pool-shapes";
@@ -787,6 +788,48 @@ test("long Rust decision questions retain their full detail and their healthy si
     const detail = await adapter.rpc(api.decisionGet, { id: "d-lantern" });
     assert.equal(detail?.details, question);
   }
+});
+
+test("unreadable planning records leave healthy siblings readable in lists and detail", async () => {
+  const fake = engine();
+  let badStep = false;
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    const path = String(url);
+    if (!path.includes("/planning/lantern/")) return response;
+    const data = await response.json();
+    if (path.endsWith("/plan")) {
+      data.documents.unshift({ key: "bad-lane", document: null });
+      if (badStep) data.lanes.push({ key: "bad-step", horizon: "unknown" });
+    } else if (path.endsWith("/items")) {
+      data.unshift({ ...data[0], id: "bad-item", lanes: ["invalid/key"] });
+    } else if (path.endsWith("/decisions")) {
+      data.unshift({ ...data[0], id: "bad-decision", options: null });
+    }
+    return Response.json(data);
+  };
+  const notices = new Map<string, string[]>();
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  listenForPlanningIssues(adapter.rust, (collection, issues) => notices.set(collection, issues));
+  const plans = await adapter.rpc(api.plans, {});
+  assert.equal(plans.length, 2);
+  assert.deepEqual(plans.find(plan => plan.project === "lantern")?.laneViews?.map(l => l.key), ["delivery"]);
+  const doc = await adapter.rpc(api.laneDocumentGet, { project: "lantern", key: "delivery" });
+  assert.equal(doc?.text, "Fixture Markdown");
+  const leads = await adapter.rpc(api.leadBoard, {});
+  assert.equal(leads.cards.length, 2);
+  assert.ok(leads.activity?.every(activity => activity.id !== "bad-item"));
+  assert.equal((await adapter.rpc(api.leadGet, { id: "i-lantern" }))?.title, "An idea");
+  assert.equal((await adapter.rpc(api.decisionList, {})).length, 2);
+  assert.equal((await adapter.rpc(api.decisionGet, { id: "d-lantern" }))?.id, "d-lantern");
+  assert.match(notices.get("Plans")?.join() ?? "", /lantern lane bad-lane/);
+  assert.match(notices.get("Items")?.join() ?? "", /lantern item bad-item/);
+  assert.match(notices.get("Decisions")?.join() ?? "", /lantern decision bad-decision/);
+  badStep = true;
+  const intact = await adapter.rpc(api.plans, {});
+  assert.deepEqual(intact.map(plan => plan.project), ["p-orbit-main"]);
+  assert.match(notices.get("Plans")?.join() ?? "", /lantern plan step bad-step/);
+  assert.equal(fake.writes.length, 0);
 });
 
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {

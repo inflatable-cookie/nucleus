@@ -1,5 +1,7 @@
-import type * as api from "../../shared/contracts";
-import type { output } from "zod";
+import * as api from "../../shared/contracts";
+import { z, type output } from "zod";
+import { decision, item, lane, planView } from "./rust-api";
+import { errorText } from "../error-text";
 import type {
   RustApi,
   RustAllSettings,
@@ -80,17 +82,20 @@ export function boardLane(
   };
 }
 
-function boardPlan(key: string, plan: RustPlanView) {
-  const entries = plan.lanes.map((entry) => ({
+function boardStep(entry: RustPlanView["lanes"][number]) {
+  return {
     lane: entry.key,
     note: entry.statusNote,
     horizon: entry.horizon,
     ...(entry.doneWhen ? { doneWhen: entry.doneWhen } : {}),
-  }));
+  };
+}
+
+function boardPlan(key: string, plan: RustPlanView) {
   return {
     project: key,
     version: plan.version,
-    entries,
+    entries: plan.lanes.map(boardStep),
     author: null,
     createdAt: null,
   };
@@ -285,6 +290,35 @@ function boardPapercut(item: RustItem, row: ProjectRow) {
   };
 }
 
+type PlanningCollection = "Plans" | "Items" | "Decisions";
+type ReportPlanningIssues = (collection: PlanningCollection, issues: string[]) => void;
+const listeners = new WeakMap<RustApi, ReportPlanningIssues>();
+
+export function listenForPlanningIssues(rust: RustApi, report: ReportPlanningIssues) {
+  listeners.set(rust, report);
+  return () => { listeners.delete(rust); };
+}
+
+const rawList = z.array(z.unknown());
+const rawPlan = planView.extend({ documents: rawList, lanes: rawList });
+const address = z.object({ id: z.string().optional(), key: z.string().optional() });
+
+function recordLabel(raw: unknown, index: number) {
+  const parsed = address.safeParse(raw).data;
+  return parsed?.id ?? parsed?.key ?? `#${index + 1}`;
+}
+
+function collectRows<T>(raw: unknown[], label: string, issues: string[], project: (value: unknown) => T): T[] {
+  return raw.flatMap((value, index) => {
+    try {
+      return [project(value)];
+    } catch (error) {
+      issues.push(`${label} ${recordLabel(value, index)}: ${errorText(error)}`);
+      return [];
+    }
+  });
+}
+
 export function createRustPlanning(
   rust: RustApi,
   settings: () => Promise<RustAllSettings>,
@@ -344,29 +378,53 @@ export function createRustPlanning(
     }
   }
 
+  function planningRead<T>(row: ProjectRow, path: string, schema: z.ZodType<T>) {
+    return readProject(row, id => rust.board.read(schema, `/planning/${encodeURIComponent(id)}/${path}`));
+  }
+
+  // Publish diagnostics with the read that produced them. A late read from
+  // an older pairing or an earlier refresh cannot replace the current notice.
+  const latestRead = new Map<PlanningCollection, symbol>();
+  async function collectProjects<T>(collection: PlanningCollection, read: (row: ProjectRow, issues: string[]) => Promise<T[]>) {
+    const ticket = Symbol();
+    latestRead.set(collection, ticket);
+    const [rows, caller] = await Promise.all([projects(), session()]);
+    const results = await Promise.all(rows.map(async row => {
+      const issues: string[] = [];
+      return { values: await read(row, issues), issues };
+    }));
+    if (latestRead.get(collection) === ticket && caller === await session())
+      listeners.get(rust)?.(collection, results.flatMap(result => result.issues));
+    return results.flatMap(result => result.values);
+  }
+
+  async function findRecord<T>(row: ProjectRow, path: string, schema: z.ZodType<T>, id: string) {
+    const records = await planningRead(row, path, rawList);
+    const raw = records?.find(record => address.safeParse(record).data?.id === id);
+    return raw === undefined ? undefined : schema.parse(raw);
+  }
+
   async function projectLane(project: string, key: string) {
     const row = (await projects()).find((entry) => entry.board.key === project);
     if (!row) throw new Error(`Project ${project} has no accessible plan.`);
-    const plan = await readProject(row, rust.plan);
-    const lane = plan?.documents.find((document) => document.key === key);
-    if (!lane) throw new Error(`Lane ${key} is not in project ${project}'s accessible plan.`);
-    return { row, lane };
+    const plan = await planningRead(row, "plan", rawPlan);
+    const raw = plan?.documents.find(document => address.safeParse(document).data?.key === key);
+    if (raw === undefined) throw new Error(`Lane ${key} is not in project ${project}'s accessible plan.`);
+    return { row, lane: lane.parse(raw) };
   }
 
   async function decisionOwner(id: string) {
     for (const row of await projects()) {
-      const decisions = await readProject(row, rust.decisions);
-      const decision = decisions?.find((entry) => entry.id === id);
-      if (decision) return { row, decision };
+      const found = await findRecord(row, "decisions", decision, id);
+      if (found) return { row, decision: found };
     }
     throw new Error(`Decision ${id} is not in any project.`);
   }
 
   async function itemOwner(id: string) {
     for (const row of await projects()) {
-      const items = await readProject(row, rust.items);
-      const item = items?.find((entry) => entry.id === id);
-      if (item) return { row, item };
+      const found = await findRecord(row, "items", item, id);
+      if (found) return { row, item: found };
     }
     throw new Error(`${id} is not in any project.`);
   }
@@ -375,11 +433,10 @@ export function createRustPlanning(
     let match: { row: ProjectRow; item: RustItem } | undefined;
     for (const row of await projects()) {
       if (project !== undefined && row.id !== project) continue;
-      const items = await readProject(row, rust.items);
-      const item = items?.find((entry) => entry.id === id && entry.kind === "papercut");
-      if (!item) continue;
+      const found = await findRecord(row, "items", item, id);
+      if (found?.kind !== "papercut") continue;
       if (match) throw new Error(`Papercut ${id} is ambiguous across projects.`);
-      match = { row, item };
+      match = { row, item: found };
     }
     if (!match)
       throw new Error(`Could not identify papercut ${id} in the accessible projects.`);
@@ -393,21 +450,29 @@ export function createRustPlanning(
   }
 
   const handlers = {
-    "queue.plans": async () => {
-      const rows = await projects();
-      const plans = await Promise.all(
-        rows.map(async (row) => ({ row, current: await readProject(row, rust.plan) })),
-      );
-      return plans.flatMap(({ row, current }) => {
-        if (!current) return [];
-        const plan = boardPlan(row.board.key, current);
-        const laneViews = current.documents.flatMap((lane) => {
-          const view = boardLane(lane, row.project, row.board.key);
-          return view ? [view] : [];
+    "queue.plans": () => collectProjects("Plans", async (row, issues) => {
+      const raw = await planningRead(row, "plan", z.unknown());
+      if (raw === undefined) return [];
+      try {
+        const plan = rawPlan.parse(raw);
+        // The saved order is one versioned record. Editing a partial order
+        // could erase a step, so withhold that project's plan if a step fails.
+        const entries = collectRows(plan.lanes, `${row.id} plan step`, issues, value => {
+          const step = planView.shape.lanes.element.parse(value);
+          return api.planEntrySchema.parse(boardStep(step));
         });
-        return [{ ...plan, savedEntries: plan.entries, laneViews }];
-      });
-    },
+        if (entries.length !== plan.lanes.length) return [];
+        const laneViews = collectRows(plan.documents, `${row.id} lane`, issues, value =>
+          api.laneViewSchema.parse(boardLane(lane.parse(value), row.project, row.board.key)));
+        return [api.planningPlanSnapshotSchema.parse({
+          project: row.board.key, version: plan.version, entries, savedEntries: entries,
+          author: null, createdAt: null, laneViews,
+        })];
+      } catch (error) {
+        issues.push(`${row.id} plan: ${errorText(error)}`);
+        return [];
+      }
+    }),
     "plan.get": async (input: { project?: string }) => {
       const row = (await projects()).find(
         (entry) => entry.board.key === input.project,
@@ -497,42 +562,35 @@ export function createRustPlanning(
       return lane;
     },
     "lead.board": async () => {
-      const rows = await projects();
-      const items = await Promise.all(
-        rows.map(async (row) => ({ row, items: await readProject(row, rust.items) ?? [] })),
-      );
-      return {
-        cards: items.flatMap(({ row, items: list }) =>
-          list.flatMap((item) => {
-            const card = boardItem(item, row.project);
-            return card ? [card] : [];
-          }),
-        ),
-        activity: items.flatMap(({ row, items: list }) => list.map(item => {
-          const at = item.updatedAtMs ?? item.createdAtMs;
+      const items = await collectProjects("Items", async (row, issues) => {
+        const raw = await planningRead(row, "items", rawList);
+        return collectRows(raw ?? [], `${row.id} item`, issues, value => {
+          const record = item.parse(value);
+          const card = boardItem(record, row.project);
+          const at = record.updatedAtMs ?? record.createdAtMs;
           return {
-            project: row.board.key, id: item.id, at: at == null ? null : iso(at),
-            taskIds: [...new Set([...(item.taskLinks ?? []), ...(item.taskId ? [item.taskId] : [])])],
+            card: card && api.boardLeadSchema.parse(card),
+            activity: {
+              project: row.board.key, id: record.id, at: at == null ? null : iso(at),
+              taskIds: [...new Set([...(record.taskLinks ?? []), ...(record.taskId ? [record.taskId] : [])])],
+            },
           };
-        })),
+        });
+      });
+      return {
+        cards: items.flatMap(({ card }) => card ? [card] : []),
+        activity: items.map(({ activity }) => activity),
         links: [],
       };
     },
-    "decision.list": async (input: { status?: string; project?: string }) => {
-      const rows = (await projects()).filter(
-        (row) => !input.project || row.board.key === input.project,
-      );
-      const lists = await Promise.all(
-        rows.map(async (row) =>
-          (await readProject(row, rust.decisions) ?? []).map((decision) =>
-            boardDecision(decision, row.board.key, row.project),
-          ),
-        ),
-      );
-      return lists
-        .flat()
-        .filter((decision) => !input.status || decision.status === input.status);
-    },
+    "decision.list": (input: { status?: string; project?: string }) =>
+      collectProjects("Decisions", async (row, issues) => {
+        if (input.project && input.project !== row.board.key) return [];
+        const raw = await planningRead(row, "decisions", rawList);
+        return collectRows(raw ?? [], `${row.id} decision`, issues, value =>
+          api.decisionViewSchema.parse(boardDecision(decision.parse(value), row.board.key, row.project)),
+        ).filter(view => !input.status || view.status === input.status);
+      }),
     "decision.get": async (input: { id: string }) => {
       const { row, decision } = await decisionOwner(input.id);
       return boardDecision(decision, row.board.key, row.project);
