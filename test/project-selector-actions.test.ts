@@ -197,8 +197,8 @@ test("1430 rendered: Rename validates the trimmed name, saves through the action
   assert.match(ui.text(), /Name is empty/);
   assert.equal(save().props.disabled, true);
 
-  ui.type("Name for consumer-b-v2", "x".repeat(201));
-  assert.match(ui.text(), /Name is over 200 characters/);
+  ui.type("Name for consumer-b-v2", "x".repeat(241));
+  assert.match(ui.text(), /Name is over 240 UTF-8 bytes/);
   assert.equal(save().props.disabled, true);
 
   ui.type("Name for consumer-b-v2", "  Consumer board  ");
@@ -274,10 +274,10 @@ test("1430 rendered: Escape closes an open row action first, and the picker on t
 test("1430: projectNameProblem applies Settings' name rule", () => {
   assert.equal(projectNameProblem("  Board  "), undefined);
   assert.equal(projectNameProblem(" "), "Name is empty");
-  assert.equal(projectNameProblem("x".repeat(200)), undefined);
+  assert.equal(projectNameProblem("é".repeat(120)), undefined);
   assert.equal(
-    projectNameProblem("x".repeat(201)),
-    "Name is over 200 characters",
+    projectNameProblem("x".repeat(241)),
+    "Name is over 240 UTF-8 bytes",
   );
 });
 

@@ -325,6 +325,23 @@ test("Projects shows and clears the claimed planner when another thread is most 
   assert.equal((await entry()).project.planner, undefined);
 });
 
+test("a full-length Rust project name round-trips through the board and Settings beside its sibling", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const entry = (await adapter.rpc(api.projectSettings, { project: "lantern" })).projects[0]!;
+  const name = "x".repeat(238) + "é";
+  await adapter.rpc(api.projectUpsert, { key: entry.project.key, repositories: entry.project.repositories, name });
+  const board = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board));
+  assert.deepEqual(board.projects.map(project => project.name), ["Orbit", name]);
+  const settings = await adapter.rpc(api.projectSettings, { project: "lantern" });
+  assert.equal(settings.projects[0]?.project.name, name);
+  await assert.rejects(adapter.rpc(api.projectUpsert, {
+    key: entry.project.key, repositories: entry.project.repositories, name: name + "x",
+  }), /240 UTF-8 bytes/);
+  assert.equal(fake.writes.length, 1);
+});
+
 test("the archive control writes the Projects domain", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));

@@ -133,9 +133,14 @@ export const projectAgentSchema = z.object({
 
 export type ProjectAgent = z.infer<typeof projectAgentSchema>;
 
+/** The project registry accepts a nonempty display name of at most 240 UTF-8 bytes. */
+export const projectNameSchema = z.string().trim().min(1, "Name is empty")
+  .refine(name => !/\p{Cc}/u.test(name), "Name contains a control character")
+  .refine(name => new TextEncoder().encode(name).length <= 240, "Name is over 240 UTF-8 bytes");
+
 export const projectSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
-  name: z.string().trim().min(1).max(200),
+  name: projectNameSchema,
   version: z.number().int().positive().default(1),
   repositories: z.array(projectRepositorySchema.refine(repo => Boolean(repo.origin || repo.path), "Repository needs an origin or path")).min(1),
   primary: projectRepositorySchema,

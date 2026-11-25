@@ -1,3 +1,4 @@
+import { projectNameSchema } from "./schema/projects";
 import { readMigratedValue, type KeyValueStorage } from "./storage-migration";
 import {
   type LeadListFacts,
@@ -91,13 +92,10 @@ export function selectProject(
   return [key];
 }
 
-/** The display-name rule Settings → Projects applies (nucleus#1430 reuses it from the board): trimmed,
- * non-empty and at most 200 characters. Returns the problem to show, or undefined when it can save. */
+/** The selector and Settings use the registry's display-name rule. */
 export function projectNameProblem(name: string): string | undefined {
-  const trimmed = name.trim();
-  if (!trimmed) return "Name is empty";
-  if (trimmed.length > 200) return "Name is over 200 characters";
-  return undefined;
+  const parsed = projectNameSchema.safeParse(name);
+  return parsed.success ? undefined : parsed.error.issues[0]?.message;
 }
 
 /** The press-event shapes that carry the Shift modifier. React Native passes
