@@ -149,6 +149,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
         return new Response(JSON.stringify({ error: { message: "Revision changed" } }), { status: 409 });
       }
       writes.push({ domain, body });
+      if (domain === "projects") projects = body.value;
       if (domain === "dispatch") dispatch = body.value;
       if (domain === "profiles") profiles = body.value;
       if (domain === "projects") projects = body.value;
@@ -233,6 +234,20 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   const storage = await adapter.rpc(api.workStorage, {});
   assert.equal(storage.backups?.newestAt, "2026-11-24T08:00:00Z");
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
+});
+
+test("Projects reads and writes the full positive Rust hung-tool range", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  for (const minutes of [1, 241, 1441, 0xffff_ffff]) {
+    const saved = await adapter.rpc(api.repositorySet, { repository: "example/orbit", toolQuietLimitMinutes: minutes });
+    assert.equal(saved.toolQuietLimitMinutes, minutes);
+    const repositories = await adapter.rpc(api.repositories, {});
+    assert.equal(repositories.length, 3);
+    assert.equal(repositories[0]?.toolQuietLimitMinutes, minutes);
+  }
+  assert.equal(api.repositorySet.input.safeParse({ repository: "example/orbit", toolQuietLimitMinutes: 0 }).success, false);
+  assert.equal(api.repositorySet.input.safeParse({ repository: "example/orbit", toolQuietLimitMinutes: 2 ** 32 }).success, false);
 });
 
 test("the board identifies malformed projects and profiles without losing healthy siblings", async () => {

@@ -39,7 +39,9 @@ export const DEFAULT_REPOSITORY_CHECKS_POLICY: RepositoryChecksPolicy = "all";
  * minutes is terminated. A null setting keeps the default.
  */
 export const DEFAULT_TOOL_QUIET_LIMIT_MINUTES = 30;
-export const repositoryToolQuietLimitSchema = z.number().int().min(5).max(1440);
+// The Rust repository stores this setting as a positive u32.
+export const MAX_TOOL_QUIET_LIMIT_MINUTES = 0xffff_ffff;
+export const repositoryToolQuietLimitSchema = z.number().int().positive().max(MAX_TOOL_QUIET_LIMIT_MINUTES);
 
 export const repositorySettingsSchema = z.object({
   repository: projectRepositorySchema,

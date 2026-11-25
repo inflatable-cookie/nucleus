@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { repositoryToolQuietLimitSchema } from "../../shared/schema/projects";
 import type { CapabilityLevel } from "../../shared/contracts";
 import { CANONICAL_PROVIDERS, THINKING_LEVELS } from "../../shared/profile-vocabulary";
 import { createRustBoardTransport } from "./rust-board";
@@ -69,7 +70,7 @@ const repository = z.object({
   path: z.string(),
   base: z.string(),
   requiredChecks: z.array(z.string()),
-  hungToolMinutes: integer,
+  hungToolMinutes: repositoryToolQuietLimitSchema,
   hostProject: z.string().optional(),
   hostProjectTitle: z.string().optional(),
   plannerThreads: z.array(z.string()).optional(),
