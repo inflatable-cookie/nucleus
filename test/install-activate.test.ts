@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activateVersion } from "../service/install/install.mjs";
@@ -39,6 +39,10 @@ test("activateVersion converges installer entrypoints so roll and recover-previo
     assert.equal(realpathSync(current), realpathSync(first));
     const command = join(home, ".local/bin/nucleus");
     assert.match(readFileSync(command, "utf8"), /nucleus-owned-command-v1/);
+    const retiredAcp = join(home, ".local/bin/nucleus-acp");
+    assert.equal(existsSync(retiredAcp), false);
+    const foreignAcp = "#!/bin/sh\n# fixture-owned command\nexit 23\n";
+    writeFileSync(retiredAcp, foreignAcp, { mode: 0o755 });
     const skill = join(home, ".agents/skills/nucleus");
     assert.equal(readlinkSync(skill), join(current, "skills/nucleus"));
     assert.equal(readFileSync(join(skill, "SKILL.md"), "utf8"), "name: nucleus\n");
@@ -50,6 +54,7 @@ test("activateVersion converges installer entrypoints so roll and recover-previo
     writeFileSync(join(home, ".codex/skills/northstar-queue/SKILL.md"), "foreign skill\n");
     await activateVersion(second);
     assert.equal(realpathSync(current), realpathSync(second));
+    assert.equal(readFileSync(retiredAcp, "utf8"), foreignAcp);
     assert.equal(readFileSync(join(skill, "SKILL.md"), "utf8"), "name: nucleus\n");
     assert.throws(() => readlinkSync(join(home, ".agents/skills/northstar-queue")));
     assert.equal(readFileSync(join(home, ".codex/skills/northstar-queue/SKILL.md"), "utf8"), "foreign skill\n");

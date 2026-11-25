@@ -55,11 +55,10 @@ module. The environment a spawned service reads from its host is composed once i
 and the installer's isolated startup proof ask it instead of naming a host
 variable, and `hostHome` pins a private host home for a fixture or proof. Each host integration keeps its own names: Paseo's bridge supplies its own home
 override, and `nucleus integrate` routes `paseo`, `t3code` (or `t3`), and `bb`
-to each host's registration step. A local T3Code launch (`bin/nucleus-acp.mjs`),
-a BB plugin host channel (`hosts/bb/plugin/server.ts`), and a Paseo bridge can
-each start the daemon when absent; T3Code and Paseo also start
-the one owner through its heartbeat (`queue-roll-owner.json`), the bridge through an
-injected process binding, and the launcher and entry through `service/transport`.
+to each host's registration step. The remaining legacy BB host channel and
+Paseo bridge can start the TypeScript daemon. The Paseo bridge starts its roll
+owner through an injected process binding. The TypeScript ACP entrypoint
+serves the protocol for fixtures.
 The service serves `queue.service-state` itself over both the socket and the local
 web board (`BRIDGE_CATALOGUE` is retired), while host bridges may augment it with
 local plugin build state. The
@@ -1765,17 +1764,12 @@ open.
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
   CLI-started service never granted presence, so this path does not fire.
-- **Capable hosts start the daemon; the CLI does not.** A Paseo bridge, a
-  configured local T3Code host (`bin/nucleus-acp.mjs` cold-start probe), and the
-  BB plugin's host channel (`hosts/bb/plugin/server.ts`) each start the detached
-  daemon when no live service identity, active roll, or fresh sibling launch claim
-  is present (`shared/service/daemon-launch.ts`). T3Code probes its registered
-  `nucleus-acp` launcher on cold start when the stored T3 endpoint is loopback
-  (`queue-service.t3-launch.json`), and BB's plugin starts it when `serviceDataDir`
-  is configured and an installed Nucleus package root is present
-  (`queue-service.bb-launch.json`). Neither launcher waits for the daemon to answer,
-  a probe during a roll starts nothing, and the daemon's own clock, grace and run
-  fence are unchanged. Only the Paseo and BB plugin bridges hold
+- **Legacy host startup.** A Paseo bridge and the BB plugin's host channel
+  can start the detached TypeScript daemon when no live identity, active roll
+  or fresh sibling claim is present. BB starts it from the installed package
+  when its service data directory is configured. The TypeScript ACP entrypoint
+  no longer starts it. The Rust launcher uses the lifetime rule in
+  [Spec 070](../specs/070-small-engine.md#rulings). Only the Paseo and BB bridges hold
   `service.nucleus-bridge-presence`. An ordinary CLI call reads the daemon over the
   authenticated socket (including `queue.service-state`) and refuses with
   `unavailable` when nothing is running; it never spawns, upgrades, reads SQLite or

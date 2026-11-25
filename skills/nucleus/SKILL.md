@@ -20,9 +20,8 @@ When a task spends its allowance after the automatic extension, its planner
 uses `nucleus answer 'repo#42' extend`. Approve by default, including beyond
 twice the original allowance. This is a planner question.
 
-For work still draining on the TypeScript engine, follow the run's supplied
-command and ticket. The installed shim sends bound TS calls to
-`nucleus-legacy`, which also exposes the legacy commands described below.
+**TypeScript command reference.** The sections below describe the retired
+engine. Use the Rust commands above for current work.
 
 TypeScript worker, reviewer and coordinator sessions expose `nucleus_report`,
 `ask` and `tell` through MCP (`nucleus ask` and `nucleus tell` on a host without an MCP binding,

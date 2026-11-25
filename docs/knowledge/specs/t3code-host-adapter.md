@@ -1969,13 +1969,8 @@ connection is recorded and adopted at its next start. `service.health` and the
 host list are read over the local service socket; the route never starts a
 service.
 
-**Cold start (nucleus#1394).** T3 probes the registered launcher on its own
-server start, with no thread, workspace or model picker, so a cold T3 start runs
-`nucleus-acp` in an unbound directory. That launcher starts the Nucleus daemon for a
-stored loopback T3 connection when none is running, through a claim that makes repeated
-and concurrent probes converge, and it never waits for the daemon. The gates and the
-ownership rules are in the service boundary contract's idle shutdown section.
-The private proof is `effigy proof:t3code:daemon -- --asar <nightly app archive>`.
+**Cold start.** The TypeScript ACP launcher no longer starts a daemon or roll
+owner. The Rust Inbox launcher ensures its engine under [Spec 070 ruling 30](070-small-engine.md#rulings).
 
 Readiness is T3's own verdict. The nightly probes an unbound directory; the
 agent opens an inert session advertising `nucleus` and `nucleus-quiet` without
