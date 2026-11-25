@@ -6,7 +6,7 @@ use serde_json::{Value, json, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    HostError, LATE_REPLY_MS, T3, clock_ms, dispatch_rejected,
+    HostError, T3, clock_ms, dispatch_rejected,
     launch::message_id,
     rpc::{Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
     task_row::ThreadVisibility,
@@ -77,6 +77,12 @@ pub enum NoticeState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeOutcome {
+    Accepted,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeSend {
     Prepared,
     Accepted,
@@ -121,7 +127,6 @@ pub struct NoticeAuthorization {
     payload: Box<RawValue>,
     previous: Option<u64>,
     fence: ThreadFence,
-    wake: Option<String>,
 }
 
 /// The caller must persist the corresponding send marker before dispatch.
@@ -138,11 +143,11 @@ impl NoticeHost for T3 {
         write: NoticeWrite<'_, Self::Authorization, Self::Dispatch>,
     ) -> Result<NoticeSend, HostError> {
         match write {
-            NoticeWrite::Prepare(authorization) => {
-                self.unsettle_notice(authorization).await?;
-                Ok(NoticeSend::Prepared)
-            }
-            NoticeWrite::Queue(dispatch) => self.send_notice(dispatch).await,
+            NoticeWrite::Prepare(_) => Err(HostError::Protocol),
+            NoticeWrite::Queue(dispatch) => self.send_notice(dispatch).await.map(|outcome| match outcome {
+                NoticeOutcome::Accepted => NoticeSend::Accepted,
+                NoticeOutcome::Rejected => NoticeSend::Rejected,
+            }),
         }
     }
 }
@@ -155,7 +160,7 @@ impl NoticeAuthorization {
 
     #[must_use]
     pub const fn needs_unsettle(&self) -> bool {
-        self.wake.is_some()
+        false
     }
 
     #[must_use]
@@ -167,8 +172,7 @@ impl NoticeAuthorization {
     /// # Errors
     /// Returns an error if the notice changed after authorization.
     pub fn record(self, delivery: &mut QuestionDelivery) -> Result<NoticeDispatch, HostError> {
-        if self.wake.is_some()
-            || delivery.thread != self.target.thread
+        if delivery.thread != self.target.thread
             || delivery.command != self.command
             || delivery.payload != self.payload.get()
             || delivery.last_send_at_ms != self.previous
@@ -193,7 +197,6 @@ struct NoticeThread {
 }
 
 struct NoticeSnapshot {
-    sequence: u64,
     thread: NoticeThread,
     projection: Value,
     paged: bool,
@@ -318,9 +321,6 @@ impl T3 {
         delivery: &QuestionDelivery,
     ) -> Result<NoticeObservation, HostError> {
         let now_ms = clock_ms()?;
-        let reply_may_arrive = delivery
-            .last_send_at_ms
-            .is_some_and(|sent| now_ms.saturating_sub(sent) < LATE_REPLY_MS);
         let payload = frozen_payload(delivery)?;
         let id = &delivery.thread;
         let ThreadObservation { reply, fence } =
@@ -336,12 +336,7 @@ impl T3 {
         }
         let state = snapshot.state(delivery)?;
         let visibility = snapshot.thread.visibility.read()?;
-        let ready = match state {
-            NoticeState::Absent => !reply_may_arrive,
-            NoticeState::Queued => visibility.settled,
-            _ => false,
-        };
-        if !ready || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms) {
+        if state != NoticeState::Absent || delivery.last_send_at_ms.is_some() || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms) {
             return Ok(NoticeObservation {
                 state,
                 authorization: None,
@@ -357,20 +352,6 @@ impl T3 {
                 return Err(HostError::Binding);
             }
         }
-        let wake = if visibility.settled {
-            if snapshot.sequence == 0 {
-                return Err(HostError::Uncertain);
-            }
-            Some(
-                snapshot
-                    .thread
-                    .visibility
-                    .settled_at
-                    .unwrap_or_else(|| snapshot.sequence.to_string()),
-            )
-        } else {
-            None
-        };
         Ok(NoticeObservation {
             state,
             authorization: Some(NoticeAuthorization {
@@ -384,44 +365,15 @@ impl T3 {
                 payload,
                 previous: delivery.last_send_at_ms,
                 fence,
-                wake,
             }),
         })
     }
 
-    /// Unsettle an authorized planner destination once for its settlement.
+    /// Queue the recorded wire. T3 clears settlement in the message transaction.
+    ///
     /// # Errors
-    /// Returns an error when the wake is inapplicable or uncertain.
-    async fn unsettle_notice(&self, authorization: &NoticeAuthorization) -> Result<(), HostError> {
-        let occurrence = authorization.wake.as_deref().ok_or(HostError::Binding)?;
-        let thread = &authorization.target.thread;
-        let command = format!("unsettle:{thread}:{occurrence}");
-        let payload = json!({
-            "type":"thread.unsettle", "threadId":thread,
-            "commandId":command, "reason":"user",
-        });
-        match self
-            .rpc
-            .call_guarded(
-                "orchestration.dispatchCommand",
-                payload,
-                Read::Background,
-                || {
-                    self.check_notice_target(authorization)?;
-                    Ok(self.rpc.claim_effect(&command))
-                },
-            )
-            .await?
-        {
-            Reply::Value(_) => Ok(()),
-            Reply::Failure(_) => Err(HostError::Uncertain),
-        }
-    }
-
-    /// Send the recorded wire. An exact rejection permits a fresh binding.
-    /// # Errors
-    /// Returns an error if the outcome is uncertain.
-    async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeSend, HostError> {
+    /// Returns an error on deferral, changed recipient evidence or an uncertain reply.
+    pub async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeOutcome, HostError> {
         let authorization = &dispatch.authorization;
         match self
             .rpc
@@ -439,9 +391,9 @@ impl T3 {
             )
             .await?
         {
-            Reply::Value(_) => Ok(NoticeSend::Accepted),
+            Reply::Value(_) => Ok(NoticeOutcome::Accepted),
             Reply::Failure(cause) if dispatch_rejected(&cause, &authorization.command) => {
-                Ok(NoticeSend::Rejected)
+                Ok(NoticeOutcome::Rejected)
             }
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
@@ -463,7 +415,7 @@ impl T3 {
         let Value::Object(mut snapshot) = value else {
             return Err(HostError::Protocol);
         };
-        let sequence = snapshot
+        snapshot
             .get("snapshotSequence")
             .and_then(Value::as_u64)
             .ok_or(HostError::Protocol)?;
@@ -477,7 +429,6 @@ impl T3 {
             return Ok(None);
         }
         Ok(Some(NoticeSnapshot {
-            sequence,
             thread,
             projection,
             paged,
