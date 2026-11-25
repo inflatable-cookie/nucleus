@@ -692,8 +692,10 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
     }
     {
         let mut state = service.state.lock().await;
+        // Distinct from this pass even if two writes share one wall-clock millisecond.
+        state.store.record_board_entry("unsent", 123).unwrap();
         let board_times = state.store.board_times("unsent").unwrap();
-        assert!(board_times.since.is_some());
+        assert_eq!(board_times.since, Some(123));
         let since = state.waits["unsent"].since;
         assert!(
             state
