@@ -376,3 +376,35 @@ fn config_inventory_recognizes_only_real_schema_backup_files() {
     std::fs::write(root.join("engine-before-v11-ABC123.sqlite"), b"unrelated").unwrap();
     assert_eq!(storage.backups().unwrap().issues, 1);
 }
+
+#[test]
+fn compaction_uses_original_dates_and_the_verified_backup_boundary() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let store = Store::open(&storage).unwrap();
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    let now = 1_795_612_000_000_i64;
+    for seq in 1..=25 {
+        // First is a recent native edit, second is an old imported version
+        // recorded today. The final two simulate writes after capture.
+        let action = if seq == 2 { "legacy_version" } else { "put" };
+        let snapshot = serde_json::json!({"version":seq,"createdAt":"2020-01-01T00:00:00Z"});
+        let at_ms = if seq < 3 { now } else { 10 };
+        db.execute(
+            "INSERT INTO planning_history VALUES (?1,'project','lane','key','planner',?2,?3,?4)",
+            rusqlite::params![seq, at_ms, action, snapshot.to_string()],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        Store::compact_planning_history(storage.database(), 23, now.cast_unsigned()).unwrap(),
+        2
+    );
+    let saved: Vec<_> = store
+        .planning_history("project", RecordKind::Lane, "key")
+        .unwrap()
+        .into_iter()
+        .map(|v| v.sequence)
+        .collect();
+    assert_eq!(saved, [vec![1], (4..=25).collect()].concat());
+}
