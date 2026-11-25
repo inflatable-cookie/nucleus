@@ -494,8 +494,7 @@ export function InboxList({
     void act(async () => {
       const project = drainedLaneProject(lane);
       if (!project) throw new Error("Select a project before closing this lane.");
-      const input = { key: lane.key, project, status: "done" as const };
-      return changeLaneStatus(input);
+      return changeLaneStatus({ key: lane.key, project, status: "done" });
     });
   const keepDrainedLane = (lane: LaneView, reason: string) =>
     void act(() =>

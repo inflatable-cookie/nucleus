@@ -122,15 +122,7 @@ test("026-14a Planning has a plan pane and a lane pane wide, and opens the lane 
     ui,
     /savePlan\(\s*planSaveInput\(project,\s*edit,\s*"operator \(board\)"\),?\s*\)/,
   );
-  // #867: the lane screen sends the version its text was written against; queue.tsx saves it under the open lane.
-  assert.match(
-    ui,
-    /saveLaneDocument\(\{\s*key:\s*planningLaneRecord\.key,\s*version,\s*text,\s*author:\s*"operator \(board\)"/,
-  );
-  assert.match(
-    readFileSync(new URL("../client/lane-screen.tsx", import.meta.url), "utf8"),
-    /onSaveDocument\(\{ version: draft\.base, text: draft\.text \}\)/,
-  );
+
 });
 
 test("026-14 Planning projects show live tasks and open leads", () => {

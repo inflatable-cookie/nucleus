@@ -378,6 +378,6 @@ test("Spec 041 rendered: Mark done from the Decisions column asks first, then fi
   assert.equal(calls.length, 0, "the confirmation writes nothing until it is confirmed");
   tree.press("Mark Alpha lane done");
   await settle(() => calls.length === 1);
-  assert.deepEqual(calls[0]!.input, { key: "alpha", status: "done" });
+  assert.deepEqual(calls[0]!.input, { project: "app", key: "alpha", status: "done" });
   await settle(() => !tree.text().includes("Alpha lane has drained"));
 });
