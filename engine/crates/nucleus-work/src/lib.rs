@@ -474,26 +474,30 @@ impl Checkout<'_> {
         self.prepare_retirement(published)?()
     }
 
-    /// Observe cleanliness outside the writer fence. The admitted operation rechecks the
-    /// owned branch and exact head immediately before unforced removal.
+    /// Observe cleanliness, then recheck ownership and the exact head before final admission.
     ///
     /// # Errors
     /// Returns an error if either observation fails or Git refuses removal.
     pub fn prepare_retirement<'a>(
         &'a self,
-        published: &'a Head,
+        published: &Head,
     ) -> Result<impl FnOnce() -> Result<Retirement, WorkError> + 'a, WorkError> {
-        let workspace = self.observe()?;
-        Ok(move || match workspace {
-            Workspace::Absent => Ok(Retirement::Absent),
-            Workspace::Clean(head) if &head == published => {
-                if self.owned_identity()?.head_oid() != published.as_str() {
-                    return Ok(Retirement::Retained);
-                }
-                self.remove(&[])?;
-                Ok(Retirement::Removed)
+        let settled = match self.observe()? {
+            Workspace::Absent => Some(Retirement::Absent),
+            Workspace::Clean(head)
+                if &head == published
+                    && self.owned_identity()?.head_oid() == published.as_str() =>
+            {
+                None
             }
-            Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
+            Workspace::Clean(_) | Workspace::Dirty => Some(Retirement::Retained),
+        };
+        Ok(move || {
+            if let Some(settled) = settled {
+                return Ok(settled);
+            }
+            self.remove(&[])?;
+            Ok(Retirement::Removed)
         })
     }
 

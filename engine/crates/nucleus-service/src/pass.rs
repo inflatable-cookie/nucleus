@@ -1861,11 +1861,10 @@ impl Service {
         {
             return Ok(None);
         }
-        // Admit the prepared operation against the current shell and dispatch mode together.
-        let remove = self
-            .host
-            .retire_with_quiet_shell(&parent, &threads, || remove)?;
+        self.host
+            .retire_with_quiet_shell(&parent, &threads, || ())?;
         drop(state);
+        // No Git observations or waits between the final writer check and unforced removal.
         Ok(Some(match remove {
             Some(remove) => remove()?,
             None => Retirement::Absent,

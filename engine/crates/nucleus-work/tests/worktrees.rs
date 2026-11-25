@@ -29,6 +29,14 @@ fn worktrees(home: &Path) -> Worktrees<'static> {
 }
 
 fn worktrees_with_redactor(home: &Path, redactor: Redactor) -> Worktrees<'static> {
+    worktrees_with_policy(home, redactor, &LocalGit)
+}
+
+fn worktrees_with_policy<'a>(
+    home: &Path,
+    redactor: Redactor,
+    policy: &'a dyn GitPolicy,
+) -> Worktrees<'a> {
     let settings = SettingsFile::open(home).expect("fixture settings");
     settings
         .save(&EngineSettings {
@@ -38,7 +46,7 @@ fn worktrees_with_redactor(home: &Path, redactor: Redactor) -> Worktrees<'static
         })
         .expect("save fixture settings");
     let storage = settings.storage().expect("resolve storage");
-    Worktrees::new(&storage, &LocalGit, redactor).expect("work root")
+    Worktrees::new(&storage, policy, redactor).expect("work root")
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -458,19 +466,45 @@ fn quarantine_retention_expires_only_old_owned_directories() {
 }
 
 #[test]
-fn an_admitted_retirement_preserves_a_new_checkout_head() {
+fn retirement_preserves_a_head_changed_during_preparation() {
+    struct AdvanceHead(std::sync::atomic::AtomicBool);
+    impl GitPolicy for AdvanceHead {
+        fn isolate(&self, command: &mut Command) {
+            LocalGit.isolate(command);
+            if command
+                .get_args()
+                .any(|arg| arg == "nucleus-index-visibility")
+                && self.0.swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                let directory = command.get_args().nth(1).unwrap();
+                git(
+                    Path::new(directory),
+                    &["commit", "--allow-empty", "-m", "new work"],
+                );
+            }
+        }
+
+        fn credential(&self, remote: &str) -> Result<Option<GitCredential>, GitFailure> {
+            LocalGit.credential(remote)
+        }
+
+        fn refresh_credential(&self, rejected: &GitCredential) -> Option<GitCredential> {
+            LocalGit.refresh_credential(rejected)
+        }
+    }
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository");
     let head = repository(&repo);
-    let work = worktrees(root.path());
+    let policy = AdvanceHead(false.into());
+    let work = worktrees_with_policy(
+        root.path(),
+        Redactor::new([], RedactionRules::common()),
+        &policy,
+    );
     let checkout = work.checkout(&repo, "example/fixture", "task-1").unwrap();
     checkout.allocate(&head).unwrap();
-    let retire = checkout.prepare_retirement(&head).unwrap();
-    git(
-        checkout.path(),
-        &["commit", "--allow-empty", "-m", "new work"],
-    );
-    assert_eq!(retire().unwrap(), Retirement::Retained);
+    policy.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Retained);
     assert!(checkout.path().is_dir());
 }
 

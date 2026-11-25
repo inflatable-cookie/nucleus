@@ -219,8 +219,8 @@ when to ask the planner.
 
 Verify source and participants before the destructive step. Remove a task
 worktree only after the current clean Git status and a quiet process and native
-participant observation. The task and project fences cover removal. The dispatch and
-shell checks admit the operation together, then release their locks before Git runs.
+participant observation. The task and project fences cover removal. Verify the Git registration and head, then check Dispatch and shell writers together
+immediately before running the unforced removal.
 A dirty checkout, unknown status or surviving needed
 source remains in custody. Once the worktree is removed, archive the known idle
 threads from the held shell. Already archived, absent and deleted threads count
