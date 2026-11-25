@@ -1,6 +1,6 @@
 # BB host adapter
 
-Status: approved. Phases 0–7 are implemented. Phase 0 (the transport spike) is proved, phase 1 (host
+Status: historical. [Spec 070 ruling 5](070-small-engine.md#rulings) retired BB as a Nucleus host. The phases, package and maintenance commands below record the earlier implementation. Phases 0–7 were implemented. Phase 0 (the transport spike) is proved, phase 1 (host
 registration, identity and health), phase 2 (workspace custody), phase 3 (worker runs, observation
 presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar and
 the task group header) and phase 6 (the boards, settings, pills and the planner terminal) are in
@@ -1278,7 +1278,7 @@ handles and task records phases 0–4 landed:
   returns to its phase-prefixed title.
 
 Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
-in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
+in the fork's historical sidebar suite: the collapsed default with number, title, shared
 state label, recorded wait and PR state; upstream's header and one read for every other group; one
 call for many groups plus the refetch on the board signal; an explicit expand written to
 `expandedTaskGroups` with `collapsedEnvironments` never written for a task group; the stored
@@ -1633,6 +1633,9 @@ layer and not on the isolated server, and the trial in Tom's own BB is his insta
   as a visible pause deserves one bounded diagnostic during Tom's trial.
 
 ### The operator install route (landed 2026-11-17)
+
+The packaging and install flow below is historical. The package stopped shipping
+BB under [Spec 070 ruling 5](070-small-engine.md#rulings).
 
 The plugin installed into the operator's own BB: it ships in the Nucleus package, one command installs it,
 and it is pinned to the service build it came from.

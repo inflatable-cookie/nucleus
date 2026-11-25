@@ -7,8 +7,7 @@
     "publication:check": "node scripts/check-publication.mjs",
     "test": "tsx scripts/run-tests.ts",
     "test:timing": "node scripts/test-timing.mjs",
-    "release:prepare": "node scripts/prepare-release.mjs",
-    "test:bb-sidebar": "vitest run --config hosts/bb/plugin/vitest.config.ts"
+    "release:prepare": "node scripts/prepare-release.mjs"
   },
   "devDependencies": {
     "@dnd-kit/core": "^6.3.1",

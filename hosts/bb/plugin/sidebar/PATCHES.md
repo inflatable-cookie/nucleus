@@ -1,3 +1,5 @@
+The BB plugin and its validation selectors are retired under [Spec 070 ruling 5](../../../../docs/knowledge/specs/070-small-engine.md#rulings). The commands below record how the fork was checked while it shipped.
+
 # The vendored thread list
 
 Nucleus owns BB's sidebar by forking BB's own list (Spec 062, decision 5a: the

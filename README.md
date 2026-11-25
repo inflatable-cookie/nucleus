@@ -50,63 +50,10 @@ overrides it; `nucleus data-home` prints the resolution). Release preparation,
 proof and publishing follow the
 [release contract](docs/knowledge/contracts/release.md).
 
-## BB host
-
-Nucleus also runs tasks in [BB](https://getbb.app) (bb 0.49 or newer). The
-Nucleus package ships the built BB plugin; one command installs it into your
-BB, and nothing else in your BB is read or written.
-
-1. **Install the plugin.** Once, after installing the Nucleus package:
-
-   ```sh
-   nucleus bb install
-   nucleus bb status
-   ```
-
-   `nucleus bb install` copies the plugin to your Nucleus data home before BB
-   installs it, so BB builds cannot change the installed Nucleus version. It
-   points the plugin at that data home and reloads it; `nucleus bb uninstall`
-   removes the plugin and its managed copy.
-   `nucleus bb status` reports the installed plugin's version and build against
-   the running Nucleus service (`match`, or `behind` with the command to fix it),
-   and says when the plugin is not configured to connect.
-   A BB update needs no Nucleus action: BB rebuilds the plugin's frontend itself
-   in that managed copy, and what is checked is the Nucleus build identity it
-   was installed from, never that bundle.
-   A later service roll keeps the plugin current by itself: when your BB has the
-   plugin installed from another build, the roll runs the same install route,
-   and a roll that could not update it says so in the roll state, in
-   `nucleus bb status` and in service health. A machine without the plugin is
-   never touched.
-2. **Point one test repository at BB.** Set the repository's host kind to `bb`
-   (`repository.set` with `hostKind: "bb"`). Paseo stays the default; a live
-   task never changes host.
-3. **Expect.** The board names the BB host online with its BB and plugin SDK
-   versions, a dispatched task's worker thread appears under its planner in BB,
-   and the sidebar's Nucleus task groups carry the task's state, PR and wait.
-   The plugin is pinned to the Nucleus build it shipped with: a plugin from
-   another build is refused with a message naming both builds, and the board
-   shows the BB host unavailable with that reason until the matching plugin is
-   installed — which a service roll does for you when the plugin is already
-   installed. Nucleus writes nothing into your BB unless you ran
-   `nucleus bb install` at least once.
-   If Paseo detects a changed installed file, its bridge stays available, the
-   board reports the failed roll, and the notice recommends reinstalling that
-   version or rolling to a fresh build.
-4. **Remove it.** `nucleus bb uninstall` removes the plugin with ID `nucleus`.
-   No other plugin, project or thread is touched; a plugin with ID `nucleus`
-   that is not a Nucleus build is refused by name rather than overwritten or
-   removed.
-
-Usage Pace is an optional BB plugin the operator installs separately; Nucleus
-never installs, updates or removes it. The operator notes
-and the design are in [Spec 062](docs/knowledge/specs/062-bb-host-adapter.md).
-
 ## Getting started
 
 1. **Connect a host.** Connect any supported host (no Paseo required):
    - **T3Code:** `nucleus integrate t3code` (or `nucleus t3 install`) registers the `nucleus` ACP provider; T3Code starts the daemon automatically on launch.
-   - **BB:** `nucleus integrate bb` (or `nucleus bb install`) installs and configures the BB plugin; BB starts the daemon automatically when the plugin loads.
    - **Paseo:** `nucleus integrate paseo` registers the installed package; then reload the `nucleus` plugin and open **Nucleus** in the sidebar.
    On a host without a plugin UI, `nucleus ui` prints a localhost link that opens the same board in a browser, and `nucleus service-state` reads service state directly over the local socket.
 2. **Configure.** New installations start paused with an empty worker pool. In

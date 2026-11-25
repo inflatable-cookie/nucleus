@@ -77,7 +77,7 @@ keep working for Paseo planners unchanged; they do not need to pass a caller fie
 
 T3Code needs two things before a task can run there: a bearer the Nucleus
 service reads, and the `nucleus` ACP provider registered in T3. One command does
-both, the way `nucleus bb install` does for BB:
+both:
 
 ```sh
 nucleus t3 install     # find the running T3Code, mint the bearer, register the
