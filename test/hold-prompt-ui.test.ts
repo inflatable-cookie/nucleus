@@ -4,8 +4,8 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
-import { Store } from "../core/store/store";
-import { submissionSchema, taskSummarySchema } from "../shared/contracts";
+import { taskSummarySchema } from "../shared/contracts";
+import { taskControlTaskSchema } from "../shared/schema/task-control";
 
 useNativeStubs();
 const h = React.createElement;
@@ -25,31 +25,43 @@ async function settle(probe: () => boolean) {
   }
   assert.fail("the surface did not settle");
 }
-/**
- * A local transactional control answers with the updated task, so the mock hands
- * back a real stored row: `{}` fails the method's output union, and `act` then
- * reports a failed control and never refetches the board it just changed.
- */
-const heldTask = (() => {
-  const store = new Store(":memory:");
-  const inserted = store.insert(
-    submissionSchema.parse({
-      submissionId: "held-task",
-      title: "Held reviewed task",
-      repoPath: "/app",
-      planningCommit: "a".repeat(40),
-      handoffPath: "held-task.md",
-      originAgentId: "agent-1",
-    }),
-    "host",
-    "handoff",
-    "a".repeat(40),
-  );
-  return store.update(inserted.id, {
-    phase: "verifying",
-    reason: "Merge held by operator; release to continue",
-  });
-})();
+const head = "a".repeat(40);
+const at = "2026-10-02T08:00:00.000Z";
+// The board validates the control answer before refetching the changed row.
+const heldTask = taskControlTaskSchema.parse({
+  id: "held-task",
+  submissionId: "held-task",
+  title: "Held reviewed task",
+  repoPath: "/app",
+  planningCommit: head,
+  planningBase: head,
+  handoffPath: "held-task.md",
+  handoffText: "Synthetic hold fixture",
+  originAgentId: "agent-1",
+  hostId: "host",
+  createdAt: at,
+  updatedAt: at,
+  version: 5,
+  phase: "verifying",
+  reason: "Merge held by operator; release to continue",
+  held: false,
+  workspaceId: null,
+  directory: null,
+  branch: "fixture/held-task",
+  agentId: null,
+  runId: null,
+  profile: null,
+  workspaceIntent: false,
+  agentIntent: false,
+  lastAgentStatus: null,
+  idleSince: null,
+  completion: null,
+  agentActive: null,
+  lastObservedAt: null,
+  prUrl: null,
+  prHead: null,
+  coordinatorGeneration: 0,
+});
 const summary = (escalated: boolean) =>
   taskSummarySchema.parse({
     id: "held-task",
@@ -78,7 +90,7 @@ const summary = (escalated: boolean) =>
     hold: {
       owner: "agent-1",
       reason: "External receipt pending",
-      since: "2026-10-02T08:00:00.000Z",
+      since: at,
     },
     ...(escalated ? { holdEscalated: true } : {}),
   });

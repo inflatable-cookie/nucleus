@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mount, useNativeStubs } from "./support/render";
 import { planningEntry } from "./support/inbox";
+import { recentProjectActivity } from "./support/project-activity";
 import {
   fakeAdapter,
-  recentProjectActivity,
   submission,
 } from "./support/fakes";
 import {

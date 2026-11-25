@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { recentProjectActivity } from "./support/fakes";
+import { recentProjectActivity } from "./support/project-activity";
 import assert from "node:assert/strict";
 import React from "react";
 import { createRequire } from "node:module";
