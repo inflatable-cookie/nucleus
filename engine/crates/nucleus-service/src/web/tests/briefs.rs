@@ -46,6 +46,22 @@ async fn assert_task_transport_limits(api: &Router, command_path: &str, exact: &
     }
 }
 
+async fn assert_stale_browser_amend(api: &Router, browser: &str, version: u64) {
+    let response = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/tasks/legacy-large/commands",
+        Some(browser),
+        Some(&json!({"amend": "Second draft", "briefVersion": version})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await["error"],
+        "The brief changed. Reopen Amend to edit the latest version."
+    );
+}
+
 #[tokio::test]
 async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
     let (home, service) = fixture(GitHub::new("fixture").expect("client"));
@@ -128,7 +144,7 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
         Method::POST,
         "/api/engine/tasks/legacy-large/commands",
         Some(&browser),
-        Some(&json!({"amend": exact})),
+        Some(&json!({"amend": exact, "briefVersion": before.task.brief().version})),
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -138,6 +154,13 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
         .expect("amended legacy task");
     assert_eq!(updated.version, before.version + 1);
     assert_eq!(updated.task.brief().text, exact);
+    assert_eq!(
+        updated.task.brief().version,
+        before.task.brief().version + 1
+    );
+
+    assert_stale_browser_amend(&api, &browser, before.task.brief().version).await;
+    assert_eq!(service.task("legacy-large").await.unwrap(), updated);
 }
 
 #[tokio::test]

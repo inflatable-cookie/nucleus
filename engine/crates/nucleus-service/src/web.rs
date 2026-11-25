@@ -932,8 +932,16 @@ fn command_options(
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum TaskCommand {
+    VersionedAmend(VersionedAmend),
     Lifecycle(Command),
     Dependency(DependencyCommand),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionedAmend {
+    amend: String,
+    brief_version: u64,
 }
 
 async fn command(
@@ -953,14 +961,29 @@ async fn command(
     }));
     let input: TaskCommand = brief_json(request, &api).await?;
     if size.load(Ordering::Relaxed) > DEFAULT_BODY_LIMIT
-        && !matches!(&input, TaskCommand::Lifecycle(Command::Amend(_)))
+        && !matches!(
+            &input,
+            TaskCommand::Lifecycle(Command::Amend(_)) | TaskCommand::VersionedAmend(_)
+        )
     {
         return Err(ApiError::Invalid);
     }
     let outcome = match input {
         TaskCommand::Lifecycle(command) => {
             api.service
-                .command_with_session(&id, &authority, command, session.as_deref(), &scope)
+                .command_with_session(&id, &authority, command, None, session.as_deref(), &scope)
+                .await?
+        }
+        TaskCommand::VersionedAmend(input) => {
+            api.service
+                .command_with_session(
+                    &id,
+                    &authority,
+                    Command::Amend(input.amend),
+                    Some(input.brief_version),
+                    session.as_deref(),
+                    &scope,
+                )
                 .await?
         }
         TaskCommand::Dependency(command) => CommandOutcome::Applied(Box::new(
@@ -1530,6 +1553,7 @@ impl IntoResponse for ApiError {
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
                     | ServiceError::EffectInProgress
+                    | ServiceError::BriefConflict
                     | ServiceError::ReportOpenPullRequest
                     | ServiceError::ReportWorkerBusy
                     | ServiceError::DependencyEdit(_)

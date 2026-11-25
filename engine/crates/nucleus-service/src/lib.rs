@@ -94,6 +94,8 @@ pub enum ServiceError {
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
     Project,
+    #[error("The brief changed. Reopen Amend to edit the latest version.")]
+    BriefConflict,
     #[error("the controller cannot access this project")]
     ControllerProject,
     #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
@@ -1382,8 +1384,15 @@ impl Service {
         authority: &Authority,
         command: Command,
     ) -> Result<CommandOutcome, ServiceError> {
-        self.command_with_session(id, authority, command, None, &ControllerScope::default())
-            .await
+        self.command_with_session(
+            id,
+            authority,
+            command,
+            None,
+            None,
+            &ControllerScope::default(),
+        )
+        .await
     }
 
     async fn command_with_session(
@@ -1391,6 +1400,7 @@ impl Service {
         id: &str,
         authority: &Authority,
         command: Command,
+        brief_version: Option<u64>,
         session: Option<&acp::WriteAccess>,
         scope: &ControllerScope,
     ) -> Result<CommandOutcome, ServiceError> {
@@ -1421,9 +1431,7 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
-        if let Command::Amend(text) = &command {
-            check_brief_size(text.len())?;
-        }
+        check_amendment(&prior.task, &command, brief_version)?;
         if matches!(
             command,
             Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
@@ -1794,6 +1802,20 @@ impl Service {
             detail_only,
         });
     }
+}
+
+fn check_amendment(
+    task: &Task,
+    command: &Command,
+    expected: Option<u64>,
+) -> Result<(), ServiceError> {
+    if let Command::Amend(text) = command {
+        if expected.is_some_and(|version| version != task.brief().version) {
+            return Err(ServiceError::BriefConflict);
+        }
+        check_brief_size(text.len())?;
+    }
+    Ok(())
 }
 
 /// The decoded UTF-8 byte limit for a new or replacement task brief.
