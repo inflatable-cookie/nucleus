@@ -1210,10 +1210,9 @@ How the previous occurrence is judged depends on its send (nucleus#1407):
   paged transcript raises `subscribeThread: incomplete projection`, nothing is
   resent, and re-entry waits. The sweep reports it after its nesting pass runs,
   not as a silent skip.
-  `effigy proof:t3code:window` runs this case on the installed nightly: an earlier
-  wake pushed outside the window, a T3 daemon restart that keeps the inbox thread,
-  binding and credential, then a fresh decision (`--expect woken`, or `--expect
-  blocked` on the pre-fix code). Its evidence names the source revision it ran.
+  The pre-cutover proof covered an earlier wake outside the window, a T3 daemon
+  restart that kept the inbox thread, binding and credential, then a fresh decision.
+  Its evidence records the source revision and whether the decision woke the thread.
 
 **The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
 while an operator decision is offered: the same host-scoped projection that raises
@@ -1470,10 +1469,10 @@ the transport: the parent row reads Nucleus role activity (running, needs a pers
 or truly waiting), so a gap changes neither the row nor a live child's hold. An
 authenticated answer or report whose delivery is unknown is still reconciled, never
 resent. Only a refused credential (401) ends the turn, because no retry can succeed.
-On the installed nightly `0.1.11-nightly.20261119.4941`, `effigy proof:t3code:reoffer -- --expect=held`
-proves the Inbox's open decision through a roll and a 40-second sustained outage: the
+On nightly `0.1.11-nightly.20261119.4941`, the pre-cutover re-offer proof preserved the
+Inbox's open decision through a roll and a 40-second sustained outage. It kept the
 same live card, a live run, the same binding, session and pin, and one fault line for
-the outage. `effigy proof:t3code:parent-gap` proves the task parent: a reviewer child
+the outage. The pre-cutover task-parent proof covered a reviewer child
 running under a held parent through a 4-second roll, a 40-second sustained outage (one
 fault line), and a second child created under the same held parent after the first is
 interrupted, with the same binding and session. One run of that proof failed the
@@ -1605,7 +1604,7 @@ children — or the server's children whose readable `T3CODE_THREAD_ID` names a
 recorded participant thread. A command a session's tools start stays a tool. The
 same recognition protects these processes from run cleanup and lets the
 owned-tool, review and closeout workspace proofs pass while the task is idle. The
-private proof is `effigy proof:t3:runtime`.
+pre-cutover proof exercised this recognition against an isolated T3 server.
 
 **A shared provider app-server's helpers are runtime too.** T3 starts each
 thread's provider as `<provider> app-server …` directly under the connected
@@ -2129,8 +2128,8 @@ when readback proves its postcondition; external disappearance without Nucleus's
 own delete does not retire presentation intents. Regression tests instrument
 `readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
-nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
-transcript on the installed nightly: the initial launch, same-state writes, several
+nucleus#1378's pre-cutover held-turn proof ran the parent transcript on the
+installed nightly: the initial launch, same-state writes, several
 milestones within one held turn, the production release and re-entry, the closeout
 through the ordinary host pass, and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
 with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a
@@ -2139,9 +2138,8 @@ plain sentence is the prompt. The proof releases the held turn through a fixture
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
 
-nucleus#1459's finished-parent archive proof (`effigy
-proof:t3code:parent-archive`) runs on the installed nightly through the ordinary
-host maintenance owner: a real store, the real `nucleus t3 install` route and a
+nucleus#1459's pre-cutover finished-parent proof ran on the installed nightly
+through the ordinary host maintenance owner: a real store, the real `nucleus t3 install` route and a
 real `T3CodeHost`, driven by `HostPass.run` and never by a presentation, nesting or
 archive method directly. It proves a stored done task with a retired workspace
 handle and a snoozed parent archived in one ordinary pass with exactly one
@@ -2157,8 +2155,7 @@ which an isolated nightly cannot create while its own ACP probe reports `warning
 and the step order that keeps the archive ahead of every presentation read.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
-and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
-cover the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
+and the pre-cutover Inbox proof covered the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
 tab after every `ui`, a retained healthy tab replaced by the revealed one, a new
 `ui` message served once and a repeated report of it not reopened, ignoring
 non-exact prompts, reopening from a closed or `LoadFailed` pane with a fresh
@@ -2169,11 +2166,9 @@ reported when the queued turn runs), Stop ending a hung open at once, and
 returning to idle immediately when no decisions are offerable while staying held
 when an offerable decision is open.
 
-The existing-Inbox proof (`effigy proof:t3code:inbox -- --existing-only`)
-also closes its private preview, dispatches exact `ui` on the same pinned
-thread and checks both the bounded ACP reply and the newly revealed preview
-tab. It checks the tab against the real private board's origin and records
-the tab ID, runtime and reveal state. A rendered-pane check also observes the
+The existing-Inbox proof also closed its private preview, dispatched exact
+`ui` on the same pinned thread, and observed the bounded ACP reply and newly
+revealed preview. Its evidence includes the board origin, tab ID, runtime and reveal state. A rendered-pane check also observes the
 board in T3's client, since server readback alone cannot show what rendered.
 
 The private proof starts an unmodified checkout of the target nightly revision,

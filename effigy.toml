@@ -28,31 +28,6 @@ setup = "npm ci"
 "proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
-"proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
-# nucleus#1395's private proof: a card lost with its ACP turn is offered again on the
-# next held turn, across a replaced callback socket, on a private nightly server.
-"proof:t3code:reoffer" = "node --import tsx scripts/acceptance/t3code-reoffer-private.ts {args}"
-"proof:t3code:parent-gap" = "node --import tsx scripts/acceptance/t3code-parent-gap-private.ts {args}"
-"proof:t3code:prepared-parent" = "node --import tsx scripts/acceptance/t3code-prepared-parent-private.ts {args}"
-# nucleus#1366's private snooze proof: the one row rule against the installed nightly.
-"proof:t3code:inbox" = "node --import tsx scripts/acceptance/t3code-inbox-private.ts {args}"
-# nucleus#1407's private proof: a settled inbox wake outside the bounded window (--expect blocked|woken).
-"proof:t3code:window" = "node --import tsx scripts/acceptance/t3code-window-private.ts {args}"
-"proof:t3code:snooze" = "node --import tsx scripts/acceptance/t3code-snooze-private.ts {args}"
-# nucleus#1378's private proof: the parent transcript's held turn on the installed nightly, its
-# release and re-entry, the quiet system re-entry probe and closeout.
-"proof:t3code:held-turn" = "node --import tsx scripts/acceptance/t3code-held-turn-private.ts {args}"
-# nucleus#1459's private proof: a finished task parent archived by the ordinary host pass,
-# with a sibling read fault, a service roll and a mismatched twin.
-"proof:t3code:parent-archive" = "node --import tsx scripts/acceptance/t3code-parent-archive-private.ts {args}"
-# nucleus#1330's operator install route against a private T3Code server: install,
-# status, a thread launched on the registered provider, uninstall, status.
-"proof:t3:install" = "node --import tsx scripts/proof-t3-install.ts {args}"
-# nucleus#1377's and nucleus#1397's private proof: the task parent's nucleus-acp
-# process and the shared provider app-server's standing helpers are the
-# participant's runtime on a private T3Code server, with real native children and
-# the negative cases that still hold.
-"proof:t3:runtime" = "node --import tsx scripts/proof-t3-runtime.ts {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
 # and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.
 "proof:bb" = "node --import tsx scripts/acceptance/bb-private.ts {args}"
@@ -66,16 +41,6 @@ setup = "npm ci"
 # Spec 062 phase 6: bundle the shared board into the BB plugin package
 # (react-native → react-native-web, React left to BB's runtime). Generated output.
 "bb:board-build" = "node scripts/bb/build-board.mjs {args}"
-# Spec 062 phase 7's operator install route: `nucleus bb install`, `status` and
-# `uninstall` against the same isolated BB server (never the operator's live BB).
-"proof:bb:install" = "node --import tsx scripts/acceptance/bb-install-private.ts {args}"
-# Spec 062 phase 7's trial: a plugin reload, a BB restart and a host outage mid-task
-# on the isolated BB server, each recovered by observation and never resent.
-"proof:bb:trial" = "node --import tsx scripts/acceptance/bb-trial-private.ts {args}"
-# nucleus#1315: two sandboxed Claude Code role threads (Accept Edits, the provider
-# sandbox on) deliver their reports through the loopback relay and read a sibling
-# checkout, on the isolated BB server.
-"proof:bb:sandbox" = "node --import tsx scripts/acceptance/bb-sandbox-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"

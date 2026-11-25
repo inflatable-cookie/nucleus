@@ -1472,8 +1472,8 @@ Paseo stayed Tom's call at the time (superseded 2026-11-20: T3 is the current op
    compare on any host (nucleus#1302).
 2. **Reload, restart and outage mid-task**, each starting from a worker turn a provider is running:
    `test/bb-lifecycle.test.ts` drives the real runtime through each fault over recorded BB rows, and
-   `effigy proof:bb:trial` does the host half against an isolated BB 0.49.0 server, polling BB's own
-   status for `active` — a begun turn, never a spawn's `starting` (assumption 6) — before each fault.
+   the pre-cutover host trial used an isolated BB 0.49.0 server and polled BB's own
+   status for `active` before each fault (assumption 6).
 3. **The fork rebase** through the documented routine, with the drift report and the
    vendored-manifest test at the pin; no newer release tag exists yet, so the evidence is the routine
    re-run at the pin plus the drift report against a newer upstream ref.
@@ -1529,9 +1529,8 @@ Two layers of evidence, and they are kept apart on purpose:
 - **the runtime layer** is `test/bb-lifecycle.test.ts`: the real `QueueRuntime` and the real BB adapter
   over BB rows recorded from the isolated server. It proves the lifecycle *rules* under each fault; the
   hosts on the other side of the adapter are fixtures.
-- **the host layer** is `effigy proof:bb:trial`: the real plugin against an isolated BB 0.49.0 server,
-  proving identity, adoption and no-resend on the host that would be there. It drives host operations
-  and does not execute a Nucleus lifecycle — no task, review or merge runs in it.
+- **the host layer** used the real plugin against an isolated BB 0.49.0 server.
+  It exercised host identity, adoption and no-resend through host operations.
 
 **The runtime layer** starts every fault from live work: one queued message plus a bounded poll makes
 BB report the worker's turn as live, one observation pass records it on the task, and only then is the
@@ -1756,7 +1755,7 @@ and the pin cases live in `test/bb-host-registration.test.ts`. `test/bb-plugin-r
 step (nucleus#1339): a plugin BB reports `behind` is installed and then reports `match`, with no file in
 packaged version directory changed; no plugin means no install; a plugin that is not ours is left alone;
 a failed install lands the roll anyway with its cause in the roll record and in health's `bbPlugin`; a
-fixture roll with no step configured reaches no BB. `effigy proof:bb:install` runs the whole
+fixture roll with no step configured reaches no BB. The pre-cutover install proof ran the whole
 route against the isolated BB server from phase 0: two pre-existing plugins (one an unrelated plugin, one
 standing in for Usage Pace) stay byte-identical and are named by no command across install, status and
 uninstall; the packaged plugin connects on the setting `install` itself wrote, is refused by name when
@@ -1857,9 +1856,8 @@ BB 0.49.
 
 ### Effigy in a BB role thread
 
-With Full Access, Effigy runs in the thread: `scripts/acceptance/bb-sandbox-private.ts`
-prints a report only after `effigy qa:docs` succeeds inside the worker thread, so
-the report's arrival proves Effigy's foreground guard started and completed. The
+In the Full Access proof, the worker reported after `effigy qa:docs` succeeded
+inside its thread. The report records that Effigy's foreground guard completed. The
 sandboxed-mode limitation above is Effigy's (its boot identity read); the held
 brief's amendment says Effigy has been told and that running inside a sandbox
 later is its own decision.
@@ -1895,7 +1893,7 @@ owner-only leaf existing before `run.attach` and a launch refusal when it cannot
 be proved; `test/siblings.test.ts` pins one shared sibling checkout per
 repository for a `bb:` host, a second task re-observing it, no change on another
 host, and an occupied path left untouched.
-`effigy proof:bb:sandbox` runs two Claude Code role threads against an isolated
+The pre-cutover proof ran two Claude Code role threads against an isolated
 BB server (the plugin installed into it, `sandboxEnabled` on, Full Access) in a
 real task worktree under the canonical per-repository root. The sibling checkout
 `../sylib` is placed by `WorkspaceProvisioning.ensureSharedSiblingCheckouts` — the
@@ -2055,7 +2053,6 @@ vendored-manifest test is an ordinary unit test over committed files, and `effig
 the opt-in fetch that compares the pin against upstream and opens a rebase.
 
 Proof selectors: `effigy proof:bb` for the private run, `effigy proof:bb:sidebar` for the built bundle's
-install, `effigy proof:bb:install` for the operator install route and the build pin, `effigy
-bb:sidebar-drift` at a planned rebase, the affected unit files for each phase, and `effigy check` plus
+install, `effigy bb:sidebar-drift` at a planned rebase, the affected unit files for each phase, and `effigy check` plus
 `effigy qa:docs` for every phase. No
 phase runs the full suite; milestone QA does that on `main`.
