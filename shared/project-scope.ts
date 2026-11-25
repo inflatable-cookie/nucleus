@@ -1,3 +1,4 @@
+import { normalizeRepositoryOrigin } from "./lanes";
 import { projectNameSchema } from "./schema/projects";
 import { readMigratedValue, type KeyValueStorage } from "./storage-migration";
 import {
@@ -52,11 +53,18 @@ export function projectHasRepository(
   repoPath: string,
   origin?: string | null,
 ): boolean {
-  return project.repositories.some((repo) =>
-    origin && repo.origin
-      ? repo.origin === origin
-      : Boolean(repo.path && repo.path === repoPath),
-  );
+  return project.repositories.some(repo => matchesRepository(repo, repoPath, origin));
+}
+
+export function matchesRepository(
+  repo: Project["repositories"][number],
+  repoPath: string,
+  origin?: string | null,
+): boolean {
+  if (!repo.origin || !origin) return Boolean(repo.path && repo.path === repoPath);
+  if (repo.origin === origin) return true;
+  const canonical = normalizeRepositoryOrigin(repo.origin);
+  return canonical !== null && canonical === normalizeRepositoryOrigin(origin);
 }
 
 /** Whether a record's repository falls inside the selection. Empty selection matches everything. */
