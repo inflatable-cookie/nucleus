@@ -37,8 +37,8 @@ test("folder rules cover processes, public host indexes and host SDK confinement
   for (const [from, to, specifier, expected] of [
     [
       "hosts/paseo/plugin/forwarder.ts",
-      "service/standalone.ts",
-      "../../../service/standalone",
+      "service/runtime-owner.ts",
+      "../../../service/runtime-owner",
       "plugin-forwarder",
     ],
     [
@@ -97,7 +97,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       null,
     ],
     [
-      "service/standalone.ts",
+      "service/runtime-owner.ts",
       "hosts/paseo/index.mjs",
       "../../hosts/paseo/index.mjs",
       null,
