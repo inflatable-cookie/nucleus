@@ -2155,8 +2155,7 @@ which an isolated nightly cannot create while its own ACP probe reports `warning
 and the step order that keeps the archive ahead of every presentation read.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
-and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
-cover the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
+and the pre-cutover Inbox proof covered the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
 tab after every `ui`, a retained healthy tab replaced by the revealed one, a new
 `ui` message served once and a repeated report of it not reopened, ignoring
 non-exact prompts, reopening from a closed or `LoadFailed` pane with a fresh
@@ -2167,11 +2166,9 @@ reported when the queued turn runs), Stop ending a hung open at once, and
 returning to idle immediately when no decisions are offerable while staying held
 when an offerable decision is open.
 
-The existing-Inbox proof (`effigy proof:t3code:inbox -- --existing-only`)
-also closes its private preview, dispatches exact `ui` on the same pinned
-thread and checks both the bounded ACP reply and the newly revealed preview
-tab. It checks the tab against the real private board's origin and records
-the tab ID, runtime and reveal state. A rendered-pane check also observes the
+The existing-Inbox proof also closed its private preview, dispatched exact
+`ui` on the same pinned thread, and observed the bounded ACP reply and newly
+revealed preview. Its evidence includes the board origin, tab ID, runtime and reveal state. A rendered-pane check also observes the
 board in T3's client, since server readback alone cannot show what rendered.
 
 The private proof starts an unmodified checkout of the target nightly revision,
