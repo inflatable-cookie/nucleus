@@ -2054,6 +2054,8 @@ text carries no local paths, no credentials and no private project names.
 The vendored sidebar used a manifest test over committed files and a separate
 opt-in drift check against upstream.
 
-Run `effigy proof:bb:sidebar` to check the built bundle's install. Use the
-affected unit files, `effigy check` and `effigy qa:docs` for each phase.
+The isolated `effigy proof:bb:sidebar` checks the built sidebar and its
+response when the Nucleus service is unavailable. The retained BB channel
+reads service identity without starting a daemon. Use the affected unit files,
+`effigy check` and `effigy qa:docs` for each phase.
 Milestone QA runs the full suite on `main`.

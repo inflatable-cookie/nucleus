@@ -10,7 +10,6 @@
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { realpathSync } from "node:fs";
-import { ensureDaemonForBb } from "../../../shared/service/daemon-launch";
 import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
 import { readNucleusBuild } from "./build-identity";
@@ -331,9 +330,6 @@ export default async function plugin(bb: BbPluginApi) {
       await runHostChannel({
         serviceDataDir,
         operations,
-        ensureDaemon: () => {
-          ensureDaemonForBb({ dataDir: serviceDataDir });
-        },
         onDeclared: (client) => {
           channelClient = client;
           const stopSignal = watchBoardSignal(bb, client);

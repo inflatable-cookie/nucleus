@@ -67,11 +67,6 @@ export interface HostChannelOptions {
    * watcher never outlives the link it reads through.
    */
   onDeclared?: (client: HostChannelClient) => void | (() => void);
-  /**
-   * Best-effort daemon launcher called before reading `queue-service.json`, so
-   * a BB-only machine starts the daemon without Paseo or T3Code present.
-   */
-  ensureDaemon?: () => void;
 }
 
 /** What a declared connection can ask the service, on the same authenticated socket. */
@@ -135,13 +130,6 @@ export async function runHostChannel(options: HostChannelOptions): Promise<void>
   const backoff = options.backoff ?? { minMs: BACKOFF_MIN_MS, maxMs: BACKOFF_MAX_MS };
   let delayMs = backoff.minMs;
   while (!options.signal.aborted) {
-    try {
-      options.ensureDaemon?.();
-    } catch (error) {
-      options.log.warn(
-        `Nucleus daemon launch failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
     const identity = readServiceIdentity(options.serviceDataDir);
     if (!identity) {
       options.log.info(`Nucleus service identity is not readable under ${options.serviceDataDir}; retrying`);
