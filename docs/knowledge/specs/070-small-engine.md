@@ -773,7 +773,7 @@ production Rust delta.
    before the quality pass, in this order:
    - a dependency audit separating the TypeScript code the Rust board reuses from engine-only code, together with
      the parity inventory. For each missing port, record its TypeScript source path and function at
-     `737246d22` and the governing ruling, if one exists. Tom prioritises these ports separately.
+     `737246d22` and the governing ruling, if one exists. The planner lists these ports for Tom to prioritise; they don't block deletion.
      Files the Rust board or its tooling still imports stay in use;
    - retiring `nucleus worktree` (Tom, 2026-11-25: "Yes, retire"). Its only callers are Paseo `paseo.json`
      setup and teardown hooks in consumer repositories, and Paseo is dropped (ruling 5). Rust task checkouts prepare
