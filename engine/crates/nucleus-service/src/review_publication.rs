@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{Service, ServiceError, event, github_accounts::ReviewerCredential};
 
+// Give GitHub time to expose a review whose POST reply was lost.
+const REVIEW_GRACE_MS: i64 = 30_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
     #[error("Choose a reviewer account different from the pull request author.")]
@@ -94,13 +97,14 @@ struct ReviewInput<'a> {
 }
 
 impl ReviewInput<'_> {
-    fn intent(&self, author: NonZeroU64) -> ReviewIntent {
+    fn intent(&self, author: NonZeroU64, pull_author: NonZeroU64) -> ReviewIntent {
         ReviewIntent {
             instance: self.instance.into(),
             pull_url: self.pull.url.clone(),
             head: self.pull.head.clone(),
             decision: self.decision,
             author,
+            pull_author,
             body_digest: self.body.digest.clone(),
         }
     }
@@ -193,13 +197,26 @@ impl Service {
             return Ok(action);
         }
 
-        let publication = if let Some(record) = publication {
-            record
-        } else {
-            let Some(record) = self.start_review(id, target, &request).await? else {
-                return Ok(Action::Wait(WaitReason::Stopping));
-            };
-            record
+        if let Some(record) = &publication {
+            if self
+                .reconcile_review(id, target, record, &request.body)
+                .await?
+            {
+                return self.apply(row, observation, action).await;
+            }
+            // Only a complete, marker-free inventory reaches this point.
+            let age = event("review_publication")
+                .at
+                .saturating_sub(record.recorded_at);
+            if record.outcome != ReviewPublicationOutcome::Pending || age < REVIEW_GRACE_MS {
+                return Err(PublicationError::UnknownDelivery.into());
+            }
+        }
+        let Some(publication) = self
+            .start_review(id, target, &request, publication.as_ref())
+            .await?
+        else {
+            return Ok(Action::Wait(WaitReason::Stopping));
         };
         if !self
             .reconcile_review(id, target, &publication, &request.body)
@@ -215,7 +232,109 @@ impl Service {
         task: &str,
         target: &PullTarget,
         request: &ReviewInput<'_>,
+        previous: Option<&ReviewPublication>,
     ) -> Result<Option<ReviewPublication>, ServiceError> {
+        let (author, selected, reviewer_client) = self.authenticated_reviewer().await?;
+        if previous.is_some_and(|record| record.intent.author != author) {
+            return Err(PublicationError::AccountUnavailable.into());
+        }
+        let pull_author = self
+            .forge
+            .review_preflight(target, &request.pull.head, author, request.decision)
+            .await?;
+        let intent = request.intent(author, pull_author);
+        if previous.is_some_and(|record| record.intent != intent) {
+            return Err(PublicationError::Unverified.into());
+        }
+        let at = event("review_publication").at;
+        {
+            let mut state = self.state.lock().await;
+            if state
+                .settings
+                .dispatch
+                .as_ref()
+                .is_some_and(|settings| settings.mode == DispatchMode::Stopped)
+            {
+                return Ok(None);
+            }
+            self.storage.database().verify()?;
+            if !state
+                .store
+                .claim_review_publication(task, &intent, previous, at)?
+            {
+                return Err(PublicationError::UnknownDelivery.into());
+            }
+        }
+        let mut write = reviewer_client
+            .as_ref()
+            .unwrap_or(&self.forge)
+            .submit_review(target, &binding(&intent), &request.body.text)
+            .await;
+        if matches!(write, ReviewWrite::Unauthenticated)
+            && let Some(credential) = selected.as_ref()
+        {
+            match self
+                .retry_unauthenticated_review(target, &intent, credential, &request.body.text)
+                .await
+            {
+                Ok(Some(retried)) => write = retried,
+                Ok(None) => {
+                    return self
+                        .defer_refused_review(task, &intent, previous.is_some())
+                        .await;
+                }
+                Err(_) if self.dispatch_mode().await == DispatchMode::Stopped => {
+                    return self
+                        .defer_refused_review(task, &intent, previous.is_some())
+                        .await;
+                }
+                Err(error) => {
+                    self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
+                        .await?;
+                    return Err(error);
+                }
+            }
+        }
+        if matches!(write, ReviewWrite::Unauthenticated)
+            && self.dispatch_mode().await == DispatchMode::Stopped
+        {
+            return self
+                .defer_refused_review(task, &intent, previous.is_some())
+                .await;
+        }
+        let outcome = match write {
+            ReviewWrite::Verified(_) if previous.is_some() => ReviewPublicationOutcome::Resubmitted,
+            ReviewWrite::Verified(review) => ReviewPublicationOutcome::Submitted(review.id),
+            ReviewWrite::Unauthenticated | ReviewWrite::AccessRefused => {
+                ReviewPublicationOutcome::AccessRefused
+            }
+            ReviewWrite::Refused => ReviewPublicationOutcome::Refused,
+            ReviewWrite::Unknown => return Err(PublicationError::UnknownDelivery.into()),
+        };
+        self.record_review(task, &intent, outcome).await?;
+        Ok(Some(ReviewPublication {
+            intent,
+            outcome,
+            recorded_at: at,
+        }))
+    }
+
+    async fn defer_refused_review(
+        &self,
+        task: &str,
+        intent: &ReviewIntent,
+        resubmitted: bool,
+    ) -> Result<Option<ReviewPublication>, ServiceError> {
+        if resubmitted {
+            self.record_review(task, intent, ReviewPublicationOutcome::Pending)
+                .await?;
+        }
+        Ok(None)
+    }
+
+    async fn authenticated_reviewer(
+        &self,
+    ) -> Result<(NonZeroU64, Option<ReviewerCredential>, Option<GitHub>), ServiceError> {
         let mut selected = self
             .github_accounts
             .reviewer_credential()
@@ -246,64 +365,7 @@ impl Service {
         {
             return Err(PublicationError::AccountUnavailable.into());
         }
-        let intent = request.intent(user.id);
-        self.forge
-            .review_preflight(target, &binding(&intent))
-            .await?;
-        {
-            let mut state = self.state.lock().await;
-            if state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|settings| settings.mode == DispatchMode::Stopped)
-            {
-                return Ok(None);
-            }
-            self.storage.database().verify()?;
-            if !state.store.claim_review_publication(
-                task,
-                &intent,
-                event("review_publication").at,
-            )? {
-                return Err(PublicationError::UnknownDelivery.into());
-            }
-        }
-        let mut write = reviewer_client
-            .as_ref()
-            .unwrap_or(&self.forge)
-            .submit_review(target, &binding(&intent), &request.body.text)
-            .await;
-        if matches!(write, ReviewWrite::Unauthenticated)
-            && let Some(credential) = selected.as_ref()
-        {
-            match self
-                .retry_unauthenticated_review(target, &intent, credential, &request.body.text)
-                .await
-            {
-                Ok(Some(retried)) => write = retried,
-                Ok(None) => {
-                    self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
-                        .await?;
-                    return Ok(None);
-                }
-                Err(error) => {
-                    self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
-                        .await?;
-                    return Err(error);
-                }
-            }
-        }
-        let outcome = match write {
-            ReviewWrite::Verified(review) => ReviewPublicationOutcome::Submitted(review.id),
-            ReviewWrite::Unauthenticated | ReviewWrite::AccessRefused => {
-                ReviewPublicationOutcome::AccessRefused
-            }
-            ReviewWrite::Refused => ReviewPublicationOutcome::Refused,
-            ReviewWrite::Unknown => return Err(PublicationError::UnknownDelivery.into()),
-        };
-        self.record_review(task, &intent, outcome).await?;
-        Ok(Some(ReviewPublication { intent, outcome }))
+        Ok((user.id, selected, reviewer_client))
     }
 
     // The prior 401 definitively refused the write. Unknown delivery never enters here.
@@ -314,6 +376,9 @@ impl Service {
         credential: &ReviewerCredential,
         body: &str,
     ) -> Result<Option<ReviewWrite>, ServiceError> {
+        if self.dispatch_mode().await == DispatchMode::Stopped {
+            return Ok(None);
+        }
         let refreshed = self.refresh_reviewer(credential).await?;
         let client = self.reviewer_client(&refreshed)?;
         let user = client
@@ -324,7 +389,14 @@ impl Service {
             return Err(PublicationError::AccountUnavailable.into());
         }
         let binding = binding(intent);
-        self.forge.review_preflight(target, &binding).await?;
+        if self
+            .forge
+            .review_preflight(target, &intent.head, intent.author, intent.decision)
+            .await?
+            != intent.pull_author
+        {
+            return Err(PublicationError::Unverified.into());
+        }
         if self.dispatch_mode().await == DispatchMode::Stopped {
             return Ok(None);
         }
@@ -357,18 +429,19 @@ impl Service {
         publication: &ReviewPublication,
         body: &ReviewBody,
     ) -> Result<bool, ServiceError> {
-        use ReviewPublicationOutcome::{AccessRefused, Pending, Refused, Submitted, Verified};
+        use ReviewPublicationOutcome::{
+            AccessRefused, Pending, Refused, Resubmitted, Submitted, Verified,
+        };
 
         let intent = &publication.intent;
         let binding = binding(intent);
         let review = match publication.outcome {
-            Pending => {
+            Pending | Resubmitted => {
                 self.forge
                     .find_review(target, &binding, &body.marker, &body.text)
                     .await?
             }
-            Submitted(id) => Some(self.forge.read_review(target, &binding, id).await?),
-            Verified(id) => Some(
+            Submitted(id) | Verified(id) => Some(
                 self.forge
                     .read_review(target, &binding, id)
                     .await
@@ -460,6 +533,7 @@ impl Service {
 fn binding(intent: &ReviewIntent) -> ReviewBinding<'_> {
     ReviewBinding {
         author: intent.author,
+        pull_author: intent.pull_author,
         head: &intent.head,
         decision: intent.decision,
     }

@@ -89,6 +89,7 @@ fn task_with_approval() -> Task {
 fn pull(head: char, merged: bool) -> Value {
     json!({
         "number": 7, "html_url": PR_URL, "merged": merged,
+        "user": {"id": 11, "login": "fixture-author"},
         "state": if merged { "closed" } else { "open" },
         "merge_commit_sha": if merged { Some(sha('f')) } else { None },
         "head": {"ref": "ns-task-1", "sha": sha(head), "repo": {"full_name": "example/fixture"}},
@@ -809,11 +810,15 @@ async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
     let reviewer = operator.with_review_bearer("reviewer-fixture").unwrap();
     let user = reviewer.authenticated_user().await.unwrap();
     let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
         author: user.id,
         head: &sha('a'),
         decision: Review::Changes,
     };
-    operator.review_preflight(&target, &binding).await.unwrap();
+    operator
+        .review_preflight(&target, binding.head, binding.author, binding.decision)
+        .await
+        .unwrap();
     assert!(matches!(
         reviewer.submit_review(&target, &binding, &body).await,
         ReviewWrite::Unknown
@@ -851,16 +856,21 @@ async fn approval_refuses_the_pull_author_and_a_moved_head_before_the_post() {
     let (operator, thread) = server(vec![Some(same_author), Some(pull('b', false))]);
     let target = branches().target(PR_URL).expect("fixture target");
     let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
         author: 42.try_into().unwrap(),
         head: &sha('a'),
         decision: Review::Approve,
     };
     assert!(matches!(
-        operator.review_preflight(&target, &binding).await,
+        operator
+            .review_preflight(&target, binding.head, binding.author, binding.decision)
+            .await,
         Err(ReviewError::SameAuthor)
     ));
     assert!(matches!(
-        operator.review_preflight(&target, &binding).await,
+        operator
+            .review_preflight(&target, binding.head, binding.author, binding.decision)
+            .await,
         Err(ReviewError::StaleHead)
     ));
     assert!(
@@ -883,6 +893,7 @@ async fn readback_rejects_wrong_id_author_head_or_verdict() {
     ]);
     let target = branches().target(PR_URL).expect("fixture target");
     let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
         author: 42.try_into().unwrap(),
         head: &sha('a'),
         decision: Review::Approve,

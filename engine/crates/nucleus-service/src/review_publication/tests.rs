@@ -13,7 +13,7 @@ use axum::{
 use nucleus_core::{Entry, Question};
 use nucleus_store::{GitHubAccount, Store};
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
 
 use super::*;
 use crate::{
@@ -31,6 +31,8 @@ enum Delivery {
     Saved,
     Lost,
     Denied,
+    StopAtUnauthorized,
+    MissingById,
 }
 
 struct ForgeFixture {
@@ -39,6 +41,8 @@ struct ForgeFixture {
     merged: AtomicBool,
     visible: AtomicBool,
     dismissed: AtomicBool,
+    posted: Notify,
+    respond: Notify,
     posts: Mutex<Vec<(String, Value)>>,
     remote: Mutex<Option<Value>>,
     reads: AtomicUsize,
@@ -53,6 +57,8 @@ impl ForgeFixture {
             merged: AtomicBool::new(false),
             visible: AtomicBool::new(true),
             dismissed: AtomicBool::new(false),
+            posted: Notify::new(),
+            respond: Notify::new(),
             posts: Mutex::default(),
             remote: Mutex::default(),
             reads: AtomicUsize::new(0),
@@ -88,18 +94,31 @@ async fn post_review(
     if matches!(remote.delivery, Delivery::Denied) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    if matches!(remote.delivery, Delivery::StopAtUnauthorized) {
+        remote.posted.notify_one();
+        remote.respond.notified().await;
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = match input["event"].as_str() {
+        Some("COMMENT") => "COMMENTED",
+        Some("APPROVE") if id != remote.author => "APPROVED",
+        Some("REQUEST_CHANGES") if id != remote.author => "CHANGES_REQUESTED",
+        _ => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+    };
     let review = json!({
         "id": 17,
         "user": {"id": id, "login": "review-fixture"},
         "commit_id": input["commit_id"],
-        "state": if input["event"] == "APPROVE" { "APPROVED" } else { "CHANGES_REQUESTED" },
+        "state": state,
         "body": input["body"],
     });
     *remote.remote.lock().unwrap() = Some(review.clone());
     match remote.delivery {
-        Delivery::Saved => (StatusCode::CREATED, Json(review)).into_response(),
+        Delivery::Saved | Delivery::MissingById => {
+            (StatusCode::CREATED, Json(review)).into_response()
+        }
         Delivery::Lost => StatusCode::BAD_GATEWAY.into_response(),
-        Delivery::Denied => unreachable!(),
+        Delivery::Denied | Delivery::StopAtUnauthorized => unreachable!(),
     }
 }
 
@@ -119,6 +138,9 @@ async fn read_review(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     assert_eq!(bearer(&headers), OPERATOR);
+    if matches!(remote.delivery, Delivery::MissingById) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let Some(mut review) = remote.remote.lock().unwrap().clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -236,6 +258,20 @@ async fn record_report(service: &Service, decision: Review) -> String {
     instance
 }
 
+fn restart_service(service: Service) -> Service {
+    let project = service.fixture().clone();
+    drop(service.state);
+    Service::open(
+        &service.settings,
+        project,
+        service.host,
+        service.forge,
+        service.callback,
+        service.report_command,
+    )
+    .unwrap()
+}
+
 async fn advance(service: &Service) -> Result<Action, ServiceError> {
     let row = service.task(TASK).await.unwrap();
     service.advance(&row, &service.host.fixture_pass()).await
@@ -291,24 +327,26 @@ async fn formal_review_reconciles_once_under_the_original_account_and_fences_mer
 
 #[tokio::test]
 async fn formal_changes_use_installed_gh_when_unset_and_keep_findings() {
-    let remote = ForgeFixture::new(10, Delivery::Saved);
-    let (_home, service, server) = create_service(&remote).await;
-    let instance = record_report(&service, Review::Changes).await;
-    assert_eq!(
-        advance(&service).await.unwrap(),
-        Action::Advance(Phase::Working)
-    );
-    let posts = remote.posts.lock().unwrap();
-    assert_eq!(posts.len(), 1);
-    let (bearer, input) = &posts[0];
-    assert_eq!(bearer, OPERATOR);
-    assert_eq!(input["event"], "REQUEST_CHANGES");
-    assert_eq!(input["commit_id"], json!(service.fixture().start));
-    let body = input["body"].as_str().unwrap();
-    assert!(body.contains("Synthetic summary"));
-    assert!(body.contains("- Add coverage"));
-    assert!(body.contains(&digest(&instance)));
-    server.abort();
+    for (author, expected) in [(10, "REQUEST_CHANGES"), (11, "COMMENT")] {
+        let remote = ForgeFixture::new(author, Delivery::Saved);
+        let (_home, service, server) = create_service(&remote).await;
+        let instance = record_report(&service, Review::Changes).await;
+        assert_eq!(
+            advance(&service).await.unwrap(),
+            Action::Advance(Phase::Working)
+        );
+        let posts = remote.posts.lock().unwrap();
+        assert_eq!(posts.len(), 1);
+        let (bearer, input) = &posts[0];
+        assert_eq!(bearer, OPERATOR);
+        assert_eq!(input["event"], expected);
+        assert_eq!(input["commit_id"], json!(service.fixture().start));
+        let body = input["body"].as_str().unwrap();
+        assert!(body.contains("Synthetic summary"));
+        assert!(body.contains("- Add coverage"));
+        assert!(body.contains(&digest(&instance)));
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -355,5 +393,118 @@ async fn an_external_merge_with_only_a_pending_report_requires_source_acceptance
     ));
     assert!(service.task(TASK).await.unwrap().task.verdict().is_none());
     assert!(remote.posts.lock().unwrap().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absence() {
+    let remote = ForgeFixture::new(10, Delivery::Lost);
+    remote.visible.store(false, Ordering::Relaxed);
+    let (_home, mut service, server) = create_service(&remote).await;
+    let instance = record_report(&service, Review::Approve).await;
+    let row = service.task(TASK).await.unwrap();
+    let body = review_body(row.task.run().unwrap(), "Synthetic summary", &[]);
+    let intent = ReviewIntent {
+        instance: instance.clone(),
+        pull_url: forge_pull(&service.fixture().start)["html_url"]
+            .as_str()
+            .unwrap()
+            .into(),
+        head: service.fixture().start.clone(),
+        decision: Review::Approve,
+        author: NonZeroU64::new(11).unwrap(),
+        pull_author: NonZeroU64::new(10).unwrap(),
+        body_digest: body.digest,
+    };
+    let mut state = service.state.lock().await;
+    let at = event("fixture").at - REVIEW_GRACE_MS;
+    assert!(
+        state
+            .store
+            .claim_review_publication(TASK, &intent, None, at)
+            .unwrap()
+    );
+    drop(state);
+    service = restart_service(service);
+    assert!(remote.posts.lock().unwrap().is_empty());
+    for _ in 0..2 {
+        assert!(matches!(
+            advance(&service).await,
+            Err(ServiceError::ReviewPublication(
+                PublicationError::UnknownDelivery
+            ))
+        ));
+        service = restart_service(service);
+        let state = service.state.lock().await;
+        let record = state
+            .store
+            .review_publication(TASK, &instance)
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.intent, intent);
+        assert_eq!(record.outcome, ReviewPublicationOutcome::Resubmitted);
+    }
+    assert_eq!(remote.reads.load(Ordering::Relaxed), 2);
+    remote.visible.store(true, Ordering::Relaxed);
+    assert_eq!(
+        advance(&service).await.unwrap(),
+        Action::Advance(Phase::Merging)
+    );
+    let posts = remote.posts.lock().unwrap();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].0, OPERATOR);
+    assert_eq!(
+        posts[0].1,
+        json!({"body":body.text, "event":"APPROVE","commit_id":intent.head})
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn dispatch_stopped_after_unauthorized_post_keeps_the_claim_pending() {
+    let remote = ForgeFixture::new(10, Delivery::StopAtUnauthorized);
+    let (_home, service, server) = create_service(&remote).await;
+    select_reviewer(&service, 42, "selected-reviewer");
+    let instance = record_report(&service, Review::Approve).await;
+    let (result, ()) = tokio::join!(advance(&service), async {
+        remote.posted.notified().await;
+        service
+            .state
+            .lock()
+            .await
+            .settings
+            .dispatch
+            .get_or_insert_with(Default::default)
+            .mode = DispatchMode::Stopped;
+        remote.respond.notify_one();
+    });
+    assert_eq!(result.unwrap(), Action::Wait(WaitReason::Stopping));
+    let store = Store::open(&service.storage).unwrap();
+    assert_eq!(
+        store
+            .review_publication(TASK, &instance)
+            .unwrap()
+            .unwrap()
+            .outcome,
+        ReviewPublicationOutcome::Pending
+    );
+    assert_eq!(remote.posts.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn missing_submitted_review_gives_unverified_attention() {
+    let remote = ForgeFixture::new(10, Delivery::MissingById);
+    let (_home, service, server) = create_service(&remote).await;
+    record_report(&service, Review::Approve).await;
+    for _ in 0..2 {
+        assert!(matches!(
+            advance(&service).await,
+            Err(ServiceError::ReviewPublication(
+                PublicationError::Unverified
+            ))
+        ));
+    }
+    assert_eq!(remote.posts.lock().unwrap().len(), 1);
     server.abort();
 }

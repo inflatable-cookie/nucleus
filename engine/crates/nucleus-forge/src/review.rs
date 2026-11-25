@@ -19,6 +19,7 @@ pub struct AuthenticatedGitHubUser {
 /// The authenticated reviewer and exact verdict this request may operate on.
 pub struct ReviewBinding<'a> {
     pub author: NonZeroU64,
+    pub pull_author: NonZeroU64,
     pub head: &'a Head,
     pub decision: Review,
 }
@@ -60,16 +61,18 @@ struct WireReview {
 }
 
 impl ReviewBinding<'_> {
-    const fn event(&self) -> &'static str {
+    fn event(&self) -> &'static str {
         match self.decision {
             Review::Approve => "APPROVE",
+            Review::Changes if self.author == self.pull_author => "COMMENT",
             Review::Changes => "REQUEST_CHANGES",
         }
     }
 
-    const fn state(&self) -> &'static str {
+    fn state(&self) -> &'static str {
         match self.decision {
             Review::Approve => "APPROVED",
+            Review::Changes if self.author == self.pull_author => "COMMENTED",
             Review::Changes => "CHANGES_REQUESTED",
         }
     }
@@ -122,19 +125,19 @@ impl GitHub {
     pub async fn review_preflight(
         &self,
         target: &PullTarget,
-        binding: &ReviewBinding<'_>,
-    ) -> Result<(), ReviewError> {
+        head: &Head,
+        reviewer: NonZeroU64,
+        decision: Review,
+    ) -> Result<NonZeroU64, ReviewError> {
         let pull = self.pull(target).await?;
-        if pull.state != PullState::Open || pull.merged || pull.head.sha != *binding.head {
+        if pull.state != PullState::Open || pull.merged || pull.head.sha != *head {
             return Err(ReviewError::StaleHead);
         }
-        if binding.decision == Review::Approve {
-            let author = pull.user.ok_or(ForgeError::Incomplete)?;
-            if author.id == binding.author {
-                return Err(ReviewError::SameAuthor);
-            }
+        let author = pull.user.ok_or(ForgeError::Incomplete)?.id;
+        if decision == Review::Approve && reviewer == author {
+            return Err(ReviewError::SameAuthor);
         }
-        Ok(())
+        Ok(author)
     }
 
     /// Submit one review after the caller has durably claimed this exact intent.

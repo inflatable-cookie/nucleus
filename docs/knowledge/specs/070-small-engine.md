@@ -517,11 +517,14 @@ Later decisions carry their own attribution.
     - The engine publishes the reviewer's verdict itself, as a formal GitHub
       review (approve or request changes) at the exact reviewed head, using the
       reviewer account. A reviewer account distinct from the PR author lets a
-      review approve.
+      review approve. When the reviewer is the PR author, a changes verdict
+      uses a comment review with the same findings. Approval requires a different author.
     - Nucleus records one publication intent for the authenticated reviewer run,
       with the PR, head, verdict, findings digest and effective GitHub user ID.
       An uncertain POST is reconciled from the original marker by the operator
-      credential. Nucleus verifies the review ID, author, head, state and body
+      credential. After 30 seconds, a complete inventory without the marker
+      permits one journaled resubmission with the original identity, body and marker.
+      Further uncertain delivery uses readback. Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.
     - An account is added through an OAuth sign-in from Settings, and its token
