@@ -219,7 +219,9 @@ when to ask the planner.
 
 Verify source and participants before the destructive step. Remove a task
 worktree only after the current clean Git status and a quiet process and native
-participant observation. A dirty checkout, unknown status or surviving needed
+participant observation. The task and project fences cover removal. Verify the Git registration and head, then check Dispatch and shell writers together
+immediately before running the unforced removal.
+A dirty checkout, unknown status or surviving needed
 source remains in custody. Once the worktree is removed, archive the known idle
 threads from the held shell. Already archived, absent and deleted threads count
 as settled. An active thread waits. See [Spec 070 rulings 34 and 35](../specs/070-small-engine.md#rulings)
