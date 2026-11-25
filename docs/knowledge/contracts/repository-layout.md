@@ -218,7 +218,7 @@ remains `server/service/local-client.mjs`. Pure review text lives in
 `shared/review-text.ts`.
 
 `service/host-environment.mjs` still supplies environment values to the
-remaining TypeScript standalone entry and fixture spawners. The archived Paseo
+remaining TypeScript runtime fixtures. The archived Paseo
 code under `hosts/paseo/` keeps its adapter, forwarding and client code in
 separate directories.
 

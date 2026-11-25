@@ -745,23 +745,10 @@ owner to the rules it enforces.
 
 ## Service boundary
 
-Nucleus runs as a persistent standalone service
-([Contract 007](contracts/service-boundary.md),
-[Spec 013](specs/013-standalone-queue-service.md)): `service/runtime-owner.ts`
-owns it. `shared/service/` holds the framed protocol and authenticated client,
-`service/` owns the sockets, and `hosts/paseo/plugin/` holds the thin bridge.
-`bin/queue-service.mjs` is the executable. Plugin reload doesn't stop it; an incompatible build or host
-session change drains and replaces it. Any spawn while an owner pid is alive
-starts as a standby for it, and opens the store the bridge already selected
-(`--data-dir`). `queue.service-state` reports the
-bridge state. Activation of `current` and installer entrypoints is a roll
-step on the bridge, retried each check, not gated on connect. A failed
-activation stays `retrying` with the error in detail until it succeeds, and
-`rolled` waits until the service answers the target build.
-
-The native bridge fetches only the active view's bounded projection: revisioned
-board state, one-task detail on selection, and telemetry or configuration on
-those views. `queue.snapshot` is a paged compatibility read, not a UI source.
+The [Rust service](../../engine/README.md#service-pass) owns scheduling, the
+local JSON API, browser pairing and the wake loop. It serves board projections
+and invalidations to the browser through the current engine endpoints.
+Remaining TypeScript service modules are from the stopped engine.
 
 ## Repository layout
 
