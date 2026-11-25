@@ -934,8 +934,12 @@ plan or lane and the returned version for the next edit. `lane.status` updates
 the disposition independently. The browser keeps the selected project with the
 lane key on document reads, edits and status actions. Lane keys can repeat
 across projects. `item.list` and `decision.list` read the current records.
-Answering a decision requires an operator binding and an explicit project. A decision that belongs to a task question accepts one answer for the
-bound task version, then wakes the ordinary answer path.
+New decisions require at least two options with distinct IDs and labels.
+Labels are compared after trimming. The board retains each option's ID from
+the read through the answer, including older decisions whose labels repeat.
+Answering requires an operator binding and an explicit project. A decision
+that belongs to a task question accepts one answer for the bound task version,
+then wakes the ordinary answer path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item
 body and commits the task, source link and item history together. If promotion

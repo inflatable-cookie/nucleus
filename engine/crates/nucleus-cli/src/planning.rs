@@ -2,7 +2,7 @@ use std::{io, path::PathBuf};
 
 use clap::Subcommand;
 use nucleus_core::{Head, profiles::Complexity};
-use nucleus_store::planning::{DecisionOption, MAX_TEXT_BYTES, PlanLane, valid_key};
+use nucleus_store::planning::{DecisionInput, DecisionOption, MAX_TEXT_BYTES, PlanLane, valid_key};
 use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
@@ -368,11 +368,13 @@ impl Action {
             ),
             A::DecisionAdd { args, options } => {
                 let (project, [question]) = project_and_args(args)?;
+                let input = DecisionInput { question, options };
+                input.validate()?;
                 (
                     Method::POST,
                     project,
                     "decisions".into(),
-                    Some(json!({ "question": question, "options": options })),
+                    Some(serde_json::to_value(input)?),
                 )
             }
             A::DecisionAnswer {
@@ -453,6 +455,41 @@ mod tests {
 
     use super::Action as Planning;
     use crate::{Action, Cli};
+
+    #[test]
+    fn decision_add_requires_distinct_labels_after_trimming() {
+        let parse = |last: &str| {
+            let parsed = Cli::try_parse_from([
+                "nucleus",
+                "decision.add",
+                "Choose a route",
+                "--option",
+                "one=Same",
+                "--option",
+                "two=Other",
+                "--option",
+                "three=Third",
+                "--option",
+                last,
+            ])
+            .expect("valid CLI arguments");
+            let Action::Planning(action) = parsed.action else {
+                panic!("planning command")
+            };
+            action.request()
+        };
+        assert_eq!(
+            parse("four= Same ").unwrap_err().to_string(),
+            "decision option labels must be distinct"
+        );
+        assert_eq!(
+            parse("four=Fourth").unwrap().2.unwrap()["options"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+    }
 
     #[test]
     fn project_tell_cli_uses_the_planner_endpoint() {
