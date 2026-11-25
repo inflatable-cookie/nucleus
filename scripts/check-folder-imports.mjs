@@ -59,7 +59,7 @@ export function edgeRule(from, target, specifier) {
   if (a.startsWith('host-client:')) return b === 'shared' || a === b || b === 'client' ? null : 'host-client';
   if (a === 'client') return b === 'shared' || b === 'client' ? null : 'client-neutral';
   if (a === 'service') return b.startsWith('host:') && !/^hosts?\/[^/]+\/index\.(?:ts|mjs)$/.test(target) ? 'host-public-index' : b.startsWith('plugin:') || b.startsWith('host-client:') || b === 'client' ? 'service-process' : null;
-  if (a === 'bin') return b === 'bin' || b === 'shared' || /^service\/transport\/index\.(?:ts|mjs|js)$/.test(target) ? null : 'cli-transport';
+  if (a === 'bin') return b === 'bin' || b === 'shared' ? null : 'cli-transport';
   return null;
 }
 

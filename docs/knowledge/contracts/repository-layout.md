@@ -182,9 +182,6 @@ backup sources. Installed backup worker and CLI entries remain under `server/`.
 
 `core/planning/` owns planning records, operations and briefs;
 `core/questions/` owns asks, messages, questions and their delegation policies.
-The review-entry CLI prepares its lead source through the local
-`service/transport/index.mjs` seam. Workspace preparation goes through service
-admission and core review-entry identity on the selected host.
 The runtime owner supplies operations with the synchronous build-identity getter.
 
 ## Migration invariants
