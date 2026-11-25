@@ -74,7 +74,7 @@ const repository = z.object({
   hostProjectTitle: z.string().optional(),
   plannerThreads: z.array(z.string()).optional(),
 }).loose();
-const project = z.object({
+export const project = z.object({
   plannerClaim: z.object({ thread: z.string(), occurrence: z.string(), replaced: z.string().optional() }).optional(),
   name: z.string(),
   archived: z.boolean(),
@@ -148,6 +148,16 @@ export const allSettings = z.object({
   projects: projectsView,
   hosts: hostsView,
   storage: storageView,
+});
+// Whole-domain edits still use the strict domain snapshots above. Board reads
+// decode the individual records so one invalid row can be reported in place.
+const boardSettings = allSettings.extend({
+  projects: projectsView.extend({
+    settings: snapshot(projects.extend({ projects: z.record(z.string(), z.unknown()) })),
+  }),
+  profiles: profilesSnapshot.extend({
+    value: profiles.extend({ profiles: z.array(z.unknown()) }),
+  }),
 });
 const browserSession = z.object({
   id: z.string(),
@@ -282,7 +292,7 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
   return {
     board,
     session: () => board.read(browserSession, "/session"),
-    settings: () => board.read(allSettings, "/settings"),
+    settings: () => board.read(boardSettings, "/settings"),
     domain: <T>(schema: z.ZodType<T>, domain: SettingsDomain) =>
       board.read(schema, `/settings/${domain}`),
     saveDomain: <T>(
