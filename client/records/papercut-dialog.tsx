@@ -38,6 +38,7 @@ const papercutCloseReason = (cut: Papercut) =>
 /** The papercut detail dialog. It owns its edit form, chosen complexity and close note. */
 export function PapercutDialog({
   id: openPapercutId,
+  project,
   compact,
   busy,
   act,
@@ -50,6 +51,7 @@ export function PapercutDialog({
 }: {
   inline?: boolean;
   id: string;
+  project?: string;
   compact: boolean;
   busy: boolean;
   act: BoardAct;
@@ -60,6 +62,7 @@ export function PapercutDialog({
   c: Colors;
 }) {
   const live = useContext(BoardLiveContext);
+  const scope = project ? { project } : {};
   const fetchPapercut = useRpc(api.papercutGet),
     editPapercut = useRpc(api.papercutEdit),
     promotePapercut = useRpc(api.papercutPromoteTask),
@@ -81,8 +84,8 @@ export function PapercutDialog({
     fix: "",
   });
   const papercutDetailQuery = useQuery({
-    queryKey: ["nucleus", "papercut", openPapercutId],
-    queryFn: () => fetchPapercut({ id: openPapercutId! }),
+    queryKey: ["nucleus", "papercut", openPapercutId, project],
+    queryFn: () => fetchPapercut({ ...scope, id: openPapercutId! }),
     enabled: Boolean(openPapercutId),
     refetchInterval: live ? false : 4000,
   });
@@ -316,6 +319,7 @@ export function PapercutDialog({
                     onPress={() =>
                       void act(async () => {
                         const result = await promotePapercut({
+                          ...scope,
                           id: papercutDetail.id,
                           board: true,
                           complexity: papercutComplexity!,
@@ -364,6 +368,7 @@ export function PapercutDialog({
                     onPark={(reason, revisitAt) =>
                       void act(async () => {
                         await parkLead({
+                          ...scope,
                           id: papercutDetail.id,
                           version: papercutDetail.version,
                           reason,
@@ -452,6 +457,7 @@ export function PapercutDialog({
                       onPress={() =>
                         void act(async () => {
                           await closePapercut({
+                            ...scope,
                             id: papercutDetail.id,
                             reason: "completed",
                             note: closeNote,
@@ -472,6 +478,7 @@ export function PapercutDialog({
                       onPress={() =>
                         void act(async () => {
                           await closePapercut({
+                            ...scope,
                             id: papercutDetail.id,
                             reason: "deprecated",
                             note: closeNote,

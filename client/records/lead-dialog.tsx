@@ -20,6 +20,7 @@ import { RecordModal } from "./record-modal";
  */
 export function LeadDialog({
   id: selectedLeadId,
+  project,
   lane: leadLane,
   compact,
   busy,
@@ -30,6 +31,7 @@ export function LeadDialog({
 }: {
   inline?: boolean;
   id: string;
+  project?: string;
   lane: { key: string; title: string } | null;
   compact: boolean;
   busy: boolean;
@@ -38,6 +40,7 @@ export function LeadDialog({
   c: Colors;
 }) {
   const live = useContext(BoardLiveContext);
+  const scope = project ? { project } : {};
   const fetchLead = useRpc(api.leadGet),
     dropLead = useRpc(api.leadDrop),
     checkLead = useRpc(api.leadCheck),
@@ -49,8 +52,8 @@ export function LeadDialog({
   const parkLead = useRpc(api.leadPark),
     unparkLead = useRpc(api.leadUnpark);
   const leadDetailQuery = useQuery({
-    queryKey: ["nucleus", "lead", selectedLeadId],
-    queryFn: () => fetchLead({ id: selectedLeadId! }),
+    queryKey: ["nucleus", "lead", selectedLeadId, project],
+    queryFn: () => fetchLead({ ...scope, id: selectedLeadId! }),
     enabled: Boolean(selectedLeadId),
     refetchInterval: live ? false : 4000,
   });
@@ -88,6 +91,7 @@ export function LeadDialog({
         onPromote: (origin) =>
           leadAct(async () => {
             const result = await promoteLead({
+              ...scope,
               id: leadDetail.id,
               repository: origin,
               board: true,
@@ -99,7 +103,7 @@ export function LeadDialog({
           }),
         onDrop: (reason) =>
           leadAct(async () => {
-            await dropLead({ id: leadDetail.id, reason });
+            await dropLead({ ...scope, id: leadDetail.id, reason });
             return "Dropped.";
           }),
         onReopen: (reason) =>
@@ -114,6 +118,7 @@ export function LeadDialog({
         onPark: (reason, revisitAt) =>
           leadAct(async () => {
             await parkLead({
+              ...scope,
               id: leadDetail.id,
               version: leadDetail.version,
               reason,
