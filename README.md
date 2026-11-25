@@ -1,12 +1,11 @@
 # Nucleus
 
-Nucleus is a local service that runs agent coding tasks end to end. Each task
-gets one worker in its own worktree. A separate reviewer checks the PR at its
-exact head, mechanical gates merge it, local `main` is synced, and closeout
-follows. Tasks survive restarts. Side effects are reconciled from evidence,
-never retried blindly. Nucleus carries out approved work; it doesn't plan it,
-and nothing merges without review of the exact head (or the
-operator's recorded acceptance of it).
+Nucleus is a local service that runs approved agent coding tasks end to end. A
+worker uses its own worktree and an independent reviewer checks the PR at its
+exact head. The engine applies the [exact-head merge and acceptance gates](docs/knowledge/contracts/orchestration.md#merge-gates)
+and closes the task. Report-only tasks deliver a lane artifact for planner
+acceptance. Tasks survive restarts, and the engine uses recorded evidence to
+reconcile side effects.
 
 T3Code connects to the engine through its host interface, and the board runs in
 a local browser. Nucleus is trusted local software with access to the agent's
@@ -35,8 +34,7 @@ is the archived TypeScript release for macOS on Apple silicon.
 3. **Resume and submit.** Resume from the board header. Agents submit approved
    work through the queue and then steer it; the
    [Nucleus skill](skills/nucleus/SKILL.md) teaches planning, submission,
-   owner verbs and review entry. Every task runs the responsible lifecycle on
-   its own: worker, reviewer, merge gates and recovery.
+   task controls and review entry.
 
 ## Where to read more
 
@@ -54,8 +52,7 @@ is the archived TypeScript release for macOS on Apple silicon.
   records, briefs and leads, submission, owner verbs, review entry, and report-only milestone QA.
 - [Operations](docs/knowledge/operations/restore.md) — restore a verified
   engine store snapshot.
-- [Open questions](docs/knowledge/questions.md) — what is deliberately
-  undecided.
+- [Open questions and historical rulings](docs/knowledge/questions.md).
 
 ## T3: one row per task
 
@@ -87,7 +84,7 @@ thread (open it from the row) or goes through Nucleus's own routes.
 From a checkout:
 
 ```sh
-npm install
+effigy setup        # install the locked browser and test dependencies
 effigy check        # typecheck and the publication gate
 effigy qa:docs      # docs checks
 effigy tasks        # task inventory

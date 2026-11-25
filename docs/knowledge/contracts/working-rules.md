@@ -9,12 +9,12 @@ order); leads, tasks, briefs, status and outcomes live in Nucleus too, never in
 this repository. A lead is not execution authority. Board observations and
 triage notes are not a backlog to invent from (2026-09-16).
 
-The planner owns operator intake, planning rulings and plan and knowledge
-updates. The plugin owns mechanical task management. Workers do not spawn
-replacement orchestration planes or merge their own PRs. A blocker is the
-worker's to own, with the retained reviewer as its second opinion and the
-Spec 058 planner ladder beyond that; only operator-only kinds reach Tom.
-Removing a blocked task is not a resolution.
+The planner owns operator intake, planning rulings and updates to the plan
+and knowledge. The engine owns mechanical reconciliation and merge. Workers
+stay in their assigned task and leave merging to the engine. The worker owns
+in-scope blockers and asks the task's planner through the assigned route. A blocked task remains owned until an
+available command settles it or its owner explicitly disposes of it. See the
+[orchestration contract](orchestration.md).
 
 Nucleus-side defects are diagnosed against code and promoted to concrete fixes;
 an existing supported recovery may settle an observation. Capacity, settings,
@@ -48,11 +48,12 @@ for identity. Match messages by structured cause, never by prefix. A refusal
 needs an exit that can make its condition false; existence of a run,
 completion or hold is not the thing's role or status.
 
-Small planning edits (plan, spec or contract wording) are committed straight to
-`main` once `effigy qa:docs` passes; code and anything needing review goes
-through a Nucleus task and its PR. Briefs start as checked, approved leads. Never
-edit a submitted brief: clarify in the owning spec, or resubmit and supersede
-the task.
+Small spec or contract wording edits may go straight to `main` after
+`effigy qa:docs` passes. Code and changes needing review go through a Nucleus
+task and its PR. The planner can admit an approved brief directly or promote
+a lead or papercut. The [Nucleus skill](../../../skills/nucleus/SKILL.md#planning-and-tasks)
+shows both routes. Keep a submitted brief intact. Clarify in the owning spec,
+or resubmit and supersede the task.
 
 Record recurring solvable friction as a Nucleus papercut (`nucleus item.add [PROJECT] papercut TITLE`) without
 making it an unplanned implementation task. Validate through Effigy; keep npm

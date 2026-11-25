@@ -21,8 +21,9 @@ Product documentation lives outside `docs/knowledge/`:
 | Product docs | Location |
 | --- | --- |
 | Project front page: what Nucleus is, install, getting started | [README.md](../../README.md) |
+| Rust installation, board pairing and T3 setup | [engine/README.md](../../engine/README.md) |
 | The Nucleus skill for planners and workers | [skills/nucleus/SKILL.md](../../skills/nucleus/SKILL.md) |
 
-Nucleus reads pre-v5 control manifests (v1–v4) for consumer repositories whose
-hook schemas predate brief mode; brief tasks refuse them. A Queue-held brief is
-the only instruction route; committed handoffs are retired (nucleus#1368).
+For approval and task admission, see the [held brief and instruction contract](contracts/orchestration.md#submission-and-instruction-source).
+[Spec 070](specs/070-small-engine.md) governs the Rust engine. Use older specs
+as design and migration evidence for their original implementations.

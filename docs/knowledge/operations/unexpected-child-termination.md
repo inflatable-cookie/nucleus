@@ -4,7 +4,9 @@ Status: assessed; sender unknown (2026-10-24)
 Tracking record: Nucleus papercut `3fdb066a-d012-4729-bf6a-03e943501c50`
 "Unexpected child termination under load has no proven sender" (v5). The
 papercut keeps the history and stays the owning record; this document bounds
-what its evidence can and cannot establish.
+what its evidence can and cannot establish. The named Nucleus TypeScript paths
+describe this investigation. The [Rust custody contract](../contracts/orchestration.md#owned-tool-evidence)
+owns current process evidence.
 
 This is a source and retained-evidence reconciliation. It claims no cause, adds
 no Nucleus logger, guard, proof tuple or process-control code, and authorizes no
@@ -48,14 +50,14 @@ detail command exposes the last 100 events (`core/store/store.ts:2165`), so the
 ## What is excluded, and what stays open
 
 - **Nucleus producer paths.** For the recorded windows in row 7, Nucleus's sweeps,
-  host-run cancel/timeout and hook termination are excluded. Today's Nucleus
-  signals are identity-scoped in source: the terminal sweep signals proven
+  host-run cancel/timeout and hook termination are excluded. The TypeScript
+  Nucleus signal paths inspected for the audit were identity-scoped: the terminal sweep signals proven
   recorded groups and per-PID targets after a start-identity check
   (`core/machine/host-process-reap.ts`), hooks signal the occurrence's recorded group
   (`core/hooks/hooks.ts`), and milestone QA stops its own step group then reaps its
   own escapees per PID with a re-proven identity
-  ([spec 035](../specs/035-host-run-scheduler.md)). That is the **current**
-  shape, not proof about 2026-10-20.
+  ([spec 035](../specs/035-host-run-scheduler.md)). That later source audit does
+  not identify a sender on 2026-10-20.
 - **Effigy 0.14.1 candidate paths.** Real code, unproven involvement. The
   retained signature (four session groups killed, the binary untouched) is
   inconsistent with a `signal_targets_for_child` group kill rooted at an
@@ -97,15 +99,16 @@ producer already has an owning record:
 - **Effigy** owns signal routing and delivery evidence for the runs it spawns:
   contract 052 K9 (one signal router), K6 (custody closure) and §5.7's
   `StopReport.signals`, which lists only signals that process actually sent.
-- **Nucleus** owns its own terminations and records them: spec 035 for host runs
-  and milestone QA, [spec 004](../specs/004-trusted-host-hook-runners.md) for
-  hook occurrences, plus the terminal sweep's recorded facts.
+- **Nucleus** owns the evidence of its own terminations. The TypeScript audit
+  read spec 035, [spec 004](../specs/004-trusted-host-hook-runners.md) and
+  the terminal sweep records. Current custody follows the
+  [Rust orchestration contract](../contracts/orchestration.md#terminal-participant-liveness).
 - **Nothing** owns an agent's or a stray tool's signal, which is the actual gap.
 
 So the smallest place to add attribution is the producer's own record, not a
-new Nucleus facility and not a whole-host tracer. The 0.14.1 binary predates that
-record shape (verified: no `StopReport`/`SignalDelivered` at `v0.14.1`), so an
-occurrence on the installed binary cannot be attributed from it today.
+new Nucleus facility and not a whole-host tracer. The released 0.14.1 binary inspected during the audit predates the
+`StopReport` and `SignalDelivered` records. Its evidence could not identify
+this occurrence.
 
 ## Future observation, if a reproduction happens
 

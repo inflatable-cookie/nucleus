@@ -1,25 +1,27 @@
 # Specs
 
-Detailed design for Nucleus: how each capability behaves, its edge cases and its
-acceptance oracle. A spec stays the owner of its design after it is
-implemented; the contracts summarise the durable rules and link here.
+[Spec 070](070-small-engine.md) governs the running Rust engine. Start there
+for current lifecycle, authority and host behavior. The [contracts](../contracts/README.md)
+and [Nucleus skill](../../../skills/nucleus/SKILL.md) give current operating
+instructions. The table preserves each spec's delivery record for the
+implementation it describes.
 
-| Spec | Status |
+| Spec | Delivery record or current role |
 | --- | --- |
-| [001 — Generic repository hooks](001-generic-repository-hooks.md) | implemented |
-| [002 — Durable hook retry and isolated integration writes](002-durable-hook-retry-and-isolated-writes.md) | implemented; isolated integration writes to be retired (R5) |
+| [001 — Generic repository hooks](001-generic-repository-hooks.md) | TypeScript implementation. Rust merge follows Spec 070 ruling 13. |
+| [002 — Durable hook retry and isolated integration writes](002-durable-hook-retry-and-isolated-writes.md) | TypeScript implementation. Rust merge follows Spec 070 ruling 13. |
 | [003 — Post-dispatch task disposition](003-post-dispatch-task-disposition.md) | implemented |
 | [004 — Trusted host hook runners](004-trusted-host-hook-runners.md) | retired 2026-11-08; hooks name host tools without an approval registry |
 | [005 — Nucleus lifecycle telemetry](005-queue-telemetry.md) | implemented |
 | [006 — Terminal closeout projection convergence](006-terminal-closeout-projection-convergence.md) | implemented |
-| [007 — Reviewed-head pre-merge hooks](007-reviewed-head-pre-merge-hooks.md) | implemented |
-| [008 — Bounded worker checkpoint continuation](008-bounded-worker-checkpoint-continuation.md) | implemented |
+| [007 — Reviewed-head pre-merge hooks](007-reviewed-head-pre-merge-hooks.md) | TypeScript implementation. Current required checks belong to GitHub under Spec 070 ruling 13. |
+| [008 — Bounded worker checkpoint continuation](008-bounded-worker-checkpoint-continuation.md) | TypeScript implementation retired by Spec 070 ruling 28. |
 | [009 — Shared telemetry snapshot and metric repair](009-shared-telemetry-snapshot-and-metric-repair.md) | implemented |
 | [010 — Automatic exact-identity hook replay](010-automatic-exact-identity-hook-replay.md) | implemented |
 | [011 — Reviewer calibration telemetry](011-reviewer-calibration-telemetry.md) | implemented |
 | [012 — Durable asynchronous Nucleus operations](012-durable-asynchronous-operations.md) | implemented |
-| [013 — Standalone Nucleus service and thin Paseo bridge](013-standalone-queue-service.md) | implemented |
-| [015 — Prospective-merge pre-merge hooks](015-prospective-merge-pre-merge-hooks.md) | implemented |
+| [013 — Standalone Nucleus service and thin Paseo bridge](013-standalone-queue-service.md) | TypeScript service and Paseo bridge history. The Rust service boundary owns current transport. |
+| [015 — Prospective-merge pre-merge hooks](015-prospective-merge-pre-merge-hooks.md) | TypeScript implementation retired by Spec 070 ruling 13. |
 | [016 — Live evidence before a recovery decision](016-live-evidence-before-recovery.md) | implemented |
 | [017 — Review entry for externally authored PRs](017-external-pr-review-entry.md) | implemented |
 | [018 — Nucleus-owned closeout and durable outcomes](018-queue-owned-closeout-and-durable-outcomes.md) | implemented |
@@ -35,8 +37,8 @@ implemented; the contracts summarise the durable rules and link here.
 | [028 — Store backups](028-store-backups.md) | implemented |
 | [030 — Changing a task's routing](030-routing-changes.md) | implemented |
 | [032 — Operator decisions](032-operator-decisions.md) | implemented |
-| [033 — Formal PR reviews under a separate reviewer identity](033-formal-pr-reviews.md) | implemented |
-| [035 — Host run scheduler (Nucleus's side)](035-host-run-scheduler.md) | implemented; Effigy v2 custody protocol approved, not implemented |
+| [033 — Formal PR reviews under a separate reviewer identity](033-formal-pr-reviews.md) | TypeScript implementation reference. Rust exact-head review follows Spec 070. |
+| [035 — Host run scheduler (Nucleus's side)](035-host-run-scheduler.md) | TypeScript host-run producer history. Contract 010 describes the Effigy boundary. |
 | [036 — Operator role reassignment after worker intent](036-role-reassignment.md) | implemented |
 | [037 — Structured review findings](retired/037-structured-review-verdicts.md) | retired 2026-11-02 (Spec 058 cutover 2); verdicts stay ordinary reviewer evidence |
 | [038 — Bounded uncertain-merge reconciliation](038-bounded-uncertain-merge-reconciliation.md) | implemented |
@@ -45,25 +47,25 @@ implemented; the contracts summarise the durable rules and link here.
 
 | [045 — Durable task worker exclusions](045-durable-worker-exclusions.md) | implemented |
 | [046 — Self-lifting merge holds](046-self-lifting-merge-holds.md) | implemented |
-| [050 — Owner task controls](050-owner-task-controls.md) | implemented |
-| [051 — Interactive tasks](051-interactive-tasks.md) | implemented |
+| [050 — Owner task controls](050-owner-task-controls.md) | TypeScript command and control history. Spec 070 owns current commands. |
+| [051 — Interactive tasks](051-interactive-tasks.md) | Retired by Spec 070 ruling 28. |
 | [052 — Usage level](052-usage-level.md) | implemented |
 | [053 — Demand-based profile selection](053-demand-based-selection.md) | implemented |
 | [054 — Required proof when a repository overrides validation policy](054-required-proof-admission.md) | implemented |
-| [055 — Source-immutable author-side proof execution](055-source-immutable-proof-executor.md) | implemented |
-| [056 — Repository namespace re-key](056-repository-namespace-rekey.md) | implemented |
+| [055 — Source-immutable author-side proof execution](055-source-immutable-proof-executor.md) | Retired by Spec 070 ruling 28. |
+| [056 — Repository namespace re-key](056-repository-namespace-rekey.md) | Retired by Spec 070 ruling 28. |
 | [057 — Retained change review and source approval awaiting proof](057-retained-change-review.md) | approved, not implemented |
-| [058 — Responsible tasks](058-responsible-tasks.md) | slices 1–17 installed (usage shadow, opt-in lifecycle, task.register, operator questions, live conversion, delegated answers, ask-in-turn, non-delivery ownership, review-round cap, one worker thread, the blocker ladder); rollout step 3 remainder and step 4 pending |
+| [058 — Responsible tasks](058-responsible-tasks.md) | TypeScript lifecycle history. Spec 070 owns current planner and recovery behavior. |
 | [059 — Subscription usage pressure gauge](retired/059-usage-gauge.md) | retired 2026-11-17 (task 1302); subscription usage belongs to host apps and their plugins |
-| [060 — Named project agents](060-named-project-agents.md) | implemented |
-| [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
-| [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
-| [065 — A host-agnostic ACP task session](065-acp-task-session.md) | implemented: the agent, its minted binding, the hold/release API and lifecycle text |
+| [060 — Named project agents](060-named-project-agents.md) | TypeScript implementation. Rust verifies responsible planners under Spec 070 rulings 8 and 23. |
+| [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | Retired by Spec 070 ruling 28. |
+| [062 — BB host adapter](062-bb-host-adapter.md) | The TypeScript BB integration retired under Spec 070 ruling 5. |
+| [065 — A host-agnostic ACP task session](065-acp-task-session.md) | Current ACP protocol design. Spec 070 owns Rust lifecycle behavior. |
 | [066 — One reconciler](066-one-reconciler.md) | approved; merge and terminal-cleanup slice delivered |
-| [067 — Explicit resolution](067-explicit-resolution.md) | approved; batches briefed |
+| [067 — Explicit resolution](067-explicit-resolution.md) | TypeScript controls and historical rulings. Spec 070 owns Rust task commands and acceptance. |
 | [068 — Self-healing](068-self-healing.md) | approved; batches briefed |
 | [069 — A scheduler that scales with active work](069-scheduler.md) | approved; built as direct PRs |
-| [070 — A small task engine, in Rust](070-small-engine.md) | approved; building alongside |
+| [070 — A small task engine, in Rust](070-small-engine.md) | Current engine and cutover rulings. |
 
 ## Host adapters
 
@@ -72,16 +74,9 @@ ACP agent whose session is one Nucleus task's thread, with no model. A host
 adapter holds its turn while its role threads are active and releases it
 between them.
 
-The [T3Code host adapter](t3code-host-adapter.md) provides native thread operations
-for the nightly trial, with CLI-helper reporting, board questions and per-project
-host opt-in.
-
-The [BB host adapter](062-bb-host-adapter.md) is the third host: one BB workspace
-per task nested under its planner thread, per-repository opt-in, a forked copy of
-BB's own thread list whose task group rows carry each task's state, a global board in
-the left rail and a per-project board in the thread, BB usage left to BB's own card
-plus the operator-installed Usage Pace plugin, and a phased plan whose first phase
-proves the plugin-backed transport.
+T3 is the current native host. The [architecture](../architecture.md#modules)
+points to its Rust adapter. The [earlier T3 adapter](t3code-host-adapter.md) and
+[BB adapter](062-bb-host-adapter.md) retain the TypeScript implementation record.
 
 ## Retired specs
 
