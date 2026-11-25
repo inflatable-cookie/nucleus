@@ -159,6 +159,7 @@ impl Service {
         &self,
         project: Option<&str>,
         id: &str,
+        repository: Option<&str>,
         complexity: Option<Complexity>,
         caller: &Authority,
         scope: &ControllerScope,
@@ -166,7 +167,7 @@ impl Service {
         self.storage.database().verify()?;
         let _projects = self.project_writes.read().await;
         let mut state = self.state.lock().await;
-        let route = self.planning_repository(&mut state, scope, project, None)?;
+        let route = self.planning_repository(&mut state, scope, project, repository)?;
         let item = state
             .store
             .item(&route.project_id, id)?
@@ -211,7 +212,7 @@ impl Service {
         };
         let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
         let mut state = self.state.lock().await;
-        if self.planning_repository(&mut state, scope, project, None)? != route {
+        if self.planning_repository(&mut state, scope, project, repository)? != route {
             return Err(ServiceError::Project);
         }
         if state.store.item(&route.project_id, id)?.as_ref() != Some(&item) {

@@ -942,8 +942,10 @@ that belongs to a task question accepts one answer for the bound task version,
 then wakes the ordinary answer path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item
-body and commits the task, source link and item history together. If promotion
-is retried, it returns the task already admitted from that item.
+body and commits the task, source link and item history together. When the
+board names a repository, promotion verifies and uses that repository in the
+item's project. The reply gives the admitted task's public reference. A retry
+returns the task already admitted from that item.
 
 During cutover, the offline `item.import` command copied the retained Planning
 items and profile settings from a fenced TypeScript backup. The active CLI
