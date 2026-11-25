@@ -401,7 +401,7 @@ in the existing control modules below.
 enters here: audit lines, the force gate, the action switch, and the wrappers that
 wake a task after its verb. The mechanisms it used to own inline have one owner
 each: `control-outcomes.ts` records the outcome and adds the stale-version hint
-from the typed `TaskChangedRefusal` (`shared/task-version.ts`), `owner-authority.ts`
+from the retired TypeScript `TaskChangedRefusal` type, `owner-authority.ts`
 proves owner and delegated authority, `receipt-acceptance.ts` records the one
 operator receipt acceptance, `budget-extension.ts` applies an authorized
 extension, `no-automatic-retry-record.ts` records the durable retry rule, and
