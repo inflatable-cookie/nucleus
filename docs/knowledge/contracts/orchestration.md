@@ -1649,6 +1649,9 @@ request identities and stored committed-handoff rows are not rewritten.
 
 ### Sibling links and preparation
 
+The stopped TypeScript engine used the provisioning rules below. For Rust
+worktrees, see [Spec 070](../specs/070-small-engine.md#rulings).
+
 - A directory workspace skips the repository's `paseo.json` `worktree.setup`.
   Nucleus places only the sibling links declared by `nucleus worktree prepare`
   beside the checkout (Tom, 2026-10-23, links only). Unsupported setup

@@ -25,11 +25,7 @@ function hasRunTicketCredential() {
   } catch { return true; }
 }
 try {
-  if (command === 'worktree') {
-    const { worktree } = await import('./worktree.mjs');
-    worktree(args[0], args.slice(1));
-  }
-  else if (command === 'helper') {
+  if (command === 'helper') {
     const [name, ...helperArgs] = args;
     const helpers = {
       submit: './nucleus-submit.mjs',

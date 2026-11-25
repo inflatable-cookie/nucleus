@@ -775,10 +775,10 @@ production Rust delta.
      the parity inventory. For each missing port, record its TypeScript source path and function at
      `737246d22` and the governing ruling, if one exists. The planner lists these ports for Tom to prioritise; they don't block deletion.
      Files the Rust board or its tooling still imports stay in use;
-   - retiring `nucleus worktree` (Tom, 2026-11-25: "Yes, retire"). Its only callers are Paseo `paseo.json`
-     setup and teardown hooks in consumer repositories, and Paseo is dropped (ruling 5). Rust task checkouts prepare
-     themselves, and pinned sibling sources come from `effigy bootstrap:deps` (ruling 33). Each consumer removes
-     its hooks in a small task before the command is deleted;
+   - retiring `nucleus worktree` (Tom, 2026-11-25: "Yes, retire"). Its callers were Paseo setup and teardown hooks.
+     The consumer sweep removed or replaced those hooks before the CLI route was deleted. The planner excluded an
+     archived checkout and a Paseo-only setup that requires a private sibling source. Rust tasks allocate Git checkouts.
+     Repositories use Effigy's pinned source declarations for sibling dependencies (ruling 33);
    - retiring the TypeScript decision bridge and importers;
    - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated");
    - deletion in batches of at most three modules;
