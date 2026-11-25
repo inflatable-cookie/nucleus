@@ -41,12 +41,6 @@ const themeDefinition = z.object({
 });
 export type T3ThemeDefinition = z.infer<typeof themeDefinition>;
 
-const themeEvent = z.object({
-  type: z.literal("environmentThemesUpdated"),
-  payload: z.object({ themes: z.array(z.unknown()) }),
-});
-const themeId = themeDefinition.pick({ id: true });
-
 function boardColors(
   roles: z.infer<typeof themeRoles> | undefined,
 ): BoardPalette["colors"] {
@@ -82,9 +76,8 @@ function palette(
 export type T3ThemeInputs = { settings: unknown; theme: unknown };
 
 /**
- * Turn T3's theme settings and the selected published theme into the board's
- * snapshot. The TypeScript host reads the inputs on demand; the Rust engine
- * caches them from T3's config stream. Both convert them here.
+ * Convert the theme settings and selected published theme cached by the
+ * Rust service into the board's snapshot.
  */
 export function boardThemeFromT3(inputs: T3ThemeInputs): BoardThemeSnapshot | null {
   const parsed = themeSettings.safeParse(inputs.settings);
@@ -108,43 +101,4 @@ export function boardThemeFromT3(inputs: T3ThemeInputs): BoardThemeSnapshot | nu
   snapshot.dark =
     base === "dark" ? palette(colors, seeds) : palette(variants?.dark);
   return snapshot;
-}
-
-type T3BoardThemeReader = {
-  call(method: "server.getSettings", payload: unknown): Promise<unknown>;
-  readStream(
-    method: "subscribeServerConfig",
-    payload: unknown,
-    accept: (value: unknown) => boolean,
-  ): Promise<unknown>;
-};
-
-/** Read the environment's defaults and published themes once per board load. */
-export async function readT3BoardTheme(
-  rpc: T3BoardThemeReader,
-): Promise<BoardThemeSnapshot | null> {
-  try {
-    const settings: unknown = await rpc.call("server.getSettings", {});
-    const id = themeSettings.safeParse(settings).data?.defaultTheme || null;
-    let theme: unknown;
-    if (id && id !== "light" && id !== "dark" && id !== "system") {
-      try {
-        const event = themeEvent.parse(
-          await rpc.readStream(
-            "subscribeServerConfig",
-            { environmentThemes: true, workspaceSnapshotsOnDemand: true },
-            (value) => themeEvent.safeParse(value).success,
-          ),
-        );
-        theme = event.payload.themes.find(
-          (value) => themeId.safeParse(value).data?.id === id,
-        );
-      } catch {
-        // Older hosts can still supply settings when the theme stream is unavailable.
-      }
-    }
-    return boardThemeFromT3({ settings, theme });
-  } catch {
-    return null;
-  }
 }
