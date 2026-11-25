@@ -217,13 +217,13 @@ when to ask the planner.
 
 ### Terminal workspace cleanup
 
-Verify source and participants before the destructive step. Remove a task
-worktree only after the current clean Git status and a quiet process and native
-participant observation. The task and project fences cover removal. Verify the Git registration and head, then check Dispatch and shell writers together
-immediately before running the unforced removal.
-A dirty checkout, unknown status or surviving needed
-source remains in custody. Once the worktree is removed, archive the known idle
-threads from the held shell. Already archived, absent and deleted threads count
+Archive terminal tasks' known idle threads independently of checkout cleanup.
+The board and Next retain the workspace outcome. Before removing a checkout,
+verify idle participants, Dispatch, the Git registration and published head.
+The task and project fences span removal. Clean worktrees use unforced removal.
+Only unstaged deletions of files at that exact published head allow forced
+removal. Modified, added, untracked or uncertain contents retain the checkout.
+Already archived, absent and deleted threads count
 as settled. An active thread waits. See [Spec 070 rulings 34 and 35](../specs/070-small-engine.md#rulings)
 and [worktree custody](../../../engine/crates/nucleus-work/src/lib.rs).
 

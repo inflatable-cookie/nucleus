@@ -514,9 +514,11 @@ impl Service {
         let head = match checkout.observe()? {
             Workspace::Absent => return Ok(None),
             Workspace::Dirty => {
-                return Err(ServiceError::ReportCheckout(
-                    "the checkout has uncommitted files",
-                ));
+                checkout
+                    .deletion_only_head()?
+                    .ok_or(ServiceError::ReportCheckout(
+                        "the retained checkout contains local changes",
+                    ))?
             }
             Workspace::Clean(head) => head,
         };
