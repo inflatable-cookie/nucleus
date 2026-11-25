@@ -133,7 +133,7 @@ async function mountTab(over: MountOver = {}) {
         setEdits((prev) => ({ ...prev, [p]: edit })),
       onSave: (p: string, edit: PlanEdit) => log.saves.push([p, edit]),
       onCancel: () => setEdits({}),
-      onCloseLane: (l: string) => log.closed.push(l),
+      onCloseLane: (lane: string, project: string, note: string) => log.closed.push(`${project}/${lane}: ${note}`),
       onReopenLane: (l: string) => log.reopened.push(l),
       c,
       projectActivity: recentProjectActivity(projects),
@@ -455,7 +455,7 @@ test("041-3 rendered: Next to Now writes a new plan version through Save; unplan
   ui.press("Mark done Title unplanned");
   ui.type("Closing note", "Landed.");
   ui.press("Mark Title unplanned done");
-  assert.deepEqual(log.closed, ["unplanned"]);
+  assert.deepEqual(log.closed, ["alpha/unplanned: Landed."]);
   ui.press("Add unplanned to alpha plan");
   assert.equal(
     ui.query("1 unplanned lanes"),

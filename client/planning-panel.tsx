@@ -140,7 +140,7 @@ function PlanEditor({
   onSave: (project: string, edit: PlanEdit) => void;
   onCancel: (project: string) => void;
   onRetry?: () => void;
-  onCloseLane?: (lane: string) => void;
+  onCloseLane?: (lane: string, note: string) => void;
   onReopenLane?: (lane: string) => void;
   /** Every project and plan, so the mark-done confirmation names each plan that lists the lane. */
   projects: Project[];
@@ -859,9 +859,9 @@ function PlanEditor({
           projects={projects}
           plans={plans}
           busy={busy}
-          onConfirm={() => {
+          onConfirm={(note) => {
             setConfirmLane(null);
-            onCloseLane(confirmLane);
+            onCloseLane(confirmLane, note);
           }}
           onCancel={() => setConfirmLane(null)}
         />
@@ -1167,7 +1167,7 @@ export function PlanningTab({
   onEdit: (project: string, edit: PlanEdit) => void;
   onSave: (project: string, edit: PlanEdit) => void;
   onCancel: (project: string) => void;
-  onCloseLane?: (lane: string, project: string) => void;
+  onCloseLane?: (lane: string, project: string, note: string) => void;
   onReopenLane?: (lane: string, project: string) => void;
   c: Colors;
 }) {
@@ -1301,7 +1301,7 @@ export function PlanningTab({
   const roadmapFor = (section: PlanSection) => {
     const project = section.project.key;
     const openLane = (lane: string) => onOpenLane(lane, project);
-    const closeLane = onCloseLane && ((lane: string) => onCloseLane(lane, project));
+    const closeLane = onCloseLane && ((lane: string, note: string) => onCloseLane(lane, project, note));
     const reopenLane = onReopenLane && ((lane: string) => onReopenLane(lane, project));
     return edits[project] ? (
       <PlanEditor
