@@ -67,7 +67,7 @@ replaced during that interval can redirect allocation. The work root belongs
 to the operator on the single-user host. A follow-up will anchor the destination
 to a verified directory handle through the Git write.
 
-Run `nucleus configure --enable` to enable the engine. The default
+Run `nucleus configure --enable` to enable the engine or `--enable=false` to disable it. Other configure flags preserve the current enable setting. The default
 engine home is `~/.nucleus/engine`. It contains the database, settings, backups, logs,
 keys and launchers. Use `--home` to keep using an explicit portable profile.
 

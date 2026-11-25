@@ -23,7 +23,7 @@ use nucleus_service::{
     Controller, DependencyCommand, MAX_BRIEF_BYTES, Project, ReportTicket, Service,
     check_brief_size, router_with_board_and_t3_callers, router_with_t3_callers,
 };
-use nucleus_store::{Hosts, SettingsFile, StoragePlacement};
+use nucleus_store::{EngineSettings, Hosts, SettingsFile, StoragePlacement};
 use reqwest::{Client, Method, RequestBuilder, header};
 use rustix::{
     fs::{FileType, Mode, OFlags, fstat, open},
@@ -236,8 +236,9 @@ impl From<AnswerArgs> for Answer {
 struct Configure {
     #[arg(long)]
     home: Option<PathBuf>,
-    #[arg(long)]
-    enable: bool,
+    /// Enable the profile, or use --enable=false to disable it.
+    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    enable: Option<bool>,
     /// Select the defaults for worktrees, scratch and builds.
     #[arg(long, value_enum)]
     placement: Option<Placement>,
@@ -278,7 +279,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Action::Ensure(args) => ensure::run(endpoint, args).await,
-        Action::Configure(args) => configure(args),
+        Action::Configure(args) => configure(&args),
         Action::Serve {
             home,
             project,
@@ -316,35 +317,47 @@ async fn main() -> Result<()> {
     }
 }
 
-fn configure(args: Configure) -> Result<()> {
+fn configure(args: &Configure) -> Result<()> {
     let settings = open_settings(args.home.as_deref())?;
-    let mut config = settings.load()?;
-    config.enabled = args.enable;
-    if let Some(placement) = args.placement {
-        config.placement = match placement {
-            Placement::Internal => StoragePlacement::Internal,
-            Placement::Barge => StoragePlacement::Barge,
-        };
-    }
-    if args.reset_roots || args.work_root.is_some() {
-        config.work_root = args.work_root;
-    }
-    if args.reset_roots || args.scratch_root.is_some() {
-        config.scratch_root = args.scratch_root;
-    }
-    if args.reset_roots || args.builds_root.is_some() {
-        config.builds_root = args.builds_root;
-    }
-    if args.reset_roots || args.log_root.is_some() {
-        config.log_root = args.log_root;
-    }
-    if args.clear_legacy_volume {
-        config.work_volume = None;
-    }
-    if let Some(volume) = args.volume.as_deref() {
-        config.work_volume = Some(settings.identify_volume(volume, &config)?);
-    }
-    settings.save(&config)?;
+    let snapshot = settings.read::<EngineSettings>()?;
+    let scratch_root = if args.scratch_root.is_some() || args.reset_roots {
+        args.scratch_root.clone()
+    } else {
+        snapshot.value.scratch_root.clone()
+    };
+    let volume = args
+        .volume
+        .as_deref()
+        .map(|path| {
+            let mut probe = snapshot.value.clone();
+            probe.scratch_root.clone_from(&scratch_root);
+            settings.identify_volume(path, &probe)
+        })
+        .transpose()?;
+    settings.configure(&snapshot, |config| {
+        if let Some(enabled) = args.enable {
+            config.enabled = enabled;
+        }
+        if let Some(placement) = &args.placement {
+            config.placement = match placement {
+                Placement::Internal => StoragePlacement::Internal,
+                Placement::Barge => StoragePlacement::Barge,
+            };
+        }
+        for (current, requested) in [
+            (&mut config.work_root, &args.work_root),
+            (&mut config.scratch_root, &args.scratch_root),
+            (&mut config.builds_root, &args.builds_root),
+            (&mut config.log_root, &args.log_root),
+        ] {
+            if args.reset_roots || requested.is_some() {
+                current.clone_from(requested);
+            }
+        }
+        if args.clear_legacy_volume || volume.is_some() {
+            config.work_volume.clone_from(&volume);
+        }
+    })?;
     Ok(())
 }
 
