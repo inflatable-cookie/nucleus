@@ -41,7 +41,7 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
     let detail = json_body(get_as(&api, "/v1/tasks/dependent", &BOARD_KEY).await).await;
     assert_eq!(detail["brief"]["text"], brief);
     assert_eq!(detail["wait"], "prerequisite");
-    assert_eq!(detail["stateLabel"], "Waiting for prerequisite");
+    assert_eq!(detail["stateLabel"], "Queued · waiting for prerequisite");
     assert!(detail["stateSinceMs"].is_u64());
     assert_eq!(
         detail["dependencyStatus"]["dependencies"][0],

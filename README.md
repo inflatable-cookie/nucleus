@@ -66,8 +66,9 @@ so each task has one row. The parent has no model. It shows the task's progress
 and holds its turn while a role runs. Follow the [T3 setup guide](engine/README.md#set-up-t3)
 to install the provider and check its status.
 
-The parent row shows Working while a worker or reviewer runs. When the child
-finishes, the row shows Waiting for two minutes so the next role can take over.
+The parent row shows the task phase and what is delaying it, even while snoozed.
+A running child keeps the row in Working. When the child finishes, the visible
+row shows Waiting for two minutes so the next role can take over.
 After that Nucleus snoozes it. An open question or decision brings the row
 back. Manual snoozes take precedence. Finished tasks archive.
 See [Spec 070, ruling 22](docs/knowledge/specs/070-small-engine.md#rulings).

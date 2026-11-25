@@ -34,22 +34,36 @@ pub(super) fn task_state_label(
     if let Some(label) = task_label_from_facts(task) {
         return label;
     }
-    if (wait.is_none() || (wait == Some(WaitReason::HostUnknown) && detail.is_none()))
-        && task.run().is_some_and(|run| {
-            !run.revoked() && run.report().is_none() && run.last_send_at_ms().is_none()
-        })
-    {
-        return "Starting".into();
+    if let Some(WaitDetail::OperatorSnoozed { until, .. }) = detail {
+        return snoozed_label(task, *until);
     }
-    if let Some(label) = wait_label(wait, detail) {
-        return label.into();
+    phase_with_delay(task, wait_label(task, wait))
+}
+
+fn live_role(task: &Task) -> bool {
+    task.run().is_some_and(|run| {
+        !run.revoked() && run.last_send_at_ms().is_some() && run.report().is_none()
+    })
+}
+
+fn phase_with_delay(task: &Task, delay: Option<&str>) -> String {
+    let mut label = phase_label(task).to_owned();
+    if task.hold().is_some() && live_role(task) {
+        label.push('*');
     }
-    let phase = phase_label(task);
-    if task.hold().is_some() {
-        format!("{phase}*")
-    } else {
-        phase.into()
+    if let Some(delay) = delay {
+        label.push_str(" · ");
+        label.push_str(delay);
     }
+    label
+}
+
+fn snoozed_label(task: &Task, until: u64) -> String {
+    let deadline = nucleus_hosts::snooze_deadline(until);
+    phase_with_delay(
+        task,
+        Some(&format!("you snoozed this thread until {deadline}")),
+    )
 }
 
 pub(super) fn phase_label(task: &Task) -> &'static str {
@@ -80,62 +94,56 @@ pub(super) fn phase_label(task: &Task) -> &'static str {
 
 // These committed facts determine the label regardless of the scheduler wait.
 pub(super) fn task_label_from_facts(task: &Task) -> Option<String> {
-    let has_live_run = task.run().is_some_and(|run| {
-        !run.revoked() && run.last_send_at_ms().is_some() && run.report().is_none()
-    });
-    Some(match task.phase() {
-        Phase::Done | Phase::Cancelled => phase_label(task).into(),
-        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "Stopping".into(),
-        _ if let Some(hold) = task.hold().filter(|_| !has_live_run) => {
-            held_label(task.phase(), hold)
+    let delay = match task.phase() {
+        Phase::Done | Phase::Cancelled => return Some(phase_label(task).into()),
+        _ if task.run().is_some_and(nucleus_core::Run::revoked) => "stopping",
+        _ if let Some(hold) = task.hold().filter(|_| !live_role(task)) => {
+            &held_label(task.phase(), hold)
         }
-        _ if task.operator_decline().is_some() => "Declined by Tom".into(),
-        _ if task.operator_question().is_some() => "Waiting on Tom".into(),
-        _ if task.question().is_some() => "Waiting for the planner".into(),
+        _ if task.operator_decline().is_some() => "declined by Tom",
+        _ if task.operator_question().is_some() => "waiting on Tom",
+        _ if task.question().is_some() => "waiting for the planner",
         _ => return None,
-    })
+    };
+    Some(phase_with_delay(task, Some(delay)))
 }
 
 fn held_label(phase: Phase, hold: &Hold) -> String {
     if let Some(target) = reference(&hold.reason) {
-        return format!("Waiting on {target}");
+        return format!("waiting on {target}");
     }
     match (phase, hold.by) {
-        (Phase::Merging, Some(HoldBy::Operator)) => "Merge held by Tom",
-        (Phase::Merging, Some(HoldBy::Planner)) => "Merge held by planner",
-        (Phase::Merging, None) => "Merge held",
-        (_, Some(HoldBy::Operator)) => "Waiting on Tom",
-        (_, Some(HoldBy::Planner)) => "Held by planner",
-        (_, None) => "Held",
+        (Phase::Merging, Some(HoldBy::Operator)) => "merge held by Tom",
+        (Phase::Merging, Some(HoldBy::Planner)) => "merge held by planner",
+        (Phase::Merging, None) => "merge held",
+        (_, Some(HoldBy::Operator)) => "waiting on Tom",
+        (_, Some(HoldBy::Planner)) => "held by planner",
+        (_, None) => "held",
     }
     .into()
 }
 
-fn wait_label(wait: Option<WaitReason>, detail: Option<&WaitDetail>) -> Option<&'static str> {
+fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
     Some(match wait {
-        Some(WaitReason::Question) => "Waiting for the planner",
-        Some(WaitReason::Capacity) => "Waiting for capacity",
-        Some(WaitReason::Prerequisite) => "Waiting for prerequisite",
-        Some(WaitReason::HostObservationBlocked) => "Couldn’t verify task thread",
-        Some(WaitReason::UsagePermission) => "Waiting on Tom",
-        Some(WaitReason::HostUnknown) => match detail {
-            Some(WaitDetail::OperatorSnoozed { .. }) => "You snoozed this thread",
-            Some(WaitDetail::BeforeSend(None) | WaitDetail::ConfirmingDelivery(_)) => "Starting",
-            _ => "Waiting for T3",
-        },
-        Some(WaitReason::IdleWithoutTerminalRun) => "Checking turn outcome",
-        Some(WaitReason::Permission) => "Waiting for permission",
-        Some(WaitReason::Input) => "Waiting for input",
-        Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
-        Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
-        Some(WaitReason::ExternalMergeBlocked) => "External merge needs attention",
-        Some(WaitReason::ReviewPublicationBlocked) => "Review needs attention",
-        Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
-        Some(WaitReason::WorkspaceBlocked) => "Workspace needs attention",
-        Some(WaitReason::ChecksPending) => "Waiting for checks",
-        Some(WaitReason::ChecksUnreported) => "Waiting for required checks to report",
-        Some(WaitReason::AssignmentTooLarge) => "Assignment too large",
-        Some(WaitReason::Starting) => "Starting",
+        Some(WaitReason::Starting) if live_role(task) => "starting",
+        Some(WaitReason::Starting | WaitReason::HostUnknown) => "waiting for T3",
+        Some(WaitReason::Question) => "waiting for the planner",
+        Some(WaitReason::Capacity) => "waiting for capacity",
+        Some(WaitReason::Prerequisite) => "waiting for prerequisite",
+        Some(WaitReason::HostObservationBlocked) => "couldn’t verify task thread",
+        Some(WaitReason::UsagePermission) => "waiting on Tom",
+        Some(WaitReason::IdleWithoutTerminalRun) => "checking turn outcome",
+        Some(WaitReason::Permission) => "waiting for permission",
+        Some(WaitReason::Input) => "waiting for input",
+        Some(WaitReason::RetainedThreadBusy) => "waiting for the previous turn",
+        Some(WaitReason::ForgeUnknown) => "waiting for GitHub",
+        Some(WaitReason::ExternalMergeBlocked) => "external merge needs attention",
+        Some(WaitReason::ReviewPublicationBlocked) => "review needs attention",
+        Some(WaitReason::WorkspaceUnknown) => "checking the workspace",
+        Some(WaitReason::WorkspaceBlocked) => "workspace needs attention",
+        Some(WaitReason::ChecksPending) => "waiting for checks",
+        Some(WaitReason::ChecksUnreported) => "waiting for required checks to report",
+        Some(WaitReason::AssignmentTooLarge) => "assignment too large",
         _ => return None,
     })
 }
@@ -229,25 +237,12 @@ impl Service {
             id,
         );
         let thread = nucleus_hosts::parent_thread(&path);
-        let (activity, _, handover) = self.role_window(&thread, task);
-        let label = if !task.phase().is_terminal() && activity == nucleus_hosts::RowChildren::Active
-        {
-            "Working".into()
-        } else if !task.phase().is_terminal() && handover.is_some() {
-            "Waiting".into()
-        } else {
-            match state.effective_wait(task) {
-                Ok(wait) => task_state_label(task, wait, state.wait_detail(id)),
-                Err(error) => {
-                    eprintln!("{id}: {error}");
-                    return false;
-                }
-            }
-        };
-        match state
-            .store
-            .desire_title(id, &thread, &task_title(task, number, &label))
-        {
+        let desired = self.row_label(state, task, &thread).and_then(|label| {
+            state
+                .store
+                .desire_title(id, &thread, &task_title(task, number, &label))
+        });
+        match desired {
             Ok(true) => {
                 self.title_wake.notify_one();
                 true
@@ -258,6 +253,43 @@ impl Service {
                 false
             }
         }
+    }
+
+    fn row_label(
+        &self,
+        state: &State,
+        task: &Task,
+        thread: &str,
+    ) -> Result<String, nucleus_store::StoreError> {
+        if task.phase().is_terminal() {
+            return Ok(phase_label(task).into());
+        }
+        let id = &task.identity().id;
+        let snooze = self
+            .host
+            .row_visibility_hint(thread)
+            .and_then(|row| row.snoozed_until_ms)
+            .filter(|&until| until > self.visibility_now());
+        if let Some(until) = snooze
+            && !state
+                .store
+                .row_snooze(id, thread)?
+                .is_some_and(|receipt| receipt.owns(Some(until)))
+        {
+            return Ok(snoozed_label(task, until));
+        }
+        let detail = state.wait_detail(id);
+        let (activity, _, handover) = self.role_window(thread, task);
+        if snooze.is_none()
+            && handover.is_some()
+            && !matches!(detail, Some(WaitDetail::OperatorSnoozed { .. }))
+        {
+            return Ok("Waiting".into());
+        }
+        let wait = state.effective_wait(task)?.filter(|wait| {
+            *wait != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
+        });
+        Ok(task_state_label(task, wait, detail))
     }
 
     pub(super) async fn watch_titles(&self) {
@@ -574,7 +606,7 @@ mod tests {
                 Some(1),
                 &task_state_label(&task, Some(WaitReason::Capacity), None)
             ),
-            "Waiting for capacity: #1 Add a greeting"
+            "Queued · waiting for capacity: #1 Add a greeting"
         );
         assert_eq!(
             task_title(
@@ -586,7 +618,7 @@ mod tests {
                     Some(&WaitDetail::BeforeSend(None))
                 )
             ),
-            "Starting: #1 Add a greeting"
+            "Queued · waiting for T3: #1 Add a greeting"
         );
         let authority = Authority::Planner {
             actor: "planner".into(),
@@ -604,7 +636,7 @@ mod tests {
                 Some(1),
                 &task_state_label(&task, Some(WaitReason::Hold), None)
             ),
-            "Waiting on fixture#2: #1 Add a greeting"
+            "Queued · waiting on fixture#2: #1 Add a greeting"
         );
         task.command(Command::Hold("Wait for copy".into()), &authority, &obs)
             .expect("hold");
@@ -614,7 +646,7 @@ mod tests {
                 Some(1),
                 &task_state_label(&task, Some(WaitReason::Hold), None)
             ),
-            "Held by planner: #1 Add a greeting"
+            "Queued · held by planner: #1 Add a greeting"
         );
         task.command(Command::Cancel, &authority, &obs)
             .expect("cancel");
@@ -803,7 +835,7 @@ mod tests {
                 assert_eq!(
                     req["payload"],
                     json!({"type":"thread.metadata.update","threadId":expected,
-                    "commandId":"task-fixture-title-1","title":"Waiting for the planner: #1 Add a greeting"})
+                    "commandId":"task-fixture-title-1","title":"Queued · waiting for the planner: #1 Add a greeting"})
                 );
                 json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
             }
