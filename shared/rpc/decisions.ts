@@ -25,11 +25,16 @@ export const decisionList = defineRpc({ name: "decision.list", input: z.object({
   task: z.string().min(1).optional(), lead: z.string().min(1).optional(), papercut: z.string().min(1).optional(),
 }).strict(), output: z.array(decisionViewSchema) });
 
-export const decisionAnswer = defineRpc({ name: "decision.answer", input: z.object({
-  id: z.string().min(1), version: z.number().int().positive(), answer: z.string().trim().min(1).max(48000),
+const answerFields = {
+  id: z.string().min(1), version: z.number().int().positive(),
   answeredBy: z.string().min(1).max(240), relayed: z.boolean().default(true), note: z.string().default(""),
   overtakes: z.array(z.string().min(1).max(160)).max(100).default([]),
-}).strict(), output: decisionViewSchema });
+};
+
+export const decisionAnswer = defineRpc({ name: "decision.answer", input: z.union([
+  z.object({ ...answerFields, optionId: z.string().min(1) }).strict(),
+  z.object({ ...answerFields, answer: z.string().trim().min(1).max(48000) }).strict(),
+]), output: decisionViewSchema });
 
 export const decisionWithdraw = defineRpc({ name: "decision.withdraw", input: z.object({
   id: z.string().min(1), version: z.number().int().positive(), reason: z.string().trim().min(1).max(4000),

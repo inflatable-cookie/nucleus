@@ -75,6 +75,7 @@ export function DecisionDialog({
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const [decisionAnswerText, setDecisionAnswerText] = useState(""),
     [decisionWithdrawReason, setDecisionWithdrawReason] = useState("");
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [pendingDecisionOption, setPendingDecisionOption] = useState<
     string | null
   >(null);
@@ -88,6 +89,18 @@ export function DecisionDialog({
   const decisionDetailPresentation = decisionDetail
     ? decisionChoicePresentation(decisionDetail)
     : null;
+  const choices = decisionDetailPresentation?.choices ?? [];
+  const recommended = decisionDetailPresentation?.recommended;
+  const identified = decisionDetailPresentation?.identified ?? false;
+  const typedAnswer = decisionAnswerText.trim();
+  const optionId = choices.find((choice) => choice.optionId === selectedOptionId)?.optionId;
+  const answer = identified
+    ? optionId ? { optionId } : null
+    : typedAnswer ? { answer: typedAnswer } : null;
+  const recordedAnswer = decisionDetail?.answer;
+  const recordedOption = recordedAnswer && "optionId" in recordedAnswer
+    ? choices.find((choice) => choice.optionId === recordedAnswer.optionId)
+    : undefined;
   const decisionDetailsContent = decisionDetail
     ? [
         ...new Set(
@@ -189,16 +202,20 @@ export function DecisionDialog({
               </Text>
             </CollapsibleSection>
           )}
-          {(decisionDetailPresentation?.choices.length ?? 0) > 0 && (
+          {choices.length > 0 && (
             <DetailSection title="Choices" c={c}>
               <View style={{ gap: space.xs }}>
-                {decisionDetailPresentation!.choices.map((choice) => (
+                {choices.map((choice) => (
                   <SurfacePress
-                    key={choice.label}
+                    key={choice.optionId ?? choice.label}
                     c={c}
-                    label={`Use option: ${choice.label}${choice.label === decisionDetailPresentation!.recommended ? ", recommended" : ""}`}
-                    selected={decisionAnswerText === choice.label}
+                    label={`Use option: ${choice.displayLabel}${choice.label === recommended ? ", recommended" : ""}`}
+                    selected={choice.optionId ? selectedOptionId === choice.optionId : decisionAnswerText === choice.label}
                     onPress={() => {
+                      if (choice.optionId) {
+                        setSelectedOptionId(choice.optionId);
+                        return;
+                      }
                       if (
                         decisionAnswerText.trim() &&
                         decisionAnswerText !== choice.label
@@ -219,10 +236,10 @@ export function DecisionDialog({
                         lineHeight: typeScale.metadata.lineHeight,
                       }}
                     >
-                      {choice.label === decisionDetailPresentation!.recommended
+                      {choice.label === recommended
                         ? "★ Recommended · "
                         : ""}
-                      {choice.label}
+                      {choice.displayLabel}
                       {choice.consequence ? ` — ${choice.consequence}` : ""}
                     </Text>
                   </SurfacePress>
@@ -374,7 +391,7 @@ export function DecisionDialog({
                       lineHeight: typeScale.body.lineHeight,
                     }}
                   >
-                    {decisionDetail.answer.text}
+                    {recordedOption?.displayLabel ?? decisionDetail.answer.text}
                   </Text>
                   <Text
                     style={{
@@ -428,7 +445,7 @@ export function DecisionDialog({
           )}
           {decisionDetail.status === "open" && (
             <DetailSection title="Answer" c={c}>
-              <TextInput
+              {!identified && <TextInput
                 accessibilityLabel="Operator answer"
                 multiline
                 value={decisionAnswerText}
@@ -445,27 +462,29 @@ export function DecisionDialog({
                   borderRadius: radius.control,
                   padding: space.xs,
                 }}
-              />
+              />}
               <Button
                 small
                 c={c}
                 text="Answer"
-                disabled={busy || !decisionAnswerText.trim()}
-                onPress={() =>
+                disabled={busy || !answer}
+                onPress={() => {
+                  if (!answer) return;
                   void act(async () => {
                     await answerDecision({
                       id: decisionDetail.id,
                       version: decisionDetail.version,
-                      answer: decisionAnswerText.trim(),
+                      ...answer,
                       answeredBy: "operator (board)",
                       relayed: false,
                       note: "",
                     });
                     setRecordNotice({ kind: "ok", text: "Answered" });
                     setDecisionAnswerText("");
+                    setSelectedOptionId(null);
                     setDecisionWithdrawReason("");
-                  }, "record")
-                }
+                  }, "record");
+                }}
               />
               <Text
                 style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}

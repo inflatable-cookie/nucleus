@@ -143,11 +143,11 @@ export function boardDecision(
     version: 1,
     question: decision.question,
     choices: decision.options.map((option) => ({
-      label: option.label,
+      ...option,
       consequence: "",
     })),
     context: null,
-    options: decision.options.map((option) => option.label),
+    options: [],
     recommendation: null,
     askedBy: { agentId: decision.author, project: primary },
     links: {
@@ -159,6 +159,7 @@ export function boardDecision(
     answer:
       answer && chosen
         ? {
+            optionId: chosen.id,
             text: chosen.label,
             answeredBy: answer.author,
             answeredAt: iso(answer.answeredAtMs),
@@ -175,7 +176,7 @@ export function boardDecision(
     stale: false,
     projectKey: key,
     askerLabel: decision.author || "Planner",
-  } as api.DecisionView;
+  };
 }
 
 
@@ -518,16 +519,15 @@ export function createRustPlanning(
     },
     "decision.answer": async (input: {
       id: string;
-      answer: string;
+      optionId?: string;
       note?: string;
     }) => {
       const { row, decision } = await decisionOwner(input.id);
-      const option = decision.options.find(
-        (entry) => entry.label === input.answer,
-      );
-      if (!option) throw new Error("Choose one of the decision's options.");
+      const { optionId } = input;
+      if (!optionId || !decision.options.some((option) => option.id === optionId))
+        throw new Error("Choose one of the decision's options.");
       const saved = await rust.answerDecision(row.id, decision.id, {
-        optionId: option.id,
+        optionId,
         note: input.note || null,
       });
       return boardDecision(saved, row.board.key, row.project);
