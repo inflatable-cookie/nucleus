@@ -1,14 +1,9 @@
 /**
  * Spec 062, phase 5: the vendored-manifest test.
  *
- * It is an ordinary unit test over committed files — no network, no install — so
- * `effigy check` and the affected run cover it. It proves what the acceptance
- * names: every file under the fork's vendored tree and every vendored registry
- * module is byte-identical to its recorded SHA-256 or named in `PATCHES.md`; every
- * patched and added file is named; the recorded SDK floor is at or below the pinned
- * release's; and the pin's forkable-list record names this plugin. `effigy
- * bb:sidebar-drift` is the opt-in half that re-derives all of this from upstream
- * over the network.
+ * This archived test runs against committed files without network or install.
+ * It verifies the vendored registry and sidebar hashes, patched and added
+ * entries, SDK floor and forkable-list pin.
  *
  * It also guards the two properties the header patch must not break: the patch set
  * never touches the row's drag bindings, and the plugin package reads no forge, no

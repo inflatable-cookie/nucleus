@@ -1,6 +1,6 @@
 # BB host adapter
 
-Status: approved. Phases 0–7 are implemented. Phase 0 (the transport spike) is proved, phase 1 (host
+Status: historical. [Spec 070 ruling 5](070-small-engine.md#rulings) retired BB as a Nucleus host. The phases, package and maintenance commands below record the earlier implementation. Phases 0–7 were implemented. Phase 0 (the transport spike) is proved, phase 1 (host
 registration, identity and health), phase 2 (workspace custody), phase 3 (worker runs, observation
 presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar and
 the task group header) and phase 6 (the boards, settings, pills and the planner terminal) are in

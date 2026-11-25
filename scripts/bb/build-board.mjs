@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Spec 062, phase 6: bundle the shared board for the BB plugin.
  *
@@ -16,8 +15,6 @@
  * The output, `hosts/bb/plugin/board/nucleus-board.js`, is generated and ignored by
  * Git; `nucleus-board.d.ts` beside it is the committed type surface. Run this
  * before `bb plugin build` (`effigy proof:bb:sidebar` does).
- *
- *   effigy bb:board-build
  */
 import { build } from 'esbuild';
 import { dirname, join, resolve } from 'node:path';
@@ -45,11 +42,4 @@ export async function buildBoard(outfile = BOARD_BUNDLE) {
     metafile: true,
   });
   return { outfile, bytes: Object.values(result.metafile.outputs).reduce((sum, output) => sum + output.bytes, 0) };
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  // No top-level await: the acceptance scripts import this module through tsx's CJS path.
-  buildBoard(process.argv[2] ? resolve(process.argv[2]) : BOARD_BUNDLE).then(({ outfile, bytes }) => {
-    console.log(`Built the BB board bundle: ${outfile} (${bytes} bytes)`);
-  }, error => { console.error(error); process.exitCode = 1; });
 }
