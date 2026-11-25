@@ -12,11 +12,10 @@ import {
   openView,
   planningEntry,
 } from "./support/inbox";
-import { Store } from "../core/store/store";
 import {
   LEAD_PREVIEW_MAX,
   projectSchema,
-  submissionSchema,
+  taskSchema,
   summarizeTask,
   syncHoldProjection,
   visibleTaskSummaries,
@@ -166,26 +165,50 @@ function mountBoard(
   );
 }
 
-function seed(store: Store, id: string, patch: Partial<Task>) {
-  const inserted = store.insert(
-    submissionSchema.parse({
+/** Numbered board rows, in admission order within each test. */
+function cardTasks() {
+  let number = 0;
+  return (id: string, patch: Partial<Task>): Task => {
+    const now = new Date().toISOString();
+    return taskSchema.parse({
+      id,
       submissionId: id,
       title: id,
+      number: ++number,
       repoPath: "/app",
       planningCommit: head,
+      planningBase: head,
       handoffPath: `${id}.md`,
+      handoffText: "handoff",
       originAgentId: "0b355fd4",
-    }),
-    "host",
-    "handoff",
-    head,
-  );
-  return store.update(inserted.id, {
-    notificationAgentId: "56e9c969",
-    originError: "",
-    originLookupError: "",
-    ...patch,
-  });
+      notificationAgentId: "56e9c969",
+      hostId: "host",
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      phase: "queued",
+      reason: "Waiting for dispatch",
+      held: false,
+      branch: `task-${id}`,
+      workspaceId: null,
+      directory: null,
+      agentId: null,
+      runId: null,
+      profile: null,
+      workspaceIntent: false,
+      agentIntent: false,
+      lastAgentStatus: null,
+      idleSince: null,
+      completion: null,
+      agentActive: null,
+      lastObservedAt: null,
+      prUrl: null,
+      prHead: null,
+      coordinatorGeneration: 1,
+      resolution: { attention: false, mergedCommit: null },
+      ...patch,
+    });
+  };
 }
 
 /** The second project's repository and row, for a queue holding back tasks in two projects. */
@@ -199,17 +222,17 @@ const otherProject = {
 
 /** One queued task's stored summary; whether the snapshot ships it or a page returns it is the test's choice. */
 function queuedTask(
-  store: Store,
+  makeTask: ReturnType<typeof cardTasks>,
   title: string,
   repoPath = "/app",
 ): TaskSummary {
-  const task = seed(store, title.replace(/\s+/g, "-").toLowerCase(), {
+  const task = makeTask(title.replace(/\s+/g, "-").toLowerCase(), {
     title,
     phase: "queued",
     reason: "Waiting for dispatch",
     repoPath,
   });
-  return summarizeTask(store.task(task.id));
+  return summarizeTask(task);
 }
 
 /**
@@ -278,47 +301,46 @@ function listScroll(tree: ReturnType<typeof mountBoard>) {
   return list;
 }
 
-/** Board fixtures: one card per state the card renders, all from real stored tasks and summaries. */
-function fixtures(store: Store) {
-  const long = seed(store, "long-title", {
+/** Board fixtures: one card per state the card renders, from checked task data and board summaries. */
+function fixtures(makeTask: ReturnType<typeof cardTasks>) {
+  const long = makeTask("long-title", {
     title: LONG_TITLE,
     phase: "working",
     reason: "Worker is editing",
   });
-  const held = seed(store, "both-holds", {
+  const held = makeTask("both-holds", {
     phase: "queued",
     reason: "Waiting for dispatch",
     ...syncHoldProjection({ dispatch: fence(DISPATCH), merge: fence(MERGE) }),
   });
-  const closing = seed(store, "archive-failed", {
+  const closing = makeTask("archive-failed", {
     phase: "closing",
     reason: "Closing the workspace",
   });
-  const stopped = seed(store, "stopped", {
+  const stopped = makeTask("stopped", {
     phase: "needs_attention",
     reason: "Needs a decision",
   });
-  const queued = seed(store, "waiting-heavy", {
+  const queued = makeTask("waiting-heavy", {
     phase: "queued",
     reason: "Waiting for dispatch",
   });
-  const reporting = seed(store, "reporting", {
+  const reporting = makeTask("reporting", {
     phase: "working",
     reason: "Worker is editing",
   });
-  const empty = seed(store, "empty-card", {
+  const empty = makeTask("empty-card", {
     phase: "needs_attention",
     reason: "",
   });
-  const summary = (id: string) => summarizeTask(store.task(id));
   return {
-    long: summary(long.id),
-    held: summary(held.id),
+    long: summarizeTask(long),
+    held: summarizeTask(held),
     // The archive failure is attention: the card shows the error, not the attempt count or retry time.
     closing: {
-      ...summary(closing.id),
+      ...summarizeTask(closing),
       resolution: {
-        ...summary(closing.id).resolution,
+        ...summarizeTask(closing).resolution,
         archiveRetry: {
           workspaceId: "ws-1",
           attempts: 3,
@@ -328,7 +350,7 @@ function fixtures(store: Store) {
       },
     },
     stopped: {
-      ...summary(stopped.id),
+      ...summarizeTask(stopped),
       stop: "attention" as const,
       stopRecord: {
         reason: "operator_needed" as const,
@@ -338,7 +360,7 @@ function fixtures(store: Store) {
       },
     },
     heavy: {
-      ...summary(queued.id),
+      ...summarizeTask(queued),
       heavyRun: {
         selector: "npm test",
         state: "queued" as const,
@@ -349,16 +371,16 @@ function fixtures(store: Store) {
       },
     },
     reporting: {
-      ...summary(reporting.id),
+      ...summarizeTask(reporting),
       headline: "Parser written; tests are next",
     },
     // An attention stop with no reason, no report and no next action: the chips row must not render empty.
     empty: {
-      ...summary(empty.id),
+      ...summarizeTask(empty),
       stop: "attention" as const,
       waitState: undefined,
     },
-    queued: summary(queued.id),
+    queued: summarizeTask(queued),
   };
 }
 
@@ -416,10 +438,10 @@ function emptyChipRows(node: HostNode): number {
 
 test("a board card says what is happening and what moves it next; IDs, timestamps and profile stay out", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     const extra = {
       ...f.queued,
       id: "extra-1",
@@ -521,16 +543,15 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("the card lays out the same content at a narrow and a wide board", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     const snapshot = board([
       f.long,
       f.held,
@@ -568,125 +589,116 @@ test("the card lays out the same content at a narrow and a wide board", async ()
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a T3Code task row names the host in its accessible label, not on the row", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
+  const { queued } = fixtures(makeTask);
+  const pendingUi = mount(
+    h(queue.TaskCard as never, {
+      task: { ...queued, hostId: "t3code:synthetic-environment" },
+      selected: false,
+      onPress: () => {},
+      c,
+      board: true,
+    }),
+  );
   try {
-    const { queued } = fixtures(store);
-    const pendingUi = mount(
-      h(queue.TaskCard as never, {
-        task: { ...queued, hostId: "t3code:synthetic-environment" },
-        selected: false,
-        onPress: () => {},
-        c,
-        board: true,
-      }),
+    assert.doesNotMatch(
+      pendingUi.text(),
+      /T3Code/,
+      "an unbound queued task with hostPending keeps the host chip hidden",
     );
-    try {
-      assert.doesNotMatch(
-        pendingUi.text(),
-        /T3Code/,
-        "an unbound queued task with hostPending keeps the host chip hidden",
-      );
-    } finally {
-      pendingUi.update(h("View", null));
-    }
-    const task = {
-      ...queued,
-      hostId: "t3code:synthetic-environment",
-      hostPending: undefined,
-    };
-    const ui = mount(
-      h(queue.TaskCard as never, {
-        task,
-        selected: false,
-        onPress: () => {},
-        c,
-        board: true,
-      }),
-    );
-    try {
-      // The row's project badge marks a T3 project; the host kind is detail (nucleus#1515).
-      assert.doesNotMatch(ui.text(), /T3Code/, "the row draws no host chip");
-      const label = ui
-        .all(/.*/)
-        .find((node) =>
-          String(node.props.accessibilityLabel ?? "").includes(
-            "Action: open task details",
-          ),
-        )?.props.accessibilityLabel as string;
-      assert.match(label, /T3Code/);
-      assert.doesNotMatch(
-        label,
-        /t3code:synthetic-environment/,
-        "long host IDs stay in the task view",
-      );
-    } finally {
-      ui.update(h("View", null));
-    }
   } finally {
-    store.close();
+    pendingUi.update(h("View", null));
+  }
+  const task = {
+    ...queued,
+    hostId: "t3code:synthetic-environment",
+    hostPending: undefined,
+  };
+  const ui = mount(
+    h(queue.TaskCard as never, {
+      task,
+      selected: false,
+      onPress: () => {},
+      c,
+      board: true,
+    }),
+  );
+  try {
+    // The row's project badge marks a T3 project; the host kind is detail (nucleus#1515).
+    assert.doesNotMatch(ui.text(), /T3Code/, "the row draws no host chip");
+    const label = ui
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(
+          "Action: open task details",
+        ),
+      )?.props.accessibilityLabel as string;
+    assert.match(label, /T3Code/);
+    assert.doesNotMatch(
+      label,
+      /t3code:synthetic-environment/,
+      "long host IDs stay in the task view",
+    );
+  } finally {
+    ui.update(h("View", null));
   }
 });
 
 test("a queued hold shows its state and keeps the complete reason accessible", async () => {
   await load();
-  const store = new Store(":memory:");
-  try {
-    const { held } = fixtures(store);
-    const fullReason =
-      "The planner needs to record the source ruling. The task can start after that decision.";
-    const task = {
-      ...held,
-      holds: {
-        ...(held.holds ?? {}),
-        dispatch: {
-          ...(held.holds?.dispatch ?? fence(fullReason)),
-          reason: fullReason,
-        },
+  const makeTask = cardTasks();
+  const { held } = fixtures(makeTask);
+  const fullReason =
+    "The planner needs to record the source ruling. The task can start after that decision.";
+  const task = {
+    ...held,
+    holds: {
+      ...(held.holds ?? {}),
+      dispatch: {
+        ...(held.holds?.dispatch ?? fence(fullReason)),
+        reason: fullReason,
       },
-    };
-    const ui = mount(
-      h(queue.TaskCard as never, {
-        task,
-        selected: false,
-        onPress: () => {},
-        c,
-        board: true,
-      }),
+    },
+  };
+  const ui = mount(
+    h(queue.TaskCard as never, {
+      task,
+      selected: false,
+      onPress: () => {},
+      c,
+      board: true,
+    }),
+  );
+  try {
+    assert.match(ui.text(), /Dispatch held/);
+    assert.doesNotMatch(ui.text(), /record the source ruling|start after that decision/);
+    const label = ui
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(
+          "Full hold reason:",
+        ),
+      )?.props.accessibilityLabel as string;
+    assert.ok(
+      label.includes(fullReason),
+      "the accessible name retains the unmodified full reason",
     );
-    try {
-      assert.match(ui.text(), /Dispatch held/);
-      assert.doesNotMatch(ui.text(), /record the source ruling|start after that decision/);
-      const label = ui
-        .all(/.*/)
-        .find((node) =>
-          String(node.props.accessibilityLabel ?? "").includes(
-            "Full hold reason:",
-          ),
-        )?.props.accessibilityLabel as string;
-      assert.ok(
-        label.includes(fullReason),
-        "the accessible name retains the unmodified full reason",
-      );
-    } finally {
-      ui.update(h("View", null));
-    }
   } finally {
-    store.close();
+    ui.update(h("View", null));
   }
 });
 
 test("a card with nothing to show renders no empty chips row, and its state line stays", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     // Attention stop on a needs-attention task: the phase line says it, so the stop badge is suppressed.
     const snapshot = board([f.empty]);
     mounted = mountBoard(
@@ -706,16 +718,15 @@ test("a card with nothing to show renders no empty chips row, and its state line
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("waits, holds and progress stops use operator words in visible and accessible card text", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const dependent = seed(store, "dependency", {
+    const dependent = makeTask("dependency", {
       phase: "queued",
       reason:
         "Waiting for prerequisites: Machine ports move out of the Paseo adapter (84aa4e89-0f2c-4ea4-ae22-b11111111111): changes_requested; Publish adapter (84aa4e89-0f2c-4ea4-ae22-b22222222222): reviewing",
@@ -724,17 +735,17 @@ test("waits, holds and progress stops use operator words in visible and accessib
         "84aa4e89-0f2c-4ea4-ae22-b22222222222",
       ],
     });
-    const progress = seed(store, "progress", {
+    const progress = makeTask("progress", {
       phase: "blocked",
       reason: "lifecycle: Reviewer continuing from checkpoint 2",
     });
-    const task = store.task(dependent.id);
+    const task = dependent;
     const projectWithPlanner = projectSchema.parse({
       ...project,
       planner: { agentId: "planner-id", setBy: "operator", setAt: at },
     });
     const summaries = visibleTaskSummaries(
-      [task, store.task(progress.id)],
+      [task, progress],
       [projectWithPlanner],
     );
     const prereq = {
@@ -756,7 +767,7 @@ test("waits, holds and progress stops use operator words in visible and accessib
         suggestedVerbs: [],
       },
     };
-    const holder = seed(store, "held-by-planner", {
+    const holder = makeTask("held-by-planner", {
       phase: "queued",
       reason: "Waiting for dispatch",
       ...syncHoldProjection({
@@ -764,10 +775,10 @@ test("waits, holds and progress stops use operator words in visible and accessib
       }),
     });
     const heldSummary = visibleTaskSummaries(
-      [store.task(holder.id)],
+      [holder],
       [projectWithPlanner],
     )[0]!;
-    const mergeHolder = seed(store, "merge-held-by-planner", {
+    const mergeHolder = makeTask("merge-held-by-planner", {
       phase: "merging",
       reason: "Merge held by planner-id: waiting for receipt",
       ...syncHoldProjection({
@@ -776,7 +787,7 @@ test("waits, holds and progress stops use operator words in visible and accessib
     });
     const mergeSummary = {
       ...visibleTaskSummaries(
-        [store.task(mergeHolder.id)],
+        [mergeHolder],
         [projectWithPlanner],
       )[0]!,
       waitState: {
@@ -792,14 +803,14 @@ test("waits, holds and progress stops use operator words in visible and accessib
         suggestedVerbs: [],
       },
     };
-    const operatorHolder = seed(store, "held-by-operator", {
+    const operatorHolder = makeTask("held-by-operator", {
       phase: "queued",
       reason: "Waiting for dispatch",
       ...syncHoldProjection({
         dispatch: { ...fence("Dispatch held by operator"), owner: "operator" },
       }),
     });
-    const otherHolder = seed(store, "held-by-other-thread", {
+    const otherHolder = makeTask("held-by-other-thread", {
       phase: "queued",
       reason: "Waiting for dispatch",
       ...syncHoldProjection({
@@ -811,14 +822,14 @@ test("waits, holds and progress stops use operator words in visible and accessib
     });
     assert.equal(
       visibleTaskSummaries(
-        [store.task(operatorHolder.id)],
+        [operatorHolder],
         [projectWithPlanner],
       )[0]?.holdDisplayOwner,
       "you",
     );
     assert.equal(
       visibleTaskSummaries(
-        [store.task(otherHolder.id)],
+        [otherHolder],
         [projectWithPlanner],
       )[0]?.holdDisplayOwner,
       "a planner thread",
@@ -869,24 +880,23 @@ test("waits, holds and progress stops use operator words in visible and accessib
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("every task and decision card keeps stored IDs and hashes out of visible and accessible text", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const uuid = "7a3c4bc4-e0db-48bb-9071-4ae6f3a09222";
     const digest =
       "79768fb6010d5f4859798c1040303dff4a9cb3697ad3f773f755480d4a4164a8";
     const rows = [
-      seed(store, "operator-wait", {
+      makeTask("operator-wait", {
         phase: "blocked",
         reason: "Needs decision",
       }),
-      seed(store, "escalation-wait", {
+      makeTask("escalation-wait", {
         phase: "blocked",
         reason:
           "Waiting with the planner or task owner " +
@@ -894,15 +904,15 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
           ": blocker escalation " +
           digest,
       }),
-      seed(store, "source-wait", {
+      makeTask("source-wait", {
         phase: "queued",
         reason: `Waiting for source ${uuid} ${digest}`,
       }),
-      seed(store, "held-attention", {
+      makeTask("held-attention", {
         phase: "needs_attention",
         reason: `Merge held by ${uuid}: receipt ${digest}`,
       }),
-      seed(store, "reason-card", {
+      makeTask("reason-card", {
         phase: "working",
         reason: `Working on ${uuid}; ref ${digest}`,
       }),
@@ -911,8 +921,9 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
       ...project,
       planner: { agentId: uuid, setBy: "operator", setAt: at },
     });
-    const escalation = store.task(rows[1]!.id);
-    store.update(escalation.id, {
+    const escalation = rows[1]!;
+    rows[1] = {
+      ...escalation,
       resolution: {
         ...escalation.resolution,
         stop: {
@@ -922,11 +933,8 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
           suggestedVerbs: [],
         },
       },
-    });
-    const base = visibleTaskSummaries(
-      rows.map((row) => store.task(row.id)),
-      [plannerProject],
-    );
+    };
+    const base = visibleTaskSummaries(rows, [plannerProject]);
     const decision = {
       id: "decision-card",
       version: 1,
@@ -1155,22 +1163,21 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
       });
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a long shell command card keeps elapsed time accessible and the command private", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const startedAt = new Date(Date.now() - 26 * 60_000).toISOString();
     const command = `Worker is executing a shell command that has run for over 15 minutes (started at ${startedAt}): TMPDIR='/scratch/qa/project-a' effigy check`;
-    const task = seed(store, "long-command", {
+    const task = makeTask("long-command", {
       phase: "working",
       reason: command,
     });
-    const summary = summarizeTask(store.task(task.id));
+    const summary = summarizeTask(task);
     for (const compact of [true, false]) {
       mounted?.update(h("View", null));
       mounted = mountBoard(
@@ -1191,17 +1198,16 @@ test("a long shell command card keeps elapsed time accessible and the command pr
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // nucleus#1532: the Queue list's own page read shows its loading and failure states in the list.
 test("the Queue list shows its held-back page loading, then a retry row when the read fails", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     const shipped = [f.held, f.heavy, f.queued];
     const snapshot = board(shipped, [{ repoPath: "/app", count: 12 }]);
     // Loading: the page does not answer yet.
@@ -1239,7 +1245,6 @@ test("the Queue list shows its held-back page loading, then a retry row when the
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -1304,7 +1309,6 @@ const triagePapercuts = (count: number) =>
 
 test("a long papercut and a long lead render as three-line rows with a one-line title", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1387,13 +1391,11 @@ test("a long papercut and a long lead render as three-line rows with a one-line 
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("Papercuts load the next page near the end and keep the real total", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     mounted = mountBoard(
@@ -1425,13 +1427,11 @@ test("Papercuts load the next page near the end and keep the real total", async 
     assert.ok(tree.query("Papercuts, 30"), "the header keeps the real total");
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("Leads load the next page near the end and keep the real total", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = Array.from({ length: 30 }, (_, index) =>
@@ -1462,13 +1462,11 @@ test("Leads load the next page near the end and keep the real total", async () =
     assert.ok(tree.query("Leads, 30"), "the header keeps the real total");
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("Leads fill a tall pane, and changing the tag or view resets the page", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1529,13 +1527,11 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("switching views at a tall viewport fills a short list without a new layout", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1574,13 +1570,11 @@ test("switching views at a tall viewport fills a short list without a new layout
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("the Leads tag filter sits in the list header row, beside the title and the item count", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1626,13 +1620,11 @@ test("the Leads tag filter sits in the list header row, beside the title and the
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("the Leads tag filter narrows the list; papercuts have no filter and the menu count stays the inbox total", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1677,14 +1669,13 @@ test("the Leads tag filter narrows the list; papercuts have no filter and the me
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // #1042 review, nucleus#1532: the Leads filter and the Queue's held-back pages persist; triage pages reset.
 test("the Leads tag and the queue's held-back pages survive view changes while triage pages reset", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1692,8 +1683,8 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
       triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
-    const shipped = [queuedTask(store, "Shipped one")];
-    const held = [queuedTask(store, "Held one"), queuedTask(store, "Held two")];
+    const shipped = [queuedTask(makeTask, "Shipped one")];
+    const held = [queuedTask(makeTask, "Held one"), queuedTask(makeTask, "Held two")];
     mounted = mountBoard(
       invokeWith(
         board(shipped, [{ repoPath: "/app", count: 3 }]),
@@ -1754,7 +1745,6 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -1762,13 +1752,13 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
 test("held-back queued tasks render as ordinary cards in compact and wide board layouts", async () => {
   await load();
   for (const compact of [true, false]) {
-    const store = new Store(":memory:");
+    const makeTask = cardTasks();
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
-      const shipped = [queuedTask(store, "Shipped one")];
+      const shipped = [queuedTask(makeTask, "Shipped one")];
       const held = [
-        queuedTask(store, "Held one"),
-        queuedTask(store, "Held two"),
+        queuedTask(makeTask, "Held one"),
+        queuedTask(makeTask, "Held two"),
       ];
       mounted = mountBoard(
         invokeWith(
@@ -1801,7 +1791,6 @@ test("held-back queued tasks render as ordinary cards in compact and wide board 
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   }
 });
@@ -1809,27 +1798,27 @@ test("held-back queued tasks render as ordinary cards in compact and wide board 
 // nucleus#1532: a project's held-back tasks follow its shipped queued cards, in queue order.
 test("the Queue appends each project's held-back tasks after its shipped cards, in queue order", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const shipped = [
-      queuedTask(store, "A one"),
-      queuedTask(store, "A two"),
-      queuedTask(store, "O one", "/other"),
-      queuedTask(store, "O two", "/other"),
+      queuedTask(makeTask, "A one"),
+      queuedTask(makeTask, "A two"),
+      queuedTask(makeTask, "O one", "/other"),
+      queuedTask(makeTask, "O two", "/other"),
     ];
     const queues = {
       "/app": [
         ...shipped.slice(0, 2),
-        queuedTask(store, "A three"),
-        queuedTask(store, "A four"),
-        queuedTask(store, "A five"),
-        queuedTask(store, "A six"),
+        queuedTask(makeTask, "A three"),
+        queuedTask(makeTask, "A four"),
+        queuedTask(makeTask, "A five"),
+        queuedTask(makeTask, "A six"),
       ],
       "/other": [
         ...shipped.slice(2),
-        queuedTask(store, "O three", "/other"),
-        queuedTask(store, "O four", "/other"),
+        queuedTask(makeTask, "O three", "/other"),
+        queuedTask(makeTask, "O four", "/other"),
       ],
     };
     const reads: Array<{ repoPath: string; offset: number }> = [];
@@ -1936,18 +1925,17 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // nucleus#1532 review finding: a scroll while a page is on its way must not read again.
 test("a multi-page Queue waits while a page is on its way instead of reading it twice", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const queue = Array.from({ length: 30 }, (_, index) =>
-      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+      queuedTask(makeTask, `Task ${String(index + 1).padStart(2, "0")}`),
     );
     const shipped = queue.slice(0, 2);
     const paging = controlledQueuedPages(queue);
@@ -2023,18 +2011,17 @@ test("a multi-page Queue waits while a page is on its way instead of reading it 
     assert.equal(paging.log.length, 3, "the end of the queue reads nothing");
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // nucleus#1532 review finding: a failed page keeps the cards read and waits at the retry row.
 test("a failed Queue page keeps the cards already read and stops reads at the retry row", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const queue = Array.from({ length: 30 }, (_, index) =>
-      queuedTask(store, `Task ${String(index + 1).padStart(2, "0")}`),
+      queuedTask(makeTask, `Task ${String(index + 1).padStart(2, "0")}`),
     );
     const shipped = queue.slice(0, 2);
     const log: Array<{ repoPath: string; offset: number }> = [];
@@ -2128,21 +2115,20 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
     assert.equal(log.length, ended, "the end of the queue reads nothing");
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // nucleus#1532: a short queue fills a tall pane without a scroll, and a failed page read offers a retry.
 test("a short queue fills a tall pane and a failed page read ends it with a retry row", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const shipped = [queuedTask(store, "Shipped one")];
+    const shipped = [queuedTask(makeTask, "Shipped one")];
     const held = [
-      queuedTask(store, "Held one"),
-      queuedTask(store, "Held two"),
-      queuedTask(store, "Held three"),
+      queuedTask(makeTask, "Held one"),
+      queuedTask(makeTask, "Held two"),
+      queuedTask(makeTask, "Held three"),
     ];
     const queue = [...shipped, ...held];
     const reads: Array<{ repoPath: string; offset: number }> = [];
@@ -2192,13 +2178,11 @@ test("a short queue fills a tall pane and a failed page read ends it with a retr
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a Triage card names its project, not its repository, when the two are named differently", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     // The project is "Board Surface"; its repository is owner/app, so the directory name "app" must not show.
@@ -2224,13 +2208,11 @@ test("a Triage card names its project, not its repository, when the two are name
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("lead-only and papercut-only repositories render T3 project badges on the board and keep folders on non-T3 boards", async () => {
   await load();
-  const store = new Store(":memory:");
   let t3Mounted: ReturnType<typeof mountBoard> | undefined;
   let plainMounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -2344,19 +2326,18 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
   } finally {
     t3Mounted?.update(h("View", null));
     plainMounted?.update(h("View", null));
-    store.close();
   }
 });
 
 // Tom, 2026-11-21: the inbox list keeps the coloured T3 project badges on task cards.
 test("a task row in the inbox list shows its T3 project badge from its own host, and a folder without one", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = seed(store, "badged-task", { phase: "working" });
+    const task = makeTask("badged-task", { phase: "working" });
     const summary = {
-      ...summarizeTask(store.task(task.id)),
+      ...summarizeTask(task),
       hostId: "t3code:main",
     };
     const snapshot = {
@@ -2397,7 +2378,6 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -2439,10 +2419,10 @@ const nodeHas = (
 
 test("the narrow header keeps the title, and its project selector becomes an icon that keeps the selection", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     mounted = mountBoard(
       invokeWith(board([f.long]), async () => ({ tasks: [], hasMore: false })),
     );
@@ -2483,13 +2463,11 @@ test("the narrow header keeps the title, and its project selector becomes an ico
     tree.raw.press("Close project selector");
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a drained-lane row draws its controls inside the row, and the row opens its lane in Planning", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const lane = {
@@ -2632,7 +2610,6 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -2697,15 +2674,15 @@ test("a drained lane asks before it is marked done, and cancel writes nothing", 
 
 test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   let detail: ReturnType<typeof mount> | undefined;
   try {
     const routing =
       "Profile Worker runs on online host t3code:task; not ruled out on srv_1, which is not ready";
-    const task = seed(store, "host-waiting", { phase: "working" });
+    const task = makeTask("host-waiting", { phase: "working" });
     const summary = {
-      ...summarizeTask(store.task(task.id)),
+      ...summarizeTask(task),
       hostId: "t3code:32be2844",
       hostWait: { hostId: "t3code:32be2844", since: at },
       hostReason: routing,
@@ -2756,7 +2733,7 @@ test("a task row keeps one status line and no host identity, while the detail ke
 
     // The task detail keeps the host selection and the reason behind it.
     const { taskDetailView } = await import("../shared/task-view");
-    const detailView = taskDetailView(store.task(task.id), {}, [], []);
+    const detailView = taskDetailView(task, {}, [], []);
     detail = mount(
       h(queue.TaskSummaryBlock as never, {
         // The detail's host selection is the summary's routing reason, shown in full.
@@ -2780,16 +2757,15 @@ test("a task row keeps one status line and no host identity, while the detail ke
   } finally {
     detail?.update(h("View", null));
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a host-waiting task keeps an owner-facing stop accessible", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const f = fixtures(store);
+    const f = fixtures(makeTask);
     const summary = {
       ...f.stopped,
       hostId: "t3code:32be2844",
@@ -2825,13 +2801,11 @@ test("a host-waiting task keeps an owner-facing stop accessible", async () => {
     assert.match(String(row.props.accessibilityLabel), /waiting on the host/i);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("single-kind views drop the kind word from line 1; mixed lists keep it", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -2898,18 +2872,17 @@ test("single-kind views drop the kind word from line 1; mixed lists keep it", as
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("a task needing attention on Needs you draws the task tile and its reference in the one list", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const task = seed(store, "blocked-task", { phase: "blocked" });
+    const task = makeTask("blocked-task", { phase: "blocked" });
     const summary = {
-      ...summarizeTask(store.task(task.id)),
+      ...summarizeTask(task),
       phase: "blocked" as const,
     };
     mounted = mountBoard(
@@ -2941,13 +2914,11 @@ test("a task needing attention on Needs you draws the task tile and its referenc
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
 test("Planning lists its projects as inbox rows, grouped, with the selected surface on the open one", async () => {
   await load();
-  const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const second = {
@@ -3058,7 +3029,6 @@ test("Planning lists its projects as inbox rows, grouped, with the selected surf
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -3092,30 +3062,29 @@ test("a resumed-thread count never adds a header pill", async () => {
 // for exceptions and buttons only where the row is the action.
 test("every card kind draws the three-line row, with flags only for exceptions and actions only on prompts", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
-    const normal = seed(store, "plain-working", {
+    const normal = makeTask("plain-working", {
       phase: "working",
       reason: "Worker is editing",
     });
-    const withPr = seed(store, "with-pr", {
+    const withPr = makeTask("with-pr", {
       phase: "reviewing",
       reason: "Reviewer reading the diff",
     });
-    const held = seed(store, "merge-ready", {
+    const held = makeTask("merge-ready", {
       phase: "merging",
       reason: "Waiting for merge",
       ...syncHoldProjection({ merge: fence("receipt pending") }),
     });
-    const summary = (id: string) => summarizeTask(store.task(id));
-    const number = (id: string) =>
-      `#${String(store.task(id).number).padStart(3, "0")}`;
+    const number = (task: Task) =>
+      `#${String(task.number).padStart(3, "0")}`;
     const tasks = [
-      summary(normal.id),
-      { ...summary(withPr.id), prUrl: "https://github.com/owner/app/pull/39" },
+      summarizeTask(normal),
+      { ...summarizeTask(withPr), prUrl: "https://github.com/owner/app/pull/39" },
       {
-        ...summary(held.id),
+        ...summarizeTask(held),
         holdEscalated: true,
         hold: { owner: "operator", reason: "receipt pending", since: at },
       },
@@ -3189,7 +3158,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       assert.match(
         nodeText(plain),
         new RegExp(
-          `^\\s*${number(normal.id)}\\s+App\\s+just now\\s+plain-working\\s+Working\\s*$`,
+          `^\\s*${number(normal)}\\s+App\\s+just now\\s+plain-working\\s+Working\\s*$`,
         ),
         "a normal task is three lines and shows no flags",
       );
@@ -3246,7 +3215,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
       assert.match(
         nodeText(holdRow),
         new RegExp(
-          `^\\s*Merge hold · ${number(held.id)}\\s+App\\s+\\d+d ago\\s+merge-ready\\s+Ready to merge\\s+· held for receipt pending\\s*$`,
+          `^\\s*Merge hold · ${number(held)}\\s+App\\s+\\d+d ago\\s+merge-ready\\s+Ready to merge\\s+· held for receipt pending\\s*$`,
         ),
       );
       assert.ok(
@@ -3269,7 +3238,6 @@ test("every card kind draws the three-line row, with flags only for exceptions a
     }
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -3277,38 +3245,38 @@ test("every card kind draws the three-line row, with flags only for exceptions a
 // lead's current check, the named project and age on line 1, and full accessible names.
 test("rows keep holds behind another status, a failed recheck, named projects with ages, and full labels", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const uuidTitle = "Rename 7a3c4bc4-e0db-48bb-9071-4ae6f3a09222 everywhere";
-    const heldAway = seed(store, "held-and-away", {
+    const heldAway = makeTask("held-and-away", {
       phase: "queued",
       reason: "Waiting for dispatch",
       ...syncHoldProjection({ dispatch: fence("Planner ruling owed.") }),
     });
-    const titled = seed(store, "uuid-title", {
+    const titled = makeTask("uuid-title", {
       title: uuidTitle,
       phase: "working",
       reason: "Worker is editing",
     });
-    const mentioned = seed(store, "fenced-working", {
+    const mentioned = makeTask("fenced-working", {
       phase: "working",
       reason: "Worker is editing",
       ...syncHoldProjection({ dispatch: fence("Planner ruling owed.") }),
     });
     const tasks = [
       {
-        ...summarizeTask(store.task(heldAway.id)),
+        ...summarizeTask(heldAway),
         hostId: "t3code:32be2844",
         hostWait: { hostId: "t3code:32be2844", since: at },
       },
       {
-        ...summarizeTask(store.task(titled.id)),
+        ...summarizeTask(titled),
         prUrl: "https://github.com/owner/app/pull/41",
       },
       // A report that merely mentions a hold never hides the live fence's flag.
       {
-        ...summarizeTask(store.task(mentioned.id)),
+        ...summarizeTask(mentioned),
         headline: "Dispatch held was discussed with the planner",
       },
     ];
@@ -3514,7 +3482,6 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
     assert.equal(projectGroup!.props.style.minWidth, 0);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -3522,13 +3489,13 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
 // own host outage beside it; the row reads "on the host", so the detail names both.
 test("task detail shows an owner-facing stop and the independent host wait together", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = cardTasks();
   let detail: ReturnType<typeof mount> | undefined;
   try {
     const { taskDetailView } = await import("../shared/task-view");
     const { taskNextSchema } = await import("../shared/contracts");
-    const task = seed(store, "budget-and-away", { phase: "blocked" });
-    const view = taskDetailView(store.task(task.id), {}, [], []);
+    const task = makeTask("budget-and-away", { phase: "blocked" });
+    const view = taskDetailView(task, {}, [], []);
     const next = taskNextSchema.parse({
       taskId: task.id,
       title: "budget-and-away",
@@ -3593,6 +3560,5 @@ test("task detail shows an owner-facing stop and the independent host wait toget
     assert.match(detail.text(), /Waiting on .+ · \d+d ago/);
   } finally {
     detail?.update(h("View", null));
-    store.close();
   }
 });
