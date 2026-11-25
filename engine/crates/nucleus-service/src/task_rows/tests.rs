@@ -894,6 +894,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     assert_eq!(card["attention"], "waiting");
     fixture.elapse_flip_interval();
     fixture.sync().await;
+    fixture.sync().await;
     fixture.observed_snooze().await;
     assert_eq!(
         fixture.commands(),
@@ -986,7 +987,6 @@ async fn an_actionable_row_retries_its_claimed_clear_on_the_visibility_deadline(
     }
     assert_eq!(fixture.attention().await, TaskAttention::Attention);
 
-    fixture.elapse_flip_interval();
     fixture.native.lock().unwrap().fail_next = true;
     fixture.sync().await;
     fixture.sync().await;
@@ -1480,6 +1480,7 @@ async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
 
 async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
     let service = &fixture.service;
+    fixture.elapse_flip_interval();
     fixture.sync().await;
     let row = service.task(ID).await.unwrap();
     let mut finished = row.task.clone();
