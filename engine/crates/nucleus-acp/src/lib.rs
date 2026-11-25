@@ -38,7 +38,7 @@ struct Session {
 struct Turn {
     id: Value,
     job: JoinHandle<()>,
-    replies: Option<mpsc::Sender<Value>>,
+    replies: Option<Arc<inbox::Replies>>,
 }
 
 impl Drop for Turn {
@@ -112,7 +112,7 @@ impl Agent {
                 .and_then(|session| session.turn.as_ref())
                 .and_then(|turn| turn.replies.as_ref())
             {
-                let _ = replies.try_send(frame);
+                replies.receive(&frame).await;
             }
             return;
         }

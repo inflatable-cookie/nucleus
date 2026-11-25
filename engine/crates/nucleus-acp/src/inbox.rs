@@ -1,12 +1,13 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
+    sync::Arc,
     time::Duration,
 };
 
 use nucleus_core::acp::{INBOX_PREVIEW_TIMEOUT, InboxAnswer, InboxForm};
 use serde_json::{Value, json};
 use tokio::{
-    sync::mpsc,
+    sync::{Mutex, mpsc},
     time::{Instant, sleep_until},
 };
 
@@ -26,6 +27,23 @@ pub(crate) fn response_session(frame: &Value) -> Option<&str> {
     Some(session)
 }
 
+// A turn can queue one answer per form it actually offered. Keeping the
+// eligibility check at input also keeps stdin available for cancellation.
+pub(crate) struct Replies {
+    cards: Mutex<BTreeMap<String, Card>>,
+    answers: mpsc::UnboundedSender<(String, InboxAnswer)>,
+}
+
+impl Replies {
+    pub(crate) async fn receive(&self, frame: &Value) {
+        let mut cards = self.cards.lock().await;
+        if let Some(answer) = take_answer(&mut cards, frame) {
+            let request = cards[&answer.field].request.clone();
+            let _ = self.answers.send((request, answer));
+        }
+    }
+}
+
 pub(crate) fn prompt(
     client: ServiceClient,
     output: &Output,
@@ -33,7 +51,12 @@ pub(crate) fn prompt(
     id: &Value,
     wait_for_ui_reply: bool,
 ) -> Turn {
-    let (send, receive) = mpsc::channel(64);
+    let (answers, receive) = mpsc::unbounded_channel();
+    let replies = Arc::new(Replies {
+        cards: Mutex::default(),
+        answers,
+    });
+    let turn_replies = Arc::clone(&replies);
     let output = output.clone();
     let session = session.to_owned();
     let request = id.clone();
@@ -44,7 +67,7 @@ pub(crate) fn prompt(
         // this message. Allow both attempts and the next service refresh.
         let until = wait_for_ui_reply
             .then(|| Instant::now() + 2 * INBOX_PREVIEW_TIMEOUT + Duration::from_secs(5));
-        match follow(&client, &output, &session, receive, until).await {
+        match follow(&client, &output, &session, &turn_replies, receive, until).await {
             Ok(()) => stop(&output, &request, "end_turn"),
             Err(failure) => error(&output, &request, -32000, &failure.to_string()),
         }
@@ -52,7 +75,7 @@ pub(crate) fn prompt(
     Turn {
         id: id.clone(),
         job,
-        replies: Some(send),
+        replies: Some(replies),
     }
 }
 
@@ -60,11 +83,11 @@ async fn follow(
     client: &ServiceClient,
     output: &Output,
     session: &str,
-    mut replies: mpsc::Receiver<Value>,
+    replies: &Replies,
+    mut answers: mpsc::UnboundedReceiver<(String, InboxAnswer)>,
     mut wait_for_ui: Option<Instant>,
 ) -> Result<(), Failure> {
     // Carry requests across reconnects. An ambiguous HTTP response never repeats an answer.
-    let mut cards = BTreeMap::<String, Card>::new();
     let mut delay = 1;
     loop {
         let result = async {
@@ -74,20 +97,21 @@ async fn follow(
                 tokio::select! {
                     change = changes.next() => {
                         change?;
-                        if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
+                        if !refresh_cards(client, output, session, &replies.cards, &mut wait_for_ui).await? {
                             return Ok(());
                         }
                         delay = 1;
                     }
-                    Some(response) = replies.recv() => {
-                        if let Some(answer) = take_answer(&mut cards, &response)
+                    Some((request, answer)) = answers.recv() => {
+                        let current = replies.cards.lock().await.get(&answer.field).is_some_and(|card| card.request == request);
+                        if current
                             && let Err(failure) = client.answer(&answer).await
                         {
                             notify(output, session, message(&failure.to_string()));
                             // The client settled this request. Read back the ordinary
                             // decision before offering a fresh form.
-                            cards.remove(&answer.field);
-                            if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
+                            replies.cards.lock().await.remove(&answer.field);
+                            if !refresh_cards(client, output, session, &replies.cards, &mut wait_for_ui).await? {
                                 return Ok(());
                             }
                         }
@@ -100,7 +124,7 @@ async fn follow(
                         }
                     } => {
                         wait_for_ui = None;
-                        if !refresh_cards(client, output, session, &mut cards, &mut wait_for_ui).await? {
+                        if !refresh_cards(client, output, session, &replies.cards, &mut wait_for_ui).await? {
                             return Ok(());
                         }
                     }
@@ -122,7 +146,7 @@ async fn refresh_cards(
     client: &ServiceClient,
     output: &Output,
     session: &str,
-    cards: &mut BTreeMap<String, Card>,
+    cards: &Mutex<BTreeMap<String, Card>>,
     wait_for_ui: &mut Option<Instant>,
 ) -> Result<bool, Failure> {
     let snapshot = client.inbox().await?;
@@ -138,6 +162,7 @@ async fn refresh_cards(
         }
     }
     let has_pending = !snapshot.pending.is_empty();
+    let mut cards = cards.lock().await;
     cards.retain(|field, _| snapshot.pending.iter().any(|form| &form.field == field));
     for form in snapshot.pending.into_iter().filter(|form| form.offer) {
         if let Entry::Vacant(slot) = cards.entry(form.field.clone()) {
@@ -208,4 +233,44 @@ fn elicit(output: &Output, session: &str, form: &InboxForm) -> Result<Card, Fail
             .collect(),
         settled: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nucleus_core::acp::InboxChoice;
+
+    #[tokio::test]
+    async fn a_burst_queues_one_answer_per_offered_form_while_the_consumer_is_busy() {
+        let (output, mut offers) = mpsc::unbounded_channel();
+        let (answers, mut queued) = mpsc::unbounded_channel();
+        let replies = Replies {
+            cards: Mutex::default(),
+            answers,
+        };
+        for i in 0..65 {
+            let field = format!("field{i}");
+            let form = InboxForm {
+                field: field.clone(),
+                question: "Continue?".into(),
+                choices: vec![InboxChoice {
+                    id: "yes".into(),
+                    label: "Yes".into(),
+                }],
+                offer: true,
+            };
+            let card = elicit(&output, "fixture", &form).unwrap();
+            replies.cards.lock().await.insert(field.clone(), card);
+            let offer = offers.try_recv().unwrap();
+            let response = json!({"jsonrpc":"2.0","id":offer["id"], "result":{"action":"accept","content":{field:"yes"}}});
+            replies.receive(&response).await;
+            replies.receive(&response).await;
+        }
+        for i in 0..65 {
+            let (_, answer) = queued.try_recv().unwrap();
+            assert_eq!(answer.field, format!("field{i}"));
+            assert_eq!(answer.option_id, "yes");
+        }
+        assert!(queued.try_recv().is_err());
+    }
 }
