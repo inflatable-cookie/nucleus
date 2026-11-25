@@ -267,7 +267,9 @@ and [workspace archive retry](https://github.com/inflatable-cookie/nucleus/blob/
 ### Archived task threads
 
 Housekeeping checks T3's archived shell on the Dispatch retention interval
-(default 12 hours). It removes up to 32 of the oldest archived parents, workers
+(default 12 hours). It drains the eligible set in batches of up to 32, oldest first. Each batch
+uses a fresh inventory on a scheduler scan at least 30 seconds after the previous
+claim. The interval starts again after the final batch. Eligible threads are parents, workers
 and reviewers recorded for finished Rust tasks. The archive must be older than
 the configured retention (default three days). A live task or origin binding
 protects the thread. Dispatch must be running, and a changed archive is checked
