@@ -704,6 +704,20 @@ mod tests {
         ]
     }
 
+    fn inbox_shell(
+        root: &str,
+        provider: &str,
+        title: &str,
+        children: &[serde_json::Value],
+    ) -> serde_json::Value {
+        let mut threads = vec![
+            json!({"id": INBOX_THREAD, "projectId": "project:nucleus-rust-inbox",
+            "providerInstanceId": provider, "worktreePath": null, "title": title, "pinnedAt": "now"}),
+        ];
+        threads.extend_from_slice(children);
+        json!({"projects":[{"id":"project:nucleus-rust-inbox", "workspaceRoot": root}], "threads": threads})
+    }
+
     #[tokio::test]
     async fn inbox_status_titles_only_write_changed_metadata_under_a_fresh_generation() {
         use nucleus_store::planning::WriteAt;
@@ -723,12 +737,10 @@ mod tests {
             json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
         })
         .await;
-        let shell = |title| {
-            json!({"projects":[{"id":"project:nucleus-rust-inbox","workspaceRoot":root}],
-            "threads":[{"id":INBOX_THREAD,"projectId":"project:nucleus-rust-inbox",
-            "providerInstanceId":provider,"worktreePath":null,"title":title,"pinnedAt":"now"}]})
+        let shell = |title: &str, children: &[serde_json::Value]| {
+            inbox_shell(&root, provider, title, children)
         };
-        host.fixture_project_shell(&shell("All quiet"), provider);
+        host.fixture_project_shell(&shell("All quiet", &[]), provider);
         service.host = host;
         let inbox = [INBOX_THREAD.to_owned()];
         let first = service.title_work(provider, &inbox).await.unwrap().unwrap();
@@ -736,17 +748,9 @@ mod tests {
         assert!(requests.lock().unwrap().is_empty());
 
         let threads = running_review_threads(&service, provider).await;
-        let working_shell = |title| {
-            let mut snapshot = shell(title);
-            snapshot["threads"]
-                .as_array_mut()
-                .unwrap()
-                .extend(threads.clone());
-            snapshot
-        };
         service
             .host
-            .fixture_project_shell(&working_shell("All quiet"), provider);
+            .fixture_project_shell(&shell("All quiet", &threads), provider);
         let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
         service.apply_title(provider, &running, 0).await.unwrap();
         assert_eq!(running.desired, "1 task running");
@@ -759,7 +763,7 @@ mod tests {
         );
         service
             .host
-            .fixture_project_shell(&working_shell("1 task running"), provider);
+            .fixture_project_shell(&shell("1 task running", &threads), provider);
 
         let project = service.fixture().host_project.clone();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
@@ -785,7 +789,7 @@ mod tests {
         assert_eq!(decision.desired, "Paused: 1 decision to answer");
         service
             .host
-            .fixture_project_shell(&shell(&decision.desired), provider);
+            .fixture_project_shell(&shell(&decision.desired, &[]), provider);
         {
             let mut state = service.state.lock().await;
             state.settings.dispatch = None;
