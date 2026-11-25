@@ -2,8 +2,8 @@ use std::{cmp::Reverse, path::Path};
 
 use nucleus_core::{Action, OperatorDecline, Question, QuestionDelivery, Task, WaitReason};
 use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, 
-    PlannerIdentity, PlannerThread, T3, ThreadHint,
+    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, PlannerIdentity, PlannerThread, T3,
+    ThreadHint,
 };
 use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
@@ -175,9 +175,8 @@ impl Service {
                     return Ok(wait);
                 }
                 NoticeState::Undelivered => {}
-                // Neither absence nor a vanished thread disproves a recorded send.
-                NoticeState::Absent | NoticeState::Gone => return Ok(wait),
-                NoticeState::Queued => return Ok(wait),
+                // None of these states authorizes another write for the recorded send.
+                NoticeState::Absent | NoticeState::Gone | NoticeState::Queued => return Ok(wait),
             }
         }
         let Some(thread) = self.planner_notice_target(&row.task, false).await? else {

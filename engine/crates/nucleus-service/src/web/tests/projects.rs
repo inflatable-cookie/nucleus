@@ -1806,10 +1806,7 @@ async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
         registry.advance_tell().await.expect("scheduler delivery");
     }
     let staged = json_body(broadcast().await).await;
-    assert_eq!(
-        staged, original,
-        "native acceptance still reports queued"
-    );
+    assert_eq!(staged, original, "native acceptance still reports queued");
     {
         let fixture = registry.notices.lock().expect("notices");
         assert!(fixture.controls.is_empty());

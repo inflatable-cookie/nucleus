@@ -5,9 +5,7 @@ use std::{
 };
 
 use nucleus_core::QuestionDelivery;
-use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, T3,
-};
+use nucleus_hosts::{HostError, NoticeAuthorization, NoticeOutcome, NoticeState, T3};
 use nucleus_store::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };

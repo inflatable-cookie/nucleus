@@ -288,7 +288,7 @@ Later decisions carry their own attribution.
       - Tom, 2026-11-25: "we could use "Waiting" while in the Working group to show when a thread is waiting for something imminent". During the two-minute window the row stays in T3's Working group and reads Waiting. When a child runs again the visible row shows its task phase. Otherwise it snoozes when the window ends.
       - Tom, 2026-11-25: "Questions and decisions need to bring the row back". A task with an open question or decision for a person is visible until it is answered, in addition to its Inbox entry. Operator snoozes are respected.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
-    - A native message can wake the exact Nucleus-owned snooze on its destination. A settled destination is explicitly unsettled before delivery. Operator snoozes defer delivery. Nucleus never sends a settle command.
+    - A native message can wake the exact Nucleus-owned snooze on its destination. Task and role delivery can explicitly unsettle their destination. Planner notices and tells wake their recipient through the message dispatch itself. Operator snoozes defer delivery. Nucleus never sends a settle command.
     - A retained role can send directly to its own thread. The scheduler uses
       the exact parent read under the task fence to keep the parent visible
       at that send. It records Starting with the first role send intent and
@@ -803,9 +803,10 @@ the existing run, question, hold and exact-head rules still apply.
 
 Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
-waiting notice, and the next due pass can also retry routing. The scheduler records the concrete send intent after checking the recipient and
-snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
-A queued notice remains read-only if the planner settles again. An uncertain question or operator-decline send keeps its exact attempt.
+waiting notice, and the next due pass can also retry routing. The scheduler
+records the concrete send intent after checking the recipient and snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
+A queued notice remains read-only if the planner settles again. An uncertain
+question or operator-decline send keeps its exact attempt.
 For report-ready, prerequisite-release and held parent recovery notices, a
 structured T3 rejection of the exact command reopens the notice once. The fresh
 attempt uses a new command ID, the same notice text and a currently verified planner.
