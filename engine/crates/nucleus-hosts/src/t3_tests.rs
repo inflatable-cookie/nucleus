@@ -2258,10 +2258,6 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
         json!({"rootThreadId":parent,"parentThreadId":parent,"relationshipToParent":"subagent"});
     let child = window["projection"]["thread"].clone();
     let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::Snapshot(window.clone()),
-        ),
         ("orchestration.subscribeThread", Response::Snapshot(window)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
