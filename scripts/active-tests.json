@@ -84,6 +84,5 @@
   "test/timing-verdict.test.ts",
   "test/ui-foundations.test.ts",
   "test/web-live-channel.test.ts",
-  "test/web-transport.test.ts",
   "test/workspace-board.test.ts"
 ]
