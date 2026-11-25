@@ -28,9 +28,6 @@ setup = "npm ci"
 "proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
-# The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
-# and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.
-"proof:bb" = "node --import tsx scripts/acceptance/bb-private.ts {args}"
 # Spec 062 phase 5's install proof: builds the plugin and installs it into the
 # isolated BB server from phase 0 (never the operator's live BB).
 "proof:bb:sidebar" = "node --import tsx scripts/acceptance/bb-sidebar-private.ts {args}"

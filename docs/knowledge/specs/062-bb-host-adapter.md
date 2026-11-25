@@ -1925,7 +1925,7 @@ What landed:
   rules below.
 - `hosts/bb/plugin/` — the plugin skeleton: a self-contained BB plugin package whose backend connects
   out to the service, declares the role and executes the bounded operations through `bb.sdk`.
-- `effigy proof:bb` (`scripts/acceptance/bb-private.ts`) — the private spike, and
+- The private phase-0 spike, and
   `test/bb-host-channel.test.ts`, `test/bb-host-executor.test.ts`, `test/bb-plugin-operations.test.ts`,
   `test/bb-plugin-protocol.test.ts`, `test/bb-proof-isolation.test.ts` for the parts a fake can prove.
 
@@ -2044,18 +2044,16 @@ T3Code contract fixtures do: the fake completes every served thread, interaction
 recorded field set and refuses an invented partial record, so an adapter that reads a field BB does
 not send fails in tests rather than in the operator's sidebar.
 
-The private proof drives an isolated BB server with its own data directory and port, a synthetic Git
-repository and a synthetic project, and a scripted local provider. It never discovers or reuses the
-operator's BB data directory, project or threads. Evidence is retained in scratch: the connection and
+The private phase-0 proof drove an isolated BB server with its own data directory and port,
+a synthetic Git repository and project, and a scripted local provider. The run kept
+its evidence in scratch: the connection and
 its reconnect, the identity probe, the unmanaged environment, a spawn with its parent and metadata,
 an observation, an archive and its cascade read, a reload mid-run and a restart mid-run. Public PR
 text carries no local paths, no credentials and no private project names.
 
-The vendored sidebar is checked twice, and neither check reaches the network from `effigy check`: the
-vendored-manifest test is an ordinary unit test over committed files, and `effigy bb:sidebar-drift` is
-the opt-in fetch that compares the pin against upstream and opens a rebase.
+The vendored sidebar used a manifest test over committed files and a separate
+opt-in drift check against upstream.
 
-Proof selectors: `effigy proof:bb` for the private run, `effigy proof:bb:sidebar` for the built bundle's
-install, `effigy bb:sidebar-drift` at a planned rebase, the affected unit files for each phase, and `effigy check` plus
-`effigy qa:docs` for every phase. No
-phase runs the full suite; milestone QA does that on `main`.
+Run `effigy proof:bb:sidebar` to check the built bundle's install. Use the
+affected unit files, `effigy check` and `effigy qa:docs` for each phase.
+Milestone QA runs the full suite on `main`.
