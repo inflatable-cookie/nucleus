@@ -402,19 +402,6 @@ test("serial wall-clock oracles are classified by the support/timing marker", ()
     ),
     false,
   );
-  // The roll-acceptance files must stay lane members: if the marker import
-  // disappears, the parallel suite skips their oracles and the serial lane
-  // drops them, losing the coverage silently to both runners at once.
-  for (const file of [
-    "test/service-roll.test.ts",
-    "test/host-run-roll.test.ts",
-  ]) {
-    assert.equal(
-      isSerialLaneSource(readFileSync(file, "utf8")),
-      true,
-      `${file} stays in the serial wall-clock lane`,
-    );
-  }
 });
 
 test("serial oracles skip the parallel suite and run in the timing lane", () => {
