@@ -1110,10 +1110,12 @@ test("a board click and action address the selected project's colliding decision
   const fake = engine();
   const answers = new Map<string, string>();
   const dropped = new Set<string>();
+  const parked = new Set<string>();
+  const promotions: unknown[] = [];
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
-    const match = /\/planning\/([^/]+)\/(decisions|items)(?:\/(shared|cut)\/(answer|drop))?(?:\?pending=true)?$/.exec(path);
+    const match = /\/planning\/([^/]+)\/(decisions|items)(?:\/(shared|cut)\/(answer|drop|park|promote))?(?:\?pending=true)?$/.exec(path);
     if (!match) return fake.fetcher(url, init);
     const project = match[1]!;
     calls.push(path);
@@ -1124,10 +1126,15 @@ test("a board click and action address the selected project's colliding decision
         answer: answers.has(project) ? { optionId: answers.get(project), note: null, author: "operator", answeredAtMs: 20 } : null };
       return Response.json(match[4] ? record : path.endsWith("?pending=true") && record.answer ? [] : [record]);
     }
+    if (match[4] === "promote") {
+      promotions.push({ project, ...JSON.parse(String(init?.body)) });
+      return Response.json({ identity: { id: "t-result" }, reference: "orbit-docs#12" });
+    }
+    if (match[4] === "park") parked.add(project);
     if (match[4] === "drop") dropped.add(project);
     const item = { id: "shared", title: project + " lead", body: project + " lead body", kind: "lead",
       state: "open", author: "planner", lanes: [], version: 1, createdAtMs: 10 };
-    const cut = { ...item, id: "cut", title: project + " cut", body: project + " cut body", kind: "papercut", state: dropped.has(project) ? "dropped" : "open" };
+    const cut = { ...item, id: "cut", title: project + " cut", body: project + " cut body", kind: "papercut", state: dropped.has(project) ? "dropped" : parked.has(project) ? "parked" : "open", reason: parked.has(project) ? "Later" : null };
     return Response.json(match[4] ? cut : [item, cut]);
   };
   const adapter = createRustAdapter(createRustApi(fetcher));
@@ -1173,7 +1180,17 @@ test("a board click and action address the selected project's colliding decision
   await press(/^Lead: lantern lead,/);
   await waitFor(() => ui.text().includes("lantern lead body"), 4000, "second project lead");
   await press(/^Papercuts, 2$/);
+  await press(/^Papercut: Orbit_Main cut,/);
+  await press("Papercut complexity medium");
+  await press("Promote to example/orbit-docs");
+  await waitFor(() => ui.text().includes("Promoted as orbit-docs#12"), 4000, "second repository receipt");
+  assert.deepEqual(promotions, [{ project: "Orbit_Main", complexity: "medium", repository: "example/orbit-docs" }]);
   await press(/^Papercut: lantern cut,/);
+  await visible("Park reason");
+  ui.type("Park reason", "Later");
+  await press("Park the lead");
+  await visible("Parked lead");
+  assert.equal(ui.query("Return the lead to the to-do list"), undefined);
   await press("Close as completed");
   await waitFor(() => dropped.size > 0, 4000, "papercut closed");
   assert.deepEqual([...dropped], ["lantern"]);

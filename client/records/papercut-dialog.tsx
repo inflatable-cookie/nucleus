@@ -23,7 +23,8 @@ import {
   type RecordNoticeValue,
 } from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
-import { ParkPanel } from "../park-controls";
+import { useEngineFeatures } from "../engine-features";
+import { ParkedNote, ParkPanel } from "../park-controls";
 import { type as typeScale, space } from "../design";
 
 const papercutPromoteReason = (cut: Papercut) =>
@@ -61,6 +62,7 @@ export function PapercutDialog({
   onClose: () => void;
   c: Colors;
 }) {
+  const rust = useEngineFeatures().engine === "rust";
   const live = useContext(BoardLiveContext);
   const scope = project ? { project } : {};
   const fetchPapercut = useRpc(api.papercutGet),
@@ -90,11 +92,12 @@ export function PapercutDialog({
     refetchInterval: live ? false : 4000,
   });
   const papercutDetail = papercutDetailQuery.data;
+  const destinations = papercutDetail?.repositories ?? (papercutDetail ? [papercutDetail.repository] : []);
   const editsMarkdown = editBase?.project !== undefined;
   // Each papercut starts with no complexity chosen.
   useEffect(() => {
     setPapercutComplexity(null);
-  }, [papercutDetail?.id]);
+  }, [openPapercutId, project]);
   return (
     <RecordModal
       label="Papercut detail"
@@ -106,7 +109,7 @@ export function PapercutDialog({
       eyebrow={
         papercutDetail ? (
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-            {papercutDetail.state} · {papercutDetail.repository.origin}
+            {papercutDetail.state} · {destinations.map(repo => repo.origin).join(", ")}
           </Text>
         ) : undefined
       }
@@ -306,44 +309,47 @@ export function PapercutDialog({
                     });
                     }}
                   />
-                  <ModalAction
-                    text="Promote"
-                    busy={busy}
-                    reason={
-                      papercutPromoteReason(papercutDetail) ??
-                      (papercutComplexity
-                        ? undefined
-                        : "Choose a complexity first")
-                    }
-                    c={c}
-                    onPress={() =>
-                      void act(async () => {
-                        const result = await promotePapercut({
-                          ...scope,
-                          id: papercutDetail.id,
-                          board: true,
-                          complexity: papercutComplexity!,
-                        });
-                        if ("backpressured" in result)
-                          setRecordNotice({
-                            kind: "error",
-                            text: result.reason,
+                  {destinations.map(({ origin }) => (
+                    <ModalAction
+                      key={origin}
+                      text={destinations.length > 1 ? `Promote to ${origin}` : "Promote"}
+                      busy={busy}
+                      reason={
+                        papercutPromoteReason(papercutDetail) ??
+                        (papercutComplexity
+                          ? undefined
+                          : "Choose a complexity first")
+                      }
+                      c={c}
+                      onPress={() =>
+                        void act(async () => {
+                          const result = await promotePapercut({
+                            ...scope,
+                            id: papercutDetail.id,
+                            repository: origin,
+                            board: true,
+                            complexity: papercutComplexity!,
                           });
-                        else if ("accepted" in result)
-                          setRecordNotice({
-                            kind: "ok",
-                            text: `Promotion ${operationStateLabel(result.operation)} · operation ${result.operation.id}`,
-                          });
-                        else
-                          setRecordNotice({
-                            kind: "ok",
-                            text: `Promoted as ${result.reference}`,
-                          });
-                      }, "record")
-                    }
-                  />
+                          if ("backpressured" in result)
+                            setRecordNotice({
+                              kind: "error",
+                              text: result.reason,
+                            });
+                          else if ("accepted" in result)
+                            setRecordNotice({
+                              kind: "ok",
+                              text: `Promotion ${operationStateLabel(result.operation)} · operation ${result.operation.id}`,
+                            });
+                          else
+                            setRecordNotice({
+                              kind: "ok",
+                              text: `Promoted as ${result.reference}`,
+                            });
+                        }, "record")
+                      }
+                    />
+                  ))}
                 </View>
-                {/* Nucleus#1543: a papercut parks like a lead; an open one can park, and a parked one unparks. */}
                 <View style={{ gap: space.xs, paddingTop: space.xxs }}>
                   <Text
                     style={{
@@ -353,49 +359,53 @@ export function PapercutDialog({
                   >
                     Parking
                   </Text>
-                  <ParkPanel
-                    c={c}
-                    busy={busy}
-                    parked={papercutDetail.parked ?? null}
-                    recheck={papercutDetail.recheck ?? null}
-                    canPark={papercutDetail.state === "open"}
-                    parkReason={
-                      papercutDetail.state === "open"
-                        ? null
-                        : "Only open papercuts can be parked"
-                    }
-                    unparkReason={null}
-                    onPark={(reason, revisitAt) =>
-                      void act(async () => {
-                        await parkLead({
-                          ...scope,
-                          id: papercutDetail.id,
-                          version: papercutDetail.version,
-                          reason,
-                          revisitAt,
-                          author: "operator (board)",
-                        });
-                        setRecordNotice({
-                          kind: "ok",
-                          text: revisitAt
-                            ? "Parked. It moves back to Open on its recheck date."
-                            : "Parked.",
-                        });
-                      }, "record")
-                    }
-                    onUnpark={() =>
-                      void act(async () => {
-                        await unparkLead({
-                          id: papercutDetail.id,
-                          version: papercutDetail.version,
-                        });
-                        setRecordNotice({
-                          kind: "ok",
-                          text: "Back on the to-do list.",
-                        });
-                      }, "record")
-                    }
-                  />
+                  {rust && papercutDetail.parked ? (
+                    <ParkedNote c={c} parked={papercutDetail.parked} recheck={papercutDetail.recheck ?? null} />
+                  ) : (
+                    <ParkPanel
+                      c={c}
+                      busy={busy}
+                      parked={papercutDetail.parked ?? null}
+                      recheck={papercutDetail.recheck ?? null}
+                      canPark={papercutDetail.state === "open"}
+                      parkReason={
+                        papercutDetail.state === "open"
+                          ? null
+                          : "Only open papercuts can be parked"
+                      }
+                      unparkReason={null}
+                      onPark={(reason, revisitAt) =>
+                        void act(async () => {
+                          await parkLead({
+                            ...scope,
+                            id: papercutDetail.id,
+                            version: papercutDetail.version,
+                            reason,
+                            revisitAt,
+                            author: "operator (board)",
+                          });
+                          setRecordNotice({
+                            kind: "ok",
+                            text: revisitAt
+                              ? "Parked. It moves back to Open on its recheck date."
+                              : "Parked.",
+                          });
+                        }, "record")
+                      }
+                      onUnpark={() =>
+                        void act(async () => {
+                          await unparkLead({
+                            id: papercutDetail.id,
+                            version: papercutDetail.version,
+                          });
+                          setRecordNotice({
+                            kind: "ok",
+                            text: "Back on the to-do list.",
+                          });
+                        }, "record")
+                      }
+                    />
+                  )}
                 </View>
                 {papercutDetail.state === "open" && (
                   <View style={{ gap: space.xs, paddingTop: space.xxs }}>

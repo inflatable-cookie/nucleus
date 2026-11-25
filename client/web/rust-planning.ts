@@ -261,11 +261,12 @@ function leadDetail(item: RustItem, project: RustProject) {
 }
 
 function boardPapercut(item: RustItem, row: ProjectRow) {
-  const repo = repositories(row.project, item.repositories)[0]!;
+  const repos = repositories(row.project, item.repositories);
   return {
     id: item.id,
     project: row.id,
-    repository: repo,
+    repository: repos[0]!,
+    repositories: repos,
     area: null,
     title: item.title,
     happened: item.body,

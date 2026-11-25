@@ -13,6 +13,7 @@ export const papercutSchema = z
     id: z.string(),
     project: z.string().min(1).optional(),
     repository: papercutRepositorySchema,
+    repositories: z.array(papercutRepositorySchema).optional(),
     area: z.string().nullable(),
     title: z.string(),
     happened: z.string(),
