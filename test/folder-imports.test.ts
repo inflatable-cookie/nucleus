@@ -36,7 +36,7 @@ test("folder imports match the known violations; remove resolved edges, never ad
 test("folder rules cover processes, public host indexes and host SDK confinement", () => {
   for (const [from, to, specifier, expected] of [
     [
-      "hosts/paseo/plugin/bridge.ts",
+      "hosts/paseo/plugin/forwarder.ts",
       "service/standalone.ts",
       "../../../service/standalone",
       "plugin-forwarder",
@@ -61,7 +61,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
     ],
     ["shared/rpc.ts", "core/store/index.ts", "../core/store", "shared-neutral"],
     [
-      "hosts/paseo/plugin/bridge.ts",
+      "hosts/paseo/plugin/forwarder.ts",
       "core/store/index.ts",
       "../../../core/store",
       "plugin-forwarder",
