@@ -369,6 +369,23 @@ impl Store {
         Ok((item, number))
     }
 
+    /// Lanes inherited from the source item of each unfinished promoted task.
+    ///
+    /// # Errors
+    /// Returns an error if the joined planning rows cannot be read.
+    pub fn live_source_lanes(&self) -> Result<Vec<(String, String, String)>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT s.task_id, s.project, lane.value FROM tasks t
+             JOIN planning_task_sources s ON s.task_id=t.id
+             JOIN planning_items i ON i.project=s.project AND i.id=s.item_id
+             JOIN json_each(CASE WHEN json_valid(i.snapshot) THEN i.snapshot END, '$.lanes') lane
+             WHERE t.phase NOT IN ('done','cancelled') AND lane.type='text'",
+        )?;
+        Ok(query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<_, _>>()?)
+    }
+
     /// Read the planning source of a task admitted by promotion.
     ///
     /// # Errors
