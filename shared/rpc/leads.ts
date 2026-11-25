@@ -91,7 +91,7 @@ export const leadEdit = defineRpc({
 
 export const leadGet = defineRpc({
   name: "lead.get",
-  input: z.object({ id: z.string().min(1) }).strict(),
+  input: z.object({ id: z.string().min(1), project: z.string().min(1).optional() }).strict(),
   output: leadDetailSchema,
 });
 
@@ -126,6 +126,7 @@ export const leadDrop = defineRpc({
   input: z
     .object({
       id: z.string().min(1),
+      project: z.string().min(1).optional(),
       reason: z.string().trim().min(1).max(4000),
     })
     .strict(),
@@ -154,6 +155,7 @@ export const leadPark = defineRpc({
   input: z
     .object({
       id: z.string().min(1),
+      project: z.string().min(1).optional(),
       version: z.number().int().positive(),
       reason: z.string().trim().min(1).max(4000),
       revisitAt: z.preprocess(
@@ -234,13 +236,13 @@ export const leadApprove = defineRpc({
 
 export const leadPromoteTask = defineRpc({
   name: "lead.promote-task",
-  input: sourcePromotionInputSchema,
+  input: sourcePromotionInputSchema.extend({ project: z.string().min(1).optional() }),
   output: sourcePromotionOutputSchema,
 });
 
 export const papercutPromoteTask = defineRpc({
   name: "papercut.promote-task",
-  input: sourcePromotionInputSchema,
+  input: sourcePromotionInputSchema.extend({ project: z.string().min(1).optional() }),
   output: sourcePromotionOutputSchema,
 });
 

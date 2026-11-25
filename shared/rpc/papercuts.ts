@@ -7,7 +7,7 @@ export const papercutAdd = defineRpc({ name: "papercut.add", input: papercutAddI
 
 export const papercutList = defineRpc({ name: "papercut.list", input: z.object({ repository: z.string().optional(), state: papercutStateSchema.default("open") }).strict(), output: z.array(papercutSchema) });
 
-export const papercutGet = defineRpc({ name: "papercut.get", input: z.object({ id: z.string().min(1) }).strict(), output: papercutSchema });
+export const papercutGet = defineRpc({ name: "papercut.get", input: z.object({ id: z.string().min(1), project: z.string().min(1).optional() }).strict(), output: papercutSchema });
 
 export const papercutEdit = defineRpc({ name: "papercut.edit", input: z.object({
   id: z.string().min(1), version: z.number().int().positive(), project: z.string().min(1).optional(),
@@ -19,6 +19,6 @@ export const papercutEdit = defineRpc({ name: "papercut.edit", input: z.object({
 
 export const papercutPromote = defineRpc({ name: "papercut.promote", input: z.object({ id: z.string().min(1), taskId: z.string().optional(), reference: z.string().optional() }).strict().refine(input => Boolean(input.taskId) !== Boolean(input.reference), "Provide one task identity"), output: papercutSchema });
 
-export const papercutClose = defineRpc({ name: "papercut.close", input: z.object({ id: z.string().min(1), reason: z.enum(["completed", "deprecated"]), note: z.string().default("") }).strict(), output: papercutSchema });
+export const papercutClose = defineRpc({ name: "papercut.close", input: z.object({ id: z.string().min(1), project: z.string().min(1).optional(), reason: z.enum(["completed", "deprecated"]), note: z.string().default("") }).strict(), output: papercutSchema });
 
 export const papercutSetLanes = defineRpc({ name: "papercut.set-lanes", input: z.object({ id: z.string().min(1), lanes: laneKeyListSchema }).strict(), output: papercutSchema });
