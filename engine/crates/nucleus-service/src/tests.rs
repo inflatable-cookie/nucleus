@@ -35,19 +35,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     let checkout = root.join("repo");
     std::fs::create_dir(&checkout).expect("project");
     git(&checkout, &["init", "-b", "main"]);
-    git(
-        &checkout,
-        &[
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "fixture",
-        ],
-    );
+    create_fixture_commit(&checkout, "fixture");
     git(
         &checkout,
         &[
@@ -99,6 +87,22 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     )
     .expect("scoped service");
     (home, service)
+}
+
+fn create_fixture_commit(repository: &Path, message: &str) {
+    git(
+        repository,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    );
 }
 
 pub(super) fn git(root: &Path, args: &[&str]) -> String {
@@ -1099,19 +1103,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     // A repository-wide prune would remove this unrelated stale registration.
     std::fs::rename(sibling_path, repo.parent().unwrap().join("sibling-moved")).unwrap();
     drop(worktrees);
-    git(
-        &repo,
-        &[
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "Advance the base",
-        ],
-    );
+    create_fixture_commit(&repo, "Advance the base");
     let new_head: Head = git(&repo, &["rev-parse", "HEAD"]).parse().unwrap();
     assert_ne!(old_head, new_head);
     service.fixture_mut().start = new_head.clone();
