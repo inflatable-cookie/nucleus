@@ -425,6 +425,7 @@ impl TaskHost for Due {
     async fn terminal_orphans(
         &self,
         _: &Path,
+        _: &Path,
     ) -> Result<Vec<nucleus_hosts::OrphanProcess>, HostError> {
         unreachable!()
     }

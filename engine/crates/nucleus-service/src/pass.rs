@@ -1873,11 +1873,11 @@ impl Service {
         task: &Task,
         checkout: &Checkout<'_>,
     ) -> Result<(), ServiceError> {
-        let mut targets = host.terminal_orphans(checkout.path()).await?;
+        let scratch = self.storage.scratch().path();
+        let mut targets = host.terminal_orphans(checkout.path(), scratch).await?;
         if targets.is_empty() {
             return Ok(());
         }
-        let scratch = self.storage.scratch().path();
         let parent = nucleus_hosts::parent_thread(checkout.path());
         let roles: Vec<_> = [
             Some(parent.as_str()),

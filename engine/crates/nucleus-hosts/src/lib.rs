@@ -332,6 +332,7 @@ pub trait TaskHost: Send + Sync {
     fn terminal_orphans(
         &self,
         checkout: &Path,
+        scratch: &Path,
     ) -> impl Future<Output = Result<Vec<OrphanProcess>, HostError>> + Send;
 
     fn observe_retained(
@@ -863,11 +864,13 @@ impl TaskHost for T3Pass<'_> {
         )
     }
 
-    async fn terminal_orphans(&self, checkout: &Path) -> Result<Vec<OrphanProcess>, HostError> {
+    async fn terminal_orphans(
+        &self,
+        checkout: &Path,
+        scratch: &Path,
+    ) -> Result<Vec<OrphanProcess>, HostError> {
         let inventory = self.process_inventory().await?;
-        inventory
-            .terminal_orphans(checkout, self.scratch.unwrap_or(checkout))
-            .await
+        inventory.terminal_orphans(checkout, scratch).await
     }
 
     async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {
