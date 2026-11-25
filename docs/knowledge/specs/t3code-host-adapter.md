@@ -329,6 +329,8 @@ archive is a catalog operation, not evidence that a folder was removed. Native
 workspace operations without an equivalent must explicitly refuse rather than
 pretend to be a Paseo workspace.
 
+The retired TypeScript title flow is recorded here.
+
 Core derives the task row's title with `taskWorkspaceTitle` and hands it
 through uncapped. Each host fits titles to its own bound at its boundary with
 the shared Unicode-safe fitting in `shared/title-fit.ts`: T3 row and thread
