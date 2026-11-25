@@ -66,6 +66,12 @@ export function build(options) {
   return compile(options);
 }
 `),
+    writeFile(join(bin, "codesign"), `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+appendFileSync(process.env.STAGE_MARKER + ".sign", JSON.stringify(process.argv.slice(2)) + "\\n");
+if (process.argv.includes("Missing Local Signer")) process.exit(1);
+if (process.env.STAGE_MODE === "bad-signature" && process.argv[2] === "--verify") process.exit(1);
+`, { mode: 0o700 }),
     writeFile(artifact, "fixture executable\n"),
     writeFile(join(bin, "oxide"), `#!/usr/bin/env node
 const { mkdirSync, readdirSync, renameSync, writeFileSync } = require("node:fs");
@@ -92,19 +98,42 @@ console.log(JSON.stringify({
   await git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
     "-c", "commit.gpgSign=false", "commit", "--quiet", "-m", "Stage fixture");
   const revision = (await git("rev-parse", "HEAD")).stdout.trim();
-  const stageRelease = (builds: string, mode: string) =>
+  const stageRelease = (builds: string, mode: string, identity: string | undefined = undefined) =>
     run(process.execPath, ["scripts/stage-engine-release.mjs", builds], {
       cwd: source,
       timeout: 30_000,
       env: {
         ...process.env,
         PATH: [bin, dirname(process.execPath), process.env.PATH].join(delimiter),
+        NUCLEUS_CODESIGN_IDENTITY: identity,
         STAGE_ARTIFACT: artifact,
         STAGE_BUILDS: builds,
         STAGE_MARKER: join(directory, mode),
         STAGE_MODE: mode,
       },
     });
+
+  await t.test("macOS requires a named signer and publishes only a verified copy", { skip: process.platform !== "darwin" }, async () => {
+    const builds = join(directory, "signed-builds");
+    await mkdir(builds);
+    for (const identity of ["", "-"]) {
+      await assert.rejects(stageRelease(builds, "no-signer", identity), /NUCLEUS_CODESIGN_IDENTITY/);
+    }
+    await assert.rejects(access(join(directory, "no-signer")), { code: "ENOENT" });
+    await assert.rejects(stageRelease(builds, "missing-identity", "Missing Local Signer"), /Check that the named identity is installed/);
+    assert.deepEqual(await readdir(join(builds, "releases")), []);
+    await assert.rejects(stageRelease(builds, "bad-signature"));
+    assert.deepEqual(await readdir(join(builds, "releases")), []);
+    await stageRelease(builds, "verified");
+    const calls = (await readFile(join(directory, "verified.sign"), "utf8")).trim().split("\n")
+      .map(line => JSON.parse(line) as string[]);
+    const binary = calls[0]?.at(-1);
+    assert.match(binary ?? "", /^\.stage-[^/]+\/nucleus$/);
+    assert.deepEqual(calls, [
+      ["--force", "--sign", "Nucleus Local Signing", "--identifier", "com.inflatable-cookie.nucleus", "--timestamp=none", binary],
+      ["--verify", "--strict", binary],
+    ]);
+  });
 
   await t.test("rejects an absent builds root before starting Oxide", async () => {
     const mount = join(directory, "absent-volume");

@@ -44,6 +44,10 @@ async function stageRelease(buildsRoot) {
   if (!buildsDirectory?.isDirectory()) {
     throw Error(`Expected an existing engine builds root at ${buildsRoot}.`);
   }
+  const signingIdentity = (process.env.NUCLEUS_CODESIGN_IDENTITY ?? 'Nucleus Local Signing').trim();
+  if (process.platform === 'darwin' && (!signingIdentity || signingIdentity === '-')) {
+    throw Error('Set NUCLEUS_CODESIGN_IDENTITY to the name of a local code-signing identity.');
+  }
   const changed = () => Error(`The engine builds destination changed during staging: ${buildsRoot}.`);
   // Relative writes stay on the directory we entered, even if its name is replaced.
   process.chdir(buildsRoot);
@@ -74,6 +78,17 @@ async function stageRelease(buildsRoot) {
     checkDestination();
     await copyFile(executable, binary);
     await chmod(binary, 0o700);
+    if (process.platform === 'darwin') {
+      try {
+        execFileSync('codesign', [
+          '--force', '--sign', signingIdentity, '--identifier', 'com.inflatable-cookie.nucleus',
+          '--timestamp=none', binary,
+        ], { stdio: 'inherit' });
+      } catch (cause) {
+        throw Error(`Could not sign the engine with "${signingIdentity}". Check that the named identity is installed and available to codesign.`, { cause });
+      }
+      execFileSync('codesign', ['--verify', '--strict', binary], { stdio: 'inherit' });
+    }
     await buildEngineBoard(join(staging, 'board-assets'));
     const skill = join('skills', 'nucleus');
     await mkdir(join(staging, skill), { recursive: true, mode: 0o700 });
