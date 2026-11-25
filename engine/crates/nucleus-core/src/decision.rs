@@ -237,6 +237,14 @@ pub fn decide(task: &Task, observation: &Observation) -> Action {
     }
 }
 
+pub(crate) fn capacity_blocked(task: &Task) -> Action {
+    if task.phase == Phase::Working && task.first_launch() {
+        Action::Advance(Phase::Queued)
+    } else {
+        Action::Wait(WaitReason::Capacity)
+    }
+}
+
 fn signal(task: &Task, observation: &Observation) -> Signal {
     if let Some(run) = task.run().filter(|run| run.revoked()) {
         return match observation.current(&run.launch.instance) {
@@ -458,7 +466,7 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
     }
     if matches!(
         task.phase,
-        Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
+        Phase::Queued | Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
     ) {
         if let Observed::Known(Forge::Merged { pr, commit }) = &observation.forge {
             if task.phase != Phase::Closing || !task.approves(&pr.head) {

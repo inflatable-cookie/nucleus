@@ -283,6 +283,60 @@ impl Service {
             }
         }
         match action {
+            Action::Advance(Phase::Working) if task.phase() == Phase::Queued => {
+                if forge_requested && let Some(error) = forge_error {
+                    return Err(error);
+                }
+                if observation.workspace == Observed::Unknown {
+                    return Ok(Action::Wait(WaitReason::WorkspaceUnknown));
+                }
+                let _fence = self.effect(row).await?;
+                let _projects = self.project_writes.read().await;
+                let route = self.project_for(identity).await?;
+                let Some(slots) = route.slots else {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                };
+                if observation.workspace == Observed::Known(Workspace::Absent)
+                    && !self.workspace_capacity(identity, &route, slots).await?
+                {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let state = self.state.lock().await;
+                if !self.initial_dispatch_allowed(&state, identity)? {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let configured = state.settings.profiles.is_some();
+                drop(state);
+                if !configured {
+                    let Some(fixture) = self
+                        .project
+                        .as_ref()
+                        .filter(|project| project.mode == crate::ProjectMode::Fixture)
+                    else {
+                        return Ok(Action::Wait(WaitReason::Capacity));
+                    };
+                    let catalog = host.profile_catalog().await?;
+                    if ![&fixture.worker, &fixture.reviewer]
+                        .into_iter()
+                        .all(|profile| catalog.supports(profile))
+                    {
+                        return Err(HostError::Configuration.into());
+                    }
+                }
+                let mut state = self.state.lock().await;
+                if state.store.dependency_blocked(&identity.id)? {
+                    return Ok(Action::Wait(WaitReason::Prerequisite));
+                }
+                if !self.initial_dispatch_allowed(&state, identity)? {
+                    return Ok(Action::Wait(WaitReason::Capacity));
+                }
+                let mut admitted = task.clone();
+                admitted.reconcile(&observation);
+                let order = state.store.admission_order(&identity.id)?;
+                self.commit(&mut state, row, &admitted, &event("queue_admitted"), None)?;
+                state.capacity_waiters.insert((order, identity.id.clone()));
+                Ok(action)
+            }
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
                 Err(ServiceError::Host(error))
             }
@@ -942,7 +996,16 @@ impl Service {
                     self.parent_not_sent(error)
                 }
             })? {
-            ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::Live(parent) => {
+                // The native run matched the frozen command's message ID.
+                if task.first_launch()
+                    && let Some(command) = &prior_turn
+                {
+                    self.record_native_turn(row, "native_turn_observed", &session, command)
+                        .await?;
+                }
+                Ok(ControlFlow::Continue(Some(parent)))
+            }
             ParentStep::DeliveryUnknown => {
                 Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain))
             }
@@ -996,7 +1059,12 @@ impl Service {
         let intent = write.starts_turn().then_some(kind);
         let command = command.to_owned();
         match self.deliver_parent(row, write, &scope, intent).await {
-            Ok(true) => {}
+            Ok(true) => {
+                if intent.is_some() && row.task.first_launch() {
+                    self.record_native_turn(row, "native_turn_observed", session, &command)
+                        .await?;
+                }
+            }
             Ok(false) => return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain)),
             Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
                 self.record_failed_parent_turn(row, session, &command)

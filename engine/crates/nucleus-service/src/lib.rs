@@ -27,7 +27,7 @@ mod titles;
 mod web;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     os::fd::OwnedFd,
     path::PathBuf,
@@ -248,7 +248,7 @@ struct State {
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
-    capacity_waiters: VecDeque<String>,
+    capacity_waiters: BTreeSet<(i64, String)>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
@@ -412,7 +412,7 @@ impl Service {
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
-                capacity_waiters: VecDeque::new(),
+                capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
@@ -543,12 +543,7 @@ impl Service {
             let next = match first.take() {
                 Some(first) => Some(first),
                 None if self.host.request_retry_at().is_some() => None,
-                None => self
-                    .state
-                    .lock()
-                    .await
-                    .schedule
-                    .take_ready(Instant::now(), &visited),
+                None => self.state.lock().await.take_ready(Instant::now(), &visited),
             };
             let Some(DueTask { id, priority }) = next else {
                 break;
@@ -611,7 +606,6 @@ impl Service {
         if task.run().is_none() && self.parent_delivery_fenced(row).await? {
             return Ok(Action::Wait(WaitReason::HostObservationBlocked));
         }
-        self.refresh_acp_if_requested(row).await?;
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
         }
@@ -649,36 +643,15 @@ impl Service {
         if row.task.phase() == Phase::ReportReady {
             return Box::pin(self.notify_report_ready(row)).await;
         }
-        if row.task.phase() == Phase::Queued
-            && row.task.run().is_none()
-            && row.task.hold().is_none()
-            && row.task.question().is_none()
-        {
-            let (enabled, configured) = {
-                let state = self.state.lock().await;
-                (
-                    self.resolve_project(&state, row.task.identity())
-                        .is_ok_and(|route| route.slots.is_some()),
-                    state.settings.profiles.is_some(),
-                )
-            };
-            let fixture = self
-                .project
-                .as_ref()
-                .filter(|project| project.mode == ProjectMode::Fixture);
-            if !enabled || (!configured && fixture.is_none()) {
+        if task.first_launch() && task.hold().is_none() && task.question().is_none() {
+            let state = self.state.lock().await;
+            if !state.forge_requested.contains(&task.identity().id)
+                && !self.initial_dispatch_allowed(&state, task.identity())?
+            {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
-            if let Some(fixture) = fixture.filter(|_| !configured) {
-                let catalog = host.profile_catalog().await?;
-                if ![&fixture.worker, &fixture.reviewer]
-                    .into_iter()
-                    .all(|profile| catalog.supports(profile))
-                {
-                    return Err(HostError::Configuration.into());
-                }
-            }
         }
+        self.refresh_acp_if_requested(row).await?;
         self.advance(row, host).await
     }
 
@@ -849,8 +822,29 @@ impl Service {
         identity: &Identity,
         recovery: bool,
     ) -> Result<bool, ServiceError> {
-        let state = self.state.lock().await;
-        let route = self.resolve_project(&state, identity)?;
+        self.launch_capacity_in(&*self.state.lock().await, identity, recovery)
+    }
+
+    fn initial_dispatch_allowed(
+        &self,
+        state: &State,
+        identity: &Identity,
+    ) -> Result<bool, ServiceError> {
+        Ok(state
+            .settings
+            .dispatch
+            .as_ref()
+            .is_none_or(|dispatch| dispatch.mode.allows_launch(true))
+            && self.launch_capacity_in(state, identity, false)?)
+    }
+
+    fn launch_capacity_in(
+        &self,
+        state: &State,
+        identity: &Identity,
+        recovery: bool,
+    ) -> Result<bool, ServiceError> {
+        let route = self.resolve_project(state, identity)?;
         let fallback_slots = self.project.as_ref().map_or_else(
             || nucleus_store::DispatchSettings::default().global_slots,
             |project| project.launch_budget.slots,
@@ -886,16 +880,17 @@ impl Service {
                     schedule,
                     allowance_clock,
                     thread_tasks,
+                    capacity_waiters,
                     ..
                 } = &mut *state;
                 if !thread_tasks.is_empty() {
                     allowance_clock.checkpoint(store, now)?;
                 }
-                schedule.seed(store, now, self.acp_provider().is_some())?;
-                if let Some(ready) = schedule.take_ready(now, &BTreeSet::new()) {
+                schedule.seed(store, now, self.acp_provider().is_some(), capacity_waiters)?;
+                if let Some(ready) = state.take_ready(now, &BTreeSet::new()) {
                     return Ok(ready);
                 }
-                next = schedule.next();
+                next = state.schedule.next();
             }
             tokio::select! {
                 () = self.wake.notified() => {},
@@ -930,7 +925,7 @@ impl Service {
             _ => None,
         };
         let mut state = self.state.lock().await;
-        let current = self.lookup(&state, id)?;
+        let mut current = self.lookup(&state, id)?;
         let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
@@ -956,6 +951,23 @@ impl Service {
             }
             return Ok(());
         }
+        if wait == Some(WaitReason::Capacity)
+            && current.task.phase() == Phase::Working
+            && current.task.first_launch()
+            && !state
+                .store
+                .pending_parent_preparation(id, current.version)?
+            && current.task.reconcile_capacity() == Action::Advance(Phase::Queued)
+        {
+            current.version = self.commit(
+                &mut state,
+                row,
+                &current.task,
+                &event("queue_capacity"),
+                None,
+            )?;
+        }
+        let row = &current;
         if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
             return Ok(());
         }
@@ -1742,7 +1754,8 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
     }
     match audit.kind.as_str() {
         "command" | "reported" => Priority::Wake,
-        "run_reserved"
+        "queue_admitted"
+        | "run_reserved"
         | "host_send"
         | "run_revoked"
         | "review_rejected_awaiting_archive"
@@ -1778,9 +1791,22 @@ impl State {
         self.waits.get(id).and_then(|wait| wait.detail.as_ref())
     }
 
+    fn enqueue_capacity(&mut self, id: &str) -> Result<(), StoreError> {
+        if !self
+            .capacity_waiters
+            .iter()
+            .any(|(_, waiting)| waiting == id)
+        {
+            self.capacity_waiters
+                .insert((self.store.admission_order(id)?, id.into()));
+        }
+        Ok(())
+    }
+
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
         if reason != Some(WaitReason::Capacity) {
             self.group_waits.remove(id);
+            self.capacity_waiters.retain(|(_, waiting)| waiting != id);
         }
         let entry = self.waits.entry(id.into()).or_insert_with(|| TaskWait {
             reason: None,
@@ -1794,11 +1820,6 @@ impl State {
         }
         entry.since = Instant::now();
         entry.detail = None;
-        if prior == Some(WaitReason::Capacity) {
-            self.capacity_waiters.retain(|waiting| waiting != id);
-        } else if reason == Some(WaitReason::Capacity) {
-            self.capacity_waiters.push_back(id.into());
-        }
         true
     }
 
@@ -1817,6 +1838,9 @@ impl State {
         detail: Option<WaitDetail>,
     ) -> Result<bool, StoreError> {
         let id = &task.identity().id;
+        if reason == Some(WaitReason::Capacity) && self.wait_reason(id) != reason {
+            self.enqueue_capacity(id)?;
+        }
         // The first pass after restart establishes a baseline for a volatile wait.
         let entered = self.wait_label_changed(task, reason, detail.as_ref());
         if entered {
@@ -1873,11 +1897,19 @@ impl State {
         }
     }
 
+    fn take_ready(&mut self, now: Instant, visited: &BTreeSet<String>) -> Option<DueTask> {
+        self.schedule.take_ready(
+            now,
+            visited,
+            self.capacity_waiters.iter().map(|(_, id)| id.as_str()),
+        )
+    }
+
     fn wake_capacity(&mut self, now: Instant) {
-        if let Some(id) = self
-            .capacity_waiters
-            .iter()
-            .find(|id| !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now))
+        if let Some(id) =
+            self.capacity_waiters.iter().map(|(_, id)| id).find(|id| {
+                !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now)
+            })
         {
             self.schedule.wake(id, now, Priority::Effect);
         }

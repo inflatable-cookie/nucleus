@@ -133,8 +133,10 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         "legacy_without_claim",
         "legacy_unresolved",
         "legacy_refused",
+        "failed",
         "no_attempt",
         "refused",
+        "replacement_observed",
     ] {
         let version = store.create(&task(id, id), &event("admitted")).unwrap();
         versions.push((id, version));
@@ -146,7 +148,9 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         assert_eq!(
             store.task_delivery_fence(id, version, "runtime").unwrap(),
             match id {
-                "ambiguous" | "legacy_unresolved" => Some(vec!["thread-hold-1".into()]),
+                "ambiguous" | "legacy_unresolved" | "replacement_observed" | "failed" => {
+                    Some(vec!["thread-hold-1".into()])
+                }
                 "later_send" => Some(vec!["thread-hold-3".into()]),
                 "new_ambiguity" => Some(vec![]),
                 _ => None,
@@ -159,6 +163,14 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
                 .unwrap()
                 .is_none()
         );
+        assert_eq!(
+            store.pending_parent_preparation(id, version).unwrap(),
+            matches!(
+                id,
+                "ambiguous" | "legacy_unresolved" | "later_send" | "replacement_observed"
+            ),
+            "{id}"
+        );
     }
 }
 
@@ -170,7 +182,13 @@ fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
     };
     let attempt = matches!(
         id,
-        "completed" | "ambiguous" | "refused" | "legacy_unresolved" | "legacy_refused"
+        "completed"
+            | "ambiguous"
+            | "refused"
+            | "legacy_unresolved"
+            | "legacy_refused"
+            | "replacement_observed"
+            | "failed"
     )
     .then(|| {
         append(
@@ -233,6 +251,26 @@ fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
             serde_json::json!({
                 "version":version, "session":"runtime", "command":"thread-hold-1",
             }),
+        );
+    }
+    if id == "replacement_observed" {
+        append(
+            "native_turn_observed",
+            serde_json::json!({"version":version,"session":"replacement","command":"thread-hold-1"}),
+        );
+        append(
+            "native_turn_failed",
+            serde_json::json!({"version":version,"session":"replacement/scope","command":"thread-hold-1"}),
+        );
+    }
+    if id == "failed" {
+        append(
+            "native_turn_replay",
+            serde_json::json!({"version":version,"session":"runtime/previous-engine","command":"thread-hold-1"}),
+        );
+        append(
+            "native_turn_failed",
+            serde_json::json!({"version":version,"session":"runtime/current-engine","command":"thread-hold-1"}),
         );
     }
 }
@@ -490,7 +528,10 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
 
     let mut store = Store::open(&storage).expect("reopen");
     assert_eq!(store.active().expect("active"), vec![task.clone()]);
-    assert_eq!(store.active_ids(None, 1).expect("first page"), ["1"]);
+    assert_eq!(
+        store.active_ids(None, 1).expect("first page"),
+        [("1".into(), None)]
+    );
     assert!(
         store
             .active_ids(Some("1"), 1)

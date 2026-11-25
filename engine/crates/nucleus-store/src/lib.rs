@@ -330,23 +330,28 @@ impl Store {
         Ok(load(&self.connection, id)?)
     }
 
-    /// Read one bounded page of active task IDs from the active index.
+    /// Read active task IDs in admission order, with the ordinal for first workers.
     /// # Errors
     /// Returns an error if the database cannot read the page.
-    pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<String>, StoreError> {
+    pub fn active_ids(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<(String, Option<i64>)>, StoreError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
+            "WITH cursor AS (SELECT coalesce((SELECT rowid FROM tasks WHERE id = ?2), 0) AS seq),
+             due AS (SELECT rowid AS admitted, id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
              AND (run IS NOT NULL OR phase NOT IN ('report_ready','blocked','error')
                   OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
-             AND id > ?2
-             UNION SELECT b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
-               WHERE b.task_id > ?2 AND t.phase NOT IN ('done','cancelled')
-             UNION SELECT n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
-               WHERE n.task_id > ?2 AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
-             UNION SELECT w.task_id FROM task_prerequisite_waits w
+             AND rowid > (SELECT seq FROM cursor)
+             UNION SELECT t.rowid, b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
+               WHERE t.rowid > (SELECT seq FROM cursor) AND t.phase NOT IN ('done','cancelled')
+             UNION SELECT t.rowid, n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
+               WHERE t.rowid > (SELECT seq FROM cursor) AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
+             UNION SELECT t.rowid, w.task_id FROM task_prerequisite_waits w
                JOIN tasks t ON t.id = w.task_id
-               WHERE w.task_id > ?2 AND w.released_at_ms IS NULL
+               WHERE t.rowid > (SELECT seq FROM cursor) AND w.released_at_ms IS NULL
                  AND t.phase NOT IN ('done','cancelled')
                  AND NOT EXISTS (
                     SELECT 1 FROM task_dependencies d
@@ -354,10 +359,27 @@ impl Store {
                     WHERE d.task_id = w.task_id AND d.after_dispatch = 1
                       AND coalesce(p.phase, '') != 'done'
                  )
-             ORDER BY id LIMIT ?1",
+             ORDER BY admitted LIMIT ?1)
+             SELECT due.id, CASE WHEN t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
+               AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
+               THEN due.admitted END
+             FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
-        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| row.get(0))?;
+        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
         Ok(ids.collect::<Result<_, _>>()?)
+    }
+
+    /// Read the admission ordinal used to order capacity waiters across repositories.
+    ///
+    /// # Errors
+    /// Returns an error if the task row cannot be read.
+    pub fn admission_order(&self, id: &str) -> Result<i64, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached("SELECT rowid FROM tasks WHERE id = ?1")?
+            .query_row([id], |row| row.get(0))?)
     }
 
     /// Read the IDs of tasks that hold a run.
@@ -820,6 +842,44 @@ impl Store {
                 Ok((row.get(0)?, row.get(1)?))
             })
             .optional()?)
+    }
+
+    /// Check every exact parent attempt before giving up the version that owns it.
+    /// A disconnected or replaced host cannot settle an attempt in the journal.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal is unreadable.
+    pub fn pending_parent_preparation(&self, id: &str, version: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "WITH journal AS (
+                 SELECT sequence, kind, json_extract(detail, '$.command') AS command,
+                        json_extract(detail, '$.session') AS session,
+                        json_extract(detail, '$.attempt') AS attempt
+                 FROM events WHERE task_id = ?1 AND json_valid(detail)
+                   AND json_extract(detail, '$.version') = ?2
+                   AND kind IN ('native_turn_intent', 'native_turn_replay',
+                                'native_turn_observed', 'native_turn_not_sent', 'native_turn_failed')
+             )
+             SELECT EXISTS(SELECT 1 FROM journal intent
+               WHERE intent.kind IN ('native_turn_intent', 'native_turn_replay')
+                 AND NOT EXISTS (SELECT 1 FROM journal proof WHERE proof.command = intent.command
+                   AND ((proof.kind = 'native_turn_observed'
+                         AND (proof.session = intent.session
+                              OR instr(intent.session, proof.session || '/') = 1))
+                     OR (proof.kind = 'native_turn_failed' AND EXISTS (
+                         SELECT 1 FROM journal origin WHERE origin.kind = 'native_turn_intent'
+                           AND origin.command = intent.command
+                           AND (origin.session = intent.session
+                                OR instr(intent.session, origin.session || '/') = 1)
+                           AND (origin.session = proof.session
+                                OR instr(proof.session, origin.session || '/') = 1)))
+                     OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
+                         AND (proof.attempt = intent.sequence
+                              OR (proof.attempt IS NULL AND proof.session = intent.session))))))",
+            )?
+            .query_row(params![id, version], |row| row.get(0))?)
     }
 
     /// Find same-version native sends whose outcome a delivery fence could still protect.

@@ -522,7 +522,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
             .lock()
             .await
             .schedule
-            .take_ready(Instant::now(), &BTreeSet::new())
+            .take_ready(Instant::now(), &BTreeSet::new(), None)
             .map(|task| task.id),
         Some(id.into())
     );
@@ -628,7 +628,10 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
             .unwrap();
         let mut state = service.state.lock().await;
         let due = state.schedule.due("unsent").unwrap();
-        let scheduled = state.schedule.take_ready(due, &BTreeSet::new()).unwrap();
+        let scheduled = state
+            .schedule
+            .take_ready(due, &BTreeSet::new(), None)
+            .unwrap();
         assert_eq!(scheduled.id, "unsent");
         assert_eq!(
             service.lookup(&state, "unsent").unwrap().version,
@@ -767,7 +770,11 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
         let mut state = service.state.lock().await;
         let due = state.schedule.due("runless").expect("still eligible");
         assert_eq!(
-            state.schedule.take_ready(due, &BTreeSet::new()).unwrap().id,
+            state
+                .schedule
+                .take_ready(due, &BTreeSet::new(), None)
+                .unwrap()
+                .id,
             "runless"
         );
         assert_eq!(
@@ -872,6 +879,449 @@ pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {
     native_fixture_with_traffic(response, None).await
+}
+
+#[tokio::test]
+async fn a_bounced_worker_keeps_admission_order_and_its_native_parent() {
+    Box::pin(exercise_queue_parent(false)).await;
+}
+
+#[tokio::test]
+async fn a_lost_parent_reply_keeps_one_native_launch_across_capacity() {
+    Box::pin(exercise_queue_parent(true)).await;
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the same native parent through capacity, restart and dispatch"
+)]
+async fn exercise_queue_parent(lose_launch_reply: bool) {
+    let (forge, forge_server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(Vec::<Value>::new()) }),
+    ))
+    .await;
+    let (home, mut service) = fixture(forge);
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let project = service.fixture().clone();
+    let shell = json!({"projects":[{
+        "id":project.host_project, "workspaceRoot":project.checkout
+    }], "threads":[]});
+    let launches = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let holds = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let children = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let old_present = Arc::new(AtomicUsize::new(0));
+    let (writes, messages, workers, progress) = (
+        Arc::clone(&launches),
+        Arc::clone(&holds),
+        Arc::clone(&children),
+        Arc::clone(&old_present),
+    );
+    let (host, native) = native_fixture(move |request| {
+        let id = &request["id"];
+        let payload = &request["payload"];
+        let value = match request["tag"].as_str() {
+            Some("server.getConfig") => json!({
+                "environment":{"orchestrationProtocolVersion":2},
+                "providers":[
+                    {"instanceId":"provider","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
+                    {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready","models":[{"slug":"nucleus"}]}
+                ]
+            }),
+            Some("orchestration.subscribeThread") => {
+                let thread = payload["threadId"].as_str().unwrap();
+                let launches = writes.lock().unwrap();
+                let stage = progress.load(Ordering::Relaxed);
+                if let Some(parent) = launches.first().filter(|launch| stage > 0 && launch["threadId"] == thread) {
+                    let mut runs = vec![json!({
+                        "id":"old-run","status":if stage == 2 {"completed"} else {"running"},
+                        "rootNodeId":"old-node","userMessageId":
+                            if stage == 3 { json!("different-message") } else { parent["initialMessage"]["messageId"].clone() },
+                    })];
+                    let messages: Vec<_> = messages.lock().unwrap().iter()
+                        .map(|hold| json!({"id":hold["messageId"]})).collect();
+                    if stage == 2 {
+                        runs.push(json!({"id":"new-run","status":"running","rootNodeId":"new-node",
+                            "userMessageId":messages[0]["id"]}));
+                    }
+                    return json!({"_tag":"Chunk","requestId":id,"values":[
+                        {"kind":"snapshot","snapshotSequence":17,"projection":{
+                            "thread":{"id":thread,"projectId":parent["projectId"],
+                                "branch":parent["workspaceStrategy"]["branch"],
+                                "worktreePath":parent["workspaceStrategy"]["worktreePath"],
+                                "modelSelection":parent["modelSelection"],
+                                "providerInstanceId":parent["modelSelection"]["instanceId"]},
+                            "runs":runs,"messages":messages,"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                        }},
+                        {"kind":"synchronized"}
+                    ]});
+                }
+                return json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Failure","cause":[
+                    {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":thread,
+                        "cause":{"name":"ProjectionStoreThreadNotFoundError",
+                            "message":format!("No orchestration projection exists for thread {thread}.")}}}
+                ]}});
+            }
+            Some("orchestration.launchThread") => {
+                writes.lock().unwrap().push(payload.clone());
+                if lose_launch_reply { return Value::Null; }
+                json!({"sequence":1})
+            }
+            Some("orchestration.dispatchCommand") if payload["type"] == "message.dispatch" => {
+                messages.lock().unwrap().push(payload.clone());
+                json!({"sequence":18})
+            }
+            Some("orchestration.dispatchCommand") if payload["type"] == "delegated_task.request" => {
+                workers.lock().unwrap().push(payload.clone());
+                json!({"sequence":19})
+            }
+            tag => panic!("unexpected queue RPC {tag:?}"),
+        };
+        json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Success","value":value}})
+    }).await;
+    host.fixture_project_shell(&shell, "fixture-acp");
+    service.host = host;
+    let oldest = "z-oldest";
+    let newest = ["m-next", "a-last"];
+    let head = &project.start;
+    let queued = |id| {
+        let (shape, _, _) = reservation(id, Entry::Brief, head);
+        Task::new(shape.identity().clone(), shape.brief().text.clone(), None)
+    };
+    let pass = async |service: &Service| {
+        tokio::time::timeout(Duration::from_secs(20), service.pass())
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert!(!service.storage.work().path().exists());
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&queued(oldest), &event("fixture"))
+        .unwrap();
+    assert!(matches!(
+        pass(&service).await[0].result,
+        Ok(Action::Advance(Phase::Working))
+    ));
+    assert!(launches.lock().unwrap().is_empty());
+    let outcomes = pass(&service).await;
+    if lose_launch_reply {
+        assert!(matches!(
+            outcomes[0].result,
+            Err(ServiceError::ParentDeliveryUnknown(_))
+        ));
+    } else {
+        assert!(matches!(
+            outcomes[0].result,
+            Ok(Action::Wait(WaitReason::Starting))
+        ));
+    }
+    assert_eq!(launches.lock().unwrap().len(), 1);
+    let preparing = service.task(oldest).await.unwrap();
+    assert!(preparing.task.run().is_none());
+
+    let (mut winner, _, _) = reservation("winner", Entry::Brief, head);
+    let instance = winner.run().unwrap().launch().instance.clone();
+    winner.record_send(&instance, 2).unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&winner, &event("fixture")).unwrap();
+        state.schedule.park("winner");
+        for id in newest {
+            state.store.create(&queued(id), &event("fixture")).unwrap();
+            state.schedule.wake(id, Instant::now(), Priority::Wake);
+        }
+    }
+    if lose_launch_reply {
+        // Run the normal task decision when an already scheduled recheck becomes due.
+        let result = service
+            .advance_due_task(&preparing, &service.host.fixture_pass())
+            .await;
+        assert!(matches!(result, Ok(Action::Wait(WaitReason::Capacity))));
+        service
+            .schedule_result(&preparing, &result, Priority::Effect)
+            .await
+            .unwrap();
+        assert_eq!(service.task(oldest).await.unwrap(), preparing);
+    } else {
+        assert!(
+            pass(&service)
+                .await
+                .iter()
+                .all(|outcome| matches!(outcome.result, Ok(Action::Wait(WaitReason::Capacity))))
+        );
+        assert!(service.state.lock().await.last_pass_calls.is_empty());
+        old_present.store(1, Ordering::Relaxed);
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .wake(oldest, Instant::now(), Priority::Wake);
+        assert!(matches!(
+            pass(&service).await[0].result,
+            Ok(Action::Wait(WaitReason::Capacity))
+        ));
+        let bounced = service.task(oldest).await.unwrap();
+        assert_eq!(bounced.task.phase(), Phase::Queued);
+        assert!(bounced.task.run().is_none());
+        assert_eq!(
+            service
+                .state
+                .lock()
+                .await
+                .capacity_waiters
+                .iter()
+                .map(|(_, id)| id.as_str())
+                .collect::<Vec<_>>(),
+            [oldest, newest[0], newest[1]]
+        );
+    }
+
+    let endpoint = service.host.endpoint().to_owned();
+    let mut host = T3::new(&endpoint, "fixture").unwrap();
+    if lose_launch_reply {
+        host = host.with_runtime_descriptor(home.path().join("missing-host-descriptor"));
+        assert!(host.runtime_identity().is_none());
+    }
+    host.fixture_project_shell(&shell, "fixture-acp");
+    let forge = std::mem::replace(&mut service.forge, GitHub::new("fixture").unwrap());
+    drop(service);
+    let settings = SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
+    let mut service = Service::open(
+        &settings,
+        project,
+        host,
+        forge,
+        "127.0.0.1:9".parse().unwrap(),
+        std::env::current_exe().unwrap(),
+    )
+    .unwrap();
+    service.state.lock().await.schedule.park("winner");
+    let outcomes = pass(&service).await;
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.task.as_str())
+            .collect::<Vec<_>>(),
+        [oldest, newest[0], newest[1]]
+    );
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome.result, Ok(Action::Wait(WaitReason::Capacity))))
+    );
+    assert!(service.state.lock().await.last_pass_calls.is_empty());
+
+    if lose_launch_reply {
+        assert_eq!(service.task(oldest).await.unwrap(), preparing);
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .wake(oldest, Instant::now(), Priority::Wake);
+        assert!(matches!(
+            pass(&service).await[0].result,
+            Ok(Action::Wait(WaitReason::Capacity))
+        ));
+        assert!(service.host.host_calls().is_empty());
+        assert_eq!(service.task(oldest).await.unwrap(), preparing);
+        service.host = T3::new(&endpoint, "fixture").unwrap();
+        service.host.fixture_project_shell(&shell, "fixture-acp");
+    }
+
+    let CommandOutcome::Applied(revoked) = service
+        .command(
+            "winner",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("cancel winner")
+    };
+    let mut settled = revoked.task.clone();
+    settled.reconcile(&Observation {
+        host: Observed::Known(Host::Current {
+            instance,
+            state: nucleus_core::RunState::Ended,
+        }),
+        forge: Observed::Unknown,
+        workspace: Observed::Unknown,
+    });
+    assert!(settled.run().is_none());
+    service
+        .state
+        .lock()
+        .await
+        .schedule
+        .wake(newest[0], Instant::now(), Priority::Effect);
+    service
+        .save(&revoked, settled, &event("stopped"))
+        .await
+        .unwrap();
+    let released = pass(&service).await;
+    assert_eq!(released[0].task, oldest);
+    let advance = async |service: &Service| {
+        let row = service.task(oldest).await.unwrap();
+        Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
+    };
+    if lose_launch_reply {
+        assert!(matches!(
+            released[0].result,
+            Err(ServiceError::ParentDeliveryUnknown(_))
+        ));
+        assert_eq!(service.task(oldest).await.unwrap(), preparing);
+        assert_eq!(launches.lock().unwrap().len(), 1);
+        assert!(holds.lock().unwrap().is_empty());
+        old_present.store(3, Ordering::Relaxed);
+        assert!(matches!(
+            advance(&service).await,
+            Err(ServiceError::ParentDeliveryUnknown(_))
+        ));
+        assert!(
+            service
+                .state
+                .lock()
+                .await
+                .store
+                .pending_parent_preparation(oldest, preparing.version)
+                .unwrap()
+        );
+        old_present.store(1, Ordering::Relaxed);
+    } else {
+        assert_eq!(
+            service.task(oldest).await.unwrap().task.phase(),
+            Phase::Working
+        );
+        assert!(matches!(
+            advance(&service).await.unwrap(),
+            Action::Wait(WaitReason::Starting)
+        ));
+        assert!(matches!(
+            advance(&service).await.unwrap(),
+            Action::Wait(WaitReason::Starting)
+        ));
+        assert_eq!(holds.lock().unwrap().len(), 1);
+        assert_eq!(
+            holds.lock().unwrap()[0]["threadId"],
+            launches.lock().unwrap()[0]["threadId"]
+        );
+        old_present.store(2, Ordering::Relaxed);
+    }
+    assert!(matches!(
+        advance(&service).await.unwrap(),
+        Action::Launch { .. }
+    ));
+    if lose_launch_reply {
+        assert!(
+            !service
+                .state
+                .lock()
+                .await
+                .store
+                .pending_parent_preparation(oldest, preparing.version)
+                .unwrap()
+        );
+    }
+    let row = service.task(oldest).await.unwrap();
+    let wire: Value = serde_json::from_str(&row.task.run().unwrap().launch().input).unwrap();
+    let (run, node) = if lose_launch_reply {
+        ("old-run", "old-node")
+    } else {
+        ("new-run", "new-node")
+    };
+    assert_eq!(wire["payload"]["parentRunId"], run);
+    assert_eq!(wire["payload"]["parentNodeId"], node);
+    assert!(matches!(
+        advance(&service).await.unwrap(),
+        Action::Launch { .. }
+    ));
+    assert_eq!(launches.lock().unwrap().len(), 1);
+    assert_eq!(holds.lock().unwrap().len(), usize::from(!lose_launch_reply));
+    assert_eq!(
+        children.lock().unwrap().as_slice(),
+        &[wire["payload"].clone()]
+    );
+    native.abort();
+    forge_server.abort();
+}
+
+#[tokio::test]
+async fn full_checkout_budget_does_not_peek_at_t3() {
+    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (host, native) = native_fixture(|request| {
+        panic!("queued checkout wait called T3: {}", request["tag"]);
+    })
+    .await;
+    service.host = host;
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let mut dispatch = nucleus_store::DispatchSettings::default();
+    dispatch.global_slots = 1;
+    dispatch.project_default_slots = 1;
+    service.state.lock().await.settings.dispatch = Some(dispatch);
+    let root = service.storage.work().path();
+    assert!(
+        !root.exists(),
+        "the fresh profile has no managed checkout root"
+    );
+    let head = &service.fixture().start;
+    let checkout_repo = &service.fixture().checkout;
+    let worktrees = service.worktrees().unwrap();
+    for id in ["first-owned", "second-owned"] {
+        let (shape, _, observation) = reservation(id, Entry::Brief, head);
+        let mut task = Task::new(shape.identity().clone(), "Fixture".into(), None);
+        task.command(
+            Command::Hold("Retain the checkout".into()),
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            &observation,
+        )
+        .unwrap();
+        worktrees
+            .checkout(checkout_repo, REPOSITORY, id)
+            .unwrap()
+            .allocate(head)
+            .unwrap();
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state.schedule.park(id);
+    }
+    let (shape, _, _) = reservation("queued", Entry::Brief, head);
+    let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        assert_eq!(state.store.occupied_slots("").unwrap(), 0);
+        state.store.create(&queued, &event("fixture")).unwrap();
+    }
+    for _ in 0..2 {
+        let outcomes = service.pass().await.unwrap();
+        assert!(matches!(
+            outcomes.as_slice(),
+            [PassOutcome {
+                result: Ok(Action::Wait(WaitReason::Capacity)),
+                ..
+            }]
+        ));
+        let row = service.task("queued").await.unwrap();
+        assert_eq!(row.task, queued);
+        assert_eq!(row.version, 1);
+        let mut state = service.state.lock().await;
+        assert!(state.last_pass_calls.is_empty());
+        state
+            .schedule
+            .wake("queued", Instant::now(), Priority::Wake);
+    }
+    assert!(service.host.host_calls().is_empty());
+    native.abort();
 }
 
 #[tokio::test]

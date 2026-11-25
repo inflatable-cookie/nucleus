@@ -55,7 +55,7 @@ struct Fixture {
     binding: Binding,
     thread: String,
     _home: tempfile::TempDir,
-    server: tokio::task::JoinHandle<()>,
+    _server: NativeServer,
 }
 
 impl Fixture {
@@ -129,7 +129,7 @@ impl Fixture {
             binding,
             thread,
             _home: home,
-            server,
+            _server: NativeServer(server),
         }
     }
 
@@ -387,9 +387,11 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     );
 }
 
-impl Drop for Fixture {
+struct NativeServer(tokio::task::JoinHandle<()>);
+
+impl Drop for NativeServer {
     fn drop(&mut self) {
-        self.server.abort();
+        self.0.abort();
     }
 }
 
@@ -723,6 +725,55 @@ async fn no_new_snooze_from_reservation_through_send() {
         fixture.commands().is_empty(),
         "native visibility cannot snooze between reservation and send"
     );
+}
+
+#[tokio::test]
+async fn restart_preserves_a_prerequisite_snooze_before_the_first_dispatch_decision() {
+    let mut fixture = Fixture::new(&pending_task()).await;
+    let (worker, _, _) = reservation(ID, Entry::Brief, &fixture.service.fixture().start);
+    fixture.seed_prerequisite(&worker).await;
+    let row = fixture.service.task(ID).await.unwrap();
+    let wait = Ok(Action::Wait(WaitReason::Prerequisite));
+    fixture
+        .service
+        .schedule_result(&row, &wait, Priority::Decision)
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.sync().await;
+    let receipt = fixture.observed_snooze().await;
+
+    let prior = &fixture.service;
+    let host = nucleus_hosts::T3::new(prior.host.endpoint(), "fixture").unwrap();
+    host.use_held_shell();
+    let settings = prior.settings.clone();
+    let project = prior.fixture().clone();
+    let callback = prior.callback;
+    let report_command = prior.report_command.clone();
+    drop(fixture.service);
+    fixture.service = Arc::new(
+        Service::open(
+            &settings,
+            project,
+            host,
+            GitHub::new("fixture").unwrap(),
+            callback,
+            report_command,
+        )
+        .unwrap(),
+    );
+    assert_eq!(fixture.attention().await, TaskAttention::Waiting);
+    assert!(fixture.sync().await.is_empty());
+    let row = fixture.service.task(ID).await.unwrap();
+    fixture
+        .service
+        .schedule_result(&row, &wait, Priority::Decision)
+        .await
+        .unwrap();
+    assert!(fixture.sync().await.is_empty());
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    assert_eq!(fixture.observed_snooze().await, receipt);
 }
 
 #[tokio::test]
