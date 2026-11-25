@@ -727,14 +727,19 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch(
-        "ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
+        "ALTER TABLE tasks DROP COLUMN report_task;
+         ALTER TABLE tasks DROP COLUMN work_continuation;
+         DROP TABLE inbox_titles;
          DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
     )
     .expect("restore version nine schema with the allocator in place");
     drop(db);
 
     let mut store = Store::open(&storage).expect("migrate version nine");
-    assert_eq!(row(&store, "first").number, Some(1));
+    let restored = row(&store, "first");
+    assert_eq!(restored.task, first);
+    assert_eq!(restored.version, 1);
+    assert_eq!(restored.number, Some(1));
     assert_eq!(store.history("first", None, 1).expect("history").len(), 1);
     let second = task("second", "fixture#second");
     assert_eq!(store.create(&second, &event("admitted")).expect("admit"), 2);
