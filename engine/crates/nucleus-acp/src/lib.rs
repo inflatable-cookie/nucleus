@@ -60,7 +60,7 @@ pub async fn run() -> io::Result<()> {
         client::enter_scratch(workspace, &scratch).map_err(io::Error::other)?;
     }
     let (output, mut frames) = mpsc::unbounded_channel();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         let mut stdout = BufWriter::new(tokio::io::stdout());
         while let Some(frame) = frames.recv().await {
             let mut bytes = serde_json::to_vec(&frame).map_err(io::Error::other)?;
@@ -77,11 +77,19 @@ pub async fn run() -> io::Result<()> {
         model: MODELS[0],
         structured: env::var("NUCLEUS_ACP_TEXT_FALLBACK").as_deref() != Ok("1"),
     };
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    while let Some(line) = lines.next_line().await? {
-        if !line.trim().is_empty() {
-            agent.receive(&line).await;
+    let input = async {
+        let mut lines = BufReader::new(tokio::io::stdin()).lines();
+        while let Some(line) = lines.next_line().await? {
+            if !line.trim().is_empty() {
+                agent.receive(&line).await;
+            }
         }
+        Ok::<_, io::Error>(())
+    };
+    tokio::select! {
+        biased;
+        written = &mut writer => return written.map_err(io::Error::other)?,
+        read = input => read?,
     }
     drop(agent);
     writer.await.map_err(io::Error::other)?

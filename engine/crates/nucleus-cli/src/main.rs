@@ -269,7 +269,14 @@ enum Placement {
 async fn main() -> Result<()> {
     let Cli { endpoint, action } = Cli::parse();
     match action {
-        Action::Acp => Ok(nucleus_acp::run().await?),
+        Action::Acp => {
+            if let Err(error) = nucleus_acp::run().await {
+                // Runtime shutdown can wait indefinitely for Tokio's blocking stdin read.
+                eprintln!("Error: {error:?}");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Action::Ensure(args) => ensure::run(endpoint, args).await,
         Action::Configure(args) => configure(args),
         Action::Serve {

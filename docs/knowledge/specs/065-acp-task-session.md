@@ -89,6 +89,10 @@ notification has nothing left to do, a re-entry exists to keep the run alive.
 The agent keeps no durable state. Killing it and relaunching it reattaches from
 the binding and the task row.
 
+The Rust provider drains queued replies when stdin closes. If writing to
+stdout fails, it stops reading and exits with a nonzero status so T3 can
+restart it, even if stdin is still open.
+
 ### 2. The binding is minted, never read from text
 
 `shared/acp/binding.ts` owns the shapes, the paths and the pointer read;
