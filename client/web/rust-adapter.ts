@@ -631,6 +631,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   async function storageState() {
     const storage = await rust.storage();
     const { active, settings: stored } = storage;
+    const summarize = (copies: typeof storage.backups) => copies && ({
+      verified: copies.verified.length,
+      newestAt: copies.verified.map(copy => copy.createdAt).sort().at(-1) ?? null,
+      issues: copies.issues,
+    });
     return {
       workRoot: active.workRoot,
       workVolumeId: stored.value.workVolume?.volumeId ?? null,
@@ -658,15 +663,8 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       retainedRoots: [],
       appliesOnRestart: true,
       retention: stored.value.retention,
-      backups: {
-        verified: storage.backups?.verified.length ?? 0,
-        newestAt:
-          storage.backups?.verified
-            .map((backup) => backup.createdAt)
-            .sort()
-            .at(-1) ?? null,
-        issues: storage.backups?.issues ?? 0,
-      },
+      backups: summarize(storage.backups),
+      configBackups: summarize(storage.configBackups),
     };
   }
 
