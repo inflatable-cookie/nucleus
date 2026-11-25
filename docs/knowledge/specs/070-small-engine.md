@@ -650,6 +650,24 @@ Later decisions carry their own attribution.
     - Throttling delays work. It never fails work and never reorders a task's
       own steps.
 
+45. **A worker that stops early continues.** On 2026-11-25 the Bovine planner,
+    asked by Tom to agree a fix, reported Terra workers ending their first
+    turn after two to three minutes with plenty of allowance left. The report
+    reminder then told them not to redo the work and to file a planner
+    question. Each case cost a planner round trip, and the second run finished
+    the work. Planner ruling, following ruling 28 ("Context gets compacted and
+    it just continues"):
+    - When a worker's turn ends without an authenticated report, its one
+      follow-up turn tells it to continue the assignment in the same checkout
+      and report when done.
+    - The worker asks the planner only about a concrete impediment: a failure
+      it cannot fix, missing access, or a scope decision. An unfinished task is
+      not an impediment.
+    - A reviewer's follow-up still asks it to report the review it performed,
+      so a review never repeats.
+    - The follow-up stays a single turn. If it also ends without a report, the
+      existing missing-report question applies.
+
 ## The model
 
 ### Stored state per task
