@@ -100,13 +100,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     method: "detail",
     mutating: false,
   },
-  // Spec 062 decision 5b: the forked sidebar's one batched task-group read.
-  {
-    name: "bb.sidebar-groups",
-    contract: contracts.bbSidebarGroups,
-    method: "bbSidebarGroups",
-    mutating: false,
-  },
   {
     name: "queue.outcome",
     contract: contracts.outcome,
