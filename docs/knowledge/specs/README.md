@@ -44,7 +44,6 @@ implementation it describes.
 | [038 — Bounded uncertain-merge reconciliation](038-bounded-uncertain-merge-reconciliation.md) | implemented |
 | [040 — Merge hold owners and release prompts](040-merge-hold-release-prompts.md) | implemented |
 | [041 — Planning roadmap and lane close-out](041-planning-roadmap.md) | implemented |
-
 | [045 — Durable task worker exclusions](045-durable-worker-exclusions.md) | implemented |
 | [046 — Self-lifting merge holds](046-self-lifting-merge-holds.md) | implemented |
 | [050 — Owner task controls](050-owner-task-controls.md) | TypeScript command and control history. Spec 070 owns current commands. |

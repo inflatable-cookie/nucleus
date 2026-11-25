@@ -552,9 +552,10 @@ Use `t3 auth session issue` to mint a short-lived session with
 `--scope providers:manage --scope orchestration:read` and supply its bearer as
 `NUCLEUS_ENGINE_T3_INSTALL_BEARER` for install or uninstall. T3 requires
 `providers:manage` for a provider mutation with an empty settings patch.
-Use a separate Rust runtime bearer with `orchestration:read` and
-`orchestration:operate` in `NUCLEUS_ENGINE_T3_BEARER` (explicit `--t3`) or
-the credential environment variable named by Hosts. Use Rust-specific
+Give the separate Rust runtime bearer `orchestration:read` and
+`orchestration:operate`, plus `preview:operate` to open the board from the
+Inbox. Supply it in `NUCLEUS_ENGINE_T3_BEARER` (explicit `--t3`) or the
+credential environment variable named by Hosts. Use Rust-specific
 sessions. The generated launcher does not store the management bearer.
 [T3 RPC scopes](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/auth/RpcAuthorization.ts#L268-L283)
 
@@ -704,8 +705,8 @@ Remove inside the editor.
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Name, optional subscription group, canonical selection with stable ID, capability, weight, provider, model and effort, and the operator's `pausedGroups` list. |
-| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, one host call slot, one optional allowance in minutes and `providerLimitCooldownSeconds` (default 300). |
-| Projects | `state/projects.json` | Name, slots, archival, discovered repository routes, required check names and hung-tool limit. The limit defaults to 30 minutes. Planners appear from verified live bindings. |
+| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, default slots per project, per-project overrides and `providerLimitCooldownSeconds` (default 300). |
+| Projects | `state/projects.json` | Name, archival, discovered repository routes, required check names and hung-tool limit. The limit defaults to 30 minutes. Planners appear from verified live bindings. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
 | Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
 
@@ -789,9 +790,10 @@ canonical lowercase GitHub slug. Use the same ID for offline planning imports,
 even if a repository has yet to enroll. Enrollment keeps an existing Projects
 ID for an exact matching route.
 
-Projects settings edits cover the project name, slot limit, archive state and
-repository checks. The Dispatch domain sets the service-wide slot limit. The
-logical project's limit covers all its routed repositories. New and amended briefs reject the retired
+Edit the project name, archive state and repository checks in Projects. In
+Limits, set global slots, the per-project default or an individual project’s
+override. Limits saves the changed fields against the Dispatch revision it
+read. A project’s slots cover all its routed repositories. New and amended briefs reject the retired
 `queue.preferredProfileId` key. Use `queue.profileRequests.worker` with a
 profile ID, reason and `required: true` for a required worker profile. A non-fixture
 launch uses the Profiles domain and the head of the verified local base.

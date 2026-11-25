@@ -1,12 +1,8 @@
 # Scripts
 
-Use Effigy from the repo root for the default maintenance loop:
-
-```bash
-effigy tasks
-effigy doctor
-effigy qa
-```
+Run `effigy tasks` from the repo root to find a selector. Use the
+[scoped checks](../AGENTS.md#validate) while editing. Full `effigy qa` belongs
+to [milestone QA](../docs/knowledge/contracts/milestone-qa.md).
 
 ## Runtime Policy
 

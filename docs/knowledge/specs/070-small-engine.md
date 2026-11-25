@@ -747,9 +747,13 @@ Every action is idempotent:
 ### Faults
 
 - **An exact terminal role run without an authenticated report** gets one
-  report-only continuation on the same thread and pinned provider and model.
-  It asks for the work actually done, with the original review head and a
-  run-bound report credential. The durable reservation reuses its command ID
+  follow-up on the same thread, provider and model with a run-bound report
+  credential. An ordinary worker continues in its checkout and reports when
+  done. It asks the planner only about an unresolved failure, missing access
+  or a scope decision. A report-only worker reports its existing delivery or
+  the impediment. A reviewer reports only the review actually performed at
+  the original exact head. No one manufactures a verdict. The durable
+  reservation reuses its command ID
   across a lost reply or engine restart. A terminal reminder with no report
   gives the owner a cause and an action. A missing slice of host history cannot
   establish that the turn ended.
