@@ -4,8 +4,7 @@ use std::{path::Path, time::Duration};
 
 use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
-    ParentSendError, ParentWrite, RowChange, RowChildren, RowObservation, RowVisibility,
-    SendOutcome,
+    ParentSendError, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -405,29 +404,6 @@ impl Service {
             return Ok(None);
         }
         Ok(receipt)
-    }
-
-    /// Hold delivery while an operator snooze covers the parent.
-    pub(super) async fn wake_parent_delivery(
-        &self,
-        row: &TaskRow,
-        write: &ParentWrite,
-    ) -> Result<(), ServiceError> {
-        if let Some(initial) = write.delivery_row() {
-            self.check_parent_snooze(row, write.binding(), initial)
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub(super) async fn wake_task_parent(
-        &self,
-        row: &TaskRow,
-        binding: &nucleus_hosts::Binding,
-        _provider: &str,
-        observed: RowObservation,
-    ) -> Result<(), ServiceError> {
-        self.check_parent_snooze(row, binding, observed).await
     }
 
     pub(super) async fn check_parent_snooze(

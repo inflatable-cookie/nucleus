@@ -178,8 +178,7 @@ Later decisions carry their own attribution.
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning
    and wire both require held evidence that attached and retained children
-   are quiet before snoozing. A delivery wake clears one visibility barrier
-   and replans on the next marker or due observation. Planner notices share a
+   are quiet before snoozing. Parent and role messages clear settlement on their own destination at dispatch. Planner notices share a
    bounded observation for delivery and authorization. Inbox reconciliation
    uses the shared shell for project and lifecycle and reuses its bounded
    observation while the marker holds. Explicit setup checks on a bounded
@@ -288,10 +287,10 @@ Later decisions carry their own attribution.
       - Tom, 2026-11-25: "we could use "Waiting" while in the Working group to show when a thread is waiting for something imminent". During the two-minute window the row stays in T3's Working group and reads Waiting. When a child runs again the visible row shows its task phase. Otherwise it snoozes when the window ends.
       - Tom, 2026-11-25: "Questions and decisions need to bring the row back". A task with an open question or decision for a person is visible until it is answered, in addition to its Inbox entry. Operator snoozes are respected.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
-    - A native message can wake the exact Nucleus-owned snooze on its destination. Task and role delivery can explicitly unsettle their destination. Planner notices and tells wake their recipient through the message dispatch itself. Operator snoozes defer delivery. Nucleus never sends a settle command.
+    - A native message can wake the exact Nucleus-owned snooze on its destination. T3 clears settlement when it dispatches the message. Child activity drives parent visibility through row reconciliation. Operator snoozes defer delivery. Nucleus never sends a settle command.
     - A retained role can send directly to its own thread. The scheduler uses
-      the exact parent read under the task fence to keep the parent visible
-      at that send. It records Starting with the first role send intent and
+      the exact parent read under the task fence to hold delivery while an
+      operator snooze is in effect. It records Starting with the first role send intent and
       updates the native title through the existing receipt.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.

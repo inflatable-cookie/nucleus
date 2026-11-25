@@ -1440,12 +1440,9 @@ impl Service {
             return Ok(SendAttempt::Deferred);
         }
         let parent = authorization.parent_row().zip(self.acp_provider());
-        if let Some((parent, provider)) = parent
-            && let Err(error) = self
-                .wake_task_parent(row, authorization.binding(), provider, parent)
-                .await
-        {
-            return Err(error);
+        if let Some((parent, _)) = parent {
+            self.check_parent_snooze(row, authorization.binding(), parent)
+                .await?;
         }
         let queued_parent = authorization.queued_parent().map(str::to_owned);
         let owned_parent_snoozes = if let Some(thread) = queued_parent.as_deref() {
