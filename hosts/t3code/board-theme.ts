@@ -6,7 +6,6 @@ import {
   type BoardThemeSnapshot,
 } from "../../shared/web-theme";
 import { findT3BuiltInTheme } from "./board-theme-builtins";
-import type { T3RpcClient } from "./rpc";
 
 const themeSettings = z.object({
   defaultTheme: z.string().max(64).optional(),
@@ -111,9 +110,18 @@ export function boardThemeFromT3(inputs: T3ThemeInputs): BoardThemeSnapshot | nu
   return snapshot;
 }
 
+type T3BoardThemeReader = {
+  call(method: "server.getSettings", payload: unknown): Promise<unknown>;
+  readStream(
+    method: "subscribeServerConfig",
+    payload: unknown,
+    accept: (value: unknown) => boolean,
+  ): Promise<unknown>;
+};
+
 /** Read the environment's defaults and published themes once per board load. */
 export async function readT3BoardTheme(
-  rpc: T3RpcClient,
+  rpc: T3BoardThemeReader,
 ): Promise<BoardThemeSnapshot | null> {
   try {
     const settings: unknown = await rpc.call("server.getSettings", {});
