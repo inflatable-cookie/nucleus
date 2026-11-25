@@ -2254,7 +2254,8 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     window["hasMoreHistory"] = json!(true);
     window["historyCursor"] = json!("earlier-items");
     window["projection"]["providerThreads"] = Value::Null;
-    window["projection"]["thread"]["parentThreadId"] = json!(parent);
+    window["projection"]["thread"]["lineage"] =
+        json!({"rootThreadId":parent,"parentThreadId":parent,"relationshipToParent":"subagent"});
     let child = window["projection"]["thread"].clone();
     let (host, native) = server(vec![
         (
@@ -2281,9 +2282,10 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     let pass = host.pass(checkout.path());
     let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
     assert!(permit.parent_row().is_none());
+    let refused = pass.send(permit.record(&mut task.clone()).unwrap()).await;
     assert!(
-        matches!(pass.send(permit.record(&mut task.clone()).unwrap()).await,
-        Err(HostError::RetainedParentSnoozed { until }) if until == until_ms)
+        matches!(refused, Err(HostError::RetainedParentSnoozed { until }) if until == until_ms),
+        "{refused:?}"
     );
     task.record_send(&instance, 4).unwrap();
     assert_eq!(
