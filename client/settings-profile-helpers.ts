@@ -288,10 +288,14 @@ export function profileRowStatus(
   entry: PoolEntry,
   state: UiQueueState,
 ): { problem: string } {
+  const groups = state.effectiveProfileGroups;
+  const group = groups && Object.hasOwn(groups, entry.profileId)
+    ? groups[entry.profileId]
+    : groups === undefined ? entry.group : undefined;
   return {
     problem: !profile.available
       ? "Unavailable"
-      : activeGroupLimit(state.availability, entry.group)
+      : group && activeGroupLimit(state.availability, group)
         ? "Subscription paused"
         : "",
   };

@@ -335,7 +335,9 @@ export function ProfilesPanel({
     ? stalePoolEntries(state.pool, state.connected ? state.profiles : [])
     : [];
   const groups = state
-    ? [...new Set(state.pool.map((entry) => entry.group))]
+    ? [...new Set(state.effectiveProfileGroups
+      ? Object.values(state.effectiveProfileGroups)
+      : state.pool.map((entry) => entry.group))]
     : [];
   return (
     <ScrollView

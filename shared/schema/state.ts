@@ -172,6 +172,7 @@ export const stateSchema = z.object({
   tasks: z.array(liveTaskSchema),
   profiles: z.array(profileSchema),
   pool: z.array(poolSchema),
+  effectiveProfileGroups: z.record(z.string(), z.string()).optional(),
   availability: z.array(availabilitySchema),
   assignments: z.record(z.string(), z.number()),
   recentAssignments: z.record(z.string(), z.number()),
