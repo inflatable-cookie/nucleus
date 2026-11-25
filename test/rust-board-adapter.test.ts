@@ -1288,6 +1288,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   ]);
 
   await visible("lantern#2, Lantern work");
+  await visible("Live tasks: 1");
   assert.equal(ui.query("orbit#1, Orbit work"), undefined);
   assert.doesNotMatch(ui.text(), /Different lane|Finished work|Couldn’t load work/);
   ui.press("lantern#2, Lantern work");
@@ -1313,6 +1314,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
     ...missing, project: "lantern", version: 1, text: "Stale", author: "fixture",
   }), /Lane version changed/);
   ui.press("Mark done Lantern delivery");
+  assert.match(ui.text(), /1 live task\./);
   ui.type("Closing note", "Landed.");
   ui.press("Mark Lantern delivery done");
   await waitFor(() => lanes.lantern.status === "done", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "Lantern lane closes");
