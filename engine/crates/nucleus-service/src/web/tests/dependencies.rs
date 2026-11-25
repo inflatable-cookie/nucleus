@@ -38,6 +38,7 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
     add(&service, "damaged", ADMIT).await;
     add(&service, "healthy", ADMIT).await;
     add(&service, "dependent", "---\nqueue:\n  complexity: medium\n  dependsOn: [inflatable-cookie/nucleus-fixture#1]\n---\n\n# Dependent").await;
+    add(&service, "foreign", ADMIT).await;
     let db = rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
         .unwrap();
     db.execute(
@@ -45,7 +46,18 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
         [],
     )
     .unwrap();
+    db.execute(
+        "UPDATE tasks SET repository='example/foreign', brief=json_set(brief, '$.text', 'Changed') WHERE id='foreign'",
+        [],
+    ).unwrap();
     let cards = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    assert!(
+        cards
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["identity"]["id"] != "foreign")
+    );
     let card = |id: &str| {
         cards
             .as_array()
