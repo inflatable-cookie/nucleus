@@ -650,6 +650,12 @@ Later decisions carry their own attribution.
     - Throttling delays work. It never fails work and never reorders a task's
       own steps.
 
+    The Rust forge shares pacing by numeric account ID across operator and
+    reviewer credentials. REST reads revalidate cached representations by URL
+    and bearer. The GraphQL checks query runs on every open-PR observation
+    that needs checks. An incomplete page of required checks keeps the merge
+    gate closed.
+
 45. **A worker that stops early continues.** On 2026-11-25 the Bovine planner,
     asked by Tom to agree a fix, reported Terra workers ending their first
     turn after two to three minutes with plenty of allowance left. The report

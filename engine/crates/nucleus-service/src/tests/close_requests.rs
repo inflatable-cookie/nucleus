@@ -107,7 +107,7 @@ async fn external_close_request_budget() {
     eprintln!(
         "PR, checks, branch, base compare, PR ref, source compare, 304 = {totals:?}; Git origin sessions = {transports}"
     );
-    assert_eq!(totals, [6, 1, 5, 1, 1, 1, 0]);
+    assert_eq!(totals, [6, 1, 5, 1, 1, 1, 8]);
     assert_eq!(transports, 0);
     server.abort();
 }
@@ -126,8 +126,12 @@ fn close_forge(recorded: &Head, head: &Head) -> (Router, Arc<[AtomicUsize; 7]>, 
     closed["state"] = json!("closed");
     closed["merge_commit_sha"] = json!("e".repeat(40));
     let mut checks = forge_checks(recorded);
-    checks["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"]["pageInfo"]["hasNextPage"] =
-        json!(true);
+    let contexts =
+        &mut checks["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"];
+    contexts["pageInfo"]["hasNextPage"] = json!(true);
+    contexts["nodes"] = json!((0..100).map(|index| json!({
+        "__typename":"CheckRun","name":format!("check-{index}"),"conclusion":"SUCCESS","isRequired":true
+    })).collect::<Vec<_>>());
     let tip = "b".repeat(40);
     let source_path = format!("/repos/{REPOSITORY}/compare/{recorded}...{head}");
     let advertised = head.clone();
@@ -159,7 +163,8 @@ fn close_forge(recorded: &Head, head: &Head) -> (Router, Arc<[AtomicUsize; 7]>, 
         )
         .route(
             "/graphql",
-            post(move || async move {
+            post(move |Json(query): Json<Value>| async move {
+                assert_eq!(query["variables"]["namedChecks"], true);
                 graphs[1].fetch_add(1, Ordering::Relaxed);
                 Json(checks)
             }),
@@ -184,4 +189,74 @@ fn close_forge(recorded: &Head, head: &Head) -> (Router, Arc<[AtomicUsize; 7]>, 
             }),
         );
     (app, counts, merged)
+}
+
+// Replay the same demand without wall-clock sleeps. Each of seven externally
+// merged PRs needs a publication check every 30 seconds in [0, 600).
+#[tokio::test]
+async fn seven_external_merges_over_ten_minutes() {
+    use axum::extract::Path;
+    use nucleus_forge::Branches;
+    let counts = Arc::new([const { AtomicUsize::new(0) }; 4]);
+    let [pulls, branches, compares] = std::array::from_fn(|_| counts.clone());
+    let base = format!("/repos/{REPOSITORY}");
+    let head: Head = "a".repeat(40).parse().unwrap();
+    let pull = forge_pull(&head);
+    let app = Router::new()
+        .route(
+            &format!("{base}/pulls/{{number}}"),
+            get(
+                move |Path(number): Path<u32>, headers: HeaderMap| async move {
+                    pulls[0].fetch_add(1, Ordering::Relaxed);
+                    let mut pr = pull;
+                    pr["number"] = json!(number);
+                    pr["html_url"] =
+                        json!(format!("https://github.com/{REPOSITORY}/pull/{number}"));
+                    pr["merged"] = json!(true);
+                    pr["state"] = json!("closed");
+                    pr["merge_commit_sha"] = json!(format!("{number:040x}"));
+                    representation(&headers, "\"closed\"", pr, &pulls[3])
+                },
+            ),
+        )
+        .route(
+            &format!("{base}/branches/main"),
+            get(move |headers: HeaderMap| async move {
+                branches[1].fetch_add(1, Ordering::Relaxed);
+                representation(
+                    &headers,
+                    "\"base\"",
+                    json!({"name":"main","commit":{"sha":"b".repeat(40)}}),
+                    &branches[3],
+                )
+            }),
+        )
+        .route(
+            &format!("{base}/compare/{{pair}}"),
+            get(move || async move {
+                compares[2].fetch_add(1, Ordering::Relaxed);
+                Json(json!({"status":"ahead"}))
+            }),
+        );
+    let (forge, server) = serve_forge(app).await;
+    let branches = Branches::for_review_entry(REPOSITORY, "main").unwrap();
+    let targets: Vec<_> = (1..=7)
+        .map(|number| {
+            branches
+                .target(&format!("https://github.com/{REPOSITORY}/pull/{number}"))
+                .unwrap()
+        })
+        .collect();
+    for _ in (0..600).step_by(30) {
+        for target in &targets {
+            let Forge::Merged { commit, .. } = forge.observe(target).await.unwrap() else {
+                panic!("merged fixture")
+            };
+            forge.verify_merge_base(target, &commit).await.unwrap();
+        }
+    }
+    let totals = counts.each_ref().map(|value| value.load(Ordering::Relaxed));
+    eprintln!("Ten-minute replay: PR, branch, compare, 304 = {totals:?}");
+    assert_eq!(totals, [140, 140, 7, 272]);
+    server.abort();
 }

@@ -1,0 +1,1 @@
+Task requests share GitHub rate limits across credentials for the same account. Writes are spaced at least a second apart, and repeated REST reads use conditional requests when GitHub provides an ETag.

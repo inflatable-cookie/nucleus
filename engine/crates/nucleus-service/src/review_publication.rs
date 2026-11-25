@@ -302,6 +302,9 @@ impl Service {
                 Err(_) if self.dispatch_mode().await == DispatchMode::Stopped => {
                     return self.defer_refused_review(task, &intent, resubmission).await;
                 }
+                Err(ServiceError::Forge(ForgeError::Deferred { until })) => {
+                    write = ReviewWrite::Deferred { until };
+                }
                 Err(error) => {
                     self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
                         .await?;
@@ -361,10 +364,10 @@ impl Service {
             .reviewer_credential()
             .await
             .map_err(|_| PublicationError::AccountUnavailable)?;
-        let mut reviewer_client = selected
-            .as_ref()
-            .map(|credential| self.reviewer_client(credential))
-            .transpose()?;
+        let mut reviewer_client = match &selected {
+            Some(credential) => Some(self.reviewer_client(credential).await?),
+            None => None,
+        };
         let mut user = reviewer_client
             .as_ref()
             .unwrap_or(&self.forge)
@@ -374,7 +377,7 @@ impl Service {
             && let Some(credential) = selected.as_ref()
         {
             let refreshed = self.refresh_reviewer(credential).await?;
-            let client = self.reviewer_client(&refreshed)?;
+            let client = self.reviewer_client(&refreshed).await?;
             user = client.authenticated_user().await;
             selected = Some(refreshed);
             reviewer_client = Some(client);
@@ -401,7 +404,7 @@ impl Service {
             return Ok(None);
         }
         let refreshed = self.refresh_reviewer(credential).await?;
-        let client = self.reviewer_client(&refreshed)?;
+        let client = self.reviewer_client(&refreshed).await?;
         let user = client
             .authenticated_user()
             .await
@@ -424,13 +427,21 @@ impl Service {
         Ok(Some(client.submit_review(target, &binding, body).await))
     }
 
-    fn reviewer_client(&self, credential: &ReviewerCredential) -> Result<GitHub, PublicationError> {
+    async fn reviewer_client(
+        &self,
+        credential: &ReviewerCredential,
+    ) -> Result<GitHub, ServiceError> {
         if credential.host() != GITHUB_HOST {
-            return Err(PublicationError::AccountUnavailable);
+            return Err(PublicationError::AccountUnavailable.into());
         }
         self.forge
-            .with_review_bearer(credential.access_token())
-            .map_err(|_| PublicationError::AccountUnavailable)
+            .with_review_bearer(
+                credential.access_token(),
+                NonZeroU64::new(credential.user_id())
+                    .ok_or(PublicationError::AccountUnavailable)?,
+            )
+            .await
+            .map_err(reviewer_identity_error)
     }
 
     async fn refresh_reviewer(
@@ -587,6 +598,7 @@ fn digest(body: &str) -> String {
 
 fn reviewer_identity_error(error: ForgeError) -> ServiceError {
     match error {
+        ForgeError::Credential => PublicationError::AccountUnavailable.into(),
         ForgeError::Status(status) if matches!(status.as_u16(), 401 | 403 | 404) => {
             PublicationError::AccountUnavailable.into()
         }
