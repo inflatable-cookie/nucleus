@@ -1968,3 +1968,5 @@ async fn host_backoff_does_not_delay_a_local_task_decision() {
     assert_eq!(outcomes[0].result.as_ref().unwrap(), &Action::Nothing);
     assert!(service.state.lock().await.last_pass_calls.is_empty());
 }
+
+mod close_requests;
