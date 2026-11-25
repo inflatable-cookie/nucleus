@@ -205,6 +205,7 @@ match (phase, run_state, observation) {
     (_, Bound(ReportOnlyWorker), TerminalReminderWithoutReport) => Block(move_to_work),
     (_, Bound(_), TerminalReminderWithoutReport) => Ask(owner_question),
     (Working | Reviewing, Bound(role), Failed(Remaining)) => Relaunch(role),
+    (Working, Bound(ReportOnlyWorker), Failed(Last)) => Block(move_to_work),
     (Working | Reviewing, Bound(_), Failed(Last)) => Ask(retry_question),
     (Queued, Unbound, Ready) => Advance(Working),
     (Working, Unbound, WorktreeReady) => launch(Worker, retained_thread),
