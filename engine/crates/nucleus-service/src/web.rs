@@ -2,8 +2,10 @@ use std::{convert::Infallible, sync::Arc};
 
 use axum::{
     Extension, Json, Router,
+    body::{Body, to_bytes},
     extract::{
-        DefaultBodyLimit, FromRequestParts, Path, Query, Request, State, rejection::JsonRejection,
+        DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, Request, State,
+        rejection::JsonRejection,
     },
     http::{
         HeaderMap, Method, StatusCode,
@@ -44,6 +46,8 @@ mod settings;
 pub(crate) use board::Board;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
+
+const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -231,7 +235,7 @@ fn routes(
         routes = routes.merge(board.routes(&api));
     }
     routes
-        .layer(DefaultBodyLimit::max(64 * 1024))
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(middleware::from_fn_with_state(
             api.clone(),
             authorize_address,
@@ -532,9 +536,10 @@ async fn admit(
     State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(scope): Extension<ControllerScope>,
-    input: Result<Json<Admission>, JsonRejection>,
+    mut request: Request,
 ) -> Result<(StatusCode, Json<Summary>), ApiError> {
-    let input = body(input)?;
+    DefaultBodyLimit::max(planning::PLANNING_BODY_LIMIT).apply(&mut request);
+    let input = body(Json::<Admission>::from_request(request, &api).await)?;
     let task = api
         .service
         .admit_in_scope(
@@ -801,9 +806,21 @@ async fn command(
     Extension(scope): Extension<ControllerScope>,
     TaskPath(id): TaskPath,
     session: Option<Extension<WriteAccess>>,
-    input: Result<Json<TaskCommand>, JsonRejection>,
+    request: Request,
 ) -> Result<Response, ApiError> {
-    let outcome = match body(input)? {
+    let (parts, incoming) = request.into_parts();
+    let bytes = to_bytes(incoming, planning::PLANNING_BODY_LIMIT)
+        .await
+        .map_err(|_| ApiError::Invalid)?;
+    let size = bytes.len();
+    let mut request = Request::from_parts(parts, Body::from(bytes));
+    // Only amendments can use the larger envelope. The bytes are already bounded.
+    DefaultBodyLimit::disable().apply(&mut request);
+    let input = body(Json::<TaskCommand>::from_request(request, &api).await)?;
+    if size > DEFAULT_BODY_LIMIT && !matches!(&input, TaskCommand::Lifecycle(Command::Amend(_))) {
+        return Err(ApiError::Invalid);
+    }
+    let outcome = match input {
         TaskCommand::Lifecycle(command) => {
             api.service
                 .command_with_session(&id, &authority, command, session.as_deref(), &scope)
