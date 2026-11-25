@@ -55,13 +55,18 @@ function repositories(project: RustProject, members?: readonly string[]) {
   return chosen.length ? chosen : all;
 }
 
+export function boardProject(key: string, project: RustProject): api.Project {
+  const repos = repositories(project);
+  return { key, name: project.name, version: 1, repositories: repos, primary: repos[0] ?? null, drain: null };
+}
+
 export function boardLane(
   lane: RustLane,
   project: RustProject,
   projectKey: string,
 ): api.LaneView | null {
   const repos = repositories(project);
-  if (!repos.length || !lane.title.trim() || !lane.aim.trim()) return null;
+  if (!lane.title.trim() || !lane.aim.trim()) return null;
   return {
     id: lane.key,
     key: lane.key,
@@ -356,24 +361,15 @@ export function createRustPlanning(
       ([id, project]) => {
         if (
           project.archived ||
-          !project.repositories[0] ||
           access.denied.has(id) ||
           (caller.planningProjects !== null && !caller.planningProjects.includes(id))
         ) return [];
-        const primary = project.repositories[0];
         return [
           {
             id,
             project,
             scope: access,
-            board: {
-              key: keys().key(id),
-              name: project.name,
-              version: 1,
-              repositories: repositories(project),
-              primary: { origin: primary.origin, path: primary.path },
-              drain: null,
-            },
+            board: boardProject(keys().key(id), project),
           },
         ];
       },

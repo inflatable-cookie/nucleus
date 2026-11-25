@@ -1571,3 +1571,22 @@ test("Planning preserves native lane titles longer than the editor suggestion", 
   const plans = await adapter.rpc(api.plans, {});
   assert.equal(plans.find(plan => plan.project === "lantern")?.laneViews?.[0]?.title, title);
 });
+
+
+test("reassigning the final repository leaves its source project and lanes readable", async () => {
+  const lane: RustLane = { key: "retained", version: 1, title: "Retained lane", aim: "Ship", document: "Roadmap", status: "open" };
+  const fake = engine({ lantern: lane });
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  await adapter.rpc(api.uiSnapshot, {});
+  await adapter.rpc(api.projectMerge, { source: "lantern", target: projectKey("Orbit_Main"), versions: { source: 1, target: 1 }, repository: "example/lantern", reason: "Move the last repository" });
+  const fresh = createRustAdapter(createRustApi(fake.fetcher));
+  const board = await fresh.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board));
+  const project = board.projects.find(item => item.key === "lantern");
+  assert.deepEqual(project?.repositories, []);
+  assert.equal(project?.primary, null);
+  const plans = await fresh.rpc(api.plans, {});
+  const saved = plans.find(plan => plan.project === "lantern")?.laneViews?.[0];
+  assert.deepEqual([saved?.key, saved?.repositories], ["retained", []]);
+  assert.equal((await fresh.rpc(api.laneDocumentGet, { project: "lantern", key: "retained" }))?.text, "Roadmap");
+});

@@ -38,7 +38,7 @@ export const laneSchema = z.object({
   aim: z.string().trim().min(1).max(LANE_AIM_MAX),
   status: laneStatusSchema,
   note: z.string().max(4000).default(""),
-  repositories: z.array(laneRepositorySchema).min(1)
+  repositories: z.array(laneRepositorySchema)
     .refine(repos => new Set(repos.map(repo => repo.origin)).size === repos.length, "Duplicate repository origin"),
   createdAt: z.string(),
   updatedAt: z.string(),
