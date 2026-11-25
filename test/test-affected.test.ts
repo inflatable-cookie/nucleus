@@ -174,7 +174,6 @@ test('specifiers resolve through emitted extensions and index files', () => {
 
 test('the graph covers the source trees and the test tree only', () => {
   assert.equal(isGraphNode('core/example.ts'), true);
-  assert.equal(isGraphNode('mcp-report.mjs'), true);
   assert.equal(isGraphNode('docs/knowledge/vision.md'), false);
   assert.equal(isGraphNode('core/data.json'), false);
   assert.equal(isTestFile('test/a.test.ts'), true);

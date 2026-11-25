@@ -75,7 +75,6 @@ export function folderViolations(root) {
     }
   }
   for (const dir of sourceRoots) walk(dir);
-  for (const path of ['mcp-report.mjs']) if (existsSync(resolve(root, path))) paths.push(path);
   const violations = [];
   for (const from of paths) {
     for (const specifier of importEdges(from, readFileSync(resolve(root, from), 'utf8'))) {
