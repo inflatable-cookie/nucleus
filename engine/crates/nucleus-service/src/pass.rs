@@ -2201,6 +2201,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
+        use nucleus_store::planning::{LaneDocument, WriteAt};
+        let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+        let project = service.fixture();
+        let lane_text = "Use the two-project fixture for acceptance.";
+        let key = "product";
+        {
+            let mut state = service.state.lock().await;
+            state.settings.projects = Some(serde_json::from_value(json!({"projects": {
+                (key): {"name":"Product", "archived":false, "repositories":[
+                    {"origin":REPOSITORY, "base":"main", "path":project.checkout, "hostProject":project.host_project}
+                ]}
+            }})).unwrap());
+            state
+                .store
+                .put_lane(
+                    key,
+                    "design",
+                    0,
+                    LaneDocument {
+                        title: "Design".into(),
+                        aim: "Release slice".into(),
+                        document: lane_text.into(),
+                    },
+                    WriteAt {
+                        actor: "planner",
+                        at_ms: 1,
+                    },
+                )
+                .unwrap();
+        }
+        let owner = Authority::Operator {
+            actor: "fixture".into(),
+        };
+        let scope = crate::ControllerScope::default();
+        let add = |id: &str, fields: &str| {
+            let input = serde_json::from_value(json!({"id":id,
+                "brief":format!("---\nqueue:\n  complexity: medium\n  {fields}\n---\nFixture task")
+            }))
+            .unwrap();
+            service.add_planned_task(Some(key), input, &owner, &scope)
+        };
+        let row = add("pinned", "laneDocuments: [design]").await.unwrap();
+        let dependent = add("follows", "dependsOn: ['nucleus-fixture#1']")
+            .await
+            .unwrap();
+        assert!(service.dependencies_blocked(&dependent).await.unwrap());
+
+        let workspace = service.worktrees().unwrap();
+        let checkout = workspace
+            .checkout(&project.checkout, REPOSITORY, "pinned")
+            .unwrap();
+        let observation = Observation {
+            host: Observed::Unknown,
+            forge: Observed::Known(Forge::Absent),
+            workspace: Observed::Known(Workspace::Absent),
+        };
+        let mut working = row.task.clone();
+        assert_eq!(
+            working.reconcile(&observation),
+            Action::Advance(Phase::Working)
+        );
+        let working = service
+            .save(&row, working, &event("advanced"))
+            .await
+            .unwrap();
+        Box::pin(service.reserve(
+            &working,
+            &checkout,
+            observation,
+            Role::Worker,
+            Launch::Create,
+            &service.host.fixture_pass(),
+        ))
+        .await
+        .unwrap();
+        let pinned = service.task("pinned").await.unwrap();
+        let launch = pinned.task.run().unwrap().launch();
+        let path = launch
+            .scratch
+            .as_ref()
+            .unwrap()
+            .join("lane-documents/design.md");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), lane_text);
+        assert!(launch.input.contains("design version 1"));
+        assert!(launch.input.contains(lane_text));
+    }
+
+    #[tokio::test]
     async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
         let reads = Arc::new(AtomicUsize::new(0));

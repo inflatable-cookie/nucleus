@@ -37,8 +37,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   State the change and its acceptance checks.
   ```
 
-  Set `queue.notifyOriginOnCloseout: true` on admission or amend to hear when
-  the task finishes or is cancelled. Omit it for silent closeout.
+  Set `queue.notifyOriginOnCloseout: true` on admission or amend for a completion notice.
+  Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
+  `task.add` resolves those references before dispatch can start.
 
   For review entry, add `--review PR_URL HEAD` with the named PR and exact full
   head. Choose the repository explicitly when the project or brief needs it.
@@ -50,7 +51,11 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   reportLane: qa
   ```
 
-  Use your delivery lane in both places. Pin the published commit with
+  Use your delivery lane in both places. A run ticket lets `lane.get` read
+  only the report-only task’s delivery lane. To give a worker lane text, set
+  `laneDocuments: [design]` under `queue`. Each run pins the document version
+  in its prompt and writes a read-only copy in run scratch.
+  Pin the published commit with
   `task.add --planning-commit HEAD` and keep the record and log keys in that lane.
 - Use `tasks`, `task REF` and `history REF` for reads. Start task decisions with
   `next REF`, using the public reference from the board, such as `'repo#42'`.
