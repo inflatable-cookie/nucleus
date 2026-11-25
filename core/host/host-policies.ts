@@ -93,7 +93,6 @@ export abstract class HostPolicies extends MachinePorts {
   abstract readonly socketPath: string;
   abstract readonly helperPath: string;
   abstract readonly reportingViaMcp: boolean;
-  abstract readonly admissionLaunchEnv: Record<string, string>;
   abstract readonly testPlacement: WorkspaceLifecycleHost["testPlacement"];
   declare workspaceAllocationBridge?: WorkspaceLifecycleHost["workspaceAllocationBridge"];
   abstract readonly workspaceHost: WorkspaceLifecycleHost["workspaceHost"] &
@@ -132,7 +131,6 @@ export abstract class HostPolicies extends MachinePorts {
       socketPath: this.socketPath,
       helperPath: this.helperPath,
       reportingViaMcp: this.reportingViaMcp,
-      admissionLaunchEnv: this.admissionLaunchEnv,
       scratchPlacement: (task) => this.scratchPlacement(task),
     };
   }
