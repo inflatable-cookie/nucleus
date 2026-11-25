@@ -442,7 +442,7 @@ function BriefEditor({
           "The brief changed. Reopen Amend to edit the latest version.",
         );
       }
-      const outcome = await submit({ amend: text });
+      const outcome = await submit({ amend: text, briefVersion: baseline.current });
       if ("status" in outcome)
         throw new Error(
           "The engine is checking the task. Try again when ready.",

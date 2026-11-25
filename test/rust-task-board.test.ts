@@ -227,6 +227,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   let activity = "Editing the fixture";
   let moveReadiness: "pending" | "ready" = "pending";
   let authorityCold = false;
+  let briefVersion = 3;
   const engine = createServer(async (req, res) => {
     const path = req.url ?? "";
     calls.push({
@@ -298,6 +299,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       for await (const part of req) parts.push(part);
       const command: unknown = JSON.parse(Buffer.concat(parts).toString());
       posts.push({ path, command });
+      if (typeof command === "object" && command !== null && "amend" in command &&
+          "briefVersion" in command && command.briefVersion !== briefVersion) {
+        json({ error: "The brief changed. Reopen Amend to edit the latest version." }, 409);
+        return;
+      }
       if (
         typeof command === "object" &&
         command !== null &&
@@ -387,7 +393,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     json({
       ...row,
       createdAtMs: 1_700_000_000_000,
-      brief: { text: "Fixture brief", version: 1, digest: Array(32).fill(1) },
+      brief: { text: "Fixture brief", version: briefVersion, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
           ? { url: "https://github.com/example/board-fixture/pull/1", head }
@@ -554,6 +560,17 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "move posted",
   );
   assert.deepEqual(posts[1]?.command, { move: "reviewing" });
+  await click("Amend");
+  const briefField = () => detail.querySelector<HTMLTextAreaElement>('textarea[aria-label="Brief"]');
+  await eventually(() => Boolean(briefField()), "brief editor opened");
+  briefVersion++; // A second editor committed before this board received an invalidation.
+  const draft = "My unsaved brief";
+  Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(briefField(), draft);
+  briefField()!.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  await eventually(() => text().includes("Reopen Amend"), "conflict reaches the editor");
+  assert.deepEqual(posts[2]?.command, { amend: draft, briefVersion: 3 });
+  assert.equal(briefField()?.value, draft);
+  await click("Amend");
   await click("Needs you, 1");
   await click("Blocked task, The worker could not finish. Try again?");
   await click("Answer");
@@ -561,14 +578,14 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     () => posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
     "answer posted",
   );
-  assert.deepEqual(posts[2]?.command, { answer: "retry" });
+  assert.deepEqual(posts[3]?.command, { answer: "retry" });
   await click("History, 2");
   await eventually(
     () => /Done/.test(text()) && /Cancelled/.test(text()),
     "only the terminal phases are history",
   );
 
-  assert.equal(posts.length, 3);
+  assert.equal(posts.length, 4);
   authorityCold = true;
   await assert.rejects(
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
@@ -598,7 +615,7 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     { answer: "retry" },
     { answer: { accept: { head, reason: "Manually reviewed" } } },
     "cancel",
-    { amend: "Updated brief" },
+    { amend: "Updated brief", briefVersion: 3 },
     { hold: "Hold for proof" },
     "release",
   ];
