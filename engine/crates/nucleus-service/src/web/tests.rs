@@ -54,6 +54,9 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
             .is_none()
     );
     let mut state = service.state.lock().await;
+    state
+        .observe_wait(&row.task, None)
+        .expect("warm reservation");
     assert_eq!(
         state.task_attention(&row).unwrap(),
         crate::attention::TaskAttention::Active
