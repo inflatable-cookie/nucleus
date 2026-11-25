@@ -492,11 +492,11 @@ export function InboxList({
     const owners = laneProjects(lane, state?.projects ?? []);
     return owners.length === 1 ? owners[0]?.key : undefined;
   };
-  const closeDrainedLane = (lane: LaneView) =>
+  const closeDrainedLane = (lane: LaneView, note: string) =>
     void act(async () => {
       const project = drainedLaneProject(lane);
       if (!project) throw new Error("Select a project before closing this lane.");
-      return changeLaneStatus({ key: lane.key, project, status: "done" });
+      return changeLaneStatus({ key: lane.key, project, status: "done", note });
     });
   const keepDrainedLane = (lane: LaneView, reason: string) =>
     void act(() =>
@@ -572,7 +572,7 @@ export function InboxList({
                 />
               ) : undefined
             }
-            onClose={() => closeDrainedLane(card.value)}
+            onClose={(note) => closeDrainedLane(card.value, note)}
             onKeep={(reason) => keepDrainedLane(card.value, reason)}
             projects={state?.projects ?? []}
             plans={plans}

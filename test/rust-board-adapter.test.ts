@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
@@ -73,6 +74,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
   const empty = { counts: {}, groups: {}, sample: 0 };
   let usage: RustProfileUsage = { recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {} };
   const reads: string[] = [];
+  const dispositions: unknown[] = [];
   const revisions: Record<string, number> = { dispatch: 1, profiles: 1, projects: 1 };
   const writes: Array<{ domain: string; body: { revision: string; value: unknown } }> = [];
   const snap = (value: unknown, domain: string) => ({ value, revision: String(revisions[domain] ?? 1), configured: true });
@@ -175,7 +177,12 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
         return json(lane);
       }
       if (init?.method === "POST" && laneAction === "status") {
+        dispositions.push(input);
+        if (!["open", "done", "dropped"].includes(input.status) || (input.status !== "open" && !input.note?.trim())) {
+          return Response.json({ error: "Invalid lane disposition" }, { status: 400 });
+        }
         lane.status = input.status;
+        lane.note = input.note;
         return json(lane);
       }
     }
@@ -205,7 +212,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     return new Response(JSON.stringify({ error: { message: "no route" } }), { status: 404 });
   }) as typeof fetch;
   return {
-    fetcher, writes, reads, denied, questions,
+    fetcher, writes, reads, denied, questions, dispositions,
     loseNextRemovalReply: () => { loseRemovalReply = true; },
     planningReads: () => reads.filter((path) => path.startsWith("GET /planning/")),
     setSession: (next: RustBrowserSession) => { session = next; },
@@ -1202,12 +1209,26 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   ui.type("Closing note", "Landed.");
   ui.press("Mark Lantern delivery done");
   await waitFor(() => lanes.lantern.status === "done", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "Lantern lane closes");
+  await assert.rejects(adapter.rpc(api.laneStatus, { ...missing, project: "lantern", status: "paused" }), /supports Open/);
+  await visible("Reopen lane Lantern delivery");
+  ui.press("Reopen lane Lantern delivery");
+  await visible("Mark done Lantern delivery");
+  ui.press("Show details for Lantern delivery");
+  assert.equal(ui.query("Set lane Delivery_Q4 paused"), undefined);
+  ui.press("Set lane Delivery_Q4 abandoned");
+  ui.type("Closing note", "Superseded by the release lane.");
+  ui.press("Abandon Lantern delivery");
+  await waitFor(() => lanes.lantern.status === "dropped", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "Lantern lane dropped");
+  const nativeCases = JSON.parse(readFileSync("test/fixtures/lane-dispositions.json", "utf8"));
+  assert.deepEqual(fake.dispositions, nativeCases);
   assert.deepEqual(lanes.Orbit_Main, lane("Orbit"));
   assert.equal(lanes.lantern.document, "# Revised Lantern document");
   assert.equal(lanes.lantern.version, 2);
   assert.deepEqual(fake.reads.filter(path => /^(PUT|POST) \/planning\//.test(path)), [
     "PUT /planning/lantern/lanes/Delivery_Q4",
     "PUT /planning/lantern/lanes/Delivery_Q4",
+    "POST /planning/lantern/lanes/Delivery_Q4/status",
+    "POST /planning/lantern/lanes/Delivery_Q4/status",
     "POST /planning/lantern/lanes/Delivery_Q4/status",
   ]);
 });

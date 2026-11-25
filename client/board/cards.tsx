@@ -1223,7 +1223,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   c: Colors;
   board?: boolean;
   busy: boolean;
-  onClose: () => void;
+  onClose: (note: string) => void;
   onKeep: (reason: string) => void;
   /** Line 1's project: the lane's projects with their badges; the lane key when it has none. */
   project?: React.ReactNode;
@@ -1306,9 +1306,9 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
               projects={projects}
               plans={plans}
               busy={busy}
-              onConfirm={() => {
+              onConfirm={(note) => {
                 setConfirmingDone(false);
-                onClose();
+                onClose(note);
               }}
               onCancel={() => setConfirmingDone(false)}
             />

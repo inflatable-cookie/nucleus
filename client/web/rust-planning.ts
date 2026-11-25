@@ -541,6 +541,7 @@ export function createRustPlanning(
       note?: string;
     }) => {
       const { row } = await projectLane(input.project, input.key);
+      if (input.status === "paused") throw new Error("This engine supports Open, Done and Abandon.");
       const status =
         input.status === "done"
           ? { status: "done" as const, note: input.note ?? "" }
