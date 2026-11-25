@@ -12,10 +12,9 @@ owner to the rules it enforces.
 
 ### Entries and shared contracts
 
-- `index.client.tsx` and `index.server.ts` are the two Paseo 0.8 contribution
-  entries, each a thin re-export of its process index in `hosts/paseo/`.
-  `hosts/paseo/plugin/index.ts` is forwarding-only: it registers every method in
-  `shared/rpc-catalogue.ts` and forwards to the local service.
+- `client/web/engine-index.tsx` starts the browser board. The board reads the
+  Rust engine through its local JSON API. The TypeScript server registration
+  and package builder are retired.
 - `shared/contracts.ts` exposes validated RPC and task/run shapes, with task
   primitives and compact view schemas in `shared/schema/`. Pure task reads live
   in `shared/holds.ts`, `shared/disposition.ts` and `shared/task-view.ts`

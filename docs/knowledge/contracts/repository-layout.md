@@ -169,38 +169,20 @@ retains its existing owner and is outside relocation scope.
 
 The `test/folder-imports.test.ts` gate scans runtime and type imports, re-exports,
 literal dynamic imports and `require` calls. It retains current violating edges
-in `test/fixtures/folder-import-violations.json`; the separate bridge gate also
-checks transitive runtime reachability. New edges fail immediately; a move removes the matching
+in `test/fixtures/folder-import-violations.json`. New edges fail immediately,
+and a move removes the matching
 known edges in the same PR. Never refresh the list wholesale. Once it is empty,
 all boundaries remain enforced without exceptions. Process entries and neutral
 transport helpers must be classified explicitly while their old paths remain.
 
 ## Root and installed compatibility
 
-The source root keeps package/configuration files (`package.json`, lockfile,
-TypeScript and Effigy configuration, `.gitignore`, `paseo-plugin.json`) and
-human front doors (`AGENTS.md`, `CLAUDE.md`, `README.md`, `CHANGELOG.md`). It keeps
-exactly three executable source front doors: `index.server.ts`,
-`index.client.tsx` and `mcp-report.mjs`. The two Paseo entries become thin
-re-exports of the corresponding process index under `hosts/paseo/`; the MCP
-entry continues forwarding to `bin/mcp-report.mjs` for retained absolute paths.
-
-Paseo loads the root entries independently. The build already generates root
-entry shims for installed bundles; it can also copy the manifest from its host
-source, while keeping root `paseo-plugin.json` for source-checkout loading.
-The manifest ID is `nucleus`: Paseo uses it as the default installation ID,
-matching bridge reload and discovery. Entry or manifest changes require the
-private installed-daemon proof and plugin-load test. No installed-loader proof uses the operator's live daemon.
-
-Source relocation does not relocate installed package contracts. Preserve
-`build.json`, `manifest.json`, `runtime/node`, `bin/nucleus.mjs`,
-`bin/queue-cli.mjs`, `skills/nucleus/SKILL.md`, root manifest and plugin entries,
-`server/index.server.mjs`, `client/index.client.js`, `web/dist/`, and the existing
-`server/` worker/helper bundle paths emitted by `scripts/build-runtime.mjs`.
-The currently running installer validates a replacement with its own code.
-Keep these output aliases during every move; if a later task must retire one,
-first ship a roll accepting both paths, then change writers in a subsequent roll.
-Do not move the source and installed reader/writer contract in one roll.
+The active executable is the Rust engine. Its browser entry is
+`client/web/engine-index.tsx`, and [engine staging](../../../engine/README.md#stage-an-engine-release)
+builds the executable and board assets together. The source root still carries
+the archived TypeScript client entry `index.client.tsx` and the report wrapper
+`mcp-report.mjs`. The historical compiled package layout is recorded in the
+[release contract](release.md#historical-typescript-runtime-package).
 
 `core/store/` now owns store persistence, schema, projections, sibling storage and
 backup sources. Installed backup worker and CLI entries remain under `server/`.
@@ -237,31 +219,14 @@ launch/install actions stay outside shared. The installed local-client entry
 remains `server/service/local-client.mjs`. Pure review text lives in
 `shared/review-text.ts`.
 
-Host environment for a spawned service is composed once in
-`service/host-environment.mjs`, which the standalone entry, the roll owner, the
-spawner and the installer's startup proof read, so the shared roll options and the
-host-independent owner name no host. `hostHome` pins a private host home for a
-fixture or probe; the Paseo bridge maps it to Paseo's own variable and keeps its
-`paseoHome` option. The archived TypeScript package used `nucleus integrate paseo`
-for registration.
-
-The plugin registration entry (`hosts/paseo/plugin/index.ts`) binds the shared structural
-bridge action port through `service/install/bridge-process-actions.ts`. That is
-its only service-process composition import; the forwarder folder — `bridge.ts`
-with `session.ts`, `spawn.ts`, `roll.ts`, `startup-output.ts` and `options.ts` —
-reaches only shared modules and its own files, with process effects supplied
-synchronously through the port. The folder gate permits this registration edge
-alone, and the layout gate checks the forwarder's transitive graph independently
-of registration.
-
-The Paseo adapter, plugin backend and client now live under `hosts/paseo/`,
-with a separate index for each process. The root plugin entries only re-export
-their process index, and the root manifest matches the host manifest source.
-The neutral board shell is bound synchronously by the host client entry.
+`service/host-environment.mjs` still supplies environment values to the
+remaining TypeScript standalone entry and fixture spawners. The archived Paseo
+code under `hosts/paseo/` keeps its adapter, forwarding and client code in
+separate directories.
 
 The standalone runtime owner lives in `service/runtime-owner.ts`. Socket listeners
-live in `service/callbacks/`, with service RPC in `service/transport/`, installation
-and roll helpers in `service/install/`, and executor workers in `service/executor/`.
+live in `service/callbacks/`, with service RPC in `service/transport/`, remaining
+standby helpers in `service/install/`, and executor workers in `service/executor/`.
 Formal-review HTTP is a forge client in `core/forge/`, not a service listener.
 Installed service worker and helper aliases remain under `server/service/`.
 
