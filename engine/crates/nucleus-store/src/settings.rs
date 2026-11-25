@@ -141,6 +141,12 @@ pub struct SettingsFile {
 }
 
 impl SettingsFile {
+    /// The canonical home identifying this engine profile.
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
     /// Open the settings domains in an explicitly selected, existing engine home.
     /// Opening creates no engine directories.
     ///
