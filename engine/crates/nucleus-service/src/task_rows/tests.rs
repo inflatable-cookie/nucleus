@@ -1481,8 +1481,18 @@ async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
 async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
     let service = &fixture.service;
     fixture.elapse_flip_interval();
-    fixture.sync().await;
     let row = service.task(ID).await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+    let before = fixture.commands();
     let mut finished = row.task.clone();
     finished
         .command(
@@ -1511,7 +1521,7 @@ async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
         );
     }
     fixture.sync().await;
-    assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+    assert_eq!(fixture.commands(), before);
 }
 
 fn plan_row(
