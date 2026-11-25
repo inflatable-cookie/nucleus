@@ -97,8 +97,7 @@ const reportedBranches = () =>
 /**
  * A report may name its own task branch and no other: a headline or summary
  * carrying a different queue branch is another task's evidence, so it refuses
- * before any PR identity is read. Both the callback path and the incident-report
- * path are pinned by `test/callback-client.test.ts`.
+ * before any PR identity is read.
  */
 export function foreignBranchRefusal(
   input: Pick<Completion, "headline" | "summary">,
