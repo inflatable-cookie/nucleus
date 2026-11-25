@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boardSource } from "./support/board-source";
-import { recentProjectActivity } from "./support/fakes";
+import { recentProjectActivity } from "./support/project-activity";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";

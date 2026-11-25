@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
-import { recentProjectActivity } from "./support/fakes";
 import {
   type DecisionView,
 } from "../shared/contracts";
