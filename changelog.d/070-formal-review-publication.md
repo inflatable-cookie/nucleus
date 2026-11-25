@@ -1,0 +1,1 @@
+Nucleus publishes and verifies reviews at the exact reviewed commit using the configured reviewer account or installed gh. A PR author’s changes verdict posts the findings as a comment review. If a review may be missing, Nucleus checks GitHub for the original marker before one resubmission.

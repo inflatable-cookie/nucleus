@@ -28,6 +28,7 @@ fn waiting_for_operator_input(wait: Option<WaitReason>) -> bool {
             WaitReason::Permission
                 | WaitReason::Input
                 | WaitReason::UsagePermission
+                | WaitReason::ReviewPublicationBlocked
                 | WaitReason::WorkspaceBlocked
         )
     )

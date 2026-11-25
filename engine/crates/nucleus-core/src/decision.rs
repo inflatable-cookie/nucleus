@@ -153,6 +153,7 @@ pub enum WaitReason {
     RetainedThreadBusy,
     Stopping,
     ForgeUnknown,
+    ReviewPublicationBlocked,
     WorkspaceUnknown,
     WorkspaceBlocked,
     ChecksPending,

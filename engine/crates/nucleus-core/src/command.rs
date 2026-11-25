@@ -137,6 +137,23 @@ impl Task {
         action
     }
 
+    /// Observe an external merge whose pending report has no published approval.
+    /// Retain any previously applied authority, or ask for explicit acceptance.
+    #[must_use]
+    pub fn reconcile_external_merge_without_pending_review(
+        &mut self,
+        observation: &Observation,
+    ) -> Action {
+        if matches!(observation.forge, Observed::Known(Forge::Merged { .. }))
+            && self.run().is_some_and(|run| {
+                !run.revoked() && matches!(run.report(), Some(Report::Review { .. }))
+            })
+        {
+            self.settle_run(observation);
+        }
+        self.reconcile(observation)
+    }
+
     fn advance(&mut self, phase: Phase, observation: &Observation) {
         if observation.resolves_repair(self) {
             self.question = None;
@@ -440,6 +457,14 @@ impl Task {
     /// Returns an error when the launch sequence is exhausted.
     pub fn next_launch_instance(&self) -> Result<String, CommandError> {
         Ok(self.launch_instance(self.next_launch_sequence()?))
+    }
+
+    /// The immutable run instance whose review was applied to the task.
+    #[must_use]
+    pub fn applied_review_instance(&self) -> Option<String> {
+        self.threads
+            .applied_review_sequence
+            .map(|sequence| self.launch_instance(sequence))
     }
 
     fn launch_instance(&self, sequence: u64) -> String {

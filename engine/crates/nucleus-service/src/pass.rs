@@ -370,6 +370,15 @@ impl Service {
                 self.reserve_report_reminder(row, &checkout, &observation)
                     .await
             }
+            action @ Action::Advance(_)
+                if let Some(target) = target.as_ref()
+                    && task.run().is_some_and(|run| {
+                        !run.revoked() && matches!(run.report(), Some(Report::Review { .. }))
+                    }) =>
+            {
+                self.apply_reviewer_transition(row, target, &observation, action)
+                    .await
+            }
             Action::Merge { head } if let Some(target) = target.as_ref() => {
                 self.merge(row, target, observation, &head).await
             }
@@ -1738,6 +1747,7 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         let target = target.clone().with_required_checks(route.required_checks);
+        self.require_published_approval(row, &target).await?;
         let attempt = self
             .forge
             .merge(task, &target)

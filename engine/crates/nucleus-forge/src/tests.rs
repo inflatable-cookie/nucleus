@@ -89,6 +89,7 @@ fn task_with_approval() -> Task {
 fn pull(head: char, merged: bool) -> Value {
     json!({
         "number": 7, "html_url": PR_URL, "merged": merged,
+        "user": {"id": 11, "login": "fixture-author"},
         "state": if merged { "closed" } else { "open" },
         "merge_commit_sha": if merged { Some(sha('f')) } else { None },
         "head": {"ref": "ns-task-1", "sha": sha(head), "repo": {"full_name": "example/fixture"}},
@@ -123,6 +124,7 @@ fn merged_graph(head: char, base: &str, state: &str, commit: Option<Head>) -> Va
 
 struct Request {
     method_and_path: String,
+    authorization: String,
     body: Option<Value>,
 }
 
@@ -162,13 +164,19 @@ fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Req
             let mut method_and_path = String::new();
             reader.read_line(&mut method_and_path).expect("read request line");
             let mut length = 0;
+            let mut authorization = String::new();
             loop {
                 let mut header = String::new();
                 assert_ne!(reader.read_line(&mut header).expect("read request header"), 0);
                 if header == "\r\n" { break; }
                 if let Some((name, value)) = header.split_once(':')
-                    && name.eq_ignore_ascii_case("Content-Length") {
-                    length = value.trim().parse().expect("valid fixture content length");
+ {
+                    if name.eq_ignore_ascii_case("Content-Length") {
+                        length = value.trim().parse().expect("valid fixture content length");
+                    }
+                    if name.eq_ignore_ascii_case("Authorization") {
+                        authorization = value.trim().into();
+                    }
                 }
             }
             let mut body = vec![0; length];
@@ -177,7 +185,7 @@ fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Req
                 let json = response.body.to_string();
                 write!(stream, "HTTP/1.1 {} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{json}", response.status, json.len(), response.headers).expect("write fixture response");
             }
-            Request { method_and_path, body: (!body.is_empty()).then(|| serde_json::from_slice(&body).expect("fixture JSON")) }
+            Request { method_and_path, authorization, body: (!body.is_empty()).then(|| serde_json::from_slice(&body).expect("fixture JSON")) }
         }).collect()
     });
     let github = GitHub::with_origin("synthetic-token", format!("http://{addr}"))
@@ -777,4 +785,126 @@ async fn a_refused_put_uses_positive_same_head_rebase_evidence_from_readback() {
             total
         );
     }
+}
+
+fn formal_review(id: u64, user: u64, head: char, state: &str, body: &str) -> Value {
+    json!({
+        "id": id, "user": {"id": user, "login": "reviewer"},
+        "commit_id": sha(head), "state": state, "body": body,
+    })
+}
+
+#[tokio::test]
+async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
+    let marker = "<!-- nucleus-review:test -->";
+    let body = format!("Changes needed\n\n{marker}");
+    let review = formal_review(7, 42, 'a', "CHANGES_REQUESTED", &body);
+    let (operator, thread) = server(vec![
+        Some(json!({"id": 42, "login": "reviewer"})),
+        Some(pull('a', false)),
+        None,
+        Some(json!([review.clone()])),
+        Some(review),
+    ]);
+    let target = branches().target(PR_URL).expect("fixture target");
+    let reviewer = operator.with_review_bearer("reviewer-fixture").unwrap();
+    let user = reviewer.authenticated_user().await.unwrap();
+    let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
+        author: user.id,
+        head: &sha('a'),
+        decision: Review::Changes,
+    };
+    operator
+        .review_preflight(&target, binding.head, binding.author, binding.decision)
+        .await
+        .unwrap();
+    assert!(matches!(
+        reviewer.submit_review(&target, &binding, &body).await,
+        ReviewWrite::Unknown
+    ));
+    let recovered = operator
+        .find_review(&target, &binding, marker, &body)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.id.get(), 7);
+    let verified = operator
+        .read_review(&target, &binding, recovered.id)
+        .await
+        .unwrap();
+    assert_eq!(verified.body, body);
+    let requests = thread.join().unwrap();
+    assert_eq!(requests[0].authorization, "Bearer reviewer-fixture");
+    assert_eq!(requests[1].authorization, "Bearer synthetic-token");
+    assert_eq!(requests[2].authorization, "Bearer reviewer-fixture");
+    assert_eq!(requests[3].authorization, "Bearer synthetic-token");
+    assert_eq!(requests[4].authorization, "Bearer synthetic-token");
+    assert_eq!(
+        requests[2].body,
+        Some(json!({"commit_id": sha('a'), "event": "REQUEST_CHANGES", "body": body}))
+    );
+    assert!(requests[2].method_and_path.starts_with("POST "));
+    assert!(requests[3].method_and_path.starts_with("GET "));
+    assert!(requests[4].method_and_path.starts_with("GET "));
+}
+
+#[tokio::test]
+async fn approval_refuses_the_pull_author_and_a_moved_head_before_the_post() {
+    let mut same_author = pull('a', false);
+    same_author["user"] = json!({"id": 42, "login": "renamed"});
+    let (operator, thread) = server(vec![Some(same_author), Some(pull('b', false))]);
+    let target = branches().target(PR_URL).expect("fixture target");
+    let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
+        author: 42.try_into().unwrap(),
+        head: &sha('a'),
+        decision: Review::Approve,
+    };
+    assert!(matches!(
+        operator
+            .review_preflight(&target, binding.head, binding.author, binding.decision)
+            .await,
+        Err(ReviewError::SameAuthor)
+    ));
+    assert!(matches!(
+        operator
+            .review_preflight(&target, binding.head, binding.author, binding.decision)
+            .await,
+        Err(ReviewError::StaleHead)
+    ));
+    assert!(
+        thread
+            .join()
+            .unwrap()
+            .iter()
+            .all(|request| request.method_and_path.starts_with("GET "))
+    );
+}
+
+#[tokio::test]
+async fn readback_rejects_wrong_id_author_head_or_verdict() {
+    let body = "findings";
+    let (operator, thread) = server(vec![
+        Some(formal_review(8, 42, 'a', "APPROVED", body)),
+        Some(formal_review(7, 99, 'a', "APPROVED", body)),
+        Some(formal_review(7, 42, 'b', "APPROVED", body)),
+        Some(formal_review(7, 42, 'a', "DISMISSED", body)),
+    ]);
+    let target = branches().target(PR_URL).expect("fixture target");
+    let binding = ReviewBinding {
+        pull_author: 11.try_into().unwrap(),
+        author: 42.try_into().unwrap(),
+        head: &sha('a'),
+        decision: Review::Approve,
+    };
+    for _ in 0..4 {
+        assert!(matches!(
+            operator
+                .read_review(&target, &binding, 7.try_into().unwrap())
+                .await,
+            Err(ReviewError::Mismatched)
+        ));
+    }
+    thread.join().unwrap();
 }

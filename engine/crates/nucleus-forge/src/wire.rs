@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use nucleus_core::{CheckState, Forge, Head, PullRequest};
 use serde::{Deserialize, de::DeserializeOwned};
 
-use crate::ForgeError;
+use crate::{AuthenticatedGitHubUser, ForgeError};
 
 #[derive(Deserialize)]
 pub(crate) struct Pull {
     pub(crate) number: i32,
     pub(crate) html_url: String,
     pub(crate) merged: bool,
+    pub(crate) user: Option<AuthenticatedGitHubUser>,
     pub(crate) merge_commit_sha: Option<Head>,
     pub(crate) state: PullState,
     pub(crate) base: GitRef,
