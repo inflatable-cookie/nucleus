@@ -803,9 +803,9 @@ the existing run, question, hold and exact-head rules still apply.
 
 Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
-waiting notice, and the next due pass can also retry routing. The scheduler
-unsettles a settled planner and reads it again before recording a concrete send
-intent. An uncertain question or operator-decline send keeps its exact attempt.
+waiting notice, and the next due pass can also retry routing. The scheduler records the concrete send intent after checking the recipient and
+snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
+A queued notice remains read-only if the planner settles again. An uncertain question or operator-decline send keeps its exact attempt.
 For report-ready, prerequisite-release and held parent recovery notices, a
 structured T3 rejection of the exact command reopens the notice once. The fresh
 attempt uses a new command ID, the same notice text and a currently verified planner.

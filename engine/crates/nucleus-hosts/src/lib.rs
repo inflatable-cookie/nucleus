@@ -65,8 +65,8 @@ pub use provider_setup::{
     NUCLEUS_RUST_PROVIDER, ProviderRegistration, ProviderSetup, ProviderSetupError,
 };
 pub use questions::{
-    NoticeAuthorization, NoticeDispatch, NoticeHost, NoticeObservation, NoticeOutcome, NoticeSend, NoticeState,
-    NoticeTarget, NoticeWrite, PlannerIdentity, PlannerThread,
+    NoticeAuthorization, NoticeDispatch, NoticeObservation, NoticeOutcome, NoticeState,
+    NoticeTarget, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
 use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};

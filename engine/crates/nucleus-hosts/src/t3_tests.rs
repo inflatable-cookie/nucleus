@@ -1,8 +1,8 @@
 use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use crate::{
-    Binding, Dispatch, HostError, NoticeHost, NoticeWrite, RoleProfile, RunRequest, SendOutcome,
-    StopProgress, T3, T3Pass, TaskHost,
+    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
+    TaskHost,
 };
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
@@ -1638,7 +1638,11 @@ async fn ready_notice(
     client: &T3,
     notice: &nucleus_core::QuestionDelivery,
 ) -> crate::NoticeAuthorization {
-    client.authorize_notice(notice).await.expect("read planner").expect("authorized")
+    client
+        .authorize_notice(notice)
+        .await
+        .expect("read planner")
+        .expect("authorized")
 }
 
 #[tokio::test]
@@ -2632,7 +2636,7 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
 
 #[tokio::test]
 async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
-    use crate::{NoticeSend, NoticeState};
+    use crate::{NoticeOutcome, NoticeState};
 
     let directory = checkout_fixture();
     let binding = binding(directory.path());
@@ -2662,20 +2666,26 @@ async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
         (probe, Response::Snapshot(started)),
     ])
     .await;
-    assert!(client.authorize_notice(&notice).await.unwrap().is_none(), "operator snooze");
+    assert!(
+        client.authorize_notice(&notice).await.unwrap().is_none(),
+        "operator snooze"
+    );
     let permit = ready_notice(&client, &notice).await;
     assert_eq!(notice.last_send_at_ms, None);
     let dispatch = permit.record(&mut notice).expect("persist native marker");
     assert_eq!(
         client
-            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .send_notice(dispatch)
             .await
             .expect("queue planner notice"),
-        NoticeSend::Accepted
+        NoticeOutcome::Accepted
     );
     let observed = client.observe_notice(&notice).await.unwrap();
     assert_eq!(observed.state, NoticeState::Queued);
-    assert!(observed.authorization.is_none(), "settling after acceptance permits no write");
+    assert!(
+        observed.authorization.is_none(),
+        "settling after acceptance permits no write"
+    );
     assert_eq!(
         client
             .notice_state(&notice)
@@ -2695,7 +2705,7 @@ async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
 
 #[tokio::test]
 async fn a_settled_recipient_gets_only_the_exact_recorded_notice() {
-    use crate::NoticeSend;
+    use crate::NoticeOutcome;
 
     let directory = checkout_fixture();
     let binding = binding(directory.path());
@@ -2736,10 +2746,10 @@ async fn a_settled_recipient_gets_only_the_exact_recorded_notice() {
         .expect("record the original bytes");
     assert_eq!(
         client
-            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .send_notice(dispatch)
             .await
             .expect("confirmed outcome"),
-        NoticeSend::Rejected
+        NoticeOutcome::Rejected
     );
     let frames = server.await.expect("fixture trace");
     assert_eq!(frames[2].payload.get(), notice.payload);

@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use nucleus_core::QuestionDelivery;
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
@@ -82,34 +80,9 @@ pub enum NoticeOutcome {
     Rejected,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeSend {
-    Prepared,
-    Accepted,
-    Rejected,
-}
-
 pub struct NoticeObservation {
     pub state: NoticeState,
     pub authorization: Option<NoticeAuthorization>,
-}
-
-/// A planner notice advances by one authorized write. Some hosts prepare the
-/// destination first and authorize the queue write on a later scheduler pass.
-pub enum NoticeWrite<'a, Authorization, Dispatch> {
-    Prepare(&'a Authorization),
-    Queue(Dispatch),
-}
-
-/// Deliver a planner notice without steering a live turn.
-pub trait NoticeHost: Send + Sync {
-    type Authorization: Sync;
-    type Dispatch: Send;
-
-    fn deliver_notice(
-        &self,
-        write: NoticeWrite<'_, Self::Authorization, Self::Dispatch>,
-    ) -> impl Future<Output = Result<NoticeSend, HostError>> + Send;
 }
 
 #[derive(Clone)]
@@ -134,33 +107,10 @@ pub struct NoticeDispatch {
     authorization: NoticeAuthorization,
 }
 
-impl NoticeHost for T3 {
-    type Authorization = NoticeAuthorization;
-    type Dispatch = NoticeDispatch;
-
-    async fn deliver_notice(
-        &self,
-        write: NoticeWrite<'_, Self::Authorization, Self::Dispatch>,
-    ) -> Result<NoticeSend, HostError> {
-        match write {
-            NoticeWrite::Prepare(_) => Err(HostError::Protocol),
-            NoticeWrite::Queue(dispatch) => self.send_notice(dispatch).await.map(|outcome| match outcome {
-                NoticeOutcome::Accepted => NoticeSend::Accepted,
-                NoticeOutcome::Rejected => NoticeSend::Rejected,
-            }),
-        }
-    }
-}
-
 impl NoticeAuthorization {
     #[must_use]
     pub const fn target(&self) -> &NoticeTarget {
         &self.target
-    }
-
-    #[must_use]
-    pub const fn needs_unsettle(&self) -> bool {
-        false
     }
 
     #[must_use]
@@ -303,7 +253,7 @@ impl T3 {
         Ok(self.observe_notice(delivery).await?.state)
     }
 
-    /// Reconcile any preceding send and prepare a dispatch or unsettle.
+    /// Reconcile any preceding send and authorize a new dispatch when eligible.
     /// # Errors
     /// Returns an error when the request is unreadable.
     pub async fn authorize_notice(
@@ -336,7 +286,10 @@ impl T3 {
         }
         let state = snapshot.state(delivery)?;
         let visibility = snapshot.thread.visibility.read()?;
-        if state != NoticeState::Absent || delivery.last_send_at_ms.is_some() || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms) {
+        if state != NoticeState::Absent
+            || delivery.last_send_at_ms.is_some()
+            || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms)
+        {
             return Ok(NoticeObservation {
                 state,
                 authorization: None,
