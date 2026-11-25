@@ -516,9 +516,16 @@ Later decisions carry their own attribution.
       An uncertain POST is reconciled from the original marker by the operator
       credential. After 30 seconds, a complete inventory without the marker
       permits one journaled resubmission with the original identity, body and marker.
-      A definite GitHub throttle preserves the attempt and its retry deadline
-      across restarts. A throttled resubmission checks again for the original
-      review before writing. Further uncertain delivery uses readback.
+      Planner ruling, 2026-11-25:
+      GitHub 5xx responses, including 502, leave delivery uncertain. Before each
+      attempt the engine looks for the same marker. If an inventory begun at
+      least ten minutes after the second attempt is complete and marker-free,
+      the engine may claim a third and final attempt on the same binding.
+      The earliest verified matching review wins. If the third attempt remains
+      unconfirmed, ReviewPublicationBlocked names the cause and offers Move to review.
+      The journal retains the review POST’s HTTP status and bounded GitHub error
+      message when available. A marker check on a responsive forge reads “confirming review”.
+      A definite throttle preserves the attempt and deadline across restarts.
       Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.

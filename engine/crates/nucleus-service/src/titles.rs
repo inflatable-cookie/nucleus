@@ -37,6 +37,11 @@ pub(super) fn task_state_label(
     if let Some(WaitDetail::OperatorSnoozed { until, .. }) = detail {
         return snoozed_label(task, *until);
     }
+    if wait == Some(WaitReason::ForgeUnknown)
+        && matches!(detail, Some(WaitDetail::ConfirmingDelivery(_)))
+    {
+        return phase_with_delay(task, Some("confirming review"));
+    }
     phase_with_delay(task, wait_label(task, wait))
 }
 

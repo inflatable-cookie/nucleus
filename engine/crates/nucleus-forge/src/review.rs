@@ -1,7 +1,6 @@
 use std::{num::NonZeroU64, time::SystemTime};
 
 use nucleus_core::{Head, Review};
-use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -46,10 +45,8 @@ pub enum ReviewError {
 pub enum ReviewWrite {
     Verified(VerifiedReview),
     Deferred { until: SystemTime },
-    Unauthenticated,
-    AccessRefused,
-    Refused,
-    Unknown,
+    Http { status: u16, message: String },
+    Unknown(String),
 }
 
 #[derive(Deserialize)]
@@ -167,22 +164,53 @@ impl GitHub {
             .client
             .post(format!("{}/{}/reviews", self.origin, target.path()))
             .json(&json!({"commit_id": binding.head, "event": binding.event(), "body": body}));
-        match self
-            .write(request)
-            .await
-            .and_then(|(_, body)| crate::decode_json::<WireReview>(&body))
-        {
+        let response = self
+            .request(request, true, |status, bytes, _| {
+                if !status.is_success() {
+                    #[derive(Deserialize)]
+                    struct ErrorBody {
+                        message: String,
+                    }
+                    let mut message = serde_json::from_slice::<ErrorBody>(bytes)
+                        .map(|error| error.message)
+                        .unwrap_or_default();
+                    if let Some(token) = self
+                        .auth
+                        .to_str()
+                        .ok()
+                        .and_then(|auth| auth.strip_prefix("Bearer "))
+                    {
+                        message = message.replace(token, "[redacted]");
+                    }
+                    return Ok(ReviewWrite::Http {
+                        status: status.as_u16(),
+                        message: message
+                            .chars()
+                            .map(|ch| if ch.is_control() { ' ' } else { ch })
+                            .take(300)
+                            .collect(),
+                    });
+                }
+                let receipt = crate::decode_json::<WireReview>(bytes);
+                let message = match receipt {
+                    Ok(review) => match binding.verify(review) {
+                        Ok(verified) if verified.body == body => {
+                            return Ok(ReviewWrite::Verified(verified));
+                        }
+                        _ => "Mismatched review receipt".to_owned(),
+                    },
+                    Err(error) => error.to_string(),
+                };
+                Ok(ReviewWrite::Http {
+                    status: status.as_u16(),
+                    message,
+                })
+            })
+            .await;
+        match response {
+            Ok(write) => write,
             Err(ForgeError::Deferred { until }) => ReviewWrite::Deferred { until },
-            Ok(review) => match binding.verify(review) {
-                Ok(verified) if verified.body == body => ReviewWrite::Verified(verified),
-                _ => ReviewWrite::Unknown,
-            },
-            Err(ForgeError::Status(StatusCode::UNAUTHORIZED)) => ReviewWrite::Unauthenticated,
-            Err(ForgeError::Status(StatusCode::FORBIDDEN | StatusCode::NOT_FOUND)) => {
-                ReviewWrite::AccessRefused
-            }
-            Err(ForgeError::Status(StatusCode::UNPROCESSABLE_ENTITY)) => ReviewWrite::Refused,
-            Err(_) => ReviewWrite::Unknown,
+            Err(error) => ReviewWrite::Unknown(error.to_string()),
         }
     }
 

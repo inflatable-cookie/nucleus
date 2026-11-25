@@ -14,6 +14,7 @@ use crate::{Service, ServiceError, event, github_accounts::ReviewerCredential};
 
 // Give GitHub time to expose a review whose POST reply was lost.
 const REVIEW_GRACE_MS: i64 = 30_000;
+const FINAL_RETRY_DELAY_MS: i64 = 10 * 60_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
@@ -33,12 +34,16 @@ pub enum PublicationError {
     Unverified,
     #[error("Review delivery is unconfirmed. Checking GitHub for the original review.")]
     UnknownDelivery,
+    #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
+    AttemptsExhausted,
+    #[error("{0}")]
+    Blocked(String),
     #[error("The reviewed commit is no longer the open pull request head.")]
     StaleHead,
 }
 
 impl PublicationError {
-    pub(super) const fn wait(&self) -> (WaitReason, &'static str) {
+    pub(super) fn wait(&self) -> (WaitReason, &str) {
         match self {
             Self::SameAuthor => (
                 WaitReason::ReviewPublicationBlocked,
@@ -52,6 +57,7 @@ impl PublicationError {
                 WaitReason::ReviewPublicationBlocked,
                 "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review.",
             ),
+            Self::Blocked(cause) => (WaitReason::ReviewPublicationBlocked, cause),
             Self::Refused => (
                 WaitReason::ReviewPublicationBlocked,
                 "GitHub refused the review. Inspect the pull request, then use Move to review.",
@@ -59,6 +65,10 @@ impl PublicationError {
             Self::Unverified => (
                 WaitReason::ReviewPublicationBlocked,
                 "The recorded review could not be verified. Inspect the pull request, then use Move to review if needed.",
+            ),
+            Self::AttemptsExhausted => (
+                WaitReason::ReviewPublicationBlocked,
+                "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review.",
             ),
             Self::UnknownDelivery => (
                 WaitReason::ForgeUnknown,
@@ -226,21 +236,25 @@ impl Service {
         record: &ReviewPublication,
         body: &ReviewBody,
     ) -> Result<bool, ServiceError> {
-        use ReviewPublicationOutcome::{Deferred, Pending, ResubmissionDeferred};
+        use ReviewPublicationOutcome::{
+            Deferred, FinalAttemptDeferred, Pending, ResubmissionDeferred, Resubmitted,
+        };
 
-        if let Deferred(until) | ResubmissionDeferred(until) = record.outcome
+        if let Deferred(until) | ResubmissionDeferred(until) | FinalAttemptDeferred(until) =
+            record.outcome
             && SystemTime::now() < until
         {
             return Err(ForgeError::Deferred { until }.into());
         }
-        if self.reconcile_review(task, target, record, body).await? {
-            return Ok(true);
-        }
         let age = event("review_publication")
             .at
             .saturating_sub(record.recorded_at);
+        if self.reconcile_review(task, target, record, body).await? {
+            return Ok(true);
+        }
         match record.outcome {
-            Deferred(_) | ResubmissionDeferred(_) => Ok(false),
+            Deferred(_) | ResubmissionDeferred(_) | FinalAttemptDeferred(_) => Ok(false),
+            Resubmitted if age >= FINAL_RETRY_DELAY_MS => Ok(false),
             Pending if age >= REVIEW_GRACE_MS => Ok(false),
             _ => Err(PublicationError::UnknownDelivery.into()),
         }
@@ -265,6 +279,125 @@ impl Service {
         if previous.is_some_and(|record| record.intent != intent) {
             return Err(PublicationError::Unverified.into());
         }
+        let Some(publication) = self
+            .claim_publication(task, target, intent, &request.body, previous)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if matches!(publication.outcome, ReviewPublicationOutcome::Verified(_)) {
+            return Ok(Some(publication));
+        }
+        let intent = &publication.intent;
+        let claim = publication.outcome;
+        let mut write = reviewer_client
+            .as_ref()
+            .unwrap_or(&self.forge)
+            .submit_review(target, &binding(intent), &request.body.text)
+            .await;
+        if matches!(write, ReviewWrite::Http { status: 401, .. })
+            && let Some(credential) = selected.as_ref()
+        {
+            match self
+                .retry_unauthenticated_review(target, intent, credential, &request.body.text)
+                .await
+            {
+                Ok(Some(retried)) => write = retried,
+                Ok(None) => {
+                    return self.defer_refused_review(task, intent, claim).await;
+                }
+                Err(_) if self.dispatch_mode().await == DispatchMode::Stopped => {
+                    return self.defer_refused_review(task, intent, claim).await;
+                }
+                Err(ServiceError::Forge(ForgeError::Deferred { until })) => {
+                    write = ReviewWrite::Deferred { until };
+                }
+                Err(error) => {
+                    self.record_review_response(
+                        task,
+                        intent,
+                        ReviewPublicationOutcome::AccessRefused,
+                        write_cause(&write).as_deref(),
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            }
+        }
+        if matches!(write, ReviewWrite::Http { status: 401, .. })
+            && self.dispatch_mode().await == DispatchMode::Stopped
+        {
+            return self.defer_refused_review(task, intent, claim).await;
+        }
+        self.settle_review_write(task, publication, write)
+            .await
+            .map(Some)
+    }
+
+    async fn settle_review_write(
+        &self,
+        task: &str,
+        publication: ReviewPublication,
+        write: ReviewWrite,
+    ) -> Result<ReviewPublication, ServiceError> {
+        let claim = publication.outcome;
+        let resubmission = claim != ReviewPublicationOutcome::Pending;
+        let intent = &publication.intent;
+        let response = write_cause(&write);
+        let acknowledged = matches!(&write, ReviewWrite::Verified(_));
+        let outcome = match write {
+            ReviewWrite::Verified(_) if resubmission => claim,
+            ReviewWrite::Verified(review) => ReviewPublicationOutcome::Submitted(review.id),
+            ReviewWrite::Http {
+                status: 401 | 403 | 404,
+                ..
+            } => ReviewPublicationOutcome::AccessRefused,
+            ReviewWrite::Http { status: 422, .. } => ReviewPublicationOutcome::Refused,
+            ReviewWrite::Deferred { until } => {
+                let deferred = if claim == ReviewPublicationOutcome::FinalAttempt {
+                    ReviewPublicationOutcome::FinalAttemptDeferred(until)
+                } else if resubmission {
+                    ReviewPublicationOutcome::ResubmissionDeferred(until)
+                } else {
+                    ReviewPublicationOutcome::Deferred(until)
+                };
+                self.record_review(task, intent, deferred).await?;
+                return Err(ForgeError::Deferred { until }.into());
+            }
+            ReviewWrite::Http { .. } | ReviewWrite::Unknown(_) => claim,
+        };
+        self.record_review_response(task, intent, outcome, response.as_deref())
+            .await?;
+        if !acknowledged && outcome == claim && claim != ReviewPublicationOutcome::FinalAttempt {
+            return Err(PublicationError::UnknownDelivery.into());
+        }
+        Ok(ReviewPublication {
+            outcome,
+            response,
+            ..publication
+        })
+    }
+
+    async fn claim_publication(
+        &self,
+        task: &str,
+        target: &PullTarget,
+        intent: ReviewIntent,
+        body: &ReviewBody,
+        previous: Option<&ReviewPublication>,
+    ) -> Result<Option<ReviewPublication>, ServiceError> {
+        let existing = self
+            .forge
+            .find_review(target, &binding(&intent), &body.marker, &body.text)
+            .await?;
+        if let (Some(record), Some(review)) = (previous, &existing) {
+            let outcome = ReviewPublicationOutcome::Verified(review.id);
+            self.record_review(task, &intent, outcome).await?;
+            return Ok(Some(ReviewPublication {
+                outcome,
+                ..record.clone()
+            }));
+        }
         let at = event("review_publication").at;
         let claim = {
             let mut state = self.state.lock().await;
@@ -282,63 +415,17 @@ impl Service {
                 .claim_review_publication(task, &intent, previous, at)?
                 .ok_or(PublicationError::UnknownDelivery)?
         };
-        let resubmission = claim == ReviewPublicationOutcome::Resubmitted;
-        let mut write = reviewer_client
-            .as_ref()
-            .unwrap_or(&self.forge)
-            .submit_review(target, &binding(&intent), &request.body.text)
-            .await;
-        if matches!(write, ReviewWrite::Unauthenticated)
-            && let Some(credential) = selected.as_ref()
-        {
-            match self
-                .retry_unauthenticated_review(target, &intent, credential, &request.body.text)
-                .await
-            {
-                Ok(Some(retried)) => write = retried,
-                Ok(None) => {
-                    return self.defer_refused_review(task, &intent, resubmission).await;
-                }
-                Err(_) if self.dispatch_mode().await == DispatchMode::Stopped => {
-                    return self.defer_refused_review(task, &intent, resubmission).await;
-                }
-                Err(ServiceError::Forge(ForgeError::Deferred { until })) => {
-                    write = ReviewWrite::Deferred { until };
-                }
-                Err(error) => {
-                    self.record_review(task, &intent, ReviewPublicationOutcome::AccessRefused)
-                        .await?;
-                    return Err(error);
-                }
-            }
-        }
-        if matches!(write, ReviewWrite::Unauthenticated)
-            && self.dispatch_mode().await == DispatchMode::Stopped
-        {
-            return self.defer_refused_review(task, &intent, resubmission).await;
-        }
-        let outcome = match write {
-            ReviewWrite::Verified(_) if resubmission => ReviewPublicationOutcome::Resubmitted,
-            ReviewWrite::Verified(review) => ReviewPublicationOutcome::Submitted(review.id),
-            ReviewWrite::Unauthenticated | ReviewWrite::AccessRefused => {
-                ReviewPublicationOutcome::AccessRefused
-            }
-            ReviewWrite::Refused => ReviewPublicationOutcome::Refused,
-            ReviewWrite::Deferred { until } => {
-                let deferred = if resubmission {
-                    ReviewPublicationOutcome::ResubmissionDeferred(until)
-                } else {
-                    ReviewPublicationOutcome::Deferred(until)
-                };
-                self.record_review(task, &intent, deferred).await?;
-                return Err(ForgeError::Deferred { until }.into());
-            }
-            ReviewWrite::Unknown => return Err(PublicationError::UnknownDelivery.into()),
+        let outcome = if let Some(review) = existing {
+            let verified = ReviewPublicationOutcome::Verified(review.id);
+            self.record_review(task, &intent, verified).await?;
+            verified
+        } else {
+            claim
         };
-        self.record_review(task, &intent, outcome).await?;
         Ok(Some(ReviewPublication {
             intent,
             outcome,
+            response: None,
             recorded_at: at,
         }))
     }
@@ -347,12 +434,16 @@ impl Service {
         &self,
         task: &str,
         intent: &ReviewIntent,
-        resubmitted: bool,
+        claim: ReviewPublicationOutcome,
     ) -> Result<Option<ReviewPublication>, ServiceError> {
-        if resubmitted {
-            self.record_review(task, intent, ReviewPublicationOutcome::Pending)
-                .await?;
-        }
+        let outcome = match claim {
+            ReviewPublicationOutcome::Resubmitted => ReviewPublicationOutcome::Pending,
+            ReviewPublicationOutcome::FinalAttempt => {
+                ReviewPublicationOutcome::FinalAttemptDeferred(SystemTime::now())
+            }
+            _ => return Ok(None),
+        };
+        self.record_review(task, intent, outcome).await?;
         Ok(None)
     }
 
@@ -462,15 +553,19 @@ impl Service {
         body: &ReviewBody,
     ) -> Result<bool, ServiceError> {
         use ReviewPublicationOutcome::{
-            AccessRefused, Deferred, Pending, Refused, ResubmissionDeferred, Resubmitted,
-            Submitted, Verified,
+            AccessRefused, Deferred, FinalAttempt, FinalAttemptDeferred, Pending, Refused,
+            ResubmissionDeferred, Resubmitted, Submitted, Verified,
         };
 
         let intent = &publication.intent;
         let binding = binding(intent);
         let review = match publication.outcome {
-            Deferred(_) => return Ok(false),
-            Pending | Resubmitted | ResubmissionDeferred(_) => {
+            Pending
+            | Resubmitted
+            | FinalAttempt
+            | Deferred(_)
+            | ResubmissionDeferred(_)
+            | FinalAttemptDeferred(_) => {
                 self.forge
                     .find_review(target, &binding, &body.marker, &body.text)
                     .await?
@@ -481,10 +576,17 @@ impl Service {
                     .await
                     .map_err(verified_review_error)?,
             ),
-            Refused => return Err(PublicationError::Refused.into()),
-            AccessRefused => return Err(PublicationError::AccessRefused.into()),
+            Refused => return Err(blocked_response(publication, PublicationError::Refused).into()),
+            AccessRefused => {
+                return Err(blocked_response(publication, PublicationError::AccessRefused).into());
+            }
         };
         let Some(review) = review else {
+            if publication.outcome == FinalAttempt {
+                return Err(
+                    blocked_response(publication, PublicationError::AttemptsExhausted).into(),
+                );
+            }
             return Ok(false);
         };
         if review.body != body.text {
@@ -553,15 +655,49 @@ impl Service {
         intent: &ReviewIntent,
         outcome: ReviewPublicationOutcome,
     ) -> Result<(), ServiceError> {
+        self.record_review_response(task, intent, outcome, None)
+            .await
+    }
+
+    async fn record_review_response(
+        &self,
+        task: &str,
+        intent: &ReviewIntent,
+        outcome: ReviewPublicationOutcome,
+        response: Option<&str>,
+    ) -> Result<(), ServiceError> {
         self.storage.database().verify()?;
         self.state.lock().await.store.record_review_publication(
             task,
             intent,
             outcome,
+            response,
             event("review_publication").at,
         )?;
         Ok(())
     }
+}
+
+fn write_cause(write: &ReviewWrite) -> Option<String> {
+    match write {
+        ReviewWrite::Http { status, message } if message.is_empty() => {
+            Some(format!("GitHub HTTP {status}"))
+        }
+        ReviewWrite::Http { status, message } => Some(format!("GitHub HTTP {status}: {message}")),
+        ReviewWrite::Unknown(cause) => Some(cause.clone()),
+        _ => None,
+    }
+}
+
+fn blocked_response(record: &ReviewPublication, fallback: PublicationError) -> PublicationError {
+    let Some(response) = &record.response else {
+        return fallback;
+    };
+    PublicationError::Blocked(format!(
+        "{} Last review POST to {}: {response}",
+        fallback.wait().1,
+        record.intent.pull_url
+    ))
 }
 
 fn binding(intent: &ReviewIntent) -> ReviewBinding<'_> {
