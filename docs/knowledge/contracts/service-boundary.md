@@ -45,11 +45,9 @@ operations, legacy QA history and host-run reads and accounting through
 it uses. Startup and active host access stay lazy.
 These modules never import or receive `QueueRuntime`.
 
-The TypeScript main-channel package roll is retired. The remaining legacy
-standalone environment is composed in `service/host-environment.mjs`. Shared
-roll helpers under `shared/service/roll/` keep the spawner's process options
-and host integration separate. The stopped TypeScript service state handler and
-Paseo forwarding code still share these contracts while their source is removed.
+The TypeScript runtime owner, native host channel bindings and main-channel
+roll are retired. For service operation, refer to the
+[Rust service](../../../engine/README.md#service-pass).
 
 ## Forge module map
 

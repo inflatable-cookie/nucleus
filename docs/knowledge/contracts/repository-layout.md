@@ -208,16 +208,10 @@ identity live in `shared/service/`. Service identity writes and process launch
 actions stay outside shared. Pure review text lives in
 `shared/review-text.ts`.
 
-`service/host-environment.mjs` still supplies environment values to the
-remaining TypeScript runtime fixtures. The archived Paseo
-code under `hosts/paseo/` keeps its adapter, forwarding and client code in
-separate directories.
-
-The standalone runtime owner lives in `service/runtime-owner.ts`. Socket listeners
-live in `service/callbacks/`, with service RPC in `service/transport/`, remaining
-standby helpers in `service/install/`, and executor workers in `service/executor/`.
-Formal-review HTTP is a forge client in `core/forge/`, not a service listener.
-Installed service worker and helper aliases remain under `server/service/`.
+The archived Paseo code under `hosts/paseo/` keeps its adapter and client code
+in separate directories. The remaining TypeScript service code contains callbacks,
+executor and standby helpers. Formal-review HTTP lives in the forge client under
+`core/forge/`.
 
 `core/workspaces/` owns workspace allocation, continuation, retirement, checkout
 mounts and cleanup, including the directory-normalization helper. Installed
