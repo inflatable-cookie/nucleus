@@ -702,6 +702,17 @@ Cargo builds" rule for the `engine/` workspace only:
    takes no new work. Planning records move into the new service (ruling 12).
 4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
    skill and the contracts are rewritten for the new commands.
+   The old engine's tasks have drained: its final database holds only finished and cancelled
+   tasks. Tom, 2026-11-25: "Yeah, queue those tasks.. it should probably go before level up though
+   otherwise we'll be assessing redundant code". The deletion follows the builder's current queue and runs
+   before the quality pass, in this order:
+   - a dependency audit separating the TypeScript code the Rust board reuses from engine-only code, together with
+     the parity inventory;
+   - replacing or retiring `nucleus worktree`;
+   - retiring the TypeScript decision bridge and importers;
+   - a decision on the read-only archive tool;
+   - deletion in batches of at most three modules;
+   - the documentation rewrite.
 
 A task never moves between engines.
 
