@@ -61,9 +61,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `service/install/` | Build identity, installation, rolling, standby and handoff. | Neutral |
 | `service/executor/` | Executor worker, host-run front/worker, supervision and private fixture servers. | Neutral |
 | `hosts/` | App integration containers; no cross-host imports. | Per child folder |
-| `hosts/paseo/` | Public service index; adapter implementation stays behind it. | Paseo |
-| `hosts/paseo/adapter/` | SDK adapter, asks, messages, questions, workspace and workspace-id mapping. | Paseo, service process |
-| `hosts/paseo/vocabulary.ts` | Paseo's translation table from the canonical profile vocabulary. | Paseo, service process |
+| `hosts/paseo/vocabulary.ts` | Paseo profile vocabulary used by the shared browser board. | Shared browser board |
 | `hosts/t3code/` | Browser theme conversion, profile catalog and vocabulary. | T3Code, browser |
 | `client/` | Host-neutral board UI, controls, settings and planning surfaces. | Neutral, browser/native UI |
 | `client/board/` | Board cards, pipeline, header and data subscriptions. | Neutral |
