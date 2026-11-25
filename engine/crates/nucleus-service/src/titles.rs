@@ -684,6 +684,26 @@ mod tests {
         }
     }
 
+    async fn running_review_threads(service: &Service, provider: &str) -> [serde_json::Value; 2] {
+        let (task, _, _) = crate::tests::reserved_reviewer("fixture", &service.fixture().start);
+        assert_eq!(task.phase(), Phase::Reviewing);
+        let parent = "fixture-parent";
+        {
+            let mut state = service.state.lock().await;
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .desire_title(&task.identity().id, parent, "Reviewing")
+                .unwrap();
+            state.set_wait(&task.identity().id, Some(WaitReason::ForgeUnknown));
+        }
+        [
+            json!({"id":parent,"projectId":"project:nucleus-rust-inbox","providerInstanceId":provider}),
+            json!({"id":task.run().unwrap().launch().thread,"parentThreadId":parent,
+                   "projectId":"project:nucleus-rust-inbox","status":"running","activeRunId":"fixture-review"}),
+        ]
+    }
+
     #[tokio::test]
     async fn inbox_status_titles_only_write_changed_metadata_under_a_fresh_generation() {
         use nucleus_store::planning::WriteAt;
@@ -715,25 +735,13 @@ mod tests {
         service.apply_title(provider, &first, 0).await.unwrap();
         assert!(requests.lock().unwrap().is_empty());
 
-        let (task, _, _) = crate::tests::reserved_reviewer("fixture", &service.fixture().start);
-        assert_eq!(task.phase(), Phase::Reviewing);
-        let parent = "fixture-parent";
-        {
-            let mut state = service.state.lock().await;
-            state.store.create(&task, &crate::event("fixture")).unwrap();
-            state
-                .store
-                .desire_title(&task.identity().id, parent, "Reviewing")
-                .unwrap();
-            state.set_wait(&task.identity().id, Some(WaitReason::ForgeUnknown));
-        }
+        let threads = running_review_threads(&service, provider).await;
         let working_shell = |title| {
             let mut snapshot = shell(title);
-            snapshot["threads"].as_array_mut().unwrap().extend([
-                json!({"id":parent,"projectId":"project:nucleus-rust-inbox","providerInstanceId":provider}),
-                json!({"id":task.run().unwrap().launch().thread, "parentThreadId":parent,
-                       "status":"running","activeRunId":"fixture-review"}),
-            ]);
+            snapshot["threads"]
+                .as_array_mut()
+                .unwrap()
+                .extend(threads.clone());
             snapshot
         };
         service
