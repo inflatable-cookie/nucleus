@@ -1431,12 +1431,7 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
-        if let Command::Amend(text) = &command {
-            if brief_version.is_some_and(|version| version != prior.task.brief().version) {
-                return Err(ServiceError::BriefConflict);
-            }
-            check_brief_size(text.len())?;
-        }
+        check_amendment(&prior.task, &command, brief_version)?;
         if matches!(
             command,
             Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
@@ -1807,6 +1802,20 @@ impl Service {
             detail_only,
         });
     }
+}
+
+fn check_amendment(
+    task: &Task,
+    command: &Command,
+    expected: Option<u64>,
+) -> Result<(), ServiceError> {
+    if let Command::Amend(text) = command {
+        if expected.is_some_and(|version| version != task.brief().version) {
+            return Err(ServiceError::BriefConflict);
+        }
+        check_brief_size(text.len())?;
+    }
+    Ok(())
 }
 
 /// The decoded UTF-8 byte limit for a new or replacement task brief.
