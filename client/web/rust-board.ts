@@ -1,3 +1,4 @@
+import { matchesRepository } from "../../shared/project-scope";
 import { activityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
 import type { Project, leadBoard } from "../../shared/contracts";
 import {
@@ -11,7 +12,7 @@ import { readLiveFrames, type LiveFrame } from "./live-channel";
 
 const api = "/api/engine";
 const root = ["rust-board"];
-const listKey = [...root, "list"];
+export const rustTaskListKey = [...root, "list"];
 const taskKey = (id: string) => [...root, "task", id];
 const historyPageSize = 30;
 const revision = z.number().int().nonnegative();
@@ -331,10 +332,10 @@ export function rustProjectActivity(
 ) {
   const items = activityItems();
   const byProject = new Map(projects.map(project => [project.key, project.repositories]));
-  const byOrigin = new Map(projects.flatMap(project => project.repositories)
-    .flatMap(repo => repo.origin ? [[repo.origin.toLowerCase(), repo] as const] : []));
+  const repositories = projects.flatMap(project => project.repositories);
   for (const task of tasks) {
-    const repo = byOrigin.get(task.identity.repository.toLowerCase());
+    const origin = task.identity.repository;
+    const repo = repositories.find(candidate => matchesRepository(candidate, origin, origin));
     const at = task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
     items.add(`task:${task.identity.id}`, {
       at: at == null ? null : new Date(at).toISOString(),
@@ -359,7 +360,7 @@ export function rustProjectActivity(
 export function useRustTasks(enabled: boolean) {
   return useQuery({
     ...pushQuery,
-    queryKey: listKey,
+    queryKey: rustTaskListKey,
     enabled,
     queryFn: ({ signal }) => transport.list(signal),
   });
