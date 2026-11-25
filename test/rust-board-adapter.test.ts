@@ -1006,6 +1006,21 @@ test("project-scoped decisions address the selected copy and ambiguous bare IDs 
   assert.deepEqual(writes, ["/api/engine/planning/lantern/decisions/shared/answer"]);
 });
 
+test("lane detail reads the full stored Markdown and edits use the native byte limit", async () => {
+  const key = "delivery";
+  const project = "lantern";
+  const address = { project, key };
+  const text = "é".repeat(2_000_000);
+  const fake = engine({ [project]: { key, version: 1, document: text, title: "Delivery", aim: "Ship", status: "open" } });
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const saved = await adapter.rpc(api.laneDocumentGet, address);
+  assert.equal(saved?.text.length, text.length);
+  assert.equal(saved?.digest, "sha256:" + createHash("sha256").update(text).digest("hex"));
+  const edit = { ...address, version: 1, text, author: "planner" };
+  assert.doesNotThrow(() => api.laneDocumentEdit.input.parse(edit));
+  assert.throws(() => api.laneDocumentEdit.input.parse({ ...edit, text: text + "x" }), /4,000,000 UTF-8 bytes/);
+});
+
 test("planning detail reads the requested revision from the scoped store history", async () => {
   const fake = engine();
   const project = "lantern";

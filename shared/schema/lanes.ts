@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { laneKeySchema } from "../schema/task-primitives";
 import { LANE_AIM_MAX, normalizeRepositoryOrigin } from "../lanes";
-import { LANE_DOCUMENT_MAX, briefDigestSchema } from "./briefs";
+import { briefDigestSchema } from "./briefs";
 
 /** The denormalised title and aim of one attached lane, in membership order, for prompts and detail. */
 export const laneContextSchema = z.object({ key: laneKeySchema, title: z.string(), aim: z.string() }).strict();
@@ -102,6 +102,6 @@ export type ProjectCloseout = z.infer<typeof projectCloseoutSchema>;
 /** Spec 041: keep answers a lane's drain prompt; the required reason ends the episode. */
 export const laneKeepInputSchema = z.object({ key: laneKeySchema, reason: z.string().trim().min(1).max(4000), author: z.string().trim().min(1).max(240).default("operator") }).strict();
 
-export const laneDocumentVersionSchema = z.object({ key: laneKeySchema, version: z.number().int().positive(), text: z.string().max(LANE_DOCUMENT_MAX), digest: briefDigestSchema, author: z.string().min(1), createdAt: z.string() }).strict();
+export const laneDocumentVersionSchema = z.object({ key: laneKeySchema, version: z.number().int().positive(), text: z.string(), digest: briefDigestSchema, author: z.string().min(1), createdAt: z.string() }).strict();
 
 export type LaneDocumentVersion = z.infer<typeof laneDocumentVersionSchema>;

@@ -51,5 +51,9 @@ export type LaneDocumentPin = z.infer<typeof laneDocumentPinSchema>;
 
 export type LaneDocumentRef = z.infer<typeof laneDocumentRefSchema>;
 
-/** A lane document reaches prompts, so it keeps the brief's bound. */
-export const LANE_DOCUMENT_MAX = BRIEF_MAX_LENGTH;
+/** The Rust planning store bounds lane edits by UTF-8 bytes. */
+export const LANE_DOCUMENT_MAX = 4_000_000;
+export const laneDocumentEditText = z.string().refine(
+  text => new TextEncoder().encode(text).byteLength <= LANE_DOCUMENT_MAX,
+  "Lane document exceeds 4,000,000 UTF-8 bytes.",
+);
