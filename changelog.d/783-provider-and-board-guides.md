@@ -1,0 +1,1 @@
+The T3 setup guide now ends with a provider status check and gives removal its own section. The board and engine guides explain when task rows appear, which Settings a paired session can change, and how the scheduler handles allowances and profile selection.
