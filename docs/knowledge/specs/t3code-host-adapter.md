@@ -2139,9 +2139,8 @@ plain sentence is the prompt. The proof releases the held turn through a fixture
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
 
-nucleus#1459's finished-parent archive proof (`effigy
-proof:t3code:parent-archive`) runs on the installed nightly through the ordinary
-host maintenance owner: a real store, the real `nucleus t3 install` route and a
+nucleus#1459's pre-cutover finished-parent proof ran on the installed nightly
+through the ordinary host maintenance owner: a real store, the real `nucleus t3 install` route and a
 real `T3CodeHost`, driven by `HostPass.run` and never by a presentation, nesting or
 archive method directly. It proves a stored done task with a retired workspace
 handle and a snoozed parent archived in one ordinary pass with exactly one
