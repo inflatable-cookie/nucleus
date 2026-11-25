@@ -26,7 +26,9 @@ const QUARANTINE_REF: &str = "--format=%(refname)%00%(objectname)%00%(symref)%00
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
 // which confirms that the whole scan completed successfully.
 const INDEX_VISIBILITY: &str = concat!(
-    r#"alias.nucleus-index-visibility=! { git ls-files -v && printf '%s\n' 'Nucleus index complete'; } | "#,
+    r#"alias.nucleus-index-visibility=! { git ls-files -v && "#,
+    r#"{ test ! -e .gitmodules || git submodule --quiet foreach --recursive 'git ls-files -v'; } && "#,
+    r#"printf '%s\n' 'Nucleus index complete'; } | "#,
     r#"awk '$0 == "Nucleus index complete" { complete = 1; next } "#,
     r#"substr($0, 1, 2) != "H " { hidden = 1 } "#,
     r#"END { if (!complete) exit 1; if (hidden) print "hidden" }'"#,

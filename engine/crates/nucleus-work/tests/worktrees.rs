@@ -159,6 +159,64 @@ fn integration_admission_detects_a_moved_ignored_submodule() {
 }
 
 #[test]
+fn admission_checks_the_index_of_a_nested_submodule() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    for name in ["inner", "outer", "registered"] {
+        repository(&root.join(name));
+    }
+    for (parent, child) in [("outer", "../inner"), ("registered", "../outer")] {
+        let repo = root.join(parent);
+        git(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                child,
+                "module",
+            ],
+        );
+        git(&repo, &["commit", "-am", "Record submodule"]);
+    }
+    let repo = root.join("registered");
+    git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+        ],
+    );
+    let trees = worktrees(root);
+    let checkout = trees.checkout(&repo, "example/fixture", "report").unwrap();
+    let nested = repo.join("module/module");
+    for (hide, show) in [
+        ("--assume-unchanged", "--no-assume-unchanged"),
+        ("--skip-worktree", "--no-skip-worktree"),
+    ] {
+        assert!(checkout.integration_clean().unwrap());
+        git(&nested, &["update-index", hide, "README.md"]);
+        fs::write(nested.join("README.md"), "masked change").unwrap();
+        assert!(
+            git(
+                &repo,
+                &["status", "--porcelain", "--ignore-submodules=none"]
+            )
+            .is_empty()
+        );
+        assert!(!checkout.integration_clean().unwrap());
+        git(&nested, &["update-index", show, "README.md"]);
+        git(&nested, &["restore", "README.md"]);
+    }
+    assert!(checkout.integration_clean().unwrap());
+}
+
+#[test]
 fn successful_status_overflow_is_dirty_and_retained() {
     let home = tempfile::tempdir().unwrap();
     let repo = home.path().join("repository");
