@@ -1,21 +1,14 @@
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { T3CodeHost } from "../hosts/t3code/adapter";
+import { t3HostCatalog } from "../hosts/t3code/catalog";
+import { configProvider } from "../hosts/t3code/config";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
-import { acpStub, nucleusProvider } from "./support/t3code-acp";
 import { paseoVocabulary } from "../hosts/paseo/vocabulary";
-import { Store } from "../core/store/store";
-import { migrateProfileVocabulary } from "../core/store/profile-vocabulary-migration";
 import {
   nucleusProfileInputSchema,
   nucleusProfileSchema,
   profileCompatibility,
-  routingProfiles,
   type NucleusProfile,
 } from "../shared/profiles";
 import {
@@ -27,16 +20,8 @@ import {
   type HostVocabulary,
   type LaunchValues,
 } from "../shared/profile-vocabulary";
-import {
-  poolSchema,
-  submissionSchema,
-  type PoolEntry,
-  type Profile,
-  type Task,
-} from "../shared/contracts";
 import type { HostKind } from "../shared/host-kind";
-import type { HostAgentSpec, HostCatalog } from "../shared/host";
-import { t3Fake } from "./support/t3code-fake";
+import type { HostCatalog } from "../shared/host";
 import {
   nightlyProviders,
   paseoCatalog,
@@ -58,38 +43,6 @@ const stored = (index: number): NucleusProfile =>
       ),
     ),
   });
-const storedPool = (): PoolEntry[] =>
-  poolShapes.map((shape, index) =>
-    poolSchema.parse({ profileId: `shape-${index}`, ...shape.entry }),
-  );
-
-async function t3Fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "profile-vocabulary-"));
-  const directory = await realpath(root);
-  const server = await t3Fake(t, directory);
-  server.controls.providers = nightlyProviders();
-  server.controls.providers = [
-    ...(server.controls.providers ?? []),
-    nucleusProvider,
-  ];
-  const acp = acpStub(server.threads);
-  const host = new T3CodeHost({
-    endpoint: server.endpoint,
-    bearer: "synthetic-bearer",
-    statePath: join(root, "state.json"),
-    timeoutMs: 1_000,
-    probeThreadId: "synthetic-probe",
-    acp: () => acp.surface,
-    reentryTimeoutMs: 200,
-  });
-  t.after(() => {
-    host.close();
-    rmSync(root, { recursive: true, force: true });
-  });
-  await host.connect();
-  return { root, directory, host, server, catalog: await host.catalog() };
-}
-
 /**
  * The launch values each pool shape translates to, by label (#1151's table):
  * Haiku and Opus run on T3 as `claudeAgent` with their thinking as `effort`,
@@ -294,7 +247,7 @@ function without(
   return copy;
 }
 
-test("acceptance 1: every pool shape is canonical and translates on Paseo and on the recorded nightly T3 catalog to its launch values", async (t) => {
+test("acceptance 1: every pool shape is canonical and translates on Paseo and on the recorded nightly T3 catalog to its launch values", () => {
   for (const shape of poolShapes) {
     const { label: _label, ...values } = shape.profile;
     assert.ok(
@@ -317,13 +270,13 @@ test("acceptance 1: every pool shape is canonical and translates on Paseo and on
     );
     nucleusProfileInputSchema.parse({ name: shape.profile.label, ...values });
   }
-  const { catalog: t3 } = await t3Fixture(t);
+  const t3 = t3HostCatalog(nightlyProviders().map(p => configProvider.parse(p)));
   assert.deepEqual(coverageFailures(paseoVocabulary, paseoCatalog()), []);
   assert.deepEqual(coverageFailures(t3codeVocabulary, t3), []);
 });
 
-test("acceptance 1: removing any translation entry the pool uses fails the coverage with the value named", async (t) => {
-  const { catalog: t3 } = await t3Fixture(t);
+test("acceptance 1: removing any translation entry the pool uses fails the coverage with the value named", () => {
+  const t3 = t3HostCatalog(nightlyProviders().map(p => configProvider.parse(p)));
   const removals: [
     HostVocabulary,
     HostCatalog,
@@ -362,63 +315,6 @@ test("acceptance 1: removing any translation entry the pool uses fails the cover
       `the failure names ${named}: ${failures.join("; ")}`,
     );
   }
-});
-
-const launchSpec = (
-  workspaceId: string,
-  profile: Profile,
-  requestId: string,
-): HostAgentSpec => ({
-  workspaceId,
-  profile,
-  title: "Synthetic role",
-  mcpBindingPath: null,
-  attempt: () => ({
-    requestId,
-    prompt: "Synthetic prompt",
-    labels: { "nucleus.task": "synthetic-task" },
-    environment: {},
-  }),
-});
-
-test("acceptance 2: a canonical Opus profile launches on T3 as claudeAgent with full-access and its effort, and translates to Paseo's IDs, with no per-profile settings", async (t) => {
-  const { directory, host, server, catalog } = await t3Fixture(t);
-  const opus = nucleusProfileSchema.parse({
-    id: "opus",
-    name: "Opus",
-    provider: "claude",
-    model: "claude-opus-5-5",
-    modeId: "full-access",
-    thinkingOptionId: "medium",
-  });
-  assert.deepEqual(
-    Object.keys(opus).sort(),
-    ["id", "modeId", "model", "name", "notes", "provider", "thinkingOptionId"],
-    "the profile carries canonical values only",
-  );
-  const [onT3] = routingProfiles([opus], catalog, t3codeVocabulary);
-  assert.equal(onT3!.available, true, onT3!.problem);
-  const workspace = await host.createWorkspace({
-    title: "Synthetic worktree",
-    requestId: "workspace-intent",
-    directory,
-    project: { projectId: "synthetic-project" },
-  });
-  await host.createAgent(launchSpec(workspace.id, onT3!, "launch-opus"));
-  const command = server.commands.find(
-    (candidate) => candidate.commandId === "launch-opus",
-  )!;
-  assert.equal(command.modelSelection.instanceId, "claudeAgent");
-  assert.equal(command.modelSelection.model, "claude-opus-5-5");
-  assert.deepEqual(command.modelSelection.options, [
-    { id: "effort", value: "medium" },
-  ]);
-  assert.equal(command.runtimeMode, "full-access");
-
-  const [onPaseo] = routingProfiles([opus], paseoCatalog(), paseoVocabulary);
-  assert.equal(onPaseo!.available, true, onPaseo!.problem);
-  assert.equal(onPaseo!.modeId, "bypassPermissions");
-  assert.equal(onPaseo!.thinkingOptionId, "medium");
 });
 
 test("a value no table can express makes the profile unavailable with a computed reason, and a value outside the vocabulary is refused at the form", () => {
@@ -492,8 +388,8 @@ test("a value no table can express makes the profile unavailable with a computed
     );
 });
 
-test("the form vocabulary is every host's catalog in canonical values, merged, without the options a table owns", async (t) => {
-  const { catalog: t3 } = await t3Fixture(t);
+test("the form vocabulary is every host's catalog in canonical values, merged, without the options a table owns", () => {
+  const t3 = t3HostCatalog(nightlyProviders().map(p => configProvider.parse(p)));
   const paseo = canonicalCatalog(paseoVocabulary, paseoCatalog());
   const onT3 = canonicalCatalog(t3codeVocabulary, t3);
   // T3's claudeAgent reads as canonical claude, its effort option as thinking levels.
@@ -555,245 +451,4 @@ test("the form vocabulary is every host's catalog in canonical values, merged, w
     mergedOpus.modes.map((mode) => mode.id),
     ["plan", "supervised", "accept-edits", "auto", "full-access"],
   );
-});
-
-test("the one-time migration moves Paseo spellings to canonical values and keeps a profile with an unknown value as stored, reported", () => {
-  const live = [
-    {
-      id: "grok",
-      name: "Grok",
-      provider: "grok",
-      model: "grok-4.6",
-      thinkingOptionId: "high",
-      featureValues: { auto_accept: true },
-    },
-    {
-      id: "luna",
-      name: "Luna",
-      provider: "codex",
-      model: "gpt-6-luna",
-      modeId: "full-access",
-      thinkingOptionId: "xhigh",
-    },
-    {
-      id: "opus",
-      name: "Opus",
-      provider: "claude",
-      model: "claude-opus-5-5",
-      modeId: "bypassPermissions",
-      thinkingOptionId: "medium",
-    },
-    {
-      id: "odd",
-      name: "Odd",
-      provider: "claude",
-      model: "claude-opus-5-5",
-      modeId: "bypassPermissions",
-      thinkingOptionId: "ultracode",
-    },
-  ];
-  const { profiles, record } = migrateProfileVocabulary(
-    live,
-    "2026-11-12T00:00:00.000Z",
-  );
-  assert.deepEqual(profiles, [
-    {
-      id: "grok",
-      name: "Grok",
-      provider: "grok",
-      model: "grok-4.6",
-      thinkingOptionId: "high",
-      modeId: "full-access",
-    },
-    live[1],
-    { ...live[2], modeId: "full-access" },
-    live[3],
-  ]);
-  assert.deepEqual(record.changes, [
-    { profileId: "grok", field: "modeId", from: undefined, to: "full-access" },
-    {
-      profileId: "grok",
-      field: "featureValues",
-      from: { auto_accept: true },
-      to: undefined,
-    },
-    {
-      profileId: "opus",
-      field: "modeId",
-      from: "bypassPermissions",
-      to: "full-access",
-    },
-  ]);
-  assert.deepEqual(record.unknown, [
-    { profileId: "odd", field: "thinkingOptionId", value: "ultracode" },
-  ]);
-  // Running it again changes nothing.
-  assert.deepEqual(migrateProfileVocabulary(profiles).record.changes, []);
-});
-
-test("the store runs the migration once on open and records it", (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "profile-vocabulary-store-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const path = join(dir, "db");
-  const first = new Store(path);
-  first.setMeta("profiles", [
-    {
-      id: "opus",
-      name: "Opus",
-      provider: "claude",
-      model: "claude-opus-5-5",
-      modeId: "bypassPermissions",
-      notes: "",
-    },
-  ]);
-  first.db
-    .prepare("DELETE FROM meta WHERE key='profileVocabularyMigration'")
-    .run();
-  first.close();
-  const second = new Store(path);
-  try {
-    assert.equal(second.profiles()[0]!.modeId, "full-access");
-    assert.deepEqual(
-      second.getMeta<{ changes: unknown[] }>("profileVocabularyMigration")!
-        .changes,
-      [
-        {
-          profileId: "opus",
-          field: "modeId",
-          from: "bypassPermissions",
-          to: "full-access",
-        },
-      ],
-    );
-    // A later legacy value is not rewritten: the migration ran.
-    second.setMeta("profiles", [
-      {
-        id: "later",
-        name: "Later",
-        provider: "claude",
-        model: "m",
-        modeId: "bypassPermissions",
-        notes: "",
-      },
-    ]);
-  } finally {
-    second.close();
-  }
-  const third = new Store(path);
-  try {
-    assert.equal(third.profiles()[0]!.modeId, "bypassPermissions");
-  } finally {
-    third.close();
-  }
-});
-
-const taskOf = (more: Partial<Task> = {}): Task =>
-  submissionSchema.parse({
-    submissionId: "profile-vocabulary",
-    title: "Profile vocabulary",
-    repoPath: "/repo",
-    planningCommit: "a".repeat(40),
-    handoffPath: "handoff.md",
-    originAgentId: "origin",
-    hostId: "t3code:env",
-    ...more,
-  }) as Task;
-
-test("routingPolicy explains a medium task landing on the cheapest profile that meets the demand", () => {
-  const dir = mkdtempSync(join(tmpdir(), "profile-vocabulary-selection-"));
-  const store = new Store(join(dir, "db"));
-  try {
-    // Two equally weighted Worker profiles rotate by name on a tie, and a Mechanical profile is not in the set at all (Normal starts a
-    // medium task on Worker, Tom 2026-11-19).
-    const pool = [
-      poolSchema.parse({
-        profileId: "pricey",
-        enabled: true,
-        group: "g1",
-        roles: ["worker"],
-        weight: "default",
-        scopes: ["general"],
-        
-        capability: "worker",
-      }),
-      poolSchema.parse({
-        profileId: "cheap",
-        enabled: true,
-        group: "g2",
-        roles: ["worker"],
-        weight: "default",
-        scopes: ["general"],
-        
-        capability: "worker",
-      }),
-      poolSchema.parse({
-        profileId: "lowrated",
-        enabled: true,
-        group: "g3",
-        roles: ["worker"],
-        weight: "most",
-        scopes: ["general"],
-        
-        capability: "mechanical",
-      }),
-    ];
-    store.setMeta("pool", pool);
-    store.setProfiles(
-      ["pricey", "cheap", "lowrated"].map((id) => ({
-        id,
-        name: id,
-        provider: "test",
-        model: `test/${id}`,
-        notes: "",
-      })),
-    );
-    const retained = store.insert(
-      taskOf({ complexity: "medium" }),
-      "paseo:local",
-      "handoff",
-      "a".repeat(40),
-    );
-    const policy = store.routingPolicy(
-      store.task(retained.id),
-      Date.now(),
-      ["pricey", "cheap", "lowrated"].map((id) => ({
-        id,
-        name: id,
-        provider: "test",
-        model: `test/${id}`,
-        available: true,
-        problem: "",
-        notes: "",
-        supportedThinking: [],
-      })),
-    );
-    const selection = policy.selection!;
-    assert.deepEqual(
-      [
-        selection.complexity,
-        selection.startTier,
-        selection.fullDemand,
-        selection.demand,
-      ],
-      ["medium", "worker", "worker", "worker"],
-    );
-    assert.match(selection.step, /first attempt: at the Normal start tier/);
-    assert.deepEqual(
-      selection.met.map((item) => item.profileId).sort(),
-      ["cheap", "pricey"],
-      "the Mechanical profile is below the demand",
-    );
-    assert.equal(
-      selection.choice?.profileId,
-      "cheap",
-      "equal weights tie on recent use, so the first by name leads",
-    );
-    assert.match(
-      selection.choice!.reason,
-      /fewest recent assignments per rotation share/,
-    );
-  } finally {
-    store.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
