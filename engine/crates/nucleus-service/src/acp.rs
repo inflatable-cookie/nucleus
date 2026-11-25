@@ -98,6 +98,11 @@ impl Service {
             .any(|thread| self.host.bound_child_active(thread, &checkout));
         let active_child = active_in_shell || run_keeps_turn(state, row);
         if task.phase().is_terminal()
+            || task.run().is_some_and(|run| run.report().is_some())
+            || matches!(
+                state.role_observation(task),
+                Some(RunState::Ended | RunState::UsageLimited)
+            )
             || matches!(
                 state.wait_detail(id),
                 Some(crate::WaitDetail::OperatorSnoozed { .. })
@@ -127,15 +132,19 @@ impl Service {
         {
             return Ok((None, false));
         }
+        // After settlement, a remembered child can acquire its own re-entry hold.
+        // It cannot extend the old prompt across a handoff to the next role.
+        let carry = active_child && task.run().is_some();
         let Some(session) = self.host.runtime_identity() else {
-            return Ok((None, active_child));
+            return Ok((None, carry));
         };
         let command =
             state
                 .store
                 .task_turn_command(id, "native_turn_intent", row.version, &session)?;
         if let Some(command) = &command
-            && state.store.task_turn_failed(id, command)?
+            && (state.store.task_turn_failed(id, command)?
+                || (nucleus_hosts::is_parent_reentry(command) && !active_in_shell))
         {
             return Ok((None, false));
         }
@@ -143,7 +152,9 @@ impl Service {
             Some(command) => state.store.task_turn_prompt(id, &command)?,
             None => None,
         };
-        Ok((prompt, active_child))
+        // An explicit prompt belongs to its own native turn.
+        let carry = carry && prompt.is_none();
+        Ok((prompt, carry))
     }
 
     pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<bool, ServiceError> {
@@ -257,9 +268,13 @@ impl Service {
         let wait = Some(WaitReason::Starting);
         let entered = starting && state.wait_label_changed(&row.task, wait, None);
         let attempt = state.store.claim_task_effect(id, &intent, entered)?;
-        if attempt.is_some() && starting {
-            state.apply_observed_wait(&row.task, wait, entered);
-            self.publish(id, row.version);
+        if attempt.is_some() {
+            if starting {
+                state.apply_observed_wait(&row.task, wait, entered);
+                self.publish(id, row.version);
+            } else {
+                self.publish_detail(id, row.version);
+            }
         }
         Ok(attempt.map(ParentClaim::Fresh))
     }
