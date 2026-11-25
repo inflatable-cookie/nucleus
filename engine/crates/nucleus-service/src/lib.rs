@@ -937,7 +937,11 @@ impl Service {
                 let isolated = self.storage.backup().clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let root = EngineStorage::scheduled_directory(&home, &isolated)?;
-                    Store::scheduled_backup(&database, &root, now_ms())
+                    let now = now_ms();
+                    if let Some(sequence) = Store::scheduled_backup(&database, &root, now)? {
+                        Store::compact_planning_history(&database, sequence, now)?;
+                    }
+                    Ok::<_, StoreError>(())
                 })
                 .await;
                 let failed = match result {
