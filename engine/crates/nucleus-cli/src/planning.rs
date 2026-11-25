@@ -6,7 +6,7 @@ use nucleus_store::planning::{DecisionOption, MAX_TEXT_BYTES, PlanLane, valid_ke
 use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
-use super::{Result, read_with_limit};
+use super::{Result, read_with_limit, stdin_brief};
 
 #[derive(Subcommand)]
 pub(super) enum Action {
@@ -352,7 +352,7 @@ impl Action {
                 project,
                 "tasks".into(),
                 Some(json!({
-                    "id": id, "reference": reference, "repository": repository, "brief": stdin_text()?,
+                    "id": id, "reference": reference, "repository": repository, "brief": stdin_brief()?,
                     "planningCommit": planning_commit,
                     "review": match review.as_slice() {
                         [url, head] => Some(json!({"url": url, "head": head})),

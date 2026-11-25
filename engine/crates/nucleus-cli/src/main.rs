@@ -20,8 +20,8 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{
-    Controller, DependencyCommand, Project, ReportTicket, Service,
-    router_with_board_and_t3_callers, router_with_t3_callers,
+    Controller, DependencyCommand, MAX_BRIEF_BYTES, Project, ReportTicket, Service,
+    check_brief_size, router_with_board_and_t3_callers, router_with_t3_callers,
 };
 use nucleus_store::{Hosts, SettingsFile, StoragePlacement};
 use reqwest::{Client, Method, RequestBuilder, header};
@@ -572,7 +572,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
             Method::POST,
             "/v1/tasks".into(),
             Some(
-                json!({"id": id, "reference": reference, "repository": repository, "brief": stdin_text()?}),
+                json!({"id": id, "reference": reference, "repository": repository, "brief": stdin_brief()?}),
             ),
         ),
         A::Tasks => (Method::GET, "/v1/tasks".into(), None),
@@ -631,7 +631,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         )?,
         A::Answer { id, answer } => command_path(&id, Command::Answer(answer.into()))?,
         A::Cancel { id } => command_path(&id, Command::Cancel)?,
-        A::Amend { id } => command_path(&id, Command::Amend(stdin_text()?))?,
+        A::Amend { id } => command_path(&id, Command::Amend(stdin_brief()?))?,
         A::Hold { id, reason } => command_path(&id, Command::Hold(reason))?,
         A::Release { id } => command_path(&id, Command::Release)?,
         A::SetDependencies(args) => args.request()?,
@@ -776,8 +776,20 @@ fn task_segment(value: &str) -> Result<Cow<'_, str>> {
     Ok(Cow::Owned(value.replace('/', "%2F").replace('#', "%23")))
 }
 
-fn stdin_text() -> Result<String> {
-    Ok(String::from_utf8(read(io::stdin().lock())?)?)
+fn stdin_brief() -> Result<String> {
+    read_brief(io::stdin().lock())
+}
+
+fn read_brief(mut source: impl Read) -> Result<String> {
+    let mut bytes = Vec::new();
+    source
+        .by_ref()
+        .take(u64::try_from(MAX_BRIEF_BYTES)?)
+        .read_to_end(&mut bytes)?;
+    // Count remaining input without retaining it, so the refusal gives the actual size.
+    let tail = usize::try_from(io::copy(&mut source, &mut io::sink())?)?;
+    check_brief_size(bytes.len() + tail)?;
+    Ok(String::from_utf8(bytes)?)
 }
 
 fn from_reader<T: DeserializeOwned>(source: impl Read) -> Result<T> {
@@ -795,4 +807,20 @@ fn read_with_limit(source: impl Read, limit: u64) -> Result<Vec<u8>> {
         return Err("input exceeds the size limit".into());
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_BRIEF_BYTES, read_brief};
+
+    #[test]
+    fn brief_stdin_preserves_the_limit_and_counts_the_entire_oversized_input() {
+        let exact = "é".repeat(MAX_BRIEF_BYTES / 2);
+        assert_eq!(read_brief(exact.as_bytes()).unwrap(), exact);
+        let oversized = format!("{exact} 🦀\n");
+        assert_eq!(
+            read_brief(oversized.as_bytes()).unwrap_err().to_string(),
+            "brief is 65542 UTF-8 bytes and exceeds the 65536-byte limit"
+        );
+    }
 }
