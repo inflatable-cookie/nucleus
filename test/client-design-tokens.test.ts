@@ -13,7 +13,6 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const SCREEN_DIRS = [join(root, 'client'), join(root, 'hosts/paseo/client')];
 /** The token source, the logo assets and the web theme the tokens resolve from. */
 const ALLOWLIST = new Set([
   'client/design.ts',
@@ -50,7 +49,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 test('no screen file carries a font size, radius or colour literal', () => {
-  const files = SCREEN_DIRS.flatMap(sourceFiles);
+  const files = sourceFiles(join(root, 'client'));
   assert.ok(files.length > 20, 'the scan found the screen sources');
   const offenders: string[] = [];
   for (const file of files) {

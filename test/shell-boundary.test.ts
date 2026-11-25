@@ -1,7 +1,7 @@
 /**
  * The board's host boundary. Board components and shared code reach the host
  * through the shell in client/shell, never the Paseo plugin package, so the same
- * components can run in a web shell later. Only the Paseo client subtree may import the plugin package.
+ * components run in the browser shell.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,8 +30,6 @@ test('board and shared code do not import the plugin package', () => {
   const shell = readFileSync(join(root, 'client/shell/index.ts'), 'utf8');
   assert.match(shell, /export function bindBoardShell/);
   assert.doesNotMatch(shell, /paseo/);
-  const entry = readFileSync(join(root, 'hosts/paseo/client/index.tsx'), 'utf8');
-  assert.ok(entry.indexOf('bindBoardShell(paseoShell)') < entry.indexOf('client.addSurface'), 'the shell is bound before board registration');
 });
 
 test('the boundary rule matches the plugin specifiers it guards', () => {
