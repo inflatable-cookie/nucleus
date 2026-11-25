@@ -232,7 +232,6 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       });
       this.api = createPaseoApi(timedDaemonRequests(this.client));
     }
-    admissionLaunchEnv: Record<string, string> = {};
     private presenceProjection: RunPresenceDaemon | null = null;
     private messageHostCache: PaseoMessageHost | null = null;
     get messageHost(): PaseoMessageHost {
@@ -336,10 +335,6 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
           });
         },
       });
-    }
-    /** Queue-owned Effigy admission hook env for worker/reviewer launches. Empty until the admission socket is configured. */
-    setAdmissionLaunchEnv(env: Record<string, string> | null): void {
-      this.admissionLaunchEnv = env ?? {};
     }
     get reportingViaMcp() {
       return Boolean(this.mcpScriptPath);
