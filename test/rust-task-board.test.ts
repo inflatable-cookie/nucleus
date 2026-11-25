@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, request, type ServerResponse } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
@@ -13,36 +13,11 @@ import {
   type RustCommand,
   type RustTask,
 } from "../client/web/rust-board";
-import { WebBoard } from "../service/web/web-board";
-import { RustBoardProxy } from "../service/web/rust-board";
-import { uiBoardSchema } from "../shared/contracts";
 import { projectActive, PROJECT_ACTIVITY_WINDOW_MS } from "../shared/project-activity";
 import { projectSchema } from "../shared/schema/projects";
 import { inboxListWidth } from "../shared/inbox-board";
 import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 
-const legacy = uiBoardSchema.parse({
-  revision: 1,
-  connected: true,
-  hostId: "host",
-  paused: false,
-  error: "",
-  quiet: true,
-  activeWorkers: 0,
-  unsettled: 0,
-  occupiedSlots: 0,
-  globalLimit: 32,
-  projectLimit: 5,
-  tasks: [],
-  profiles: [],
-  pool: [],
-  availability: [],
-  assignments: {},
-  recentAssignments: {},
-  lanes: [],
-  projects: [],
-  prStates: {},
-});
 const repository = "https://github.com/example/board-fixture";
 
 test("Rust board settings retain imported profile fields across edits", () => {
@@ -246,7 +221,6 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     path: string;
     authorization?: string;
     cookie?: string;
-    origin?: string;
   }[] = [];
   const streams = new Set<ServerResponse>();
   let activity = "Editing the fixture";
@@ -258,9 +232,12 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       path,
       authorization: req.headers.authorization,
       cookie: req.headers.cookie,
-      origin: req.headers.origin,
     });
-    if (req.headers.authorization !== `Bearer ${key}`) {
+    if (path === "/api/engine/pair" && req.headers.authorization === `Bearer ${key}`) {
+      res.writeHead(204, { "set-cookie": "board_session=fixture; HttpOnly; SameSite=Strict" }).end();
+      return;
+    }
+    if (req.headers.cookie !== "board_session=fixture") {
       res.writeHead(401).end();
       return;
     }
@@ -268,18 +245,41 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       res
         .writeHead(status, { "content-type": "application/json" })
         .end(JSON.stringify(value));
-    if (path === "/v1/events") {
+    if (path === "/api/engine/session") {
+      json({ id: "fixture-session", canEditSettings: true, planningProjects: null });
+      return;
+    }
+    if (path === "/api/engine/settings") {
+      const snapshot = (value: unknown) => ({ configured: true, revision: "1", value });
+      json({
+        profiles: snapshot({ profiles: [], pausedGroups: [] }),
+        dispatch: snapshot({ usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 4,
+          projectSlotOverrides: {}, providerLimitCooldownSeconds: 300, mode: "running" }),
+        projects: { settings: snapshot({ projects: {} }), resolvedPlanners: {} },
+        hosts: { settings: snapshot({ t3: null }), active: { endpoint: "", status: "reachable" } },
+        storage: { settings: snapshot({ enabled: true, workRoot: null, logRoot: null, scratchRoot: null,
+          retention: { keepNewest: 5, maxAgeDays: null } }),
+          active: { databaseRoot: "/fixture/db", workRoot: "/fixture/work", backupRoot: "/fixture/backups",
+            scratchRoot: "/fixture/scratch", logRoot: "/fixture/logs" } },
+      });
+      return;
+    }
+    if (path === "/api/engine/theme") {
+      json({ theme: null });
+      return;
+    }
+    if (path === "/api/engine/events") {
       streams.add(res);
       res.on("close", () => streams.delete(res));
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("event: refresh\ndata: {}\n\n");
       return;
     }
-    if (path === "/v1/tasks") {
+    if (path === "/api/engine/tasks") {
       json(rows);
       return;
     }
-    const [, , , id, route] = path.split("/");
+    const [, , , , id, route] = path.split("/");
     const row = rows.find((row) => row.identity.id === id);
     if (!row) {
       json({ error: "missing" }, 404);
@@ -415,48 +415,26 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   const engineAddress = engine.address();
   assert.ok(engineAddress && typeof engineAddress !== "string");
 
-  const { buildWeb } = await (new Function(
-    "return import('../scripts/build-runtime.mjs')",
-  )() as Promise<{ buildWeb(path: string): Promise<void> }>);
-  await buildWeb(root);
+  const { buildEngineBoard } = await (new Function(
+    "return import('../scripts/build-web.mjs')",
+  )() as Promise<{ buildEngineBoard(path: string): Promise<void> }>);
+  await buildEngineBoard(root);
   const bundle = await readFile(join(root, "app.js"), "utf8");
   assert.ok(!bundle.includes(key));
   assert.doesNotMatch(bundle, /NUCLEUS_BOARD_ENGINE_(KEY|URL)|RustBoardProxy/);
 
-  const board = new WebBoard({
-    bundleDir: root,
-    port: 0,
-    rustBoard: new RustBoardProxy({
-      url: `http://127.0.0.1:${engineAddress.port}`,
-      key,
-    }),
-    host: {
-      call: async (method) => {
-        if (method === "queue.ui-snapshot") return legacy;
-        if (method === "lead.board") return { cards: [], links: [] };
-        return [];
-      },
-      board: () => legacy,
-      unavailable: () => null,
-      subscribe: () => () => {},
-    },
-  });
-  const port = await board.listen();
-  t.after(() => board.close());
-  const origin = `http://127.0.0.1:${port}`;
-  const link = board.issueLink(5).url;
+  const origin = `http://127.0.0.1:${engineAddress.port}`;
+  const link = `${origin}/#token=${key}`;
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: link,
     runScripts: "dangerously",
     pretendToBeVisual: true,
   });
   t.after(() => dom.window.close());
-  const browserCalls: { path: string; credential: string | null }[] = [];
   let cookie = "";
   const fetcher: typeof fetch = async (input, options = {}) => {
     const path = String(input);
     const headers = new Headers(options.headers);
-    browserCalls.push({ path, credential: headers.get("authorization") });
     if (cookie) headers.set("cookie", cookie);
     if (options.method === "POST") headers.set("origin", origin);
     const response = await fetch(origin + path, { ...options, headers });
@@ -479,7 +457,6 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       );
   };
 
-  assert.equal((await fetch(origin + "/api/engine/tasks")).status, 401);
   assert.equal(calls.length, 0);
   Object.assign(dom.window, {
     matchMedia: () =>
@@ -508,9 +485,9 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   assert.match(text(), /fixture-review-model/);
   assert.ok(detail.querySelector('[aria-label="Step Review: todo · Round 2"]'));
   await eventually(() => text().includes("3m / 1h"), "task allowance");
-  const beforeList = reads("/v1/tasks");
-  const beforeDetail = reads("/v1/tasks/running");
-  const beforeNext = reads("/v1/tasks/running/next");
+  const beforeList = reads("/api/engine/tasks");
+  const beforeDetail = reads("/api/engine/tasks/running");
+  const beforeNext = reads("/api/engine/tasks/running/next");
 
   activity = "Testing the retry path";
   invalidate();
@@ -539,9 +516,9 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     () => text().includes(activity),
     "a second frame at the same version also refreshed",
   );
-  assert.ok(reads("/v1/tasks") > beforeList);
-  assert.ok(reads("/v1/tasks/running") >= beforeDetail + 2);
-  assert.ok(reads("/v1/tasks/running/next") >= beforeNext + 2);
+  assert.ok(reads("/api/engine/tasks") > beforeList);
+  assert.ok(reads("/api/engine/tasks/running") >= beforeDetail + 2);
+  assert.ok(reads("/api/engine/tasks/running/next") >= beforeNext + 2);
 
   await click("Activity");
   await eventually(
@@ -550,18 +527,18 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   );
   assert.doesNotMatch(text(), /run ticket material/);
   const beforeReconnect = {
-    list: reads("/v1/tasks"),
-    detail: reads("/v1/tasks/running"),
-    next: reads("/v1/tasks/running/next"),
-    history: reads("/v1/tasks/running/history?limit=30"),
+    list: reads("/api/engine/tasks"),
+    detail: reads("/api/engine/tasks/running"),
+    next: reads("/api/engine/tasks/running/next"),
+    history: reads("/api/engine/tasks/running/history?limit=30"),
   };
   for (const stream of streams) stream.end();
   await eventually(
     () =>
-      reads("/v1/tasks") > beforeReconnect.list &&
-      reads("/v1/tasks/running") > beforeReconnect.detail &&
-      reads("/v1/tasks/running/next") > beforeReconnect.next &&
-      reads("/v1/tasks/running/history?limit=30") > beforeReconnect.history,
+      reads("/api/engine/tasks") > beforeReconnect.list &&
+      reads("/api/engine/tasks/running") > beforeReconnect.detail &&
+      reads("/api/engine/tasks/running/next") > beforeReconnect.next &&
+      reads("/api/engine/tasks/running/history?limit=30") > beforeReconnect.history,
     "reconnect refreshes the list and every visible read",
     7000,
   );
@@ -571,7 +548,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await click("Move: Reviewing");
   await eventually(
     () =>
-      posts.filter(({ path }) => path === "/v1/tasks/running/commands")
+      posts.filter(({ path }) => path === "/api/engine/tasks/running/commands")
         .length === 2,
     "move posted",
   );
@@ -580,7 +557,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await click("Blocked task, The worker could not finish. Try again?");
   await click("Answer");
   await eventually(
-    () => posts.some(({ path }) => path === "/v1/tasks/blocked/commands"),
+    () => posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
     "answer posted",
   );
   assert.deepEqual(posts[2]?.command, { answer: "retry" });
@@ -590,76 +567,17 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "only the terminal phases are history",
   );
 
-  const badHost = await new Promise<number | undefined>((resolve, reject) => {
-    const req = request(
-      origin + "/api/engine/tasks",
-      { headers: { host: "example.org", cookie } },
-      (response) => {
-        response.resume();
-        resolve(response.statusCode);
-      },
-    );
-    req.on("error", reject);
-    req.end();
-  });
-  assert.equal(badHost, 403);
-  assert.equal(
-    (
-      await fetch(origin + "/api/engine/tasks/running/commands", {
-        method: "POST",
-        headers: { cookie, "content-type": "application/json" },
-        body: '"cancel"',
-      })
-    ).status,
-    403,
-  );
-  assert.equal(
-    (
-      await fetch(origin + "/api/engine/tasks/running/commands", {
-        method: "POST",
-        headers: {
-          cookie,
-          origin: `http://localhost:${port}`,
-          "content-type": "application/json",
-        },
-        body: '"cancel"',
-      })
-    ).status,
-    403,
-  );
-  assert.equal(
-    (
-      await fetch(origin + "/api/engine/tasks/running/acp", {
-        headers: { cookie },
-      })
-    ).status,
-    404,
-  );
-  assert.equal(
-    (await fetch(origin + "/api/engine/settings", { headers: { cookie } }))
-      .status,
-    404,
-  );
   assert.equal(posts.length, 3);
   authorityCold = true;
   await assert.rejects(
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
     { message: "planner authority is not yet known. Retry shortly." },
   );
-  assert.ok(
-    calls.every(
-      (call) =>
-        call.authorization === `Bearer ${key}` && !call.cookie && !call.origin,
-    ),
-  );
-  assert.ok(
-    browserCalls
-      .filter(({ path }) => path.startsWith("/api/engine/"))
-      .every(({ credential }) => credential === null),
-  );
-  assert.ok(browserCalls.every(({ credential }) => !credential?.includes(key)));
+  assert.deepEqual(calls.filter(call => call.authorization).map(call => call.path), ["/api/engine/pair"]);
+  assert.ok(calls.filter(({ path }) => path !== "/api/engine/pair")
+    .every(({ authorization, cookie }) => !authorization && cookie === "board_session=fixture"));
 
-  // Leave the board connected for longer than the legacy snapshot interval.
+  // Only a stream event should refresh a settled task.
   await eventually(
     () =>
       streams.size === 1 &&
@@ -696,14 +614,6 @@ test("typed Board commands match Rust serde shapes and pending is a single write
       version: 7,
     });
   assert.deepEqual(sent, commands);
-  assert.throws(
-    () =>
-      new RustBoardProxy({
-        url: "http://example.org",
-        key: head.padEnd(64, "a"),
-      }),
-    /loopback/,
-  );
 });
 
 test("the standalone bundle is the shared web board on the Rust routes and refreshes on push", async (t) => {
