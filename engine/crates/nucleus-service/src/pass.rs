@@ -1439,17 +1439,6 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
-        if let Some(wake) = authorization.unsettle() {
-            let command = wake.command_id().ok_or(ServiceError::Input)?;
-            if self
-                .claim_row_unsettle(&task.identity().id, command)
-                .await?
-            {
-                host.write_control(wake).await?;
-                self.recheck_effect(row, WaitReason::HostUnknown).await;
-            }
-            return Ok(SendAttempt::Deferred);
-        }
         let parent = authorization.parent_row().zip(self.acp_provider());
         if let Some((parent, provider)) = parent
             && let Err(error) = self
