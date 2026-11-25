@@ -379,7 +379,8 @@ test("work counts come from the lane, and a partial list says how many it shows"
     ui.query(/^Open task Build it/).props.accessibilityLabel,
     /Held · Awaiting the source decision/,
   );
-  assert.match(ui.text(), /Working\s*· Held · Awaiting the source decision/);
+  assert.match(ui.text(), /Build it\s*Working/);
+  assert.doesNotMatch(ui.text(), /Awaiting the source decision/);
   ui.press(/^Open task Build it/);
   assert.deepEqual(log.opened, ["task:t1"]);
 });
