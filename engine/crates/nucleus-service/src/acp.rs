@@ -438,7 +438,10 @@ impl Service {
             state.acp_refresh_requests.remove(id) == Some(row.version)
         };
         if refresh && let Err(error) = self.refresh_acp_parent(row).await {
-            if matches!(error, ServiceError::ParentNotSent { .. }) {
+            if matches!(
+                error,
+                ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. }
+            ) {
                 let mut state = self.state.lock().await;
                 if self.lookup(&state, id)?.version == row.version {
                     state.acp_refresh_requests.insert(id.into(), row.version);

@@ -77,6 +77,8 @@ pub enum ServiceError {
         reason: String,
         retry_at: Option<Instant>,
     },
+    #[error("the next task row visibility change is scheduled")]
+    RowVisibilityDeferred { until: Instant },
     #[error("T3 parent message delivery could not be confirmed: {0}")]
     ParentDeliveryUnknown(HostError),
     #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
@@ -205,6 +207,8 @@ pub struct Service {
     title_wake: Notify,
     enrollment_wake: Notify,
     tell_wake: Notify,
+    #[cfg(test)]
+    visibility_time_offset: AtomicU64,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -438,6 +442,8 @@ impl Service {
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
             tell_wake: Notify::new(),
+            #[cfg(test)]
+            visibility_time_offset: AtomicU64::new(0),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,
@@ -570,6 +576,12 @@ impl Service {
             if matches!(result, Ok(Action::Launch { .. })) {
                 self.title_wake.notify_one();
             }
+            let result = match result {
+                Err(ServiceError::RowVisibilityDeferred { .. }) => {
+                    Ok(Action::Wait(WaitReason::HostUnknown))
+                }
+                result => result,
+            };
             results.push(PassOutcome { task: id, result });
         }
         Ok(results)
@@ -1071,23 +1083,26 @@ impl Service {
             state.wait_detail(id),
             Some(WaitDetail::ShowingForDelivery(_))
         );
-        let before_send = matches!(result, Err(ServiceError::ParentNotSent { .. }))
-            || (wait == Some(WaitReason::HostUnknown)
-                && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-                && (showing
-                    || match row.task.run() {
-                        None => matches!(result, Err(ServiceError::Host(_))),
-                        Some(run) => {
-                            !run.revoked()
-                                && run.last_send_at_ms().is_none()
-                                && run.report().is_none()
-                        }
-                    }));
+        let before_send = matches!(
+            result,
+            Err(ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. })
+        ) || (wait == Some(WaitReason::HostUnknown)
+            && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
+            && (showing
+                || match row.task.run() {
+                    None => matches!(result, Err(ServiceError::Host(_))),
+                    Some(run) => {
+                        !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
+                    }
+                }));
         let (wait, detail) = if before_send {
             let now = Instant::now();
             let backoff = match result {
                 Err(ServiceError::ParentNotSent { retry_at, .. }) => *retry_at,
-                Err(ServiceError::Host(HostError::Deferred { until })) => Some(*until),
+                Err(
+                    ServiceError::Host(HostError::Deferred { until })
+                    | ServiceError::RowVisibilityDeferred { until },
+                ) => Some(*until),
                 _ => None,
             };
             state.schedule.reset_host_backoff(id);

@@ -1,12 +1,19 @@
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{Store, StoreError};
+use crate::{EventDraft, Store, StoreError, append};
+
+const FLIP_INTERVAL_MS: u64 = 120_000;
 
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_row_snoozes (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id),
     thread TEXT NOT NULL,
     receipt TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS task_row_flips (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    attempted_at INTEGER NOT NULL,
+    deferred INTEGER NOT NULL DEFAULT 0
 ) STRICT";
 
 /// Recorded outcome of one exact native snooze command.
@@ -65,12 +72,62 @@ impl Store {
         thread: &str,
         receipt: &RowSnooze,
     ) -> Result<(), StoreError> {
-        self.connection.execute(
-            "INSERT INTO task_row_snoozes (task_id, thread, receipt) VALUES (?1, ?2, ?3)
-             ON CONFLICT(task_id) DO UPDATE SET thread = excluded.thread, receipt = excluded.receipt",
-            params![task, thread, serde_json::to_string(receipt)?],
+        save(&self.connection, task, thread, receipt)
+    }
+
+    /// Claim one visibility write and its ownership receipt together. Returns
+    /// the next eligible time if the task already attempted a write recently.
+    ///
+    /// # Errors
+    /// Returns an error if the claim or its audit event cannot be saved.
+    pub fn claim_row_flip(
+        &mut self,
+        task: &str,
+        thread: &str,
+        receipt: &RowSnooze,
+        now: u64,
+    ) -> Result<Option<u64>, StoreError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous: Option<(u64, bool)> = tx
+            .query_row(
+                "SELECT attempted_at, deferred FROM task_row_flips WHERE task_id = ?1",
+                [task],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((at, deferred)) = previous
+            && now < at.saturating_add(FLIP_INTERVAL_MS)
+        {
+            let due = at.saturating_add(FLIP_INTERVAL_MS);
+            if !deferred {
+                tx.execute(
+                    "UPDATE task_row_flips SET deferred = 1 WHERE task_id = ?1",
+                    [task],
+                )?;
+                append(&tx, task, &EventDraft {
+                    at: i64::try_from(now).unwrap_or(i64::MAX),
+                    kind: "native_row_flip_deferred".into(),
+                    detail: serde_json::json!({
+                        "thread": thread,
+                        "action": if receipt.clear_attempted_for.is_some() { "clear" } else { "snooze" },
+                        "attemptedAt": at,
+                        "eligibleAt": due,
+                    }).to_string(),
+                })?;
+            }
+            tx.commit()?;
+            return Ok(Some(due));
+        }
+        tx.execute(
+            "INSERT INTO task_row_flips (task_id, attempted_at) VALUES (?1, ?2)
+             ON CONFLICT(task_id) DO UPDATE SET attempted_at = excluded.attempted_at, deferred = 0",
+            params![task, now],
         )?;
-        Ok(())
+        save(&tx, task, thread, receipt)?;
+        tx.commit()?;
+        Ok(None)
     }
 
     /// Forget presentation ownership when a task finishes or its snooze ends.
@@ -80,6 +137,20 @@ impl Store {
     pub fn forget_row_snooze(&self, task: &str) -> Result<(), StoreError> {
         forget(&self.connection, task)
     }
+}
+
+fn save(
+    connection: &Connection,
+    task: &str,
+    thread: &str,
+    receipt: &RowSnooze,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "INSERT INTO task_row_snoozes (task_id, thread, receipt) VALUES (?1, ?2, ?3)
+         ON CONFLICT(task_id) DO UPDATE SET thread = excluded.thread, receipt = excluded.receipt",
+        params![task, thread, serde_json::to_string(receipt)?],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn forget(connection: &Connection, task: &str) -> Result<(), StoreError> {
