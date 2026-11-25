@@ -1003,7 +1003,7 @@ test("planning detail reads the requested revision from the scoped store history
   const key = "delivery";
   const step = { key, horizon: "now", statusNote: "Original note", doneWhen: "Tests pass" };
   const original = { version: 1, lanes: [step] };
-  const lane = { key, version: 1, title: "Delivery", aim: "Ship", document: "First draft", status: "open", note: "" };
+  const lane = { key, version: 1, title: "Delivery", aim: "Ship", document: "First draft", status: "open" };
   const history = (action: string, sequence: number, snapshot: unknown) => ({
     sequence, action, snapshot, actor: "planner", atMs: 1000 * sequence,
   });
@@ -1015,12 +1015,14 @@ test("planning detail reads the requested revision from the scoped store history
     const path = String(url);
     if (path.endsWith("/planning/lantern/history/plan/lantern")) return Response.json([
       history("set", 8, original),
+      { ...history("import", 9, original), actor: "importer" },
       history("set", 12, { version: 2, lanes: [] }),
       history("legacy_version", 15, previous),
       history("import", 16, { ...original, version: 3 }),
     ]);
     if (path.endsWith("/planning/lantern/history/lane/delivery")) return Response.json([
       history("put", 6, lane),
+      { ...history("status", 7, { ...lane, status: "done", note: "Shipped" }), actor: "closer" },
       history("put", 10, { ...lane, version: 2, document: "Second draft" }),
     ]);
     return fake.fetcher(url, init);

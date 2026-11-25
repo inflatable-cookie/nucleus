@@ -401,8 +401,9 @@ export function createRustPlanning(
     const records = await planningRead(row, `history/${kind}/${encodeURIComponent(id)}`, history);
     const matches = records?.filter(record => snapshotVersion.safeParse(record.snapshot).data?.version === version);
     // Imports can record the normalized snapshot again. The original version
-    // owns the author's name and the time it was saved.
-    const saved = matches?.find(record => record.action === "legacy_version") ?? matches?.at(-1);
+    // owns its author and timestamp. Native history is ordered by sequence;
+    // later disposition changes and re-imports do not create a revision.
+    const saved = matches?.find(record => record.action === "legacy_version") ?? matches?.[0];
     if (!saved) throw new Error(`Version ${version} of ${kind} ${id} is unavailable.`);
     return saved;
   }
