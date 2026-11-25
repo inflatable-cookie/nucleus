@@ -21,15 +21,32 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   `item.park` or `item.drop` to maintain them. Promote approved work with
   `item.promote [PROJECT] ID`. A lead carries its complexity in the brief.
   Supply `--complexity` when promoting a papercut.
-- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. For review
-  entry, add `--review PR_URL HEAD` with the named PR and exact full head. Choose
-  the repository explicitly when the project or brief needs it. For milestone
-  QA, set `queue.reportOnly: true`, attach the delivery lane and name it with
-  `queue.reportLane`. Admit it with `--planning-commit HEAD`. Keep the record
-  and runner log keys with that lane.
+- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
+  admission through `task.add` or `admit` requires `queue.complexity` in the
+  brief front matter. This example uses medium.
+
+  ```markdown
+  ---
+  queue:
+    complexity: medium
+  ---
+
+  # Brief title
+
+  State the change and its acceptance checks.
+  ```
+
+  For review entry, add `--review PR_URL HEAD` with the named PR and exact full
+  head. Choose the repository explicitly when the project or brief needs it.
+  For milestone QA, set `queue.reportOnly: true`, attach the delivery lane and
+  name it with `queue.reportLane`. Admit it with `--planning-commit HEAD`. Keep
+  the record and runner log keys with that lane.
 - Use `tasks`, `task REF` and `history REF` for reads. Start task decisions with
   `next REF`, using the public reference from the board, such as `'repo#42'`.
-  Follow its wait and command preflight. `move`, `answer`, `cancel`, `amend`,
+  Follow its wait and command preflight. With the version from `next`, use
+  `set-dependencies` before dispatch or `set-prerequisite-wait` after dispatch.
+  See the [prerequisite commands](https://github.com/inflatable-cookie/nucleus/blob/main/docs/knowledge/specs/070-small-engine.md#commands)
+  for references and how to clear a wait. `move`, `answer`, `cancel`, `amend`,
   `hold` and `release` act on the task. The task's planner answers its work and
   retry questions and approves allowance extensions by default, including
   beyond twice the original allowance. The planner uses `complete` to accept
