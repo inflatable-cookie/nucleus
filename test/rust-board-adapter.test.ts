@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -994,6 +995,47 @@ test("project-scoped decisions address the selected copy and ambiguous bare IDs 
   assert.equal((await adapter.rpc(api.decisionGet, { id: "shared", project: "lantern" }))?.question, "lantern question");
   await adapter.rpc(api.decisionAnswer, { ...answer, project: "lantern" });
   assert.deepEqual(writes, ["/api/engine/planning/lantern/decisions/shared/answer"]);
+});
+
+test("planning detail reads the requested revision from the scoped store history", async () => {
+  const fake = engine();
+  const project = "lantern";
+  const key = "delivery";
+  const step = { key, horizon: "now", statusNote: "Original note", doneWhen: "Tests pass" };
+  const original = { version: 1, lanes: [step] };
+  const lane = { key, version: 1, title: "Delivery", aim: "Ship", document: "First draft", status: "open", note: "" };
+  const history = (action: string, sequence: number, snapshot: unknown) => ({
+    sequence, action, snapshot, actor: "planner", atMs: 1000 * sequence,
+  });
+  const previous = {
+    project, version: 3, entries: [{ lane: key, note: "Imported", horizon: "now" }],
+    author: "original planner", createdAt: "2026-09-12T19:00:00.000Z",
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    if (path.endsWith("/planning/lantern/history/plan/lantern")) return Response.json([
+      history("set", 8, original),
+      history("set", 12, { version: 2, lanes: [] }),
+      history("legacy_version", 15, previous),
+      history("import", 16, { ...original, version: 3 }),
+    ]);
+    if (path.endsWith("/planning/lantern/history/lane/delivery")) return Response.json([
+      history("put", 6, lane),
+      history("put", 10, { ...lane, version: 2, document: "Second draft" }),
+    ]);
+    return fake.fetcher(url, init);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const plan = await adapter.rpc(api.planGet, { project, version: 1 });
+  assert.deepEqual(plan, { project, version: 1,
+    entries: [{ lane: key, horizon: "now", doneWhen: step.doneWhen, note: step.statusNote }],
+    author: "planner", createdAt: new Date(8000).toISOString() });
+  assert.deepEqual(await adapter.rpc(api.planGet, { project, version: 3 }), previous);
+  const doc = await adapter.rpc(api.laneDocumentGet, { project, key, version: 1 });
+  assert.deepEqual(doc, { key, version: 1, text: lane.document, author: "planner",
+    createdAt: new Date(6000).toISOString(), digest: "sha256:" + createHash("sha256").update(lane.document).digest("hex") });
+  await assert.rejects(adapter.rpc(api.planGet, { project, version: 4 }), /Version 4.*unavailable/);
+  await assert.rejects(adapter.rpc(api.laneDocumentGet, { project, key, version: 4 }), /Version 4.*unavailable/);
 });
 
 test("unreadable planning records leave healthy siblings readable in lists and detail", async () => {
