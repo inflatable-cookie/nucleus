@@ -11,6 +11,7 @@ import { useWebTheme } from "./theme";
 import {
   createPushInvalidator,
   createRustInvalidator,
+  rustTaskListKey,
   listenForRustChanges,
   isRustHttpError,
 } from "./rust-board";
@@ -130,6 +131,8 @@ export function WebApp() {
         },
         storageChanged: () => invalidateBoard({ queryKey: ["nucleus", "work-storage"] }),
         planningChanged: () => {
+          // A source item can change its task’s lane without changing the task row.
+          invalidateBoard({ queryKey: rustTaskListKey, exact: true });
           invalidateBoard({
             queryKey: ["nucleus"],
             predicate: ({ queryKey: [, area] }) =>

@@ -49,7 +49,7 @@ test("Rust board settings retain imported profile fields across edits", () => {
 const head = "a".repeat(40);
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
-  const repo = { origin: repository, path: "/fixture" };
+  const repo = { origin: "example/board-fixture", path: "/fixture" };
   const project = projectSchema.parse({ key: "app", name: "App", repositories: [repo], primary: repo });
   const now = Date.UTC(2026, 10, 24);
   const cutoff = now - PROJECT_ACTIVITY_WINDOW_MS;
@@ -1080,7 +1080,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(notices().some(message => message.includes("Project damaged")));
   await eventually(() => Boolean(selector("Needs you, 0")), "a decision change updates the menu outside Needs you");
   assert.deepEqual(planningReads().slice(3), [initialPlanningReads[0]]);
+  const beforeSourceEdit = taskReads();
   emit("planning");
+  await eventually(() => taskReads() > beforeSourceEdit, "a source item edit refreshes task lane membership");
   await eventually(() => planningReads().length >= 6, "a planning change refreshes plans and items");
   assert.deepEqual(planningReads().slice(4).sort(), initialPlanningReads.slice(1));
   await eventually(() => text().includes("Standalone task"), "task title renders");

@@ -34,7 +34,7 @@ export type LaneKeep = z.infer<typeof laneKeepSchema>;
 export const laneSchema = z.object({
   id: z.string().min(1),
   key: laneKeySchema,
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1),
   aim: z.string().trim().min(1).max(LANE_AIM_MAX),
   status: laneStatusSchema,
   note: z.string().max(4000).default(""),

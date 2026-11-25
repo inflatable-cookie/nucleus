@@ -1558,3 +1558,11 @@ test("the paired Profiles panel adds, edits, and duplicates using the shared con
     "the last usable options remain",
   );
 });
+
+test("Planning preserves native lane titles longer than the editor suggestion", async () => {
+  const title = "a".repeat(201);
+  const lane: RustLane = { key: "long", version: 1, title, aim: "Ship", document: "Hello", status: "open" };
+  const adapter = createRustAdapter(createRustApi(engine({ lantern: lane }).fetcher));
+  const plans = await adapter.rpc(api.plans, {});
+  assert.equal(plans.find(plan => plan.project === "lantern")?.laneViews?.[0]?.title, title);
+});
