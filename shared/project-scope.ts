@@ -216,7 +216,7 @@ export function projectSelectorRows(
   const missingActivity = Number.NEGATIVE_INFINITY;
   return projects
     .flatMap((project) => {
-      const primary = project.primary.origin ?? project.primary.path;
+      const primary = project.primary?.origin ?? project.primary?.path ?? "";
       if (
         needle &&
         !`${project.name} ${primary}`.toLowerCase().includes(needle)
@@ -308,6 +308,7 @@ export function openScopeLanes(
   projects: Project[],
   lanes: Array<{
     key: string;
+    project?: string;
     status: string;
     repositories: Array<{ origin: string; path: string }>;
   }>,
@@ -317,15 +318,8 @@ export function openScopeLanes(
   for (const project of scopedProjects(projects, selection))
     for (const lane of lanes) {
       if (lane.status !== "active" || seen.has(lane.key)) continue;
-      if (
-        (lane.repositories ?? []).some((member) =>
-          (project.repositories ?? []).some((repo) =>
-            member.origin && repo.origin
-              ? member.origin === repo.origin
-              : Boolean(member.path && member.path === repo.path),
-          ),
-        )
-      )
+      if (lane.project ? lane.project === project.key :
+          lane.repositories.some(member => projectHasRepository(project, member.path, member.origin)))
         seen.add(lane.key);
     }
   return [...seen];
@@ -339,6 +333,7 @@ export function planningScopeLanes(
   plans: ProjectPlan[],
   lanes: Array<{
     key: string;
+    project?: string;
     repositories: Array<{ origin: string; path: string }>;
   }>,
 ): string[] {
@@ -353,7 +348,7 @@ export function planningScopeLanes(
         .flatMap((plan) => plan.entries.map((entry) => entry.lane)),
       ...lanes
         .filter((lane) =>
-          lane.repositories.some((repo) => contains(repo.path, repo.origin)),
+          lane.project ? keys.has(lane.project) : lane.repositories.some((repo) => contains(repo.path, repo.origin)),
         )
         .map((lane) => lane.key),
     ]),

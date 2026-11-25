@@ -751,3 +751,12 @@ test("1529 the selector has two groups: active rows, then Dormant (parking is re
   assert.equal(projectSelectorRowGroup(row(false)), 0);
   assert.equal(projectSelectorRowGroup(row(true)), 1);
 });
+
+test("a repository-free project owns its unplanned native lanes", () => {
+  const empty = { ...project("empty", "Empty"), primary: null };
+  const lane = { key: "retained", project: "empty", status: "active", repositories: [] };
+  const both = [empty, consumer];
+  assert.deepEqual(openScopeLanes(both, [lane], ["empty"]), ["retained"]);
+  assert.deepEqual(planningScopeLanes(both, ["empty"], [], [lane]), ["retained"]);
+  assert.deepEqual(planningScopeLanes(both, [consumer.key], [], [lane]), []);
+});

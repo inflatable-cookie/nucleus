@@ -224,7 +224,7 @@ export function MoveRepositoryConfirm({ c, repo, source, target, check, onMoveRe
   const label = repositoryLabel(repo);
   const { state, loading, blocked, carried, why, retry } = useMergeCheck(check);
   const sole = source.repositories.length === 1;
-  const primary = identityOf(source.primary) === identityOf(repo);
+  const primary = source.primary !== null && identityOf(source.primary) === identityOf(repo);
   const rest = source.repositories.length - 1;
   return <View accessibilityRole="alert" accessibilityLabel={`Add ${label} from ${source.name}`} style={{ gap: space.xs }}>
     <Text style={{ color: r.warning, ...note }}>

@@ -146,8 +146,8 @@ export const projectSchema = z.object({
   // Rust board snapshot only, for migrating a selection saved before identity-based keys.
   legacyScopeKey: z.string().nullable().optional(),
   version: z.number().int().positive().default(1),
-  repositories: z.array(projectRepositorySchema.refine(repo => Boolean(repo.origin || repo.path), "Repository needs an origin or path")).min(1),
-  primary: projectRepositorySchema,
+  repositories: z.array(projectRepositorySchema.refine(repo => Boolean(repo.origin || repo.path), "Repository needs an origin or path")),
+  primary: projectRepositorySchema.nullable(),
   // Spec 041: the open next-aim episode while the project's board is drained; operational, re-forms from activity.
   drain: laneDrainSchema.nullable().default(null),
   // Spec 042, retired 2026-11-02 (Spec 058 cutover 5): the owner role is gone. The field stays on
@@ -160,8 +160,10 @@ export const projectSchema = z.object({
   planner: z.object({ agentId: z.string().trim().min(1).max(300), name: projectAgentNameSchema.optional(), setBy: z.string().trim().min(1).max(300), setAt: z.string(), }).strict().nullable().optional(),
   // Task 1110: every named, non-task thread the project registers. Absent on rows written before it.
   agents: z.array(projectAgentSchema).max(100).optional(),
-}).strict().refine(project => project.repositories.some(repo =>
-  repo.origin && project.primary.origin ? repo.origin === project.primary.origin : Boolean(repo.path && repo.path === project.primary.path)),
+}).strict().refine(({ repositories, primary }) => primary === null
+  ? repositories.length === 0
+  : repositories.some(repo => repo.origin && primary.origin
+    ? repo.origin === primary.origin : Boolean(repo.path && repo.path === primary.path)),
   "Primary repository must belong to the project");
 
 export type Project = z.infer<typeof projectSchema>;
