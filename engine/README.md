@@ -688,9 +688,8 @@ Milestone 4 removes the remaining TypeScript transition paths:
 
 - The per-repository pilot manifest compatibility and the TypeScript admission
   selector. The global no-new-work switch covers the drain.
-- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim forwards
-  only `worktree` through the packaged launcher to `bin/worktree.mjs`.
-  Effigy worktree hooks still use `prepare`, `link`, and `unlink`.
+- The `nucleus-dispatch` shim and `nucleus-legacy` command. The shim now
+  forwards every call to the Rust engine.
 - The TypeScript Inbox bridge and board proxy.
 - The TypeScript Settings screens and their RPC wiring. The Rust-backed
   Settings screens become the only Settings surface.

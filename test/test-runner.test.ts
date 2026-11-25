@@ -30,11 +30,11 @@ import {
 } from "../scripts/timing-source.mjs";
 import { TIMING_PREFIX, serialTestOptions } from "./support/timing";
 
-test("the default TypeScript suite retains the board and worktree hook coverage", () => {
+test("the default TypeScript suite retains board coverage", () => {
   const files = selectTestFiles([], activeTests.map(file => file.slice("test/".length)));
   assert.equal(new Set(files).size, activeTests.length);
   assert.ok(files.every(existsSync));
-  for (const retained of ["rust-board-adapter", "inbox-board", "board-card-ui", "worktree-command"]) {
+  for (const retained of ["rust-board-adapter", "inbox-board", "board-card-ui"]) {
     assert.ok(files.includes(`test/${retained}.test.ts`));
   }
   for (const retired of ["active-passes", "main-channel", "t3-install", "nucleus-install"]) {

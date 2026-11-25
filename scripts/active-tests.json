@@ -86,6 +86,5 @@
   "test/ui-foundations.test.ts",
   "test/web-live-channel.test.ts",
   "test/web-transport.test.ts",
-  "test/workspace-board.test.ts",
-  "test/worktree-command.test.ts"
+  "test/workspace-board.test.ts"
 ]

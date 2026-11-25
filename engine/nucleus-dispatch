@@ -1,8 +1,4 @@
 #!/bin/sh
 set -eu
 
-if [ "${1-}" = worktree ]; then
-    exec "$HOME/.local/bin/nucleus-legacy" "$@"
-fi
-
 exec "$HOME/.nucleus/engine/bin/nucleus-engine" "$@"

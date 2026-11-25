@@ -1363,14 +1363,6 @@ replaces them, and old exports stay inert history. See
 gates behind the verbs. Preserve the operator pause, profiles, limits and
 subscription state; never reset an exhausted group.
 
-### Worktree setup
-
-Use `nucleus worktree prepare [SOURCE[=LINK] ...]` before repository setup,
-`nucleus worktree link` after it, and `nucleus worktree unlink` on teardown.
-The command replays the primary checkout’s Effigy dependency links. Sources are
-resolved relative to the primary checkout. A primary checkout is left alone.
-Install Nucleus to use `nucleus worktree <action>`.
-
 Create and edit routing profiles in Settings → Profiles.
 
 ### Triage batches (opt-in per project)
