@@ -7,7 +7,6 @@ import { dirname, join } from "node:path";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import { sharedCargoEnvironment } from "../machine/cargo-cache";
-import { mergeAdmissionLaunchEnv } from "../qa/effigy-admission";
 import { runPrompt, workerStartingHead } from "./prompts";
 import { measureRunPrompt, writePromptSize, type WorkerPromptMeasurement } from "./prompt-text/measure";
 import { buildRunContext, materializeRunContext } from "./prompt-text/context-store";
@@ -100,7 +99,7 @@ export function callbackEnvironment(
   );
 }
 
-/** The launch environment for one create: shared cargo, the run's scratch, the callback and the admission hook. */
+/** The launch environment for one create: shared cargo, the run's scratch, the callback ticket. */
 function launchEnvironment(
   owner: CreationOwner,
   task: Task,
@@ -108,19 +107,12 @@ function launchEnvironment(
   temporaryDirectory: string | undefined,
   ticket: string,
 ): Record<string, string> {
-  return mergeAdmissionLaunchEnv(
-    {
-      ...sharedCargoEnvironment(),
-      ...runTemporaryEnvironment(
-        runId,
-        owner.scratchPlacement(task),
-        temporaryDirectory,
-      ),
-      ...callbackEnvironment(owner, task, runId),
-      NUCLEUS_TICKET: ticket,
-    },
-    owner.admissionLaunchEnv,
-  );
+  return {
+    ...sharedCargoEnvironment(),
+    ...runTemporaryEnvironment(runId, owner.scratchPlacement(task), temporaryDirectory),
+    ...callbackEnvironment(owner, task, runId),
+    NUCLEUS_TICKET: ticket,
+  };
 }
 
 /** Prepare the recorded leaf for hosts that cannot pass a per-thread TMPDIR to their agent. */

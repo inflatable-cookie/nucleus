@@ -1,4 +1,3 @@
-import { compiledIdentity, stableInstalledPath } from "../../shared/runtime.mjs";
 /**
  * Queue's Effigy v0.15 generic admission adapter (Spec 035).
  *
@@ -28,8 +27,6 @@ import { compiledIdentity, stableInstalledPath } from "../../shared/runtime.mjs"
  *   scheduler's 30-minute capacity deadline; expiry is a deny with that reason.
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 export const EFFIGY_ADMISSION_REQUEST_SCHEMA = "effigy.admission-request.v1";
@@ -180,65 +177,4 @@ function livenessExpired(nowMs: number, lastConfirmedAtMs: number | null, livene
 
 export function formatAdmissionStdout(decision: "admit" | { deny: string }): string {
   return decision === "admit" ? "admit" : `deny ${decision.deny}`;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-export function defaultAdmissionHookPath(): string {
-  return fileURLToPath(new URL("../../bin/queue-effigy-admission-hook.mjs", import.meta.url));
-}
-
-/** Absolute tsx loader in this Queue checkout. Bare `--import tsx` resolves from Effigy's cwd. */
-export function defaultAdmissionTsxLoader(): string {
-  const loader = fileURLToPath(new URL("../../node_modules/tsx/dist/loader.mjs", import.meta.url));
-  if (!existsSync(loader)) throw new Error(`Queue admission hook requires tsx loader at ${loader}`);
-  return loader;
-}
-
-/**
- * Node-mode launcher prefix for the hook subprocess (task 413).
- *
- * Queue's service can itself run inside Paseo's Electron helper, where
- * `process.execPath` is that helper binary. Effigy runs the hook command itself
- * (`/bin/sh -c` in the invocation cwd), so the helper becomes the hook's own
- * launcher: without Node mode it starts the desktop argument parser, reports
- * `--import` as an unknown option and prints that banner instead of an
- * admit/deny, and the run is refused for a reason that is not admission's. The
- * same bytes in Node mode are the Node runtime the loader needs.
- *
- * The assignment rides inside the command, so the shell applies it to this one
- * child only: the agent shell, the worker/reviewer environment Queue merges and
- * the Effigy workload never inherit it. Plain Node ignores the variable, so the
- * command is byte-identical whichever runtime Queue runs under, and no path is
- * sniffed or resolved.
- */
-export const ADMISSION_HOOK_NODE_MODE_ENV = "ELECTRON_RUN_AS_NODE";
-export const ADMISSION_HOOK_NODE_MODE_VALUE = "1";
-
-export function defaultAdmissionHookCommand(execPath = process.execPath, hookPath = defaultAdmissionHookPath()): string {
-  if (compiledIdentity) return `${ADMISSION_HOOK_NODE_MODE_ENV}=${ADMISSION_HOOK_NODE_MODE_VALUE} ${shellQuote(stableInstalledPath(execPath))} ${shellQuote(stableInstalledPath(hookPath))}`;
-  return `${ADMISSION_HOOK_NODE_MODE_ENV}=${ADMISSION_HOOK_NODE_MODE_VALUE}`
-    + ` ${shellQuote(execPath)} --import ${shellQuote(defaultAdmissionTsxLoader())} ${shellQuote(hookPath)}`;
-}
-
-/** Environment Queue sets on worker/reviewer launches it owns. Never fabricates EFFIGY_ADMITTED. */
-export function queueOwnedAdmissionEnvironment(input: {
-  hookCommand: string;
-  socketPath: string;
-  hookTimeoutMs?: number;
-}): Record<string, string> {
-  return {
-    [EFFIGY_ADMISSION_HOOK_ENV]: input.hookCommand,
-    [QUEUE_ADMISSION_SOCKET_ENV]: input.socketPath,
-    [EFFIGY_ADMISSION_HOOK_TIMEOUT_ENV]: String(input.hookTimeoutMs ?? ADMISSION_HOOK_TIMEOUT_MS),
-  };
-}
-
-export function mergeAdmissionLaunchEnv(
-  base: Record<string, string>,
-  admission: Record<string, string> | null | undefined,
-): Record<string, string> {
-  return admission && Object.keys(admission).length ? { ...base, ...admission } : { ...base };
 }
