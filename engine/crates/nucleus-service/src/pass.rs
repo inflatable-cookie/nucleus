@@ -573,7 +573,7 @@ impl Service {
         Ok(in_flight < slots.saturating_mul(2))
     }
 
-    async fn apply(
+    pub(super) async fn apply(
         &self,
         row: &TaskRow,
         observation: &Observation,
@@ -649,13 +649,24 @@ impl Service {
             .to_string();
         }
         if updated.phase() == Phase::ReportReady
-            && let Some(delivery) = updated
-                .report_task()
-                .and_then(|report| report.delivery.as_ref())
+            && let Some(report) = updated.report_task()
+            && let Some(delivery) = &report.delivery
         {
             audit.detail =
                 serde_json::json!({ "artifact": delivery.artifact, "summary": delivery.summary })
                     .to_string();
+            if row.task.phase() != Phase::ReportReady
+                && report.notice_attempted
+                && self
+                    .state
+                    .lock()
+                    .await
+                    .store
+                    .last_report_artifact(&updated.identity().id)?
+                    .is_some_and(|prior| prior != delivery.artifact)
+            {
+                updated.reopen_report_notice();
+            }
         }
         if row.task.phase() != updated.phase() && updated.phase() == Phase::Closing {
             crate::presentation::note_merge(&mut audit, &observation.forge);

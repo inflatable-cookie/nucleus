@@ -3,12 +3,17 @@ use std::sync::Mutex;
 use nucleus_core::{CallbackCredential, Head, Observation, Role, Workspace};
 use nucleus_hosts::HostError;
 
-use super::{planning::put_as, *};
+use super::{
+    planning::put_as,
+    projects::{NoticeFixture, NoticeReply},
+    *,
+};
 use crate::tests::{git, native_fixture};
 
 const TASK: &str = "report-cutover";
 const PROJECT: &str = "local-fixture";
 const WORKER: &str = "worker-report";
+const PLANNER: &str = "planner-report";
 const BRIEF: &str = "---\ntitle: Milestone QA\nqueue:\n  complexity: low\n  lanes: [qa, notes]\n  reportOnly: true\n  reportLane: qa\n---\nQualify the pinned commit.";
 
 #[tokio::test]
@@ -461,6 +466,106 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     );
 }
 
+#[tokio::test]
+async fn revised_report_opens_its_own_planner_notice() {
+    let fixture = ReportFixture::new().await;
+    fixture.admit().await;
+    let first = fixture.reserve().await;
+    let original = fixture.write(&first, 1, "initial qualification").await;
+    let original = ReportTurn::report(&original["artifact"], &fixture.head);
+    let ready = fixture.deliver(&first, &original).await;
+    fixture.notices.lock().unwrap().next_reply = NoticeReply::Lost;
+    assert!(matches!(
+        fixture.notice_pass().await,
+        Err(ServiceError::Host(_))
+    ));
+    let spent = fixture.service.task(TASK).await.unwrap();
+    assert!(spent.version > ready.version);
+    fixture.report(&first, &original).await;
+    assert_eq!(fixture.service.task(TASK).await.unwrap(), spent);
+
+    let same = fixture.revise("Recheck the existing qualification").await;
+    fixture.report(&first, &original).await;
+    let mut same_artifact = original.clone();
+    same_artifact["report_ready"]["summary"] = json!("Rechecked existing evidence.");
+    let same = fixture.deliver(&same, &same_artifact).await;
+    assert!(same.task.report_task().unwrap().notice_attempted);
+    assert_eq!(
+        fixture.service.notify_report_ready(&same).await.unwrap(),
+        Action::Nothing
+    );
+    assert_eq!(fixture.notices.lock().unwrap().sends.len(), 1);
+
+    let revision = fixture.revise("Update the qualification").await;
+    let changed = fixture.write(&revision, 2, "revised qualification").await;
+    let revised = ReportTurn::report(&changed["artifact"], &fixture.head);
+    let revised_ready = fixture.deliver(&revision, &revised).await;
+    fixture.report(&first, &original).await;
+    fixture.report(&revision, &revised).await;
+    assert_eq!(fixture.service.task(TASK).await.unwrap(), revised_ready);
+    assert!(
+        !revised_ready.task.report_task().unwrap().notice_attempted,
+        "a changed, authenticated lane artifact must open a new planner notice"
+    );
+    fixture.service.host.wait_for_requests().await;
+    assert_eq!(fixture.notice_pass().await.unwrap(), Action::Nothing);
+    let messages = &fixture.notices.lock().unwrap().sends;
+    assert_eq!(messages.len(), 2);
+    assert_ne!(messages[0]["commandId"], messages[1]["commandId"]);
+    assert!(messages[0]["text"].as_str().unwrap().contains("qa v2"));
+    assert!(messages[1]["text"].as_str().unwrap().contains("qa v3"));
+}
+
+#[tokio::test]
+async fn revised_report_gets_its_own_exact_rejection_retry() {
+    let fixture = ReportFixture::new().await;
+    fixture.admit().await;
+    let first = fixture.reserve().await;
+    let original = fixture.write(&first, 1, "initial qualification").await;
+    let original = ReportTurn::report(&original["artifact"], &fixture.head);
+    fixture.deliver(&first, &original).await;
+    assert_eq!(
+        fixture.reject_notice().await,
+        Action::Wait(WaitReason::Question)
+    );
+    assert_eq!(fixture.reject_notice().await, Action::Nothing);
+
+    let revision = fixture.revise("Update the qualification").await;
+    let changed = fixture.write(&revision, 2, "revised qualification").await;
+    let revised = ReportTurn::report(&changed["artifact"], &fixture.head);
+    fixture.deliver(&revision, &revised).await;
+    assert_eq!(
+        fixture.reject_notice().await,
+        Action::Wait(WaitReason::Question)
+    );
+
+    let same = fixture.revise("Recheck the revised qualification").await;
+    fixture.deliver(&same, &revised).await;
+    assert_eq!(fixture.reject_notice().await, Action::Nothing);
+    let spent = fixture.service.task(TASK).await.unwrap();
+    assert!(spent.task.report_task().unwrap().notice_attempted);
+    fixture.report(&same, &revised).await;
+    assert_eq!(fixture.service.task(TASK).await.unwrap(), spent);
+    assert_eq!(
+        fixture.service.notify_report_ready(&spent).await.unwrap(),
+        Action::Nothing
+    );
+
+    let notices = fixture.notices.lock().unwrap();
+    let [original, original_retry, revised, revised_retry] = notices.sends.as_slice() else {
+        panic!("each artifact gets one attempt and one retry");
+    };
+    assert_eq!(original["text"], original_retry["text"]);
+    assert_eq!(revised["text"], revised_retry["text"]);
+    assert_ne!(original["text"], revised["text"]);
+    let commands: std::collections::BTreeSet<_> = notices
+        .sends
+        .iter()
+        .map(|send| send["commandId"].as_str().unwrap())
+        .collect();
+    assert_eq!(commands.len(), 4);
+}
+
 struct ReportFixture {
     _home: tempfile::TempDir,
     service: Arc<Service>,
@@ -469,6 +574,7 @@ struct ReportFixture {
     published: Arc<Mutex<Option<Head>>>,
     open_pr: Arc<AtomicBool>,
     busy: Arc<AtomicBool>,
+    notices: Arc<Mutex<NoticeFixture>>,
     checkout: std::path::PathBuf,
     forge: tokio::task::JoinHandle<()>,
     host: tokio::task::JoinHandle<()>,
@@ -501,21 +607,36 @@ impl ReportFixture {
         service.forge = forge;
 
         let checkout = nucleus_work::checkout_path(service.storage.work().path(), REPOSITORY, TASK);
+        let root = service.fixture().checkout.clone();
         let path = checkout.clone();
         let running = Arc::clone(&busy);
+        let notices = Arc::new(Mutex::new(NoticeFixture::default()));
+        let deliveries = Arc::clone(&notices);
         let (host, host_server) = native_fixture(move |request| {
-            assert_eq!(request["tag"], "orchestration.subscribeThread");
-            assert_eq!(request["payload"]["threadId"], WORKER);
-            let requests = if running.load(Ordering::Relaxed) {
-                json!([{"kind":"permission","status":"pending"}])
-            } else { json!([]) };
-            json!({"_tag":"Chunk","requestId":request["id"],"values":[
-                {"kind":"snapshot","snapshotSequence":1,"projection":{
+            let planner = json!({"id":PLANNER,"projectId":PROJECT,"updatedAt":"2026-11-23T18:10:00Z"});
+            let snapshot = match request["tag"].as_str() {
+                Some("orchestration.subscribeShell") => json!({"kind":"snapshot","snapshot":{
+                    "projects":[{"id":PROJECT,"workspaceRoot":root}], "threads":[planner],
+                }}),
+                Some("orchestration.subscribeThread") if request["payload"]["threadId"] == PLANNER => {
+                    json!({"kind":"snapshot","snapshotSequence":1,"projection":{
+                        "thread":planner, "runs":[], "messages":[],
+                    }})
+                }
+                Some("orchestration.subscribeThread") => {
+                    assert_eq!(request["payload"]["threadId"], WORKER);
+                    let requests = if running.load(Ordering::Relaxed) {
+                        json!([{"kind":"permission","status":"pending"}])
+                    } else { json!([]) };
+                    json!({"kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":WORKER,"projectId":PROJECT,"worktreePath":path,"branch":format!("ns-{TASK}")},
                     "runs":[],"messages":[],"runtimeRequests":requests,"providerThreads":[],"turnItems":[],"subagents":[]
-                }},
-                {"kind":"synchronized"}
-            ]})
+                    }})
+                }
+                Some("orchestration.dispatchCommand") => return deliveries.lock().unwrap().dispatch(request),
+                _ => panic!("unexpected fixture request {request}"),
+            };
+            json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
         }).await;
         service.host = host;
         let service = Arc::new(service);
@@ -548,6 +669,7 @@ impl ReportFixture {
             published,
             open_pr,
             busy,
+            notices,
             checkout,
             forge: forge_server,
             host: host_server,
@@ -659,22 +781,72 @@ impl ReportFixture {
 
     async fn settle(&self, turn: &ReportTurn) -> nucleus_store::TaskRow {
         let prior = self.service.task(TASK).await.expect("reported");
-        let mut task = prior.task.clone();
-        assert_eq!(
-            task.reconcile(&Observation {
-                host: Observed::Known(Host::Current {
-                    instance: turn.instance.clone(),
-                    state: RunState::Ended
-                }),
-                forge: Observed::Unknown,
-                workspace: Observed::Known(Workspace::Clean(self.head.clone())),
+        let observation = Observation {
+            host: Observed::Known(Host::Current {
+                instance: turn.instance.clone(),
+                state: RunState::Ended,
             }),
+            forge: Observed::Unknown,
+            workspace: Observed::Known(Workspace::Clean(self.head.clone())),
+        };
+        assert_eq!(
+            self.service
+                .apply(&prior, &observation, Action::Advance(Phase::ReportReady))
+                .await
+                .expect("settle report"),
             Action::Advance(Phase::ReportReady)
         );
+        let settled = self.service.task(TASK).await.expect("report ready");
+        assert_eq!(settled.task.phase(), Phase::ReportReady);
+        settled
+    }
+
+    async fn report(&self, turn: &ReportTurn, report: &Value) {
+        assert_eq!(
+            post_json(&self.api, &turn.callback(), turn.key(), report).await,
+            StatusCode::NO_CONTENT
+        );
+    }
+
+    async fn deliver(&self, turn: &ReportTurn, report: &Value) -> nucleus_store::TaskRow {
+        self.report(turn, report).await;
+        self.settle(turn).await
+    }
+
+    async fn revise(&self, instruction: &str) -> ReportTurn {
+        assert_eq!(
+            self.command(json!({"move_work":{"instruction":instruction}}))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        self.reserve().await
+    }
+
+    async fn notice_pass(&self) -> Result<Action, ServiceError> {
+        assert!(
+            self.service
+                .state
+                .lock()
+                .await
+                .schedule
+                .due(TASK)
+                .is_some_and(|due| due <= tokio::time::Instant::now()),
+            "settling or reopening the report schedules its notice"
+        );
         self.service
-            .save(&prior, task, &event("fixture_settled"))
+            .pass()
             .await
-            .expect("report ready")
+            .expect("scheduler pass")
+            .into_iter()
+            .find(|outcome| outcome.task == TASK)
+            .expect("the scheduler processed the report")
+            .result
+    }
+
+    async fn reject_notice(&self) -> Action {
+        self.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+        self.notice_pass().await.expect("exact native rejection")
     }
 
     async fn write(&self, turn: &ReportTurn, version: u64, document: &str) -> Value {

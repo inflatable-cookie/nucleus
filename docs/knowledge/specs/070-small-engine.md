@@ -649,6 +649,10 @@ of the exact command reopens the notice once. The fresh attempt uses a new
 command ID, the stored report or release data and a currently verified planner.
 A second rejection spends the retry. Uncertain replies and previously spent
 notices stay closed, including legacy `report_ready_planner_unavailable` records.
+A finished report worker that publishes a different exact lane artifact opens
+that artifact's own notice and retry allowance. An authenticated callback
+replay or a new run reporting the same artifact keeps the existing allowance
+and delivery status.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
 `dependencyEdits` from local state. The `next` command list includes
