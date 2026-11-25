@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { laneKeySchema } from "../schema/task-primitives";
-import { LANE_AIM_MAX, normalizeRepositoryOrigin } from "../lanes";
+import { normalizeRepositoryOrigin } from "../lanes";
 import { briefDigestSchema } from "./briefs";
 
 /** The denormalised title and aim of one attached lane, in membership order, for prompts and detail. */
@@ -35,9 +35,9 @@ export const laneSchema = z.object({
   id: z.string().min(1),
   key: laneKeySchema,
   title: z.string().trim().min(1),
-  aim: z.string().trim().min(1).max(LANE_AIM_MAX),
+  aim: z.string().trim().min(1),
   status: laneStatusSchema,
-  note: z.string().max(4000).default(""),
+  note: z.string().default(""),
   repositories: z.array(laneRepositorySchema).min(1)
     .refine(repos => new Set(repos.map(repo => repo.origin)).size === repos.length, "Duplicate repository origin"),
   createdAt: z.string(),
@@ -72,7 +72,7 @@ export type LaneView = z.infer<typeof laneViewSchema>;
 export const laneUpsertInputSchema = z.object({
   key: laneKeySchema,
   title: z.string().trim().min(1).max(200),
-  aim: z.string().trim().min(1).max(LANE_AIM_MAX),
+  aim: z.string().trim().min(1),
   repositories: z.array(laneRepositorySchema).min(1)
     .refine(repos => new Set(repos.map(repo => repo.origin)).size === repos.length, "Duplicate repository origin"),
 }).strict();
@@ -86,7 +86,7 @@ export const laneAddressSchema = z.object({
 
 export const laneStatusInputSchema = laneAddressSchema.extend({
   status: laneStatusSchema,
-  note: z.string().max(4000).optional(),
+  note: z.string().optional(),
 }).strict();
 
 export const lanesQuerySchema = z.object({
