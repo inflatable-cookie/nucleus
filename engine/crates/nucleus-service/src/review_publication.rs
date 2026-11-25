@@ -6,7 +6,7 @@ use nucleus_core::{
 };
 use nucleus_forge::{ForgeError, GitHub, PullTarget, ReviewBinding, ReviewError, ReviewWrite};
 use nucleus_store::{
-    DispatchMode, ReviewIntent, ReviewPublication, ReviewPublicationOutcome, TaskRow,
+    DispatchMode, GITHUB_HOST, ReviewIntent, ReviewPublication, ReviewPublicationOutcome, TaskRow,
 };
 use sha2::{Digest, Sha256};
 
@@ -179,22 +179,27 @@ impl Service {
             }
             let mut updated = task.clone();
             let action = updated.reconcile_external_merge_without_pending_review(observation);
-            let mut audit = event("external_merge_without_published_review");
-            if updated.phase() == Phase::Closing {
+            let mut audit = if updated.phase() == Phase::Closing {
+                let mut audit = event("phase_reconciled");
                 crate::presentation::note_merge(&mut audit, &observation.forge);
+                audit
+            } else {
+                event("question_asked")
+            };
+            if audit.detail.is_empty() {
+                audit.detail = serde_json::json!({"reason": "The pending review has no verified GitHub publication."}).to_string();
             }
             self.save(row, updated, &audit).await?;
             return Ok(action);
         }
 
-        let publication = match publication {
-            Some(record) => record,
-            None => {
-                let Some(record) = self.start_review(id, target, &request).await? else {
-                    return Ok(Action::Wait(WaitReason::Stopping));
-                };
-                record
-            }
+        let publication = if let Some(record) = publication {
+            record
+        } else {
+            let Some(record) = self.start_review(id, target, &request).await? else {
+                return Ok(Action::Wait(WaitReason::Stopping));
+            };
+            record
         };
         if !self
             .reconcile_review(id, target, &publication, &request.body)
@@ -327,7 +332,7 @@ impl Service {
     }
 
     fn reviewer_client(&self, credential: &ReviewerCredential) -> Result<GitHub, PublicationError> {
-        if credential.host() != "github.com" {
+        if credential.host() != GITHUB_HOST {
             return Err(PublicationError::AccountUnavailable);
         }
         self.forge
