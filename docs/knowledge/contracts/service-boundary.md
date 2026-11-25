@@ -1404,6 +1404,8 @@ SQLite and releases its lease. Both directions reject concurrent ownership.
 
 ### Executor request timings
 
+The following timings describe the archived TypeScript daemon.
+
 `service.health.requestTimings` reports the executor's in-flight count and the
 last 32 settled requests: method, timestamp, outcome, `queueMs`, `handlerMs`
 (including async waits), `publicationMs`, `returnMs` and `totalMs` (the executor

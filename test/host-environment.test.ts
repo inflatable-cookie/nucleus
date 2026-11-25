@@ -34,7 +34,6 @@ test("the composition owner maps a private host home into the host's own environ
 
 test("generic TypeScript service entries leave host names in composition", () => {
   const neutral = [
-    "service/executor/executor.ts",
     "service/runtime-owner.ts",
   ];
   for (const path of neutral) {
