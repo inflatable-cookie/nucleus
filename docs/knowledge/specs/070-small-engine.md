@@ -446,7 +446,7 @@ Later decisions carry their own attribution.
 
 34. **Archiving a Done task is housekeeping.** Tom, 2026-11-24: "it shouldn't matter that the workers are archived already. We're just archiving task containers! It's all getting too fiddly." Custody is proven once, when a task's checkout is removed. After that, archiving its threads proves nothing further. The archive step archives each of the task's threads that the held shell shows as present, unarchived and idle. A thread that is already archived, absent or deleted counts as done, with no read. A thread showing activity waits with a plain cause. The task is closed when none of its threads remain unarchived. This replaces family-closure receipts and archive proofs.
    On the volume-wide open-file scan, Tom, 2026-11-25: "That's way too heavy a check - we need to find a better way of doing that". At retirement the held shell supplies role activity, Git supplies publication and worktree state, and one cwd census per pass covers every closing task. A process with its working directory in the checkout or run scratch holds removal. An open file alone does not.
-   At terminal closeout, stop an orphaned process tree only when its root has parent PID 1 and its working directory is in the task’s verified checkout. Protect T3 and its descendants. Record each process, signal and outcome in task history. This also applies to retained terminal checkouts.
+   At terminal closeout, stop an orphaned process tree only when its root has parent PID 1 and its working directory is in the task’s verified checkout or its settled run scratch. Protect T3 and its descendants. Record each process, signal and outcome in task history. This also applies to retained terminal checkouts.
 
 
 35. **A lubricated workflow.** Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
@@ -684,7 +684,9 @@ Later decisions carry their own attribution.
     - When a code worker's turn ends without an authenticated report, its one
       follow-up turn tells it to continue the assignment in the same checkout
       and report when done.
-    - The worker asks the planner only about a concrete impediment: a failure
+    - The first code-worker assignment tells the worker to continue until done.
+      An early turn ending does not call for retry or reassignment.
+      The worker asks the planner only about a concrete impediment: a failure
       it cannot fix, missing access, or a scope decision. An unfinished task is
       not an impediment.
     - A reviewer's follow-up still asks it to report the review it performed,

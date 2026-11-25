@@ -222,8 +222,8 @@ The board and Next retain the workspace outcome. Before removing a checkout,
 verify idle participants in the held shell, Dispatch, the Git registration and
 published head. Each pass shares one census of the local user’s working
 directories. A PID in the checkout or run scratch holds removal and appears in
-the wait detail. At terminal closeout, Nucleus stops a checkout-local process
-tree orphaned to PID 1 and records the signal outcomes in task history. Host
+the wait detail. At terminal closeout, Nucleus stops a process tree rooted in the checkout
+or the task’s recorded run scratch and orphaned to PID 1 and records the signal outcomes in task history. Host
 processes and their descendants stay protected. An incomplete census keeps
 the checkout.
 For a retained Done code checkout, read the merged PR again and match its

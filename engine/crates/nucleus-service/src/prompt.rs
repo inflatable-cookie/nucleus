@@ -15,6 +15,7 @@ use crate::DependencyStatus;
 
 const SKILL: &str = include_str!("../../../../skills/nucleus/SKILL.md");
 const REPORTING: &str = "Reporting and contact";
+const WORKER_QUESTION: &str = "Ask the planner only about a failure you cannot resolve, missing access, or a scope decision, not to retry or reassign.";
 
 #[derive(Default)]
 pub(super) struct LaneContext {
@@ -55,7 +56,10 @@ pub(super) fn report_reminder(
     }
     let continue_work = launch.role == Role::Worker && task.report_task().is_none();
     if continue_work {
-        text.push_str("Continue the assignment in this checkout and report when it is done. Ask the planner only about a failure you cannot resolve, missing access, or a scope decision.\n");
+        let _ = writeln!(
+            text,
+            "Continue the assignment in this checkout and report when it is done. {WORKER_QUESTION}"
+        );
     } else {
         text.push_str(
         "Use your findings and evidence from this thread. Do not redo the assignment, repeat checks, or claim work you did not perform. If the work was incomplete, report what was actually done and what prevented completion.\n",
@@ -376,6 +380,10 @@ impl Prompt<'_> {
                     "summary": "ONE_SENTENCE_DESCRIBING_THE_CHANGE",
                 }});
                 let _ = writeln!(text, "Ready for review: {example}");
+                let _ = writeln!(
+                    text,
+                    "There is no run or time limit. Keep working until the assignment is done. {WORKER_QUESTION}"
+                );
             }
             Role::Reviewer => {
                 text.push_str("Report the verdict and complete findings here. Nucleus publishes your summary on GitHub. Cite command results and omit local paths.\n");
@@ -555,6 +563,10 @@ mod tests {
         ] {
             assert!(text.contains(fact), "missing {fact}");
         }
+        let before_question = text.split_once("Planner question:").unwrap().0;
+        assert!(before_question.ends_with(&format!(
+            "There is no run or time limit. Keep working until the assignment is done. {WORKER_QUESTION}\n"
+        )));
         assert!(!text.contains("### Reviewer"));
         assert!(!text.contains("effigy test:affected"));
         assert!(!text.contains("changelog.d/"));
