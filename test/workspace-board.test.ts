@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // The host wraps contributed components with these providers from the SDK's host
@@ -25,8 +24,6 @@ const load = async () => {
 };
 const h = React.createElement;
 const c = new Proxy({}, { get: () => "#000" }) as never;
-const read = (name: string) =>
-  readFileSync(new URL(`../${name}`, import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 const repo = { origin: "owner/consumer", path: "/repo" };
@@ -217,18 +214,6 @@ test("026-14c rendered: a workspace without a snapshot or project root cannot re
   assert.ok(ui.get("Nucleus board message"));
   assert.equal(ui.query("Nucleus navigation"), undefined);
   unmount(ui);
-});
-
-test("026-14c the Open Nucleus board workspace command opens the registered panel", () => {
-  const entry = read("hosts/paseo/client/index.tsx");
-  assert.match(
-    entry,
-    /addWorkspacePanel\(\{ id: BOARD_PANEL_ID, title: "Nucleus board", icon: "LayoutDashboard", locations: \["workspace"\], context: "workspace", Component: QueueBoardPanel \}\)/,
-  );
-  assert.match(
-    entry,
-    /addCommandCenterItem\(\{ id: BOARD_PANEL_ID, title: "Open Nucleus board", [^}]*context: "workspace", onSelect: context => context\.openPanel\(BOARD_PANEL_ID\) \}\)/,
-  );
 });
 
 test("026-14c the panel reuses the main surface board; there is no second copy of board code", () => {

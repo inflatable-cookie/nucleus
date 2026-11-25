@@ -392,10 +392,8 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 /**
- * The host loads the plugin as a CJS bundle. Like plugin-load.test.ts guards the
- * server entry, this builds the client entry the way the host does and renders
- * MainSurface from the bundle — so the dark-theme check at both viewport sizes
- * verifies the artifact the installed bundle carries, not just the sources.
+ * Bundle MainSurface with the fixture shell and render it in dark theme at
+ * both viewport sizes.
  * React, the JSX runtime, react-query and the plugin client stay single-instance
  * with the test's own imports; only react-native resolves to the host stubs.
  */
