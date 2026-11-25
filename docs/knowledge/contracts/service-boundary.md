@@ -83,7 +83,9 @@ and [session persistence](../../../engine/crates/nucleus-service/src/web/board/s
 
 The paired API mounts the same planning handlers as the controller API and
 checks session scope. The browser subscribes to scoped engine invalidations and
-re-reads affected data. Open planning records use periodic reads while the
+re-reads affected data. List refreshes reuse finished cards until the task version,
+journal sequence or board timestamp changes. Prerequisites use current task
+states and the viewer's project access on every read. Open planning records use periodic reads while the
 stream is disconnected. Reconnection resynchronizes open views and stops
 those periodic reads. A browser view, Settings read or ordinary planning read
 consumes the store and cached host facts.

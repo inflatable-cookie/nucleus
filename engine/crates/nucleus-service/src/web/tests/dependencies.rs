@@ -210,3 +210,54 @@ async fn prerequisite_wait_releases_once_and_preserves_reserved_run() {
         1
     );
 }
+
+#[tokio::test]
+async fn refreshed_finished_cards_follow_current_dependencies_and_same_version_board_events() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = controller(Arc::clone(&service));
+    add(&service, "first", ADMIT).await;
+    add(
+        &service,
+        "dependent",
+        "---\nqueue:\n  complexity: medium\n  dependsOn: ['#1']\n---\n# Follow",
+    )
+    .await;
+    service
+        .command("dependent", &operator(), Command::Cancel)
+        .await
+        .unwrap();
+    let cards = async || json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    let cold = cards().await;
+    assert_eq!(cold[0]["identity"]["id"], "dependent");
+    assert_eq!(
+        cold[0]["dependencyStatus"]["dependencies"][0]["status"],
+        "pending"
+    );
+    assert_eq!(cards().await, cold);
+
+    service
+        .command("first", &operator(), Command::Cancel)
+        .await
+        .unwrap();
+    let changed = cards().await;
+    assert_eq!(changed[0]["version"], cold[0]["version"]);
+    assert_eq!(
+        changed[0]["dependencyStatus"]["dependencies"][0]["status"],
+        "cancelled"
+    );
+    let mut event = event("command");
+    event.at = 123_456;
+    {
+        let mut state = service.state.lock().await;
+        state.store.record_task_effect("dependent", &event).unwrap();
+        state
+            .store
+            .record_board_entry("dependent", event.at)
+            .unwrap();
+    }
+    let edited = cards().await;
+    assert_eq!(edited[0]["version"], cold[0]["version"]);
+    assert_eq!(edited[0]["latestEventAtMs"], event.at);
+    assert_eq!(edited[0]["stateSinceMs"], event.at);
+}
