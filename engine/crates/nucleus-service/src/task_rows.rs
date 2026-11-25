@@ -237,11 +237,11 @@ impl Service {
     ) -> Result<(Plan, u64, Option<u64>), ServiceError> {
         let (activity, ended, handover) = self.role_window(thread, &row.task);
         let question = row_question(state, &row.task)?;
-        if activity == RowChildren::Unknown && !question {
-            return Ok((Plan::Idle(None), ended, None));
-        }
         if self.desire_title(state, &row.task, row.number) {
             self.publish_detail(&row.task.identity().id, row.version);
+        }
+        if activity == RowChildren::Unknown && !question {
+            return Ok((Plan::Idle(None), ended, None));
         }
         let visible = question || activity == RowChildren::Active || handover.is_some();
         Ok((
