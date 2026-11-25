@@ -492,7 +492,7 @@ impl T3 {
         &self,
         owns: impl Fn(&str, i64) -> bool + Send + Sync,
         cutoff: u64,
-    ) -> Result<Vec<PruneWrite>, HostError> {
+    ) -> Result<(Vec<PruneWrite>, bool), HostError> {
         let before = self
             .rpc
             .with_shell(|shell| shell.map(|s| self.rpc.fence_at("", Some(s))))
@@ -526,8 +526,9 @@ impl T3 {
             }
         }
         candidates.sort_by(|a, b| (a.archived_ms, &a.thread).cmp(&(b.archived_ms, &b.thread)));
+        let more = candidates.len() > 32;
         candidates.truncate(32);
-        Ok(candidates)
+        Ok((candidates, more))
     }
 
     /// Check the archive at the socket before sending its occurrence-specific command.

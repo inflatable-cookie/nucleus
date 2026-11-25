@@ -3144,10 +3144,11 @@ async fn retention_walk_removes_only_an_old_owned_archive_still_closed_at_the_wi
     host.rpc.fixture_shell(
         &json!({"kind":"snapshot","snapshot":{"snapshotSequence":14,"projects":[],"threads":[]}}),
     );
-    let work = host
+    let (work, more) = host
         .prune_candidates(|id, _| id != "foreign", cutoff)
         .await
         .unwrap();
+    assert!(!more);
     assert_eq!(
         work.iter().map(|w| w.thread.as_str()).collect::<Vec<_>>(),
         ["old", "reopened"]
@@ -3165,4 +3166,36 @@ async fn retention_walk_removes_only_an_old_owned_archive_still_closed_at_the_wi
     assert_eq!(cmd["type"], "thread.delete");
     assert_eq!(cmd["threadId"], "old");
     assert!(cmd.get("onlyIfUnused").is_none());
+}
+
+#[tokio::test]
+async fn retention_walk_drains_seventy_archives_in_three_bounded_batches() {
+    let mut steps = Vec::new();
+    for start in [0, 32, 64] {
+        let rows:Vec<_>=(start..70).map(|n|json!({"id":format!("t-{n:02}"), "archivedAt":"2026-11-18T00:00:00Z", "deletedAt":null})).collect();
+        steps.push((
+            "orchestration.getArchivedShellSnapshot",
+            Response::Value(json!({"snapshotSequence":101,"projects":[],"threads":rows})),
+        ));
+        for _ in start..(start + 32).min(70) {
+            steps.push(("orchestration.dispatchCommand", Response::Success));
+        }
+    }
+    let (host, wire) = server(steps).await;
+    host.rpc.fixture_shell(
+        &json!({"kind":"snapshot","snapshot":{"snapshotSequence":101,"projects":[],"threads":[]}}),
+    );
+    let mut sizes = Vec::new();
+    loop {
+        let (batch, more) = host.prune_candidates(|_, _| true, u64::MAX).await.unwrap();
+        sizes.push(batch.len());
+        for write in batch {
+            assert!(host.prune_thread(&write, || Ok(true)).await.unwrap());
+        }
+        if !more {
+            break;
+        }
+    }
+    assert_eq!(sizes, [32, 32, 6]);
+    assert_eq!(wire.await.unwrap().len(), 73);
 }

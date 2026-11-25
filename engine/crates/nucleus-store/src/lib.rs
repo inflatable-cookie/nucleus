@@ -319,7 +319,7 @@ impl Store {
         CREATE INDEX IF NOT EXISTS pending_completion_notices ON completion_notices(task_id) WHERE retry IS NOT NULL")?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS housekeeping_runs (
-            name TEXT PRIMARY KEY, started_ms INTEGER NOT NULL
+            name TEXT PRIMARY KEY, started_ms INTEGER NOT NULL, next_batch_ms INTEGER
         ) STRICT;
         CREATE TABLE IF NOT EXISTS thread_prune_attempts (
             thread TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL, attempts INTEGER NOT NULL
@@ -537,11 +537,23 @@ impl Store {
         interval: i64,
     ) -> Result<bool, StoreError> {
         Ok(self.connection.execute(
-            "INSERT INTO housekeeping_runs VALUES (?1, ?2)
-            ON CONFLICT(name) DO UPDATE SET started_ms=excluded.started_ms
-            WHERE started_ms<=?2-?3",
+            "INSERT INTO housekeeping_runs VALUES (?1, ?2, ?2+30000)
+            ON CONFLICT(name) DO UPDATE SET started_ms=excluded.started_ms, next_batch_ms=excluded.next_batch_ms
+            WHERE next_batch_ms<=?2 OR (next_batch_ms IS NULL AND started_ms<=?2-?3)",
             params![name, now, interval],
         )? == 1)
+    }
+
+    /// End a drained sweep; a partial sweep remains due on the next eligible scheduler scan.
+    ///
+    /// # Errors
+    /// Returns a database error if the cadence cannot be saved.
+    pub fn finish_housekeeping(&self, name: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE housekeeping_runs SET next_batch_ms=NULL WHERE name=?1",
+            [name],
+        )?;
+        Ok(())
     }
 
     /// Native thread IDs owned exclusively by finished tasks and their prior prune attempts.

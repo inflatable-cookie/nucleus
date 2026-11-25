@@ -951,6 +951,11 @@ impl Service {
             (settings.thread_retention_days, state.store.prune_owners()?)
         };
         if owners.is_empty() {
+            self.state
+                .lock()
+                .await
+                .store
+                .finish_housekeeping("archived_threads")?;
             return Ok(());
         }
         let eligible = |id: &str, stamp: i64| {
@@ -958,7 +963,7 @@ impl Service {
                 !prior.is_some_and(|(when, attempts)| when == stamp && attempts >= 4)
             })
         };
-        let candidates = self
+        let (candidates, mut more) = self
             .host
             .prune_candidates(eligible, now.saturating_sub(u64::from(days) * 86_400_000))
             .await?;
@@ -997,7 +1002,16 @@ impl Service {
                     .await
                     .store
                     .confirm_thread_prune(&write.thread, write.archived_ms)?;
+            } else {
+                more = true;
             }
+        }
+        if !more {
+            self.state
+                .lock()
+                .await
+                .store
+                .finish_housekeeping("archived_threads")?;
         }
         Ok(())
     }

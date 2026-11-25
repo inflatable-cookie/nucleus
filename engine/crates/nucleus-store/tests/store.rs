@@ -1448,6 +1448,7 @@ fn retention_keeps_other_tasks_and_remembers_its_interval_and_archive_attempts()
     for _ in 0..4 {
         assert!(store.claim_thread_prune("parent", 71).unwrap());
     }
+    store.finish_housekeeping("archived_threads").unwrap();
     drop(store);
     let reopened = Store::open(&storage).unwrap();
     assert!(
@@ -1462,4 +1463,36 @@ fn retention_keeps_other_tasks_and_remembers_its_interval_and_archive_attempts()
     );
     assert!(!reopened.claim_thread_prune("parent", 71).unwrap());
     assert!(reopened.claim_thread_prune("parent", 120).unwrap());
+}
+
+#[test]
+fn retention_partial_batches_survive_restart_and_finish_inside_the_interval() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let interval = 12 * 3_600_000;
+    for now in [1000, 31_000, 61_000] {
+        let store = Store::open(&storage).unwrap();
+        assert!(
+            store
+                .start_housekeeping("archived_threads", now, interval)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .start_housekeeping("archived_threads", now + 29_999, interval)
+                .unwrap()
+        );
+    }
+    let store = Store::open(&storage).unwrap();
+    store.finish_housekeeping("archived_threads").unwrap();
+    assert!(
+        !store
+            .start_housekeeping("archived_threads", 91_000, interval)
+            .unwrap()
+    );
+    assert!(
+        store
+            .start_housekeeping("archived_threads", 61_000 + interval, interval)
+            .unwrap()
+    );
 }
