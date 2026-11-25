@@ -1,69 +1,30 @@
-# Restore the Nucleus store
+# Recover the engine store
 
-Use a verified `.sqlite.gz` snapshot from the configured backup location for the
-live store: `backupRoot` in `settings.json`, the `NUCLEUS_BACKUP_ROOT` override, or
-the portable default `<work-root>/archives/nucleus-backups/`. A private
-`NUCLEUS_DATA_HOME` instance or fixture uses its own `<data dir>/backups/`. The data
-directory is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set. An existing install whose
-snapshots are still in `<work-root>/queue/backups/` keeps being listed there until
-those files are moved, so both locations are valid restore sources; the live
-**Storage** page shows where new snapshots go.
+The Rust engine keeps task state in `engine.sqlite` under the verified database
+root. Settings → Storage shows the active placement. Before upgrading an older
+engine schema, the store makes a standalone SQLite backup in the configured
+backup directory. It opens the copy read-only and verifies the application ID,
+source schema version and SQLite quick check before publishing the backup as
+`engine-before-v<source-version>-<suffix>.sqlite`.
 
-Work placement comes from `workRoot` in `settings.json` or the
-`NUCLEUS_WORK_ROOT` environment override. A fresh install uses a portable
-root at `~/.nucleus/work`. Optional `workVolumeId` (or
-`NUCLEUS_WORK_VOLUME_ID`) pins a volume. Existing mount-rooted records adopt
-their common root and its observed volume ID once, preserving the guard. If that volume is away,
-`backup.list` reports it unavailable; no backup falls back to another drive.
-Retired locations outside the active placement are never read or listed, except
-the backup and QA locations named above while their files are still there.
+A release roll is forward-only. If the operator directs recovery from a backup:
 
-1. Run `paseo plugin disable nucleus`. Wait for the Nucleus service to stop.
-   Do not restore while it owns the store.
-2. Set `data_dir` to the Nucleus data directory and `snapshot` to the chosen
-   `.sqlite.gz` file. Keep both paths quoted in shell commands.
-3. Prepare and verify the snapshot in a private temporary directory before
-   moving any managed files. The verifier accepts schemas 50 through 58; use an
-   older build to upgrade an older snapshot first.
+1. Keep dispatch paused. Record the source revision, backup schema version,
+   running tasks and any native effects accepted since the backup.
+2. Rehearse with a private copy. Open the backup read-only first. Verify its
+   application ID (`N070`), expected `user_version` and `PRAGMA quick_check`.
+   Open a separate writable copy with the intended engine to test the upgrade.
+   Compare task and event contents, current delivery occurrences and pending
+   native operations.
+3. At the authorized switch, stop the engine writer, preserve the original
+   database with its journal files and use the verified recovery copy. Keep
+   dispatch paused while reconciling any post-backup sends against their exact
+   native commands and receipts. Reading the same endpoint or seeing the same
+   receipt sequence alone cannot establish continuity.
+4. Confirm the schema, task states, outstanding deliveries and board. Restore
+   the prior dispatch setting when the recovered state accounts for native work.
 
-   ```sh
-   restore_probe_dir="$(mktemp -d)"
-   chmod 700 "$restore_probe_dir"
-   gzip -dc "$snapshot" > "$restore_probe_dir/queue.sqlite"
-   node --experimental-sqlite -e '
-     const { DatabaseSync } = require("node:sqlite");
-     const db = new DatabaseSync(process.argv[1], { readOnly: true });
-     try {
-       const check = db.prepare("PRAGMA integrity_check").get().integrity_check;
-       const row = db.prepare("SELECT value FROM meta WHERE key = ?").get("schema");
-       const schema = JSON.parse(row.value);
-       if (check !== "ok" || !Number.isInteger(schema) || schema < 50 || schema > 58)
-         throw new Error(`Unsupported or corrupt snapshot (schema ${schema}); the store opens schema 50 through 58`);
-     } finally { db.close(); }
-   ' "$restore_probe_dir/queue.sqlite"
-   ```
-
-   Continue only if both commands succeed. On failure, remove the private
-   directory and select a supported snapshot; the managed store remains in place.
-4. Move the current SQLite file set aside, then install the verified file. Keep
-   the replaced files until the restored store has been checked:
-
-   ```sh
-   replaced_dir="$data_dir/replaced-$(date -u +%Y%m%dT%H%M%SZ)"
-   mkdir -p "$replaced_dir"
-   for file in "$data_dir/queue.sqlite" "$data_dir/queue.sqlite-wal" "$data_dir/queue.sqlite-shm"; do
-     if test -e "$file"; then mv "$file" "$replaced_dir/"; fi
-   done
-   mv "$restore_probe_dir/queue.sqlite" "$data_dir/queue.sqlite"
-   chmod 600 "$data_dir/queue.sqlite"
-   rm -rf "$restore_probe_dir"
-   ```
-
-5. Run `paseo plugin enable nucleus`, then
-   `paseo plugin reload nucleus`. Check `backup.list` and a known task or
-   planning record before removing any replaced files.
-
-The backup files stay in place. A restore replaces only the SQLite file set;
-other Nucleus settings and plugin files remain in the data directory. The
-`backup-status.json` beside the store is Nucleus's record of the last backup
-failure; leave it for Nucleus to clear on its next successful snapshot.
+[Schema 12 upgrade and continuity rules](../specs/070-small-engine.md#parent-delivery-storage-and-upgrade)
+describe the delivery evidence. For the retired TypeScript `queue.sqlite` and
+its compressed snapshots, use the
+[archived restore procedure](https://github.com/inflatable-cookie/nucleus/blob/c1771a0651636cbf1a69e5309ea62fff055efd3d/docs/knowledge/operations/restore.md).
