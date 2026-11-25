@@ -13,7 +13,6 @@ export function createHost(
   mcpScriptPath?: string,
 ): Adapter &
   RegistrationAdapter & {
-    setAdmissionLaunchEnv(env: Record<string, string> | null): void;
   } {
   const PaseoAdapter = paseoAdapterClass(Policy);
   return new PaseoAdapter(url, socketPath, helperPath, password, mcpScriptPath);

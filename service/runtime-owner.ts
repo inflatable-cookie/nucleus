@@ -210,11 +210,6 @@ import {
 
 import { CapacityChangeJournal } from "../core/dispatch/capacity-changes";
 
-import {
-  defaultAdmissionHookCommand,
-  queueOwnedAdmissionEnvironment,
-} from "../core/qa/effigy-admission";
-import { hostRunAdmissionSocketPath } from "../core/host-runs/host-run-paths";
 import type { Papercut } from "../shared/contracts";
 import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 import { HOST_HEALTH_STARTUP_GRACE_MS } from "../core/scheduling/host-health";
@@ -459,9 +454,6 @@ export class QueueRuntime {
   private hostRunEndpoint: HostRunEndpoint | null = null;
   /** Queue-owned Effigy admission hook socket; started with the host-run endpoint. */
   private admissionEndpoint: EffigyAdmissionEndpoint | null = null;
-  private paseoLaunchAdapter: {
-    setAdmissionLaunchEnv(env: Record<string, string> | null): void;
-  } | null = null;
   /** Why the host-run endpoint is not serving; empty while it serves or when disabled. */
   private hostRunEndpointError = "";
   private readonly serveHostRunEndpoint: boolean;
@@ -732,7 +724,6 @@ export class QueueRuntime {
     type PaseoRawAdapter = Adapter & {
       socketPath?: string;
       helperPath?: string;
-      setAdmissionLaunchEnv?: (env: Record<string, string> | null) => void;
     };
     let paseoRaw: PaseoRawAdapter | null = null;
     if (options.adapterFactory) {
@@ -783,7 +774,6 @@ export class QueueRuntime {
         raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
           this.store,
         );
-        this.paseoLaunchAdapter = raw;
         paseoRaw = raw as PaseoRawAdapter;
         this.paseoAdapter = admitAdapter(raw, this.admission);
       } else {
@@ -1482,24 +1472,6 @@ export class QueueRuntime {
           this.startError = `Host-run endpoint: ${this.hostRunEndpointError}`;
           console.error("Nucleus host-run endpoint:", this.startError);
         }
-        let hookCommand: string;
-        try {
-          hookCommand = defaultAdmissionHookCommand();
-        } catch (error) {
-          // Missing tsx must not abort Queue start. A deny stub keeps v0.15
-          // fail-closed instead of running heavy work with no hook.
-          console.error(
-            "Nucleus admission hook command:",
-            error instanceof Error ? error.message : String(error),
-          );
-          hookCommand = "printf 'deny Queue admission hook is unavailable\\n'";
-        }
-        this.paseoLaunchAdapter?.setAdmissionLaunchEnv(
-          queueOwnedAdmissionEnvironment({
-            hookCommand,
-            socketPath: hostRunAdmissionSocketPath(this.hostRunStateDir),
-          }),
-        );
       }
     } finally {
       this.resolveHostRunReady();

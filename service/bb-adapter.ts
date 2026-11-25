@@ -155,7 +155,6 @@ export function composeBbAdapter(input: {
     readonly socketPath = join(input.dataDir, "callback.sock");
     readonly reportingViaMcp = false;
     readonly supportsCoordinatorRecovery = true;
-    readonly admissionLaunchEnv = {};
     readonly testPlacement = undefined;
     /** Repository scratch namespaces, so a BB run's leaf follows the repository's setting. */
     scratchNamespaceFor = (task: Task) => store.scratchNamespaceFor(task);

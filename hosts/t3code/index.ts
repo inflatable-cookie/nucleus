@@ -35,7 +35,6 @@ export function createHost(config: T3CodeConfig): T3CodeHost {
 export type T3Reporting = {
   socketPath: string;
   helperPath: string;
-  admissionLaunchEnv?: Record<string, string>;
   testPlacement?: {
     dataDir: string;
     retainedDataDirs?: string[];
@@ -55,7 +54,6 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     readonly admissionStartIntervalMs = 0;
     readonly socketPath: string;
     readonly helperPath: string;
-    readonly admissionLaunchEnv: Record<string, string>;
     readonly testPlacement?: {
       dataDir: string;
       retainedDataDirs?: string[];
@@ -70,7 +68,6 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       this.native = native;
       this.socketPath = reporting?.socketPath ?? "";
       this.helperPath = reporting?.helperPath ?? "";
-      this.admissionLaunchEnv = reporting?.admissionLaunchEnv ?? {};
       this.testPlacement = reporting?.testPlacement;
       const inheritedCreateAgent = this.createAgent.bind(this);
       this.createAgent = (

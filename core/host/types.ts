@@ -345,8 +345,7 @@ export interface TimelinePage {
 
 /**
  * Queue's callback facts for one agent launch: the ticket and MCP binding files
- * its helper reads, the callback environment, the scratch placement and the
- * launch admission env. The owner builds one per call (`() => CreationOwner`),
+ * its helper reads, the callback environment and the scratch placement. The owner builds one per call (`() => CreationOwner`),
  * so each read sees the adapter's current values.
  */
 export interface CreationOwner {
@@ -354,7 +353,6 @@ export interface CreationOwner {
   readonly helperPath: string;
   /** The host attaches MCP reporting, so a binding file is written before the create. */
   readonly reportingViaMcp: boolean;
-  readonly admissionLaunchEnv: Record<string, string>;
   /**
    * When false the host cannot inject per-thread environment, so the launch
    * attempt carries an empty environment and the prompt names the helper and ticket.
