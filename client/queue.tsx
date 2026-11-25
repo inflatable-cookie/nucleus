@@ -40,7 +40,7 @@ import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
 import { projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
-import { InboxList, useInboxBoard, usePipelineState } from "./board/inbox-list";
+import { InboxList, RustListRows, useInboxBoard, usePipelineState } from "./board/inbox-list";
 import { InboxMenu, type BoardView } from "./board/inbox-menu";
 import { useBoardSelection } from "./board/use-board-selection";
 import {
@@ -52,7 +52,7 @@ import {
 } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
-import { groupRustTasks, rustProjectActivity, useRustTasks, type RustInvalidation } from "./web/rust-board";
+import { groupRustTasks, rustProjectActivity, useRustTasks, type RustTask, type RustInvalidation } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
@@ -301,6 +301,30 @@ export function MainSurface({
     state?.projects.find((project) =>
       projectHasRepository(project, repoPath, origin),
     );
+  const rustListProps = {
+    error: rustTasks.error,
+    retry: () => void rustTasks.refetch(),
+    selected: rustTaskId,
+    onSelect: selectRustTask,
+    project: ({ identity }: RustTask) => {
+      const origin = normalizeRepositoryOrigin(identity.repository);
+      const project = projectForRepository(identity.repository, identity.repository);
+      const repo = project?.repositories
+        .find((candidate) => matchesRepository(candidate, identity.repository, identity.repository));
+      return {
+        name: project?.name ?? origin ?? identity.repository,
+        key: project?.key,
+        badge: (repo?.path && state?.repositoryBadges?.[repo.path]) || null,
+      };
+    },
+  };
+  const laneProject = state?.projects.find(({ key }) => key === planningLaneRef?.project);
+  const rustLaneTasks = rustBoard && laneProject && planningLaneRef
+    ? rustTasks.data?.filter((task) =>
+        task.phase !== "done" && task.phase !== "cancelled" &&
+        task.lanes?.includes(planningLaneRef.key) &&
+        projectHasRepository(laneProject, task.identity.repository, task.identity.repository))
+    : undefined;
   const queuedCounts = (state?.queuedCounts ?? []).filter((item) =>
     belongs(item.repoPath),
   );
@@ -717,7 +741,10 @@ export function MainSurface({
                           version,
                         })
                       }
-                      tasks={{
+                      tasks={rustBoard ? {
+                        total: rustLaneTasks?.length,
+                        rows: <RustListRows c={c} view="working" rust={{ ...rustListProps, tasks: rustLaneTasks }} />,
+                      } : {
                         items: laneTasksQuery.data?.tasks,
                         error: laneTasksQuery.error
                           ? planMessage(laneTasksQuery.error)
@@ -805,21 +832,7 @@ export function MainSurface({
                     view={view}
                     rust={rustView ? {
                       tasks: rustColumns?.[rustView],
-                      error: rustTasks.error,
-                      retry: () => void rustTasks.refetch(),
-                      selected: rustTaskId,
-                      onSelect: selectRustTask,
-                      project: ({ identity }) => {
-                        const origin = normalizeRepositoryOrigin(identity.repository);
-                        const project = projectForRepository(identity.repository, identity.repository);
-                        const repo = project?.repositories
-                          .find((candidate) => matchesRepository(candidate, identity.repository, identity.repository));
-                        return {
-                          name: project?.name ?? origin ?? identity.repository,
-                          key: project?.key,
-                          badge: (repo?.path && state?.repositoryBadges?.[repo.path]) || null,
-                        };
-                      },
+                      ...rustListProps,
                     } : undefined}
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}

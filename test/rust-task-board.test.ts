@@ -5,6 +5,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
+import { rustTaskCard as task } from "./support/rust-task-card";
 import { profilesSnapshot, type storageView } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
@@ -46,36 +47,6 @@ test("Rust board settings retain imported profile fields across edits", () => {
 });
 
 const head = "a".repeat(40);
-const task = (
-  id: string,
-  phase: RustTask["phase"],
-  reference: string = id,
-): RustTask => ({
-  identity: { id, repository, reference, base: "main" },
-  lifecycle: {
-    steps: [
-      { key: "queued", label: "Queued", state: phase === "queued" ? "current" : "done", tone: "accent", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
-      { key: "working", label: "Working", state: phase === "working" ? "current" : "todo", tone: "accent", elapsedMs: phase === "working" ? 831_000 : null, activeSinceMs: null, note: null, roundLabel: null },
-      { key: "review", label: "Review", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: "Round 2" },
-      { key: "merge", label: "Merge", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
-      { key: "close", label: "Close", state: "todo", tone: "muted", elapsedMs: null, activeSinceMs: null, note: null, roundLabel: null },
-    ],
-    admittedAtMs: 1_790_000_000_000,
-    finishedAtMs: null,
-    reviewRound: 2,
-    worker: { thread: "fixture-worker", provider: "codex", model: "fixture-worker-model" },
-    reviewer: { thread: "fixture-reviewer", provider: "claude", model: "fixture-review-model" },
-  },
-  phase,
-  version: 7,
-  wait: null,
-  attention: "waiting",
-  nextCheckAt: null,
-  question: null,
-  hold: null,
-  stateLabel: phase[0]!.toUpperCase() + phase.slice(1),
-  stateSinceMs: null,
-});
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
   const repo = { origin: repository, path: "/fixture" };
