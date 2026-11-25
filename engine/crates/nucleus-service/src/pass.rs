@@ -154,6 +154,18 @@ impl Service {
         if workspace == Workspace::Dirty && checkout.deletion_only_head()?.as_ref() != Some(&head) {
             return Err(retained());
         }
+        if task.phase() == Phase::Done && task.report_task().is_none() {
+            if matches!(&workspace, Workspace::Clean(local) if *local != head) {
+                return Err(retained());
+            }
+            let (publication, _) = self.read_forge(task, &checkout).await?;
+            if !matches!(publication, Forge::Merged { ref pr, .. } if Some(pr) == task.pull_request())
+            {
+                return Err(ServiceError::ArchiveEvidence(
+                    "The merged pull request does not confirm the retained checkout's recorded head.".into(),
+                ));
+            }
+        }
         match self
             .retire_if_idle(task, &binding, &checkout, Some(&head))
             .await?

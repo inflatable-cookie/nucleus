@@ -220,7 +220,9 @@ when to ask the planner.
 Archive terminal tasks' known idle threads independently of checkout cleanup.
 The board and Next retain the workspace outcome. Before removing a checkout,
 verify idle participants, Dispatch, the Git registration and published head.
-The task and project fences span removal. Clean worktrees use unforced removal.
+For a retained Done code checkout, read the merged PR again and match its
+head to the task’s recorded head. An unavailable read leaves the checkout in
+place. The task and project fences span removal. Clean worktrees use unforced removal.
 Only unstaged deletions of files at that exact published head allow forced
 removal. Git-ignored output goes with the checkout. Modified, added, non-ignored
 untracked or uncertain contents retain it. A cancelled task retires a clean

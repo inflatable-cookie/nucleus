@@ -9,7 +9,7 @@ use nucleus_core::{
     Action, CheckState, Entry, Forge, Host, LaunchInputs, Observed, RetainedThread, Review,
     RunState,
 };
-use nucleus_forge::GitHub;
+use nucleus_forge::{ForgeError, GitHub};
 use nucleus_hosts::{RunActivity, T3, TaskHost};
 use nucleus_store::EventDraft;
 use tower::ServiceExt;
@@ -2540,7 +2540,9 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
         .get(nucleus_core::Role::Reviewer)
         .expect("new child");
     let (host, parent, archived, publish, native) = archive_shell_fixture(&service, child).await;
-    service.host = host;
+    service.host = host.with_quiet_fixture_processes();
+    let (forge, readable, _, reads, server) = serve_merged_forge(&service.fixture().start).await;
+    service.forge = forge;
     let draft = {
         let work = service.worktrees().unwrap();
         let project = service.fixture();
@@ -2564,7 +2566,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     assert!(
         matches!(service.archive_done(&second).await,Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained"))
     );
-    assert_eq!(std::fs::read_to_string(draft).unwrap(), "keep this draft");
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep this draft");
     assert_eq!(
         *archived.lock().expect("archive writes"),
         [child, parent.as_str()]
@@ -2581,6 +2583,24 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
         *archived.lock().expect("archive writes"),
         [child, parent.as_str(), child]
     );
+    publish(&service.host, None);
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    std::fs::remove_file(&draft).unwrap();
+    let checkout = draft.parent().unwrap();
+    assert!(
+        matches!(service.archive_done(&second).await, Err(ServiceError::Forge(ForgeError::Status(status))) if status == StatusCode::SERVICE_UNAVAILABLE)
+    );
+    assert!(checkout.is_dir());
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+    readable.store(true, Ordering::Relaxed);
+    service.forge_until.store(0, Ordering::Relaxed);
+    assert_eq!(
+        service.archive_done(&second).await.unwrap(),
+        Action::Nothing
+    );
+    assert!(!checkout.exists());
+    server.abort();
     native.abort();
 }
 
