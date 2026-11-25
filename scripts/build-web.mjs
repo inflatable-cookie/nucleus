@@ -5,19 +5,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
-export function buildWeb(out) {
-  return buildPage(out, 'client/web/index.tsx');
-}
-
-export function buildEngineBoard(out) {
-  return buildPage(out, 'client/web/engine-index.tsx', { minify: true });
-}
-
-async function buildPage(out, entry, options = {}) {
+export async function buildEngineBoard(out) {
   await mkdir(out, { recursive: true });
   await build({
     absWorkingDir: root,
-    entryPoints: [entry],
+    entryPoints: ['client/web/engine-index.tsx'],
     outfile: resolve(out, 'app.js'),
     bundle: true,
     platform: 'browser',
@@ -36,7 +28,7 @@ async function buildPage(out, entry, options = {}) {
         });
       },
     }],
-    ...options,
+    minify: true,
   });
   await writeFile(join(out, 'index.html'), '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nucleus</title><style>html,body,#root{height:100%;margin:0}</style></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>');
 }

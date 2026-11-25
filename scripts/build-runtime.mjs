@@ -1,5 +1,5 @@
 import { copyNodeRuntime } from './copy-node-runtime.mjs';
-import { buildEngineBoard, buildWeb } from './build-web.mjs';
+import { buildEngineBoard } from './build-web.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -26,7 +26,6 @@ function installedCommands(text) {
     .replace(/node bin\/nucleus-(submit|reparent|review-entry)\.mjs/g, 'nucleus helper $1');
 }
 
-export { buildWeb };
 
 export async function buildRuntime(destination) {
   if (process.versions.electron) throw Error('Runtime builds require standalone Node; Electron helpers cannot be packaged');
@@ -289,7 +288,6 @@ export async function buildRuntime(destination) {
   await copyFile(join(root, 'hosts/paseo/plugin/paseo-plugin.json'), join(out, 'paseo-plugin.json'));
   await writeFile(join(out, 'index.server.ts'), "export { default } from './server/index.server.mjs';\n");
   await build({ absWorkingDir: root, entryPoints: ['index.client.tsx'], outfile: join(out, 'client/index.client.js'), bundle: true, platform: 'neutral', format: 'esm', external: ['react', 'react/*', 'react-native', 'react-native/*', 'zod', 'zod/*', '@tanstack/react-query', '@tanstack/react-query/*', '@getpaseo/plugin', '@getpaseo/plugin/*'] });
-  await buildWeb(join(out, 'web/dist'));
   await buildEngineBoard(join(out, 'web/engine'));
   await writeFile(join(out, 'index.client.tsx'), "export { default } from './client/index.client.js';\n");
   await mkdir(join(out, 'runtime'));

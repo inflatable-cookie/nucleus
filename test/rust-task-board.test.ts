@@ -703,6 +703,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       backups: { complete: true, issues: 0, verified: [] },
     }),
   };
+  let hostThemeAvailable = true;
   const fetcher: typeof fetch = async (input, init) => {
     const path = String(input);
     requests.push(path);
@@ -738,13 +739,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         planningProjects: operator ? null : ["fixture"],
       });
     if (path === "/api/engine/theme") return Response.json({
-      theme: {
+      theme: hostThemeAvailable ? {
         settings: { defaultTheme: "t3-code", defaultAppearance: "dark" },
         theme: { id: "t3-code", appearance: "dark", colors: {
           text: "#f5f5f5", textMuted: "#a3a3a3", secondaryLabel: "#818181", sidebar: "#000000",
           surfaceRaised: "#111111", sidebarRowHover: "#111111", sidebarRowSelected: "#111111",
         } },
-      },
+      } : null,
     });
     if (path === "/api/engine/profiles/usage") {
       const empty = { counts: {}, groups: {}, sample: 0 };
@@ -840,9 +841,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       }] : []);
     assert.fail("Unexpected standalone route " + path);
   };
+  const systemTheme = Object.assign(new dom.window.EventTarget(), { matches: true });
   Object.assign(dom.window, {
     innerWidth: 1280,
-    matchMedia: () => Object.assign(new dom.window.EventTarget(), { matches: true }),
+    matchMedia: () => systemTheme,
     fetch: fetcher,
     TextDecoder,
     TextEncoder,
@@ -1111,6 +1113,22 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
   await eventually(() => text().includes("Usage level"), "the shared Limits section renders");
+  const settings = selector("Standalone Nucleus settings");
+  const back = selector("Back to board");
+  assert.ok(settings && back);
+  assert.equal(back.getAttribute("role"), "button");
+  assert.equal(back.tabIndex, 0);
+  assert.equal(style(settings).paddingLeft, "24px");
+  hostThemeAvailable = false;
+  emit("theme");
+  await eventually(() => style(back).backgroundColor === "rgb(37, 41, 50)",
+    "Settings uses the dark system palette when the host has no theme");
+  systemTheme.matches = false;
+  systemTheme.dispatchEvent(new dom.window.Event("change"));
+  await eventually(() => style(back).backgroundColor === "rgb(231, 235, 240)",
+    "open Settings follows a system appearance change");
+  hostThemeAvailable = true;
+  emit("theme");
   assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
   await click("Profiles");
