@@ -37,6 +37,7 @@ enum Delivery {
 }
 
 struct ForgeFixture {
+    address: std::sync::OnceLock<std::net::SocketAddr>,
     author: u64,
     delivery: Delivery,
     merged: AtomicBool,
@@ -53,6 +54,7 @@ struct ForgeFixture {
 impl ForgeFixture {
     fn new(author: u64, delivery: Delivery) -> Arc<Self> {
         Arc::new(Self {
+            address: std::sync::OnceLock::default(),
             author,
             delivery,
             merged: AtomicBool::new(false),
@@ -100,7 +102,11 @@ async fn post_review(
         } else {
             StatusCode::FORBIDDEN
         };
-        return (status, [("retry-after", after)]).into_response();
+        return (
+            status,
+            [("retry-after", after), ("x-ratelimit-remaining", "0")],
+        )
+            .into_response();
     }
     if matches!(remote.delivery, Delivery::Denied) {
         return StatusCode::FORBIDDEN.into_response();
@@ -220,6 +226,7 @@ async fn create_service(
         .with_state(remote.clone());
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
+    remote.address.set(address).unwrap();
     service.forge = GitHub::loopback_fixture(address).unwrap();
     service.github_accounts = Arc::new(GitHubAccounts::with_fixture(
         service.settings.clone(),
@@ -275,10 +282,10 @@ async fn record_report(service: &Service, decision: Review) -> String {
     instance
 }
 
-fn restart_service(service: Service) -> Service {
+fn restart_service(service: Service, remote: &ForgeFixture) -> Service {
     let project = service.fixture().clone();
     let settings = service.settings.clone();
-    let forge = service.forge.with_review_bearer("fixture-token").unwrap();
+    let forge = GitHub::loopback_fixture(*remote.address.get().unwrap()).unwrap();
     let callback = service.callback;
     let report_command = service.report_command.clone();
     drop(service);
@@ -444,7 +451,7 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
     let (_home, mut service, server) = create_service(&remote).await;
     let instance = record_report(&service, Review::Approve).await;
     let (intent, body) = aged_claim(&service, &instance).await;
-    service = restart_service(service);
+    service = restart_service(service, &remote);
     assert!(remote.posts.lock().unwrap().is_empty());
     for _ in 0..2 {
         assert!(matches!(
@@ -453,7 +460,7 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
                 PublicationError::UnknownDelivery
             ))
         ));
-        service = restart_service(service);
+        service = restart_service(service, &remote);
         let state = service.state.lock().await;
         let record = state
             .store
@@ -539,7 +546,7 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
         panic!("expected a definite throttle");
     };
     assert!(until >= before + std::time::Duration::from_hours(1));
-    let service = restart_service(service);
+    let service = restart_service(service, &remote);
     assert!(matches!(advance(&service).await,
         Err(ServiceError::Forge(ForgeError::Deferred { until: retained })) if retained == until));
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
@@ -568,7 +575,7 @@ async fn assert_throttled_publication(resubmission: bool) {
         else {
             panic!("expected GitHub to defer attempt {attempt}");
         };
-        service = restart_service(service);
+        service = restart_service(service, &remote);
         let retained = service
             .state
             .lock()

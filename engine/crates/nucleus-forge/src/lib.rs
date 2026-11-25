@@ -8,18 +8,20 @@ pub use review::{
 };
 
 use std::{
-    collections::VecDeque,
-    sync::Mutex,
+    collections::{BTreeMap, VecDeque},
+    num::NonZeroU64,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use nucleus_core::{Action, CheckState, Forge, Head, Observation, Observed, Task, decide};
 use reqwest::{
-    Client, Response, StatusCode, Url,
-    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, RETRY_AFTER},
+    Client, IntoUrl, RequestBuilder, Response, StatusCode, Url,
+    header::{ACCEPT, AUTHORIZATION, ETAG, HeaderMap, HeaderValue, IF_NONE_MATCH, RETRY_AFTER},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
+use tokio::sync::Mutex;
 use wire::{GraphReply, Pull, PullState};
 
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
@@ -265,6 +267,9 @@ impl PullTarget {
 }
 
 pub struct GitHub {
+    auth: HeaderValue,
+    account: SharedAccount,
+    accounts: Arc<Mutex<BTreeMap<NonZeroU64, SharedAccount>>>,
     ancestors: Mutex<VecDeque<Url>>,
     client: Client,
     origin: String,
@@ -303,14 +308,8 @@ impl GitHub {
     }
 
     fn with_origin(bearer: &str, origin: String) -> Result<Self, ForgeError> {
-        if bearer.is_empty() {
-            return Err(ForgeError::Credential);
-        }
-        let mut auth = HeaderValue::from_str(&format!("Bearer {bearer}"))
-            .map_err(|_| ForgeError::Credential)?;
-        auth.set_sensitive(true);
+        let auth = Self::authorization(bearer)?;
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, auth);
         headers.insert(
             ACCEPT,
             HeaderValue::from_static("application/vnd.github+json"),
@@ -328,9 +327,22 @@ impl GitHub {
             .build()?;
         Ok(Self {
             client,
+            auth,
+            account: Arc::default(),
+            accounts: Arc::default(),
             origin,
             ancestors: Mutex::default(),
         })
+    }
+
+    fn authorization(bearer: &str) -> Result<HeaderValue, ForgeError> {
+        if bearer.is_empty() {
+            return Err(ForgeError::Credential);
+        }
+        let mut auth = HeaderValue::from_str(&format!("Bearer {bearer}"))
+            .map_err(|_| ForgeError::Credential)?;
+        auth.set_sensitive(true);
+        Ok(auth)
     }
 
     /// Find the open PR on a task branch before a worker report is available.
@@ -355,8 +367,7 @@ impl GitHub {
             ("base", &branches.base),
             ("per_page", "2"),
         ]);
-        let response = self.client.get(url).send().await?;
-        let listed: Vec<Listed> = decode(response).await?;
+        let listed: Vec<Listed> = self.get(url).await?;
         match listed.as_slice() {
             [] => Ok(None),
             [pull] => Ok(Some(branches.target(&pull.html_url)?)),
@@ -377,21 +388,14 @@ impl GitHub {
             pullRequests(headRefName:$head,states:OPEN,first:1){totalCount}
           }
         }";
-        let response = self
-            .client
-            .post(format!("{}/graphql", self.origin))
-            .json(&json!({"query": query, "variables": {
-                "owner": branches.owner, "repo": branches.repository, "head": head
-            }}))
-            .send()
+        let graph = self
+            .graph(
+                query,
+                json!({
+                    "owner": branches.owner, "repo": branches.repository, "head": head
+                }),
+            )
             .await?;
-        let now = SystemTime::now();
-        let deadline =
-            deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
-        let graph: GraphReply = decode(response).await?;
-        if graph.rate_limited() {
-            return Err(ForgeError::Deferred { until: deadline });
-        }
         graph.has_open_branch_pr()
     }
 
@@ -436,7 +440,7 @@ impl GitHub {
         }
         let name = format!("pull/{}/head", target.number);
         let url = self.repository_url(&target.branches, &format!("git/ref/{name}"))?;
-        let reference: Reference = decode(self.client.get(url).send().await?).await?;
+        let reference: Reference = self.get(url).await?;
         if reference.name != format!("refs/{name}") || reference.object.kind != "commit" {
             return Err(ForgeError::Identity);
         }
@@ -455,7 +459,7 @@ impl GitHub {
         url.path_segments_mut()
             .map_err(|()| ForgeError::Incomplete)?
             .push(name);
-        let branch: PublishedBranch = decode(self.client.get(url).send().await?).await?;
+        let branch: PublishedBranch = self.get(url).await?;
         if branch.name != name {
             return Err(ForgeError::Identity);
         }
@@ -476,7 +480,7 @@ impl GitHub {
             url.query_pairs_mut()
                 .append_pair("per_page", "100")
                 .append_pair("page", &page.to_string());
-            let batch: Vec<PublishedBranch> = decode(self.client.get(url).send().await?).await?;
+            let batch: Vec<PublishedBranch> = self.get(url).await?;
             let last = batch.len() < 100;
             heads.extend(
                 batch
@@ -513,18 +517,13 @@ impl GitHub {
             status: Relation,
         }
         let url = self.repository_url(branches, &format!("compare/{ancestor}...{tip}"))?;
-        let facts = || {
-            self.ancestors
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        };
-        if facts().contains(&url) {
+        let mut facts = self.ancestors.lock().await;
+        if facts.contains(&url) {
             return Ok(true);
         }
-        let comparison: Comparison = decode(self.client.get(url.clone()).send().await?).await?;
+        let comparison: Comparison = self.get(url.clone()).await?;
         let contains = matches!(comparison.status, Relation::Ahead | Relation::Identical);
         if contains {
-            let mut facts = facts();
             if facts.len() == 256 {
                 facts.pop_front();
             }
@@ -618,25 +617,36 @@ impl GitHub {
         if query == CHECKS_QUERY {
             variables["namedChecks"] = json!(named_checks);
         }
-        let response = self
+        self.graph(query, variables).await
+    }
+
+    async fn graph(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> Result<GraphReply, ForgeError> {
+        let request = self
             .client
             .post(format!("{}/graphql", self.origin))
-            .json(&json!({"query": query, "variables": variables}))
-            .send()
-            .await?;
-        let now = SystemTime::now();
-        let deadline =
-            deadline_hint(response.headers(), now).unwrap_or(now + Duration::from_mins(1));
-        let graph: GraphReply = decode(response).await?;
-        if graph.rate_limited() {
-            return Err(ForgeError::Deferred { until: deadline });
-        }
-        Ok(graph)
+            .json(&json!({"query":query, "variables":variables}));
+        self.request(request, false, |_, bytes, deadline| {
+            let graph: GraphReply = decode_json(bytes)?;
+            if secondary_limit(bytes) {
+                return Err(ForgeError::Deferred {
+                    until: deadline.max(SystemTime::now() + Duration::from_mins(1)),
+                });
+            }
+            if graph.rate_limited() {
+                return Err(ForgeError::Deferred { until: deadline });
+            }
+            Ok(graph)
+        })
+        .await
     }
 
     async fn pull(&self, target: &PullTarget) -> Result<Pull, ForgeError> {
         let url = format!("{}/{}", self.origin, target.path());
-        let pull: Pull = decode(self.client.get(url).send().await?).await?;
+        let pull: Pull = self.get(url).await?;
         target.verify(&pull)?;
         Ok(pull)
     }
@@ -699,16 +709,11 @@ impl GitHub {
             });
         }
         let url = format!("{}/{}/merge", self.origin, target.path());
-        let reply = self
+        let request = self
             .client
             .put(url)
-            .json(&json!({ "sha": head, "merge_method": "squash" }))
-            .send()
-            .await;
-        let write = match reply {
-            Ok(reply) => classify_write(reply).await,
-            Err(_) => MergeWrite::Unknown,
-        };
+            .json(&json!({ "sha": head, "merge_method": "squash" }));
+        let write = classify_write(self.write(request).await);
         if let MergeWrite::Deferred { until } = write {
             return Ok(MergeAttempt {
                 write,
@@ -748,31 +753,29 @@ impl GitHub {
     }
 }
 
-async fn classify_write(response: Response) -> MergeWrite {
+fn classify_write(reply: Result<(StatusCode, Vec<u8>), ForgeError>) -> MergeWrite {
     #[derive(Deserialize)]
     struct Receipt {
         merged: bool,
         sha: Option<Head>,
     }
 
-    let (status, bytes) = match payload(response).await {
-        Ok(payload) => payload,
-        Err(ForgeError::Deferred { until }) => return MergeWrite::Deferred { until },
-        Err(_) => return MergeWrite::Unknown,
-    };
-    match status {
-        StatusCode::OK => match decode_json::<Receipt>(&bytes) {
+    match reply {
+        Ok((StatusCode::OK, bytes)) => match decode_json::<Receipt>(&bytes) {
             Ok(Receipt {
                 merged: true,
                 sha: Some(commit),
             }) => MergeWrite::Merged { commit },
             _ => MergeWrite::Unknown,
         },
-        StatusCode::CONFLICT => MergeWrite::HeadMismatch,
-        status if status.is_server_error() || status == StatusCode::REQUEST_TIMEOUT => {
-            MergeWrite::Unknown
+        Err(ForgeError::Deferred { until }) => MergeWrite::Deferred { until },
+        Err(ForgeError::Status(StatusCode::CONFLICT)) => MergeWrite::HeadMismatch,
+        Err(ForgeError::Status(status))
+            if !status.is_server_error() && status != StatusCode::REQUEST_TIMEOUT =>
+        {
+            MergeWrite::Refused { status }
         }
-        status => MergeWrite::Refused { status },
+        _ => MergeWrite::Unknown,
     }
 }
 
@@ -799,40 +802,187 @@ fn deadline_hint(headers: &HeaderMap, now: SystemTime) -> Option<SystemTime> {
         .filter(|time| *time >= now)
 }
 
-async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ForgeError> {
-    let (status, bytes) = payload(response).await?;
-    if !status.is_success() {
-        return Err(ForgeError::Status(status));
-    }
-    decode_json(&bytes)
+type SharedAccount = Arc<Mutex<Account>>;
+
+#[derive(Default)]
+struct Account {
+    until: Option<SystemTime>,
+    next_write: Option<tokio::time::Instant>,
+    reads: VecDeque<Representation>,
 }
 
-async fn payload(mut response: Response) -> Result<(StatusCode, Vec<u8>), ForgeError> {
-    #[derive(Deserialize)]
-    struct ErrorBody {
-        message: String,
+struct Representation {
+    url: Url,
+    auth: HeaderValue,
+    tag: HeaderValue,
+    bytes: Vec<u8>,
+}
+
+impl GitHub {
+    async fn get<T: DeserializeOwned>(&self, url: impl IntoUrl) -> Result<T, ForgeError> {
+        self.request(self.client.get(url), false, |_, bytes, _| {
+            decode_json(bytes)
+        })
+        .await
     }
 
-    let status = response.status();
-    let headers = response.headers();
-    let now = SystemTime::now();
-    let fallback = now + Duration::from_mins(1);
-    let hint = deadline_hint(headers, now);
-    let exhausted = headers
-        .get("x-ratelimit-remaining")
-        .is_some_and(|value| value == "0");
-    let forbidden = status == StatusCode::FORBIDDEN;
-    if exhausted
-        || status == StatusCode::TOO_MANY_REQUESTS
-        || (forbidden && headers.contains_key(RETRY_AFTER))
-    {
-        return Err(ForgeError::Deferred {
-            until: hint.unwrap_or(fallback),
-        });
+    async fn write(&self, request: RequestBuilder) -> Result<(StatusCode, Vec<u8>), ForgeError> {
+        self.request(request, true, |status, bytes, _| {
+            Ok((status, bytes.to_vec()))
+        })
+        .await
     }
-    if !status.is_success() && !forbidden {
-        return Ok((status, Vec::new()));
+
+    async fn request<T>(
+        &self,
+        request: RequestBuilder,
+        write: bool,
+        parse: impl FnOnce(StatusCode, &[u8], SystemTime) -> Result<T, ForgeError>,
+    ) -> Result<T, ForgeError> {
+        let mut request = request.header(AUTHORIZATION, self.auth.clone()).build()?;
+        let mut state = self.account.lock().await;
+        if let Some(until) = state.until
+            && until > SystemTime::now()
+        {
+            return Err(ForgeError::Deferred { until });
+        }
+        if write {
+            if let Some(next) = state.next_write {
+                tokio::time::sleep_until(next).await;
+            }
+            state.next_write = Some(tokio::time::Instant::now() + Duration::from_secs(1));
+        }
+        let url = request.url().clone();
+        let get = request.method() == reqwest::Method::GET;
+        let cached = if get {
+            state
+                .reads
+                .iter()
+                .position(|entry| entry.url == url && entry.auth == self.auth)
+        } else {
+            None
+        };
+        if let Some(index) = cached {
+            request
+                .headers_mut()
+                .insert(IF_NONE_MATCH, state.reads[index].tag.clone());
+        }
+        let response = self.client.execute(request).await?;
+        let reply = state.receive(response).await;
+        if write {
+            state.next_write = Some(tokio::time::Instant::now() + Duration::from_secs(1));
+        }
+        let Reply {
+            status,
+            tag,
+            bytes,
+            deadline,
+        } = reply?;
+        if status == StatusCode::NOT_MODIFIED {
+            let index = cached.ok_or(ForgeError::Incomplete)?;
+            return parse(StatusCode::OK, &state.reads[index].bytes, deadline);
+        }
+        if let Some(index) = cached {
+            state.reads.remove(index);
+        }
+        let result = parse(status, &bytes, deadline);
+        if let Err(ForgeError::Deferred { until }) = &result {
+            state.until = Some(*until);
+        }
+        if result.is_ok()
+            && get
+            && let Some(tag) = tag
+        {
+            // At most 16 bounded bodies per account, shared across tasks and pages.
+            if state.reads.len() == 16 {
+                state.reads.pop_front();
+            }
+            state.reads.push_back(Representation {
+                url,
+                auth: self.auth.clone(),
+                tag,
+                bytes,
+            });
+        }
+        result
     }
+}
+
+struct Reply {
+    status: StatusCode,
+    tag: Option<HeaderValue>,
+    bytes: Vec<u8>,
+    deadline: SystemTime,
+}
+
+impl Account {
+    async fn receive(&mut self, response: Response) -> Result<Reply, ForgeError> {
+        let status = response.status();
+        let headers = response.headers();
+        let now = SystemTime::now();
+        let minute = now + Duration::from_mins(1);
+        let hint = deadline_hint(headers, now).unwrap_or(minute);
+        let exhausted = headers
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value == "0");
+        let retry = headers.contains_key(RETRY_AFTER);
+        let quota_status = matches!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS | StatusCode::FORBIDDEN
+        );
+        let limited =
+            status == StatusCode::TOO_MANY_REQUESTS || (quota_status && (exhausted || retry));
+        let deadline = if exhausted { hint } else { hint.max(minute) };
+        if exhausted || retry || limited {
+            self.until = Some(if limited { deadline } else { hint });
+        }
+        let tag = headers.get(ETAG).cloned();
+        let received = response_bytes(response).await;
+        if quota_status && received.as_ref().is_ok_and(|bytes| secondary_limit(bytes)) {
+            let until = hint.max(minute);
+            self.until = Some(until);
+            return Err(ForgeError::Deferred { until });
+        }
+        if limited {
+            return Err(ForgeError::Deferred { until: deadline });
+        }
+        if !status.is_success() && status != StatusCode::NOT_MODIFIED {
+            return Err(ForgeError::Status(status));
+        }
+        Ok(Reply {
+            status,
+            tag,
+            bytes: received?,
+            deadline: hint,
+        })
+    }
+}
+
+fn secondary_limit(bytes: &[u8]) -> bool {
+    #[derive(Default, Deserialize)]
+    #[serde(default)]
+    struct Message {
+        message: String,
+    }
+    #[derive(Deserialize)]
+    struct Errors {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        errors: Vec<Message>,
+    }
+    serde_json::from_slice::<Errors>(bytes).is_ok_and(|body| {
+        std::iter::once(body.message)
+            .chain(body.errors.into_iter().map(|error| error.message))
+            .any(|message| {
+                message
+                    .to_ascii_lowercase()
+                    .contains("secondary rate limit")
+            })
+    })
+}
+
+async fn response_bytes(mut response: Response) -> Result<Vec<u8>, ForgeError> {
     let mut data = Vec::new();
     while let Some(bytes) = response.chunk().await? {
         if data.len() + bytes.len() > BODY_LIMIT {
@@ -840,18 +990,7 @@ async fn payload(mut response: Response) -> Result<(StatusCode, Vec<u8>), ForgeE
         }
         data.extend_from_slice(&bytes);
     }
-    if forbidden
-        && serde_json::from_slice::<ErrorBody>(&data).is_ok_and(|body| {
-            body.message
-                .to_ascii_lowercase()
-                .contains("secondary rate limit")
-        })
-    {
-        return Err(ForgeError::Deferred {
-            until: hint.unwrap_or(fallback).max(fallback),
-        });
-    }
-    Ok((status, data))
+    Ok(data)
 }
 
 fn decode_json<T: DeserializeOwned>(data: &[u8]) -> Result<T, ForgeError> {

@@ -123,6 +123,8 @@ fn merged_graph(head: char, base: &str, state: &str, commit: Option<Head>) -> Va
 }
 
 struct Request {
+    at: std::time::Instant,
+    validator: Option<String>,
     method_and_path: String,
     authorization: String,
     body: Option<Value>,
@@ -163,6 +165,8 @@ fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Req
             let mut reader = BufReader::new(&stream);
             let mut method_and_path = String::new();
             reader.read_line(&mut method_and_path).expect("read request line");
+            let at = std::time::Instant::now();
+            let mut validator = None;
             let mut length = 0;
             let mut authorization = String::new();
             loop {
@@ -174,6 +178,7 @@ fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Req
                     if name.eq_ignore_ascii_case("Content-Length") {
                         length = value.trim().parse().expect("valid fixture content length");
                     }
+                    if name.eq_ignore_ascii_case("If-None-Match") { validator = Some(value.trim().into()); }
                     if name.eq_ignore_ascii_case("Authorization") {
                         authorization = value.trim().into();
                     }
@@ -185,7 +190,7 @@ fn scripted(responses: Vec<Option<FixtureReply>>) -> (GitHub, JoinHandle<Vec<Req
                 let json = response.body.to_string();
                 write!(stream, "HTTP/1.1 {} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{json}", response.status, json.len(), response.headers).expect("write fixture response");
             }
-            Request { method_and_path, authorization, body: (!body.is_empty()).then(|| serde_json::from_slice(&body).expect("fixture JSON")) }
+            Request { at, validator, method_and_path, authorization, body: (!body.is_empty()).then(|| serde_json::from_slice(&body).expect("fixture JSON")) }
         }).collect()
     });
     let github = GitHub::with_origin("synthetic-token", format!("http://{addr}"))
@@ -800,6 +805,7 @@ async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
     let body = format!("Changes needed\n\n{marker}");
     let review = formal_review(7, 42, 'a', "CHANGES_REQUESTED", &body);
     let (operator, thread) = server(vec![
+        Some(json!({"id": 11, "login": "operator"})),
         Some(json!({"id": 42, "login": "reviewer"})),
         Some(pull('a', false)),
         None,
@@ -807,7 +813,10 @@ async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
         Some(review),
     ]);
     let target = branches().target(PR_URL).expect("fixture target");
-    let reviewer = operator.with_review_bearer("reviewer-fixture").unwrap();
+    let reviewer = operator
+        .with_review_bearer("reviewer-fixture", 42.try_into().unwrap())
+        .await
+        .unwrap();
     let user = reviewer.authenticated_user().await.unwrap();
     let binding = ReviewBinding {
         pull_author: 11.try_into().unwrap(),
@@ -835,6 +844,8 @@ async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
         .unwrap();
     assert_eq!(verified.body, body);
     let requests = thread.join().unwrap();
+    assert_eq!(requests[0].authorization, "Bearer synthetic-token");
+    let requests = &requests[1..];
     assert_eq!(requests[0].authorization, "Bearer reviewer-fixture");
     assert_eq!(requests[1].authorization, "Bearer synthetic-token");
     assert_eq!(requests[2].authorization, "Bearer reviewer-fixture");
@@ -948,4 +959,143 @@ async fn ancestry_proofs_follow_the_current_pull_ref_and_branch_tip() {
             .count(),
         3
     );
+}
+
+#[tokio::test]
+async fn account_deadlines_and_write_spacing_follow_identity_across_bearers() {
+    let same = 42.try_into().unwrap();
+    let other = 11.try_into().unwrap();
+    let user = json!({"id": 42, "login": "operator"});
+    let (operator, calls) = scripted(vec![
+        Some(FixtureReply::ok(user.clone())),
+        Some(FixtureReply::ok(json!({}))),
+        Some(FixtureReply::ok(json!({}))),
+        Some(FixtureReply {
+            status: 403,
+            headers: "Retry-After: 1\r\n",
+            body: json!({"message":"secondary rate limit"}),
+        }),
+        Some(FixtureReply::ok(json!({"id":11, "login":"reviewer"}))),
+    ]);
+    let reviewer = operator
+        .with_review_bearer("refreshed-bearer", same)
+        .await
+        .unwrap();
+    let distinct = operator
+        .with_review_bearer("different-bearer", other)
+        .await
+        .unwrap();
+    let (first, second) = tokio::join!(
+        operator.write(operator.client.put(format!("{}/merge", operator.origin))),
+        reviewer.write(reviewer.client.post(format!("{}/reviews", reviewer.origin))),
+    );
+    first.unwrap();
+    second.unwrap();
+    let before = SystemTime::now();
+    let Err(ForgeError::Deferred { until }) = reviewer.authenticated_user().await else {
+        panic!("secondary throttle")
+    };
+    assert!(until >= before + Duration::from_mins(1));
+    let refreshed = operator
+        .with_review_bearer("replacement-bearer", same)
+        .await
+        .unwrap();
+    for handle in [&operator, &refreshed] {
+        assert!(
+            matches!(handle.authenticated_user().await, Err(ForgeError::Deferred { until: held }) if held == until)
+        );
+    }
+    assert_eq!(distinct.authenticated_user().await.unwrap().id, other);
+    let calls = calls.join().unwrap();
+    assert!(calls[2].at.duration_since(calls[1].at) >= Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn conditional_reads_revalidate_each_credential_and_page() {
+    let ok = || {
+        Some(FixtureReply {
+            status: 200,
+            headers: "ETag: W/\"first\"\r\n",
+            body: json!(7),
+        })
+    };
+    let (client, calls) = scripted(vec![
+        ok(),
+        Some(FixtureReply {
+            status: 304,
+            headers: "",
+            body: Value::Null,
+        }),
+        ok(),
+        Some(FixtureReply::ok(json!({"id":42,"login":"operator"}))),
+        ok(),
+        Some(FixtureReply::ok(json!(8))),
+        Some(FixtureReply::ok(json!(9))),
+    ]);
+    let page = format!("{}/reviews?page=1", client.origin);
+    for _ in 0..2 {
+        assert_eq!(client.get::<u64>(&page).await.unwrap(), 7);
+    }
+    client
+        .get::<u64>(format!("{}/reviews?page=2", client.origin))
+        .await
+        .unwrap();
+    let other = client
+        .with_review_bearer("scoped-bearer", 42.try_into().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(other.get::<u64>(&page).await.unwrap(), 7);
+    assert_eq!(client.get::<u64>(&page).await.unwrap(), 8);
+    assert_eq!(client.get::<u64>(&page).await.unwrap(), 9);
+    let calls = calls.join().unwrap();
+    let validators: Vec<_> = calls.iter().map(|r| r.validator.as_deref()).collect();
+    assert_eq!(
+        validators,
+        [
+            None,
+            Some("W/\"first\""),
+            None,
+            None,
+            None,
+            Some("W/\"first\""),
+            None
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_second_read_waits_until_the_first_body_finishes() {
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = GitHub::with_origin(
+        "fixture",
+        format!("http://{}", socket.local_addr().unwrap()),
+    )
+    .unwrap();
+    let server = thread::spawn(move || {
+        let (mut first, _) = socket.accept().unwrap();
+        let mut request = [0; 4096];
+        assert!(first.read(&mut request).unwrap() > 0);
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n1")
+            .unwrap();
+        thread::sleep(Duration::from_millis(100));
+        socket.set_nonblocking(true).unwrap();
+        assert_eq!(
+            socket.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        first.write_all(b"2").unwrap();
+        socket.set_nonblocking(false).unwrap();
+        let (mut second, _) = socket.accept().unwrap();
+        assert!(second.read(&mut request).unwrap() > 0);
+        second
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n34")
+            .unwrap();
+    });
+    let (one, two) = tokio::join!(
+        client.get::<u64>(&client.origin),
+        client.get::<u64>(&client.origin)
+    );
+    assert_eq!((one.unwrap(), two.unwrap()), (12, 34));
+    server.join().unwrap();
 }

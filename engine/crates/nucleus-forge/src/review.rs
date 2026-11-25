@@ -5,7 +5,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{ForgeError, GitHub, PullTarget, decode, wire::PullState};
+use crate::{ForgeError, GitHub, PullTarget, wire::PullState};
 
 const PAGE_SIZE: usize = 30;
 const MAX_PAGES: usize = 100;
@@ -94,12 +94,31 @@ impl ReviewBinding<'_> {
 }
 
 impl GitHub {
-    /// Use a reviewer bearer on the same forge origin, without modifying this client.
+    /// Pace a saved reviewer by its numeric account ID, including after token refresh.
+    /// Callers verify the bearer identity before operating on its behalf.
     ///
     /// # Errors
     /// Returns an error if the bearer or client is invalid.
-    pub fn with_review_bearer(&self, bearer: &str) -> Result<Self, ForgeError> {
-        Self::with_origin(bearer, self.origin.clone())
+    pub async fn with_review_bearer(
+        &self,
+        bearer: &str,
+        id: NonZeroU64,
+    ) -> Result<Self, ForgeError> {
+        let auth = Self::authorization(bearer)?;
+        let mut accounts = self.accounts.lock().await;
+        if accounts.is_empty() {
+            let operator = self.authenticated_user().await?;
+            accounts.insert(operator.id, self.account.clone());
+        }
+        let account = accounts.entry(id).or_default().clone();
+        Ok(Self {
+            client: self.client.clone(),
+            origin: self.origin.clone(),
+            auth,
+            account,
+            accounts: self.accounts.clone(),
+            ancestors: tokio::sync::Mutex::default(),
+        })
     }
 
     /// Bind a credential to its numeric GitHub identity before claiming a write.
@@ -107,12 +126,7 @@ impl GitHub {
     /// # Errors
     /// Returns an error when GitHub refuses the credential or returns unusable evidence.
     pub async fn authenticated_user(&self) -> Result<AuthenticatedGitHubUser, ForgeError> {
-        let response = self
-            .client
-            .get(format!("{}/user", self.origin))
-            .send()
-            .await?;
-        let user: AuthenticatedGitHubUser = decode(response).await?;
+        let user: AuthenticatedGitHubUser = self.get(format!("{}/user", self.origin)).await?;
         if user.login.trim().is_empty() {
             return Err(ForgeError::Incomplete);
         }
@@ -149,26 +163,16 @@ impl GitHub {
         binding: &ReviewBinding<'_>,
         body: &str,
     ) -> ReviewWrite {
-        let Ok(response) = self
+        let request = self
             .client
             .post(format!("{}/{}/reviews", self.origin, target.path()))
-            .json(&json!({"commit_id": binding.head, "event": binding.event(), "body": body}))
-            .send()
+            .json(&json!({"commit_id": binding.head, "event": binding.event(), "body": body}));
+        match self
+            .write(request)
             .await
-        else {
-            return ReviewWrite::Unknown;
-        };
-        let status = response.status();
-        match decode::<WireReview>(response).await {
-            // Quota headers can also accompany a successful or ambiguous POST.
-            Err(ForgeError::Deferred { until })
-                if matches!(
-                    status,
-                    StatusCode::TOO_MANY_REQUESTS | StatusCode::FORBIDDEN
-                ) =>
-            {
-                ReviewWrite::Deferred { until }
-            }
+            .and_then(|(_, body)| crate::decode_json::<WireReview>(&body))
+        {
+            Err(ForgeError::Deferred { until }) => ReviewWrite::Deferred { until },
             Ok(review) => match binding.verify(review) {
                 Ok(verified) if verified.body == body => ReviewWrite::Verified(verified),
                 _ => ReviewWrite::Unknown,
@@ -193,13 +197,7 @@ impl GitHub {
         id: NonZeroU64,
     ) -> Result<VerifiedReview, ReviewError> {
         let url = format!("{}/{}/reviews/{id}", self.origin, target.path());
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(ForgeError::from)?;
-        let review: WireReview = decode(response).await?;
+        let review: WireReview = self.get(url).await?;
         if review.id != id {
             return Err(ReviewError::Mismatched);
         }
@@ -220,13 +218,9 @@ impl GitHub {
         let url = format!("{}/{}/reviews", self.origin, target.path());
         let mut foreign_marker = false;
         for page in 1..=MAX_PAGES {
-            let response = self
-                .client
+            let reviews: Vec<WireReview> = self
                 .get(format!("{url}?per_page={PAGE_SIZE}&page={page}"))
-                .send()
-                .await
-                .map_err(ForgeError::from)?;
-            let reviews: Vec<WireReview> = decode(response).await?;
+                .await?;
             let last_page = reviews.len() < PAGE_SIZE;
             // GitHub lists reviews in chronological order. Retain the earliest
             // exact review if a duplicate is present.
