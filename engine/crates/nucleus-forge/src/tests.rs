@@ -612,6 +612,36 @@ fn a_pull_target_stays_inside_the_configured_repository() {
 }
 
 #[tokio::test]
+async fn a_selected_check_rollup_must_be_present_even_when_null() {
+    let target = branches().target(PR_URL).unwrap();
+    for present in [false, true] {
+        let mut response = checks('a', "SUCCESS");
+        let pr = response["data"]["repository"]["pullRequest"]
+            .as_object_mut()
+            .unwrap();
+        if present {
+            pr.insert("statusCheckRollup".into(), Value::Null);
+        } else {
+            pr.remove("statusCheckRollup");
+        }
+        let (forge, server) = server(vec![Some(pull('a', false)), Some(response)]);
+        let result = forge.observe(&target).await;
+        if present {
+            assert!(matches!(
+                result,
+                Ok(Forge::Open {
+                    checks: CheckState::Ready,
+                    ..
+                })
+            ));
+        } else {
+            assert!(matches!(result, Err(ForgeError::Incomplete)));
+        }
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+}
+
+#[tokio::test]
 async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
     for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Unreported)] {
         let mut response = checks('a', "SUCCESS");

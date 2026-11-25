@@ -118,6 +118,47 @@ fn review_allocation_can_fetch_a_pull_head_missing_from_the_registered_checkout(
 }
 
 #[test]
+fn integration_admission_detects_a_moved_ignored_submodule() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("registered");
+    let child = root.path().join("child");
+    repository(&repo);
+    repository(&child);
+    git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "../child",
+            "module",
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.module.ignore",
+            "all",
+        ],
+    );
+    git(&repo, &["add", ".gitmodules"]);
+    git(&repo, &["commit", "-m", "Pin the ignored submodule"]);
+    let work = worktrees(root.path());
+    let checkout = work.checkout(&repo, "example/fixture", "report").unwrap();
+    assert!(checkout.integration_clean().unwrap());
+    git(
+        &repo.join("module"),
+        &["commit", "--allow-empty", "-m", "Move the checkout"],
+    );
+    assert!(git(&repo, &["status", "--porcelain"]).is_empty());
+    assert!(!checkout.integration_clean().unwrap());
+}
+
+#[test]
 fn successful_status_overflow_is_dirty_and_retained() {
     let home = tempfile::tempdir().unwrap();
     let repo = home.path().join("repository");
