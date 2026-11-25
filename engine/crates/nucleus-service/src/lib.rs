@@ -952,6 +952,11 @@ impl Service {
             return Ok(());
         }
         if wait == Some(WaitReason::Capacity)
+            && current.task.phase() == Phase::Working
+            && current.task.first_launch()
+            && !state
+                .store
+                .pending_parent_preparation(id, current.version)?
             && current.task.reconcile_capacity() == Action::Advance(Phase::Queued)
         {
             current.version = self.commit(

@@ -844,6 +844,37 @@ impl Store {
             .optional()?)
     }
 
+    /// Check every exact parent attempt before giving up the version that owns it.
+    /// A disconnected or replaced host cannot settle an attempt in the journal.
+    ///
+    /// # Errors
+    /// Returns an error if the turn journal is unreadable.
+    pub fn pending_parent_preparation(&self, id: &str, version: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "WITH journal AS (
+                 SELECT sequence, kind, json_extract(detail, '$.command') AS command,
+                        json_extract(detail, '$.session') AS session,
+                        json_extract(detail, '$.attempt') AS attempt
+                 FROM events WHERE task_id = ?1 AND json_valid(detail)
+                   AND json_extract(detail, '$.version') = ?2
+                   AND kind IN ('native_turn_intent', 'native_turn_replay',
+                                'native_turn_observed', 'native_turn_not_sent')
+             )
+             SELECT EXISTS(SELECT 1 FROM journal intent
+               WHERE intent.kind IN ('native_turn_intent', 'native_turn_replay')
+                 AND NOT EXISTS (SELECT 1 FROM journal proof WHERE proof.command = intent.command
+                   AND ((proof.kind = 'native_turn_observed'
+                         AND (proof.session = intent.session
+                              OR instr(intent.session, proof.session || '/') = 1))
+                     OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
+                         AND (proof.attempt = intent.sequence
+                              OR (proof.attempt IS NULL AND proof.session = intent.session))))))",
+            )?
+            .query_row(params![id, version], |row| row.get(0))?)
+    }
+
     /// Find same-version native sends whose outcome a delivery fence could still protect.
     /// An empty list inside Some represents a typed uncertain send with no usable command.
     ///

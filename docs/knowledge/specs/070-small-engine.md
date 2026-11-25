@@ -455,6 +455,7 @@ Later decisions carry their own attribution.
     project and checkout capacity under the task fence before entering Working.
     This also applies to report-only work. A first worker without a run or a
     retained role returns to Queued if capacity closes before reservation.
+    An unresolved parent attempt keeps its task version and waits for capacity.
     It keeps its original admission order and reuses its native parent row
     on a later dispatch.
     Admission creates no T3 parent. The TypeScript path uses

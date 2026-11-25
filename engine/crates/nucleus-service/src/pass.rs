@@ -996,7 +996,16 @@ impl Service {
                     self.parent_not_sent(error)
                 }
             })? {
-            ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::Live(parent) => {
+                // The native run matched the frozen command's message ID.
+                if task.first_launch()
+                    && let Some(command) = &prior_turn
+                {
+                    self.record_native_turn(row, "native_turn_observed", &session, command)
+                        .await?;
+                }
+                Ok(ControlFlow::Continue(Some(parent)))
+            }
             ParentStep::DeliveryUnknown => {
                 Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain))
             }
@@ -1050,7 +1059,12 @@ impl Service {
         let intent = write.starts_turn().then_some(kind);
         let command = command.to_owned();
         match self.deliver_parent(row, write, &scope, intent).await {
-            Ok(true) => {}
+            Ok(true) => {
+                if intent.is_some() && row.task.first_launch() {
+                    self.record_native_turn(row, "native_turn_observed", session, &command)
+                        .await?;
+                }
+            }
             Ok(false) => return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain)),
             Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
                 self.record_failed_parent_turn(row, session, &command)
