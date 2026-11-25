@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EventDraft, Store, StoreError, append};
 
-const FLIP_INTERVAL_MS: u64 = 120_000;
+const FLIP_INTERVAL_MS: i64 = 120_000;
 
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_row_snoozes (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id),
@@ -87,10 +87,11 @@ impl Store {
         receipt: &RowSnooze,
         now: u64,
     ) -> Result<Option<u64>, StoreError> {
+        let now = i64::try_from(now).unwrap_or(i64::MAX);
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous: Option<(u64, bool)> = tx
+        let previous: Option<(i64, bool)> = tx
             .query_row(
                 "SELECT attempted_at, deferred FROM task_row_flips WHERE task_id = ?1",
                 [task],
@@ -107,7 +108,7 @@ impl Store {
                     [task],
                 )?;
                 append(&tx, task, &EventDraft {
-                    at: i64::try_from(now).unwrap_or(i64::MAX),
+                    at: now,
                     kind: "native_row_flip_deferred".into(),
                     detail: serde_json::json!({
                         "thread": thread,
@@ -118,7 +119,7 @@ impl Store {
                 })?;
             }
             tx.commit()?;
-            return Ok(Some(due));
+            return Ok(Some(due.unsigned_abs()));
         }
         tx.execute(
             "INSERT INTO task_row_flips (task_id, attempted_at) VALUES (?1, ?2)
