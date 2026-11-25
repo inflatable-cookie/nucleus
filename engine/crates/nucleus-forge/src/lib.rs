@@ -1,6 +1,11 @@
 //! Observe GitHub pull requests and merge only at the authorized head.
 
+mod review;
 mod wire;
+
+pub use review::{
+    AuthenticatedGitHubUser, ReviewBinding, ReviewError, ReviewWrite, VerifiedReview,
+};
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
