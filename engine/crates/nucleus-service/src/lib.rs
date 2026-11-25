@@ -17,6 +17,8 @@ mod project;
 mod prompt;
 mod question;
 mod report_only;
+mod review_publication;
+pub use review_publication::PublicationError;
 mod schedule;
 mod scratch;
 mod task_rows;
@@ -182,6 +184,8 @@ pub enum ServiceError {
     Host(#[from] HostError),
     #[error(transparent)]
     Forge(#[from] ForgeError),
+    #[error(transparent)]
+    ReviewPublication(#[from] PublicationError),
 }
 
 pub struct Service {
@@ -1051,11 +1055,13 @@ impl Service {
         if state.observe_task_allowance(&row.task, wait)? {
             self.publish_detail(id, row.version);
         }
-        let owner_action = wait == Some(WaitReason::HostObservationBlocked)
-            || matches!(
-                result,
-                Err(ServiceError::ParentRecoveryPlanner { retry_at: None })
-            );
+        let owner_action = matches!(
+            wait,
+            Some(WaitReason::HostObservationBlocked | WaitReason::ReviewPublicationBlocked)
+        ) || matches!(
+            result,
+            Err(ServiceError::ParentRecoveryPlanner { retry_at: None })
+        );
         if owner_action {
             state.schedule.park(id);
         } else if !checking_workspace {
@@ -1751,6 +1757,10 @@ fn task_wait(
             observation(Wait::HostUnknown, "Waiting for delivery confirmation.")
         }
         Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
+        Err(ServiceError::ReviewPublication(error)) => {
+            let (wait, cause) = error.wait();
+            observation(wait, cause)
+        }
         Err(ServiceError::Forge(_)) => (Some(Wait::ForgeUnknown), None),
         Err(ServiceError::InboxUnavailable { .. }) => (Some(Wait::Question), None),
         Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
