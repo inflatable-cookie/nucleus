@@ -26,15 +26,16 @@ use wire::{GraphReply, Pull, PullState};
 
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const API_VERSION: &str = "2026-03-10";
+const MAX_CHECK_PAGES: usize = 10;
 const CHECKS_QUERY: &str = "
-  query($owner:String!,$repo:String!,$number:Int!,$namedChecks:Boolean!){
+  query($owner:String!,$repo:String!,$number:Int!,$namedChecks:Boolean!,$after:String){
     repository(owner:$owner,name:$repo){
       pullRequest(number:$number){
-        headRefOid baseRefName isDraft state mergeable mergeStateStatus reviewDecision
+        headRefOid baseRefName baseRefOid isDraft state mergeable mergeStateStatus reviewDecision
         statusCheckRollup{
           state
-          contexts(first:100) @include(if:$namedChecks){
-            pageInfo{hasNextPage}
+          contexts(first:100,after:$after) @include(if:$namedChecks){
+            pageInfo{hasNextPage endCursor}
             nodes{
               __typename
               ... on CheckRun{name conclusion isRequired(pullRequestNumber:$number)}
@@ -576,12 +577,22 @@ impl GitHub {
         let checks = if !pull.merged && pull.state == PullState::Open {
             let required = &target.branches.required_checks;
             let named = merge || !required.is_empty();
-            self.query_pull(target, CHECKS_QUERY, named).await?.checks(
-                &pull.head.sha,
-                &target.branches.base,
-                required,
-                named,
-            )?
+            let page = self.query_pull(target, CHECKS_QUERY, named, None).await?;
+            let mut checks = page.checks(&pull.head.sha, &target.branches.base)?;
+            let mut cursors = std::collections::BTreeSet::new();
+            while let Some(cursor) = checks.next_cursor() {
+                if cursors.len() + 1 >= MAX_CHECK_PAGES || !cursors.insert(cursor.to_owned()) {
+                    break;
+                }
+                let page = self
+                    .query_pull(target, CHECKS_QUERY, true, Some(cursor))
+                    .await?;
+                checks.append(
+                    page.checks(&pull.head.sha, &target.branches.base)?,
+                    &pull.base.sha,
+                )?;
+            }
+            checks.state(required, named)
         } else {
             CheckState::Unknown
         };
@@ -595,7 +606,7 @@ impl GitHub {
     ) -> Result<Pull, ForgeError> {
         if pull.merged && pull.state == PullState::Closed && pull.merge_commit_sha.is_none() {
             pull.merge_commit_sha = Some(
-                self.query_pull(target, MERGE_COMMIT_QUERY, false)
+                self.query_pull(target, MERGE_COMMIT_QUERY, false, None)
                     .await?
                     .merge_commit(&pull.head.sha, &target.branches.base)?,
             );
@@ -608,6 +619,7 @@ impl GitHub {
         target: &PullTarget,
         query: &str,
         named_checks: bool,
+        after: Option<&str>,
     ) -> Result<GraphReply, ForgeError> {
         let mut variables = json!({
             "owner": target.branches.owner,
@@ -616,6 +628,7 @@ impl GitHub {
         });
         if query == CHECKS_QUERY {
             variables["namedChecks"] = json!(named_checks);
+            variables["after"] = json!(after);
         }
         self.graph(query, variables).await
     }

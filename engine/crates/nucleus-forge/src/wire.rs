@@ -81,7 +81,8 @@ struct Repository<T> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Checks {
+pub(crate) struct Checks {
+    base_ref_oid: Option<Head>,
     head_ref_oid: Head,
     base_ref_name: String,
     is_draft: bool,
@@ -109,6 +110,7 @@ struct CheckContexts {
 #[serde(rename_all = "camelCase")]
 struct CheckPage {
     has_next_page: bool,
+    end_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -206,19 +208,13 @@ impl GraphReply {
             .any(|error| error.kind.as_deref() == Some("RATE_LIMITED"))
     }
 
-    pub(crate) fn checks(
-        self,
-        head: &Head,
-        base: &str,
-        required: &[String],
-        named: bool,
-    ) -> Result<CheckState, ForgeError> {
+    pub(crate) fn checks(self, head: &Head, base: &str) -> Result<Checks, ForgeError> {
         let checks: Checks = self.pull_request()?;
         verify_graph_pull(head, base, &checks.head_ref_oid, &checks.base_ref_name)?;
         if checks.state != "OPEN" {
             return Err(ForgeError::Incomplete);
         }
-        Ok(checks.state(required, named))
+        Ok(checks)
     }
 
     pub(crate) fn merge_commit(self, head: &Head, base: &str) -> Result<Head, ForgeError> {
@@ -261,6 +257,43 @@ fn verify_graph_pull(
 }
 
 impl Checks {
+    pub(crate) fn next_cursor(&self) -> Option<&str> {
+        let page = &self
+            .status_check_rollup
+            .as_ref()?
+            .contexts
+            .as_ref()?
+            .page_info;
+        page.end_cursor
+            .as_deref()
+            .filter(|cursor| page.has_next_page && !cursor.is_empty())
+    }
+
+    pub(crate) fn append(&mut self, next: Self, base: &Head) -> Result<(), ForgeError> {
+        if self.base_ref_oid.as_ref() != Some(base)
+            || next.base_ref_oid.as_ref() != Some(base)
+            || self.is_draft != next.is_draft
+            || self.mergeable != next.mergeable
+            || self.merge_state_status != next.merge_state_status
+            || self.review_decision != next.review_decision
+        {
+            return Err(ForgeError::Incomplete);
+        }
+        let rollup = self
+            .status_check_rollup
+            .as_mut()
+            .ok_or(ForgeError::Incomplete)?;
+        let more = next.status_check_rollup.ok_or(ForgeError::Incomplete)?;
+        if rollup.state != more.state {
+            return Err(ForgeError::Incomplete);
+        }
+        let contexts = rollup.contexts.as_mut().ok_or(ForgeError::Incomplete)?;
+        let more = more.contexts.ok_or(ForgeError::Incomplete)?;
+        contexts.nodes.extend(more.nodes);
+        contexts.page_info = more.page_info;
+        Ok(())
+    }
+
     fn required_state(&self, required: &[String], named: bool) -> CheckState {
         let Some(rollup) = &self.status_check_rollup else {
             return if required.is_empty() {
@@ -322,7 +355,7 @@ impl Checks {
         CheckState::Ready
     }
 
-    fn state(&self, required: &[String], named: bool) -> CheckState {
+    pub(crate) fn state(&self, required: &[String], named: bool) -> CheckState {
         if self.is_draft {
             return CheckState::Blocked;
         }
