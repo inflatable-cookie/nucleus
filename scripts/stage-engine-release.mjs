@@ -47,8 +47,11 @@ async function stageRelease(buildsRoot) {
     await copyFile(buildEngine(), binary);
     await chmod(binary, 0o700);
     await buildEngineBoard(join(staging, 'board-assets'));
+    const skill = join('skills', 'nucleus');
+    await mkdir(join(staging, skill), { recursive: true, mode: 0o700 });
+    await copyFile(join(root, skill, 'SKILL.md'), join(staging, skill, 'SKILL.md'));
     if (cleanRevision() !== revision) throw Error('The checkout revision changed during the engine build.');
-    // Publish the pair together. A concurrent stage's nonempty release wins.
+    // Publish the release together. A concurrent stage's nonempty release wins.
     await rename(staging, release);
   } finally {
     await rm(staging, { recursive: true, force: true });
