@@ -138,8 +138,22 @@ pub enum ServiceError {
     TellReply,
     #[error("tell requires a verified planner binding with a sending project")]
     TellPlannerRequired,
-    #[error("no project matches {0:?}. Use a registered project ID or name.")]
+    #[error("no project named {0}. Use a registered project ID, name or repository.")]
     TellUnknownProject(String),
+    #[error("no project named {selector}; repository {repository} belongs to project {project}")]
+    RepositoryOwner {
+        selector: String,
+        repository: String,
+        project: String,
+    },
+    #[error(
+        "repository {repository} has no verified T3 checkout in project {project}; open a T3 thread in its checkout and run one planning command"
+    )]
+    UnboundCheckout {
+        repository: String,
+        project: String,
+        planner: bool,
+    },
     #[error("project name {0:?} is ambiguous. Use its project ID.")]
     TellAmbiguousProject(String),
     #[error("project {0:?} is archived")]

@@ -1438,6 +1438,7 @@ impl IntoResponse for ApiError {
                 let status = match error {
                     ServiceError::Missing
                     | ServiceError::TellUnknownProject(_)
+                    | ServiceError::RepositoryOwner { .. }
                     | ServiceError::TaskReferenceMissing
                     | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => {
                         StatusCode::NOT_FOUND
@@ -1460,6 +1461,7 @@ impl IntoResponse for ApiError {
                         | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
                     )
                     | ServiceError::Project
+                    | ServiceError::UnboundCheckout { planner: false, .. }
                     | ServiceError::Settings(
                         nucleus_store::StorageError::InvalidSettings(_)
                         | nucleus_store::StorageError::MissingVolume
@@ -1471,6 +1473,7 @@ impl IntoResponse for ApiError {
                     ServiceError::QuestionPlanner
                     | ServiceError::TellPlannerRequired
                     | ServiceError::ControllerProject
+                    | ServiceError::UnboundCheckout { planner: true, .. }
                     | ServiceError::PlannerEnrollmentRefused(_)
                     | ServiceError::PlannerAuthorityRefused
                     | ServiceError::AnswerInInbox
