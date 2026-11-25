@@ -26,7 +26,7 @@ import {
   boardSubscriptionAvailability,
   createRustProfiles,
 } from "./rust-profiles";
-import { createRustPlanning } from "./rust-planning";
+import { boardProject, createRustPlanning } from "./rust-planning";
 import { errorText } from "../error-text";
 import { generatedProjectBadge } from "../../shared/t3/project-badge";
 
@@ -69,27 +69,6 @@ export function projectId(key: string) {
   const id = String.fromCharCode(...(hex.match(/../g) ?? []).map(pair => parseInt(pair, 16)));
   if (!/^(?!\.{1,2}$)[a-zA-Z0-9._-]+$/.test(id) || projectKey(id) !== key) throw new Error("Invalid encoded project key.");
   return id;
-}
-
-/** One Rust project as the board's project record. */
-export function boardProject(
-  key: string,
-  project: RustProject,
-): api.Project | null {
-  const repositories = project.repositories.map((repo) => ({
-    origin: repo.origin,
-    path: repo.path,
-  }));
-  const primary = repositories[0];
-  if (!primary) return null;
-  return {
-    key,
-    name: project.name,
-    version: 1,
-    repositories,
-    primary,
-    drain: null,
-  };
 }
 
 /** The repository settings record the shared editor reads, from the Rust fields. */
