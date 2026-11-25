@@ -684,6 +684,7 @@ async fn list(
                     &scope,
                     &entry.dependencies,
                     &by_id,
+                    &listing.unreadable,
                 )?,
                 dependency_edits: DependencyEdits::unavailable(),
             });

@@ -1134,12 +1134,12 @@ fn restore_checks_the_digest_of_each_stored_brief() {
     assert_eq!(listing.readable[0].task, healthy);
     assert_eq!(listing.unreadable[0].identity.id, "damaged");
     assert_eq!(reopened.get("healthy").unwrap(), Some(healthy));
-    let Err(error @ StoreError::UnreadableTask(_)) = reopened.get("damaged") else {
+    let Err(StoreError::UnreadableTask(error)) = reopened.get("damaged") else {
         panic!("expected a brief integrity error");
     };
     assert!(
         error
-            .to_string()
+            .cause
             .contains("stored brief digest does not match the text for task damaged")
     );
 }
@@ -1184,12 +1184,7 @@ fn restoring_a_review_entry_with_planner_acceptance_is_refused() {
         .expect("fixture connection");
     db.execute("UPDATE tasks SET entry='review_entry'", [])
         .expect("inject invalid restored state");
-    assert!(matches!(
-        store.get("1"),
-        Err(StoreError::Sqlite(
-            rusqlite::Error::FromSqlConversionFailure(..)
-        ))
-    ));
+    assert!(matches!(store.get("1"), Err(StoreError::UnreadableTask(_))));
 }
 
 #[test]

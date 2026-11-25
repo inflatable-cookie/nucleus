@@ -180,9 +180,10 @@ impl DependencyStatus {
             row.task.phase(),
             Phase::Done | Phase::Cancelled | Phase::Closing
         ) && state.store.dependency_blocked(id)?;
-        Self::from_facts(&dependencies, blocking, |id| {
-            let prerequisite = state.store.row(id)?;
-            Ok(fact(state, id, scope, prerequisite.as_ref()))
+        Self::from_facts(&dependencies, blocking, |id| match state.store.row(id) {
+            Ok(row) => Ok(fact(state, id, scope, row.as_ref())),
+            Err(StoreError::UnreadableTask(row)) => Ok(unreadable_fact(state, scope, &row)),
+            Err(error) => Err(error.into()),
         })
     }
 
@@ -191,8 +192,12 @@ impl DependencyStatus {
         scope: &ControllerScope,
         dependencies: &Dependencies,
         rows: &std::collections::HashMap<&str, &TaskRow>,
+        unreadable: &[nucleus_store::UnreadableTask],
     ) -> Result<Self, ServiceError> {
         Self::from_facts(dependencies, false, |id| {
+            if let Some(row) = unreadable.iter().find(|row| row.identity.id == id) {
+                return Ok(unreadable_fact(state, scope, row));
+            }
             Ok(fact(state, id, scope, rows.get(id).copied()))
         })
     }
@@ -221,6 +226,29 @@ impl DependencyStatus {
             prerequisite_wait,
             blocking,
         })
+    }
+}
+
+fn unreadable_fact(
+    state: &State,
+    scope: &ControllerScope,
+    row: &nucleus_store::UnreadableTask,
+) -> DependencyFact {
+    let visible = scope.task(state, &row.identity).is_ok();
+    DependencyFact {
+        task_id: if visible {
+            row.identity.id.clone()
+        } else {
+            String::new()
+        },
+        reference: if visible {
+            row.reference.clone()
+        } else {
+            String::new()
+        },
+        phase: visible.then_some(Phase::Error),
+        title: None,
+        status: DependencyState::Pending,
     }
 }
 

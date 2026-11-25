@@ -83,7 +83,7 @@ pub enum StoreError {
     UpgradeBackup,
     #[error("the report-task migration found a missing database reference")]
     ReportMigrationReferences,
-    #[error("stored task {} could not be restored: {}", .0.identity.id, .0.cause)]
+    #[error("stored task failed integrity validation")]
     UnreadableTask(Box<UnreadableTask>),
     #[error("task identity is immutable")]
     IdentityChanged,
