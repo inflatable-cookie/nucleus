@@ -560,8 +560,13 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "move posted",
   );
   assert.deepEqual(posts[1]?.command, { move: "reviewing" });
+  const amendReady = () => {
+    const button = dom.window.document.querySelector('[aria-label="Amend"]');
+    return Boolean(button && button.getAttribute("aria-disabled") !== "true" && !button.hasAttribute("disabled"));
+  };
+  await eventually(amendReady, "the move settled and Amend is available");
   await click("Amend");
-  const briefField = () => detail.querySelector<HTMLTextAreaElement>('textarea[aria-label="Brief"]');
+  const briefField = () => dom.window.document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Brief"]');
   await eventually(() => Boolean(briefField()), "brief editor opened");
   briefVersion++; // A second editor committed before this board received an invalidation.
   const draft = "My unsaved brief";
