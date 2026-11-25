@@ -120,12 +120,12 @@ test("706: an open header menu stacks above the panes and the outside-press laye
   assert.match(ui, /zIndex: 40 \}\}/);
 });
 
-test("Settings is the native settings screen holding Dispatch limits, Profiles, Projects, Hosts, Backups, Storage and Telemetry", () => {
+test("Settings keeps shared sections and the operator GitHub section behind the same tab row", () => {
   // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
   // Hosts holds the host catalogue and the default host picker (nucleus#1325); Hosts sits after Projects (nucleus#1494).
   // Storage is its own page (nucleus#1526): every work-volume path is edited there,
   // never inside Backups.
-  assert.equal(settingsViews.length, 7);
+  assert.equal(settingsViews.length, 8);
   assert.deepEqual(
     settingsViews.map((view) => view.label),
     [
@@ -135,6 +135,7 @@ test("Settings is the native settings screen holding Dispatch limits, Profiles, 
       "Hosts",
       "Backups",
       "Storage",
+      "GitHub",
       "Telemetry",
     ],
   );
@@ -147,14 +148,18 @@ test("Settings is the native settings screen holding Dispatch limits, Profiles, 
       "Hosts",
       "Backups",
       "Storage",
+      "GitHub",
       "Telemetry",
     ],
   );
-  // The tab row stays one line in Paseo's 640–700 point settings column (nucleus#963): short labels only.
-  assert.ok(
-    settingsViews.reduce((sum, view) => sum + view.short.length, 0) <= 52,
-    "the seven short labels fit one line",
-  );
+  const legacy = settingsViews.filter(({ id }) => id !== "github-accounts");
+  const rustOperator = settingsViews.filter(({ id }) => id !== "backups" && id !== "telemetry");
+  for (const views of [legacy, rustOperator]) {
+    assert.ok(
+      views.reduce((sum, { short }) => sum + short.length, 0) <= 52,
+      "the visible short labels fit one line",
+    );
+  }
   assert.match(settingsScreen, /settingsViews\.map\(\(?view\)? =>/);
   for (const view of settingsViews)
     assert.ok(

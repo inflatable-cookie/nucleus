@@ -112,9 +112,10 @@ export function WebApp() {
         settingsChanged: () => {
           invalidateBoard({
             queryKey: ["nucleus"],
-            predicate: ({ queryKey: [, area] }) =>
+            predicate: ({ queryKey: [, area, detail] }) =>
               ["state", "profiles", "repositories", "project-settings", "capacity-state", "hosts"]
-                .some((key) => key === area),
+                .some((key) => key === area) ||
+              (area === "github-accounts" && detail === "settings"),
           });
         },
         storageChanged: () => invalidateBoard({ queryKey: ["nucleus", "work-storage"] }),
