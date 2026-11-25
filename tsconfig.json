@@ -19,13 +19,5 @@
   "include": [
     "**/*.ts",
     "**/*.tsx"
-  ],
-  "exclude": [
-    "hosts/bb/plugin/sidebar/**",
-    "hosts/bb/plugin/components/**",
-    "hosts/bb/plugin/lib/**",
-    "hosts/bb/plugin/hooks/**",
-    "hosts/bb/plugin/app.tsx",
-    "hosts/bb/plugin/test-setup.ts"
   ]
 }

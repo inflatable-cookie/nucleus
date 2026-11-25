@@ -1582,7 +1582,7 @@ is `active`. It then records:
 
 The pin is still the newest BB release. `git ls-remote --tags` on 2026-11-17 lists
 `desktop-v0.49.0` as the highest `desktop-v*` tag, so there is no newer release to rebase onto yet.
-What was proved instead, through the routine in [PATCHES.md](../../../hosts/bb/plugin/sidebar/PATCHES.md):
+What was proved instead, through the routine in [the archived patch record](https://github.com/inflatable-cookie/nucleus/blob/4b1e2a751582d65331b998472b3e6cbf4eb754a7/hosts/bb/plugin/sidebar/PATCHES.md):
 
 - **The routine reproduces the pin.** A clean clone of this repository at the branch head, with a fresh
   clone of BB at `desktop-v0.49.0`, runs `node scripts/bb/vendor-sidebar.mjs --upstream <clone>` to

@@ -23,11 +23,11 @@ The marks are bundled locally as white PNGs rasterised from those SVGs and
 cropped to the mark; the client tints them to the theme text colour and makes
 no runtime requests for them.
 
-## Vendored BB sidebar (MIT)
+## Historical BB sidebar (MIT)
 
-Nucleus's BB plugin vendors BB's sidebar thread list (`plugins/thread-list`) to
-own the sidebar (Spec 062, decision 5a). BB is MIT; its notice is kept verbatim as
-`hosts/bb/plugin/sidebar/LICENSE`.
+The retired BB plugin vendored BB's sidebar thread list (`plugins/thread-list`)
+under the MIT licence. The verbatim notice remains with the archived source at
+`4b1e2a751:hosts/bb/plugin/sidebar/LICENSE`.
 
 - **Source** — <https://github.com/get-bb/bb>, commit
   `7b26cae79ec978fafd0a5db0e8517e94f12eb8f4` (tag `desktop-v0.49.0`).
@@ -38,10 +38,10 @@ own the sidebar (Spec 062, decision 5a). BB is MIT; its notice is kept verbatim 
   routine.
 - **Modifications** — the files are unmodified except where
   `hosts/bb/plugin/sidebar/PATCHES.md` says otherwise. That file names every
-  patched and added file and its reason; those modifications are under Nucleus's
+  patched and added file and its reason. Those modifications are under Nucleus's
   own terms.
 - **Record** — `hosts/bb/plugin/sidebar/UPSTREAM.json` holds a SHA-256 per file as
-  the pin ships it. A rebase updates this section's commit and tree list.
+  shipped by the pin. The archive contains the final record.
 
 Copyright 2026 Michael Yong, and the BB contributors, under the MIT licence in
-`hosts/bb/plugin/sidebar/LICENSE`.
+`4b1e2a751:hosts/bb/plugin/sidebar/LICENSE`.
