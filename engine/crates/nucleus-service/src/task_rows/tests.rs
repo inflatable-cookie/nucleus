@@ -726,6 +726,49 @@ async fn no_new_snooze_from_reservation_through_send() {
 }
 
 #[tokio::test]
+async fn restart_preserves_a_prerequisite_snooze_before_the_first_dispatch_decision() {
+    let mut fixture = Fixture::new(&pending_task()).await;
+    let (worker, _, _) = reservation(ID, Entry::Brief, &fixture.service.fixture().start);
+    fixture.seed_prerequisite(&worker).await;
+    let row = fixture.service.task(ID).await.unwrap();
+    let wait = Ok(Action::Wait(WaitReason::Prerequisite));
+    fixture
+        .service
+        .schedule_result(&row, &wait, Priority::Decision)
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    let receipt = fixture.observed_snooze().await;
+
+    let prior = &fixture.service;
+    let host = nucleus_hosts::T3::new(prior.host.endpoint(), "fixture").unwrap();
+    host.use_held_shell();
+    fixture.service = Arc::new(
+        Service::open(
+            &prior.settings,
+            prior.fixture().clone(),
+            host,
+            GitHub::new("fixture").unwrap(),
+            prior.callback,
+            prior.report_command.clone(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(fixture.attention().await, TaskAttention::Waiting);
+    assert!(fixture.sync().await.is_empty());
+    let row = fixture.service.task(ID).await.unwrap();
+    fixture
+        .service
+        .schedule_result(&row, &wait, Priority::Decision)
+        .await
+        .unwrap();
+    assert!(fixture.sync().await.is_empty());
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    assert_eq!(fixture.observed_snooze().await, receipt);
+}
+
+#[tokio::test]
 async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;

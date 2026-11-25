@@ -229,8 +229,7 @@ impl Service {
     ) -> Result<Option<u64>, ServiceError> {
         let now = self.visibility_now();
         let retry = Some(now + RECHECK_MS);
-        let fence = self.task_fence(id).await;
-        let Ok(_fence) = fence.try_lock_owned() else {
+        let Ok(_fence) = self.task_fence(id).await.try_lock_owned() else {
             return Ok(retry);
         };
         let Some(visibility) = self.host.row_visibility_hint(thread) else {
@@ -239,11 +238,11 @@ impl Service {
         let (row, prior, plan, attention) = {
             let state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            let Some(attention) = row_attention_for_effect(&state, &row)? else {
+            let children = self.host.row_children(thread, &visibility_roles(&row.task));
+            let Some(attention) = row_attention_for_effect(&state, &row, children)? else {
                 return Ok(None);
             };
             let prior = state.store.row_snooze(id, thread)?;
-            let children = self.host.row_children(thread, &visibility_roles(&row.task));
             let plan = plan_row(attention, visibility, prior.clone(), now, children);
             (row, prior, plan, attention)
         };
@@ -276,7 +275,8 @@ impl Service {
         };
         let (change, receipt) = {
             let mut state = self.state.lock().await;
-            if row_attention_for_effect(&state, &row)? != Some(attention) {
+            let children = self.host.row_children(thread, &visibility_roles(&row.task));
+            if row_attention_for_effect(&state, &row, children)? != Some(attention) {
                 return Ok(retry);
             }
             match plan {
@@ -540,10 +540,25 @@ pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
 fn row_attention_for_effect(
     state: &State,
     row: &TaskRow,
+    children: RowChildren,
 ) -> Result<Option<TaskAttention>, ServiceError> {
     let attention = state.task_attention(row)?;
     let task = &row.task;
     let id = &task.identity().id;
+    if attention == TaskAttention::Waiting && children == RowChildren::Active {
+        return Ok(Some(TaskAttention::Active));
+    }
+    // A restored reservation is not a dispatch decision. Keep its native horizon
+    // until the first scheduler result, unless an active child is already visible.
+    if attention == TaskAttention::Waiting
+        && !state.waits.contains_key(id)
+        && task
+            .run()
+            .is_some_and(|run| !run.revoked() && run.report().is_none())
+        && state.role_observation(task).is_none()
+    {
+        return Ok(None);
+    }
     let starting = matches!(
         (state.wait_reason(id), state.wait_detail(id)),
         (None | Some(WaitReason::Starting), _) | (Some(WaitReason::HostUnknown), None)
