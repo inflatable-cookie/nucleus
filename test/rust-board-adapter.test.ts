@@ -155,7 +155,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
       revisions[domain] = (revisions[domain] ?? 1) + 1;
     }
     if (domain) return json(views[domain]!());
-    const [, project, collection] = /^\/planning\/([^/]+)\/(plan|items|decisions)$/.exec(path) ?? [];
+    const [, project, collection] = /^\/planning\/([^/]+)\/(plan|items|decisions)$/.exec(path.split("?")[0]!) ?? [];
     if (project && (denied.has(project) ||
       (session.planningProjects !== null && !session.planningProjects.includes(project)))) {
       return Response.json({ error: "controller is not authorized for this project" }, { status: 403 });
@@ -840,7 +840,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
   );
   await wait(new RegExp(projectKey("Orbit_Main") + '.*"needs":1.*Which path should we take.*"leads":1,"lanes":\\["Delivery"\\]'));
   const scopedReads = [
-    "GET /planning/Orbit_Main/decisions", "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
+    "GET /planning/Orbit_Main/decisions?pending=true", "GET /planning/Orbit_Main/items", "GET /planning/Orbit_Main/plan",
   ];
   assert.deepEqual(fake.planningReads().sort(), scopedReads);
   ui.update(render("planning"));
@@ -852,7 +852,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
   const push = createPushInvalidator(client);
   push({ queryKey: ["nucleus", "decisions"] });
   await waitFor(() => fake.planningReads().length === 4, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "decisions refresh outside Needs you");
-  assert.deepEqual(fake.planningReads().slice(3), ["GET /planning/Orbit_Main/decisions"]);
+  assert.deepEqual(fake.planningReads().slice(3), ["GET /planning/Orbit_Main/decisions?pending=true"]);
   assert.equal(await adapter.refreshSession(), false);
   push({ queryKey: ["nucleus"] });
   await waitFor(() => fake.planningReads().length === 7, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "reconnect refresh");
@@ -912,6 +912,40 @@ test("long Rust decision questions retain their full detail and their healthy si
     const detail = await adapter.rpc(api.decisionGet, { id: "d-lantern" });
     assert.equal(detail?.details, question);
   }
+});
+
+test("an unavailable project leaves the other project readable and clears its diagnostic on recovery", async () => {
+  const fake = engine();
+  let status = 500;
+  const fetcher: typeof fetch = (url, init) => {
+    if (status && String(url).endsWith("/planning/lantern/plan"))
+      return Promise.resolve(Response.json({ error: "could not read plan" }, { status }));
+    return fake.fetcher(url, init);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const notices = new Map<string, string[]>();
+  listenForPlanningIssues(adapter.rust, (key, issues) => notices.set(key, issues));
+  assert.deepEqual((await adapter.rpc(api.plans, {})).map(plan => plan.project), [projectKey("Orbit_Main")]);
+  assert.match(notices.get("Plans")?.join() ?? "", /lantern Plans:.*could not read plan/);
+  status = 0;
+  assert.equal((await adapter.rpc(api.plans, {})).length, 2);
+  assert.deepEqual(notices.get("Plans"), []);
+  status = 401;
+  await assert.rejects(adapter.rpc(api.plans, {}));
+});
+
+test("Needs you uses the pending inventory and history retains older task decisions", async () => {
+  const fake = engine();
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    if (!String(url).endsWith("/planning/lantern/decisions")) return response;
+    const rows = await response.json();
+    return Response.json([...rows, { ...rows[0], id: "obsolete", task: { taskId: "old-task", taskVersion: 2 } }]);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const pending = await adapter.rpc(api.decisionList, { status: "open" });
+  assert.deepEqual(pending.map(row => row.id), ["d-Orbit_Main", "d-lantern"]);
+  assert.ok((await adapter.rpc(api.decisionList, {})).some(row => row.id === "obsolete"));
 });
 
 test("unreadable planning records leave healthy siblings readable in lists and detail", async () => {
@@ -1089,7 +1123,7 @@ test("a project refusal settles lists until the paired session changes", async (
   const decisions = () => adapter.rpc(api.decisionList, { status: "open" });
   assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main"]);
   assert.deepEqual(fake.planningReads(), [
-    "GET /planning/Orbit_Main/decisions", "GET /planning/lantern/decisions",
+    "GET /planning/Orbit_Main/decisions?pending=true", "GET /planning/lantern/decisions?pending=true",
   ]);
   fake.denied.clear();
   assert.equal(await adapter.refreshSession(), false, "the same session reconnects");

@@ -391,7 +391,13 @@ export function createRustPlanning(
     const [rows, caller] = await Promise.all([projects(), session()]);
     const results = await Promise.all(rows.map(async row => {
       const issues: string[] = [];
-      return { values: await read(row, issues), issues };
+      try {
+        return { values: await read(row, issues), issues };
+      } catch (error) {
+        if (isRustHttpError(error, 401)) throw error;
+        issues.push(`${row.id} ${collection}: ${errorText(error)}`);
+        return { values: [], issues };
+      }
     }));
     if (latestRead.get(collection) === ticket && caller === await session())
       listeners.get(rust)?.(collection, results.flatMap(result => result.issues));
@@ -586,7 +592,7 @@ export function createRustPlanning(
     "decision.list": (input: { status?: string; project?: string }) =>
       collectProjects("Decisions", async (row, issues) => {
         if (input.project && input.project !== row.board.key) return [];
-        const raw = await planningRead(row, "decisions", rawList);
+        const raw = await planningRead(row, input.status === "open" ? "decisions?pending=true" : "decisions", rawList);
         return collectRows(raw ?? [], `${row.id} decision`, issues, value =>
           api.decisionViewSchema.parse(boardDecision(decision.parse(value), row.board.key, row.project)),
         ).filter(view => !input.status || view.status === input.status);
