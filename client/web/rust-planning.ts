@@ -1,6 +1,8 @@
 import * as api from "../../shared/contracts";
 import { z, type output } from "zod";
-import { decision, item, lane, planView } from "./rust-api";
+import { laneDocumentVersionSchema } from "../../shared/schema/lanes";
+import { projectPlanSchema } from "../../shared/schema/plans";
+import { decision, item, lane, plan, planView } from "./rust-api";
 import { errorText } from "../error-text";
 import type {
   RustApi,
@@ -91,7 +93,7 @@ function boardStep(entry: RustPlanView["lanes"][number]) {
   };
 }
 
-function boardPlan(key: string, plan: RustPlanView) {
+function boardPlan(key: string, plan: Pick<RustPlanView, "lanes" | "version">) {
   return {
     project: key,
     version: plan.version,
@@ -301,6 +303,17 @@ export function listenForPlanningIssues(rust: RustApi, report: ReportPlanningIss
   return () => { listeners.delete(rust); };
 }
 
+const history = z.array(z.object({
+  actor: z.string(), atMs: z.number().int(), action: z.string(), snapshot: z.unknown(),
+}));
+const snapshotVersion = z.object({ version: z.number().int() });
+
+async function laneRevision(saved: RustLane, author: string, createdAt: string) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(saved.document));
+  const hex = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
+  return { key: saved.key, version: saved.version, text: saved.document, digest: `sha256:${hex}`, author, createdAt };
+}
+
 const rawList = z.array(z.unknown());
 const rawPlan = planView.extend({ documents: rawList, lanes: rawList });
 const address = z.object({ id: z.string().optional(), key: z.string().optional() });
@@ -382,6 +395,17 @@ export function createRustPlanning(
 
   function planningRead<T>(row: ProjectRow, path: string, schema: z.ZodType<T>) {
     return readProject(row, id => rust.board.read(schema, `/planning/${encodeURIComponent(id)}/${path}`));
+  }
+
+  async function savedRevision(row: ProjectRow, kind: "plan" | "lane", id: string, version: number) {
+    const records = await planningRead(row, `history/${kind}/${encodeURIComponent(id)}`, history);
+    const matches = records?.filter(record => snapshotVersion.safeParse(record.snapshot).data?.version === version);
+    // Imports can record the normalized snapshot again. The original version
+    // owns its author and timestamp. Native history is ordered by sequence;
+    // later disposition changes and re-imports do not create a revision.
+    const saved = matches?.find(record => record.action === "legacy_version") ?? matches?.[0];
+    if (!saved) throw new Error(`Version ${version} of ${kind} ${id} is unavailable.`);
+    return saved;
   }
 
   // Publish diagnostics with the read that produced them. A late read from
@@ -466,14 +490,21 @@ export function createRustPlanning(
         return [];
       }
     }),
-    "plan.get": async (input: { project?: string }) => {
+    "plan.get": async (input: { project?: string; version?: number }) => {
       const row = (await projects()).find(
         (entry) => entry.board.key === input.project,
       );
       if (!row) throw new Error(`Project ${input.project} has no plan.`);
-      const plan = await readProject(row, rust.plan);
-      if (!plan) throw new Error(`Project ${input.project} has no accessible plan.`);
-      return boardPlan(row.board.key, plan);
+      if (input.version !== undefined) {
+        const saved = await savedRevision(row, "plan", row.id, input.version);
+        if (saved.action === "legacy_version") {
+          return { ...projectPlanSchema.parse(saved.snapshot), project: row.board.key };
+        }
+        return { ...boardPlan(row.board.key, plan.parse(saved.snapshot)), author: saved.actor, createdAt: iso(saved.atMs) };
+      }
+      const current = await readProject(row, rust.plan);
+      if (!current) throw new Error(`Project ${input.project} has no accessible plan.`);
+      return boardPlan(row.board.key, current);
     },
     "plan.set": async (input: {
       project?: string;
@@ -500,17 +531,19 @@ export function createRustPlanning(
       });
       return boardPlan(row.board.key, await rust.plan(row.id));
     },
-    "lane.document.get": async (input: { key: string; project: string }) => {
-      const { lane } = await projectLane(input.project, input.key);
-      if (!lane.version) return null;
-      return {
-        key: lane.key,
-        version: lane.version,
-        text: lane.document,
-        digest: `sha256:${"0".repeat(64)}`,
-        author: "Nucleus",
-        createdAt: "",
-      };
+    "lane.document.get": async (input: { key: string; project: string; version?: number }) => {
+      if (input.version !== undefined) {
+        const row = (await projects()).find(entry => entry.board.key === input.project);
+        if (!row) throw new Error(`Project ${input.project} has no accessible plan.`);
+        const saved = await savedRevision(row, "lane", input.key, input.version);
+        const document = saved.action === "legacy_version"
+          ? laneDocumentVersionSchema.parse(saved.snapshot)
+          : await laneRevision(lane.parse(saved.snapshot), saved.actor, iso(saved.atMs));
+        if (document.key !== input.key) throw new Error("The saved lane key differs.");
+        return document;
+      }
+      const { lane: current } = await projectLane(input.project, input.key);
+      return current.version ? laneRevision(current, "Nucleus", "") : null;
     },
     "lane.document.edit": async (input: {
       key: string;
@@ -525,14 +558,7 @@ export function createRustPlanning(
         aim: lane.aim,
         document: input.text,
       });
-      return {
-        key: saved.key,
-        version: saved.version,
-        text: saved.document,
-        digest: `sha256:${"0".repeat(64)}`,
-        author: "Nucleus",
-        createdAt: "",
-      };
+      return laneRevision(saved, "Nucleus", "");
     },
     "lane.status": async (input: {
       key: string;
