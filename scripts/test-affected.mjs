@@ -19,7 +19,7 @@ import activeTests from './active-tests.json' with { type: 'json' };
 
 /** Trees whose code is parsed for import edges. Root entry files are listed separately. */
 const GRAPH_ROOTS = ['core', 'service', 'hosts', 'shared', 'client', 'bin', 'scripts', 'test'];
-const ROOT_FILES = ['index.client.tsx', 'mcp-report.mjs'];
+const ROOT_FILES = ['mcp-report.mjs'];
 const CODE = /\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)$/;
 /** Tests the unit runner would run by default; the expensive benchmark is opt-in. */
 const EXCLUDED_TESTS = new Set(['test/store-compaction-bench.test.ts']);

@@ -12,7 +12,6 @@ const hostSdk = /^(?:@getpaseo\/|paseo-provenance-client(?:\/|$))/;
 export function area(path) {
   // This executable is a private service process, not a CLI transport client.
   if (['bin/host-run-private-server.mjs', 'bin/queue-service.mjs', 'bin/queue-host-run-supervisor.mjs', 'bin/queue-validation-supervisor.mjs', 'bin/queue-effigy-admission-hook.mjs'].includes(path)) return 'service';
-  if (path === 'index.client.tsx') return 'host-client:paseo';
   const host = path.match(/^hosts?\/([^/]+)\/(.*)$/);
   if (host) return `${host[2].startsWith('plugin/') ? 'plugin' : host[2].startsWith('client/') ? 'host-client' : 'host'}:${host[1]}`;
   if (path.startsWith('server/service/') || path.startsWith('service/') || path === 'service/runtime-owner.ts') return 'service';
@@ -82,7 +81,7 @@ export function folderViolations(root) {
     }
   }
   for (const dir of sourceRoots) walk(dir);
-  for (const path of ['index.client.tsx', 'mcp-report.mjs']) if (existsSync(resolve(root, path))) paths.push(path);
+  for (const path of ['mcp-report.mjs']) if (existsSync(resolve(root, path))) paths.push(path);
   const violations = [];
   for (const from of paths) {
     for (const specifier of importEdges(from, readFileSync(resolve(root, from), 'utf8'))) {
