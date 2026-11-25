@@ -21,8 +21,6 @@ import activeTests from './active-tests.json' with { type: 'json' };
 const GRAPH_ROOTS = ['core', 'service', 'hosts', 'shared', 'client', 'bin', 'scripts', 'test'];
 const ROOT_FILES = ['mcp-report.mjs'];
 const CODE = /\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)$/;
-/** Tests the unit runner would run by default; the expensive benchmark is opt-in. */
-const EXCLUDED_TESTS = new Set(['test/store-compaction-bench.test.ts']);
 const ACTIVE_TESTS_PATH = 'scripts/active-tests.json';
 const TEST = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
 /** Emitted-JavaScript specifiers resolve to their TypeScript sources first. */
@@ -42,7 +40,7 @@ export function isGraphNode(path) {
 }
 
 export function isTestFile(path) {
-  return TEST.test(path) && !EXCLUDED_TESTS.has(path);
+  return TEST.test(path);
 }
 
 /** A declaration's implementation file: editing `x.d.mts` changes what imports `x.mjs`. */
