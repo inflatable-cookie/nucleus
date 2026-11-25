@@ -263,3 +263,13 @@ prior contract preserves the TypeScript procedures for
 [proof execution](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/docs/knowledge/contracts/orchestration.md#source-immutable-proof-executor-ruling),
 [the planner ladder](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/docs/knowledge/contracts/orchestration.md#non-converging-review-ladder-spec-058-cutover-3)
 and [workspace archive retry](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/docs/knowledge/contracts/orchestration.md#workspace-archive-retry).
+
+### Archived task threads
+
+Housekeeping checks T3's archived shell on the Dispatch retention interval
+(default 12 hours). It removes up to 32 of the oldest archived parents, workers
+and reviewers recorded for finished Rust tasks. The archive must be older than
+the configured retention (default three days). A live task or origin binding
+protects the thread. Dispatch must be running, and a changed archive is checked
+again on a later pass. An uncertain write keeps its command ID and requires
+fresh archive evidence before another attempt, up to three retries.

@@ -3121,3 +3121,48 @@ async fn rust_provider_create_race_never_upserts_a_namesake() {
     let mutation: Value = serde_json::from_str(requests[1].payload.get()).expect("mutation");
     assert_eq!(mutation["providerInstanceMutation"]["operation"], "create");
 }
+
+#[tokio::test]
+async fn retention_walk_removes_only_an_old_owned_archive_still_closed_at_the_wire() {
+    let old = "2026-11-20T10:00:00.000Z";
+    let cutoff = crate::task_row::timestamp_ms("2026-11-22T10:00:00Z").unwrap();
+    let row = |id: &str, at: &str| json!({"id":id,"archivedAt":at,"deletedAt":null});
+    let mut deleted = row("gone", old);
+    deleted["deletedAt"] = json!(old);
+    let inventory = json!({"schemaVersion":2,"snapshotSequence":14,"projects":[],"threads":[
+        row("old",old),row("reopened",old),row("foreign",old),
+        row("recent","2026-11-24T11:00:00.000Z"),deleted
+    ]});
+    let (host, wire) = server(vec![
+        (
+            "orchestration.getArchivedShellSnapshot",
+            Response::Value(inventory),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc.fixture_shell(
+        &json!({"kind":"snapshot","snapshot":{"snapshotSequence":14,"projects":[],"threads":[]}}),
+    );
+    let work = host
+        .prune_candidates(|id, _| id != "foreign", cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        work.iter().map(|w| w.thread.as_str()).collect::<Vec<_>>(),
+        ["old", "reopened"]
+    );
+    assert!(host.prune_thread(&work[0], || Ok(true)).await.unwrap());
+    host.rpc.fixture_shell(&json!({"kind":"thread.updated","sequence":15,"thread":{"id":"reopened","archivedAt":null,"deletedAt":null}}));
+    assert!(
+        !host
+            .prune_thread(&work[1], || panic!("no claim on a reopened thread"))
+            .await
+            .unwrap()
+    );
+    let writes = wire.await.unwrap();
+    let cmd: Value = serde_json::from_str(writes.last().unwrap().payload.get()).unwrap();
+    assert_eq!(cmd["type"], "thread.delete");
+    assert_eq!(cmd["threadId"], "old");
+    assert!(cmd.get("onlyIfUnused").is_none());
+}
