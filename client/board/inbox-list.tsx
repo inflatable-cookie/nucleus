@@ -305,13 +305,14 @@ export type InboxListProps = {
     origin?: string | null,
   ) => Project | undefined;
   selected: string | null;
+  recordProject?: string;
   selectedLeadId: string | null;
   openPapercutId: string | null;
   openDecisionId: string | null;
   onSelectTask: (id: string) => void;
-  onSelectDecision: (id: string) => void;
-  onSelectLead: (id: string, lane: null) => void;
-  onSelectPapercut: (id: string) => void;
+  onSelectDecision: (id: string, project?: string) => void;
+  onSelectLead: (id: string, lane: null, project?: string) => void;
+  onSelectPapercut: (id: string, project?: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
   onOpenLane: (key: string, project?: string) => void;
   /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
@@ -351,6 +352,7 @@ export function InboxList({
   queuedHidden,
   projectForRepository,
   selected,
+  recordProject,
   selectedLeadId,
   openPapercutId,
   openDecisionId,
@@ -507,7 +509,8 @@ export function InboxList({
     return decision?.headline ?? decision?.question;
   };
   const renderCard = (card: PipelineCard) => {
-    const key = `${card.kind}:${card.id}`;
+    const projectKey = card.kind === "decision" || card.kind === "lead" ? card.value.projectKey ?? undefined : undefined;
+    const key = JSON.stringify([card.kind, projectKey, card.id]);
     const badgeFor = (task: TaskSummary) =>
       task.hostId
         ? (state?.projectBadges?.[task.hostId]?.[task.repoPath] ?? null)
@@ -527,8 +530,8 @@ export function InboxList({
             projectLabel={project?.name}
             projectKey={project?.key}
             c={c}
-            selected={openDecisionId === card.id}
-            onPress={() => onSelectDecision(card.id)}
+            selected={openDecisionId === card.id && recordProject === projectKey}
+            onPress={() => onSelectDecision(card.id, projectKey)}
           />
         );
       }
@@ -632,9 +635,9 @@ export function InboxList({
             c={c}
             projectForRepository={projectForRepository}
             repositoryBadges={state?.repositoryBadges}
-            selected={selectedLeadId === card.id || openPapercutId === card.id}
-            onSelectLead={(id) => onSelectLead(id, null)}
-            onSelectPapercut={onSelectPapercut}
+            selected={recordProject === projectKey && (selectedLeadId === card.id || openPapercutId === card.id)}
+            onSelectLead={(id) => onSelectLead(id, null, projectKey)}
+            onSelectPapercut={id => onSelectPapercut(id, projectKey)}
             // The Leads and Papercuts views list one kind, so line 1 starts
             // with the project; mixed lists keep the kind word.
             showKindWord={view !== "leads" && view !== "papercuts"}

@@ -261,6 +261,7 @@ export function usePlanningData({
 /** The open records an action refreshes once it lands. */
 type OpenRecords = {
   selected: string | null;
+  recordProject?: string;
   selectedLeadId: string | null;
   openPapercutId: string | null;
   openDecisionId: string | null;
@@ -272,6 +273,7 @@ type OpenRecords = {
  * the board and the open records; `leadAct` is the lead screen's variant.
  */
 export function useBoardAct({
+  recordProject,
   selected,
   selectedLeadId,
   openPapercutId,
@@ -307,17 +309,17 @@ export function useBoardAct({
         });
       if (selectedLeadId)
         void queryClient.invalidateQueries({
-          queryKey: ["nucleus", "lead", selectedLeadId],
+          queryKey: ["nucleus", "lead", selectedLeadId, recordProject],
           exact: true,
         });
       if (openPapercutId)
         void queryClient.invalidateQueries({
-          queryKey: ["nucleus", "papercut", openPapercutId],
+          queryKey: ["nucleus", "papercut", openPapercutId, recordProject],
           exact: true,
         });
       if (openDecisionId)
         void queryClient.invalidateQueries({
-          queryKey: ["nucleus", "decision", openDecisionId],
+          queryKey: ["nucleus", "decision", openDecisionId, recordProject],
           exact: true,
         });
       await queryClient.invalidateQueries({ queryKey: ["nucleus", "leads"] });
@@ -356,7 +358,7 @@ export function useBoardAct({
       });
       if (selectedLeadId)
         await queryClient.invalidateQueries({
-          queryKey: ["nucleus", "lead", selectedLeadId],
+          queryKey: ["nucleus", "lead", selectedLeadId, recordProject],
           exact: true,
         });
       return value;
