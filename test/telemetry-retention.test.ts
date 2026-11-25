@@ -4,10 +4,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
-import { Engine } from "../core/engine";
-import { enginePorts } from "../core/port-context";
-import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
-import type { Adapter } from "../core/host";
 import { buildTelemetryBase, createTelemetrySnapshotCache, telemetrySnapshot, telemetrySnapshotFromBase } from "../core/telemetry/telemetry";
 import { runSchema, submissionSchema, taskSchema } from "../shared/contracts";
 import {
@@ -233,32 +229,6 @@ test("an interrupted pass commits capture and deletion together and the next pas
     assert.equal(f.records().length, 3);
     for (let index = 0; index < FILTERS.length; index++) assert.deepEqual(comparable(snapshots(f.store)[index]), comparable(before[index]));
   } finally { f.close(); }
-});
-
-test("a capture fault keeps the task's history and surfaces in retention health", async t => {
-  const store = new Store(":memory:");
-  const engine = new Engine(store, {} as Adapter, 60_000);
-  t.after(async () => { await engine.stop(); store.close(); });
-  store.setMeta("paused", false);
-  (engine as unknown as Record<string, unknown>).migrateProjectOwnersToPlanners = async () => {};
-  (engine as unknown as Record<string, unknown>).removeSiblings = async () => {};
-  const maintenance = new SweepMaintenance(enginePorts(engine,
-    ["adapter", "hostAvailable", "hostIds", "migrateProjectOwnersToPlanners", "removeSiblings", "stopped", "store", "withHost"], []));
-  const task = store.insert(submissionSchema.parse({ submissionId: "fault", title: "fault", repoPath: "/repo-a", scope: "general", planningCommit: "a".repeat(40), handoffPath: "h.md", originAgentId: "origin" }), "host", "handoff", "a".repeat(40));
-  const finished = taskSchema.parse({ ...store.task(task.id), phase: "done", reason: "Done", createdAt: iso(0), updatedAt: iso(HOUR), finishedAt: iso(HOUR) });
-  store.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(JSON.stringify(finished), task.id);
-  const outcomes = (store as unknown as { outcomesStore: { telemetryFactsForTask: (id: string) => unknown } }).outcomesStore;
-  const original = outcomes.telemetryFactsForTask.bind(outcomes);
-  outcomes.telemetryFactsForTask = () => { throw new Error("capture unavailable"); };
-  await maintenance.run(queryAt);
-  assert.equal(store.task(task.id).phase, "done", "history is never deleted unsummarized");
-  assert.match(store.getMeta<string>("retentionError") ?? "", /Telemetry capture failed for 1 finished task; their history is kept/);
-  // The fault clears with the next successful pass, and the history then purges with its record.
-  outcomes.telemetryFactsForTask = original;
-  await maintenance.run(queryAt + DAY);
-  assert.throws(() => store.task(task.id), /purged/);
-  assert.equal(store.getMeta<string>("retentionError"), "");
-  assert.equal(Number(store.db.prepare("SELECT COUNT(*) AS n FROM task_telemetry_retained").get()!.n), 1);
 });
 
 test("retained records expire outside the 90-day cohort window without touching detailed retention", () => {

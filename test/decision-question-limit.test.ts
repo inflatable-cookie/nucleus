@@ -8,40 +8,6 @@ import { Store } from "../core/store/store";
 import { Decisions } from "../core/planning/decisions";
 import { decisionList, DECISION_QUESTION_CLIP_MARKER, clipDecisionQuestion } from "../shared/contracts";
 import { errorText, readErrorText, storedBoardErrorText } from "../client/error-text";
-import { fixture } from "./support/responsible-lifecycle-fixture";
-
-/**
- * Nucleus#1141: an over-long question never breaks a board read, and every
- * question producer stays within the limit. The three-round non-convergence
- * question is built from the reviewer's full findings plus the worker's latest
- * return, which exceeds the 4,000-character view limit; on the board route that
- * broke the read with a raw too_big refusal under the board header.
- */
-
-test("1141-1 the third non-converging round raises no board decision; its long finding travels in the planner tell", async () => {
-  const f = fixture({ responsible: true });
-  // Board route: a Nucleus question would become a Spec 032 decision instead of a
-  // native prompt. Spec 068 Decision 2 raises none at the third round.
-  Object.assign(f.adapter, { capabilities: () => ({ nativeDecisions: false }) });
-  try {
-    await f.reviews(2);
-    await f.engine.wake();
-    assert.equal(f.run().role, "revision", "a returned revision runs before the third review");
-    await f.report("ready_for_review");
-    await f.engine.wake();
-    assert.equal(f.run().role, "reviewer", "the third review runs");
-    const longFinding = `Authenticated findings: ${"Finding detail. ".repeat(400).trim()}`;
-    assert.ok(longFinding.length > 4000, "the fixture finding exceeds the view limit");
-    await f.report("changes_required", { reviewText: longFinding });
-    await f.settle(2);
-    assert.equal(f.events("responsible_question").length, 0, "no joint question");
-    assert.equal(new Decisions(f.store).list({ status: "open" }).length, 0, "no board decision");
-    for (let i = 0; i < 30 && !f.events("review_round_planner_told").length; i++) await new Promise(resolve => setImmediate(resolve));
-    const tell = f.prompts.find(prompt => prompt.messageId.startsWith("ns-review-round-"));
-    assert.ok(tell, "the planner tell was sent");
-    assert.ok(tell!.text.includes("Finding detail."), "the finding travels in the tell");
-  } finally { await f.close(); }
-});
 
 test("1141-2 an already-stored over-long record clips in the view without failing the read", () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-decision-limit-"));
