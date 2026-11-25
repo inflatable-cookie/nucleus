@@ -6,10 +6,10 @@ Durable rules Nucleus runs on. Detailed design for each capability is in
 | Contract | Owns |
 | --- | --- |
 | [working-rules.md](working-rules.md) | How work moves through this repository |
-| [orchestration.md](orchestration.md) | Durable orchestration behaviour: dispatch, review, merge, closeout, recovery, and the daemon owner map |
+| [orchestration.md](orchestration.md) | Rust task authority, dispatch, review, merge and cleanup |
 | [repository-hooks.md](repository-hooks.md) | Historical TypeScript repository hooks and current merge policy |
 | [durable-telemetry.md](durable-telemetry.md) | Historical TypeScript telemetry records and metrics |
-| [service-boundary.md](service-boundary.md) | The standalone Nucleus service and the Paseo bridge |
+| [service-boundary.md](service-boundary.md) | Rust service, caller authentication, browser pairing and host access |
 | [repository-layout.md](repository-layout.md) | Where code and documents live in this repository |
 | [agent-local-paths.md](agent-local-paths.md) | Local path registry for agents |
 | [release.md](release.md) | Local engine staging, release and recovery authority |

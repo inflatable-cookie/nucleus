@@ -1,0 +1,1 @@
+The Nucleus service and orchestration contracts describe the Rust API, authority boundaries, task lifecycle and custody rules. Historical TypeScript procedures remain available at the pre-cutover revision.
