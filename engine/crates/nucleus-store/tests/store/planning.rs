@@ -22,7 +22,7 @@ fn schema_seven_migrates_in_place() {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
     db.execute_batch(
         "DROP TABLE task_numbers; DROP TABLE task_number_counters;
-         DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
+         DROP TABLE planning_record_clocks; DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
          DROP TABLE parent_deliveries; PRAGMA user_version = 7;",
     ).expect("restore version seven schema");
@@ -285,4 +285,94 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
                 .is_empty()
         );
     }
+}
+
+#[test]
+fn retained_history_preserves_item_times_and_edit_versions() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    let body = |v: u32| ItemContent {
+        title: format!("Item {v}"),
+        body: "details".into(),
+        lanes: vec![],
+    };
+    store
+        .add_item("project", "i".into(), ItemKind::Papercut, body(0), STAMP)
+        .unwrap();
+    let mut last = 0;
+    for v in 1..=25 {
+        last = store
+            .edit_item(
+                "project",
+                "i",
+                body(v),
+                None,
+                WriteAt {
+                    at_ms: 100 + u64::from(v),
+                    ..STAMP
+                },
+            )
+            .unwrap()
+            .version;
+    }
+    // A byte-identical final write still advances the editor's optimistic revision.
+    let saved = store
+        .edit_item(
+            "project",
+            "i",
+            body(25),
+            Some(last),
+            WriteAt {
+                at_ms: 300,
+                ..STAMP
+            },
+        )
+        .unwrap();
+    let now = 60 * 86_400_000;
+    assert_eq!(
+        Store::compact_planning_history(storage.database(), saved.version, now).unwrap(),
+        7
+    );
+    assert_eq!(
+        Store::compact_planning_history(storage.database(), saved.version, now).unwrap(),
+        0
+    );
+    drop(store);
+    let mut store = Store::open(&storage).unwrap();
+    let current = store.items_with_times("project").unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            current.created_at_ms,
+            current.updated_at_ms,
+            current.version
+        ),
+        (Some(10), Some(300), saved.version)
+    );
+    assert!(matches!(
+        store.edit_item("project", "i", body(26), Some(last), STAMP),
+        Err(StoreError::PlanningConflict)
+    ));
+    let next = store
+        .edit_item("project", "i", body(26), Some(saved.version), STAMP)
+        .unwrap();
+    assert!(next.version > saved.version);
+}
+
+#[test]
+fn config_inventory_recognizes_only_real_schema_backup_files() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    storage.backup().ensure().unwrap();
+    let root = storage.backup().path();
+    let path = root.join("engine-before-v11-abc123.sqlite");
+    let store = Store::open(&storage).unwrap();
+    drop(store);
+    std::fs::copy(storage.database().path().join("engine.sqlite"), &path).unwrap();
+    let db = Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 11).unwrap();
+    drop(db);
+    assert_eq!(storage.backups().unwrap().issues, 0);
+    std::fs::write(root.join("engine-before-v11-ABC123.sqlite"), b"unrelated").unwrap();
+    assert_eq!(storage.backups().unwrap().issues, 1);
 }

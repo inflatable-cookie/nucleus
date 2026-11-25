@@ -3,6 +3,7 @@
 pub(super) mod decisions;
 mod model;
 mod removal;
+mod retention;
 
 use std::collections::BTreeSet;
 
@@ -539,7 +540,15 @@ fn record_history(
     tx.execute(
         "INSERT INTO planning_history (sequence, project, kind, id, actor, at_ms, action, snapshot)
          SELECT coalesce(max(version),0)+1, ?1, ?2, ?3, ?4, ?5, ?6, ?7 FROM planning_record_clocks",
-        params![project, kind.as_str(), id, stamp.actor, at_ms, action, snapshot],
+        params![
+            project,
+            kind.as_str(),
+            id,
+            stamp.actor,
+            at_ms,
+            action,
+            snapshot
+        ],
     )?;
     Ok(())
 }
