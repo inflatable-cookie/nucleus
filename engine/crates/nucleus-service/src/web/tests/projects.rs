@@ -323,6 +323,25 @@ fn registry_api(service: &Arc<Service>) -> Router {
     )
 }
 
+fn registry_board_api(registry: &Registry) -> Router {
+    let assets = registry.home.path().join("board");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    crate::router_with_board_and_t3_callers(
+        Arc::clone(&registry.service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture-operator".into(),
+            },
+        }],
+        &assets,
+        Some(T3_KEY),
+    )
+    .unwrap()
+}
+
 fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
     let projects = nucleus_store::Projects {
         projects: BTreeMap::from([(
@@ -345,6 +364,7 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
                     .collect(),
             },
         )]),
+        ..Default::default()
     };
     let revision = settings
         .read::<nucleus_store::Projects>()
@@ -817,22 +837,7 @@ async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
     };
     let alpha = project_id("alpha-planner");
     let beta = project_id("beta-planner");
-    let assets = registry.home.path().join("board");
-    std::fs::create_dir(&assets).unwrap();
-    std::fs::write(assets.join("index.html"), "").unwrap();
-    std::fs::write(assets.join("app.js"), "").unwrap();
-    let api = crate::router_with_board_and_t3_callers(
-        Arc::clone(&registry.service),
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "fixture-operator".into(),
-            },
-        }],
-        &assets,
-        Some(T3_KEY),
-    )
-    .unwrap();
+    let api = registry_board_api(&registry);
     let operator = pair_board(&api, &BOARD_KEY).await;
     let link = json_body(
         caller_request(
@@ -2124,4 +2129,475 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
             beta_allowed
         );
     }
+}
+
+#[tokio::test]
+async fn project_removal_rechecks_open_work_and_operator_authority() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let projects = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let id = projects.value.projects.keys().next().unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(preview["tasks"], json!([]));
+    let confirm = json!({"digest":preview["digest"], "reason":"Retired fixture"});
+    for method in [Method::GET, Method::POST] {
+        assert_eq!(
+            caller_request(
+                &registry.api,
+                method,
+                &removal,
+                "alpha-planner",
+                confirm.clone()
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    let mut edited = projects.value.clone();
+    edited.projects.get_mut(id).unwrap().name = "Renamed fixture".into();
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            PROJECTS,
+            &BOARD_KEY,
+            &json!({"revision":projects.revision,"value":edited})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_as(&registry.api, &removal, &BOARD_KEY, &confirm)
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+
+    registry.task("alpha-planner", "removal-blocker").await;
+    let reply = post_as(&registry.api, &removal, &BOARD_KEY, &confirm).await;
+    assert_eq!(reply.status(), StatusCode::CONFLICT);
+    assert!(
+        json_body(reply).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("open tasks")
+    );
+    let blocked = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(blocked["tasks"][0]["taskId"], "removal-blocker");
+    assert!(
+        registry
+            .service
+            .settings
+            .read::<nucleus_store::Projects>()
+            .unwrap()
+            .value
+            .projects
+            .contains_key(id)
+    );
+}
+
+#[tokio::test]
+async fn project_removal_deletes_planning_and_preserves_finished_repository_history() {
+    use nucleus_store::planning::RecordKind;
+
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let snapshot = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let id = snapshot.value.projects.keys().next().unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    registry.task("alpha-planner", "finished-removal").await;
+    finish_removal_task(&registry, "finished-removal", None).await;
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirm = |digest: &Value| json!({"digest":digest, "reason":"Retired fixture"});
+    seed_removal_planning(&registry, id).await;
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &removal,
+            &BOARD_KEY,
+            &confirm(&preview["digest"])
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirmation = confirm(&preview["digest"]);
+    let first = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let receipt = json_body(first).await;
+    let original = &snapshot.value.projects[id].repositories[0];
+    let saved = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    assert_eq!(
+        receipt,
+        json!({
+            "repositories":[{"origin":original.origin,"path":original.path}],
+            "removedAtMs":saved.value.removed[id].removed_at_ms,
+        })
+    );
+
+    {
+        let state = registry.service.state.lock().await;
+        assert_eq!(state.store.plan(id).unwrap().version, 0);
+        assert!(state.store.lanes(id).unwrap().is_empty());
+        assert!(state.store.items(id).unwrap().is_empty());
+        assert!(state.store.decisions(id, false).unwrap().is_empty());
+        assert!(
+            state
+                .store
+                .planning_history(id, RecordKind::Lane, "release")
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let task_path = "/v1/tasks/finished-removal";
+    let task = json_body(get_as(&registry.api, task_path, &BOARD_KEY).await).await;
+    assert_eq!(task["phase"], "done");
+    assert_eq!(task["identity"]["repository"], ALPHA_REPO);
+    let registry = registry.reopen();
+    assert_eq!(
+        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
+        receipt
+    );
+    assert_retirement_history(&registry, task_path).await;
+    registry.enroll("alpha-planner").await;
+    assert!(
+        !registry
+            .service
+            .settings
+            .read::<nucleus_store::Projects>()
+            .unwrap()
+            .value
+            .projects
+            .contains_key(id)
+    );
+    assert!(matches!(
+        registry
+            .service
+            .command(
+                "finished-removal",
+                &Authority::Operator {
+                    actor: "fixture".into()
+                },
+                Command::Move(Phase::Working)
+            )
+            .await,
+        Err(ServiceError::Project)
+    ));
+}
+
+async fn assert_retirement_history(registry: &Registry, task_path: &str) {
+    let response = get_as(&registry.api, &format!("{task_path}/history"), &BOARD_KEY).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let history = json_body(response).await;
+    let mut kinds = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| &event["content"]["kind"]);
+    assert_eq!(kinds.next(), Some(&json!("project_removed")));
+    assert_eq!(kinds.next(), Some(&json!("fixture_finished")));
+    assert!(kinds.all(|kind| kind != "project_removed"));
+}
+
+#[tokio::test]
+async fn project_removal_rechecks_positive_activity_for_a_finished_task() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let task = registry.task("alpha-planner", "terminal-removal").await;
+    let id = removal_settings(&registry)
+        .value
+        .projects
+        .into_keys()
+        .next()
+        .unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    let head = "a".repeat(40).parse::<Head>().unwrap();
+    finish_removal_task(&registry, &task.identity().id, Some(&head)).await;
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(
+        preview["tasks"],
+        json!([]),
+        "a leftover reservation is not activity"
+    );
+    let confirmation = json!({"digest":preview["digest"], "reason":"Retired fixture"});
+
+    terminal_removal_worker(&registry, &task, true);
+    let active = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    assert_eq!(active["tasks"][0]["taskId"], task.identity().id);
+    let refused = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(
+        json_body(refused).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("open tasks")
+    );
+
+    terminal_removal_worker(&registry, &task, false);
+    let removed = post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await;
+    assert_eq!(removed.status(), StatusCode::OK);
+}
+
+fn terminal_removal_worker(registry: &Registry, task: &Task, active: bool) {
+    let checkout = nucleus_work::checkout_path(
+        registry.service.storage.work().path(),
+        &task.identity().repository,
+        &task.identity().id,
+    );
+    registry.service.host.fixture_project_shell(
+        &json!({"projects": [], "threads": [{
+            "id": "fixture-worker", "worktreePath": checkout,
+            "status": if active { "running" } else { "completed" },
+            "activeRunId": active.then_some("active-worker"),
+            "pendingBackgroundTasks": [],
+        }]}),
+        "fixture-acp",
+    );
+}
+
+#[tokio::test]
+async fn project_removal_recreates_the_same_project_after_pending_cleanup() {
+    assert_removal_restoration(None).await;
+}
+
+#[tokio::test]
+async fn project_removal_restores_an_origin_under_a_different_project() {
+    assert_removal_restoration(Some("restored-project")).await;
+}
+
+async fn assert_removal_restoration(destination: Option<&str>) {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "old-task").await;
+    finish_removal_task(&registry, "old-task", None).await;
+    let prior_age = restored_task_board_age(&registry).await;
+    assert!(prior_age[0].is_some());
+
+    let before = removal_settings(&registry);
+    let (old_id, original) = before.value.projects.iter().next().unwrap();
+    let mut restored = original.clone();
+    let repo = restored.repositories.first_mut().unwrap();
+    repo.host_project = None;
+    repo.host_project_title = None;
+    repo.planner_threads.clear();
+    let new_id = destination.unwrap_or(old_id);
+    let removal = format!("{PROJECTS}/{old_id}/removal");
+    seed_removal_planning(&registry, old_id).await;
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirmation = json!({"digest":preview["digest"],"reason":"retired test project"});
+    let expected = seed_pending_project_removal(&registry, &before, old_id, &confirmation);
+    assert_eq!(
+        put_restored_project(&registry, new_id, &restored)
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+        "the pending receipt must fence re-add",
+    );
+
+    let registry = registry.reopen();
+    assert!(!removal_settings(&registry).value.removed[old_id].cleanup_pending);
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .plan(old_id)
+            .unwrap()
+            .version,
+        0
+    );
+    assert_eq!(
+        put_restored_project(&registry, new_id, &restored)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert!(!removal_settings(&registry).value.removed_origin(ALPHA_REPO));
+    seed_removal_planning(&registry, new_id).await;
+
+    let registry = registry.reopen();
+    assert_eq!(
+        json_body(post_as(&registry.api, &removal, &BOARD_KEY, &confirmation).await).await,
+        expected,
+        "an old exact receipt is replayable after re-add",
+    );
+    assert_eq!(restored_task_board_age(&registry).await, prior_age);
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .plan(new_id)
+            .unwrap()
+            .version,
+        1
+    );
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "new-task").await;
+    finish_removal_task(&registry, "new-task", None).await;
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    assert!(matches!(
+        registry
+            .service
+            .command("old-task", &operator, Command::Move(Phase::Working))
+            .await,
+        Err(ServiceError::Project),
+    ));
+    assert!(
+        registry
+            .service
+            .command("new-task", &operator, Command::Move(Phase::Working))
+            .await
+            .is_ok()
+    );
+}
+
+async fn restored_task_board_age(registry: &Registry) -> [Option<u64>; 4] {
+    let api = registry_board_api(registry);
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let tasks = read_paired_task(&api, "/api/engine/tasks", &cookie).await;
+    let task = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["identity"]["id"] == "old-task")
+        .expect("finished history is visible on the board after re-add");
+    let latest = task["latestEventAtMs"].as_u64();
+    let since = task["stateSinceMs"].as_u64();
+    let admitted = task["lifecycle"]["admittedAtMs"].as_u64();
+    [latest, since, admitted, latest.or(since).or(admitted)]
+}
+
+fn removal_settings(
+    registry: &Registry,
+) -> nucleus_store::SettingsSnapshot<nucleus_store::Projects> {
+    registry.service.settings.read().unwrap()
+}
+
+fn seed_pending_project_removal(
+    registry: &Registry,
+    before: &nucleus_store::SettingsSnapshot<nucleus_store::Projects>,
+    old_id: &str,
+    confirmation: &Value,
+) -> Value {
+    let repo = &before.value.projects[old_id].repositories[0];
+    let expected =
+        json!({"repositories":[{"origin":repo.origin,"path":repo.path}],"removedAtMs":42});
+    registry
+        .service
+        .settings
+        .edit(
+            &before.revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects.projects.remove(old_id);
+                projects.removed.insert(
+                    old_id.into(),
+                    serde_json::from_value(json!({
+                        "repositories": expected["repositories"],
+                        "blockedOrigins": [ALPHA_REPO.to_ascii_lowercase()],
+                        "cleanupPending": true,
+                        "digest": confirmation["digest"],
+                        "reason": confirmation["reason"],
+                        "removedAtMs": expected["removedAtMs"],
+                    }))
+                    .unwrap(),
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    expected
+}
+
+async fn put_restored_project(
+    registry: &Registry,
+    id: &str,
+    project: &nucleus_store::ProjectSettings,
+) -> Response {
+    let snapshot = removal_settings(registry);
+    let mut projects = snapshot.value.projects;
+    projects.insert(id.into(), project.clone());
+    planning::put_as(
+        &registry.api,
+        PROJECTS,
+        &BOARD_KEY,
+        &json!({"revision":snapshot.revision,"value":{"projects":projects}}),
+    )
+    .await
+}
+
+async fn finish_removal_task(registry: &Registry, id: &str, retained: Option<&Head>) {
+    let mut state = registry.service.state.lock().await;
+    let row = state.store.row(id).unwrap().unwrap();
+    let mut task = row.task.clone();
+    if let Some(head) = retained {
+        occupy_slot(&mut task, head);
+        task.revoke_run();
+    }
+    let mut snapshot = serde_json::to_value(&task).unwrap();
+    snapshot["phase"] = json!("done");
+    state
+        .store
+        .save_row(
+            &row,
+            &serde_json::from_value(snapshot).unwrap(),
+            &event("fixture_finished"),
+        )
+        .unwrap();
+}
+
+async fn seed_removal_planning(registry: &Registry, id: &str) {
+    let lane = format!("/v1/planning/{id}/lanes/release");
+    let plan = format!("/v1/planning/{id}/plan");
+    let items = format!("/v1/planning/{id}/items");
+    let decisions = format!("/v1/planning/{id}/decisions");
+
+    assert_eq!(
+        planning::put_as(&registry.api, &lane, &BOARD_KEY,
+            &json!({"version":0,"title":"Release","aim":"Verify release","document":"Fixture notes"})).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            &plan,
+            &BOARD_KEY,
+            &json!({"version":0,"lanes":[{"key":"release","horizon":"now","doneWhen":"Released","statusNote":"Fixture"}]})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_as(&registry.api, &items, &BOARD_KEY,
+            &json!({"kind":"papercut","title":"Fixture item","body":"Use the test","lanes":["release"]})).await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        post_as(&registry.api, &decisions, &BOARD_KEY,
+            &json!({"question":"Ship?","options":[{"id":"yes","label":"Ship"},{"id":"no","label":"Wait"}]})).await.status(),
+        StatusCode::CREATED
+    );
 }

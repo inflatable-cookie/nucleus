@@ -61,6 +61,8 @@ function engine() {
       { origin: "example/lantern", path: "/work/lantern", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     ] },
   } };
+  let removalReceipt: { repositories: Array<{ origin: string; path: string }>; removedAtMs: number } | undefined;
+  let loseRemovalReply = false;
   let catalog: RustCachedCatalog = { providers: null, readAtMs: null, status: "pending" };
   const empty = { counts: {}, groups: {}, sample: 0 };
   let usage: RustProfileUsage = { recent: empty, worker: empty, reviewer: empty, totals: {}, groupTotals: {} };
@@ -89,6 +91,23 @@ function engine() {
     if (path === "/profiles/usage") return json(usage);
     if (path === "/settings") return json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
     if (path === "/tasks") return json([]);
+    if (path === "/settings/projects/Orbit_Main/removal") {
+      const project = projects.projects.Orbit_Main;
+      if (init?.method !== "POST") {
+        return json({ project, digest: "confirmed-revision", tasks: [] });
+      }
+      assert.deepEqual(JSON.parse(String(init.body)), { digest: "confirmed-revision", reason: "Retired" });
+      if (!removalReceipt) {
+        projects = { projects: { ...projects.projects } };
+        Reflect.deleteProperty(projects.projects, "Orbit_Main");
+        removalReceipt = {
+          repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
+          removedAtMs: 1_790_000_000_000,
+        };
+        if (loseRemovalReply) throw new TypeError("removal reply lost");
+      }
+      return json(removalReceipt);
+    }
     if (path === "/settings/projects/reassign") {
       const body = JSON.parse(String(init?.body)) as { revision: string; origin: string; toProject: string };
       writes.push({ domain: "reassign", body: { revision: body.revision, value: body } });
@@ -145,6 +164,7 @@ function engine() {
   }) as typeof fetch;
   return {
     fetcher, writes, reads, denied,
+    loseNextRemovalReply: () => { loseRemovalReply = true; },
     planningReads: () => reads.filter((path) => path.startsWith("GET /planning/")),
     setSession: (next: RustBrowserSession) => { session = next; },
     setProfiles: (next: unknown, pausedGroups: string[]) => { profiles = { profiles: next, pausedGroups }; },
@@ -244,6 +264,34 @@ test("the archive control writes the Projects domain", async () => {
   assert.equal(projects.projects.Orbit_Main!.archived, true);
   const board = await adapter.rpc(api.uiSnapshot, {});
   assert.ok(!("unchanged" in board) && board.projects.length === 1, "an archived project leaves the board");
+});
+
+test("the Rust adapter ports project removal through one native resource", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  await adapter.rpc(api.uiSnapshot, {});
+  const key = "p-orbit-main";
+  const preview = await adapter.rpc(api.projectManagementPreview, { key });
+  assert.equal(preview.project.name, "Orbit");
+  assert.deepEqual(preview.tasks, []);
+  const confirmation = { key, version: preview.project.version, digest: preview.digest, reason: "Retired" };
+  fake.loseNextRemovalReply();
+  await assert.rejects(adapter.rpc(api.projectManage, confirmation), /removal reply lost/);
+  const board = await adapter.rpc(api.uiSnapshot, {});
+  assert.ok(!("unchanged" in board) && !board.projects.some((project) => project.key === key));
+  const removed = await adapter.rpc(api.projectManage, confirmation);
+  assert.deepEqual(removed, {
+    key, reason: "Retired", removedAt: new Date(1_790_000_000_000).toISOString(),
+    repositories: [
+      { origin: "example/orbit", path: "/work/orbit" },
+      { origin: "example/orbit-docs", path: "/work/orbit-docs" },
+    ],
+  });
+  assert.deepEqual(fake.reads.filter((read) => read.endsWith("/removal")), [
+    "GET /settings/projects/Orbit_Main/removal",
+    "POST /settings/projects/Orbit_Main/removal",
+    "POST /settings/projects/Orbit_Main/removal",
+  ]);
 });
 
 test("moving a repository in the shared Projects editor reassigns it in the engine", async () => {

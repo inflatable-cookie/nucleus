@@ -500,7 +500,8 @@ export function MainSurface({
       }
       projectActions={{
         ...projectSelector.actions,
-        ...(features.projectAgents ? { remove: setRemovingProject } : {}),
+        ...(features.projectAgents || (features.engine === "rust" && state?.canEditSettings === true)
+          ? { remove: setRemovingProject } : {}),
       }}
       onOpenChange={setScopeOpen}
       compact={narrow}

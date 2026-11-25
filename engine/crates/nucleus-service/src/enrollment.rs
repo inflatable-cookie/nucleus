@@ -672,6 +672,11 @@ fn register(
 ) -> Result<(), StorageError> {
     let conflict =
         || StorageError::InvalidSettings("the T3 caller or repository is already bound".into());
+    if projects.removed_origin(&repository.origin) {
+        return Err(StorageError::InvalidSettings(
+            "This repository's project was removed".into(),
+        ));
+    }
     if projects
         .projects
         .values()

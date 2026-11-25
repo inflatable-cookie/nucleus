@@ -173,6 +173,10 @@ impl Board {
                 post(settings::reassign),
             )
             .route(
+                "/api/engine/settings/projects/{project}/removal",
+                get(settings::preview_project_removal).post(settings::remove_project),
+            )
+            .route(
                 "/api/engine/settings/{domain}",
                 get(settings::get).put(settings::put),
             )

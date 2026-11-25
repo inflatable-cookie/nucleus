@@ -244,7 +244,10 @@ fn read_registry(
     existing: Projects,
     report: &mut ProjectImportReport,
 ) -> Result<Registry, ImportError> {
-    let mut projects = Projects::default();
+    let mut projects = Projects {
+        removed: existing.removed.clone(),
+        ..Projects::default()
+    };
     let mut origins = BTreeMap::new();
     let mut aliases = BTreeMap::new();
     let mut query = source.prepare("SELECT key, data FROM projects ORDER BY key")?;

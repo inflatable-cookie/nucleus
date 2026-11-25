@@ -329,6 +329,58 @@ impl<'de> Deserialize<'de> for ProjectSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Projects {
     pub projects: BTreeMap<String, ProjectSettings>,
+    /// Durable removals by project ID, including the repositories they retired.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<String, RemovedProject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemovedProject {
+    pub repositories: Vec<RemovedRepository>,
+    /// Origins still barred from first-contact enrollment. The receipt stays immutable.
+    pub blocked_origins: BTreeSet<String>,
+    pub cleanup_pending: bool,
+    pub digest: String,
+    pub reason: String,
+    pub removed_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovedRepository {
+    pub origin: String,
+    pub path: PathBuf,
+}
+
+impl Projects {
+    #[must_use]
+    pub fn removed_origin(&self, origin: &str) -> bool {
+        let origin = origin.to_ascii_lowercase();
+        self.removed
+            .values()
+            .any(|project| project.blocked_origins.contains(&origin))
+    }
+
+    /// Release an explicitly registered origin from the first-contact fence.
+    ///
+    /// # Errors
+    /// Returns a conflict if the previous project's planning cleanup is pending.
+    pub fn restore_origin(&mut self, origin: &str) -> Result<(), crate::StorageError> {
+        let origin = origin.to_ascii_lowercase();
+        for removed in self.removed.values_mut() {
+            if removed.blocked_origins.contains(&origin) && removed.cleanup_pending {
+                return Err(crate::StorageError::SettingsConflict);
+            }
+            removed.blocked_origins.remove(&origin);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn has_pending_removals(&self) -> bool {
+        self.removed.values().any(|removed| removed.cleanup_pending)
+    }
 }
 
 impl SettingsValue for Projects {
@@ -344,7 +396,12 @@ impl SettingsValue for Projects {
         let mut planners = std::collections::BTreeSet::new();
         for (id, project) in &self.projects {
             check(
-                key(id) && text(&project.name),
+                key(id)
+                    && text(&project.name)
+                    && self
+                        .removed
+                        .get(id)
+                        .is_none_or(|removed| !removed.cleanup_pending),
                 "project",
                 "each project needs a stable ID and name",
             )?;
@@ -353,6 +410,7 @@ impl SettingsValue for Projects {
                     repo.origin
                         .split_once('/')
                         .is_some_and(|(owner, name)| key(owner) && key(name))
+                        && !self.removed_origin(&repo.origin)
                         && origins.insert(repo.origin.to_ascii_lowercase())
                         && absolute_path(&repo.path)
                         && branch(&repo.base)

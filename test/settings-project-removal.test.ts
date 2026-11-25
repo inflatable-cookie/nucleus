@@ -266,3 +266,36 @@ test('loading, a failed preview without host paths, QA and the 256-task limit bl
   assert.equal(textOf(alert).includes(syntheticHome), false, 'host paths removed');
   done(failed);
 });
+
+test('Rust removal refuses open tasks in the shared dialog and requires a second confirmation', async () => {
+  const source = project('rust-removal', 'Rust project');
+  let blocked = true;
+  const requests: unknown[] = [];
+  const rpc = {
+    previewRpc: async () => blocked ? previewOf(source,
+      [{ kind: 'task', id: 'task-1', label: 'Fixture task', shared: false }],
+      [{ taskId: 'task-1', version: 2 }]) : previewOf(source),
+    removeRpc: async (input: unknown) => {
+      requests.push(input);
+      return { key: source.key, repositories: source.repositories, reason: 'retired', removedAt: 'now' };
+    },
+  };
+  const ui = await sheet({ project: source, rpc });
+  try {
+    await tick();
+    ui.type('Reason', 'retired');
+    assert.equal(ui.query('Cancel 1 task'), undefined);
+    assert.match(ui.text(), /Finish or cancel the open tasks/);
+    assert.equal(ui.get('Delete project').props.disabled, true);
+    blocked = false;
+    ui.press('Refresh open work');
+    await tick();
+    ui.press('Delete project');
+    assert.equal(requests.length, 0);
+    ui.press('Delete project Rust project');
+    await tick();
+    assert.deepEqual(requests, [{ key: source.key, version: 3, digest: 'pinned', reason: 'retired' }]);
+  } finally {
+    done(ui);
+  }
+});

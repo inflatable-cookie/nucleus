@@ -26,7 +26,7 @@ export interface EngineFeatures {
   slotUsage: boolean;
   /** The coordinator dispatch role, as a Profiles usage view. */
   coordinatorRole: boolean;
-  /** Projects: agent registration, planner picking, merge and removal flows. */
+  /** Projects: agent registration, planner picking and legacy project management. */
   projectAgents: boolean;
   /** Hosts: the multi-host catalogue, default host and host removal. */
   hostCatalog: boolean;
@@ -73,7 +73,7 @@ export const RUST_ENGINE_FEATURES: EngineFeatures = {
   // Ruling 1: worker and reviewer are the only dispatch roles.
   coordinatorRole: false,
   // Ruling 8: planners resolve live and are never typed in; no agent
-  // registration, merge or removal flows.
+  // registration, merge or bulk cancellation.
   projectAgents: false,
   // Rulings 5 and 17: T3 is the only host.
   hostCatalog: false,
