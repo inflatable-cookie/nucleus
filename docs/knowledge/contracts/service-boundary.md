@@ -440,6 +440,10 @@ settings are byte-identical after a write); `test/settings-pool.test.ts`
 
 ### Local web board
 
+This section describes the retired TypeScript board transport. The current
+board uses the Rust engine's paired session and JSON API. See the
+[engine board guide](../../../engine/README.md#board).
+
 The standalone service serves the board to a browser on this machine
 (`service/web/web-board.ts`, started by `QueueService`). It is part of the
 service process, not a separate daemon, and it is not the Paseo plugin. The web
@@ -539,13 +543,14 @@ The runtime build packages both bundles together.
   screen, and the change record keeps every applied Settings change readable
   through `queue.capacity-state`.
 
-Proofs: `test/web-board.test.ts` (fixed-port fallback and recorded port; Host and
+Historical proofs included `test/web-board.test.ts` (fixed-port fallback and recorded port; Host and
 Origin refusals; pairing, persisted digest permissions, restart continuity and
 revoke; cookie-authenticated read and writes; Settings over the web and the
 socket's refusal of the same write; the `task.register` refusal; live revisions
-and stream close on revoke; the minimal page). `test/web-transport.test.ts`
-proves read retry after restart and no retry for mutations. The web shell's own
-proof lands with its task.
+and stream close on revoke; the minimal page) and `test/web-transport.test.ts`
+(read retry after restart and no retry for mutations). The shipped board is
+exercised by `test/rust-task-board.test.ts`, including Settings writes and
+reconnects.
 
 ## Process and data ownership
 

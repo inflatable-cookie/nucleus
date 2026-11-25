@@ -89,16 +89,10 @@ owner to the rules it enforces.
 
 The TypeScript engine and its runtime are retired. This section records their former ownership. The active runtime is documented in the [Rust engine guide](../../engine/README.md).
 
-- `shared/acp/` and `core/acp/` are the host-agnostic ACP task session
-  ([Spec 065](specs/065-acp-task-session.md)). The neutral half is shared, because
-  a launched agent holds no store: `agent.ts` the stdio protocol with no model,
-  `binding.ts` the binding shapes and the pointer read, `transport.ts` its socket
-  client, `entry.ts` the environment and launch, `surface.ts` the interface the
-  engine holds. The service half is core: `binding.ts` mints and verifies,
-  `sessions.ts` serves the hold, release and lifecycle API on the callback socket,
-  and `lifecycle.ts` owns the one line a session shows. The legacy ACP
-  script serves isolated fixtures. The Rust provider is the installed ACP
-  entrypoint under [Spec 070](specs/070-small-engine.md).
+- The retired ACP task session split its protocol, binding and socket client
+  between `shared/acp/` and `core/acp/` ([Spec 065](specs/065-acp-task-session.md)).
+  The Rust provider is the installed ACP entrypoint. See the
+  [T3 setup guide](../../engine/README.md#set-up-t3).
 - `service/runtime-owner.ts` owns the process lease, store, daemon adapter,
   callbacks, pre-insertion policy validation and reconciliation, with bounded
   construct, start, health and drain phases so an unreachable Paseo SDK never
