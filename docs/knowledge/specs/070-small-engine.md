@@ -496,6 +496,26 @@ Later decisions carry their own attribution.
     Linked worktree creation follows the ten-minute `gitBulk` timeout from
     `core/git/git-command.ts` and `core/workspaces/workspace-lifecycle.ts`.
 
+38. **GitHub accounts are configurable.** Tom, 2026-11-25: "I want nucleus to be
+    a packageable product.. this stuff needs to be configurable [...] Ideally I
+    would like to be able to configure separate optional accounts to use for
+    workers and reviews, if either is unset fall back to installed `gh`
+    credentials. We'll need to pull together oauth log in and keychain storage
+    to make it work. Keychain stuff should be in Longhorn."
+    - Two optional accounts: one for workers, which push and open PRs, and one
+      for reviewers, which post formal reviews. Each falls back to the
+      installed `gh` credentials when it is unset.
+    - The engine publishes the reviewer's verdict itself, as a formal GitHub
+      review (approve or request changes) at the exact reviewed head, using the
+      reviewer account. A reviewer account distinct from the PR author lets a
+      review approve.
+    - An account is added through an OAuth sign-in from Settings, and its token
+      is stored in the platform keychain through Longhorn's credential store.
+      Tokens never appear in settings files, logs or prompts.
+    - The planner's baseline before this ruling was to restore the TypeScript
+      per-org reviewer token from the keychain. That baseline becomes this
+      ruling's reviewer fallback path.
+
 ## The model
 
 ### Stored state per task
