@@ -997,11 +997,26 @@ export function decisionChoicePresentation(decision: DecisionView) {
   const raw =
     decision.choices ??
     decision.options.slice(0, 3).map((label) => ({ label, consequence: "" }));
-  const recommended =
-    decision.recommended ?? decision.options[0] ?? raw[0]?.label;
+  const identified = raw.some((choice) => "id" in choice);
+  const recommended = identified
+    ? undefined
+    : (decision.recommended ?? decision.options[0] ?? raw[0]?.label);
   const first = raw.find((choice) => choice.label === recommended);
+  const ordered = first ? [first, ...raw.filter((choice) => choice !== first)] : raw;
+  const labelCounts = new Map<string, number>();
+  for (const { label } of raw) {
+    const visible = label.trim();
+    labelCounts.set(visible, (labelCounts.get(visible) ?? 0) + 1);
+  }
   return {
-    choices: first ? [first, ...raw.filter((choice) => choice !== first)] : raw,
+    identified,
+    choices: ordered.map((choice) => {
+      const optionId = "id" in choice && typeof choice.id === "string" ? choice.id : null;
+      const displayLabel = optionId && (labelCounts.get(choice.label.trim()) ?? 0) > 1
+        ? `${choice.label.trim()} (${optionId})`
+        : choice.label;
+      return { ...choice, optionId, displayLabel };
+    }),
     recommended,
   };
 }
