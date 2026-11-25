@@ -13,9 +13,8 @@ import { acrossViews, openView, planningEntry } from "./support/inbox";
 const mountInbox = (element: React.ReactElement) => acrossViews(mount(element));
 import { build } from "esbuild";
 import { createRequire } from "node:module";
-import { taskSummarySchema, type UiBoard } from "../shared/contracts";
-import { BOARD_STATE_KEY } from "../client/board-state";
-import { applyLiveUpdate, decodeLiveFrame } from "../client/web/live-channel";
+import { taskSummarySchema, uiSnapshot, type UiBoard } from "../shared/contracts";
+import { BOARD_STATE_KEY, nextBoardState } from "../client/board-state";
 
 useNativeStubs();
 
@@ -585,31 +584,40 @@ function boardAck(revision: number, activeWorkers: number) {
   };
 }
 
-test("late RPC ack and full responses do not overwrite newer live frames, and older live frames do not overwrite RPC projections", async () => {
+test("board projection changes preserve matching counters and reject revisions out of order", () => {
+  const projection = (revision: number, activeWorkers: number) =>
+    uiSnapshot.output.parse(boardWithTask(revision, "task", "Retained task", activeWorkers));
+  const retained = projection(7, 1);
+  const matching = boardAck(7, 2);
+  assert.deepEqual(nextBoardState(undefined, matching), matching);
+  const merged = nextBoardState(retained, matching);
+  assert.equal(merged.revision, 7);
+  assert.equal(merged.activeWorkers, 2);
+  assert.ok(!("unchanged" in retained) && !("unchanged" in merged));
+  assert.deepEqual(merged.tasks, retained.tasks);
+
+  assert.equal(nextBoardState(retained, boardAck(6, 9)), retained);
+  assert.equal(nextBoardState(retained, boardAck(8, 9)), retained);
+  assert.equal(nextBoardState(retained, projection(6, 9)), retained);
+  assert.equal(nextBoardState(retained, projection(8, 4)).revision, 8);
+  assert.equal(nextBoardState(retained, projection(7, 4)).activeWorkers, 4);
+  assert.equal(nextBoardState(retained, projection(1, 0), { allowReplacement: true }).revision, 1);
+  assert.equal(nextBoardState(retained, boardAck(1, 9), { allowReplacement: true }), retained);
+});
+
+test("a bounded board read keeps the projection and a replacement can restart its revision", async () => {
   await load();
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const requestedRevisions: Array<number | undefined> = [];
-  let heldSnapshot: ((value: unknown) => void) | null = null;
-  let nextRpcResponse: unknown = boardWithTask(1, "task-1", "Initial board", 0);
+  let response = uiSnapshot.output.parse(boardWithTask(6, "task-6", "Current board", 5));
 
   const rpc = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot") {
       requestedRevisions.push((input as { revision?: number }).revision);
-      if (heldSnapshot) {
-        return new Promise((resolve) => {
-          const resolveHeld = heldSnapshot!;
-          heldSnapshot = null;
-          // Expose resolver so the test controls exact arrival ordering.
-          resolveHeld(resolve);
-        });
-      }
-      return nextRpcResponse;
+      return response;
     }
     return invoke(method, input);
   };
-
   const ui = mountInbox(
     h(QueryClientProvider, {
       client,
@@ -621,137 +629,19 @@ test("late RPC ack and full responses do not overwrite newer live frames, and ol
   );
 
   try {
-    await settle(() => ui.text().includes("Initial board"));
-    assert.equal(requestedRevisions[0], undefined);
+    await settle(() => ui.text().includes("Current board"));
+    assert.deepEqual(requestedRevisions, [undefined]);
 
-    // Arrival order 1 (ack): RPC starts at rev 1, live board rev 2 commits while RPC is in flight,
-    // then RPC resolves with ack(1). Revision 2 must remain in cache and on screen.
-    let releaseAckRpc!: (value: unknown) => void;
-    heldSnapshot = (resolve) => {
-      releaseAckRpc = resolve as (value: unknown) => void;
-    };
-    const ackRefetch = client.refetchQueries({
-      queryKey: BOARD_STATE_KEY,
-      exact: true,
-    });
-    await settle(() => typeof releaseAckRpc === "function");
-    assert.equal(
-      requestedRevisions.at(-1),
-      1,
-      "bounded read sends the retained revision",
-    );
-
-    applyLiveUpdate(
-      client,
-      decodeLiveFrame({
-        event: "board",
-        data: JSON.stringify(boardWithTask(2, "task-2", "Live rev 2", 3)),
-      }),
-    );
-    await settle(() => ui.text().includes("Live rev 2"));
-
-    releaseAckRpc(boardAck(1, 0));
-    await ackRefetch;
-    const afterLateAck = client.getQueryData<UiBoard>(BOARD_STATE_KEY);
-    assert.equal(afterLateAck?.revision, 2);
-    assert.equal(afterLateAck?.activeWorkers, 3);
-    assert.ok(ui.text().includes("Live rev 2"));
-
-    // Arrival order 1 (same-revision live counters while RPC ack is in flight):
-    // live counters at rev 2 must not be clobbered by an in-flight ack(2) captured earlier.
-    let releaseSameRevAck!: (value: unknown) => void;
-    heldSnapshot = (resolve) => {
-      releaseSameRevAck = resolve as (value: unknown) => void;
-    };
-    const sameRevRefetch = client.refetchQueries({
-      queryKey: BOARD_STATE_KEY,
-      exact: true,
-    });
-    await settle(() => typeof releaseSameRevAck === "function");
-    applyLiveUpdate(
-      client,
-      decodeLiveFrame({
-        event: "counters",
-        data: JSON.stringify(boardAck(2, 7)),
-      }),
-    );
-    assert.equal(
-      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
-      7,
-    );
-    releaseSameRevAck(boardAck(2, 1));
-    await sameRevRefetch;
-    assert.equal(
-      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
-      7,
-    );
-
-    // Arrival order 1 (older full response): RPC starts at rev 2, live rev 4 commits while in flight,
-    // then RPC resolves with an older full response (rev 3). Revision 4 must remain.
-    let releaseOldFullRpc!: (value: unknown) => void;
-    heldSnapshot = (resolve) => {
-      releaseOldFullRpc = resolve as (value: unknown) => void;
-    };
-    const oldFullRefetch = client.refetchQueries({
-      queryKey: BOARD_STATE_KEY,
-      exact: true,
-    });
-    await settle(() => typeof releaseOldFullRpc === "function");
-    applyLiveUpdate(
-      client,
-      decodeLiveFrame({
-        event: "board",
-        data: JSON.stringify(boardWithTask(4, "task-4", "Live rev 4", 4)),
-      }),
-    );
-    await settle(() => ui.text().includes("Live rev 4"));
-    releaseOldFullRpc(boardWithTask(3, "task-3", "Older full rev 3", 0));
-    await oldFullRefetch;
-    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 4);
-    assert.ok(ui.text().includes("Live rev 4"));
-    assert.ok(!ui.text().includes("Older full rev 3"));
-
-    // Arrival order 2 (RPC commits newer projection first, then older live full board and ack arrive):
-    nextRpcResponse = boardWithTask(6, "task-6", "RPC rev 6", 5);
+    response = boardAck(6, 8);
     await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
-    await settle(() => ui.text().includes("RPC rev 6"));
+    assert.equal(requestedRevisions.at(-1), 6, "bounded read sends the retained revision");
     assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
+    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers, 8);
+    assert.ok(ui.text().includes("Current board"));
 
-    applyLiveUpdate(
-      client,
-      decodeLiveFrame({
-        event: "board",
-        data: JSON.stringify(boardWithTask(5, "task-5", "Older live rev 5", 1)),
-      }),
-    );
-    applyLiveUpdate(
-      client,
-      decodeLiveFrame({
-        event: "counters",
-        data: JSON.stringify(boardAck(5, 1)),
-      }),
-    );
-    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
-    assert.equal(
-      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
-      5,
-    );
-    assert.ok(ui.text().includes("RPC rev 6"));
-
-    // Same-revision counter refresh via RPC ack is preserved when no newer live commit intervened.
-    nextRpcResponse = boardAck(6, 8);
+    response = uiSnapshot.output.parse(boardWithTask(1, "task-r1", "Replaced board", 0));
     await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
-    assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 6);
-    assert.equal(
-      client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.activeWorkers,
-      8,
-    );
-    assert.ok(ui.text().includes("RPC rev 6"));
-
-    // Server replacement via RPC poll: a lower-revision full board when nothing committed in flight replaces the cache.
-    nextRpcResponse = boardWithTask(1, "task-r1", "Replaced server rev 1", 0);
-    await client.refetchQueries({ queryKey: BOARD_STATE_KEY, exact: true });
-    await settle(() => ui.text().includes("Replaced server rev 1"));
+    await settle(() => ui.text().includes("Replaced board"));
     assert.equal(client.getQueryData<UiBoard>(BOARD_STATE_KEY)?.revision, 1);
   } finally {
     ui.update(h("View", null));

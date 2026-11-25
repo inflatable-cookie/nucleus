@@ -17,11 +17,7 @@ import {
   type UnchangedBoard,
 } from "../shared/contracts";
 
-/**
- * The board's one query key. The poll (this module) and the web live channel
- * (`client/web/live-channel.ts`) both write this entry, so neither spells the
- * key out for itself.
- */
+/** The board projection shared by all observable surfaces. */
 export const BOARD_STATE_KEY = ["nucleus", "state"] as const;
 
 export type RetainedBoard = UiQueueState & {
@@ -31,8 +27,7 @@ export type RetainedBoard = UiQueueState & {
 
 export interface BoardTransitionOptions {
   /**
-   * Allow a lower-revision full projection to replace the retained one (used
-   * for explicit server replacement or a fresh reconnect/unavailable recovery).
+   * Allow a lower-revision full projection after a board service replacement.
    */
   allowReplacement?: boolean;
 }
@@ -44,8 +39,6 @@ export interface BoardReadTicket {
 
 interface BoardCacheState {
   commitEpoch: number;
-  allowReplacement: boolean;
-  replacementArmedAtEpoch: number | null;
   lastGuard: {
     expectedPrev: UiBoard | undefined;
     committed: UiBoard;
@@ -59,8 +52,6 @@ function cacheStateOf(queryClient: QueryClient): BoardCacheState {
   if (!state) {
     state = {
       commitEpoch: 0,
-      allowReplacement: false,
-      replacementArmedAtEpoch: null,
       lastGuard: null,
     };
     boardCacheStates.set(queryClient, state);
@@ -87,14 +78,6 @@ function mergeAckCounters(
     resumedThreads: ack.resumedThreads,
     error: ack.error,
   };
-}
-
-function recordCommit(state: BoardCacheState, committed: UiBoard): void {
-  state.commitEpoch++;
-  if (!isUnchangedBoard(committed)) {
-    state.allowReplacement = false;
-    state.replacementArmedAtEpoch = null;
-  }
 }
 
 /**
@@ -153,11 +136,7 @@ export function commitBoardRead(
 
   let next: UiBoard;
   if (sameEpoch) {
-    const allowReplacement =
-      !isUnchangedBoard(response) &&
-      (started.revision !== undefined ||
-        (state.allowReplacement &&
-          state.replacementArmedAtEpoch === state.commitEpoch));
+    const allowReplacement = started.revision !== undefined;
     next = nextBoardState(current, response, { allowReplacement });
   } else if (!current) {
     next = response;
@@ -177,54 +156,9 @@ export function commitBoardRead(
     return current;
   }
 
-  recordCommit(state, next);
+  state.commitEpoch++;
   state.lastGuard = { expectedPrev: current, committed: next };
   return next;
-}
-
-/**
- * Commit a live board or counter frame into the shared query cache, enforcing
- * the same revision and ack rules against whatever is currently cached.
- */
-export function commitBoardUpdate(
-  queryClient: QueryClient,
-  response: UiBoard,
-): UiBoard | undefined {
-  return queryClient.setQueryData<UiBoard>(BOARD_STATE_KEY, (retained) => {
-    const state = cacheStateOf(queryClient);
-    const allowReplacement =
-      !isUnchangedBoard(response) &&
-      state.allowReplacement &&
-      state.replacementArmedAtEpoch === state.commitEpoch;
-    const next = nextBoardState(retained, response, { allowReplacement });
-    if (retained !== undefined && next === retained) return retained;
-    recordCommit(state, next);
-    return next;
-  });
-}
-
-function armReplacement(queryClient: QueryClient): void {
-  const state = cacheStateOf(queryClient);
-  state.allowReplacement = true;
-  state.replacementArmedAtEpoch = state.commitEpoch;
-}
-
-/**
- * Mark the cached board invalidated on an `unavailable` signal and allow the
- * replacement projection (including a lower revision after server restart) to
- * replace it when it arrives.
- */
-export function invalidateBoardState(queryClient: QueryClient): void {
-  armReplacement(queryClient);
-  void queryClient.invalidateQueries({ queryKey: BOARD_STATE_KEY });
-}
-
-/**
- * Arm replacement for the first full board frame after a live stream reconnects
- * so a restarted server with a lower revision is not blocked by the prior run.
- */
-export function markBoardReconnect(queryClient: QueryClient): void {
-  armReplacement(queryClient);
 }
 
 /**
