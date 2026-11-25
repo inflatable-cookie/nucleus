@@ -10,7 +10,7 @@ use nucleus_core::{
     RunState,
 };
 use nucleus_forge::GitHub;
-use nucleus_hosts::{RunActivity, T3};
+use nucleus_hosts::{RunActivity, T3, TaskHost};
 use nucleus_store::EventDraft;
 use tower::ServiceExt;
 
@@ -2116,6 +2116,130 @@ async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
     assert!(
         state.schedule.due("awaiting-group").expect("settings wake") <= tokio::time::Instant::now()
     );
+}
+
+#[tokio::test]
+async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_group() {
+    use crate::profiles::LaunchSelection;
+    use nucleus_core::Workspace;
+
+    let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, native) = crate::tests::native_fixture(|request| {
+        assert_eq!(request["tag"], "server.getConfig");
+        json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
+            "environment":{"orchestrationProtocolVersion":2},
+            "providers":[
+                {"instanceId":"codex","enabled":true,"status":"ready","models":[{"slug":"base"}]},
+                {"instanceId":"codex-team","driver":"codex","enabled":true,"status":"ready",
+                 "models":[{"slug":"base"},{"slug":"team-only"}]}
+            ]
+        }}})
+    })
+    .await;
+    service.host = host;
+    let service = Arc::new(service);
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Profiles").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let api = router_with_board(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+        &assets,
+    )
+    .unwrap();
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let path = "/api/engine/settings/profiles";
+    let initial = read_paired_task(&api, path, &cookie).await;
+    let mut input = json!({"revision":initial["revision"],"value":{"profiles":[
+        {"name":"Team","selection":{"id":"team","provider":"codex","model":"team-only"}},
+        {"name":"Explicit","enabled":false,"group":"shared","providerInstanceId":"codex-team",
+         "selection":{"id":"explicit","provider":"codex","model":"base"}},
+        {"name":"Pinned","enabled":false,"providerInstanceId":"codex-team",
+         "selection":{"id":"pinned","provider":"codex","model":"base"}},
+        {"name":"Missing","selection":{"id":"missing","provider":"codex","model":"other"}}
+    ]}});
+    let saved =
+        json_body(browser_request(&api, Method::PUT, path, Some(&cookie), Some(&input)).await)
+            .await;
+    assert_eq!(
+        saved["effectiveGroups"],
+        json!({"explicit":"shared","pinned":"codex-team"})
+    );
+    assert!(service.host.host_calls().is_empty());
+
+    let pass = service.host.fixture_pass();
+    pass.profile_catalog().await.expect("seed cached catalog");
+    let calls = service.host.host_calls();
+    let snapshot = read_paired_task(&api, "/api/engine/settings", &cookie).await;
+    let groups = json!({"team":"codex-team","explicit":"shared","pinned":"codex-team"});
+    assert_eq!(snapshot["profiles"]["effectiveGroups"], groups);
+    assert_eq!(
+        read_paired_task(&api, path, &cookie).await["effectiveGroups"],
+        groups
+    );
+    assert_eq!(service.host.host_calls(), calls);
+
+    let observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Absent),
+    };
+    let mut task = Task::new(
+        Identity {
+            id: "fixture".into(),
+            reference: "fixture".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "Fixture brief".into(),
+        None,
+    );
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let select = || service.select_launch(&task, &observation, nucleus_core::Role::Worker, &pass);
+    let Ok(LaunchSelection::Profile(launch)) = select().await else {
+        panic!("eligible team profile")
+    };
+    assert_eq!(launch.group, groups["team"]);
+
+    input["revision"] = saved["revision"].clone();
+    input["value"]["pausedGroups"] = json!([groups["team"]]);
+    let manual =
+        json_body(browser_request(&api, Method::PUT, path, Some(&cookie), Some(&input)).await)
+            .await;
+    assert_eq!(manual["value"]["pausedGroups"], json!(["codex-team"]));
+    assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
+
+    input["revision"] = manual["revision"].clone();
+    input["value"]["pausedGroups"] = json!([]);
+    assert_eq!(
+        browser_request(&api, Method::PUT, path, Some(&cookie), Some(&input))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let now = now_ms();
+    let deadline = now + 60_000;
+    {
+        let state = service.state.lock().await;
+        service
+            .record_subscription_pause(&state, &launch.group, deadline, now)
+            .unwrap();
+    }
+    let usage = read_paired_task(&api, "/api/engine/profiles/usage", &cookie).await;
+    assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
+    assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
+    native.abort();
 }
 
 #[tokio::test]

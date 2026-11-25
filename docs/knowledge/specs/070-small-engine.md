@@ -112,8 +112,12 @@ Later decisions carry their own attribution.
    profiles. Provider and model use the engine's held T3 config catalog. Refresh
    reloads that cache through the paired API. If T3 is unavailable, the editor
    reports it and keeps the last usable choices for the lifetime of the service.
-   Paired sessions read stored enabled flags, subscription pauses and recorded
-   usage even when their Settings controls are read-only. Only an authenticated
+   Profiles uses the dispatch resolver and the current cached catalog to show
+   each profile's subscription group. An explicit group takes precedence over
+   an instance pin or the instance that can launch the model. Profiles without
+   a resolved group do not add a Pause control. Paired sessions read stored
+   enabled flags, subscription pauses and recorded usage even when their
+   Settings controls are read-only. Only an authenticated
    operator session can edit. Usage strips show up to the last 50 assignments
    in the selected view across both roles or for one role.
 
