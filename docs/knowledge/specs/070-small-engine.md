@@ -862,8 +862,8 @@ The board theme follows the host's settings and published themes. The scheduler'
 host watcher keeps T3's `subscribeServerConfig` stream open, applies only its
 `snapshot`, `settingsUpdated` and `environmentThemesUpdated` events, and caches
 the result. `GET /api/engine/theme` reads the cache and never calls the host. A
-change emits a `theme` event, and the client resolves the palette with the
-TypeScript host's own conversion.
+change emits a `theme` event. The board resolves its palette through the shared
+TypeScript theme converter, which has no dependency on the legacy RPC client.
 
 `nucleus-engine ui` prints a two-minute, one-use link for the authenticated
 controller. Pairing consumes the token and issues an eight-hour HttpOnly session
