@@ -17,6 +17,34 @@ pub(super) async fn put_as(api: &Router, path: &str, key: &[u8; 32], body: &Valu
 }
 
 #[tokio::test]
+async fn board_lane_dispositions_survive_native_validation_and_readback() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let api = router(
+        Arc::new(service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let path = format!("{PROJECT}/lanes/Delivery_Q4");
+    let status = format!("{path}/status");
+    let doc = json!({"version":0, "title":"Delivery", "aim":"Ship", "document":"Release"});
+    assert_eq!(
+        put_as(&api, &path, &PLANNER_KEY, &doc).await.status(),
+        StatusCode::OK
+    );
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../../../../test/fixtures/lane-dispositions.json"
+    ))
+    .unwrap();
+    for wire in cases {
+        let response = post_as(&api, &status, &PLANNER_KEY, &wire).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let plan = json_body(get_as(&api, &format!("{PROJECT}/plan"), &PLANNER_KEY).await).await;
+        let lane = &plan["documents"][0];
+        assert_eq!(lane["status"], wire["status"]);
+        assert_eq!(lane["note"], wire["note"]);
+    }
+}
+
+#[tokio::test]
 async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let api = router(
