@@ -98,6 +98,16 @@ pub enum RowChildren {
 }
 
 impl T3 {
+    /// Read attached and retained child activity from the synchronized shell.
+    #[must_use]
+    pub fn row_children(&self, parent: &str, roles: &[&str]) -> (RowChildren, u64) {
+        self.rpc.with_shell(|view| {
+            view.map_or((RowChildren::Unknown, 0), |view| {
+                view.row_children(parent, roles)
+            })
+        })
+    }
+
     /// Last delivered user message from the synchronized shell, without a native read.
     #[must_use]
     pub fn row_message_at(&self, thread: &str) -> Option<u64> {
@@ -144,6 +154,7 @@ impl T3 {
         command: &str,
         change: RowChange,
         shell: Option<&TitleTarget>,
+        children: (&[&str], u64),
         parent: Option<(RowObservation, &str)>,
     ) -> Result<SendOutcome, ParentSendError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
@@ -177,6 +188,14 @@ impl T3 {
                 None,
                 || {
                     self.rpc.with_shell(|view| {
+                        if matches!(change, RowChange::SnoozeUntil(_))
+                            && view.is_none_or(|view| {
+                                view.row_children(&thread, children.0)
+                                    != (RowChildren::Quiet, children.1)
+                            })
+                        {
+                            return Err(HostError::RowChildBusy);
+                        }
                         if let Some(target) = shell {
                             let current = view
                                 .and_then(|view| target.row_in(view))
@@ -225,7 +244,7 @@ fn refused(cause: &serde_json::Value, command: &str, kind: &str) -> bool {
         })
 }
 
-fn timestamp_ms(value: &str) -> Result<u64, HostError> {
+pub(crate) fn timestamp_ms(value: &str) -> Result<u64, HostError> {
     let time = OffsetDateTime::parse(value, &Rfc3339).map_err(|_| HostError::Protocol)?;
     u64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| HostError::Protocol)
 }

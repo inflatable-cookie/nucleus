@@ -117,19 +117,12 @@ impl Service {
             &task.identity().repository,
             id,
         );
-        let active_in_shell = [nucleus_core::Role::Worker, nucleus_core::Role::Reviewer]
-            .into_iter()
-            .filter_map(|role| task.threads().get(role))
-            .filter(|thread| {
-                task.run()
-                    .is_none_or(|run| !run.revoked() || run.launch().thread != *thread)
-            })
-            .chain(
-                task.run()
-                    .filter(|run| !run.revoked())
-                    .map(|run| run.launch().thread.as_str()),
-            )
-            .any(|thread| self.host.bound_child_active(thread, &checkout));
+        let parent = nucleus_hosts::parent_thread(&checkout);
+        let (activity, _, handover) = self.role_window(&parent, task);
+        let active_in_shell = activity == nucleus_hosts::RowChildren::Active;
+        // Carry an existing authenticated turn through the handover. The initial
+        // prompt still requires its exact recorded delivery.
+        let carry_row = !task.phase().is_terminal() && (active_in_shell || handover.is_some());
         let active_child = active_in_shell || run_keeps_turn(state, row);
         if task.phase().is_terminal()
             || task.run().is_some_and(|run| run.report().is_some())
@@ -144,9 +137,7 @@ impl Service {
             || (!active_child
                 && matches!(
                     state.wait_detail(id),
-                    Some(
-                        crate::WaitDetail::BeforeSend(_) | crate::WaitDetail::ShowingForDelivery(_)
-                    )
+                    Some(crate::WaitDetail::BeforeSend(_))
                 ))
             || (!active_in_shell && crate::attention::waiting_for_person(task, wait))
             || task.hold().is_some()
@@ -158,13 +149,13 @@ impl Service {
                 .is_some_and(|dispatch| dispatch.mode == nucleus_store::DispatchMode::Stopped)
             || (!active_in_shell && wait == Some(WaitReason::HostObservationBlocked))
         {
-            return Ok((None, false));
+            return Ok((None, carry_row));
         }
         if !active_child
             && (task.run().is_some()
                 || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)))
         {
-            return Ok((None, false));
+            return Ok((None, carry_row));
         }
         // A remembered child can acquire a new re-entry hold after settlement.
         // Carrying the prior prompt requires a current role.
@@ -177,7 +168,7 @@ impl Service {
             delivery.result == ParentResult::Failed
                 || (nucleus_hosts::is_parent_reentry(&delivery.command) && !active_in_shell)
         }) {
-            return Ok((None, false));
+            return Ok((None, carry_row));
         }
         let prompt = delivery
             .filter(|delivery| {
@@ -189,7 +180,7 @@ impl Service {
             .map(|delivery| delivery_prompt(&delivery))
             .transpose()?
             .flatten();
-        let carry = active_child && task.run().is_some() && prompt.is_none();
+        let carry = prompt.is_none() && (carry_row || active_child && task.run().is_some());
         Ok((prompt, carry))
     }
 
@@ -373,7 +364,7 @@ impl Service {
         }
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-        if nucleus_hosts::is_pinned_parent_hold(&command) {
+        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(&command) {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
         self.wake_parent_delivery(row, &write).await?;
@@ -513,10 +504,7 @@ impl Service {
                     .any(|value| value.refresh && value.result == ParentResult::Pending)
         };
         if refresh && let Err(error) = self.refresh_acp_parent(row).await {
-            if matches!(
-                error,
-                ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. }
-            ) {
+            if matches!(error, ServiceError::ParentNotSent { .. }) {
                 let mut state = self.state.lock().await;
                 if self.lookup(&state, id)?.version == row.version {
                     state.acp_refresh_requests.insert(id.into(), row.version);

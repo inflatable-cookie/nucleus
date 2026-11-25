@@ -80,8 +80,6 @@ pub enum ServiceError {
         reason: String,
         retry_at: Option<Instant>,
     },
-    #[error("the next task row visibility change is scheduled")]
-    RowVisibilityDeferred { until: Instant },
     #[error("T3 parent message delivery could not be confirmed: {source}")]
     ParentDeliveryUnknown { source: HostError, until: Instant },
     #[error(
@@ -240,7 +238,6 @@ struct TaskWait {
 #[derive(PartialEq, Eq)]
 enum WaitDetail {
     BeforeSend(Option<&'static str>),
-    ShowingForDelivery(Option<&'static str>),
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
     Blocked(String),
@@ -654,12 +651,7 @@ impl Service {
         if matches!(result, Ok(Action::Launch { .. })) {
             self.title_wake.notify_one();
         }
-        Ok(Some(match result {
-            Err(ServiceError::RowVisibilityDeferred { .. }) => {
-                Ok(Action::Wait(WaitReason::HostUnknown))
-            }
-            result => result,
-        }))
+        Ok(Some(result))
     }
 
     async fn advance_due_task(
@@ -1013,7 +1005,7 @@ impl Service {
             }
             return Ok(());
         }
-        let (mut wait, mut detail) = task_wait(&state, row, result);
+        let (mut wait, mut detail) = task_wait(row, result);
         if wait == Some(WaitReason::Capacity)
             && current.task.phase() == Phase::Working
             && current.task.first_launch()
@@ -1085,10 +1077,7 @@ impl Service {
                 delay = schedule::LIVE_CHECK;
             }
             let due = match result {
-                Err(
-                    ServiceError::Host(HostError::Deferred { until })
-                    | ServiceError::RowVisibilityDeferred { until },
-                ) => (*until).max(now + delay),
+                Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
                 Err(ServiceError::ParentNotSent { retry_at, .. }) => {
                     (now + delay).max(retry_at.unwrap_or(now))
                 }
@@ -1692,23 +1681,11 @@ fn workspace_cause(result: &Result<Action, ServiceError>) -> String {
 }
 
 fn task_wait(
-    state: &State,
     row: &TaskRow,
     result: &Result<Action, ServiceError>,
 ) -> (Option<WaitReason>, Option<WaitDetail>) {
     use WaitReason as Wait;
-    let showing = matches!(
-        state.wait_detail(&row.task.identity().id),
-        Some(WaitDetail::ShowingForDelivery(_))
-    );
-    let pre_wire = |cause| {
-        let detail = if showing {
-            WaitDetail::ShowingForDelivery(cause)
-        } else {
-            WaitDetail::BeforeSend(cause)
-        };
-        (Some(Wait::HostUnknown), Some(detail))
-    };
+    let pre_wire = |cause| (Some(Wait::HostUnknown), Some(WaitDetail::BeforeSend(cause)));
     let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
     match result {
         Err(ServiceError::ArchiveEvidence(_)) => (Some(Wait::Stopping), None),
@@ -1729,9 +1706,7 @@ fn task_wait(
             Wait::HostObservationBlocked,
             "The T3 task turn failed. Open the task thread to check, then update the task to retry.",
         ),
-        Err(ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. }) => {
-            pre_wire(None)
-        }
+        Err(ServiceError::ParentNotSent { .. }) => pre_wire(None),
         Err(ServiceError::ParentDeliveryUnknown { .. }) => (
             Some(Wait::HostUnknown),
             Some(WaitDetail::ConfirmingDelivery(
@@ -1748,15 +1723,13 @@ fn task_wait(
                 HostError::ProcessCoverage(failure) => Some(process_check_detail(*failure)),
                 _ => None,
             };
-            if showing || row.task.run().is_none_or(unsent) {
+            if row.task.run().is_none_or(unsent) {
                 pre_wire(cause)
             } else {
                 observation(Wait::HostUnknown, cause.unwrap_or("Waiting for T3."))
             }
         }
-        Ok(Action::Wait(Wait::HostUnknown)) if showing || row.task.run().is_some_and(unsent) => {
-            pre_wire(None)
-        }
+        Ok(Action::Wait(Wait::HostUnknown)) if row.task.run().is_some_and(unsent) => pre_wire(None),
         Ok(Action::Wait(Wait::HostUnknown))
             if row
                 .task

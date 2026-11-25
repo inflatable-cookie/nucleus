@@ -674,7 +674,7 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
                 .observe_wait_detail(
                     &row.task,
                     Some(WaitReason::HostUnknown),
-                    Some(crate::WaitDetail::ShowingForDelivery(None)),
+                    Some(crate::WaitDetail::BeforeSend(Some("Checking T3"))),
                 )
                 .unwrap()
         );
