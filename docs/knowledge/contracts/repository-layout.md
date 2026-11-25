@@ -182,9 +182,6 @@ backup sources. Installed backup worker and CLI entries remain under `server/`.
 
 `core/planning/` owns planning records, operations and briefs;
 `core/questions/` owns asks, messages, questions and their delegation policies.
-The review-entry CLI prepares its lead source through the local
-`service/transport/index.mjs` seam. Workspace preparation goes through service
-admission and core review-entry identity on the selected host.
 The runtime owner supplies operations with the synchronous build-identity getter.
 
 ## Migration invariants
@@ -206,10 +203,9 @@ together under `core/verbs/disposition/`.
 
 ## Transport location
 
-The framed protocol, socket client, local client, roll recovery, discovery reads
-and build identity live in `shared/service/`. Service identity writes and process
-launch/install actions stay outside shared. The installed local-client entry
-remains `server/service/local-client.mjs`. Pure review text lives in
+The framed protocol, socket client, roll recovery, discovery reads and build
+identity live in `shared/service/`. Service identity writes and process launch
+actions stay outside shared. Pure review text lives in
 `shared/review-text.ts`.
 
 `service/host-environment.mjs` still supplies environment values to the
@@ -237,10 +233,9 @@ Runtime handlers now live in `core/runtime/`. Host admission, registration,
 facade and registry live in `core/host/`; its public `index.ts` retains the
 adapter contract and adapter-facing value types extracted before relocation.
 
-The retired TypeScript CLI used the neutral `queueClient` in
-`shared/service/local-client.ts` for direct service transport, with an explicit
-`--via-paseo` compatibility route. The installed Rust CLI uses the engine
-endpoint. The TypeScript plugin registration lookup lives in
+The archived TypeScript CLI connected directly to its service socket and also
+had an explicit `--via-paseo` compatibility route. The installed Rust CLI uses
+the engine endpoint. The TypeScript plugin registration lookup lives in
 `shared/plugin-discovery.mjs`.
 
 `core/qa/` owns project QA, validation, proof and Effigy admission policy, including

@@ -47,10 +47,8 @@ export class HostForgetRefusedError extends Error {
 export type OriginLookup = 'mine' | 'not-mine' | 'unknown';
 
 /**
- * The caller's identity source named the host it belongs to (the caller
- * resolution in `shared/caller.mjs` proves it from a ticket or the host's own
- * fallback). It is evidence about the identity's own host, never another
- * thread's.
+ * A ticket or the native host can establish the host of one thread.
+ * The resulting evidence applies to that same identity.
  */
 export interface OriginHostEvidence { hostId: string; source: string }
 
