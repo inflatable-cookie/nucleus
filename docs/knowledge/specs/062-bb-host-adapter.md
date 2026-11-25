@@ -2054,8 +2054,8 @@ text carries no local paths, no credentials and no private project names.
 The vendored sidebar used a manifest test over committed files and a separate
 opt-in drift check against upstream.
 
-The isolated `effigy proof:bb:sidebar` checks the built sidebar and its
-response when the Nucleus service is unavailable. The retained BB channel
-reads service identity without starting a daemon. Use the affected unit files,
-`effigy check` and `effigy qa:docs` for each phase.
+The isolated sidebar proof, its vendored pin checks and the BB package
+sources were retired under Spec 070 ruling 5. The Rust browser keeps the
+host vocabulary it uses for existing records.
+
 Milestone QA runs the full suite on `main`.
