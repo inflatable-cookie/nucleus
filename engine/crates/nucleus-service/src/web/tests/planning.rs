@@ -37,11 +37,11 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
     let response = get_as(&api, &plan, &PLANNER_KEY).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json_body(response).await["idle"], true);
+    let unknown = get_as(&api, "/v1/planning/other/plan", &PLANNER_KEY).await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
     assert_eq!(
-        get_as(&api, "/v1/planning/other/plan", &PLANNER_KEY)
-            .await
-            .status(),
-        StatusCode::BAD_REQUEST
+        json_body(unknown).await["error"],
+        ServiceError::TellUnknownProject("other".into()).to_string()
     );
     assert_eq!(
         get_as(&api, &plan, &[0; 32]).await.status(),
