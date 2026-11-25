@@ -151,13 +151,10 @@ impl Service {
         if let Some(replay) = state.store.tell_replay(&key, now)? {
             return Ok(replay.into());
         }
-        let projects = tell_projects(&state, selectors)?;
-        let (groups, unrouted) = group_by_thread(projects.into_iter().map(|project| {
-            (
-                project,
-                tell_planner(&state, project, actor).map(|planner| planner.identity.id.as_str()),
-            )
-        }));
+        let (routed, unrouted): (Vec<_>, Vec<_>) = tell_projects(&state, selectors)?
+            .into_iter()
+            .map(str::to_owned)
+            .partition(|project| tell_planner(&state, project, actor).is_some());
         // A stored route whose process-local proof expired is still a candidate.
         // Ask the enrollment worker before freezing the broadcast's recipient set.
         let candidates: BTreeSet<_> = unrouted
@@ -174,18 +171,15 @@ impl Service {
         if let Some(wait) = pending {
             return Err(wait);
         }
-        let recipients = groups
-            .into_values()
-            .flatten()
-            .collect::<BTreeSet<_>>()
+        let recipients = routed
             .into_iter()
-            .map(|project| Ok((project.to_owned(), new_id("tell")?)))
+            .map(|project| Ok((project, new_id("tell")?)))
             .collect::<Result<Vec<_>, ServiceError>>()?;
         let no_live_planners: Vec<_> = unrouted
             .into_iter()
             .map(|id| TellProject {
-                id: id.into(),
-                name: project_name(&state, id).into(),
+                name: project_name(&state, &id).into(),
+                id,
             })
             .collect();
         let rows = state.store.record_tell(
