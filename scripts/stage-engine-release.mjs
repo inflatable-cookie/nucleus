@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { chmod, copyFile, lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { existsSync, lstatSync, renameSync, statSync } from 'node:fs';
+import { chmod, copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildEngineBoard } from './build-web.mjs';
@@ -32,19 +32,47 @@ function buildEngine() {
   return executable;
 }
 
+const fileIdentity = { bigint: true, throwIfNoEntry: false };
+
+function sameDirectory(expected, actual) {
+  return actual?.isDirectory() && expected.dev === actual.dev && expected.ino === actual.ino;
+}
+
 async function stageRelease(buildsRoot) {
   const revision = cleanRevision();
+  const buildsDirectory = statSync(buildsRoot, fileIdentity);
+  if (!buildsDirectory?.isDirectory()) {
+    throw Error(`Expected an existing engine builds root at ${buildsRoot}.`);
+  }
+  const changed = () => Error(`The engine builds destination changed during staging: ${buildsRoot}.`);
+  // Relative writes stay on the directory we entered, even if its name is replaced.
+  process.chdir(buildsRoot);
+  if (!sameDirectory(buildsDirectory, statSync('.', fileIdentity))) throw changed();
   const releases = join(buildsRoot, 'releases');
-  const release = join(releases, revision);
-  await mkdir(releases, { recursive: true, mode: 0o700 });
-  if (!(await lstat(releases)).isDirectory()) {
+  try {
+    await mkdir('releases', { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  const releasesDirectory = lstatSync('releases', fileIdentity);
+  if (!releasesDirectory?.isDirectory()) {
     throw Error(`Expected a real engine releases directory at ${releases}.`);
   }
-  if (existsSync(release)) throw Error(`Engine release already exists at ${release}.`);
-  const staging = await mkdtemp(join(releases, '.stage-'));
+  process.chdir('releases');
+  if (!sameDirectory(releasesDirectory, statSync('.', fileIdentity))) throw changed();
+  function checkDestination() {
+    if (!sameDirectory(buildsDirectory, statSync(buildsRoot, fileIdentity)) ||
+        !sameDirectory(releasesDirectory, lstatSync(releases, fileIdentity))) throw changed();
+  }
+  checkDestination();
+  const release = join(releases, revision);
+  if (existsSync(revision)) throw Error(`Engine release already exists at ${release}.`);
+  const staging = await mkdtemp('.stage-');
   try {
     const binary = join(staging, 'nucleus');
-    await copyFile(buildEngine(), binary);
+    const executable = buildEngine();
+    checkDestination();
+    await copyFile(executable, binary);
     await chmod(binary, 0o700);
     await buildEngineBoard(join(staging, 'board-assets'));
     const skill = join('skills', 'nucleus');
@@ -52,7 +80,15 @@ async function stageRelease(buildsRoot) {
     await copyFile(join(root, skill, 'SKILL.md'), join(staging, skill, 'SKILL.md'));
     if (cleanRevision() !== revision) throw Error('The checkout revision changed during the engine build.');
     // Publish the release together. A concurrent stage's nonempty release wins.
-    await rename(staging, release);
+    checkDestination();
+    renameSync(staging, revision);
+    try {
+      checkDestination();
+    } catch (error) {
+      // Withdraw our release from the anchored directory if it moved across the rename.
+      renameSync(revision, staging);
+      throw error;
+    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
