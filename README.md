@@ -20,7 +20,7 @@ that setting controls where runs start and which profiles need the operator's pe
 
 Follow the [engine staging instructions](engine/README.md#stage-an-engine-release)
 for the current Rust executable and local web board. See the
-[release contract](docs/knowledge/contracts/release.md) for publication.
+[release contract](docs/knowledge/contracts/release.md) for release policy.
 The [0.1.0 download](https://github.com/inflatable-cookie/nucleus/releases/tag/v0.1.0)
 is the archived TypeScript release for macOS on Apple silicon.
 
@@ -38,10 +38,6 @@ is the archived TypeScript release for macOS on Apple silicon.
    owner verbs and review entry. Every task runs the responsible lifecycle on
    its own: worker, reviewer, merge gates and recovery.
 
-Paseo and T3Code provide their own subscription usage display or host-specific
-plugins for it. Nucleus does not add a subscription usage screen or sidebar
-gauge; its Usage level setting controls dispatch routing only.
-
 ## Where to read more
 
 - [docs/README.md](docs/README.md) — the entry point to the project's docs.
@@ -55,9 +51,9 @@ gauge; its Usage level setting controls dispatch routing only.
   [specs](docs/knowledge/specs/README.md) (per-capability design with
   acceptance oracles).
 - [The Nucleus skill](skills/nucleus/SKILL.md) — what agents read: planning
-  records, briefs and leads, submission, owner verbs, review entry, and milestone QA history.
+  records, briefs and leads, submission, owner verbs, review entry, and report-only milestone QA.
 - [Operations](docs/knowledge/operations/restore.md) — restore a verified
-  store snapshot. The data-home layout is in the release contract.
+  engine store snapshot.
 - [Open questions](docs/knowledge/questions.md) — what is deliberately
   undecided.
 

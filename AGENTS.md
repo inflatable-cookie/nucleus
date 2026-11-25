@@ -1,11 +1,9 @@
 # Nucleus
 
-A trusted local plugin for its supported agent hosts and a standalone service
-that own durable task dispatch, review, merge, closeout and recovery. Every task
-runs the responsible lifecycle: one worker owns it end to end, one retained
-reviewer reviews it, the planner ladder takes rulings, and one retained recovery
-thread handles faults code cannot settle. Nucleus must never become a place that
-invents planning decisions or grants execution authority from documents.
+The Rust service owns durable task dispatch, review, merge and closeout. T3
+hosts the task's ACP thread and its worker and reviewer. The engine reconciles
+mechanical faults from evidence. Questions about the work go to the task's
+planner. A planning document cannot authorize execution.
 Merging through Nucleus requires exact-head review, qualified owner acceptance
 or recorded operator source acceptance. The operator-source rule came through
 a 2026-10-20 agent relay. A responsible planner or the operator board may
@@ -36,8 +34,8 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 - `effigy qa` — the full milestone board, including the Rust workspace,
   typecheck, docs and active TypeScript tests.
 
-The TypeScript engine is stopped. Rust reuses the board's TypeScript client
-and shared code, so their tests and typecheck stay active. See
+The browser board and its shared TypeScript code have active tests and a
+typecheck. The Rust service serves the board and its API. See
 [Spec 070](docs/knowledge/specs/070-small-engine.md#rulings).
 
 Existing npm scripts stay package-native; do not add wrappers around Effigy.
@@ -57,26 +55,23 @@ all fragments into the changelog and removes the folded files.
 - Keep Northstar independent of Paseo: the Nucleus skill belongs here, not in
   Northstar core.
 - Tasks needing attention stay owned until resolved or explicitly disposed of.
-  The worker owns its blockers with the retained reviewer as its second opinion,
-  the planner ladder takes planning rulings, and one retained recovery thread
-  handles operational faults.
+  Read the current wait, question and available commands with `nucleus next <id>`.
+  A planner ruling is required for decisions about the work.
 
 ## Guardrails
 
 - Preserve the live database, profiles, subscriptions, limits and pause state.
   Never edit the live database or silently reset exhausted groups.
-- Reload only the connected host's plugin after typechecking
-  (`paseo plugin reload nucleus` in Paseo, `bb plugin reload nucleus` in BB).
-  Never restart a host or its daemon. Never test light mode on the operator's
-  display.
+- Never restart T3 or its daemon. Check UI changes against the built board
+  before merge. The planner checks the installed board in dark theme after a roll.
+  Never test light mode on the operator's display.
 - Never leave uncommitted work in the registered checkout; it fences every
   agent's Nucleus CLI. Work in a separate worktree.
 - Load `NUCLEUS_SCRATCH_ROOT` from the ignored `.agents.local.env` for new
   scratch, including test temporary directories and command output. Managed runs
   use their recorded root. Set `TMPDIR`, `TMP` and `TEMP` there before tests;
   if the configured volume is absent, stop without an internal-drive fallback.
-  Service and bridge scratch derives from `workRoot/scratch`; the environment
-  variable is an optional override there. Developer scripts may require it.
+  Service scratch follows the configured storage placement. Developer scripts may require it.
 - Examples and fixtures are synthetic. Keep evidence in scratch and link it
   from PRs; never commit it. PR bodies must contain no local paths or private
   project names because they will be public.
@@ -100,10 +95,9 @@ File small, recurring friction in Nucleus with `papercut.add` (see the
 Nucleus skill, `nucleus`). There is no `PAPERCUTS.md`.
 
 No Nucleus task may fix a single stuck state (Tom, 2026-10-14). A papercut
-describes the stuck shape, not a fix mechanism. Clear it with an existing Spec
-050 owner verb (`next`, `route`, `restart`, `move`, `retry_effect`), make one
-of those verbs more general, or leave it for the phase 2 reconciler. A new
-guard, proof tuple or exception-specific control is never the fix.
+describes the stuck shape. Use the same engine decision for every task with that shape.
+Check the current commands with `nucleus next <id>` and preserve exact delivery evidence
+when the outcome of a send is uncertain. See [Spec 070](docs/knowledge/specs/070-small-engine.md#rulings).
 
 ## Validate
 
