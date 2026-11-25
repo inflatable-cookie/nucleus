@@ -320,7 +320,7 @@ impl Service {
         use nucleus_core::profiles::BriefPolicy;
 
         let before = BriefPolicy::parse(&prior.brief().text).unwrap_or_default();
-        let after = BriefPolicy::parse(&amended.brief().text)?;
+        let after = BriefPolicy::submitted(&amended.brief().text)?;
         if before.depends_on == after.depends_on {
             return Ok(None);
         }

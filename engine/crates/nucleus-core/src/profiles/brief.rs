@@ -12,6 +12,8 @@ pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
     pub critical: bool,
     profile_requests: Requests,
+    #[serde(default, deserialize_with = "present")]
+    preferred_profile_id: bool,
     #[serde(default, deserialize_with = "optional_bool")]
     pub report_only: Option<bool>,
     #[serde(default, deserialize_with = "optional_text")]
@@ -31,6 +33,10 @@ pub struct BriefPolicy {
 enum LaneSelection {
     Key(#[serde(deserialize_with = "text_scalar")] String),
     Keys(#[serde(deserialize_with = "lane_keys")] Vec<String>),
+}
+
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    de::IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
 fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -89,6 +95,7 @@ fn text_scalar<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::
 #[derive(Debug)]
 pub enum BriefPolicyError {
     UnclosedFrontmatter,
+    RetiredProfile,
     InvalidFrontmatter(yaml_serde::Error),
     UnjustifiedRequest(Role),
     ReportPolicy(&'static str),
@@ -97,6 +104,7 @@ pub enum BriefPolicyError {
 impl fmt::Display for BriefPolicyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RetiredProfile => f.write_str("queue.preferredProfileId is retired; use queue.profileRequests.worker with profileId and reason (required: true to require it)"),
             Self::UnclosedFrontmatter => {
                 f.write_str("brief frontmatter is missing its closing delimiter")
             }
@@ -113,6 +121,18 @@ impl fmt::Display for BriefPolicyError {
 impl std::error::Error for BriefPolicyError {}
 
 impl BriefPolicy {
+    /// Validate routing keys on a new or amended brief. Stored briefs stay readable.
+    ///
+    /// # Errors
+    /// Returns a replacement for the retired profile selector.
+    pub fn submitted(brief: &str) -> Result<Self, BriefPolicyError> {
+        let policy = Self::parse(brief)?;
+        if policy.preferred_profile_id {
+            return Err(BriefPolicyError::RetiredProfile);
+        }
+        Ok(policy)
+    }
+
     /// Write the explicit promotion choice into a papercut's task brief.
     ///
     /// # Errors
@@ -232,5 +252,22 @@ impl BriefPolicy {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::BriefPolicy;
+
+    #[test]
+    fn retired_selector_only_refuses_new_or_amended_input() {
+        let brief = "---\nqueue:\n  preferredProfileId: old\n---\nHeld work";
+        assert!(BriefPolicy::parse(brief).is_ok());
+        assert!(
+            BriefPolicy::submitted(brief)
+                .unwrap_err()
+                .to_string()
+                .contains("queue.profileRequests.worker")
+        );
     }
 }

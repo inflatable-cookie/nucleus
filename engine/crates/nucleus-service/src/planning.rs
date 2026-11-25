@@ -431,7 +431,7 @@ fn check_brief(brief: &str) -> Result<BriefPolicy, ServiceError> {
     if brief.trim().is_empty() {
         return Err(ServiceError::Input);
     }
-    let policy = BriefPolicy::parse(brief)?;
+    let policy = BriefPolicy::submitted(brief)?;
     if policy.complexity.is_none() {
         return Err(ServiceError::ComplexityRequired);
     }
