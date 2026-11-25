@@ -382,6 +382,8 @@ impl RegisteredProject {
 }
 
 pub struct T3 {
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    fixture_quiet_processes: bool,
     rpc: Rpc,
     runtime_descriptor: Option<PathBuf>,
 }
@@ -435,6 +437,8 @@ impl T3 {
     /// Returns an error for an invalid endpoint or bearer.
     pub fn new(endpoint: &str, bearer: &str) -> Result<Self, HostError> {
         Ok(Self {
+            #[cfg(any(test, feature = "loopback-fixture"))]
+            fixture_quiet_processes: false,
             rpc: Rpc::new(endpoint, bearer)?,
             runtime_descriptor: None,
         })
@@ -482,6 +486,10 @@ impl T3 {
 
     #[must_use]
     pub fn pass<'a>(&'a self, scratch: &'a Path) -> T3Pass<'a> {
+        #[cfg(any(test, feature = "loopback-fixture"))]
+        if self.fixture_quiet_processes {
+            return self.fixture_pass();
+        }
         T3Pass {
             host: self,
             evidence: Arc::new(PassEvidence::default()),
@@ -489,6 +497,14 @@ impl T3 {
             run_scratch: None,
             role_threads: [None, None],
         }
+    }
+
+    /// Use the quiet process census for passes started inside a loopback service fixture.
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    #[must_use]
+    pub fn with_quiet_fixture_processes(mut self) -> Self {
+        self.fixture_quiet_processes = true;
+        self
     }
 
     /// Give a loopback RPC fixture a known process census.
