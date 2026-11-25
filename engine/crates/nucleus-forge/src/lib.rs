@@ -643,7 +643,8 @@ impl GitHub {
             .client
             .post(format!("{}/graphql", self.origin))
             .json(&json!({"query":query, "variables":variables}));
-        self.request(request, false, |_, bytes, deadline| {
+        self.request(request, false, |status, bytes, deadline| {
+            require_success(status)?;
             let graph: GraphReply = decode_json(bytes)?;
             if secondary_limit(bytes) {
                 return Err(ForgeError::Deferred {
@@ -834,7 +835,8 @@ struct Representation {
 
 impl GitHub {
     async fn get<T: DeserializeOwned>(&self, url: impl IntoUrl) -> Result<T, ForgeError> {
-        self.request(self.client.get(url), false, |_, bytes, _| {
+        self.request(self.client.get(url), false, |status, bytes, _| {
+            require_success(status)?;
             decode_json(bytes)
         })
         .await
@@ -842,6 +844,7 @@ impl GitHub {
 
     async fn write(&self, request: RequestBuilder) -> Result<(StatusCode, Vec<u8>), ForgeError> {
         self.request(request, true, |status, bytes, _| {
+            require_success(status)?;
             Ok((status, bytes.to_vec()))
         })
         .await
@@ -960,15 +963,26 @@ impl Account {
         if limited {
             return Err(ForgeError::Deferred { until: deadline });
         }
-        if !status.is_success() && status != StatusCode::NOT_MODIFIED {
-            return Err(ForgeError::Status(status));
-        }
+        // A rejected request still has an HTTP status if its body is unreadable.
+        let bytes = if status.is_client_error() || status.is_server_error() {
+            received.unwrap_or_default()
+        } else {
+            received?
+        };
         Ok(Reply {
             status,
             tag,
-            bytes: received?,
+            bytes,
             deadline: hint,
         })
+    }
+}
+
+fn require_success(status: StatusCode) -> Result<(), ForgeError> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(ForgeError::Status(status))
     }
 }
 
