@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "../shell";
+import { BoardLiveContext } from "../board-live";
 import {
   Button,
   DetailSection,
@@ -58,6 +59,7 @@ export function PapercutDialog({
   onClose: () => void;
   c: Colors;
 }) {
+  const live = useContext(BoardLiveContext);
   const fetchPapercut = useRpc(api.papercutGet),
     editPapercut = useRpc(api.papercutEdit),
     promotePapercut = useRpc(api.papercutPromoteTask),
@@ -80,7 +82,7 @@ export function PapercutDialog({
     queryKey: ["nucleus", "papercut", openPapercutId],
     queryFn: () => fetchPapercut({ id: openPapercutId! }),
     enabled: Boolean(openPapercutId),
-    refetchInterval: 4000,
+    refetchInterval: live ? false : 4000,
   });
   const papercutDetail = papercutDetailQuery.data;
   useEffect(() => {

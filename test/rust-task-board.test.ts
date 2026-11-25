@@ -643,6 +643,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let usageCount = 49;
   let resetAt: number | undefined;
   let decisionOpen = true;
+  let decisionQuestion = "Which route should we take?";
+  let itemBody = "Fixture body";
+  let reconnectGate: Promise<void> | undefined;
   let projectArchived = false;
   let projectRemoved = false;
   let removalWrites = 0;
@@ -655,7 +658,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const secondCut = "A second open papercut";
   const leadItem = (id: string, title: string, origin: string) => ({
     id, title, repositories: [origin], kind: "lead", author: "Fixture planner",
-    body: "Fixture body", lanes: [], state: "open",
+    body: itemBody, lanes: [], state: "open",
     createdAtMs: now - 4 * 3_600_000, updatedAtMs: now - 36 * 60_000,
   });
   const papercut = "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
@@ -746,6 +749,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     }
     assert.equal(headers.get("authorization"), null);
     if (path === "/api/engine/events") {
+      await reconnectGate;
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           stream = controller;
@@ -866,7 +870,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     if (path === "/api/engine/planning/fixture/decisions")
       return Response.json(decisionOpen ? [{
         id: "fixture-decision", projectId: "fixture", author: "Fixture planner",
-        question: "Which route should we take?", createdAtMs: now,
+        question: decisionQuestion, createdAtMs: now,
         options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }], answer: null,
       }] : []);
     assert.fail("Unexpected standalone route " + path);
@@ -1223,6 +1227,105 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on reconnect");
 
   await click("Back to board");
+  // Advance the record polling interval in the browser without disturbing
+  // reconnect timers or the rendering clock.
+  const setInterval = dom.window.setInterval.bind(dom.window);
+  const clearInterval = dom.window.clearInterval.bind(dom.window);
+  const recordTimers = new Map<number, { next: number; run: () => void }>();
+  let intervalId = 0;
+  let intervalClock = 0;
+  t.mock.method(dom.window, "setInterval",
+    (run: () => void, delay?: number) => {
+      if (delay !== 4000) return setInterval(run, delay);
+      const id = --intervalId;
+      recordTimers.set(id, { next: intervalClock + delay, run });
+      return id;
+    },
+  );
+  t.mock.method(dom.window, "clearInterval", (id: number) => {
+    if (id < 0) recordTimers.delete(id);
+    else clearInterval(id);
+  });
+  const advanceRecordClock = async () => {
+    intervalClock += 4100;
+    for (const timer of recordTimers.values()) {
+      if (timer.next > intervalClock) continue;
+      timer.next += 4000;
+      timer.run();
+    }
+    await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+  };
+
+  decisionOpen = true;
+  emit("decisions");
+  await eventually(() => Boolean(selector("Needs you, 1")), "the decision is back on the board");
+  const decisionCard = () => dom.window.document.querySelector<HTMLElement>('[aria-label^="Decision: Which route should we take?"]');
+  const itemRoute = "/planning/fixture/items";
+  const decisionRoute = "/planning/fixture/decisions";
+  const records = [
+    {
+      detail: "Lead detail", view: "Leads, 3", event: "planning", route: itemRoute,
+      card: () => selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`),
+    },
+    {
+      detail: "Papercut detail", view: "Papercuts, 2", event: "planning", route: itemRoute,
+      card: () => selector(`Papercut: ${papercut}, Status: Open`),
+    },
+    {
+      detail: "Decision detail", view: "Needs you, 1", event: "decisions", route: decisionRoute,
+      card: decisionCard,
+    },
+  ];
+  for (const { detail, view, event, route, card } of records) {
+    await click(view);
+    await eventually(() => Boolean(card()), detail + " card is available");
+    const beforeOpen = count(route);
+    card()!.click();
+    const current = event === "planning" ? itemBody : decisionQuestion;
+    await eventually(() => selector(detail)?.textContent?.includes(current) === true, detail + " initial read");
+    assert.equal(count(route) - beforeOpen, 1, detail + " reads once on opening");
+
+    const beforeIdle = count(route);
+    await advanceRecordClock();
+    assert.equal(count(route) - beforeIdle, 0, detail + " has no interval reads on a healthy stream");
+
+    const changed = detail + " from a push";
+    if (event === "planning") itemBody = changed;
+    else decisionQuestion = changed;
+    emit(event);
+    await eventually(() => selector(detail)?.textContent?.includes(changed) === true, detail + " refreshes on its event");
+    assert.equal(count(route) - beforeIdle, 2, detail + " and its collection each refresh once");
+  }
+
+  let resumeEvents!: () => void;
+  reconnectGate = new Promise<void>((resolve) => { resumeEvents = resolve; });
+  t.after(() => resumeEvents());
+  closeStream!();
+  const channel = (state: string) => dom.window.document.querySelector(`[data-live-channel="${state}"]`);
+  await eventually(() => Boolean(channel("disconnected")) && recordTimers.size === 1,
+    "the open decision starts its fallback read interval when the stream drops");
+  const beforeFallback = count(decisionRoute);
+  decisionQuestion = "Decision detail during disconnection";
+  await advanceRecordClock();
+  await eventually(() => selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
+    "the open decision refreshes during disconnection");
+  assert.equal(count(decisionRoute) - beforeFallback, 1);
+
+  const beforeRecovery = count(decisionRoute);
+  decisionQuestion = "Decision detail after reconnect";
+  resumeEvents();
+  reconnectGate = undefined;
+  await eventually(() => Boolean(channel("connected")) &&
+    selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
+    "stream reconnection refreshes the open decision");
+  assert.equal(count(decisionRoute) - beforeRecovery, 2);
+
+  const afterRecovery = count(decisionRoute);
+  await advanceRecordClock();
+  assert.equal(count(decisionRoute) - afterRecovery, 0, "reconnection stops the fallback interval");
+  await click("Working, 1");
+  decisionOpen = false;
+  emit("decisions");
   await click("Projects, All projects");
   const projectRow = () => selector("Project selector")?.querySelector<HTMLElement>(
     '[role="checkbox"][aria-label^="Project Fixture project,"]',
