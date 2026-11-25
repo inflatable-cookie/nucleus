@@ -42,7 +42,7 @@ impl Store {
     /// Replace the ordered plan if the supplied version is current.
     ///
     /// # Errors
-    /// Returns an error for a stale version, unknown or repeated lane, or database failure.
+    /// Returns an error for a stale version, invalid completion criterion, unknown or repeated lane, or database failure.
     pub fn set_plan(
         &mut self,
         project: &str,
@@ -54,7 +54,10 @@ impl Store {
         input.version = next_version(current.version, input.version)?;
         let mut keys = BTreeSet::new();
         for entry in &input.lanes {
-            if !keys.insert(&entry.key)
+            // Match the board's 300 UTF-16 code unit limit (Spec 041).
+            if entry.done_when.contains(['\r', '\n'])
+                || entry.done_when.encode_utf16().nth(300).is_some()
+                || !keys.insert(&entry.key)
                 || read::<Lane>(&tx, LaneRecord, project, &entry.key)?.is_none()
             {
                 return Err(StoreError::PlanningInput);

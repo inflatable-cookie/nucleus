@@ -881,6 +881,24 @@ test("a stored Rust plan note survives the aggregate board read in full", async 
   assert.equal(plan?.savedEntries?.[0]?.note, step.statusNote);
 });
 
+test("an older completion criterion stays readable and can be corrected", async () => {
+  const fake = engine();
+  const doneWhen = "first line\n" + "📦".repeat(150);
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    if (!String(url).endsWith("/planning/lantern/plan")) return response;
+    const plan = await response.json();
+    return Response.json({ ...plan, lanes: [{ ...plan.lanes[0], doneWhen }] });
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const plans = await adapter.rpc(api.plans, {});
+  assert.equal(plans.length, 2);
+  const entry = plans.find(row => row.project === "lantern")?.savedEntries?.[0];
+  assert.equal(entry?.doneWhen, doneWhen);
+  assert.equal(api.planEntriesSchema.safeParse([entry]).success, false);
+  assert.equal(api.planEntriesSchema.safeParse([{ ...entry, doneWhen: "Shipped" }]).success, true);
+});
+
 test("long Rust decision questions retain their full detail and their healthy siblings", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
