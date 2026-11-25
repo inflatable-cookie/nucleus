@@ -336,7 +336,7 @@ export function createRustProfiles(rust: RustApi) {
     // the resolved subscription). A value equal to that display leaves the stored
     // field as it was, so an unrelated edit never pins a default or drops an
     // imported value; a changed value is written.
-    "queue.profile": async (input: api.PoolEntry) => {
+    "queue.profile": async (input: api.PoolEntry & { groupChanged?: boolean }) => {
       const saved = await editProfiles((value, groups) => ({
         ...value,
         profiles: value.profiles.map((entry) => {
@@ -354,7 +354,8 @@ export function createRustProfiles(rust: RustApi) {
               weight: input.weight,
             },
           };
-          if (input.group !== shown.group) next.group = input.group;
+          if (input.groupChanged !== false && input.group !== shown.group)
+            next.group = input.group;
           if (roles.length && !sameSet(roles, shown.roles)) next.roles = roles;
           if (!sameSet(input.scopes, shown.scopes)) next.scopes = input.scopes;
           return next;

@@ -63,7 +63,9 @@ export const readProfileCompatibility = defineRpc({ name: "profile.compatibility
 
 export const configureProfile = defineRpc({
   name: "queue.profile",
-  input: z.preprocess((raw) => poolRecordFromLegacy(raw), poolSchema),
+  input: z.preprocess((raw) => poolRecordFromLegacy(raw), poolSchema.extend({
+    groupChanged: z.boolean().optional(),
+  })),
   // An older service can still answer ok. Settings needs the stored entry to confirm a save.
   output: z.object({ ok: z.literal(true), entry: poolSchema.optional() }),
 });

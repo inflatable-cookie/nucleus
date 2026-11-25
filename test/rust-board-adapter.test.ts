@@ -596,9 +596,12 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
       assert.deepEqual(saved.value.pausedGroups, ["codex-team", "team"]);
       const reserve = board.pool.find(({ profileId }) => profileId === "r");
       assert.ok(reserve);
-      await adapter.rpc(api.configureProfile, { ...reserve, weight: "more" });
+      fake.setOfferedGroups({ r: "codex-other" });
+      const updated = await adapter.rpc(api.configureProfile, { ...reserve, weight: "more", groupChanged: false });
+      assert.equal(updated.entry?.group, "codex-other");
       const edited = await adapter.rust.storedProfiles();
       assert.equal(edited.value.profiles.find(({ selection }) => selection.id === "r")?.group, undefined);
+      fake.setOfferedGroups({ r: "codex-team" });
     }
     assert.equal(Boolean(ui.query("Edit Worker")), canEditSettings);
     assert.equal(ui.get(canEditSettings ? "Disable Worker" : "Worker: On").props.disabled, !canEditSettings);
