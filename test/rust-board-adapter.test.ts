@@ -34,6 +34,7 @@ import type {
  */
 
 function engine(laneByProject: Record<string, RustLane> = {}) {
+  const questions = new Map<string, string>();
   let session: RustBrowserSession = {
     id: "operator-session",
     canEditSettings: true,
@@ -176,7 +177,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     }
     if (collection === "plan") return json({
       version: 1,
-      lanes: [{ key: "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
+      lanes: [{ key: laneByProject[project ?? ""]?.key ?? "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
       documents: [laneByProject[project ?? ""] ?? {
         key: "delivery", version: 1, title: "Delivery", aim: "Ship the change",
         document: "Fixture Markdown", status: "open",
@@ -193,14 +194,14 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     }]);
     if (collection === "decisions") return json([{
       id: `d-${project}`, projectId: project, author: "planner",
-      question: "Which path should we take?", createdAtMs: 1_790_000_000_000,
+      question: questions.get(project ?? "") ?? "Which path should we take?", createdAtMs: 1_790_000_000_000,
       options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }],
       answer: null,
     }]);
     return new Response(JSON.stringify({ error: { message: "no route" } }), { status: 404 });
   }) as typeof fetch;
   return {
-    fetcher, writes, reads, denied,
+    fetcher, writes, reads, denied, questions,
     loseNextRemovalReply: () => { loseRemovalReply = true; },
     planningReads: () => reads.filter((path) => path.startsWith("GET /planning/")),
     setSession: (next: RustBrowserSession) => { session = next; },
@@ -721,9 +722,24 @@ test("Rust board loads scoped collections on entry and shares them across views"
   assert.deepEqual(fake.planningReads().slice(4).sort(), scopedReads);
 });
 
+test("long Rust decision questions retain their full detail and their healthy siblings", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  for (const length of [4001, 48001]) {
+    const question = "Q".repeat(length);
+    fake.questions.set("lantern", question);
+    const rows = await adapter.rpc(api.decisionList, { status: "open" });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]?.question, "Which path should we take?");
+    assert.equal(rows[1]?.question, api.clipDecisionQuestion(question));
+    const detail = await adapter.rpc(api.decisionGet, { id: "d-lantern" });
+    assert.equal(detail?.details, question);
+  }
+});
+
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
   const lane = (name: string): RustLane => ({
-    key: "delivery",
+    key: "Delivery_Q4",
     version: 1,
     title: `${name} delivery`,
     aim: `Ship the ${name} change`,
@@ -738,7 +754,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   });
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   const logStart = fake.reads.length;
-  const missing = { key: "delivery" };
+  const missing = { key: "Delivery_Q4" };
   await assert.rejects(adapter.rpc(api.laneDocumentGet, missing as never), /project/);
   await assert.rejects(adapter.rpc(api.laneDocumentEdit, {
     ...missing, version: 1, text: "Wrong lane", author: "fixture",
@@ -822,9 +838,9 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   assert.equal(lanes.lantern.document, "# Revised Lantern document");
   assert.equal(lanes.lantern.version, 2);
   assert.deepEqual(fake.reads.filter(path => /^(PUT|POST) \/planning\//.test(path)), [
-    "PUT /planning/lantern/lanes/delivery",
-    "PUT /planning/lantern/lanes/delivery",
-    "POST /planning/lantern/lanes/delivery/status",
+    "PUT /planning/lantern/lanes/Delivery_Q4",
+    "PUT /planning/lantern/lanes/Delivery_Q4",
+    "POST /planning/lantern/lanes/Delivery_Q4/status",
   ]);
 });
 
