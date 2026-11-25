@@ -6,7 +6,7 @@ mod transport;
 
 use std::{
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime},
@@ -250,6 +250,16 @@ pub struct GitHubAccounts {
     flow: Mutex<Option<Flow>>,
 }
 
+pub(crate) struct AccountLifetime(Weak<GitHubAccounts>);
+
+impl Drop for AccountLifetime {
+    fn drop(&mut self) {
+        if let Some(accounts) = self.0.upgrade() {
+            accounts.cancel_pending();
+        }
+    }
+}
+
 impl GitHubAccounts {
     pub(crate) fn new(settings: SettingsFile) -> Self {
         Self {
@@ -263,6 +273,10 @@ impl GitHubAccounts {
             mutations: Mutex::new(()),
             flow: Mutex::new(None),
         }
+    }
+
+    pub(crate) fn lifetime(self: &Arc<Self>) -> AccountLifetime {
+        AccountLifetime(Arc::downgrade(self))
     }
 
     #[cfg(test)]
@@ -600,7 +614,7 @@ impl GitHubAccounts {
         Ok(flow.view())
     }
 
-    pub(crate) fn cancel_pending(&self) {
+    fn cancel_pending(&self) {
         let mut guard = lock(&self.flow);
         if let Some(flow) = guard.take() {
             flow.cancel.store(true, Ordering::Relaxed);
