@@ -12,8 +12,8 @@ contending on the shared changelog.
 
 ## Local staging and activation
 
-Stage the binary and its matching browser board from one clean revision using
-the [engine staging command](../../../engine/README.md#stage-an-engine-release).
+Stage the binary, browser board and Nucleus skill from one clean revision
+using the [engine staging command](../../../engine/README.md#stage-an-engine-release).
 Run [milestone QA](milestone-qa.md) against a published main commit. Keep
 artifacts and private validation evidence in the configured scratch location.
 

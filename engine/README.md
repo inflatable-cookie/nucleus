@@ -29,9 +29,10 @@ dependencies land. The planner arranges independent review and merges. Run
 formatting, check, strict Clippy and nextest for changed crates through Effigy.
 Oxide manages Cargo storage for `engine:check`, `engine:clippy`, and
 `engine:nextest`. Set `TMPDIR`, `TMP` and `TEMP` for tests as described in
-[AGENTS.md](../AGENTS.md). Cargo deny and the whole workspace run at milestone
-QA. The fixture exercises success, a stopped run, and readback after uncertain
-delivery before the planner's live check.
+[AGENTS.md](../AGENTS.md). [Milestone QA](../docs/knowledge/contracts/milestone-qa.md#run-each-slice-under-a-durable-run-key)
+qualifies the workspace and board with the eight selectors declared in
+`effigy qa`. The fixture exercises success, a stopped run, and readback after
+uncertain delivery before the planner's live check.
 
 Use `publish = false` for workspace packages. The Longhorn crates are pinned to
 tag `v0.6.0` and require Rust 1.97.1.
@@ -88,13 +89,19 @@ From a clean checkout of the intended revision with the web dependencies
 installed, run `effigy engine:stage -- /absolute/builds-root`. Pass the active
 builds root shown in Storage. This is the Barge builds class when placement is
 enabled and no explicit override is set. The selector builds `nucleus` with
-`oxide build --profile release` and publishes the executable and
-`board-assets/` together under `<builds-root>/releases/<git-sha>/`. It
-refuses an existing release directory.
+`oxide build --profile release` and stages the executable, `board-assets/`
+and `skills/nucleus/SKILL.md` together under `<builds-root>/releases/<git-sha>/`.
+It refuses an existing release directory.
 
-Point the CLI runtime link and the service and ACP launchers at the staged
-`nucleus`. Pass the matching `board-assets/` to the service and keep the
-matching release files for recovery. Schema upgrades follow the
+At activation, point the CLI runtime link and the service and ACP launchers
+at the staged `nucleus`. Pass its `board-assets/` to the service. The managed
+skill link at `<engine-home>/skills/nucleus` points to that release's skill
+directory. Configure each provider to discover the stable link once. On later
+rolls, update the stable target with the runtime and keep the provider's skill
+path. The engine embeds its run protocol when a provider has yet to discover
+the matching sections.
+
+Keep the matching release files for recovery. Schema upgrades follow the
 [forward-only recovery policy](../docs/knowledge/specs/070-small-engine.md#parent-delivery-storage-and-upgrade).
 Staging leaves running processes and launcher definitions untouched.
 
@@ -410,10 +417,10 @@ outside both the checkout and the run scratch scanned for custody.
 The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
 
-Each run gets its own `<scratch-root>/<task>/<run>` directory. The cwd and
-open-file census covers the checkout and that run's scratch. An existing
-reservation keeps its original scratch path. The shared class root only hosts
-temporary files for the census itself.
+A new run gets its own `<scratch-root>/r/<12-hex-run-key>` directory. The
+assignment gives its recorded path. The cwd and open-file census covers that
+run's checkout and scratch. An existing reservation keeps its original
+scratch path. The shared class root hosts temporary files for the census itself.
 
 Role assignments use each member lane's title and aim. Explicit
 `queue.laneDocuments` references pin a version at reservation and give that
