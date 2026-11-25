@@ -2247,17 +2247,7 @@ mod tests {
         native_fixture, reservation, serve_forge,
     };
 
-    #[tokio::test]
-    async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.host = crate::tests::verified_native_fixture(
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            home.path(),
-        );
-        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
-        service.fixture_mut().acp_provider = Some("fixture".into());
-        service.state.lock().await.settings.dispatch =
-            Some(nucleus_store::DispatchSettings::default());
+    async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
         let task = Task::new(
             nucleus_core::Identity {
                 id: "orphan-test".into(),
@@ -2288,7 +2278,22 @@ mod tests {
             )
             .await
             .unwrap();
-        let terminal = service.task(id).await.unwrap();
+        service.task(id).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.host = crate::tests::verified_native_fixture(
+            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+            home.path(),
+        );
+        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.state.lock().await.settings.dispatch =
+            Some(nucleus_store::DispatchSettings::default());
+        let terminal = cancelled_cleanup_task(&service).await;
+        let id = &terminal.task.identity().id;
         assert_eq!(terminal.task.phase(), Phase::Cancelled);
         let work = service.worktrees().unwrap();
         let checkout = work
