@@ -17,6 +17,8 @@ import {
   type ProjectRepository,
 } from "../project-helpers";
 import {
+  DEFAULT_TOOL_QUIET_LIMIT_MINUTES,
+  MAX_TOOL_QUIET_LIMIT_MINUTES,
   PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES,
   VALIDATION_TIMEOUT_MAX_MS,
   type RepositorySetInput,
@@ -360,7 +362,7 @@ function RustRepositoryFields({
   flush: () => void;
 }) {
   const [checks, setChecks] = useState((settings?.requiredChecks ?? []).join(", "));
-  const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? 30);
+  const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? DEFAULT_TOOL_QUIET_LIMIT_MINUTES);
   return (
     <View style={{ gap: space.sm }}>
       <Pair>
@@ -400,7 +402,7 @@ function RustRepositoryFields({
             unit="min"
             value={hung}
             min={1}
-            max={240}
+            max={MAX_TOOL_QUIET_LIMIT_MINUTES}
             disabled={disabled}
             onChange={(next) => {
               setHung(next);
