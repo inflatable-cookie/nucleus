@@ -1,4 +1,4 @@
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::SystemTime};
 
 use nucleus_core::{Head, Review};
 use reqwest::StatusCode;
@@ -45,6 +45,7 @@ pub enum ReviewError {
 #[derive(Debug)]
 pub enum ReviewWrite {
     Verified(VerifiedReview),
+    Deferred { until: SystemTime },
     Unauthenticated,
     AccessRefused,
     Refused,
@@ -157,7 +158,17 @@ impl GitHub {
         else {
             return ReviewWrite::Unknown;
         };
+        let status = response.status();
         match decode::<WireReview>(response).await {
+            // Quota headers can also accompany a successful or ambiguous POST.
+            Err(ForgeError::Deferred { until })
+                if matches!(
+                    status,
+                    StatusCode::TOO_MANY_REQUESTS | StatusCode::FORBIDDEN
+                ) =>
+            {
+                ReviewWrite::Deferred { until }
+            }
             Ok(review) => match binding.verify(review) {
                 Ok(verified) if verified.body == body => ReviewWrite::Verified(verified),
                 _ => ReviewWrite::Unknown,

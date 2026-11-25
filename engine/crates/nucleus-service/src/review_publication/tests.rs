@@ -33,6 +33,7 @@ enum Delivery {
     Denied,
     StopAtUnauthorized,
     MissingById,
+    Throttle(&'static str),
 }
 
 struct ForgeFixture {
@@ -86,11 +87,21 @@ async fn post_review(
     Json(input): Json<Value>,
 ) -> impl IntoResponse {
     let id = reviewer_id(&headers);
-    remote
-        .posts
-        .lock()
-        .unwrap()
-        .push((bearer(&headers).into(), input.clone()));
+    let attempt = {
+        let mut posts = remote.posts.lock().unwrap();
+        posts.push((bearer(&headers).into(), input.clone()));
+        posts.len()
+    };
+    if let Delivery::Throttle(after) = remote.delivery
+        && attempt <= 2
+    {
+        let status = if attempt == 1 {
+            StatusCode::TOO_MANY_REQUESTS
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        return (status, [("retry-after", after)]).into_response();
+    }
     if matches!(remote.delivery, Delivery::Denied) {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -114,10 +125,12 @@ async fn post_review(
     });
     *remote.remote.lock().unwrap() = Some(review.clone());
     match remote.delivery {
-        Delivery::Saved | Delivery::MissingById => {
+        Delivery::Saved | Delivery::MissingById | Delivery::Throttle(_) => {
             (StatusCode::CREATED, Json(review)).into_response()
         }
-        Delivery::Lost => StatusCode::BAD_GATEWAY.into_response(),
+        Delivery::Lost => {
+            (StatusCode::BAD_GATEWAY, [("x-ratelimit-remaining", "0")]).into_response()
+        }
         Delivery::Denied | Delivery::StopAtUnauthorized => unreachable!(),
     }
 }
@@ -397,16 +410,11 @@ async fn an_external_merge_with_only_a_pending_report_requires_source_acceptance
     server.abort();
 }
 
-#[tokio::test]
-async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absence() {
-    let remote = ForgeFixture::new(10, Delivery::Lost);
-    remote.visible.store(false, Ordering::Relaxed);
-    let (_home, mut service, server) = create_service(&remote).await;
-    let instance = record_report(&service, Review::Approve).await;
+async fn aged_claim(service: &Service, instance: &str) -> (ReviewIntent, ReviewBody) {
     let row = service.task(TASK).await.unwrap();
     let body = review_body(row.task.run().unwrap(), "Synthetic summary", &[]);
     let intent = ReviewIntent {
-        instance: instance.clone(),
+        instance: instance.into(),
         pull_url: forge_pull(&service.fixture().start)["html_url"]
             .as_str()
             .unwrap()
@@ -415,7 +423,7 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
         decision: Review::Approve,
         author: NonZeroU64::new(11).unwrap(),
         pull_author: NonZeroU64::new(10).unwrap(),
-        body_digest: body.digest,
+        body_digest: body.digest.clone(),
     };
     let mut state = service.state.lock().await;
     let at = event("fixture").at - REVIEW_GRACE_MS;
@@ -424,8 +432,18 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
             .store
             .claim_review_publication(TASK, &intent, None, at)
             .unwrap()
+            .is_some()
     );
-    drop(state);
+    (intent, body)
+}
+
+#[tokio::test]
+async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absence() {
+    let remote = ForgeFixture::new(10, Delivery::Lost);
+    remote.visible.store(false, Ordering::Relaxed);
+    let (_home, mut service, server) = create_service(&remote).await;
+    let instance = record_report(&service, Review::Approve).await;
+    let (intent, body) = aged_claim(&service, &instance).await;
     service = restart_service(service);
     assert!(remote.posts.lock().unwrap().is_empty());
     for _ in 0..2 {
@@ -507,5 +525,78 @@ async fn missing_submitted_review_gives_unverified_attention() {
         ));
     }
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
+    let remote = ForgeFixture::new(10, Delivery::Throttle("3600"));
+    let (_home, service, server) = create_service(&remote).await;
+    let instance = record_report(&service, Review::Approve).await;
+    aged_claim(&service, &instance).await;
+    let before = SystemTime::now();
+    let Err(ServiceError::Forge(ForgeError::Deferred { until })) = advance(&service).await else {
+        panic!("expected a definite throttle");
+    };
+    assert!(until >= before + std::time::Duration::from_hours(1));
+    let service = restart_service(service);
+    assert!(matches!(advance(&service).await,
+        Err(ServiceError::Forge(ForgeError::Deferred { until: retained })) if retained == until));
+    assert_eq!(remote.posts.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn repeated_throttles_of_the_first_write_allow_later_publication() {
+    Box::pin(assert_throttled_publication(false)).await;
+}
+
+#[tokio::test]
+async fn throttled_resubmission_rechecks_the_original_before_retrying() {
+    Box::pin(assert_throttled_publication(true)).await;
+}
+
+async fn assert_throttled_publication(resubmission: bool) {
+    let remote = ForgeFixture::new(10, Delivery::Throttle("0"));
+    let (_home, mut service, server) = create_service(&remote).await;
+    let instance = record_report(&service, Review::Approve).await;
+    if resubmission {
+        aged_claim(&service, &instance).await;
+    }
+    for attempt in 1..=2 {
+        let Err(ServiceError::Forge(ForgeError::Deferred { until })) = advance(&service).await
+        else {
+            panic!("expected GitHub to defer attempt {attempt}");
+        };
+        service = restart_service(service);
+        let retained = service
+            .state
+            .lock()
+            .await
+            .store
+            .review_publication(TASK, &instance)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            retained.outcome,
+            if resubmission {
+                ReviewPublicationOutcome::ResubmissionDeferred(until)
+            } else {
+                ReviewPublicationOutcome::Deferred(until)
+            }
+        );
+    }
+    assert_eq!(
+        advance(&service).await.unwrap(),
+        Action::Advance(Phase::Merging)
+    );
+    let posts = remote.posts.lock().unwrap();
+    assert_eq!(posts.len(), 3);
+    // Each resubmission reconciles the original, including after the successful POST.
+    assert_eq!(
+        remote.reads.load(Ordering::Relaxed),
+        if resubmission { 4 } else { 0 }
+    );
+    assert!(posts.iter().all(|post| post == &posts[0]));
     server.abort();
 }
