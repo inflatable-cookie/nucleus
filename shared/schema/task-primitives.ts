@@ -5,8 +5,8 @@ export const dependencyIdsSchema = z.array(z.string().min(1).max(160)).max(100)
   .refine(ids => new Set(ids).size === ids.length, "Duplicate prerequisite task IDs")
   .transform(ids => [...ids].sort());
 
-/** Spec 019: a lane key is a Queue-wide slug; never auto-created from a typo. */
-export const laneKeySchema = z.string().regex(LANE_KEY_PATTERN).min(1).max(80);
+/** Spec 019: a lane key is the engine’s case-sensitive identifier within its project. */
+export const laneKeySchema = z.string().regex(LANE_KEY_PATTERN).min(1).max(128);
 
 /** Spec 019 revision: a task belongs to zero or more lanes, in the order given, with no duplicates. */
 export const laneKeyListSchema = z.array(laneKeySchema).max(32)

@@ -74,6 +74,16 @@ export const decisionSchema = z.object({
 
 export type Decision = z.infer<typeof decisionSchema>;
 
+/**
+ * Stored decision rows predate the view limit or bypassed it. Reads parse them
+ * leniently and the view clips the question with a marker, so one over-long
+ * stored record never breaks a whole read. Writes keep the strict schema, so
+ * new rows always fit the view and stored rows are never rewritten by a read.
+ */
+export const storedDecisionSchema = decisionSchema.extend({
+  question: z.string().trim().min(1),
+});
+
 const identifiedDecisionChoiceSchema = z.object({
   id: z.string(), label: z.string(), consequence: z.string(),
 }).strict();
@@ -83,7 +93,8 @@ const identifiedDecisionChoiceSchema = z.object({
 // A view without `projectKey` (a reader or fixture from before #578, or a server
 // mid-roll) parses as no project, so its decisions still show.
 /** `askerLabel`: who asked, for the board — the task reference and role, the planner or agent name, or `operator`. Never a bare agent or thread ID. */
-export const decisionViewSchema = decisionSchema.extend({
+export const decisionViewSchema = storedDecisionSchema.extend({
+  details: z.string().nullable().optional(),
   choices: z.union([
     z.array(identifiedDecisionChoiceSchema).min(2),
     decisionSchema.shape.choices.unwrap(),
@@ -94,7 +105,14 @@ export const decisionViewSchema = decisionSchema.extend({
   ]).nullable().default(null),
   stale: z.boolean(), projectKey: z.string().nullable().default(null),
   askerLabel: z.string().min(1).max(240),
-}).strict();
+}).strict().transform(view => {
+  const question = clipDecisionQuestion(view.question);
+  if (question === view.question) return view;
+  return {
+    ...view, question,
+    details: [view.question, view.details].filter(Boolean).join("\n\n"),
+  };
+});
 
 export type DecisionView = z.infer<typeof decisionViewSchema>;
 
@@ -122,16 +140,6 @@ export function clipDecisionQuestion(question: string, max: number = DECISION_QU
   const cut = (boundary > room / 2 ? head.slice(0, boundary) : head).trimEnd();
   return `${cut}${DECISION_QUESTION_CLIP_MARKER}`;
 }
-
-/**
- * Stored decision rows predate the view limit or bypassed it. Reads parse them
- * leniently and the view clips the question with a marker, so one over-long
- * stored record never breaks a whole read. Writes keep the strict schema, so
- * new rows always fit the view and stored rows are never rewritten by a read.
- */
-export const storedDecisionSchema = decisionSchema.extend({
-  question: z.string().trim().min(1),
-});
 
 export const decisionDraftShape = {
   question: z.string().trim().min(1).max(4000),

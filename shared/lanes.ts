@@ -1,6 +1,6 @@
 /** Spec 019 lane helpers. Pure matching and attachment rules; lane discovery is Planning's search (shared/lane-finder.ts). */
 export const LANE_AIM_MAX = 2000;
-export const LANE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+export const LANE_KEY_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
 
 /** Normalise a git remote or `owner/name` to Queue's origin slug. */
 export function normalizeRepositoryOrigin(value: string): string | null {
