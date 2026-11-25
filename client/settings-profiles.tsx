@@ -99,7 +99,7 @@ export function ProfilesPanel({
   usageError?: unknown;
   repositories: RepositorySettings[];
   busy: boolean;
-  savePool: (entry: PoolEntry) => Promise<void>;
+  savePool: (entry: PoolEntry, groupChanged?: boolean) => Promise<void>;
   savePoolList: (entries: PoolEntry[]) => Promise<boolean>;
   saveAvailability: (
     value: UiQueueState["availability"][number],
