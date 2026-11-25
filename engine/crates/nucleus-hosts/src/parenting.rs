@@ -1116,21 +1116,3 @@ fn verify_delivery_visibility(
     }
     Ok(())
 }
-
-impl crate::T3Pass<'_> {
-    /// Check native and local process activity before removing a checkout.
-    ///
-    /// # Errors
-    /// Returns an error if the host or process evidence is incomplete.
-    pub async fn retirement_idle(
-        &self,
-        binding: &Binding,
-        thread: &str,
-    ) -> Result<bool, HostError> {
-        let projection = self
-            .host
-            .read_thread(binding, thread, ThreadRead::Listed)
-            .await?;
-        self.quiet(binding, thread, projection.as_ref()).await
-    }
-}

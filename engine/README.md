@@ -298,18 +298,12 @@ also check the open PR and clean checkout after native authorization.
   request, decision version and selected choice. When T3 supplies that
   evidence, Nucleus will require a direct UI submission for operator-only
   decisions.
-- A pass shares one bounded cwd census across checkout checks. The Mac adapter
-  cross-checks cwd-only `lsof` against the local T3 user's PIDs, then filters one
-  open-file listing of the filesystems containing the checkout and run scratch.
-  It holds both directory descriptors during that scan and requires each in
-  the reply. Closed files take no space in the listing. The mount check covers
-  nested filesystems and verifies the scope again before accepting quiet.
-  An open file or working directory in either scope is busy. An unaccounted
-  live PID, undecodable path, incomplete listing or warning leaves settlement
-  unknown. Decode `lsof` escapes before comparing path bytes. Run the
-  engine and T3 under the same local user with private task checkout roots.
-  Use a fresh pass after a launch can have started new processes. Barge pools
-  require the host-side inherited hold.
+- One working-directory census serves all checkout checks in a scheduler pass.
+  The Mac adapter compares cwd-only `lsof` output with the local user's PID
+  list and checks missing PIDs once. A process in the checkout or run scratch
+  holds retirement. A missing or ambiguous cwd leaves custody unknown.
+  After a launch, further checks need a fresh pass. Run the engine and T3
+  under the same local user with private task checkout roots.
 - Set `NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR` to the connected T3 server's
   `userdata/server-runtime.json` to recognise standing provider processes.
   Each pass verifies the descriptor origin and server PID, then follows only
@@ -317,8 +311,8 @@ also check the open PR and clean checkout after native authorization.
   keep custody. Unreadable process facts and conflicting bindings also hold.
   A standing helper bound to another recorded role of the same task can be
   excluded when its cwd is inside this checkout and a fresh exact native read
-  confirms that role is idle with no pending work. Its scoped open files still
-  hold custody.
+  confirms that role is idle with no pending work. At checkout removal, every
+  process with a cwd in the checkout or run scratch holds custody.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery
@@ -437,7 +431,7 @@ The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
 
 A new run gets its own `<scratch-root>/r/<12-hex-run-key>` directory. The
-assignment gives its recorded path. The cwd and open-file census covers that
+assignment gives its recorded path. The cwd census covers that
 run's checkout and scratch. An existing reservation keeps its original
 scratch path. The shared class root hosts temporary files for the census itself.
 

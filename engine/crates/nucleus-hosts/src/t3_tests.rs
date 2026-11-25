@@ -347,9 +347,10 @@ async fn done_archive_uses_only_the_held_shell_and_skips_a_late_active_row() {
     assert!(matches!(restart_step(), Ok(crate::DoneArchive::Finished)));
     assert!(
         quiet_pass(&restarted)
-            .retirement_idle(&binding, "worker")
+            .retirement_writer(checkout.path())
             .await
             .unwrap()
+            .is_none()
     );
     assert!(restarted.host_calls().is_empty());
     let requests = native.await.unwrap();
@@ -1646,6 +1647,53 @@ async fn ready_notice(
 }
 
 #[tokio::test]
+async fn closing_tasks_share_one_cwd_census_for_checkout_and_scratch() {
+    let busy = checkout_fixture();
+    let idle = checkout_fixture();
+    let elsewhere = checkout_fixture();
+    // The test process keeps these open with its cwd outside every fixture.
+    let _handles: Vec<_> = (0..128)
+        .map(|n| std::fs::File::create(elsewhere.path().join(n.to_string())).unwrap())
+        .collect();
+    let _open_in_idle_checkout = std::fs::File::create(idle.path().join("build.log")).unwrap();
+    let mut child = Process::new("/bin/sleep")
+        .arg("60")
+        .current_dir(busy.path())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+    let pass = host.pass(elsewhere.path());
+    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
+    assert!(!pass.evidence.processes.initialized());
+    assert_eq!(
+        scope(busy.path(), None)
+            .retirement_writer(busy.path())
+            .await
+            .unwrap(),
+        Some(pid)
+    );
+    child.kill().await.unwrap();
+    // A second census here would see that the child has exited.
+    assert_eq!(
+        scope(idle.path(), Some(busy.path().to_owned()))
+            .retirement_writer(idle.path())
+            .await
+            .unwrap(),
+        Some(pid)
+    );
+    assert_eq!(
+        scope(idle.path(), None)
+            .retirement_writer(idle.path())
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
 async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_removal() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -1676,11 +1724,12 @@ async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_remov
             "snapshotSequence":1,"projects":[],"threads":[]
         }}));
     assert!(
-        !unlisted
+        unlisted
             .pass(checkout.path())
-            .retirement_idle(&binding, &parent)
+            .retirement_writer(checkout.path())
             .await
             .unwrap()
+            .is_some()
     );
     assert!(unlisted.host_calls().is_empty());
     unlisted.rpc.clear_shell();

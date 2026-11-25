@@ -422,6 +422,10 @@ async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
 }
 
 impl TaskHost for Due {
+    async fn retirement_writer(&self, _: &Path) -> Result<Option<u32>, HostError> {
+        unreachable!("no retirement in the replay fixture")
+    }
+
     async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
         unreachable!("only revoked runs are exercised")
     }

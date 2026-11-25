@@ -89,7 +89,21 @@ impl Service {
         ))
     }
 
+    #[cfg(test)]
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
+        let pass = self.host.pass(self.storage.scratch().path());
+        self.archive_done_in_pass(
+            row,
+            &pass.for_task(&row.task, self.existing_run_scratch(&row.task)),
+        )
+        .await
+    }
+
+    pub(super) async fn archive_done_in_pass(
+        &self,
+        row: &TaskRow,
+        host: &impl TaskHost,
+    ) -> Result<Action, ServiceError> {
         let task = &row.task;
         let parenting = self.acp_provider().is_some();
         if task.hold().is_some() || (!parenting && task.report_task().is_none()) {
@@ -167,7 +181,7 @@ impl Service {
             }
         }
         match self
-            .retire_if_idle(task, &binding, &checkout, Some(&head))
+            .retire_if_idle(host, task, &binding, &checkout, Some(&head))
             .await?
         {
             Some(Retirement::Retained) if task.report_task().is_some() => Err(
@@ -406,7 +420,7 @@ impl Service {
                 self.merge(row, target, observation, &head).await
             }
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
-                self.close(row, &checkout, &binding, target, workspace)
+                self.close(host, row, &checkout, &binding, target, workspace)
                     .await
             }
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => Err(error),
@@ -1854,6 +1868,7 @@ impl Service {
     // Both callers hold the current task and project fences through Git retirement.
     async fn retire_if_idle(
         &self,
+        host: &impl TaskHost,
         task: &Task,
         binding: &Binding,
         checkout: &Checkout<'_>,
@@ -1865,13 +1880,11 @@ impl Service {
             task.threads().get(Role::Worker),
             Some(parent.as_str()),
         ];
-        let pass = self.host.pass(self.storage.scratch().path());
-        let pass = pass.for_task(task, self.existing_run_scratch(task));
         let threads: Vec<_> = threads.into_iter().flatten().collect();
-        for thread in &threads {
-            if !pass.retirement_idle(binding, thread).await? {
-                return Ok(None);
-            }
+        if let Some(pid) = host.retirement_writer(checkout.path()).await? {
+            return Err(ServiceError::ArchiveEvidence(format!(
+                "PID {pid} has its working directory in the task checkout or run scratch."
+            )));
         }
         let remove = head
             .map(|head| checkout.prepare_retirement(head))
@@ -1897,6 +1910,7 @@ impl Service {
 
     async fn close(
         &self,
+        host: &impl TaskHost,
         row: &TaskRow,
         checkout: &Checkout<'_>,
         binding: &Binding,
@@ -1924,7 +1938,7 @@ impl Service {
                 return Err(HostError::Binding.into());
             }
             if self
-                .retire_if_idle(task, binding, checkout, Some(head))
+                .retire_if_idle(host, task, binding, checkout, Some(head))
                 .await?
                 .is_none()
             {
@@ -2180,14 +2194,26 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let retire = || service.retire_if_idle(&task, &binding, &checkout, Some(head));
+        let retire = || async {
+            service
+                .retire_if_idle(
+                    &service.host.pass(service.storage.scratch().path()),
+                    &task,
+                    &binding,
+                    &checkout,
+                    Some(head),
+                )
+                .await
+        };
         let mut writer = tokio::process::Command::new("/bin/sleep")
             .arg("60")
             .current_dir(checkout.path())
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        assert_eq!(retire().await.unwrap(), None);
+        assert!(
+            matches!(retire().await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
+        );
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();
         shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));

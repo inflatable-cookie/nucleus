@@ -14,7 +14,6 @@ pub(crate) enum ThreadRead {
     Observation,
     Exact,
     Inbox,
-    Listed,
 }
 
 pub(crate) struct ShellCustody<'a>(pub &'a Value);
