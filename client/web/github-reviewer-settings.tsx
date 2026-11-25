@@ -31,7 +31,7 @@ const flowView = z.discriminatedUnion("status", [
     status: z.literal("waiting"),
     verificationUri: z.literal("https://github.com/login/device"),
     userCode: z.string().min(1),
-    expiresAtMs: z.number().int().nonnegative(),
+    expiresAtMs: z.number().int().nonnegative().nullish(),
   }),
   z.strictObject({ id: flowId, status: z.literal("confirm"), account }),
   z.strictObject({ id: flowId, status: z.literal("failed"), message: z.string() }),
@@ -200,7 +200,7 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
       <LabelHelp
         c={c}
         label="Reviewer"
-        text="Use a GitHub account for formal reviews, or choose Installed gh to use the GitHub CLI identity. The engine keeps sign-in credentials in the system keychain. Sign out removes the saved sign-in from this profile."
+        text="A signed-in account can review repositories it can access where the Nucleus Agents GitHub App is installed. Choose Installed gh to use the GitHub CLI identity. Sign-in credentials stay in the system keychain."
       />
       {settings.isPending && <Text accessibilityRole="text" style={muted(c)}>Loading GitHub accounts…</Text>}
       {settings.isError && (
@@ -272,17 +272,21 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
           {unavailableFlow ? (
             <Text accessibilityRole="alert" style={muted(c)}>This sign-in is no longer available.</Text>
           ) : flow?.status === "waiting" ? (
-            flow.expiresAtMs <= Date.now() ? (
+            flow.expiresAtMs != null && flow.expiresAtMs <= Date.now() ? (
               <Text accessibilityRole="alert" style={muted(c)}>This code has expired.</Text>
             ) : (
               <>
                 <a href={flow.verificationUri} target="_blank" rel="noreferrer" style={{ color: c.accent }}>
-                  Open GitHub
+                  {flow.verificationUri}
                 </a>
                 <Text selectable accessibilityLabel="GitHub device code" style={{ color: c.foreground }}>
                   {flow.userCode}
                 </Text>
-                <Text style={muted(c)}>Expires at {new Date(flow.expiresAtMs).toLocaleTimeString()}.</Text>
+                <Text style={muted(c)}>
+                  {flow.expiresAtMs == null
+                    ? "Waiting for GitHub authorization…"
+                    : `Expires at ${new Date(flow.expiresAtMs).toLocaleTimeString()}.`}
+                </Text>
               </>
             )
           ) : flow?.status === "confirm" ? (

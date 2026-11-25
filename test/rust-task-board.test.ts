@@ -724,12 +724,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let githubFlow: "starting" | "waiting" | "confirm" | "failed" = "starting";
   let githubFlowCount = 0;
   let invalidGitHubResponse = false;
+  let githubSignOutGate: Promise<void> | undefined;
   const githubFlowView = () => {
     const id = `fixture-flow-${githubFlowCount}`;
     switch (githubFlow) {
       case "starting": return { id, status: githubFlow };
       case "waiting": return { id, status: githubFlow, verificationUri: "https://github.com/login/device",
-        userCode: "ABCD-EFGH", expiresAtMs: now + 60_000 };
+        userCode: "ABCD-EFGH" };
       case "confirm": return { id, status: githubFlow, account: reviewer };
       case "failed": return { id, status: githubFlow, message: "GitHub sign-in expired. Start again." };
     }
@@ -915,6 +916,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       if (method === "POST" && route === "/accounts/github.com%3A27/sign-out") {
         assert.deepEqual(body, { revision: githubSettings.revision });
         assert.equal(githubSettings.workerAccountId, null);
+        await githubSignOutGate;
         githubSettings = { ...githubSettings, revision: githubSettings.revision + "-signed-out",
           accounts: [], reviewerAccountId: null };
         return Response.json(githubSettings);
@@ -1347,6 +1349,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.match(text(), /GitHub sign-in is unavailable/);
   assert.equal(selector("Sign in"), null);
   assert.equal(selector("Import existing reviewer"), null);
+  await click("Reviewer help");
+  await eventually(() => selector("Reviewer help text")?.textContent?.includes("where the Nucleus Agents GitHub App is installed") === true,
+    "reviewer help explains the account and app-installation access requirement");
+  await click("Reviewer help");
 
   const refreshGitHub = async () => {
     await click("Storage");
@@ -1359,9 +1365,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   githubFlow = "waiting";
   await eventually(() => selector("GitHub device code")?.textContent === "ABCD-EFGH", "the device code arrives");
   const verificationLink = dom.window.document.querySelector<HTMLAnchorElement>('a[href="https://github.com/login/device"]');
+  assert.equal(verificationLink?.textContent, "https://github.com/login/device");
   assert.equal(verificationLink?.target, "_blank");
   assert.equal(verificationLink?.rel, "noreferrer");
-  assert.match(text(), /Expires at/);
+  assert.match(text(), /Waiting for GitHub authorization/, "device-code progress works without a TTL");
   await click("Cancel");
   await eventually(() => !selector("GitHub device code") && Boolean(selector("Sign in")), "cancellation clears the code");
   assert.equal(githubCalls.filter(({ method }) => method === "DELETE").length, 1);
@@ -1439,8 +1446,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => text().includes("Sign out of @fixture-reviewer and use Installed gh for reviews?"), "sign-out confirms the named account");
   assert.ok(!githubCalls.some(({ route }) => route.endsWith("/sign-out")));
   assert.equal(githubSettings.reviewerAccountId, reviewerId);
-  assert.equal(selector("Reviewer, Installed gh"), null, "the UI waits for confirmed sign-out");
+  let finishSignOut: () => void = () => {};
+  githubSignOutGate = new Promise<void>((resolve) => { finishSignOut = resolve; });
   await click("Sign out");
+  await eventually(() => githubCalls.some(({ route }) => route.endsWith("/sign-out")), "confirmed sign-out calls the engine");
+  assert.ok(selector("Reviewer, @fixture-reviewer, Saved sign-in"), "a pending sign-out keeps the selected reviewer");
+  assert.equal(selector("Reviewer, Installed gh"), null, "the UI waits for confirmed sign-out");
+  finishSignOut();
   await eventually(() => Boolean(selector("Reviewer, Installed gh")), "sign-out clears the reviewer selection");
   assert.equal(githubSettings.accounts.length, 0);
   t.diagnostic("GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, import, explicit sign-out and public fields.");
