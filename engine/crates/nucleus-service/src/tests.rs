@@ -422,6 +422,14 @@ async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
 }
 
 impl TaskHost for Due {
+    async fn terminal_orphans(
+        &self,
+        _: &Path,
+        _: &Path,
+    ) -> Result<Vec<nucleus_hosts::OrphanProcess>, HostError> {
+        unreachable!()
+    }
+
     async fn retirement_writer(&self, _: &Path) -> Result<Option<u32>, HostError> {
         unreachable!("no retirement in the replay fixture")
     }

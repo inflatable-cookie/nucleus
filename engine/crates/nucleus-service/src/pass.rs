@@ -141,6 +141,7 @@ impl Service {
         if workspace == Workspace::Absent {
             return Ok(Action::Nothing);
         }
+        self.stop_checkout_orphans(host, task, &checkout).await?;
         let head = if task.phase() == Phase::Cancelled {
             if let Workspace::Clean(head) = &workspace {
                 self.verify_route(identity, &route).await?;
@@ -1865,6 +1866,91 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
+    // Both callers hold the task and project fences and have inspected this owned checkout.
+    async fn stop_checkout_orphans(
+        &self,
+        host: &impl TaskHost,
+        task: &Task,
+        checkout: &Checkout<'_>,
+    ) -> Result<(), ServiceError> {
+        let scratch = self.storage.scratch().path();
+        let mut targets = host.terminal_orphans(checkout.path(), scratch).await?;
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let parent = nucleus_hosts::parent_thread(checkout.path());
+        let roles: Vec<_> = [
+            Some(parent.as_str()),
+            task.threads().get(Role::Worker),
+            task.threads().get(Role::Reviewer),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for force in [false, true] {
+            if force {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let mut state = self.state.lock().await;
+            if !state
+                .settings
+                .dispatch
+                .as_ref()
+                .is_some_and(|d| d.mode == DispatchMode::Running)
+            {
+                return Err(ServiceError::ArchiveEvidence(
+                    "Process cleanup is waiting for Dispatch.".into(),
+                ));
+            }
+            let id = &task.identity().id;
+            let mut intent = event("checkout_process_stop");
+            intent.detail =
+                serde_json::json!({"signal":if force {"KILL"} else {"TERM"},"processes":targets})
+                    .to_string();
+            state.store.claim_task_effect(id, &intent, false)?;
+            drop(state);
+            targets =
+                nucleus_hosts::verify_orphans(&targets, checkout.path(), scratch, force).await?;
+            if targets.is_empty() {
+                break;
+            }
+            // Contended state defers the effect rather than aging the PID verification.
+            let mut state = self.state.try_lock().map_err(|_| {
+                ServiceError::ArchiveEvidence("Checking checkout processes again.".into())
+            })?;
+            if !state
+                .settings
+                .dispatch
+                .as_ref()
+                .is_some_and(|d| d.mode == DispatchMode::Running)
+            {
+                return Err(ServiceError::ArchiveEvidence(
+                    "Process cleanup is waiting for Dispatch.".into(),
+                ));
+            }
+            let mut results = Vec::new();
+            self.host.retire_with_quiet_shell(&parent, &roles, || {
+                targets.retain(|p| {
+                    let result = p.signal(force);
+                    let outcome = match &result {
+                        Ok(true) => "sent".to_owned(),
+                        Ok(false) => "exited".to_owned(),
+                        Err(cause) => cause.to_string(),
+                    };
+                    results.push(serde_json::json!({"process":p,"outcome":outcome}));
+                    matches!(result, Ok(true))
+                });
+            })?;
+            let mut outcome = event("checkout_process_result");
+            outcome.detail = serde_json::json!({"signal":if force {"SIGKILL"} else {"SIGTERM"},"results":results}).to_string();
+            state.store.claim_task_effect(id, &outcome, false)?;
+        }
+        // The pass's census still contains the original PIDs. A fresh pass confirms exit.
+        Err(ServiceError::ArchiveEvidence(
+            "Checking that checkout processes have exited.".into(),
+        ))
+    }
+
     // Both callers hold the current task and project fences through Git retirement.
     async fn retire_if_idle(
         &self,
@@ -1937,6 +2023,7 @@ impl Service {
             if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
                 return Err(HostError::Binding.into());
             }
+            self.stop_checkout_orphans(host, task, checkout).await?;
             if self
                 .retire_if_idle(host, task, binding, checkout, Some(head))
                 .await?
@@ -2159,6 +2246,131 @@ mod tests {
         Due, REPOSITORY, code_task_at_merge, fixture, forge_checks, forge_fixture, forge_pull,
         native_fixture, reservation, serve_forge,
     };
+
+    async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
+        let task = Task::new(
+            nucleus_core::Identity {
+                id: "orphan-test".into(),
+                reference: "orphan-test".into(),
+                repository: REPOSITORY.into(),
+                base: "main".into(),
+                entry: Entry::Brief,
+                origin_thread: None,
+            },
+            "Synthetic cleanup".into(),
+            None,
+        );
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let id = &task.identity().id;
+        service
+            .command(
+                id,
+                &Authority::Operator {
+                    actor: "fixture".into(),
+                },
+                Command::Cancel,
+            )
+            .await
+            .unwrap();
+        service.task(id).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.host = crate::tests::verified_native_fixture(
+            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+            home.path(),
+        );
+        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.state.lock().await.settings.dispatch =
+            Some(nucleus_store::DispatchSettings::default());
+        let terminal = cancelled_cleanup_task(&service).await;
+        let id = &terminal.task.identity().id;
+        assert_eq!(terminal.task.phase(), Phase::Cancelled);
+        let work = service.worktrees().unwrap();
+        let checkout = work
+            .checkout(&service.fixture().checkout, REPOSITORY, id)
+            .unwrap();
+        checkout.allocate(&service.fixture().start).unwrap();
+        let base = checkout.path();
+        std::fs::write(base.join("unpublished"), "retain").unwrap();
+        let spawn = |dir: &Path| {
+            tokio::process::Command::new("/bin/sleep")
+                .arg("30")
+                .current_dir(dir)
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap()
+        };
+        let mut host_child = spawn(base);
+        let mut outside = spawn(home.path());
+        // The launching shell exits. One child handles TERM and the orphan root and second child ignore it.
+        let script = r#"/bin/sh -c '/bin/sleep 60 >/dev/null 2>&1 & soft=$!; trap "" TERM; /bin/sleep 60 >/dev/null 2>&1 & echo "$$ $! $soft"; exec >/dev/null 2>&1; wait' </dev/null &"#;
+        let output = tokio::process::Command::new("/bin/sh")
+            .args(["-c", script])
+            .current_dir(base)
+            .output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        let pids: Vec<u32> = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        assert_eq!(pids.len(), 3);
+        let outcome = service.archive_done(&terminal).await;
+        assert!(
+            matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("exited")),
+            "{outcome:?}"
+        );
+        let history = service.history(id, None, 25).await.unwrap();
+        let sent = |pid: u32, signal: &str| {
+            history
+                .iter()
+                .filter(|e| e.content.kind == "checkout_process_result")
+                .any(|e| {
+                    let detail: serde_json::Value =
+                        serde_json::from_str(&e.content.detail).unwrap();
+                    detail["signal"] == signal
+                        && detail["results"].as_array().unwrap().iter().any(|entry| {
+                            entry["process"]["pid"].as_u64() == Some(u64::from(pid))
+                                && entry["outcome"] == "sent"
+                                && entry["process"]["command"]
+                                    .as_str()
+                                    .is_some_and(|name| !name.is_empty())
+                        })
+                })
+        };
+        for (index, pid) in pids.into_iter().enumerate() {
+            assert!(sent(pid, "SIGTERM"));
+            assert_eq!(sent(pid, "SIGKILL"), index < 2);
+            let probe = tokio::process::Command::new("/bin/ps")
+                .args(["-p", &pid.to_string(), "-o", "stat="])
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                probe.stdout.is_empty()
+                    || String::from_utf8_lossy(&probe.stdout)
+                        .trim()
+                        .starts_with('Z')
+            );
+        }
+        assert!(base.join("unpublished").exists());
+        assert!(host_child.try_wait().unwrap().is_none());
+        assert!(outside.try_wait().unwrap().is_none());
+        host_child.kill().await.unwrap();
+        outside.kill().await.unwrap();
+    }
 
     #[tokio::test]
     async fn unbound_review_checkout_survives_a_local_writer_and_an_active_child() {

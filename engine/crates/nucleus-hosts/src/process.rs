@@ -1,3 +1,5 @@
+pub(crate) mod orphans;
+
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
