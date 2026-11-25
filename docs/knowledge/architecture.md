@@ -104,8 +104,8 @@ owner to the rules it enforces.
   [service boundary](contracts/service-boundary.md). A lost plugin presence
   while a host is still connected raises the board error and messages the
   Nucleus planner once.
-- `core/store/store-compaction.ts` owns the one-shot store conversion, run once at
-  start before serving ([store compaction](operations/store-compaction.md)).
+- The retired TypeScript service performed a one-shot store conversion at startup.
+  See the [historical compaction runbook](operations/store-compaction.md).
 - `core/store/` gives each store mechanism one owner. `store.ts` is the facade:
   owner wiring, the transaction and listener boundaries and the shared read
   clocks. `store-tasks.ts` owns the task projection and the task read models

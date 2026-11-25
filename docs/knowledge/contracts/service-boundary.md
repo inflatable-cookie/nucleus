@@ -23,6 +23,8 @@ for making its service and Paseo request rate bounded.
 
 ## Runtime module map
 
+The paths and contexts below describe the retired TypeScript runtime.
+
 `service/runtime-owner.ts` owns construction, startup, bootstrap, drain, health and
 presence. Its extracted methods remain one-line delegates for dispatch and callers.
 `core/runtime/board.ts` owns snapshots, board counters, task pages, detail,
@@ -1436,6 +1438,8 @@ that worker is alive and recovers on its next publication (2026-11-06: one
 `database is locked` left the service refusing everything until it was stopped by hand).
 
 ### Event-loop delay
+
+This section records the retired TypeScript service's instrumentation.
 
 `service.health.eventLoop` reports the runtime executor thread's event-loop delay
 (`monitorEventLoopDelay`, 10 ms resolution): `p50Ms`, `p99Ms` and `maxMs` over a

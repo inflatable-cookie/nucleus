@@ -5,9 +5,8 @@
  * A call whose transport fails while the service is being replaced is no longer
  * lost: a read waits, bounded, for the replacement and answers from it; a
  * mutation carries a client-minted request key, asks the replacement for that
- * request's recorded outcome (`service.request-outcome`, backed by the request
- * ledger in `core/runtime/request-ledger.ts` and typed in
- * `shared/request-outcome.ts`) and returns the real answer — applied,
+ * request's recorded outcome (`service.request-outcome`) and returns
+ * the recorded answer — applied,
  * refused, or proven not received. A resend happens only after a proven
  * non-receipt, never blindly; "unknown" survives only where no service ever
  * recorded anything.
