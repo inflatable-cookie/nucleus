@@ -182,10 +182,22 @@ impl Registry {
     }
 
     async fn start_contact(&self, actor: &str) {
-        assert_eq!(
-            submit(&self.api, actor, actor, None).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
+        let mut state = self.service.state.lock().await;
+        assert!(matches!(
+            self.service.request_enrollment(&mut state, actor),
+            ServiceError::PlannerEnrollmentPending(_)
+        ));
+        drop(state);
+        self.take_requested(actor).await;
+    }
+
+    async fn finish_requested(&self, actor: &str) {
+        self.service.enrollment_wake.notified().await;
+        self.take_requested(actor).await;
+        self.service.complete_enrollment(actor).await;
+    }
+
+    async fn take_requested(&self, actor: &str) {
         let requested = self
             .service
             .take_enrollment()
@@ -477,25 +489,17 @@ async fn submit(api: &Router, actor: &str, id: &str, repo: Option<&str>) -> Resp
 }
 
 #[tokio::test]
-async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_reads() {
+async fn first_contact_enrolls_two_exact_routes_inline_and_scoped_reads() {
     let registry = registry().await;
     let api = &registry.api;
-    for _ in 0..2 {
-        assert_eq!(
-            submit(api, "alpha-planner", "first", None).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-    }
-    assert_eq!(registry.reads.load(Ordering::Relaxed), 0);
-    assert!(registry.service.task("first").await.is_err());
-    assert_eq!(
-        registry.service.take_enrollment().await.as_deref(),
-        Some("alpha-planner")
+    let (created, ()) = tokio::join!(
+        biased;
+        submit(api, "alpha-planner", "first", None),
+        registry.finish_requested("alpha-planner")
     );
-    assert!(registry.service.take_enrollment().await.is_none());
-    registry.service.complete_enrollment("alpha-planner").await;
+    assert_eq!(created.status(), StatusCode::CREATED);
     registry.enroll("beta-planner").await;
-    let alpha = registry.task("alpha-planner", "first").await;
+    let alpha = registry.service.task("first").await.unwrap().task;
     let beta = registry.task("beta-planner", "second").await;
     assert_eq!(alpha.identity().repository, ALPHA_REPO);
     assert_eq!(alpha.identity().base, "main");
@@ -564,17 +568,16 @@ async fn cold_task_reads_request_one_check_then_return_the_saved_tasks() {
     registry.enroll(actor).await;
     registry.task(actor, "first").await;
     let registry = registry.reopen();
-    for path in ["/v1/tasks", "/v1/tasks/first"] {
-        let result = caller_request(&registry.api, Method::GET, path, actor, Value::Null).await;
-        assert_eq!(result.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-    assert_eq!(
-        registry.service.take_enrollment().await.as_deref(),
-        Some(actor)
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let (tasks, detail, ()) = tokio::join!(
+        biased;
+        caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null),
+        caller_request(&registry.api, Method::GET, "/v1/tasks/first", actor, Value::Null),
+        registry.finish_requested(actor)
     );
-    assert!(registry.service.take_enrollment().await.is_none());
-    registry.service.complete_enrollment(actor).await;
-    let tasks = caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null).await;
+    assert_eq!(tasks.status(), StatusCode::OK);
+    assert_eq!(detail.status(), StatusCode::OK);
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads + 1);
     assert_eq!(json_body(tasks).await[0]["identity"]["id"], "first");
 }
 
@@ -587,18 +590,14 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
     let api = &registry.api;
     let actor = "alpha-planner";
     let item = json!({"kind":"papercut","title":"Own project","body":"A synthetic item."});
-    for (method, path, input) in [
-        (Method::GET, PLAN, Value::Null),
-        (Method::GET, ITEMS, Value::Null),
-        (Method::POST, ITEMS, item.clone()),
-    ] {
-        let response = caller_request(api, method, path, actor, input).await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            json_body(response).await["error"],
-            ServiceError::PlannerEnrollmentPending.to_string()
-        );
-    }
+    let started = tokio::time::Instant::now();
+    let response = caller_request(api, Method::GET, PLAN, actor, Value::Null).await;
+    assert!(started.elapsed() >= std::time::Duration::from_secs(3));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        json_body(response).await["error"],
+        "Nucleus is verifying this T3 planner and repository. Retry shortly."
+    );
     assert_eq!(registry.reads.load(Ordering::Relaxed), 0);
     assert_eq!(
         registry.service.take_enrollment().await.as_deref(),
@@ -1166,11 +1165,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
             json!({}),
         )
     };
-    assert_eq!(promote().await.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(registry.reads.load(Ordering::Relaxed), 0);
-    let actor = registry.service.take_enrollment().await.expect("one proof");
-    registry.service.complete_enrollment(&actor).await;
-    let created = promote().await;
+    let (created, ()) = tokio::join!(biased; promote(), registry.finish_requested("alpha-planner"));
     let status = created.status();
     let task = json_body(created).await;
     assert_eq!(status, StatusCode::CREATED, "{task}");
@@ -2011,30 +2006,12 @@ async fn project_tell_rechecks_only_saved_cold_recipients_before_admitting_a_req
     registry.enroll("beta-planner").await;
     let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "After restart");
     let reads = registry.reads.load(Ordering::Relaxed);
-    for _ in 0..2 {
-        assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
-    let actor = registry
-        .service
-        .take_enrollment()
-        .await
-        .expect("scheduled proof");
-    assert_eq!(actor, "alpha-planner");
-    assert!(registry.service.take_enrollment().await.is_none());
-    assert!(
-        registry
-            .service
-            .state
-            .lock()
-            .await
-            .store
-            .next_tell()
-            .unwrap()
-            .is_none()
-    );
-    registry.service.complete_enrollment(&actor).await;
-    let result = json_body(send().await).await;
+    let (response, ()) = tokio::join!(biased; send(), async {
+        assert!(registry.service.state.lock().await.store.next_tell().unwrap().is_none());
+        registry.finish_requested("alpha-planner").await;
+    });
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads + 1);
+    let result = json_body(response).await;
     assert_eq!(result["deliveries"].as_array().unwrap().len(), 1);
     assert_eq!(result["noLivePlanners"], json!([]));
     let reads = registry.reads.load(Ordering::Relaxed);
@@ -3070,7 +3047,8 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     let (thread, text, new_handle) = received_notice(&registry);
     assert_eq!(thread, "next-planner");
     assert!(text.contains("Fallback delivery"));
-    assert!(text.contains("original sender (alpha-planner) is gone"));
+    assert!(text.contains("a planner of project Exact T3 Alpha, is gone"));
+    assert!(!text.contains("alpha-planner"));
     assert!(text.contains("After closure"));
     assert_ne!(handle, new_handle);
     registry.advance_tell().await.unwrap();

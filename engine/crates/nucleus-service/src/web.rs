@@ -75,11 +75,46 @@ pub struct Controller {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
-pub(crate) struct ControllerScope(Option<String>);
+#[serde(transparent)]
+pub(crate) struct ControllerScope {
+    actor: Option<String>,
+    #[serde(skip)]
+    enrollment_deadline: Option<tokio::time::Instant>,
+}
 
 impl ControllerScope {
+    fn for_request(mut self) -> Self {
+        self.enrollment_deadline =
+            Some(tokio::time::Instant::now() + std::time::Duration::from_secs(3));
+        self
+    }
+
+    /// Recheck admission after the exact proof finishes. Each check releases its locks before waiting.
+    pub(super) async fn with_enrollment<T, F: Future<Output = Result<T, ServiceError>>>(
+        &self,
+        mut check: impl FnMut() -> F,
+    ) -> Result<T, ServiceError> {
+        let Some(deadline) = self.enrollment_deadline else {
+            return check().await;
+        };
+        loop {
+            let mut finished = match check().await {
+                Err(ServiceError::PlannerEnrollmentPending(receiver)) => receiver,
+                result => return result,
+            };
+            // The last sender drops when the worker publishes the result or the binding is invalidated.
+            if tokio::time::Instant::now() >= deadline
+                || tokio::time::timeout_at(deadline, finished.changed())
+                    .await
+                    .is_err()
+            {
+                return Err(ServiceError::PlannerEnrollmentPending(finished));
+            }
+        }
+    }
+
     pub(crate) fn actor(&self) -> Option<&str> {
-        self.0.as_deref()
+        self.actor.as_deref()
     }
 
     pub(crate) fn require(
@@ -102,7 +137,7 @@ impl ControllerScope {
         state: &EngineState,
         identity: &Identity,
     ) -> Result<(), ServiceError> {
-        if self.0.is_some() {
+        if self.actor.is_some() {
             let (id, _, repo) = state
                 .settings
                 .project_for_origin(&identity.repository)
@@ -131,7 +166,11 @@ impl ControllerEntry {
                     actor: actor.into(),
                 },
             },
-            scope: ControllerScope(Some(actor.into())),
+            scope: ControllerScope {
+                actor: Some(actor.into()),
+                ..Default::default()
+            }
+            .for_request(),
         }
     }
 
@@ -351,15 +390,25 @@ fn request_controller(
 }
 
 async fn reauthorize_known(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
-    if let Some(actor) = scope.actor() {
-        let mut state = api.service.state.lock().await;
-        if state.settings.planner_route(actor).is_some()
-            && state.live_planner_project(actor).is_none()
+    let Some(actor) = scope.actor() else {
+        return Ok(());
+    };
+    {
+        let state = api.service.state.lock().await;
+        if state.live_planner_project(actor).is_some()
+            || state.settings.planner_route(actor).is_none()
         {
-            return Err(api.service.request_enrollment(&mut state, actor));
+            return Ok(());
         }
     }
-    Ok(())
+    scope
+        .with_enrollment(|| async {
+            let mut state = api.service.state.lock().await;
+            api.service
+                .planning_planner_project(&mut state, actor, None)
+                .map(|_| ())
+        })
+        .await
 }
 
 async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<ControllerEntry> {
@@ -912,7 +961,7 @@ async fn task_events(
 }
 
 async fn task_visible(service: &Service, project: &ControllerScope, task: &str) -> bool {
-    if project.0.is_none() {
+    if project.actor().is_none() {
         return true;
     }
     let state = service.state.lock().await;

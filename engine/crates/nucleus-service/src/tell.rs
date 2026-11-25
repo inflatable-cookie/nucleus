@@ -117,6 +117,16 @@ impl Service {
         caller: &ControllerScope,
         input: &TellRequest,
     ) -> Result<TellResponse, ServiceError> {
+        caller
+            .with_enrollment(|| self.admit_tell(caller, input))
+            .await
+    }
+
+    async fn admit_tell(
+        &self,
+        caller: &ControllerScope,
+        input: &TellRequest,
+    ) -> Result<TellResponse, ServiceError> {
         let actor = caller.actor().ok_or(ServiceError::TellPlannerRequired)?;
         let text = input.text.trim();
         if text.is_empty() || text.encode_utf16().count() > MAX_TEXT_CHARS {
@@ -239,9 +249,14 @@ impl Service {
 
     pub(crate) async fn claim_planner(&self, scope: &ControllerScope) -> Result<(), ServiceError> {
         let actor = scope.actor().ok_or(ServiceError::TellPlannerRequired)?;
-        let _write = self.project_writes.write().await;
-        let mut state = self.state.lock().await;
-        let project = self.planning_planner_project(&mut state, actor, None)?;
+        let (_write, mut state, project) = scope
+            .with_enrollment(|| async {
+                let write = self.project_writes.write().await;
+                let mut state = self.state.lock().await;
+                let project = self.planning_planner_project(&mut state, actor, None)?;
+                Ok((write, state, project))
+            })
+            .await?;
         self.record_claim_notice(&mut state, &project)?;
         let file = self.settings.clone();
         let claimed = actor.to_owned();
@@ -584,7 +599,9 @@ impl Service {
             &row.text,
             &handle,
             fallback,
-            row.gone_sender.as_deref(),
+            row.gone_sender
+                .as_ref()
+                .map(|_| project_name(state, &row.to_project)),
         );
         Ok(PlannedTell {
             handle,
@@ -773,9 +790,9 @@ fn notice_text(
     fallback: bool,
     gone: Option<&str>,
 ) -> String {
-    let routing = if let Some(sender) = gone {
+    let routing = if let Some(project) = gone {
         format!(
-            "\nFallback delivery. The original sender ({sender}) is gone from this project. This reply goes to its project planner.\n"
+            "\nFallback delivery. The original sender, a planner of project {project}, is gone.\n"
         )
     } else if fallback {
         "\nFallback delivery. Use nucleus planner.claim to receive project messages, or pass this on.\n".into()
