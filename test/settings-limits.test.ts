@@ -128,6 +128,24 @@ async function mountLimits(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test("Limits sends the edited field at the displayed Dispatch revision", async () => {
+  const saves: unknown[] = [];
+  const { ui, done } = await mountLimits({
+    authority: { ...authority({ effective: { globalLimit: 96 } }), revision: "shown" },
+    saveCapacity: async (input: unknown) => { saves.push(input); },
+  });
+  try {
+    assert.equal(ui.get("Global dispatch limit (slots, 1–4294967295)").props.value, "96");
+    const label = "Per project dispatch limit (slots, 1–32)";
+    ui.press(`Decrease ${label}`);
+    ui.get(label).props.onSubmitEditing();
+    await settle(() => saves.length > 0);
+    assert.deepEqual(saves, [{ revision: "shown", projectLimit: 4 }]);
+  } finally {
+    done();
+  }
+});
+
 test("limits show applied values beside controls, and the recorded changes stay off the screen", async () => {
   const applied = { globalLimit: 21, stallThresholdMinutes: 45 };
   const v1 = "2026-11-02T09:00:00.000Z",

@@ -59,7 +59,7 @@ export type DispatchLimitsProps = {
   retryAuthority: () => void;
   refreshBoard: () => Promise<unknown>;
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
-  saveCapacity: (values: api.CapacityAuthorityValues) => Promise<void>;
+  saveCapacity: (values: api.CapacityInput) => Promise<void>;
   saveProjectLimit: (
     value: ProjectLimitPatch & { projectKey: string },
   ) => Promise<void>;
@@ -357,15 +357,17 @@ function ReadNotice({
 function TaskSlots({
   c,
   values,
+  revision,
   authorityError,
   retry,
   save,
 }: {
   c: Colors;
   values: api.CapacityAuthorityValues | null;
+  revision?: string;
   authorityError: unknown;
   retry: () => void;
-  save: (values: api.CapacityAuthorityValues) => Promise<void>;
+  save: (values: api.CapacityInput) => Promise<void>;
 }) {
   const features = useEngineFeatures();
   const shown = CAPACITY_FIELDS.filter(({ key }) =>
@@ -377,41 +379,33 @@ function TaskSlots({
   );
   // Local UI state: opening Advanced never writes, and collapsing keeps every draft and pending save.
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const auto = useSectionAutoSave(save);
-  // The applied values are adopted whenever nothing is pending and the last save did
-  // not fail, so a refresh (or a change made elsewhere) never fights a live draft.
-  const valuesJson = values ? JSON.stringify(values) : "";
-  useEffect(() => {
-    if (!values || auto.saver.busy || auto.failed) return;
-    setDrafts(
-      Object.fromEntries(
-        CAPACITY_FIELDS.map((field) => [field.key, values[field.key]]),
-      ),
-    );
-  }, [valuesJson, auto.failed]);
-  // The control keeps each value in its range, so every edit is sendable. Typing saves
-  // after a pause and a step after the same pause, so repeated presses land as one save.
-  // One field at a time still writes the whole state, so a change never carries a stale
-  // value for a limit it did not touch.
+  // Coalesce only the fields edited during this debounce, against their displayed revision.
+  const pending = useRef<{ revision?: string; fields: Partial<Record<CapacityKey, number>> }>({ fields: {} });
+  const auto = useSectionAutoSave<api.CapacityInput>(async (input) => {
+    pending.current = { fields: {} };
+    try {
+      await save(input);
+    } catch (error) {
+      if ("revision" in input) retry();
+      throw error;
+    } finally {
+      setDrafts(pending.current.fields);
+    }
+  });
   const edit = (key: CapacityKey, value: number) => {
-    const next = { ...drafts, [key]: value };
-    setDrafts(next);
     if (!values) return;
-    auto.enqueue(
-      Object.fromEntries(
-        CAPACITY_FIELDS.map((field) => [
-          field.key,
-          next[field.key] ?? values[field.key],
-        ]),
-      ) as unknown as api.CapacityAuthorityValues,
-      600,
-    );
+    const fields = { ...pending.current.fields, [key]: value };
+    const base = pending.current.revision ?? revision;
+    pending.current = { revision: base, fields };
+    setDrafts(fields);
+    auto.enqueue(base === undefined ? { ...values, ...fields } : { revision: base, ...fields }, 600);
   };
   // A labelled card per limit. The line under it names the value in force only when the
   // entered value differs, so an unsaved draft never reads as applied.
   const field = (spec: LimitSpec, current: api.CapacityAuthorityValues) => {
     const name = CAPACITY_FIELD_LABELS[spec.key],
       unit = UNIT_SHORT[spec.unit];
+    const max = revision !== undefined && spec.key === "globalLimit" ? api.MAX_GLOBAL_SLOTS : spec.max;
     const draft = drafts[spec.key] ?? current[spec.key];
     return (
       <NumberStepper
@@ -421,10 +415,10 @@ function TaskSlots({
         c={c}
         label={name}
         help={spec.help}
-        a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${spec.max})`}
+        a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${max})`}
         value={draft}
         min={spec.min}
-        max={spec.max}
+        max={max}
         unit={spec.unit === "slots" ? undefined : unit}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
@@ -763,6 +757,7 @@ export function DispatchLimits(props: DispatchLimitsProps) {
       <TaskSlots
         c={c}
         values={values}
+        revision={authority?.revision}
         authorityError={props.authorityError}
         retry={props.retryAuthority}
         save={props.saveCapacity}

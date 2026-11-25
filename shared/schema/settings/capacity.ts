@@ -146,7 +146,7 @@ const capacityValue = (field: CapacityBoundField) =>
     .min(capacityBounds[field].min)
     .max(capacityBounds[field].max);
 
-export const capacitySchema = z
+const legacyCapacitySchema = z
   .object({
     globalLimit: z.number().int().min(1).max(64),
     projectLimit: z.number().int().min(1).max(32),
@@ -175,6 +175,21 @@ export const capacitySchema = z
   })
   .strict();
 
+/** Rust Dispatch uses a positive u32 for the global ceiling. */
+export const MAX_GLOBAL_SLOTS = 0xffff_ffff;
+const globalSlots = z.number().int().min(1).max(MAX_GLOBAL_SLOTS);
+const slotPatch = z.object({
+  revision: z.string().min(1),
+  globalLimit: globalSlots.optional(),
+  projectLimit: legacyCapacitySchema.shape.projectLimit.optional(),
+}).strict().refine(
+  (patch) => patch.globalLimit !== undefined || patch.projectLimit !== undefined,
+  "Choose a dispatch limit to change",
+);
+
+export const capacitySchema = z.union([slotPatch, legacyCapacitySchema]);
+export type CapacityInput = z.infer<typeof capacitySchema>;
+
 /**
  * Settings-only capacity writes (service-boundary contract, "Settings-only
  * capacity writes"): the whole capacity state one write carries. Every field is
@@ -182,7 +197,7 @@ export const capacitySchema = z
  * is recorded as a whole before-and-after state, never as a patch.
  */
 // The applied state never carries the legacy alias: one name, one value.
-export const capacityAuthorityValuesSchema = capacitySchema
+export const capacityAuthorityValuesSchema = legacyCapacitySchema
   .omit({ paseoCallLimit: true })
   .extend({
     papercutProjectLimit: capacityValue("papercutProjectLimit"),
@@ -270,7 +285,8 @@ export type CapacityChange = z.infer<typeof capacityChangeSchema>;
  */
 export const capacityAuthorityStateSchema = z
   .object({
-    effective: capacityAuthorityValuesSchema,
+    effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots }),
+    revision: z.string().min(1).optional(),
     changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),
   })
   .strict();

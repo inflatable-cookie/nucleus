@@ -137,22 +137,11 @@ test("the rotation weight is five named stops with Default at the centre", () =>
 });
 
 test("the capacity catalogue is the only place a limit is bounded and defaulted", () => {
-  assert.deepEqual(Object.keys(capacitySchema.shape), [
-    "globalLimit",
-    "projectLimit",
-    "papercutProjectLimit",
-    "hostCallLimit",
-    "paseoCallLimit",
-    "stallThresholdMinutes",
-    "holdReminderMinutes",
-    "holdEscalationMinutes",
-    "laneDrainMinutes",
-    "laneDrainEscalationMinutes",
-    "hostOutageNoticeMinutes",
-    "threadRetentionDays",
-    "threadRetentionIntervalHours",
-    "operatorDefaultHostKind",
-  ]);
+  assert.deepEqual(capacitySchema.parse({ revision: "v1", projectLimit: 3 }), {
+    revision: "v1", projectLimit: 3,
+  });
+  assert.throws(() => capacitySchema.parse({ revision: "v1" }));
+  assert.throws(() => capacitySchema.parse({ revision: "v1", globalLimit: 2 ** 32 }));
   // An absent field keeps the catalogue's default, and the bound is the catalogue's.
   assert.equal(
     capacityStateFields.hostCallLimit.parse(undefined),
