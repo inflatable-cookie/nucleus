@@ -811,7 +811,7 @@ export function MainSurface({
                       onSelect: selectRustTask,
                       project: ({ identity }) => {
                         const origin = normalizeRepositoryOrigin(identity.repository);
-                        const project = projectForRepository(identity.repository, origin);
+                        const project = projectForRepository(identity.repository, identity.repository);
                         const repo = project?.repositories
                           .find((candidate) => matchesRepository(candidate, identity.repository, identity.repository));
                         return {

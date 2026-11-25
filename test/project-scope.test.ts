@@ -611,6 +611,11 @@ test("repository matching prefers origin and falls back to path only when needed
     projectHasRepository(consumer, "/elsewhere", "owner/consumer"),
     true,
   );
+  const mixed = project("orbit", "Orbit", { origin: "Example/Orbit", path: "/work/orbit" });
+  const selected = scopeContains([mixed], ["orbit"]);
+  assert.equal(selected("", "https://github.com/example/orbit.git"), true);
+  assert.equal(selected("/work/orbit", "example/another"), false);
+  assert.equal(selected("/work/orbit", null), true);
   assert.equal(projectHasRepository(consumer, "/consumer", null), true);
   assert.equal(projectHasRepository(consumer, "", null), false);
 });
