@@ -185,61 +185,74 @@ async fn recover_rewritten_source(service: &Service, api: &Router, restored: &At
         .unwrap();
 }
 
+fn external_review_forge(
+    head: &nucleus_core::Head,
+    replacement: &nucleus_core::Head,
+    latest: Arc<AtomicBool>,
+    restored: Arc<AtomicBool>,
+    calls: Arc<AtomicUsize>,
+) -> Router {
+    let remote = restored;
+    let original = head.clone();
+    let descendant = replacement.clone();
+    let changed = latest;
+    let moved = replacement.clone();
+    let first = head.clone();
+    Router::new()
+        .route(
+            &format!("/repos/{REPOSITORY}/git/ref/pull/1/head"),
+            get(move || async move {
+                let sha = if remote.load(Ordering::Relaxed) {
+                    descendant
+                } else {
+                    original
+                };
+                Json(json!({"ref":"refs/pull/1/head","object":{"type":"commit","sha":sha}}))
+            }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/compare/{head}...{replacement}"),
+            get(|| async { Json(json!({"status":"ahead"})) }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/pulls/1"),
+            get(move || {
+                calls.fetch_add(1, Ordering::Relaxed);
+                let seen = if changed.load(Ordering::Relaxed) {
+                    &moved
+                } else {
+                    &first
+                };
+                let mut pull = forge_pull(seen);
+                pull["head"]["ref"] = json!("existing-topic");
+                pull["merged"] = json!(true);
+                pull["state"] = json!("closed");
+                pull["merge_commit_sha"] = json!("f".repeat(40));
+                std::future::ready(Json(pull))
+            }),
+        )
+        .route(
+            &format!("/repos/{REPOSITORY}/branches/main"),
+            get(|| async { Json(json!({"name":"main","commit":{"sha":"f".repeat(40)}})) }),
+        )
+}
+
 #[tokio::test]
 async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
     let replacement: nucleus_core::Head = "b".repeat(40).parse().unwrap();
     let restored = Arc::new(AtomicBool::new(false));
-    let remote = restored.clone();
-    let original = head.clone();
-    let descendant = replacement.clone();
     let latest = Arc::new(AtomicBool::new(false));
-    let changed = Arc::clone(&latest);
     let reads = Arc::new(AtomicUsize::new(0));
-    let calls = Arc::clone(&reads);
-    let moved = replacement.clone();
-    let first = head.clone();
-    let (forge, server) = serve_forge(
-        Router::new()
-            .route(
-                &format!("/repos/{REPOSITORY}/git/ref/pull/1/head"),
-                get(move || async move {
-                    let sha = if remote.load(Ordering::Relaxed) {
-                        descendant
-                    } else {
-                        original
-                    };
-                    Json(json!({"ref":"refs/pull/1/head","object":{"type":"commit","sha":sha}}))
-                }),
-            )
-            .route(
-                &format!("/repos/{REPOSITORY}/compare/{head}...{replacement}"),
-                get(|| async { Json(json!({"status":"ahead"})) }),
-            )
-            .route(
-                &format!("/repos/{REPOSITORY}/pulls/1"),
-                get(move || {
-                    calls.fetch_add(1, Ordering::Relaxed);
-                    let seen = if changed.load(Ordering::Relaxed) {
-                        &moved
-                    } else {
-                        &first
-                    };
-                    let mut pull = forge_pull(seen);
-                    pull["head"]["ref"] = json!("existing-topic");
-                    pull["merged"] = json!(true);
-                    pull["state"] = json!("closed");
-                    pull["merge_commit_sha"] = json!("f".repeat(40));
-                    std::future::ready(Json(pull))
-                }),
-            )
-            .route(
-                &format!("/repos/{REPOSITORY}/branches/main"),
-                get(|| async { Json(json!({"name":"main","commit":{"sha":"f".repeat(40)}})) }),
-            ),
-    )
-    .await;
+    let app = external_review_forge(
+        &head,
+        &replacement,
+        latest.clone(),
+        restored.clone(),
+        reads.clone(),
+    );
+    let (forge, server) = serve_forge(app).await;
     service.forge = forge;
     let service = Arc::new(service);
     let api = router(
