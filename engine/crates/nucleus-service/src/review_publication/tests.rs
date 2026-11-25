@@ -335,7 +335,7 @@ async fn formal_review_reconciles_once_under_the_original_account_and_fences_mer
     let (wait, detail) = crate::task_wait(&row, &Err(ForgeError::Incomplete.into()));
     assert_eq!(
         crate::titles::task_state_label(&row.task, wait, detail.as_ref()),
-        "Reviewing · waiting for GitHub"
+        "Reviewing · GitHub"
     );
     assert_eq!(retained.intent.author.get(), 42);
     assert_eq!(retained.intent.head, service.fixture().start);

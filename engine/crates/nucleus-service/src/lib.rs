@@ -1306,23 +1306,29 @@ impl Service {
         message: String,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
-        let delay = if self
+        let operator = self
             .host
             .row_visibility_hint(thread)
             .is_none_or(|row| row.snoozed_until_ms == Some(until))
-        {
-            Duration::from_millis(until.saturating_sub(now_ms()))
+            && !state
+                .store
+                .row_snooze(id, thread)?
+                .is_some_and(|receipt| receipt.owns(Some(until)));
+        let delay = if operator {
+            until.saturating_sub(now_ms())
         } else {
-            Duration::ZERO
+            0
         };
-        state.schedule.defer_effect(id, Instant::now() + delay);
-        let detail = WaitDetail::OperatorSnoozed {
+        state
+            .schedule
+            .defer_effect(id, Instant::now() + Duration::from_millis(delay));
+        let detail = operator.then(|| WaitDetail::OperatorSnoozed {
             version: row.version,
             thread: thread.into(),
             until,
             message,
-        };
-        if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), Some(detail))? {
+        });
+        if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), detail)? {
             self.desire_title(state, &row.task, row.number);
             self.title_wake.notify_one();
             self.publish(id, row.version);

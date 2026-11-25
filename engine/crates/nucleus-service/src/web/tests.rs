@@ -427,7 +427,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
-    assert_eq!(detail["stateLabel"], "Reviewing · waiting for capacity");
+    assert_eq!(detail["stateLabel"], "Reviewing · capacity");
     assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
     assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
     assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());
@@ -2920,7 +2920,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
         .record_board_entry("age", since)
         .unwrap();
     let capacity = read_paired_task(&api, list, &cookie).await[0].clone();
-    assert_eq!(capacity["stateLabel"], "Queued · waiting for capacity");
+    assert_eq!(capacity["stateLabel"], "Queued · capacity");
     assert_eq!(capacity["stateSinceMs"], since);
 
     let amend = json!({"amend": "---\nqueue:\n  complexity: low\n---\n# Renamed title"});
@@ -2971,7 +2971,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     }
     observe_task_wait(&reopened, WaitReason::ForgeUnknown).await;
     let changed = read_paired_task(&api, detail, &cookie).await;
-    assert_eq!(changed["stateLabel"], "Queued · waiting for GitHub");
+    assert_eq!(changed["stateLabel"], "Queued · GitHub");
     assert_eq!(
         changed["lifecycle"]["steps"][0]["note"],
         changed["stateLabel"]
@@ -2997,7 +2997,7 @@ async fn operator_hold_keeps_its_state_entry_across_restart() {
     let api = settings_api(&Arc::new(service));
     let path = "/v1/tasks/held";
     let before = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    assert_eq!(before["stateLabel"], "Queued · waiting on Tom");
+    assert_eq!(before["stateLabel"], "Queued · Tom");
     assert!(before["stateSinceMs"].is_u64());
     assert!(before["latestEventAtMs"].is_u64());
     drop(api);
