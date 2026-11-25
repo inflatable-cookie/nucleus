@@ -1437,6 +1437,8 @@ that worker is alive and recovers on its next publication (2026-11-06: one
 
 ### Event-loop delay
 
+This section records the retired TypeScript service's instrumentation.
+
 `service.health.eventLoop` reports the runtime executor thread's event-loop delay
 (`monitorEventLoopDelay`, 10 ms resolution): `p50Ms`, `p99Ms` and `maxMs` over a
 window of up to 60 s (`windowSeconds`), plus `maxSinceStartMs`, memory-only. That
