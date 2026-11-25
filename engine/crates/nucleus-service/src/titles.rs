@@ -132,6 +132,7 @@ fn wait_label(wait: Option<WaitReason>, detail: Option<&WaitDetail>) -> Option<&
         Some(WaitReason::Input) => "Waiting for input",
         Some(WaitReason::RetainedThreadBusy) => "Waiting for the previous turn",
         Some(WaitReason::ForgeUnknown) => "Waiting for GitHub",
+        Some(WaitReason::ExternalMergeBlocked) => "External merge needs attention",
         Some(WaitReason::ReviewPublicationBlocked) => "Review needs attention",
         Some(WaitReason::WorkspaceUnknown) => "Checking the workspace",
         Some(WaitReason::WorkspaceBlocked) => "Workspace needs attention",

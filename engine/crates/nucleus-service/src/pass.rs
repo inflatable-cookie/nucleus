@@ -223,6 +223,15 @@ impl Service {
         {
             return self.stop_run(row, &checkout, observation, host).await;
         }
+        if task.hold().is_none()
+            && let Some(
+                error @ ServiceError::Forge(
+                    ForgeError::UnpublishedMerge | ForgeError::UnverifiedSource,
+                ),
+            ) = forge_error
+        {
+            return Err(error);
+        }
         if task.phase() == Phase::Reviewing
             && task.run().is_none()
             && task.question().is_none()
@@ -472,7 +481,9 @@ impl Service {
         let source = recorded_source(task).ok_or(ForgeError::UnverifiedSource)?;
         if source.url != pr.url
             || (source.head != pr.head
-                && !checkout.pull_descends_from(target.number(), &source.head, &pr.head)?)
+                && !checkout
+                    .pull_descends_from(target.number(), &source.head, &pr.head)
+                    .map_err(|_| ForgeError::SourceUnavailable)?)
         {
             return Err(ForgeError::UnverifiedSource.into());
         }

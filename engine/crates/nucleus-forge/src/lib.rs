@@ -60,6 +60,8 @@ pub enum ForgeError {
         "the merged pull request source could not be verified against the task’s recorded head"
     )]
     UnverifiedSource,
+    #[error("the pull request source history is unavailable")]
+    SourceUnavailable,
     #[error("GitHub reported a different pull request base")]
     BaseChanged,
     #[error("GitHub refused the original head and the readback still shows it")]

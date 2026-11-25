@@ -189,6 +189,37 @@ fn published_descendant(root: &std::path::Path) -> nucleus_core::Head {
     replacement
 }
 
+async fn recover_rewritten_source(
+    service: &Service,
+    api: &Router,
+    original: &nucleus_core::Head,
+    restored: &nucleus_core::Head,
+) {
+    let root = &service.fixture().checkout;
+    crate::tests::git(root, &["update-ref", "refs/pull/1/head", original.as_str()]);
+    service.pass().await.expect("observe source mismatch");
+    let card = json_body(get_as(api, "/v1/tasks/external", &BOARD_KEY).await).await;
+    assert_eq!(card["wait"], "external_merge_blocked");
+    assert_eq!(card["attention"], "attention");
+    assert_eq!(
+        card["waitDetail"],
+        "the merged pull request source could not be verified against the task’s recorded head. Hold and release the task to recheck."
+    );
+    assert!(card["nextCheckAt"].is_null());
+    crate::tests::git(root, &["update-ref", "refs/pull/1/head", restored.as_str()]);
+    let owner = Authority::Operator {
+        actor: "operator".into(),
+    };
+    service
+        .command("external", &owner, Command::Hold("Source checked".into()))
+        .await
+        .unwrap();
+    service
+        .command("external", &owner, Command::Release)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
@@ -266,6 +297,7 @@ async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes()
             crate::schedule::Priority::Wake,
         );
     }
+    recover_rewritten_source(&service, &api, &head, &replacement).await;
     let _ = service.pass().await.expect("observe replacement head");
     let row = service.task("external").await.expect("reconciled task");
     assert_eq!(row.task.pull_request().expect("PR").head, replacement);

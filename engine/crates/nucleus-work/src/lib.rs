@@ -413,7 +413,18 @@ impl Checkout<'_> {
         if advertised.trim_end() != format!("{merged}\t{reference}") {
             return Ok(false);
         }
-        self.contains(recorded, merged)
+        // An unrelated history gives a nonempty difference. Git read failures remain errors.
+        let difference = self.git(
+            &self.repository,
+            &[
+                "rev-list",
+                "-1",
+                recorded.as_str(),
+                "--not",
+                merged.as_str(),
+            ],
+        )?;
+        Ok(difference.is_empty())
     }
 
     /// Verify that the pinned commit can be checked out locally.

@@ -153,6 +153,17 @@ fn external_source_requires_the_exact_pull_ref_and_a_descendant() {
             .pull_descends_from(7, &recorded, &rewritten)
             .unwrap()
     );
+    git(&upstream, &["checkout", "--orphan", "unrelated"]);
+    let unrelated = commit("new root");
+    git(
+        &upstream,
+        &["update-ref", "refs/pull/7/head", unrelated.as_str()],
+    );
+    assert!(
+        !checkout
+            .pull_descends_from(7, &recorded, &unrelated)
+            .unwrap()
+    );
     assert!(!checkout.path().exists());
 }
 
