@@ -695,12 +695,14 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
     use nucleus_store::ParentResult;
 
-    for (delivered, unfrozen, inconclusive) in [
-        (false, false, false),
-        (true, false, false),
-        (false, true, false),
-        (false, true, true),
-        (false, false, true),
+    for (delivered, unfrozen, inconclusive, stale_descriptor) in [
+        (false, false, false, false),
+        (true, false, false, false),
+        (false, true, false, false),
+        (false, true, true, false),
+        (false, false, true, false),
+        (false, false, false, true),
+        (true, false, false, true),
     ] {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
@@ -748,7 +750,23 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
             {"kind":"synchronized"}
         ]})
     }).await;
-        let host = verified_native_fixture(host, home.path());
+        let previous = stale_descriptor.then(|| {
+            tokio::process::Command::new("/bin/sleep")
+                .arg("60")
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap()
+        });
+        let pid = previous
+            .as_ref()
+            .map_or_else(std::process::id, |child| child.id().unwrap());
+        let host = described_native_fixture(host, home.path(), pid);
+        let recorded_runtime = if stale_descriptor {
+            host.parent_runtime_hint().unwrap()
+        } else {
+            // Rows from the previous release have a descriptor-only pin.
+            host.runtime_identity().unwrap()
+        };
         service.fixture_mut().acp_provider = Some("fixture-acp".into());
         let row = {
             let mut state = service.state.lock().await;
@@ -762,7 +780,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
                         version: row.version,
                         command,
                         refresh: false,
-                        runtime: Some("retired-host".into()),
+                        runtime: Some(recorded_runtime),
                         wire: (!unfrozen).then(|| frozen.to_string()),
                         legacy_prompt: None,
                         due_ms: 0,
@@ -1003,16 +1021,29 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
 }
 
 pub(super) fn verified_native_fixture(host: T3, root: &std::path::Path) -> T3 {
+    described_native_fixture(host, root, std::process::id())
+}
+
+fn described_native_fixture(host: T3, root: &std::path::Path, pid: u32) -> T3 {
     let descriptor = root.join("native-runtime.json");
-    std::fs::write(
-        &descriptor,
-        json!({
-            "origin": host.endpoint(), "pid": std::process::id(),
-            "startedAt": "2020-01-01T00:00:00Z"
-        })
-        .to_string(),
-    )
-    .unwrap();
+    if !descriptor.exists() {
+        // The local proof reads process start time at whole-second resolution.
+        std::thread::sleep(Duration::from_secs(1));
+        let timestamp = Process::new("/bin/date")
+            .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+            .output()
+            .unwrap();
+        assert!(timestamp.status.success());
+        std::fs::write(
+            &descriptor,
+            json!({
+                "origin": host.endpoint(), "pid": pid,
+                "startedAt": std::str::from_utf8(&timestamp.stdout).unwrap().trim(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
     host.with_runtime_descriptor(descriptor)
 }
 

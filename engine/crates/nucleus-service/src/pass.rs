@@ -954,12 +954,7 @@ impl Service {
             match record.result {
                 ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
                 ParentResult::Failed => return Ok(()),
-                ParentResult::Pending
-                    if !crate::acp::can_replay(
-                        record,
-                        self.host.verified_runtime_identity().as_deref(),
-                    ) =>
-                {
+                ParentResult::Pending if self.replay_runtime(record).await.is_none() => {
                     return self
                         .resolve_parent_deliveries(
                             row,
@@ -1040,11 +1035,13 @@ impl Service {
         let attempt = prior
             .as_ref()
             .filter(|value| value.result != ParentResult::Refused);
-        let replay_launch = attempt.is_some_and(|value| {
-            value.result == ParentResult::Pending
-                && value.command.ends_with("-launch")
-                && crate::acp::can_replay(value, self.host.verified_runtime_identity().as_deref())
-        });
+        let replay_launch = if let Some(record) = attempt.filter(|value| {
+            value.result == ParentResult::Pending && value.command.ends_with("-launch")
+        }) {
+            self.replay_runtime(record).await.is_some()
+        } else {
+            false
+        };
         let step = self
             .host
             .prepare_parent(

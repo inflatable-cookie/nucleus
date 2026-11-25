@@ -64,7 +64,7 @@ fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
     ServiceError::ParentDeliveryUnknown { source, until }
 }
 
-pub(super) fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
+fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
     record.wire.is_some() && runtime.is_some() && record.runtime.as_deref() == runtime
 }
 
@@ -209,22 +209,31 @@ impl Service {
         {
             return Ok(());
         }
-        let runtime = self.host.verified_runtime_identity();
+        if row.task.phase() == Phase::Working
+            && row.task.first_launch()
+            && !state.forge_requested.contains(id)
+            && !self.initial_dispatch_allowed(&state, row.task.identity())?
+        {
+            return Ok(());
+        }
+        drop(state);
+        let described = self.host.parent_runtime_hint();
+        let runtime = if records.iter().any(|record| {
+            record.result == ParentResult::Pending && can_replay(record, described.as_deref())
+        }) {
+            self.host.verified_runtime_identity().await
+        } else {
+            None
+        };
         let uncertain: Vec<_> = records
             .into_iter()
             .filter(|value| {
                 value.result == ParentResult::Pending && !can_replay(value, runtime.as_deref())
             })
             .collect();
-        if uncertain.is_empty()
-            || (row.task.phase() == Phase::Working
-                && row.task.first_launch()
-                && !state.forge_requested.contains(id)
-                && !self.initial_dispatch_allowed(&state, row.task.identity())?)
-        {
+        if uncertain.is_empty() {
             return Ok(());
         }
-        drop(state);
         let _fence = self.effect(row).await?;
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
@@ -232,6 +241,17 @@ impl Service {
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
         self.resolve_parent_deliveries(row, &route.binding(&checkout)?, &uncertain)
             .await
+    }
+
+    pub(super) async fn replay_runtime(&self, record: &ParentDelivery) -> Option<String> {
+        let described = self.host.parent_runtime_hint()?;
+        if !can_replay(record, Some(&described)) {
+            return None;
+        }
+        self.host
+            .verified_runtime_identity()
+            .await
+            .filter(|verified| verified == &described)
     }
 
     pub(super) async fn resolve_parent_deliveries(
@@ -245,7 +265,6 @@ impl Service {
         for record in records.iter().filter(|record| record.wire.is_none()) {
             parent_due(record)?;
         }
-        let before = self.host.verified_runtime_identity();
         let mut accepted = Vec::new();
         if let Some(provider) = self.acp_provider() {
             let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
@@ -264,19 +283,16 @@ impl Service {
                 .map(|record| record.command.clone())
                 .collect();
             if !commands.is_empty() {
-                let receipts = if before.is_some() {
-                    self.host
-                        .parent_delivery_receipts(binding, provider, commands)
-                        .await
-                } else {
-                    Err(HostError::Unavailable)
-                };
+                let receipts = self
+                    .host
+                    .parent_delivery_receipts(binding, provider, commands)
+                    .await;
                 let unavailable = match receipts {
-                    Ok(found) if self.host.verified_runtime_identity() == before => {
+                    Ok(found) => {
                         accepted = found;
                         None
                     }
-                    Ok(_) | Err(HostError::Binding | HostError::ParentReceiptInconclusive) => None,
+                    Err(HostError::Binding | HostError::ParentReceiptInconclusive) => None,
                     Err(error @ HostError::Deferred { .. }) => {
                         return Err(parent_delivery_retry(error, 0));
                     }
@@ -326,23 +342,26 @@ impl Service {
         prior: Option<ParentDelivery>,
         refresh: bool,
     ) -> Result<bool, ServiceError> {
-        let runtime = self.host.verified_runtime_identity();
+        let mut runtime = None;
         let existing = prior
             .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
         if let Some(record) = &existing {
             match record.result {
                 ParentResult::Accepted | ParentResult::Failed => return Ok(false),
                 ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
-                ParentResult::Pending if !can_replay(record, runtime.as_deref()) => {
-                    self.resolve_parent_deliveries(
-                        row,
-                        write.binding(),
-                        std::slice::from_ref(record),
-                    )
-                    .await?;
-                    return Ok(false);
+                ParentResult::Pending => {
+                    runtime = self.replay_runtime(record).await;
+                    if runtime.is_none() {
+                        self.resolve_parent_deliveries(
+                            row,
+                            write.binding(),
+                            std::slice::from_ref(record),
+                        )
+                        .await?;
+                        return Ok(false);
+                    }
+                    parent_due(record)?;
                 }
-                ParentResult::Pending => parent_due(record)?,
                 ParentResult::Refused => {}
             }
             if let Some(wire) = &record.wire {
@@ -358,6 +377,9 @@ impl Service {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
         self.wake_parent_delivery(row, &write).await?;
+        if runtime.is_none() {
+            runtime = self.host.verified_runtime_identity().await;
+        }
         write.require_runtime(runtime.clone());
         let attempt = if write.starts_turn() {
             Some(

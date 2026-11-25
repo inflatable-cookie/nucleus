@@ -1028,6 +1028,22 @@ async fn parent_launch_replay_keeps_the_original_wire() {
         (launch, Response::Success),
     ])
     .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let descriptor = checkout.path().join("runtime.json");
+    let timestamp = ::time::OffsetDateTime::now_utc()
+        .format(&::time::format_description::well_known::Rfc3339)
+        .unwrap();
+    std::fs::write(
+        &descriptor,
+        json!({"origin": host.endpoint(), "pid": std::process::id(), "startedAt":timestamp})
+            .to_string(),
+    )
+    .unwrap();
+    let host = host.with_runtime_descriptor(descriptor);
+    let runtime = host
+        .verified_runtime_identity()
+        .await
+        .expect("loopback peer owns the wire");
     let pass = quiet_pass(&host);
     let prepare = |title, prompt, prior| {
         Box::pin(host.prepare_parent(
@@ -1039,13 +1055,14 @@ async fn parent_launch_replay_keeps_the_original_wire() {
             pass.profile_catalog(),
         ))
     };
-    let crate::ParentStep::Write(first) = prepare("Original task", "Original prompt", None)
+    let crate::ParentStep::Write(mut first) = prepare("Original task", "Original prompt", None)
         .await
         .unwrap()
     else {
         panic!("prepare the original parent");
     };
     let frozen = serde_json::to_string(first.freeze()).unwrap();
+    first.require_runtime(Some(runtime.clone()));
     host.write_parent(first).await.unwrap();
 
     let crate::ParentStep::Write(mut replay) = prepare(
@@ -1064,6 +1081,7 @@ async fn parent_launch_replay_keeps_the_original_wire() {
     replay
         .use_frozen(serde_json::from_str(&frozen).unwrap())
         .unwrap();
+    replay.require_runtime(Some(runtime));
     host.write_parent(replay).await.unwrap();
     let sent = native.await.unwrap();
     assert_eq!(sent[2].payload.get(), sent[4].payload.get());
@@ -1102,7 +1120,8 @@ async fn stale_runtime_descriptor_cannot_send_a_frozen_parent_to_another_process
     )
     .unwrap();
     let host = host.with_runtime_descriptor(descriptor);
-    let recorded_runtime = host.runtime_identity().unwrap();
+    let recorded_runtime = host.parent_runtime_hint().unwrap();
+    assert!(host.verified_runtime_identity().await.is_none());
     let crate::ParentStep::Write(mut write) = Box::pin(host.prepare_parent(
         &binding,
         "nucleus-rust",
