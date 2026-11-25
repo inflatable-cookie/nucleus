@@ -809,32 +809,21 @@ T3 project is active at the registered checkout. Projects settings edits and
 native writes are ordered so an edited binding cannot authorize an earlier
 destination. Role threads use the task's ACP parent.
 
-## Pinned Inbox during transition
+## Pinned Inbox
 
-The scheduler creates or reads operator acceptance questions in the existing
-TypeScript Inbox. The decision names the engine, task and row version. Rust
-applies an authenticated acceptance to the exact merged head. A decline sends
-one planner notice and leaves the task waiting for a move or cancellation.
-Bridge outages leave the question pending and use shared backoff.
+Set `NUCLEUS_RUST_NATIVE_INBOX=1` and install the Inbox pin with
+`nucleus t3 install`. The native Inbox uses the Rust planning decision store.
+The scheduler verifies each answer against the task version and exact merge head
+before applying it. A decline sends one planner notice and waits for a move or
+cancellation.
 
-Set `NUCLEUS_RUST_INBOX_ENGINE` and `NUCLEUS_RUST_INBOX_KEY_FILE` in both services.
-Use a stable engine name and an absolute path to a separate owner-only file
-containing a 32-byte key encoded as lowercase hex. Set `NUCLEUS_RUST_INBOX_URL`
-in Rust to the TypeScript board's `http://127.0.0.1:<port>` origin. The key works
-only on the bridge route.
+The installed service launcher may still have TypeScript transition assignments.
+Remove `NUCLEUS_RUST_INBOX_URL`, `NUCLEUS_RUST_INBOX_ENGINE` and
+`NUCLEUS_RUST_INBOX_KEY_FILE` when rolling the release that retires the bridge.
 
-Set `NUCLEUS_RUST_NATIVE_INBOX=1` to use the Rust Inbox, and install its pin with
-`nucleus t3 install`. Both Inbox threads may be pinned during cutover.
-Rust routes new operator questions to the Rust Inbox and leaves the TypeScript
-Inbox in place for TypeScript decisions. The planner retires the TypeScript
-Inbox manually after its open decisions have drained.
-
-Keep the bridge connected until its active Rust task versions have been handed
-off. Rust reads any answer already recorded there and fences each unanswered
-version before offering it locally. Once an Inbox form is answered, the shared
-decision record holds the answer and the scheduler verifies the task and merge
-head before applying it. A fresh answer is required when the question's task
-version changes.
+A restored profile with a legacy Inbox binding keeps its native offer fenced.
+The operator must authorize forward recovery of that decision before the native
+Inbox can offer the task question.
 
 The Rust Inbox records native form answers as
 `operator via T3 Inbox (unattested)`. T3 currently returns the same response

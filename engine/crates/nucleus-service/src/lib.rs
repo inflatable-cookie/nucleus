@@ -155,7 +155,7 @@ pub enum ServiceError {
     Profile(#[from] nucleus_core::profiles::ProfileLaunchError),
     #[error("project dispatch requires a configured Profiles domain")]
     ProfileConfiguration,
-    #[error("the Rust Inbox bridge needs a loopback endpoint, engine ID and owner-only key file")]
+    #[error("set NUCLEUS_RUST_NATIVE_INBOX to 0 or 1 and configure a T3 ACP provider when enabled")]
     InboxConfiguration,
     #[error("the Rust Inbox is unavailable")]
     InboxUnavailable { until: Instant },
@@ -187,7 +187,6 @@ pub struct Service {
     registry_provider: Option<String>,
     host: T3,
     forge: GitHub,
-    inbox: Option<inbox::Inbox>,
     native_inbox: Option<native_inbox::NativeInbox>,
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
@@ -405,7 +404,6 @@ impl Service {
             registry_provider,
             host,
             forge,
-            inbox: None,
             native_inbox: None,
             board: std::sync::OnceLock::new(),
             callback,
@@ -669,12 +667,6 @@ impl Service {
         }
         if self.clear_surpassed_allowance_question(row).await? {
             return Ok(Action::Advance(row.task.phase()));
-        }
-        if let Err(error) = self.clear_stale_inbox(row).await
-            && row.task.operator_question().is_some()
-            && row.task.operator_decline().is_none()
-        {
-            return Err(error);
         }
         if row.task.phase() == Phase::ReportReady {
             return Box::pin(self.notify_report_ready(row)).await;

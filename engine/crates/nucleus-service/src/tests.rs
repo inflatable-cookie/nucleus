@@ -1559,10 +1559,11 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     .await;
     service.host = host;
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
-    let mut dispatch = nucleus_store::DispatchSettings::default();
-    dispatch.global_slots = 1;
-    dispatch.project_default_slots = 1;
-    service.state.lock().await.settings.dispatch = Some(dispatch);
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        global_slots: 1,
+        project_default_slots: 1,
+        ..nucleus_store::DispatchSettings::default()
+    });
     let root = service.storage.work().path();
     assert!(
         !root.exists(),

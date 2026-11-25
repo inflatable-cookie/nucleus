@@ -243,13 +243,13 @@ Later decisions carry their own attribution.
       opens it on request.
     - The title shows pending operator decisions first, then the host's running tasks, then `All quiet`. `Paused: ` covers Pause, Dispatch hold and Stop. The engine derives the counts locally and updates only the title metadata using a new receipt generation when the text changes.
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
-    - Before native Rust Inbox setup, the scheduler sends Rust operator questions to the TypeScript decision store and reads the answers back. The planner retires the TypeScript Inbox manually after global no-new-work is on and its decisions have drained.
-    - During the cutover both Inbox threads may be pinned at once. Tom, 2026-11-24: "We can have two inbox threads - it will make it easier to test." Install no longer waits for the TypeScript pin. The Rust Inbox takes Rust decisions, and the TypeScript Inbox keeps TypeScript decisions until it is retired.
-      Each active Rust bridge version moves through a single TypeScript
-      transaction. A recorded answer goes to the scheduler for exact-head preflight.
-      An unanswered version is withdrawn before it can appear in the Rust Inbox.
-      An unconfirmed handoff stays fenced. Milestone 4 deletes the TypeScript
-      bridge when the old engine is removed.
+    - Before native Rust Inbox setup, the scheduler sent Rust operator questions
+      through the TypeScript decision store. Both pins could coexist during
+      cutover. Each active Rust bridge version had to return a recorded answer
+      or confirm withdrawal before the scheduler could offer it in Rust.
+    - Milestone 4 retires the Rust client for the TypeScript decision bridge.
+      A restored profile that still holds a legacy decision binding keeps its
+      native offer fenced until the operator authorizes forward recovery.
 
 19. **Configurable storage; an external volume is opt-in.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD", then "An external drive shouldn't be a requirement - most people won't want that. It should be opt-in, default to sensible internal drive locations".
     - Storage exposes the active roots and the configured placement for worktrees, scratch and builds. Existing explicit roots take precedence. `TMPDIR`, `TMP` and `TEMP` for engine commands point at scratch, which also holds run tickets and evidence.
