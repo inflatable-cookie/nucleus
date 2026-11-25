@@ -1201,6 +1201,23 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
     let promoted = json_body(promoted).await;
     assert_eq!(promoted["identity"]["repository"], BETA_REPO);
     assert_eq!(promoted["reference"], "second#2");
+    assert_eq!(promoted["title"], "Fixture issue");
+    let detail = read_paired_task(
+        &api,
+        &format!(
+            "/api/engine/tasks/{}",
+            promoted["identity"]["id"].as_str().unwrap()
+        ),
+        &operator,
+    )
+    .await;
+    assert_eq!(detail["title"], "Fixture issue");
+    assert!(
+        detail["brief"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("Use the selected repository.")
+    );
 }
 
 #[tokio::test]

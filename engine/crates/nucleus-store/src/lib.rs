@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS legacy_project_import (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   pending TEXT CHECK (json_valid(pending))
 ) STRICT";
+const PAPERCUT_TITLE: &str = "(SELECT CASE WHEN json_valid(i.snapshot) THEN
+    CASE WHEN json_extract(i.snapshot, '$.kind')='papercut' AND json_type(i.snapshot, '$.title')='text'
+    THEN json_extract(i.snapshot, '$.title') END END
+    FROM planning_task_sources s JOIN planning_items i ON i.project=s.project AND i.id=s.item_id
+    WHERE s.task_id=tasks.id) AS papercut_title";
 const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
@@ -460,7 +465,7 @@ impl Store {
         self.connection
             .query_row(
                 &format!(
-                    "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks WHERE id = ?1"
+                    "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER}, {PAPERCUT_TITLE} FROM tasks WHERE id = ?1"
                 ),
                 [id],
                 decode_listed_row,
@@ -766,7 +771,7 @@ impl Store {
     /// Returns an error if the database cannot read or decode the rows.
     pub fn active(&self) -> Result<Vec<Task>, StoreError> {
         self.tasks(&format!(
-            "SELECT {TASK_COLUMNS} FROM tasks WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL ORDER BY id"
+            "SELECT {TASK_COLUMNS}, {PAPERCUT_TITLE} FROM tasks WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL ORDER BY id"
         ))
     }
 
@@ -792,7 +797,7 @@ impl Store {
 
     fn list_rows(&self, clause: &str) -> Result<TaskList, StoreError> {
         let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks {clause}"
+            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER}, {PAPERCUT_TITLE} FROM tasks {clause}"
         ))?;
         let mut tasks = TaskList::default();
         for row in query.query_map([], decode_listed_row)? {
@@ -806,7 +811,7 @@ impl Store {
 
     fn tasks(&self, statement: &str) -> Result<Vec<Task>, StoreError> {
         let mut query = self.connection.prepare_cached(statement)?;
-        let rows = query.query_map([], decode_task)?;
+        let rows = query.query_map([], decode_display_task)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -1192,7 +1197,7 @@ fn event_from_row(row: &Row<'_>) -> rusqlite::Result<Event> {
 fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> {
     connection
         .query_row(
-            &format!("SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks WHERE id = ?1"),
+            &format!("SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER}, {PAPERCUT_TITLE} FROM tasks WHERE id = ?1"),
             [id],
             decode_row,
         )
@@ -1201,7 +1206,7 @@ fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> 
 
 fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
-        task: decode_task(row)?,
+        task: decode_display_task(row)?,
         version: row.get(17)?,
         number: row.get(18)?,
     })
@@ -1239,6 +1244,12 @@ fn identity_columns(row: &Row<'_>) -> rusqlite::Result<Value> {
         "entry": row.get::<_, String>(4)?,
         "origin_thread": row.get::<_, Option<String>>(14)?,
     }))
+}
+
+fn decode_display_task(row: &Row<'_>) -> rusqlite::Result<Task> {
+    let mut task = decode_task(row)?;
+    task.papercut_title = row.get("papercut_title")?;
+    Ok(task)
 }
 
 fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
