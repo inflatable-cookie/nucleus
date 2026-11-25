@@ -1257,11 +1257,31 @@ async fn seed_ready_report(service: &Service, id: &str, legacy_attempt: bool) {
         .expect("report ready row");
 }
 
-async fn notice_pass(service: &Service) -> Vec<crate::PassOutcome> {
-    tokio::time::timeout(Duration::from_secs(5), service.pass())
-        .await
-        .expect("notice task is due")
-        .expect("scheduler pass")
+async fn notice_pass(service: &Service, task: &str) -> Vec<crate::PassOutcome> {
+    {
+        let mut state = service.state.lock().await;
+        let crate::State {
+            store,
+            schedule,
+            capacity_waiters,
+            ..
+        } = &mut *state;
+        let now = tokio::time::Instant::now();
+        // Cold fixtures discover persisted notices through the ordinary scheduler scan.
+        schedule
+            .seed(
+                store,
+                now,
+                service.acp_provider().is_some(),
+                capacity_waiters,
+            )
+            .expect("seed the notice schedule");
+        assert!(
+            schedule.due(task).is_some_and(|due| due <= now),
+            "notice for {task} is not due"
+        );
+    }
+    service.pass().await.expect("scheduler pass")
 }
 
 #[derive(Clone, Copy)]
@@ -1373,7 +1393,7 @@ async fn assert_idle_notice(registry: &Registry) {
 }
 
 async fn advance_task_notice(registry: &Registry) -> Result<Action, ServiceError> {
-    notice_pass(&registry.service)
+    notice_pass(&registry.service, "notice")
         .await
         .into_iter()
         .find(|outcome| outcome.task == "notice")
@@ -1472,7 +1492,7 @@ async fn report_notice_reverifies_a_persisted_origin_after_reopen_without_a_cli_
         assert!(state.settings.planner_route("alpha-planner").is_some());
         assert!(state.settings.planner_route("next-planner").is_some());
     }
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert_eq!(outcomes.len(), 1, "the legacy spent row stays closed");
     assert_eq!(outcomes[0].task, "report");
     assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
@@ -1493,7 +1513,7 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
     registry.enroll("alpha-planner").await;
     seed_ready_report(&registry.service, "report", false).await;
     registry.archived.store(true, Ordering::Relaxed);
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(
         outcomes[0].result,
         Ok(Action::Wait(WaitReason::Question))
@@ -1516,14 +1536,16 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
             .planner_route("alpha-planner")
             .is_none()
     );
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(
         outcomes[0].result,
         Ok(Action::Wait(WaitReason::Question))
     ));
     registry.notices.lock().expect("notices").settled = true;
+    // Enrollment must wake the notice without relying on a previously scheduled recheck.
+    registry.service.state.lock().await.schedule.park("report");
     registry.enroll("next-planner").await;
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(
         outcomes[0].result,
         Ok(Action::Wait(WaitReason::Question))
@@ -1554,7 +1576,7 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
             crate::schedule::Priority::Effect,
         );
     }
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
     let sent = registry.service.task("report").await.expect("sent report");
     assert!(sent.task.report_task().expect("report").notice_attempted);
@@ -1581,7 +1603,7 @@ async fn an_uncertain_cold_origin_cannot_route_or_lose_its_persisted_binding() {
     seed_ready_report(&registry.service, "report", false).await;
     let registry = registry.reopen();
     registry.notices.lock().expect("notices").uncertain_planner = true;
-    let outcomes = notice_pass(&registry.service).await;
+    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(
         outcomes[0].result,
         Err(ServiceError::Host(HostError::Uncertain))
