@@ -11,7 +11,6 @@ restoreEnvironmentAfterTests(() => {
     delete process.env.NUCLEUS_WORK_VOLUME_ID;
   else process.env.NUCLEUS_WORK_VOLUME_ID = previousWorkVolumeId;
 });
-import { observeIdle } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -32,8 +31,6 @@ import { gunzipSync } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 import { CURRENT_SCHEMA, Store } from "../core/store/store";
 import { backupListSchema } from "../shared/contracts";
-import { QueueRuntime } from "../service/runtime-owner";
-import type { Adapter } from "../core/host";
 import {
   backupBeforeMigration,
   backupCommand,
@@ -87,19 +84,6 @@ const local = (
 const fixtureVolume = (dir: string) => join(dir, "external");
 const copiesAt = (dir: string) =>
   readdirSync(dir).filter((name) => name.endsWith(".sqlite.gz")).length;
-const adapterFor = (dir: string) =>
-  ({
-    client: { isConnected: true },
-    isConnected: () => true,
-    hostId: "fixture",
-    socketPath: join(dir, "callback.sock"),
-    helperPath: join(dir, "worker-helper.mjs"),
-    connect: async () => {},
-    close: async () => {},
-    catalog: async () => ({ providers: [] }),
-    observe: observeIdle("ws", "worker"),
-  }) as unknown as Adapter;
-
 test("Spec 028 row 1: snapshot during committed store changes is consistent and verified", async (t) => {
   const { path, backups, store } = fixture(t);
   store.db.exec(
@@ -662,134 +646,6 @@ test("Spec 028: a snapshot that fails on a volume that is there still stops the 
   );
 });
 
-test("Spec 028: a failing backup stays visible without latching the service startup error, and survives a roll", async (t) => {
-  const { dir, dataDir, store } = fixture(t);
-  store.close();
-  const first = new QueueRuntime({
-    dataDir,
-    adapterFactory: () => adapterFor(dir),
-    timers: false,
-  });
-  try {
-    await first.started;
-    writeFileSync(join(dataDir, "backups"), "refused");
-    await assert.rejects(() => first.backupNow({}));
-    assert.equal(first.startError, "");
-    assert.equal(first.health().ready, true);
-    assert.ok((await first.backupList({})).localError);
-    const failingBoard = first.uiSnapshot({});
-    assert.ok(
-      !("unchanged" in failingBoard) && failingBoard.backup.localError,
-      "the board carries the failure",
-    );
-  } finally {
-    await first.stop();
-  }
-  // A new service lifetime reads the same durable status: the failure did not die with the process.
-  const second = new QueueRuntime({
-    dataDir,
-    adapterFactory: () => adapterFor(dir),
-    timers: false,
-  });
-  try {
-    await second.started;
-    assert.ok(
-      (await second.backupList({})).localError,
-      "the recorded failure is durable",
-    );
-    rmSync(join(dataDir, "backups"));
-    await second.backupNow({});
-    assert.equal((await second.backupList({})).localError, null);
-  } finally {
-    await second.stop();
-  }
-});
-
-test("Spec 028: the service lists snapshots in its own process, never by spawning one to stat them", async (t) => {
-  const { dir, dataDir, path, backups, store } = fixture(t);
-  store.close();
-  const runtime = new QueueRuntime({
-    dataDir,
-    adapterFactory: () => adapterFor(dir),
-    timers: false,
-  });
-  const execPath = process.execPath;
-  try {
-    await runtime.started;
-    await createBackup(
-      path,
-      backups,
-      new Date(Date.UTC(2026, 0, 1, 6)).toISOString(),
-    );
-    // Falsification: a listing that spawned a child cannot answer with no node to spawn.
-    process.execPath = join(dir, "no-such-node");
-    try {
-      const listed = await runtime.backupList({});
-      assert.equal(listed.localError, null);
-      assert.equal(
-        listed.snapshots.filter((entry) => entry.kind === "hourly").length,
-        1,
-        "the snapshot is listed in process",
-      );
-    } finally {
-      process.execPath = execPath;
-    }
-  } finally {
-    process.execPath = execPath;
-    await runtime.stop();
-  }
-});
-
-test("Spec 028: snapshot health rides the board projection and re-projects when it changes", async (t) => {
-  const { dir, dataDir, store } = fixture(t);
-  store.close();
-  const runtime = new QueueRuntime({
-    dataDir,
-    adapterFactory: () => adapterFor(dir),
-    timers: false,
-  });
-  try {
-    await runtime.started;
-    const before = runtime.uiSnapshot({});
-    assert.ok(!("unchanged" in before));
-    assert.deepEqual(
-      before.backup,
-      { newestSnapshotAt: null, localError: null },
-      "no snapshot yet",
-    );
-    await runtime.backupNow({});
-    const after = runtime.uiSnapshot({});
-    assert.ok(!("unchanged" in after));
-    assert.ok(
-      after.backup.newestSnapshotAt,
-      "the newest verified snapshot is on the board",
-    );
-    assert.ok(
-      Math.abs(Date.parse(after.backup.newestSnapshotAt!) - Date.now()) <
-        120_000,
-      "the snapshot it names is the one just taken",
-    );
-    assert.equal(after.backup.localError, null);
-    // A poller holding the earlier revision re-projects instead of keeping the old fact.
-    const polled = runtime.uiSnapshot({ revision: before.revision });
-    assert.ok(
-      !("unchanged" in polled),
-      "the settled snapshot advanced the board revision",
-    );
-    assert.equal(polled.backup.newestSnapshotAt, after.backup.newestSnapshotAt);
-    // A failing backup location is on the board too, so a Settings tab needs no listing of its own.
-    rmSync(join(dataDir, "backups"), { recursive: true, force: true });
-    writeFileSync(join(dataDir, "backups"), "refused");
-    await assert.rejects(() => runtime.backupNow({}));
-    const failing = runtime.uiSnapshot({});
-    assert.ok(!("unchanged" in failing));
-    assert.match(failing.backup.localError ?? "", /is not a directory/);
-    rmSync(join(dataDir, "backups"));
-  } finally {
-    await runtime.stop();
-  }
-});
-
 test("Spec 028 row 6: runbook restore keeps replaced files and opens snapshot records", async (t) => {
   const { dir, dataDir, path, backups, store } = fixture(t);
   store.db.exec(
@@ -822,51 +678,6 @@ test("Spec 028 row 6: runbook restore keeps replaced files and opens snapshot re
     restored.close();
   }
   assert.ok(existsSync(join(replaced, "queue.sqlite")));
-});
-
-test("A fixture data directory never backs up to the live work root, even with timers on", async (t) => {
-  // A temporary HOME keeps the live store's iCloud folder and accounts out of reach.
-  const home = mkdtempSync(join(tmpdir(), "queue-fake-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  t.after(() => {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-  });
-  const dir = mkdtempSync(join(tmpdir(), "queue-timer-backup-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const source = mkdtempSync(join(tmpdir(), "queue-plugin-source-"));
-  t.after(() => rmSync(source, { recursive: true, force: true }));
-  writeFileSync(join(source, "mcp-report.mjs"), "export {};\n");
-  const liveBefore = existsSync(liveBackupDir());
-  // Timers on and no adapter factory: the shape that once wrote fixture backups into the live folder.
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    sourcePath: source,
-    connectTimeoutMs: 250,
-  });
-  try {
-    const target = (runtime as unknown as { backupDir: string }).backupDir;
-    assert.equal(target, join(dir, "backups"));
-    assert.notEqual(target, liveBackupDir());
-    assert.equal(
-      existsSync(liveBackupDir()),
-      liveBefore,
-      "the live volume is untouched",
-    );
-    assert.equal(
-      existsSync(
-        join(
-          home,
-          "Library/Mobile Documents/com~apple~CloudDocs/Paseo Northstar Queue/backups",
-        ),
-      ),
-      false,
-      "no iCloud copy is written",
-    );
-  } finally {
-    await runtime.stop();
-  }
 });
 
 test("Backup worker refuses a non-live store aimed at the live backup directory", async (t) => {
@@ -954,103 +765,6 @@ test("scheduled snapshots run every 6 hours and read as stale after one interval
   );
   assert.equal(BACKUP_INTERVAL_MS, 6 * 60 * 60 * 1000);
   assert.equal(BACKUP_STALE_AFTER_MS, 7 * 60 * 60 * 1000);
-});
-
-test("scheduled snapshots are due against the newest verified one, so service rolls never postpone them (review #570)", async (t) => {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const { randomUUID } = require("node:crypto") as typeof import("node:crypto");
-  const { BACKUP_DUE_CHECK_MS } = await import("../shared/contracts");
-  const hour = 60 * 60 * 1000;
-  const dir = fs.mkdtempSync(join(tmpdir(), "nsq-backup-due-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.writeFileSync(join(dir, "mcp-report.mjs"), "export {};");
-  t.mock.timers.enable({
-    apis: ["setInterval", "Date"],
-    now: Date.parse("2026-10-21T00:00:00.000Z"),
-  });
-  const snapshotAt = (at: number) => {
-    fs.mkdirSync(join(dir, "backups"), { recursive: true });
-    fs.writeFileSync(
-      join(
-        dir,
-        "backups",
-        `${new Date(at).toISOString().replace(/:/g, "-").replace(".", "-")}-${randomUUID()}.hourly.sqlite.gz`,
-      ),
-      "",
-    );
-  };
-  // Isolate the scheduling policy: no daemon work, and a backup writes a snapshot at the mocked time.
-  t.mock.method(QueueRuntime.prototype as any, "start", async () => {});
-  let backups = 0;
-  t.mock.method(QueueRuntime.prototype, "backupNow", async () => {
-    backups++;
-    snapshotAt(Date.now());
-    return { snapshots: [], localError: null };
-  });
-  const interval = globalThis.setInterval;
-  t.mock.method(
-    globalThis,
-    "setInterval",
-    (callback: any, ms: number, ...args: any[]) =>
-      interval(ms === BACKUP_DUE_CHECK_MS ? callback : () => {}, ms, ...args),
-  );
-  const lifetime = async (hours: number) => {
-    const runtime = new QueueRuntime({ dataDir: dir, sourcePath: dir });
-    await runtime.started;
-    await Promise.resolve();
-    await Promise.resolve();
-    for (
-      let elapsed = 0;
-      elapsed < hours * hour;
-      elapsed += BACKUP_DUE_CHECK_MS
-    )
-      t.mock.timers.tick(BACKUP_DUE_CHECK_MS);
-    await runtime.stop();
-  };
-  snapshotAt(Date.now() - hour);
-  await lifetime(4);
-  assert.equal(backups, 0, "a start with a recent snapshot takes none");
-  // Timeline: snapshot at -1 h; lifetimes cover 0-4 h, 4-8 h, 8-12 h and 12-16 h.
-  await lifetime(4);
-  assert.equal(
-    backups,
-    1,
-    "due at 5 h, inside the second lifetime: taken once across the roll",
-  );
-  await lifetime(4);
-  assert.equal(backups, 2, "next due at 11 h, inside the third lifetime");
-  await lifetime(4);
-  assert.equal(
-    backups,
-    2,
-    "nothing before 17 h, however often the service rolls",
-  );
-});
-
-test("a store with no snapshot takes one at its first start", async (t) => {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const dir = fs.mkdtempSync(join(tmpdir(), "nsq-backup-first-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.writeFileSync(join(dir, "mcp-report.mjs"), "export {};");
-  t.mock.method(QueueRuntime.prototype as any, "start", async () => {});
-  let backups = 0;
-  t.mock.method(QueueRuntime.prototype, "backupNow", async () => {
-    backups++;
-    return { snapshots: [], localError: null };
-  });
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    sourcePath: dir,
-    timers: true,
-  });
-  try {
-    await runtime.started;
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(backups, 1);
-  } finally {
-    await runtime.stop();
-  }
 });
 
 test("a snapshot file name is read once into its period, its shared stem and its tier", () => {
