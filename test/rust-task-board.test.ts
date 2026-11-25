@@ -675,10 +675,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   });
   const papercut = "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
   let editableCut = {
-    ...leadItem("cut", papercut, "example/board-fixture"),
+    ...leadItem("second-cut", secondCut, boundRepository),
     kind: "papercut",
     version: 11,
-    updatedAtMs: null as number | null,
     lanes: ["delivery"],
   };
   const papercutWrites: Array<{
@@ -886,14 +885,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       { ...leadItem("parked-lead", parkedLead, boundRepository), state: "parked", reason: parkReason },
       leadItem("bound", "Lead with a saved T3 title", boundRepository),
       { ...leadItem("mixed", "Lead spanning mixed bindings", boundRepository), repositories: [boundRepository, "example/board-fixture"] },
-      editableCut,
+      { ...leadItem("cut", papercut, "example/board-fixture"), kind: "papercut", updatedAtMs: null, version: 22 },
       { ...leadItem("parked-cut", parkedCut, boundRepository), kind: "papercut", state: "parked", reason: parkReason, version: 21 },
-      { ...leadItem("second-cut", secondCut, boundRepository), kind: "papercut", version: 22 },
+      editableCut,
     ]);
     if (init?.method === "PUT" && path.startsWith("/api/engine/planning/fixture/items/")) {
       const body = JSON.parse(String(init.body));
       papercutWrites.push({ path, body });
-      assert.equal(path, "/api/engine/planning/fixture/items/cut");
+      assert.equal(path, "/api/engine/planning/fixture/items/second-cut");
       assert.equal(body.version, editableCut.version);
       editableCut = { ...editableCut, ...body, version: body.version + 1, updatedAtMs: now };
       return Response.json(editableCut);
@@ -1169,7 +1168,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const cutTitle = cutCard.querySelector(`[title="${papercut}"]`);
   assert.ok(cutTitle);
   assert.equal(style(cutTitle).textOverflow, "ellipsis");
-  await click(`Papercut: ${papercut}, Status: Open`);
+  await click(`Papercut: ${secondCut}, Status: Open`);
   await click("Edit");
   const editField = (label: string, value: string) => {
     const field = selector(label) as HTMLInputElement | HTMLTextAreaElement;
@@ -1187,7 +1186,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Save changes");
   await eventually(() => text().includes("Saved version 12"), "uses the saved Rust item version");
   assert.deepEqual(papercutWrites, [{
-    path: "/api/engine/planning/fixture/items/cut",
+    path: "/api/engine/planning/fixture/items/second-cut",
     body: { version: 11, title: editedTitle, body: editedBody, lanes: ["delivery"] },
   }]);
   await eventually(() => Boolean(selector(`Papercut: ${editedTitle}, Status: Open`)), "list shows the saved title");
