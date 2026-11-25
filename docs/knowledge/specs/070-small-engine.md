@@ -678,6 +678,15 @@ Later decisions carry their own attribution.
     - The follow-up stays a single turn. If it also ends without a report, the
       existing missing-report question applies.
 
+46. **Reviewer report reminders and recovery.** On 2026-11-25 Tom ruled
+    “Keep Rust behaviour.” When a reviewer ends without an authenticated
+    report, the engine sends one reminder for that run on the retained
+    reviewer thread. After a confirmed failure it relaunches the reviewer
+    within the attempt limit, then routes exhausted attempts to the task
+    planner. Neither step requires operator authorization. For the Rust
+    engine this supersedes Tom’s 2026-10-07 rule “Further reviewer turns
+    require explicit operator authorization.” No verdict is ever manufactured.
+
 ## The model
 
 ### Stored state per task
@@ -747,10 +756,15 @@ Every action is idempotent:
 ### Faults
 
 - **An exact terminal role run without an authenticated report** gets one
-  report-only continuation on the same thread and pinned provider and model.
-  It asks for the work actually done, with the original review head and a
-  run-bound report credential. The durable reservation reuses its command ID
-  across a lost reply or engine restart. A terminal reminder with no report
+  follow-up on the same thread, provider and model with a run-bound report
+  credential. An ordinary worker continues in its checkout and reports when
+  done. It asks the planner only about an unresolved failure, missing access
+  or a scope decision. A report-only worker reports its existing delivery or
+  the impediment. A reviewer reports only the review actually performed at
+  the original exact head. If the reviewer run confirmably failed, the engine
+  relaunches the reviewer within the attempt limit. After exhaustion it asks
+  the task planner. No one manufactures a verdict. The durable reservation
+  reuses its command ID across a lost reply or engine restart. A terminal reminder with no report
   gives the owner a cause and an action. A missing slice of host history cannot
   establish that the turn ended.
 - **A run that's gone or a reliably rejected dispatch** is relaunched in the
