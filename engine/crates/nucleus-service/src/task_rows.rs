@@ -1,6 +1,6 @@
 //! Reconcile native visibility independently of dispatch and API reads.
 
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use nucleus_core::{Role, RunState, Task, WaitReason};
 use nucleus_hosts::{
@@ -137,6 +137,20 @@ fn confirm_snooze(receipt: &mut RowSnooze, shown: Option<u64>) -> bool {
 }
 
 impl Service {
+    #[cfg_attr(
+        not(test),
+        expect(clippy::unused_self, reason = "tests advance the clock per service")
+    )]
+    fn visibility_now(&self) -> u64 {
+        let now = now_ms();
+        #[cfg(test)]
+        let now = now
+            + self
+                .visibility_time_offset
+                .load(std::sync::atomic::Ordering::Relaxed);
+        now
+    }
+
     pub(super) async fn operator_snooze_wait(&self, row: &TaskRow) -> Option<ServiceError> {
         let state = self.state.lock().await;
         let WaitDetail::OperatorSnoozed {
@@ -184,10 +198,7 @@ impl Service {
         &self,
         provider: &str,
         threads: &[String],
-        clear_retries: &mut BTreeMap<String, u64>,
     ) -> Result<Option<Duration>, ServiceError> {
-        let now = now_ms();
-        clear_retries.retain(|_, due| *due > now);
         let mut next = None;
         for thread in threads {
             let id = self
@@ -197,18 +208,17 @@ impl Service {
                 .store
                 .task_with_title_thread(thread)?;
             let Some(id) = id else { continue };
-            let due = match Box::pin(self.reconcile_task_row(&id, provider, thread, clear_retries))
-                .await
-            {
+            let due = match Box::pin(self.reconcile_task_row(&id, provider, thread)).await {
                 Ok(due) => due,
                 Err(error) => {
                     eprintln!("{thread}: {error}");
-                    Some(now_ms() + RECHECK_MS)
+                    Some(self.visibility_now() + RECHECK_MS)
                 }
             };
             next = earliest(next, due);
         }
-        Ok(next.map(|deadline| Duration::from_millis(deadline.saturating_sub(now_ms()))))
+        Ok(next
+            .map(|deadline| Duration::from_millis(deadline.saturating_sub(self.visibility_now()))))
     }
 
     async fn reconcile_task_row(
@@ -216,9 +226,9 @@ impl Service {
         id: &str,
         provider: &str,
         thread: &str,
-        clear_retries: &mut BTreeMap<String, u64>,
     ) -> Result<Option<u64>, ServiceError> {
-        let retry = Some(now_ms() + RECHECK_MS);
+        let now = self.visibility_now();
+        let retry = Some(now + RECHECK_MS);
         let fence = self.task_fence(id).await;
         let Ok(_fence) = fence.try_lock_owned() else {
             return Ok(retry);
@@ -234,16 +244,11 @@ impl Service {
             };
             let prior = state.store.row_snooze(id, thread)?;
             let children = self.host.row_children(thread, &visibility_roles(&row.task));
-            let plan = plan_row(attention, visibility, prior.clone(), now_ms(), children);
+            let plan = plan_row(attention, visibility, prior.clone(), now, children);
             (row, prior, plan, attention)
         };
         if let Plan::Idle(deadline) = plan {
             return Ok(deadline);
-        }
-        if let Some(&due) = clear_retries.get(id)
-            && matches!(plan, Plan::Write(RowChange::Unsnooze, _))
-        {
-            return Ok(Some(due));
         }
         let task = &row.task;
         let identity = task.identity();
@@ -270,7 +275,7 @@ impl Service {
             return Ok(retry);
         };
         let (change, receipt) = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             if row_attention_for_effect(&state, &row)? != Some(attention) {
                 return Ok(retry);
             }
@@ -285,8 +290,12 @@ impl Service {
                     return Ok(retry);
                 }
                 Plan::Write(change, receipt) => {
-                    if prior.as_ref() != Some(&receipt) {
-                        state.store.save_row_snooze(id, thread, &receipt)?;
+                    if let Some(due) =
+                        state
+                            .store
+                            .claim_row_flip(id, thread, &receipt, self.visibility_now())?
+                    {
+                        return Ok(Some(due));
                     }
                     (change, receipt)
                 }
@@ -298,9 +307,6 @@ impl Service {
             .host
             .write_row_visibility(&binding, &command, change, Some(&target), &roles, None)
             .await;
-        if change == RowChange::Unsnooze && result.is_err() {
-            clear_retries.insert(id.into(), now_ms() + RECHECK_MS);
-        }
         match result {
             Err(ParentSendError::NotSent(error)) => {
                 self.restore_row_snooze(id, thread, prior.as_ref()).await?;
@@ -466,12 +472,12 @@ impl Service {
             let mut receipt = prior.clone();
             confirm_snooze(&mut receipt, shown);
             receipt.clear_attempted_for = shown;
-            if receipt != prior {
-                self.state
-                    .lock()
-                    .await
-                    .store
-                    .save_row_snooze(id, &thread, &receipt)?;
+            let mut state = self.state.lock().await;
+            let now = self.visibility_now();
+            if let Some(due) = state.store.claim_row_flip(id, &thread, &receipt, now)? {
+                return Err(ServiceError::RowVisibilityDeferred {
+                    until: tokio::time::Instant::now() + Duration::from_millis(due - now),
+                });
             }
             (snooze_command(id, &thread, change, &receipt), Some(prior))
         };
@@ -542,7 +548,13 @@ fn row_attention_for_effect(
         (state.wait_reason(id), state.wait_detail(id)),
         (None | Some(WaitReason::Starting), _) | (Some(WaitReason::HostUnknown), None)
     );
-    let about_to_send = starting
+    let retrying_send = state.wait_reason(id) == Some(WaitReason::HostUnknown)
+        && matches!(
+            state.wait_detail(id),
+            Some(WaitDetail::BeforeSend(_) | WaitDetail::ShowingForDelivery(_))
+        )
+        && state.role_observation(task) == Some(RunState::ReadyToSend);
+    let about_to_send = (starting || retrying_send)
         && task.hold().is_none()
         && task.run().is_some_and(|run| {
             !run.revoked()
@@ -556,6 +568,16 @@ fn row_attention_for_effect(
     ) && state.schedule.effect_ready(id, tokio::time::Instant::now());
     if attention == TaskAttention::Waiting && (about_to_send || showing_delivery) {
         return Ok(Some(TaskAttention::Active));
+    }
+    // A transition can make the next effect due before the scheduler records a wait.
+    if attention == TaskAttention::Waiting
+        && state.wait_reason(id).is_none()
+        && state
+            .schedule
+            .due(id)
+            .is_some_and(|due| due <= tokio::time::Instant::now())
+    {
+        return Ok(None);
     }
     // After a cold start a recorded send alone gives no evidence that a child is quiet.
     let awaiting_child_read = attention == TaskAttention::Waiting

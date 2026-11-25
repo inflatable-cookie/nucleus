@@ -54,7 +54,6 @@ struct Fixture {
     native: Arc<Mutex<NativeRow>>,
     binding: Binding,
     thread: String,
-    clear_retries: tokio::sync::Mutex<BTreeMap<String, u64>>,
     _home: tempfile::TempDir,
     server: tokio::task::JoinHandle<()>,
 }
@@ -129,7 +128,6 @@ impl Fixture {
             native,
             binding,
             thread,
-            clear_retries: tokio::sync::Mutex::default(),
             _home: home,
             server,
         }
@@ -182,17 +180,76 @@ impl Fixture {
 
     async fn sync(&self) -> nucleus_hosts::HostCalls {
         self.publish_shell();
-        let mut clear_retries = self.clear_retries.lock().await;
-        let (result, calls) =
-            nucleus_hosts::T3::count_pass_calls(Box::pin(self.service.reconcile_task_rows(
-                PROVIDER,
-                std::slice::from_ref(&self.thread),
-                &mut clear_retries,
-            )))
-            .await;
+        let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            self.service
+                .reconcile_task_rows(PROVIDER, std::slice::from_ref(&self.thread)),
+        ))
+        .await;
         result.unwrap();
         assert!(!calls.contains_key("orchestration.subscribeThread"));
         calls
+    }
+
+    fn elapse_flip_interval(&self) {
+        self.elapse_visibility_ms(120_000);
+    }
+
+    fn elapse_visibility_ms(&self, ms: u64) {
+        self.service
+            .visibility_time_offset
+            .fetch_add(ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn restart(&mut self) {
+        let service = Arc::get_mut(&mut self.service).unwrap();
+        let settings = service.settings.clone();
+        let project = service.fixture().clone();
+        let offset = service
+            .visibility_time_offset
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let host = std::mem::replace(
+            &mut service.host,
+            nucleus_hosts::T3::new("http://127.0.0.1:9", "unused-fixture-key").unwrap(),
+        );
+        let placeholder = fixture(GitHub::new("fixture").unwrap());
+        let old = std::mem::replace(&mut self.service, Arc::new(placeholder.1));
+        drop(old);
+        self.service = Arc::new(
+            Service::open(
+                &settings,
+                project,
+                host,
+                GitHub::new("fixture").unwrap(),
+                "127.0.0.1:9".parse().unwrap(),
+                std::env::current_exe().unwrap(),
+            )
+            .unwrap(),
+        );
+        self.elapse_visibility_ms(offset);
+    }
+
+    fn observed_visibility(&self) -> RowObservation {
+        RowObservation {
+            visibility: self.service.host.row_visibility_hint(&self.thread).unwrap(),
+            sequence: 1,
+        }
+    }
+
+    async fn wake(&self, row: &TaskRow, observed: RowObservation) -> Result<(), ServiceError> {
+        let _fence = self.service.effect(row).await?;
+        self.service
+            .wake_task_parent(row, &self.binding, PROVIDER, observed)
+            .await
+    }
+
+    async fn deferred_flips(&self) -> usize {
+        self.service
+            .history(ID, None, 100)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|event| event.content.kind == "native_row_flip_deferred")
+            .count()
     }
 
     fn child(&self, id: &str, busy: bool) {
@@ -391,6 +448,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
         "Couldn’t confirm delivery. Open the task thread to check."
     );
     assert!(blocked["nextCheckAt"].is_null());
+    fixture.elapse_flip_interval();
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
 }
@@ -692,6 +750,17 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         )
         .await
         .unwrap();
+    // The send is due, with a brief preflight deferral and an awake destination.
+    service
+        .schedule_result(
+            &row,
+            &Err(service.parent_not_sent("waiting for shell confirmation")),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    assert!(fixture.sync().await.is_empty());
+    assert!(fixture.sync().await.is_empty());
     service
         .schedule_result(
             &row,
@@ -780,6 +849,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
         .await
         .unwrap();
     assert_eq!(fixture.attention().await, TaskAttention::Active);
+    fixture.elapse_flip_interval();
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
 
@@ -822,6 +892,8 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     let card = fixture.board_task().await;
     assert_eq!(card["stateLabel"], "Waiting for the planner");
     assert_eq!(card["attention"], "waiting");
+    fixture.elapse_flip_interval();
+    fixture.sync().await;
     fixture.sync().await;
     fixture.observed_snooze().await;
     assert_eq!(
@@ -919,12 +991,7 @@ async fn an_actionable_row_retries_its_claimed_clear_on_the_visibility_deadline(
     fixture.sync().await;
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
-    assert!(fixture.clear_retries.lock().await[ID] > now_ms());
-    fixture
-        .clear_retries
-        .lock()
-        .await
-        .insert(ID.into(), now_ms());
+    fixture.elapse_flip_interval();
     fixture.sync().await;
 
     // An operator restores the identical horizon before the next shell observation.
@@ -971,6 +1038,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     .await;
     assert!(reused.unwrap().is_some());
     assert!(calls.is_empty());
+    fixture.elapse_flip_interval();
     let (ready, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.wake_parent_delivery(&row, &write)))
             .await;
@@ -1001,6 +1069,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     );
 
     drop(fence);
+    fixture.elapse_flip_interval();
     fixture.sync().await;
     fixture.sync().await;
     let fence = service.effect(&row).await.unwrap();
@@ -1049,6 +1118,7 @@ async fn an_imminent_delivery_stays_visible_across_checking_and_sends_once() {
     let fixture = Fixture::new(&task).await;
     let service = &fixture.service;
     let row = create_visibility_row(&fixture, &task).await;
+    fixture.elapse_flip_interval();
     let session = service.host.runtime_identity().unwrap();
     let prepare = || {
         service
@@ -1136,6 +1206,7 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     let fixture = Fixture::new(&task).await;
     let service = &fixture.service;
     let row = create_visibility_row(&fixture, &task).await;
+    fixture.elapse_flip_interval();
     let session = service.host.runtime_identity().unwrap();
     let prepare = || {
         service
@@ -1180,6 +1251,7 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
         )
         .await
         .unwrap();
+    fixture.elapse_flip_interval();
     fixture.sync().await;
     fixture.sync().await;
     assert_eq!(
@@ -1262,6 +1334,82 @@ async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
 }
 
 #[tokio::test]
+async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
+    let task = pending_task();
+    let mut fixture = Fixture::new(&task).await;
+    let row = create_visibility_row(&fixture, &task).await;
+    fixture.elapse_visibility_ms(30_000);
+    assert!(matches!(
+        fixture.wake(&row, fixture.observed_visibility()).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    assert_eq!(fixture.deferred_flips().await, 0);
+    fixture
+        .service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+
+    for active in [false, true, false] {
+        fixture.child("monitor", active);
+        assert!(fixture.sync().await.is_empty());
+    }
+    assert_eq!(fixture.deferred_flips().await, 1);
+
+    fixture.restart();
+    for active in [true, false, true, false] {
+        fixture.child("monitor", active);
+        assert!(fixture.sync().await.is_empty());
+    }
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    assert_eq!(fixture.deferred_flips().await, 1);
+
+    // The snooze has aged out, but the first clear is still in the window.
+    fixture.elapse_visibility_ms(90_000);
+    fixture.sync().await;
+    assert!(fixture.sync().await.is_empty());
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+    for _ in 0..3 {
+        let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            fixture.wake(&row, fixture.observed_visibility()),
+        ))
+        .await;
+        let Err(ServiceError::RowVisibilityDeferred { until }) = result else {
+            panic!("clear must wait for the oldest remaining attempt: {result:?}");
+        };
+        let delay = until.saturating_duration_since(tokio::time::Instant::now());
+        assert!(delay > Duration::ZERO && delay <= Duration::from_secs(30));
+        assert!(calls.is_empty());
+    }
+    assert_eq!(fixture.commands().len(), 3);
+    assert_eq!(fixture.deferred_flips().await, 2);
+
+    fixture.elapse_visibility_ms(30_000);
+    assert!(matches!(
+        fixture.wake(&row, fixture.observed_visibility()).await,
+        Err(ServiceError::ParentNotSent { .. })
+    ));
+    assert_eq!(
+        fixture.commands(),
+        [
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.snooze",
+            "thread.unsnooze"
+        ]
+    );
+    assert_eq!(fixture.deferred_flips().await, 2);
+}
+
+#[tokio::test]
 async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
     let pending = pending_task();
     let fixture = Fixture::new(&pending).await;
@@ -1288,6 +1436,7 @@ async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
             .prepare_parent_refresh(&fixture.binding, PROVIDER)
     };
     for _ in 0..2 {
+        fixture.elapse_flip_interval();
         let write = prepare().await.unwrap().unwrap();
         fixture.native.lock().unwrap().fail_next = true;
         let (ready, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
@@ -1298,6 +1447,7 @@ async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
         assert!(!calls.contains_key("orchestration.subscribeThread"));
         fixture.publish_shell();
     }
+    fixture.elapse_flip_interval();
     let write = prepare().await.unwrap().unwrap();
     assert!(matches!(
         service.wake_parent_delivery(&row, &write).await,
@@ -1330,8 +1480,19 @@ async fn an_owned_clear_reuses_its_id_until_the_shell_observes_the_result() {
 
 async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
     let service = &fixture.service;
-    fixture.sync().await;
+    fixture.elapse_flip_interval();
     let row = service.task(ID).await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    fixture.sync().await;
+    assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+    let before = fixture.commands();
     let mut finished = row.task.clone();
     finished
         .command(
@@ -1360,7 +1521,7 @@ async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
         );
     }
     fixture.sync().await;
-    assert_eq!(fixture.commands().last().unwrap(), "thread.snooze");
+    assert_eq!(fixture.commands(), before);
 }
 
 fn plan_row(

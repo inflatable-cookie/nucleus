@@ -21,10 +21,11 @@ impl Store {
                          'question_delivery', 'operator_decline_notified', 'provider_limit',
                          'delegated_parent_ended', 'paused_reservation_released',
                          'host_send_not_sent', 'report_ready_planner_unavailable',
-                         'native_row_unsettle', 'role_threads_archived', 'role_archive_progress'
+                         'role_threads_archived', 'role_archive_progress'
                        )
                        AND kind NOT GLOB 'closed_checkout_*'
                        AND kind NOT GLOB 'host_observation_*'
+                       AND kind NOT GLOB 'native_row_*'
                        AND kind NOT GLOB 'native_turn_*'
                        AND kind NOT GLOB '*_observed'
                        AND kind NOT GLOB '*_notice_*'

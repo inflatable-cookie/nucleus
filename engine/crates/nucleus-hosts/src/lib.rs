@@ -1015,7 +1015,7 @@ impl TaskHost for T3Pass<'_> {
         if !queued && (worker || awaiting_reply(run, clock_ms()?)) {
             return Err(HostError::Uncertain);
         }
-        let parent_row = if !worker && let Some(parent) = &wire.parent {
+        let parent_row = if !queued && let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
