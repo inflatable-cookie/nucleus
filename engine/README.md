@@ -27,12 +27,14 @@ send or a positively observed completed turn binds the retained thread.
 Keep PRs near 1,500 changed lines plus tests. Open each against `main` once its
 dependencies land. The planner arranges independent review and merges. Run
 formatting, check, strict Clippy and nextest for changed crates through Effigy.
-Oxide manages Cargo storage for `engine:check`, `engine:clippy`, and
-`engine:nextest`. Set `TMPDIR`, `TMP` and `TEMP` for tests as described in
-[AGENTS.md](../AGENTS.md). [Milestone QA](../docs/knowledge/contracts/milestone-qa.md#run-each-slice-under-a-durable-run-key)
-qualifies the workspace and board with the eight selectors declared in
-`effigy qa`. The fixture exercises success, a stopped run, and readback after
-uncertain delivery before the planner's live check.
+Oxide manages Cargo storage for `engine:check`, `engine:clippy`,
+`engine:deny` and `engine:nextest`. Run `effigy engine:deny` for RustSec
+advisories, duplicate versions, licenses and sources in the locked workspace
+graph. Set `TMPDIR`, `TMP` and `TEMP` for tests as described in
+[AGENTS.md](../AGENTS.md). The [milestone QA checklist](../docs/knowledge/contracts/milestone-qa.md#run-each-slice-under-a-durable-run-key)
+lists the selectors declared in `effigy qa`. The fixture exercises success, a
+stopped run, and readback after uncertain delivery before the planner's live
+check.
 
 Use `publish = false` for workspace packages. The Longhorn crates are pinned to
 tag `v0.6.0` and require Rust 1.97.1.

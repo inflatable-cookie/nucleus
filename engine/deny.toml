@@ -1,0 +1,31 @@
+[bans]
+# Transitive consumers still require different versions of some crates.
+multiple-versions = "warn"
+wildcards = "deny"
+# Unpublished members use sibling paths and tagged Longhorn dependencies.
+allow-wildcard-paths = true
+
+[licenses]
+include-dev = true
+# The engine's publish = false workspace members carry no SPDX metadata.
+private = { ignore = true }
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Zlib",
+]
+# rustls-platform-verifier uses this package's Mozilla root certificate data.
+# https://github.com/rustls/webpki-roots/tree/main/webpki-root-certs
+exceptions = [
+  { crate = "webpki-root-certs@=1.0.12", allow = ["CDLA-Permissive-2.0"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "tag"
+allow-git = ["https://github.com/inflatable-cookie/longhorn.git"]

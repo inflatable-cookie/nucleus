@@ -20,7 +20,7 @@ thiserror = "2"
 url = { version = "2", features = ["serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-plist = "1"
+plist = "1.10.0"
 
 [lints]
 workspace = true

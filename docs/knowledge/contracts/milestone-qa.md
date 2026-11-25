@@ -52,6 +52,7 @@ missing rather than folded into an aggregate:
 
 ```sh
 effigy --run-id "qa-<sha7>-engine-fmt" engine:fmt
+effigy --run-id "qa-<sha7>-engine-deny" engine:deny
 effigy --run-id "qa-<sha7>-engine-check" engine:check
 effigy --run-id "qa-<sha7>-engine-clippy" engine:clippy
 effigy --run-id "qa-<sha7>-check" check
