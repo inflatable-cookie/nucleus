@@ -142,13 +142,16 @@ impl Service {
         expect(clippy::unused_self, reason = "tests advance the clock per service")
     )]
     fn visibility_now(&self) -> u64 {
-        let now = now_ms();
         #[cfg(test)]
-        let now = now
-            + self
-                .visibility_time_offset
+        {
+            let time = self
+                .visibility_time
                 .load(std::sync::atomic::Ordering::Relaxed);
-        now
+            if time != 0 {
+                return time;
+            }
+        }
+        now_ms()
     }
 
     pub(super) async fn operator_snooze_wait(&self, row: &TaskRow) -> Option<ServiceError> {

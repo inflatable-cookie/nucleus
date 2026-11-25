@@ -212,7 +212,7 @@ pub struct Service {
     enrollment_wake: Notify,
     tell_wake: Notify,
     #[cfg(test)]
-    visibility_time_offset: AtomicU64,
+    visibility_time: AtomicU64,
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
@@ -453,7 +453,7 @@ impl Service {
             enrollment_wake: Notify::new(),
             tell_wake: Notify::new(),
             #[cfg(test)]
-            visibility_time_offset: AtomicU64::new(0),
+            visibility_time: AtomicU64::new(0),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
             _profile: profile,

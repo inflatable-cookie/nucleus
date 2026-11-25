@@ -818,27 +818,26 @@ mod tests {
                     .is_some()
             );
         }
-        let service = Arc::new(service);
-        let background = Arc::clone(&service);
-        let watcher = tokio::spawn(async move { background.watch_host().await });
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if service
-                    .state
-                    .lock()
-                    .await
-                    .store
-                    .pending_title(&parent)
-                    .expect("receipt")
-                    .is_none()
-                {
-                    break;
+        {
+            let mut watcher = std::pin::pin!(service.watch_host());
+            std::future::poll_fn(|cx| {
+                assert!(watcher.as_mut().poll(cx).is_pending());
+                // The watcher's own wakeups drive the receipt check through durable confirmation.
+                let confirmed = service.state.try_lock().is_ok_and(|state| {
+                    state
+                        .store
+                        .pending_title(&parent)
+                        .expect("receipt")
+                        .is_none()
+                });
+                if confirmed {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
                 }
-                tokio::time::sleep(Duration::from_millis(15)).await;
-            }
-        })
-        .await
-        .expect("title confirmed");
+            })
+            .await;
+        }
         let counts = service.host.host_calls();
         assert_eq!(counts["orchestration.subscribeShell"], 1);
         assert_eq!(counts["orchestration.dispatchCommand"], 1);
@@ -859,7 +858,6 @@ mod tests {
             service.host.host_calls()["orchestration.dispatchCommand"],
             1
         );
-        watcher.abort();
         native.abort();
     }
 }
