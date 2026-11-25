@@ -1,3 +1,3 @@
 ### Removed
 
-- Removed the stopped TypeScript standalone daemon launcher and standby spawner.
+- Removed the stopped TypeScript standalone daemon, standby spawner and board HTTP adapter.
