@@ -23,13 +23,13 @@ task surface rather than growing a parallel workflow system.
 
 ## Layout
 
-- `bin/` holds the operator CLI and the MCP reporting bridge.
+- `engine/nucleus-dispatch` routes the installed command to the Rust engine.
+- `scripts/build-web.mjs` builds the browser assets used in the staged release.
 - `scripts/check-moves.ts` (`effigy check:moves`) compares moved code between two
   refs. Every move PR in lane `nucleus-simplify` runs it and pastes the result.
 
-These tools use Node because the plugin SDK, SQLite and scoped MCP bridge
-already depend on it. They resolve repository assets from their own module path,
-so they can be invoked from anywhere. Live acceptance scripts mutate workspaces
+Node runs the browser build, source checks and test runners. Use the
+repository selectors for maintenance. Live acceptance scripts mutate workspaces
 or GitHub; run them only for an explicitly authorized acceptance scenario.
 
 `effigy check:moves -- --shards <before> <after> <family>...` compares case
