@@ -242,8 +242,9 @@ revision must produce a new PR head before another review. An external merge dur
 after the run settles. `Close` finishes only after fresh merged-head evidence and
 workspace inspection. Dirty or unpublished work is retained and shown at closeout.
 
-The commands mutate the same row. `hold` and `release` toggle the hold,
-`amend` versions the brief, and `answer` resolves the current question. `move`
+The commands mutate the same row. `hold` and `release` toggle the hold.
+`amend` versions the brief. An amendment carrying `briefVersion` returns 409 if another edit has advanced the brief.
+`answer` resolves the current question. `move`
 and `cancel` revoke the run credential immediately. The pass loop reconciles
 the stop before releasing the workspace or starting another run. Direct moves
 never give a head merge authority. The merge and clean-worktree gates also
