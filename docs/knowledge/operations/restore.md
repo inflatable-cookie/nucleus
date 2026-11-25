@@ -1,10 +1,11 @@
 # Recover the engine store
 
 The Rust engine keeps task state in `engine.sqlite` under the verified database
-root. In Settings → Storage, choose a verified recovery point from before the
-incident and record its filename and time.
+root. Settings → Storage shows the backup status and scheduled archive root.
+On disk, select a recovery point from before the incident and record its
+filename and time.
 
-- **Scheduled backups** have names ending in `-rust-<uuid>.<tier>.sqlite.gz`
+- **Scheduled backups** are in the displayed archive root. Their names end in `-rust-<uuid>.<tier>.sqlite.gz`
   for the hourly, daily and weekly tiers. The default engine home uses Barge’s
   archives class for `nucleus-backups`. An isolated home uses its own backup
   directory. Decompress the selected archive into a fresh private directory.
