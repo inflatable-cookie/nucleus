@@ -28,14 +28,12 @@ const escapeRegExp = (value: string) =>
 
 /**
  * nucleus#1546: the Planning menu entry counts the open lanes in scope through
- * the real board read — real stored lanes and projects, read back through
- * `queue.ui-snapshot` like the operator's board. Wide, medium and the narrow
- * drawer, in the dark theme.
+ * the board snapshot contract in wide, medium and narrow layouts.
  */
 test("1546 the Planning menu entry counts the open lanes in scope", async () => {
-  const fixture = await planningFixture();
+  const fixture = planningFixture();
   // One lane two projects list: it counts once, whatever selects both.
-  fixture.store.upsertLane({
+  fixture.addLane({
     key: "shared",
     title: "Shared lane",
     aim: "A lane two selected projects list.",
@@ -61,11 +59,7 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
       }),
     }),
   );
-  const nameOf = (key: string) =>
-    (fixture.store.projectByKey(key)?.name ?? key) as string;
-  const roadmap = nameOf(fixture.keys.roadmap);
-  const idle = nameOf(fixture.keys.idle);
-  const dormant = nameOf(fixture.keys.dormant);
+  const { roadmap, idle, dormant } = fixture.projectNames;
   const waitFor = async (label: string | RegExp) => {
     for (let i = 0; i < 400 && !ui.query(label); i++)
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -199,6 +193,5 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
   } finally {
     ui.update(h("View", null));
     client.clear();
-    await fixture.close();
   }
 });
