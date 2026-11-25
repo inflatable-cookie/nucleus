@@ -298,9 +298,9 @@ service unreachable at session/new, the refusal codes, a closed stdin, and the l
 missing-binding answer.
 
 `shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`
-reads the environment and launches it. The legacy TypeScript ACP script
-serves isolated fixtures. See [Spec 070](070-small-engine.md) for the installed
-Rust provider and its startup contract.
+reads the environment and launches it in the remaining TypeScript fixture.
+See [Spec 070](070-small-engine.md) for the installed Rust provider and its
+startup contract.
 
 The agent tests also cover the hold rule: a re-entry prompt shows nothing, forwards
 nothing, holds the turn until the service releases it, and leaves the operator's
@@ -312,14 +312,10 @@ open still answers with its actionable line (nucleus#1435).
 The service tests prove a mint carries both host rules into the binding and
 that a mint without them writes neither.
 
-`test/acp-service.test.ts` covers the service side against a real store, engine
-and callback socket, including a spawned `bin/nucleus-acp.mjs` speaking ACP to
-the real service: minting and revocation, the catalogue method, the bind
-refusals, hold and lifecycle text, an attach after this service already showed
-the session's line, the long poll, the release directive, the operator message
-and its duplicate rule, the 401/409 refusals, a process with no ACP surface, the
-lifecycle line's signature, verification across a restart, and a relaunched
-launcher whose `session/load` shows the line the dead process had already shown.
+The installed ACP provider's protocol tests in
+`engine/crates/nucleus-cli/tests/acp_protocol.rs` cover concurrent inbox forms,
+unbound sessions, reattachment after closeout, parent turn holds, and recovery
+after a missed report wake.
 
 Affected unit files cover the rest; `effigy check` and `effigy qa:docs` gate the
 docs.
