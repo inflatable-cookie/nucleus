@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use nucleus_core::{
     Action, Observation, Role, Run, Task, WaitReason,
@@ -8,9 +11,10 @@ use nucleus_core::{
     },
 };
 use nucleus_hosts::{
-    HostError, ProfileCatalog, ProviderLimit, RoleProfile, TaskHost, launch_provider_instance,
+    HostError, ProfileCatalog, ProfileOffer, ProviderLimit, RoleProfile, TaskHost,
+    launch_provider_instance,
 };
-use nucleus_store::{DispatchMode, DispatchSettings, Profiles, TaskRow};
+use nucleus_store::{DispatchMode, DispatchSettings, NamedProfile, PoolRole, Profiles, TaskRow};
 
 use crate::{ProjectMode, Service, ServiceError, State, now_ms};
 
@@ -105,11 +109,83 @@ impl Service {
         }
         let catalog = host.profile_catalog().await?;
         let mut state = self.state.lock().await;
-        let runtime_mode = self.project.as_ref().map_or("full-access", |project| {
-            project.profile(role).runtime_mode.as_str()
-        });
-        select_profile(&mut state, task, observation, role, catalog, runtime_mode)
+        select_profile(
+            &mut state,
+            task,
+            observation,
+            role,
+            catalog,
+            self.profile_runtime_mode(role),
+        )
     }
+
+    fn profile_runtime_mode(&self, role: Role) -> &str {
+        self.project.as_ref().map_or("full-access", |project| {
+            project.profile(role).runtime_mode.as_str()
+        })
+    }
+
+    pub(super) fn effective_profile_groups<'a>(
+        &self,
+        profiles: &'a Profiles,
+    ) -> BTreeMap<&'a str, String> {
+        let catalog = self.host.cached_profile_catalog();
+        let modes = [
+            (PoolRole::Worker, self.profile_runtime_mode(Role::Worker)),
+            (
+                PoolRole::Reviewer,
+                self.profile_runtime_mode(Role::Reviewer),
+            ),
+        ];
+        profiles
+            .profiles
+            .iter()
+            .filter_map(|profile| {
+                let group = profile
+                    .group
+                    .as_deref()
+                    .or(profile.provider_instance_id.as_deref())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        let catalog = catalog.as_deref()?;
+                        // Registry launches share one default mode. A legacy project can use
+                        // different modes by role, so only present a single unambiguous group.
+                        let mut groups = modes.into_iter().filter_map(|(role, mode)| {
+                            if profile
+                                .roles
+                                .as_ref()
+                                .is_some_and(|roles| !roles.contains(&role))
+                            {
+                                return None;
+                            }
+                            profile_offer(catalog, profile, mode).map(|(_, group)| group)
+                        });
+                        let group = groups.next()?;
+                        groups.all(|other| other == group).then_some(group)
+                    })?;
+                Some((profile.selection.id.as_str(), group))
+            })
+            .collect()
+    }
+}
+
+fn profile_offer(
+    catalog: &ProfileCatalog,
+    profile: &NamedProfile,
+    runtime_mode: &str,
+) -> Option<(ProfileOffer, String)> {
+    let offer = catalog.offer(
+        &profile.selection,
+        profile.provider_instance_id.as_deref(),
+        profile.mode_id.as_deref().unwrap_or(runtime_mode),
+        &profile.feature_values,
+    )?;
+    let group = profile
+        .group
+        .as_deref()
+        .unwrap_or_else(|| offer.instance())
+        .to_owned();
+    Some((offer, group))
 }
 
 fn select_profile(
@@ -132,19 +208,9 @@ fn select_profile(
         if !profile.eligible_for(role) {
             continue;
         }
-        let Some(offer) = catalog.offer(
-            &profile.selection,
-            profile.provider_instance_id.as_deref(),
-            profile.mode_id.as_deref().unwrap_or(runtime_mode),
-            &profile.feature_values,
-        ) else {
+        let Some((offer, group)) = profile_offer(catalog, profile, runtime_mode) else {
             continue;
         };
-        let group = profile
-            .group
-            .as_deref()
-            .unwrap_or_else(|| offer.instance())
-            .to_owned();
         let counts = state
             .store
             .rotation_counts(role, &profile.selection.id, &group);

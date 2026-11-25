@@ -388,11 +388,11 @@ impl Rpc {
         &self,
         instance: &str,
     ) -> Option<nucleus_core::profiles::Provider> {
-        self.catalog
-            .lock()
-            .expect("provider catalog")
-            .current()?
-            .provider_family(instance)
+        self.cached_profile_catalog()?.provider_family(instance)
+    }
+
+    pub(crate) fn cached_profile_catalog(&self) -> Option<Arc<ProfileCatalog>> {
+        self.catalog.lock().expect("provider catalog").current()
     }
 
     pub(crate) fn board_catalog(&self) -> Value {

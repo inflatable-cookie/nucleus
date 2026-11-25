@@ -549,7 +549,6 @@ impl T3 {
         })
     }
 
-    /// Read the board-safe projection of the cached provider catalog.
     /// Resolve an observed provider instance from the current cached catalog.
     #[must_use]
     pub fn cached_provider_family(
@@ -559,6 +558,13 @@ impl T3 {
         self.rpc.cached_provider_family(instance)
     }
 
+    /// Read the current launch catalog from the cache without calling the host.
+    #[must_use]
+    pub fn cached_profile_catalog(&self) -> Option<std::sync::Arc<ProfileCatalog>> {
+        self.rpc.cached_profile_catalog()
+    }
+
+    /// Read the board-safe projection of the cached provider catalog.
     #[must_use]
     pub fn board_catalog(&self) -> Value {
         self.rpc.board_catalog()
