@@ -20,7 +20,7 @@ async function start() {
     });
     if (!response.ok) throw new Error("The board link could not be paired.");
   }
-  root.render(<WebApp engine="rust" />);
+  root.render(<WebApp />);
 }
 
 root.render(<p role="status">Connecting to the Nucleus engine…</p>);
