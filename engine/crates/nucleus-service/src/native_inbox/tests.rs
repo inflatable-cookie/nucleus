@@ -601,14 +601,7 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     let offered = Arc::new(std::sync::OnceLock::<String>::new());
     let native_form = Arc::clone(&offered);
     let (host, server) = native_fixture(move |req| {
-        let mut reply = native_response(req, &seen, &root);
-        if req["tag"] == "orchestration.subscribeThread"
-            && seen.load(Ordering::Relaxed) == 7
-            && let Some(field) = native_form.get()
-        {
-            compact_pending_form(&mut reply["values"][0], field);
-        }
-        reply
+        native_form_response(req, &seen, &root, native_form.get().map(String::as_str))
     })
     .await;
     service.host = host;
@@ -699,7 +692,13 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     server.abort();
 }
 
-fn compact_pending_form(snapshot: &mut Value, field: &str) {
+fn native_form_response(req: &Value, seen: &AtomicUsize, root: &str, field: Option<&str>) -> Value {
+    let mut reply = native_response(req, seen, root);
+    let Some(field) = field else { return reply };
+    if req["tag"] != "orchestration.subscribeThread" || seen.load(Ordering::Relaxed) != 7 {
+        return reply;
+    }
+    let snapshot = &mut reply["values"][0];
     snapshot["hasMoreHistory"] = json!(true);
     snapshot["historyCursor"] = json!("previous-page");
     snapshot["turnItemsOmitLocalVisible"] = json!(true);
@@ -716,6 +715,7 @@ fn compact_pending_form(snapshot: &mut Value, field: &str) {
         "position": 36, "visibility": "local", "sourceThreadId": INBOX_THREAD,
         "sourceItemId": "form", "item": item
     }]);
+    reply
 }
 
 async fn retire(service: &Service, target: &InboxTarget<'_>) {
