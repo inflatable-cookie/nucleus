@@ -666,12 +666,19 @@ struct StoredTask {
 }
 
 impl TryFrom<StoredTask> for Task {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(stored: StoredTask) -> Result<Self, Self::Error> {
+        let digest: [u8; 32] = Sha256::digest(stored.brief.text.as_bytes()).into();
+        if stored.brief.digest != digest {
+            return Err(format!(
+                "stored brief digest does not match the text for task {}",
+                stored.identity.id
+            ));
+        }
         if matches!(&stored.verdict, Some(Verdict::Accepted { acceptance, .. }) if !acceptance.authority.can_accept(stored.identity.entry))
         {
-            return Err("stored acceptance is not authorized for this task entry");
+            return Err("stored acceptance is not authorized for this task entry".into());
         }
         if (matches!(
             stored.phase,
@@ -689,17 +696,17 @@ impl TryFrom<StoredTask> for Task {
                     || (stored.phase == Phase::Done && report.acceptance.is_none())
             })
         {
-            return Err("stored report-only delivery does not match its task");
+            return Err("stored report-only delivery does not match its task".into());
         }
         if stored.attempts > 3 {
-            return Err("stored attempt count exceeds the retry limit");
+            return Err("stored attempt count exceeds the retry limit".into());
         }
         if stored.question.as_ref().is_some_and(|open| {
             open.operator_decline.is_some()
                 && (stored.identity.entry != Entry::ReviewEntry
                     || !matches!(&open.question, Question::Accept { head } if open.head.as_ref() == Some(head)))
         }) {
-            return Err("stored operator decline does not match its acceptance question");
+            return Err("stored operator decline does not match its acceptance question".into());
         }
         if stored.run.as_ref().is_some_and(|run| {
             let role = run.launch.role;
@@ -716,7 +723,7 @@ impl TryFrom<StoredTask> for Task {
                         stored.identity.id, stored.threads.launch_sequence
                     )
         }) {
-            return Err("stored run does not match its task reservation");
+            return Err("stored run does not match its task reservation".into());
         }
         Ok(Self {
             identity: stored.identity,
