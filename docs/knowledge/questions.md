@@ -1,12 +1,19 @@
-# Open questions
+# Open questions and historical rulings
+
+The current engine rules live in [Spec 070](specs/070-small-engine.md) and the
+[service boundary](contracts/service-boundary.md). Dated TypeScript rulings
+below are retained for their historical context.
 
 ## Who may write host-wide settings?
 
-Answered for `queue.capacity`: only the operator, from Settings. The rule and its
-code are recorded in [contracts/service-boundary.md](contracts/service-boundary.md),
-"Settings-only capacity writes (Tom, 2026-10-25)".
+The Rust Settings API checks operator authority. See the
+[current Settings and capacity boundary](contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25).
 
-Short version: every caller of the catalogue — the Settings screen, the CLI and
+The TypeScript ruling limited `queue.capacity` writes to the operator
+Settings surface. The [archived service contract](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/docs/knowledge/contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25)
+records its enforcement and evidence.
+
+In the TypeScript engine, every caller of the catalogue — the Settings screen, the CLI and
 any task session's shell — is the same uid as the service, so no caller identity,
 hidden command or same-user credential separates them. Tom chose accident
 prevention rather than an authority boundary (2026-10-25): Settings writes the
@@ -28,8 +35,8 @@ design-only limit and the root-owned authority implementation below for
 enforcement, and it is delivered: the #426 root-owned installer and document path
 stay reviewed but unused and historical, and nothing on this host needs them.
 
-The change log stays: every applied change is recorded and read through
-`queue.capacity-state` by the CLI and agents. Settings has no view of it (Tom,
+That implementation recorded each change for the CLI and agents to read through
+`queue.capacity-state`. Its Settings screen had no view of the log (Tom,
 2026-11-08: "Drop the UI, keep the log").
 
 ### Ruling: build the root-owned authority design (Tom, 2026-10-25, superseded)
@@ -45,8 +52,8 @@ derive rule, the dispatch refusal, `queue.capacity-state`, the read-only Setting
 section and the reviewed writer and installer artifacts — without installing
 anything. Its consequence was that Tom could not change a limit from Settings
 without a privileged host installation, which is what the Settings-only ruling
-above replaced. The residual software-integrity limits and unused artifacts are in the
-[Settings-only capacity writes](contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25) section of the service boundary.
+above replaced. The archived service contract above records the residual
+software-integrity limits and unused artifacts.
 
 ### Ruling: design the enforced boundary first (Tom, 2026-10-25, superseded)
 
@@ -62,6 +69,11 @@ overrides, pool, profiles, availability, pause and budgets — are named as
 residual scope and are not changed by any of this.
 
 ## May a Nucleus-launched agent shell carry the Effigy v2 admission opt-in?
+
+The Rust launcher does not inject the admission hook. The following question
+concerns the TypeScript producer and its opt-in. See the
+[current Effigy boundary](contracts/host-run-scheduling-010.md) before applying
+that proposal to Rust.
 
 Owner: operator. Source facts:
 [specs/035-host-run-scheduler.md](specs/035-host-run-scheduler.md), "Reviewed
@@ -96,8 +108,9 @@ Answered questions are recorded in their owning knowledge files.
 
 ## How does a renamed repository keep its Nucleus history?
 
-Answered for Nucleus by [Spec 056](specs/056-repository-namespace-rekey.md):
-one operator-invoked, atomic, idempotent re-key moves a repository's *current*
+The TypeScript answer in [Spec 056](specs/056-repository-namespace-rekey.md)
+used one operator-invoked atomic re-key. Spec 070 ruling 28 retired that
+command at cutover. It moved a repository's then-current
 records (settings, numbering, tasks, outcomes, leads, lanes, decision targets,
 project membership, QA) to its new `owner/name`, while operation
 payloads, hook events, host-run rows, retained shadow-journal history, receipts
