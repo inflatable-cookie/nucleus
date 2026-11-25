@@ -253,6 +253,7 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
+        self.threads.settled_scratch.clone_from(&run.launch.scratch);
         if let Some(state) = &mut self.report_state
             && let Some(head) = run.report.as_ref().and_then(Report::source_head)
             && !state.reported_heads.contains(head)
@@ -478,6 +479,17 @@ impl Task {
     /// Returns an error when the launch sequence is exhausted.
     pub fn next_launch_instance(&self) -> Result<String, CommandError> {
         Ok(self.launch_instance(self.next_launch_sequence()?))
+    }
+
+    /// Last run and its recorded scratch directory for checkout retirement.
+    #[must_use]
+    pub fn settled_scratch(&self) -> Option<(String, Option<&std::path::Path>)> {
+        (self.threads.launch_sequence > 0).then(|| {
+            (
+                self.launch_instance(self.threads.launch_sequence),
+                self.threads.settled_scratch.as_deref(),
+            )
+        })
     }
 
     /// The immutable run instance whose review was applied to the task.

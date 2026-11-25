@@ -590,6 +590,8 @@ pub struct Threads {
     reviewer_profile: Option<BoundProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) applied_review_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) settled_scratch: Option<PathBuf>,
 }
 
 impl Threads {
