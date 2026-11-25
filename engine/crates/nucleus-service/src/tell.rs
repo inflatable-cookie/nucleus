@@ -165,12 +165,14 @@ impl Service {
             .flat_map(|id| state.planner_candidates_for(id))
             .filter(|candidate| candidate != actor)
             .collect();
-        if !candidates.is_empty() {
-            let mut pending = ServiceError::PlannerEnrollmentPending;
-            for candidate in candidates {
-                pending = self.request_enrollment(&mut state, &candidate);
+        let mut pending = None;
+        for candidate in candidates {
+            if let Some(wait) = self.request_tell_enrollment(&mut state, &candidate) {
+                pending = Some(wait);
             }
-            return Err(pending);
+        }
+        if let Some(wait) = pending {
+            return Err(wait);
         }
         let recipients = groups
             .into_values()

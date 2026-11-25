@@ -1737,26 +1737,39 @@ async fn project_tell_rechecks_only_saved_cold_recipients_before_admitting_a_req
 }
 
 #[tokio::test]
-async fn project_tell_keeps_an_uncertain_recipient_pending_and_does_not_reenroll_a_removed_route() {
+async fn project_tell_routes_the_verified_subset_after_one_uncertain_recipient_check() {
     let registry = registry().await;
-    registry.enroll("beta-planner").await;
     registry.enroll("alpha-planner").await;
-    let registry = registry.reopen();
+    registry.enroll("next-planner").await;
     registry.enroll("beta-planner").await;
-    let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "Cold recipient");
+    let registry = registry.reopen();
+    registry.enroll("next-planner").await;
+    registry.enroll("beta-planner").await;
+    let send = || registry.tell("next-planner", json!("all"), "Cold recipient");
     assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
     let actor = registry.service.take_enrollment().await.unwrap();
+    assert_eq!(actor, "alpha-planner");
     registry.notices.lock().unwrap().uncertain_planner = true;
     registry.service.complete_enrollment(&actor).await;
-    assert!(!send().await.status().is_success());
-    {
-        let state = registry.service.state.lock().await;
-        assert!(state.settings.planner_route(&actor).is_some());
-        assert!(state.store.next_tell().unwrap().is_none());
-    }
+    let result = json_body(send().await).await;
+    assert_eq!(result["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(result["noLivePlanners"][0]["name"], "Exact T3 Alpha");
+    assert_eq!(result, json_body(send().await).await);
+    let state = registry.service.state.lock().await;
+    assert!(state.settings.planner_route(&actor).is_some());
+    assert!(state.live_planner_project(&actor).is_none());
+    assert_eq!(
+        result["deliveries"][0]["to"].as_str(),
+        state.live_planner_project("beta-planner")
+    );
+}
 
+#[tokio::test]
+async fn project_tell_cannot_reenroll_a_removed_recipient_route() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
     let registry = registry.reopen();
-    registry.notices.lock().unwrap().uncertain_planner = false;
     registry.enroll("beta-planner").await;
     let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "Cold recipient");
     assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);

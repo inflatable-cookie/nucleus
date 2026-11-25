@@ -264,6 +264,21 @@ impl Service {
         })
     }
 
+    /// A completed negative check can settle this recipient while a later demand
+    /// refreshes its saved binding on the enrollment worker's retry cadence.
+    pub(super) fn request_tell_enrollment(
+        &self,
+        state: &mut State,
+        actor: &str,
+    ) -> Option<ServiceError> {
+        let checked = matches!(
+            state.enrollments.0.get(actor),
+            Some(Contact::Refused { .. })
+        );
+        let result = self.request_enrollment(state, actor);
+        (!checked).then_some(result)
+    }
+
     pub(super) fn request_enrollment(&self, state: &mut State, actor: &str) -> ServiceError {
         let binding = state.planner_binding(actor).map(Box::new);
         let contacts = &mut state.enrollments.0;
@@ -333,7 +348,9 @@ impl Service {
             let Some(Contact::Checking { binding, .. }) = state.enrollments.0.get(actor) else {
                 return;
             };
-            binding.clone()
+            binding
+                .clone()
+                .or_else(|| state.planner_binding(actor).map(Box::new))
         };
         let result = self.verify_enrollment(actor, binding.as_deref()).await;
         let mut state = self.state.lock().await;
