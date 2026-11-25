@@ -16,7 +16,6 @@ export const syntheticArtifactFixtures = new Set([
 export const syntheticVolumeFixtures = {
   'test/checkout-volume.test.ts': ['cache-volume', 'retired-volume'],
   'test/store-backups.test.ts': ['example-volume'],
-  'test/order-pins.test.ts': ['retired-volume', 'example-volume'],
   'test/prompts.test.ts': ['retired-volume'],
   'test/settings-pool.test.ts': ['retired-volume'],
   'test/backups-panel-ui.test.ts': ['example-volume'],
