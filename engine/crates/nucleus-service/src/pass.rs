@@ -80,13 +80,37 @@ pub(super) struct DispatchPermit<'a> {
 
 impl Service {
     pub(super) fn existing_run_scratch(&self, task: &Task) -> Option<PathBuf> {
-        let launch = task.run()?.launch();
-        Some(scratch::bound_path(
-            self.storage.scratch().path(),
-            &task.identity().id,
-            &launch.instance,
-            launch.scratch.as_deref(),
-        ))
+        let root = self.storage.scratch().path();
+        let id = &task.identity().id;
+        if let Some(run) = task.run() {
+            let launch = run.launch();
+            return Some(scratch::bound_path(
+                root,
+                id,
+                &launch.instance,
+                launch.scratch.as_deref(),
+            ));
+        }
+        if !matches!(
+            task.phase(),
+            Phase::Closing | Phase::Done | Phase::Cancelled
+        ) {
+            return None;
+        }
+        let (instance, recorded) = task.settled_scratch()?;
+        let path = if let Some(path) = recorded {
+            path.to_owned()
+        } else {
+            // Pre-upgrade settled rows retain the sequence but omit the absolute path.
+            let short = root.join(scratch::relative_path(&instance));
+            if matches!(short.try_exists(), Ok(false)) {
+                scratch::bound_path(root, id, &instance, None)
+            } else {
+                short
+            }
+        };
+        // Retention may already have removed the directory. Other errors stay fenced.
+        (!matches!(path.try_exists(), Ok(false))).then_some(path)
     }
 
     #[cfg(test)]
@@ -2279,6 +2303,104 @@ mod tests {
             .await
             .unwrap();
         service.task(id).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_process_in_settled_run_scratch_holds_checkout_retirement() {
+        use std::os::unix::fs::DirBuilderExt as _;
+
+        let (home, service) = fixture(GitHub::new("fixture").unwrap());
+        let scratch = home.path().canonicalize().unwrap().join("assigned-scratch");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&scratch)
+            .unwrap();
+        let id = "settled-custody";
+        let head = service.fixture().start.clone();
+        let (template, _, mut observation) = reservation(id, Entry::Brief, &head);
+        let mut task = Task::new(template.identity().clone(), "Scoped fixture".into(), None);
+        task.reconcile(&observation);
+        let credential = task
+            .reserve_launch(
+                &observation,
+                LaunchInputs {
+                    thread: "worker".into(),
+                    started_at: 1,
+                    input: "fixture".into(),
+                    scratch: Some(scratch.clone()),
+                },
+                &[9; 32],
+            )
+            .unwrap();
+        let instance = task.run().unwrap().launch().instance.clone();
+        let pr = PullRequest {
+            url: "https://github.com/example/test/pull/1".into(),
+            head: head.clone(),
+        };
+        task.record_report(
+            &instance,
+            credential.as_bytes(),
+            Report::Work(pr.clone().into()),
+        )
+        .unwrap();
+        observation.forge = Observed::Known(Forge::Open {
+            pr,
+            checks: CheckState::Ready,
+        });
+        observation.host = Observed::Known(Host::Current {
+            instance,
+            state: RunState::Ended,
+        });
+        assert_eq!(
+            task.reconcile(&observation),
+            Action::Advance(Phase::Reviewing)
+        );
+        task.command(
+            Command::Cancel,
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            &observation,
+        )
+        .unwrap();
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let row = service.task(id).await.unwrap();
+        assert!(row.task.run().is_none());
+        let bound = service.existing_run_scratch(&row.task);
+        assert_eq!(bound.as_deref(), Some(scratch.as_path()));
+        let work = service.worktrees().unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
+        checkout.allocate(&head).unwrap();
+        let binding = service
+            .checkout_binding(row.task.identity(), &route, &checkout)
+            .unwrap();
+        let mut child = tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(&scratch)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let host = service
+            .host
+            .pass(service.storage.scratch().path())
+            .for_task(&row.task, bound);
+        let result = service
+            .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
+            .await;
+        let pid = child.id().unwrap();
+        child.kill().await.unwrap();
+        assert!(
+            matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+            "{result:?}"
+        );
+        assert!(checkout.path().exists());
     }
 
     #[tokio::test]
