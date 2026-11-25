@@ -1111,7 +1111,7 @@ test("unreadable planning records leave healthy siblings readable in lists and d
 test("a board click and action address the selected project's colliding decision and items", async (t) => {
   const fake = engine();
   const answers = new Map<string, string>();
-  const dropped = new Set<string>();
+  const dropped = new Map<string, { reason: string | null; disposition: string }>();
   const parked = new Set<string>();
   const promotions: unknown[] = [];
   const calls: string[] = [];
@@ -1133,10 +1133,10 @@ test("a board click and action address the selected project's colliding decision
       return Response.json({ identity: { id: "t-result" }, reference: "orbit-docs#12" });
     }
     if (match[4] === "park") parked.add(project);
-    if (match[4] === "drop") dropped.add(project);
+    if (match[4] === "drop") dropped.set(project, JSON.parse(String(init?.body)));
     const item = { id: "shared", title: project + " lead", body: project + " lead body", kind: "lead",
       state: "open", author: "planner", lanes: [], version: 1, createdAtMs: 10 };
-    const cut = { ...item, id: "cut", title: project + " cut", body: project + " cut body", kind: "papercut", state: dropped.has(project) ? "dropped" : parked.has(project) ? "parked" : "open", reason: parked.has(project) ? "Later" : null };
+    const cut = { ...item, id: "cut", title: project + " cut", body: project + " cut body", kind: "papercut", state: dropped.has(project) ? "dropped" : parked.has(project) ? "parked" : "open", reason: parked.has(project) ? "Later" : null, ...dropped.get(project) };
     return Response.json(match[4] ? cut : [item, cut]);
   };
   const adapter = createRustAdapter(createRustApi(fetcher));
@@ -1195,7 +1195,10 @@ test("a board click and action address the selected project's colliding decision
   assert.equal(ui.query("Return the lead to the to-do list"), undefined);
   await press("Close as completed");
   await waitFor(() => dropped.size > 0, 4000, "papercut closed");
-  assert.deepEqual([...dropped], ["lantern"]);
+  assert.deepEqual([...dropped], [["lantern", { reason: null, disposition: "completed" }]]);
+  const saved = await adapter.rpc(api.papercutGet, { id: "cut", project: "lantern" });
+  assert.equal(saved?.closedReason, "completed");
+  assert.equal(saved?.note, null);
 });
 
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
