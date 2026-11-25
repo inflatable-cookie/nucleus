@@ -152,10 +152,11 @@ impl Schedule {
         now: Instant,
         parenting: bool,
         capacity_waiters: &mut BTreeSet<(i64, String)>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<bool, ServiceError> {
         if now < self.scan_at {
-            return Ok(());
+            return Ok(false);
         }
+        let housekeeping = self.archive_cursor.is_none();
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
         let archival =
             store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
@@ -186,7 +187,7 @@ impl Schedule {
                 pending
             });
         }
-        Ok(())
+        Ok(housekeeping)
     }
 
     pub(crate) fn take_ready<'a>(
