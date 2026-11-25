@@ -468,13 +468,12 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     assert_eq!(fixture.commands(), ["thread.snooze"]);
     fixture.observed_snooze().await;
 
-    {
-        let mut state = service.state.lock().await;
-        let due = state.schedule.due(ID).unwrap();
-        assert!(state.schedule.recover_host_observation(ID, due, None));
-    }
     service
-        .schedule_result(&row, &unknown, Priority::Effect)
+        .schedule_result(
+            &row,
+            &Err(ServiceError::ParentDeliveryHeld),
+            Priority::Effect,
+        )
         .await
         .unwrap();
     let blocked = fixture.board_task().await;
@@ -483,7 +482,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
     assert_eq!(blocked["wait"], "host_observation_blocked");
     assert_eq!(
         blocked["waitDetail"],
-        "Couldn’t confirm delivery. Open the task thread to check."
+        "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
     );
     assert!(blocked["nextCheckAt"].is_null());
     fixture.elapse_flip_interval();

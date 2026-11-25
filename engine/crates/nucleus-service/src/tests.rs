@@ -628,7 +628,6 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
         let mut state = service.state.lock().await;
         state.store.create(&task, &event("fixture")).unwrap();
         let row = service.lookup(&state, "unsent").unwrap();
-        state.schedule.block_host_observation("unsent");
         state.set_wait("unsent", Some(WaitReason::HostObservationBlocked));
         row
     };
@@ -1723,4 +1722,140 @@ pub(super) async fn native_fixture_with_traffic(
             axum::serve(tcp, app).await.expect("native server");
         }),
     )
+}
+
+#[tokio::test]
+async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (task, _, _) = reservation("bad-scope", Entry::Brief, &service.fixture().start);
+    let mut identity = task.identity().clone();
+    identity.repository = "example/other".into();
+    let task = Task::new(identity, "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .schedule
+            .wake("bad-scope", Instant::now(), Priority::Wake);
+    }
+    assert!(matches!(service.pass().await, Err(ServiceError::Project)));
+    let mut state = service.state.lock().await;
+    let due = state
+        .schedule
+        .due("bad-scope")
+        .expect("failed task has a retry");
+    assert!(due > Instant::now());
+    assert_eq!(
+        state
+            .schedule
+            .take_ready(due, &BTreeSet::new(), None)
+            .unwrap()
+            .id,
+        "bad-scope"
+    );
+    assert_eq!(
+        state.scheduler_error.as_deref(),
+        Some("the task is outside this engine's configured project")
+    );
+    assert!(state.last_pass_calls.is_empty());
+}
+
+#[tokio::test]
+async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (mut task, _, _) = reservation("sent", Entry::Brief, &service.fixture().start);
+    let instance = task.run().unwrap().launch().instance.clone();
+    task.record_send(&instance, now_ms()).unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, "sent").unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_mins(2);
+    for error in [
+        HostError::Unavailable,
+        HostError::Deferred { until: deadline },
+        HostError::RoleReplyPending { until: deadline },
+    ] {
+        service
+            .schedule_result(&row, &Err(ServiceError::Host(error)), Priority::Effect)
+            .await
+            .unwrap();
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due("sent").unwrap();
+        match error {
+            HostError::Unavailable => assert!(due < deadline),
+            _ => assert_eq!(due, deadline),
+        }
+        assert_eq!(
+            state
+                .schedule
+                .take_ready(due, &BTreeSet::new(), None)
+                .unwrap()
+                .id,
+            "sent"
+        );
+    }
+}
+
+#[tokio::test]
+async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (task, _, _) = reservation("archive", Entry::Brief, &service.fixture().start);
+    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
+    let mut snapshot = serde_json::to_value(task).unwrap();
+    snapshot["phase"] = json!("done");
+    let task = serde_json::from_value(snapshot).unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, "archive").unwrap()
+    };
+    let until = Instant::now() + Duration::from_mins(1);
+    service
+        .schedule_result(
+            &row,
+            &Err(ServiceError::Host(HostError::Deferred { until })),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let state = service.state.lock().await;
+    assert_eq!(state.schedule.due("archive"), Some(until));
+    assert!(
+        matches!(state.wait_detail("archive"), Some(WaitDetail::Archive(cause)) if cause.contains("host deferred"))
+    );
+}
+
+#[tokio::test]
+async fn host_backoff_does_not_delay_a_local_task_decision() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let host = service.host.pass(service.storage.scratch().path());
+    assert!(host.profile_catalog().await.is_err());
+    assert!(service.host.request_retry_at().is_some());
+    let (task, _, _) = reservation("local", Entry::Brief, &service.fixture().start);
+    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+    }
+    service
+        .command(
+            "local",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap();
+    let outcomes = tokio::time::timeout(Duration::from_secs(2), service.pass())
+        .await
+        .expect("local work must not wait for T3")
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].task, "local");
+    assert_eq!(outcomes[0].result.as_ref().unwrap(), &Action::Nothing);
+    assert!(service.state.lock().await.last_pass_calls.is_empty());
 }

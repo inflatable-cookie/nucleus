@@ -14,6 +14,7 @@ const SCAN_PAGE: u32 = 32;
 pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
 pub(crate) const LIVE_CHECK: Duration = Duration::from_secs(45);
+pub(crate) const RETRY: Duration = Duration::from_secs(3);
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -72,22 +73,19 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             (T3_RETRY_DELAY, Priority::Decision)
         }
         Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),
-        Some(
-            WaitReason::Capacity
-            | WaitReason::Prerequisite
-            | WaitReason::AssignmentTooLarge
-            | WaitReason::HostObservationBlocked,
-        ) => (Duration::from_mins(1), Priority::Refresh),
+        Some(WaitReason::Capacity | WaitReason::Prerequisite | WaitReason::AssignmentTooLarge) => {
+            (Duration::from_mins(1), Priority::Refresh)
+        }
         Some(WaitReason::ChecksPending | WaitReason::ChecksUnreported) => {
             (Duration::from_secs(15), Priority::Decision)
         }
-        _ => (Duration::from_secs(3), Priority::Decision),
+        _ => (RETRY, Priority::Decision),
     }
 }
 
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
-    recovery: BTreeMap<String, (ObservationKind, Recovery)>,
+    workspace: BTreeMap<String, Recovery>,
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
@@ -99,17 +97,11 @@ enum Recovery {
     Blocked,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ObservationKind {
-    Host,
-    Workspace,
-}
-
 impl Schedule {
     pub(crate) fn new() -> Self {
         Self {
             tasks: BTreeMap::new(),
-            recovery: BTreeMap::new(),
+            workspace: BTreeMap::new(),
             scan_at: Instant::now(),
             cursor: None,
             archive_cursor: None,
@@ -117,7 +109,7 @@ impl Schedule {
     }
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
-        let due = match self.recovery.get(id).map(|(_, recovery)| recovery) {
+        let due = match self.workspace.get(id) {
             Some(Recovery::CheckAt(after)) => due.max(*after),
             Some(Recovery::Blocked) => return,
             None => due,
@@ -126,83 +118,32 @@ impl Schedule {
     }
 
     pub(crate) fn park(&mut self, id: &str) {
-        self.tasks.entry(id.into()).or_default();
+        self.tasks.insert(id.into(), Pending::default());
     }
 
     pub(crate) fn defer_effect(&mut self, id: &str, due: Instant) {
-        self.reset_recovery(id);
+        self.reset_workspace(id);
         let mut pending = Pending::default();
         pending.wake(due, Priority::Effect);
         self.tasks.insert(id.into(), pending);
     }
 
-    pub(crate) fn block_host_observation(&mut self, id: &str) {
-        self.recovery
-            .insert(id.into(), (ObservationKind::Host, Recovery::Blocked));
-        self.tasks.insert(id.into(), Pending::default());
-    }
-
-    pub(crate) fn resume_on_host_evidence(&mut self, id: &str) {
-        if self.recovery.get(id) == Some(&(ObservationKind::Host, Recovery::Blocked)) {
-            self.recovery.remove(id);
-        }
-    }
-
-    pub(crate) fn recover_host_observation(
-        &mut self,
-        id: &str,
-        now: Instant,
-        deferred_until: Option<Instant>,
-    ) -> bool {
-        self.recover_observation(id, ObservationKind::Host, now, deferred_until)
-    }
-
     pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant) -> bool {
-        self.recover_observation(id, ObservationKind::Workspace, now, None)
-    }
-
-    fn recover_observation(
-        &mut self,
-        id: &str,
-        kind: ObservationKind,
-        now: Instant,
-        deferred_until: Option<Instant>,
-    ) -> bool {
-        let prior = self
-            .recovery
-            .get(id)
-            .filter(|(recorded, _)| *recorded == kind);
-        let next = match prior.map(|(_, recovery)| recovery) {
-            Some(Recovery::CheckAt(due)) if *due <= now && deferred_until.is_none() => {
-                Recovery::Blocked
-            }
-            Some(Recovery::CheckAt(due)) => {
-                Recovery::CheckAt((*due).max(deferred_until.unwrap_or(now)))
-            }
-            Some(Recovery::Blocked) => Recovery::Blocked,
-            None => Recovery::CheckAt((now + T3_RETRY_DELAY).max(deferred_until.unwrap_or(now))),
+        let next = match self.workspace.get(id).copied() {
+            Some(Recovery::CheckAt(due)) if due <= now => Recovery::Blocked,
+            Some(prior) => prior,
+            None => Recovery::CheckAt(now + T3_RETRY_DELAY),
         };
-        self.recovery.insert(id.into(), (kind, next));
-        self.tasks.insert(id.into(), Pending::default());
+        self.workspace.insert(id.into(), next);
+        self.park(id);
         if let Recovery::CheckAt(due) = next {
             self.wake(id, due, Priority::Effect);
         }
         next == Recovery::Blocked
     }
 
-    pub(crate) fn reset_recovery(&mut self, id: &str) -> bool {
-        self.recovery.remove(id).is_some()
-    }
-
-    pub(crate) fn host_session_changed(&mut self, now: Instant) {
-        for (id, (kind, retry)) in std::mem::take(&mut self.recovery) {
-            match kind {
-                ObservationKind::Host => self.wake(&id, now, Priority::Effect),
-                ObservationKind::Workspace => {
-                    self.recovery.insert(id, (kind, retry));
-                }
-            }
-        }
+    pub(crate) fn reset_workspace(&mut self, id: &str) {
+        self.workspace.remove(id);
     }
 
     pub(crate) fn seed(
@@ -302,38 +243,6 @@ impl Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unknown_host_gets_one_due_read_then_waits_for_new_authority() {
-        let mut schedule = Schedule::new();
-        let now = Instant::now();
-        let due = now + T3_RETRY_DELAY;
-        assert!(!schedule.recover_host_observation("worker", now, None));
-        schedule.wake("worker", now, Priority::Effect);
-        assert!(schedule.take_ready(now, &BTreeSet::new(), None).is_none());
-        assert_eq!(
-            schedule.take_ready(due, &BTreeSet::new(), None).unwrap().id,
-            "worker"
-        );
-        let deferred = due + T3_RETRY_DELAY;
-        assert!(!schedule.recover_host_observation("worker", due, Some(deferred)));
-        assert_eq!(schedule.due("worker"), Some(deferred));
-        assert!(schedule.recover_host_observation("worker", deferred, None));
-        schedule.wake("worker", deferred, Priority::Effect);
-        assert!(
-            schedule
-                .take_ready(deferred, &BTreeSet::new(), None)
-                .is_none()
-        );
-        schedule.host_session_changed(deferred);
-        assert_eq!(
-            schedule
-                .take_ready(deferred, &BTreeSet::new(), None)
-                .unwrap()
-                .id,
-            "worker"
-        );
-    }
 
     #[test]
     fn earlier_due_tasks_win_over_more_recent_wakes() {

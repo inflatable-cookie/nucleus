@@ -1,0 +1,1 @@
+The scheduler keeps local work moving through T3 outages and shows when it will check a pending delivery again. An earlier parent delivery that cannot be matched to a native command shows how to review recovery.

@@ -282,6 +282,7 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
         }},
         "inbox": api.service.inbox_health(),
         "oldestWaits": oldest,
+        "schedulerError": state.scheduler_error,
     }))
 }
 
