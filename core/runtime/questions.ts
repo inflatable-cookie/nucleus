@@ -250,9 +250,6 @@ export class RuntimeQuestions {
     return view;
   }
 
-  rustInboxDecision(input: Parameters<Decisions["rustInbox"]>[0]) {
-    return this.context.decisions.rustInbox(input);
-  }
 
   backfillDecisions(input: { dryRun?: boolean }) {
     return this.context.decisions.backfillDecisionProjects(
