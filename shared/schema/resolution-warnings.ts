@@ -38,7 +38,7 @@ export const resolutionWarningId = z.enum([
  * accept (Spec 067 authority). A coordinator that names one is refused: a second
  * budget spend, the revision cap and the replacement ceiling (`budget`) are the
  * planner's disposition, as the author-round rule already holds
- * (`assertAuthorRevisionAllowance`). `bin/explicit-outcome.mjs` marks the same IDs.
+ * (`assertAuthorRevisionAllowance`).
  */
 type WarningId = z.infer<typeof resolutionWarningId>;
 export const PLANNER_ONLY_WARNINGS: ReadonlySet<WarningId> = new Set<WarningId>([
