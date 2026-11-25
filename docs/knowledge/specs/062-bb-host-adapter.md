@@ -1888,9 +1888,9 @@ planner's live BB trial after this merges, not part of this PR.
 
 `test/bb-report-relay.test.ts` pins the relay's gate (ticket by run id,
 owner-only file, exact token/task/run, allowed routes only, the service's own
-status and body, no forward on any refusal); `test/callback-client.test.ts`
-pins the generated helper choosing the loopback route for a `bb:` ticket and
-never printing the credential; `test/bb-plugin-backend.test.ts` pins the
+status and body, no forward on any refusal); the retired generated helper's
+tests covered loopback routing for a `bb:` ticket and credential redaction.
+`test/bb-plugin-backend.test.ts` pins the
 registered route and its refusals; `test/bb-run-scratch.test.ts` pins the
 owner-only leaf existing before `run.attach` and a launch refusal when it cannot
 be proved; `test/siblings.test.ts` pins one shared sibling checkout per

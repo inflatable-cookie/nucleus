@@ -109,7 +109,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       "client-neutral",
     ],
     [
-      "core/engine.ts",
+      "core/example.ts",
       "@getpaseo/client",
       "@getpaseo/client",
       "host-sdk-location",
