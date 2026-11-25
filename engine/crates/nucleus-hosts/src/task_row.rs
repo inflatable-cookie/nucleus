@@ -55,16 +55,14 @@ pub fn snooze_deadline(until: u64) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowVisibility {
     pub settled: bool,
-    pub settled_at_ms: Option<u64>,
     pub snoozed_until_ms: Option<u64>,
 }
 
 impl ThreadVisibility {
     pub(crate) fn read(&self) -> Result<RowVisibility, HostError> {
+        let settled_at = self.settled_at.as_deref().map(timestamp_ms).transpose()?;
         Ok(RowVisibility {
-            settled: self.settled_override.as_deref() == Some("settled")
-                || self.settled_at.is_some(),
-            settled_at_ms: self.settled_at.as_deref().map(timestamp_ms).transpose()?,
+            settled: self.settled_override.as_deref() == Some("settled") || settled_at.is_some(),
             snoozed_until_ms: self
                 .snoozed_until
                 .as_deref()
@@ -81,12 +79,11 @@ pub struct RowObservation {
     pub visibility: RowVisibility,
 }
 
-/// Commands supported by native task-row reconciliation and explicit wake.
+/// Commands supported by native task-row reconciliation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowChange {
     SnoozeUntil(u64),
     Unsnooze,
-    Unsettle,
 }
 
 /// What the held shell knows about a task row's role children.
@@ -153,15 +150,13 @@ impl T3 {
         binding: &Binding,
         command: &str,
         change: RowChange,
-        shell: Option<&TitleTarget>,
+        target: &TitleTarget,
         children: (&[&str], u64),
-        parent: Option<(RowObservation, &str)>,
     ) -> Result<SendOutcome, ParentSendError> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let kind = match change {
             RowChange::SnoozeUntil(_) => "thread.snooze",
             RowChange::Unsnooze => "thread.unsnooze",
-            RowChange::Unsettle => "thread.unsettle",
         };
         let mut payload = json!({"type":kind, "commandId":command, "threadId":thread});
         match change {
@@ -173,18 +168,14 @@ impl T3 {
                         .map_err(|_| ParentSendError::NotSent(HostError::Protocol))?;
                 payload["snoozedUntil"] = deadline.into();
             }
-            RowChange::Unsnooze | RowChange::Unsettle => payload["reason"] = "user".into(),
+            RowChange::Unsnooze => payload["reason"] = "user".into(),
         }
         let reply = self
             .rpc
             .write_guarded(
                 "orchestration.dispatchCommand",
                 payload,
-                if shell.is_some() {
-                    crate::rpc::Read::Background
-                } else {
-                    crate::rpc::Read::One
-                },
+                crate::rpc::Read::Background,
                 None,
                 || {
                     self.rpc.with_shell(|view| {
@@ -196,28 +187,12 @@ impl T3 {
                         {
                             return Err(HostError::RowChildBusy);
                         }
-                        if let Some(target) = shell {
-                            let current = view
-                                .and_then(|view| target.row_in(view))
-                                .ok_or(HostError::Binding)?;
-                            if target.thread() != thread
-                                || !std::sync::Arc::ptr_eq(&current, target.marker())
-                            {
-                                return Err(HostError::Binding);
-                            }
-                        } else if let Some(row) = view.and_then(|view| view.marker(&thread)) {
-                            if crate::rpc::closed_row(&row)
-                                || parent.is_none_or(|(expected, provider)| {
-                                    row["projectId"] != binding.project_id
-                                        || row["worktreePath"] != binding.worktree_path
-                                        || row["branch"] != binding.branch
-                                        || row["providerInstanceId"] != provider
-                                        || visibility(&row).ok() != Some(expected.visibility)
-                                })
-                            {
-                                return Err(HostError::Binding);
-                            }
-                        } else if self.rpc.uses_held_shell() {
+                        let current = view
+                            .and_then(|view| target.row_in(view))
+                            .ok_or(HostError::Binding)?;
+                        if target.thread() != thread
+                            || !std::sync::Arc::ptr_eq(&current, target.marker())
+                        {
                             return Err(HostError::Binding);
                         }
                         Ok(())

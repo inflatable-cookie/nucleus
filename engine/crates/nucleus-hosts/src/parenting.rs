@@ -213,12 +213,10 @@ impl ParentWrite {
         self.runtime = runtime;
     }
 
-    /// The row and ACP provider bound to a prepared message.
+    /// The row bound to a prepared message.
     #[must_use]
-    pub fn delivery_row(&self) -> Option<(RowObservation, &str)> {
-        self.delivery
-            .as_ref()
-            .map(|delivery| (delivery.row, self.wire.provider.as_str()))
+    pub fn delivery_row(&self) -> Option<RowObservation> {
+        self.delivery.as_ref().map(|delivery| delivery.row)
     }
 
     #[must_use]
@@ -1107,13 +1105,6 @@ fn verify_delivery_visibility(
     observed: Option<u64>,
     owned: &[u64],
 ) -> Result<(), HostError> {
-    if visibility.settled {
-        return Err(HostError::ParentPreflight {
-            predicate: "parent row is still settled",
-            prepared,
-            observed,
-        });
-    }
     if let Some(until) = visibility.snoozed_until_ms
         && until > clock_ms()?
         && !owned.contains(&until)

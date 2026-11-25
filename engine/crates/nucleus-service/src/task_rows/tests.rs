@@ -17,6 +17,7 @@ use tower::ServiceExt;
 use super::*;
 use crate::attention::TaskAttention;
 use crate::{
+    event,
     schedule::Priority,
     tests::{REPOSITORY, fixture, native_fixture, reservation},
     web::{Controller, router},
@@ -109,12 +110,8 @@ impl Fixture {
                             assert_eq!(payload["reason"], "user");
                             row.until = Value::Null;
                         }
-                        "thread.unsettle" => {
-                            assert_eq!(payload["reason"], "user");
-                            row.settled_at = Value::Null;
-                        }
                         "message.dispatch" => {
-                            assert!(row.settled_at.is_null());
+                            row.settled_at = Value::Null;
                             row.until = Value::Null;
                             row.message_at = json!("2030-01-01T00:00:01Z");
                         }
@@ -1133,13 +1130,6 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     fixture.native.lock().unwrap().until = Value::Null;
     fixture.publish_shell();
     let write = prepare().await.unwrap().unwrap();
-    assert!(matches!(
-        service.wake_parent_delivery(&row, &write).await,
-        Err(ServiceError::ParentNotSent { .. })
-    ));
-    assert_eq!(fixture.commands()[3..], ["thread.unsettle"]);
-    fixture.publish_shell();
-    let write = prepare().await.unwrap().unwrap();
     service.wake_parent_delivery(&row, &write).await.unwrap();
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
@@ -1150,10 +1140,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         .unwrap();
     assert!(!calls.contains_key("orchestration.subscribeThread"));
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
-    assert_eq!(
-        fixture.commands()[3..],
-        ["thread.unsettle", "message.dispatch"]
-    );
+    assert_eq!(fixture.commands()[3..], ["message.dispatch"]);
     drop(fence);
 
     assert_terminal_forgets_snooze(&fixture).await;
@@ -1497,9 +1484,8 @@ async fn a_child_starting_after_planning_prevents_the_parent_snooze() {
         &fixture.binding,
         "late-snooze",
         RowChange::SnoozeUntil(now_ms() + HORIZON_MS),
-        Some(&target),
+        &target,
         (&[], 0),
-        None,
     )))
     .await;
     assert!(matches!(
@@ -1516,7 +1502,6 @@ async fn a_child_starting_after_planning_prevents_the_parent_snooze() {
 fn renewing_uses_a_new_horizon_and_uncertain_or_refused_writes_stay_observation_only() {
     let awake = RowVisibility {
         settled: false,
-        settled_at_ms: None,
         snoozed_until_ms: None,
     };
     let now = 1234;
