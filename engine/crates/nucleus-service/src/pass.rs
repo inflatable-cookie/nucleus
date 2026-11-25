@@ -2195,6 +2195,7 @@ mod tests {
         service.host = host;
         let service = Arc::new(service);
 
+        let pass_started = tokio::time::Instant::now();
         let outcomes = service.pass().await.expect("exact run read");
         assert!(matches!(
             outcomes.as_slice(),
@@ -2204,15 +2205,20 @@ mod tests {
             }]
         ));
         assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
-        let due = service
-            .state
-            .lock()
-            .await
-            .schedule
-            .due("reviewer")
-            .expect("backstop");
-        assert!(due > tokio::time::Instant::now() + Duration::from_secs(40));
-        let watch = prove_running_hint_refresh(&service, &native_reads).await;
+        {
+            let mut state = service.state.lock().await;
+            crate::tests::assert_scheduled_wait(
+                &mut state,
+                "reviewer",
+                WaitReason::Running,
+                pass_started,
+                crate::schedule::LIVE_CHECK,
+            );
+            // The watcher must supply the next decision even if the backstop has elapsed.
+            state.schedule.park("reviewer");
+        }
+        let thread = &task.run().expect("reviewer run").launch().thread;
+        let watch = prove_running_hint_refresh(&service, thread, &native_reads).await;
         let authority = Authority::Operator {
             actor: "fixture".into(),
         };
@@ -2238,16 +2244,28 @@ mod tests {
 
     async fn prove_running_hint_refresh(
         service: &Arc<Service>,
+        thread: &str,
         native_reads: &AtomicUsize,
     ) -> tokio::task::JoinHandle<()> {
         let service_watch = Arc::clone(service);
         let watch = tokio::spawn(async move { service_watch.watch_host().await });
-        tokio::time::timeout(Duration::from_secs(5), service.pass())
-            .await
-            .expect("host event wakes the decision")
-            .expect("event pass");
+        let hint = loop {
+            let changed = service.wake.notified();
+            {
+                let state = service.state.lock().await;
+                if let Some(seen) = state.thread_tasks["reviewer"][thread].seen.as_ref() {
+                    assert!(seen.hint.running());
+                    assert_eq!(state.schedule.due("reviewer"), Some(seen.at));
+                    break seen.hint.clone();
+                }
+            }
+            changed.await;
+        };
+        service.pass().await.expect("event pass");
         let reads = native_reads.load(Ordering::Relaxed);
         assert_eq!(reads, 2);
+        // Replay the same shell fact as fresh evidence after the exact read completes.
+        service.wake_from_host(hint).await;
         service.state.lock().await.schedule.wake(
             "reviewer",
             tokio::time::Instant::now(),

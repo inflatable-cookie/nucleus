@@ -763,7 +763,10 @@ mod tests {
 
     #[tokio::test]
     async fn one_bounded_cwd_followup_drops_an_exited_missing_pid() {
-        let scratch = tempfile::tempdir().expect("scratch");
+        let scratch = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("private scratch");
         let checkout = scratch.path().canonicalize().expect("canonical");
         let exited = u32::try_from(i32::MAX).unwrap();
         assert!(gone(exited), "fixture PID must not exist");

@@ -1053,6 +1053,25 @@ pub(super) async fn native_fixture(
     native_fixture_with_traffic(response, None).await
 }
 
+pub(super) fn assert_scheduled_wait(
+    state: &mut State,
+    task: &str,
+    reason: WaitReason,
+    pass_started: Instant,
+    delay: Duration,
+) -> Instant {
+    let due = state.schedule.due(task).expect("recorded recheck");
+    let wait = &state.waits[task];
+    assert_eq!(wait.reason, Some(reason));
+    assert!((pass_started + delay..=wait.since + delay).contains(&due));
+    assert!(
+        state
+            .take_ready(due - Duration::from_nanos(1), &BTreeSet::new())
+            .is_none()
+    );
+    due
+}
+
 #[tokio::test]
 async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     let (forge, forge_server) = serve_forge(Router::new().route(
@@ -1097,13 +1116,27 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     });
     assert!(task.discard_paused_reservation(&observation));
     assert!(task.dispatch_started());
-    service
-        .state
-        .lock()
-        .await
-        .store
-        .create(&task, &event("fixture"))
-        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        let State {
+            store,
+            schedule,
+            capacity_waiters,
+            ..
+        } = &mut *state;
+        store.create(&task, &event("fixture")).unwrap();
+        let now = Instant::now();
+        schedule
+            .seed(
+                store,
+                now,
+                service.acp_provider().is_some(),
+                capacity_waiters,
+            )
+            .unwrap();
+        assert_eq!(schedule.due("partial"), Some(now));
+    }
+    let pass_started = Instant::now();
     let first = service.pass().await.unwrap();
     assert!(matches!(
         first[0].result,
@@ -1115,23 +1148,16 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(admin.join("index.lock").exists());
     assert!(service.host.host_calls().is_empty());
 
-    let second = tokio::time::timeout(
-        nucleus_hosts::T3_RETRY_DELAY + Duration::from_secs(8),
-        service.pass(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let second = run_workspace_recheck(&service, "partial", pass_started).await;
     assert!(
         matches!(
-            second[0].result,
+            second,
             Ok(Action::Launch {
                 role: nucleus_core::Role::Worker,
                 ..
             })
         ),
-        "{:?}",
-        second[0].result
+        "{second:?}"
     );
     let row = service.task("partial").await.unwrap();
     assert!(row.task.run().is_some());
@@ -1142,6 +1168,34 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(!path.join("partial-file").exists());
     assert!(service.host.host_calls().is_empty());
     forge_server.abort();
+}
+
+async fn run_workspace_recheck(
+    service: &Service,
+    task: &str,
+    pass_started: Instant,
+) -> Result<Action, ServiceError> {
+    let recovery = {
+        let mut state = service.state.lock().await;
+        let due = assert_scheduled_wait(
+            &mut state,
+            task,
+            WaitReason::WorkspaceUnknown,
+            pass_started,
+            nucleus_hosts::T3_RETRY_DELAY,
+        );
+        state
+            .take_ready(due, &BTreeSet::new())
+            .expect("workspace recheck is ready at its deadline")
+    };
+    assert_eq!(recovery.id, task);
+    assert_eq!(recovery.priority, Priority::Effect);
+    let host = service.host.pass(service.storage.scratch().path());
+    service
+        .run_due_task(&recovery.id, recovery.priority, &host)
+        .await
+        .unwrap()
+        .expect("workspace recovery outcome")
 }
 
 #[tokio::test]
