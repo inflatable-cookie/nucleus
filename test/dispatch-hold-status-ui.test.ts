@@ -5,18 +5,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
 import { inboxText, showInView } from "./support/inbox";
-import { Store } from "../core/store/store";
+import { boardDetailReply, boardNext, boardTasks } from "./support/board-tasks";
 import {
-  submissionSchema,
   summarizeTask,
   syncHoldProjection,
-  type Task,
 } from "../shared/contracts";
-import {
-  collectOwnerVerbFacts,
-  ownerTaskNext,
-} from "../core/verbs/owner-verbs";
-import { createTaskDetailCache } from "../core/telemetry/task-detail";
 
 // Queue reliability: the card and detail show the live dispatch hold, not the
 // stale stored reason, and `task.next` names the same fence. Synthetic rows only.
@@ -43,8 +36,7 @@ const dark = {
   statusDanger: "#f85149",
 } as const;
 const c = dark as never;
-const head = "a".repeat(40),
-  at = "2026-10-27T00:00:00.000Z";
+const at = "2026-10-27T00:00:00.000Z";
 const STALE =
   "Chatterbox routing: origin 0b355fd4 was not found in workspace project-c";
 const DISPATCH =
@@ -143,73 +135,48 @@ function mountBoard(
   );
 }
 
-function seed(store: Store, id: string, patch: Partial<Task>) {
-  const inserted = store.insert(
-    submissionSchema.parse({
-      submissionId: id,
-      title: id,
-      repoPath: "/app",
-      planningCommit: head,
-      handoffPath: `${id}.md`,
-      originAgentId: "0b355fd4",
-    }),
-    "host",
-    "handoff",
-    head,
-  );
-  return store.update(inserted.id, {
-    notificationAgentId: "56e9c969",
-    originError: "",
-    originLookupError: "",
-    ...patch,
-  });
-}
-
 test("the card and detail show the live dispatch hold, and next names the same fence", async () => {
   await load();
-  const store = new Store(":memory:");
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     // Queued, dispatch held, stale stored reason and cleared routing errors.
-    const stale = seed(store, "stale-hold", {
+    const stale = makeTask("stale-hold", {
       phase: "queued",
       reason: STALE,
       ...syncHoldProjection({ dispatch: fence(DISPATCH) }),
     });
     // Both fences on a queued task: the dispatch wait, with the merge hold still named.
-    const both = seed(store, "both-holds", {
+    const both = makeTask("both-holds", {
       phase: "queued",
       reason: STALE,
       ...syncHoldProjection({ dispatch: fence(DISPATCH), merge: fence(MERGE) }),
     });
     // Merge-only hold on a reviewing task: its activity stays the state.
-    const review = seed(store, "merge-review", {
+    const review = makeTask("merge-review", {
       phase: "reviewing",
       reason: "Reviewer run is reading the diff",
       ...syncHoldProjection({ merge: fence(MERGE) }),
     });
     // A genuine unresolved routing error, unheld.
-    const routing = seed(store, "real-origin-error", {
+    const routing = makeTask("real-origin-error", {
       phase: "queued",
       reason: "Waiting for dispatch",
       originError: "Origin thread 0b355fd4 not found",
     });
-    const unheld = seed(store, "unheld", {
+    const unheld = makeTask("unheld", {
       phase: "working",
       reason: "Worker is editing",
     });
-    const read = createTaskDetailCache(store);
-    const ids = [stale, both, review, routing, unheld].map((task) => task.id);
-    // One snapshot object, so every refetch returns the same data identity.
-    const snapshot = board(ids.map((id) => summarizeTask(store.task(id))));
+    const rows = [stale, both, review, routing, unheld];
+    const replies = new Map(rows.map((row) => [row.id, boardDetailReply(row)]));
+    const snapshot = board(rows.map((row) => summarizeTask(row)));
     const invoke = async (method: string, input: unknown) => {
       const taskId = (input as { taskId?: string } | undefined)?.taskId ?? "";
       if (method === "queue.ui-snapshot") return snapshot;
       if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return read(taskId);
-      // The Next section reads the registry against the store, so it is what `task.next` reports.
-      if (method === "task.next")
-        return ownerTaskNext(collectOwnerVerbFacts(store, store.task(taskId)));
+      if (method === "queue.detail") return replies.get(taskId);
+      if (method === "task.next") return boardNext(replies.get(taskId)!.task);
       // `host.run.board` is one combined object (runs plus the accounting join), not
       // a run list: an array here fails the method's output schema, so the query
       // errors and retries instead of settling into an empty, well-formed board.
@@ -348,6 +315,5 @@ test("the card and detail show the live dispatch hold, and next names the same f
     assert.equal(tree.query("Merge hold owner and reason"), undefined);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });

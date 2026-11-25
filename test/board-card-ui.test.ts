@@ -1,3 +1,4 @@
+import { boardTasks } from "./support/board-tasks";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boardSource } from "./support/board-source";
@@ -15,7 +16,6 @@ import {
 import {
   LEAD_PREVIEW_MAX,
   projectSchema,
-  taskSchema,
   summarizeTask,
   syncHoldProjection,
   visibleTaskSummaries,
@@ -165,52 +165,6 @@ function mountBoard(
   );
 }
 
-/** Numbered board rows, in admission order within each test. */
-function cardTasks() {
-  let number = 0;
-  return (id: string, patch: Partial<Task>): Task => {
-    const now = new Date().toISOString();
-    return taskSchema.parse({
-      id,
-      submissionId: id,
-      title: id,
-      number: ++number,
-      repoPath: "/app",
-      planningCommit: head,
-      planningBase: head,
-      handoffPath: `${id}.md`,
-      handoffText: "handoff",
-      originAgentId: "0b355fd4",
-      notificationAgentId: "56e9c969",
-      hostId: "host",
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-      phase: "queued",
-      reason: "Waiting for dispatch",
-      held: false,
-      branch: `task-${id}`,
-      workspaceId: null,
-      directory: null,
-      agentId: null,
-      runId: null,
-      profile: null,
-      workspaceIntent: false,
-      agentIntent: false,
-      lastAgentStatus: null,
-      idleSince: null,
-      completion: null,
-      agentActive: null,
-      lastObservedAt: null,
-      prUrl: null,
-      prHead: null,
-      coordinatorGeneration: 1,
-      resolution: { attention: false, mergedCommit: null },
-      ...patch,
-    });
-  };
-}
-
 /** The second project's repository and row, for a queue holding back tasks in two projects. */
 const otherRepo = { origin: "owner/other", path: "/other" };
 const otherProject = {
@@ -222,7 +176,7 @@ const otherProject = {
 
 /** One queued task's stored summary; whether the snapshot ships it or a page returns it is the test's choice. */
 function queuedTask(
-  makeTask: ReturnType<typeof cardTasks>,
+  makeTask: ReturnType<typeof boardTasks>,
   title: string,
   repoPath = "/app",
 ): TaskSummary {
@@ -302,7 +256,7 @@ function listScroll(tree: ReturnType<typeof mountBoard>) {
 }
 
 /** Board fixtures: one card per state the card renders, from checked task data and board summaries. */
-function fixtures(makeTask: ReturnType<typeof cardTasks>) {
+function fixtures(makeTask: ReturnType<typeof boardTasks>) {
   const long = makeTask("long-title", {
     title: LONG_TITLE,
     phase: "working",
@@ -438,7 +392,7 @@ function emptyChipRows(node: HostNode): number {
 
 test("a board card says what is happening and what moves it next; IDs, timestamps and profile stay out", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -548,7 +502,7 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
 
 test("the card lays out the same content at a narrow and a wide board", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -594,7 +548,7 @@ test("the card lays out the same content at a narrow and a wide board", async ()
 
 test("a T3Code task row names the host in its accessible label, not on the row", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   const { queued } = fixtures(makeTask);
   const pendingUi = mount(
     h(queue.TaskCard as never, {
@@ -651,7 +605,7 @@ test("a T3Code task row names the host in its accessible label, not on the row",
 
 test("a queued hold shows its state and keeps the complete reason accessible", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   const { held } = fixtures(makeTask);
   const fullReason =
     "The planner needs to record the source ruling. The task can start after that decision.";
@@ -695,7 +649,7 @@ test("a queued hold shows its state and keeps the complete reason accessible", a
 
 test("a card with nothing to show renders no empty chips row, and its state line stays", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -723,7 +677,7 @@ test("a card with nothing to show renders no empty chips row, and its state line
 
 test("waits, holds and progress stops use operator words in visible and accessible card text", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const dependent = makeTask("dependency", {
@@ -885,7 +839,7 @@ test("waits, holds and progress stops use operator words in visible and accessib
 
 test("every task and decision card keeps stored IDs and hashes out of visible and accessible text", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const uuid = "7a3c4bc4-e0db-48bb-9071-4ae6f3a09222";
@@ -1168,7 +1122,7 @@ test("every task and decision card keeps stored IDs and hashes out of visible an
 
 test("a long shell command card keeps elapsed time accessible and the command private", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const startedAt = new Date(Date.now() - 26 * 60_000).toISOString();
@@ -1204,7 +1158,7 @@ test("a long shell command card keeps elapsed time accessible and the command pr
 // nucleus#1532: the Queue list's own page read shows its loading and failure states in the list.
 test("the Queue list shows its held-back page loading, then a retry row when the read fails", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -1675,7 +1629,7 @@ test("the Leads tag filter narrows the list; papercuts have no filter and the me
 // #1042 review, nucleus#1532: the Leads filter and the Queue's held-back pages persist; triage pages reset.
 test("the Leads tag and the queue's held-back pages survive view changes while triage pages reset", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1752,7 +1706,7 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
 test("held-back queued tasks render as ordinary cards in compact and wide board layouts", async () => {
   await load();
   for (const compact of [true, false]) {
-    const makeTask = cardTasks();
+    const makeTask = boardTasks();
     let mounted: ReturnType<typeof mountBoard> | undefined;
     try {
       const shipped = [queuedTask(makeTask, "Shipped one")];
@@ -1798,7 +1752,7 @@ test("held-back queued tasks render as ordinary cards in compact and wide board 
 // nucleus#1532: a project's held-back tasks follow its shipped queued cards, in queue order.
 test("the Queue appends each project's held-back tasks after its shipped cards, in queue order", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const shipped = [
@@ -1931,7 +1885,7 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
 // nucleus#1532 review finding: a scroll while a page is on its way must not read again.
 test("a multi-page Queue waits while a page is on its way instead of reading it twice", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const queue = Array.from({ length: 30 }, (_, index) =>
@@ -2017,7 +1971,7 @@ test("a multi-page Queue waits while a page is on its way instead of reading it 
 // nucleus#1532 review finding: a failed page keeps the cards read and waits at the retry row.
 test("a failed Queue page keeps the cards already read and stops reads at the retry row", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const queue = Array.from({ length: 30 }, (_, index) =>
@@ -2121,7 +2075,7 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
 // nucleus#1532: a short queue fills a tall pane without a scroll, and a failed page read offers a retry.
 test("a short queue fills a tall pane and a failed page read ends it with a retry row", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const shipped = [queuedTask(makeTask, "Shipped one")];
@@ -2332,7 +2286,7 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
 // Tom, 2026-11-21: the inbox list keeps the coloured T3 project badges on task cards.
 test("a task row in the inbox list shows its T3 project badge from its own host, and a folder without one", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const task = makeTask("badged-task", { phase: "working" });
@@ -2419,7 +2373,7 @@ const nodeHas = (
 
 test("the narrow header keeps the title, and its project selector becomes an icon that keeps the selection", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -2674,7 +2628,7 @@ test("a drained lane asks before it is marked done, and cancel writes nothing", 
 
 test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   let detail: ReturnType<typeof mount> | undefined;
   try {
@@ -2762,7 +2716,7 @@ test("a task row keeps one status line and no host identity, while the detail ke
 
 test("a host-waiting task keeps an owner-facing stop accessible", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const f = fixtures(makeTask);
@@ -2877,7 +2831,7 @@ test("single-kind views drop the kind word from line 1; mixed lists keep it", as
 
 test("a task needing attention on Needs you draws the task tile and its reference in the one list", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const task = makeTask("blocked-task", { phase: "blocked" });
@@ -3062,7 +3016,7 @@ test("a resumed-thread count never adds a header pill", async () => {
 // for exceptions and buttons only where the row is the action.
 test("every card kind draws the three-line row, with flags only for exceptions and actions only on prompts", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const normal = makeTask("plain-working", {
@@ -3245,7 +3199,7 @@ test("every card kind draws the three-line row, with flags only for exceptions a
 // lead's current check, the named project and age on line 1, and full accessible names.
 test("rows keep holds behind another status, a failed recheck, named projects with ages, and full labels", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const uuidTitle = "Rename 7a3c4bc4-e0db-48bb-9071-4ae6f3a09222 everywhere";
@@ -3489,7 +3443,7 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
 // own host outage beside it; the row reads "on the host", so the detail names both.
 test("task detail shows an owner-facing stop and the independent host wait together", async () => {
   await load();
-  const makeTask = cardTasks();
+  const makeTask = boardTasks();
   let detail: ReturnType<typeof mount> | undefined;
   try {
     const { taskDetailView } = await import("../shared/task-view");
