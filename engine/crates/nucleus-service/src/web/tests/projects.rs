@@ -1608,7 +1608,7 @@ async fn report_notice_reverifies_a_persisted_origin_after_reopen_without_a_cli_
 }
 
 #[tokio::test]
-async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() {
+async fn report_notice_waits_for_a_planner_then_dispatches_once() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
     seed_ready_report(&registry.service, "report", false).await;
@@ -1646,37 +1646,6 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
     registry.service.state.lock().await.schedule.park("report");
     registry.enroll("next-planner").await;
     let outcomes = notice_pass(&registry.service, "report").await;
-    assert!(matches!(
-        outcomes[0].result,
-        Ok(Action::Wait(WaitReason::Question))
-    ));
-    assert_eq!(
-        registry
-            .service
-            .task("report")
-            .await
-            .expect("unsettled only"),
-        row
-    );
-    {
-        let fixture = registry.notices.lock().expect("notices");
-        assert_eq!(fixture.controls.len(), 1);
-        assert_eq!(fixture.controls[0]["threadId"], "next-planner");
-        assert!(fixture.sends.is_empty());
-    }
-    {
-        let mut state = registry.service.state.lock().await;
-        assert!(
-            state.schedule.due("report").is_some(),
-            "unsettle schedules a fresh read"
-        );
-        state.schedule.wake(
-            "report",
-            tokio::time::Instant::now(),
-            crate::schedule::Priority::Effect,
-        );
-    }
-    let outcomes = notice_pass(&registry.service, "report").await;
     assert!(matches!(outcomes[0].result, Ok(Action::Nothing)));
     let sent = registry.service.task("report").await.expect("sent report");
     assert!(sent.task.report_task().expect("report").notice_attempted);
@@ -1686,7 +1655,7 @@ async fn report_notice_waits_for_a_planner_then_unsettles_and_dispatches_once() 
         Ok(Action::Nothing)
     ));
     let fixture = registry.notices.lock().expect("notices");
-    assert_eq!(fixture.controls.len(), 1);
+    assert!(fixture.controls.is_empty());
     assert_eq!(fixture.sends.len(), 1);
     assert_eq!(fixture.sends[0]["threadId"], "next-planner");
     assert_eq!(
@@ -1833,17 +1802,14 @@ async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
         "admission is local"
     );
     registry.notices.lock().expect("notices").settled = true;
-    for _ in 0..3 {
+    for _ in 0..2 {
         registry.advance_tell().await.expect("scheduler delivery");
     }
     let staged = json_body(broadcast().await).await;
-    assert_eq!(
-        staged, original,
-        "unsettle and native acceptance still report queued"
-    );
+    assert_eq!(staged, original, "native acceptance still reports queued");
     {
         let fixture = registry.notices.lock().expect("notices");
-        assert_eq!(fixture.controls.len(), 1);
+        assert!(fixture.controls.is_empty());
         assert_eq!(fixture.sends.len(), 2);
         let threads: std::collections::BTreeSet<_> = fixture
             .sends

@@ -289,8 +289,8 @@ Later decisions carry their own attribution.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
     - A native message can wake the exact Nucleus-owned snooze on its destination. T3 clears settlement when it dispatches the message. Child activity drives parent visibility through row reconciliation. Operator snoozes defer delivery. Nucleus never sends a settle command.
     - A retained role can send directly to its own thread. The scheduler uses
-      the exact parent read under the task fence to keep the parent visible
-      at that send. It records Starting with the first role send intent and
+      the exact parent read under the task fence to hold delivery while an
+      operator snooze is in effect. It records Starting with the first role send intent and
       updates the native title through the existing receipt.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
@@ -803,8 +803,9 @@ the existing run, question, hold and exact-head rules still apply.
 Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
 waiting notice, and the next due pass can also retry routing. The scheduler
-unsettles a settled planner and reads it again before recording a concrete send
-intent. An uncertain question or operator-decline send keeps its exact attempt.
+records the concrete send intent after checking the recipient and snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
+A queued notice remains read-only if the planner settles again. An uncertain
+question or operator-decline send keeps its exact attempt.
 For report-ready, prerequisite-release and held parent recovery notices, a
 structured T3 rejection of the exact command reopens the notice once. The fresh
 attempt uses a new command ID, the same notice text and a currently verified planner.
