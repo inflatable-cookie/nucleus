@@ -603,8 +603,8 @@ export function MainSurface({
                   listSurface: narrow && canvas !== section ? "canvas" : "section",
                 }}
                 leads={boardLeads}
-                onCloseLane={(key, project) =>
-                  void act(() => changeLaneStatus({ key, project, status: "done" }))
+                onCloseLane={(key, project, note) =>
+                  void act(() => changeLaneStatus({ key, project, status: "done", note }))
                 }
                 onReopenLane={(key, project) =>
                   void act(() => changeLaneStatus({ key, project, status: "active" }))
