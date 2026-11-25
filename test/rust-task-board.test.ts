@@ -982,7 +982,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       editableCut = { ...editableCut, ...body, version: body.version + 1, updatedAtMs: now };
       return Response.json(editableCut);
     }
-    if (path === "/api/engine/planning/fixture/decisions")
+    if (path === "/api/engine/planning/fixture/decisions" || path === "/api/engine/planning/fixture/decisions?pending=true")
       return Response.json([...(decisionOpen ? [decision()] : []), ...(damagedDecision ? [{ id: "damaged-decision" }] : [])]);
     if (path === "/api/engine/planning/fixture/decisions/fixture-decision/answer") {
       assert.equal(init?.method, "POST");
@@ -1024,7 +1024,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => menuCounts.every((label) => Boolean(selector(label))),
     "planning and decision counts settle before any navigation");
   assert.ok(stream, "the board subscribed to engine changes");
-  const initialPlanningReads = ["decisions", "items", "plan"].map((key) => `/api/engine/planning/fixture/${key}`);
+  const initialPlanningReads = ["decisions?pending=true", "items", "plan"].map((key) => `/api/engine/planning/fixture/${key}`);
   assert.deepEqual(planningReads().sort(), initialPlanningReads, "one store read per collection in scope");
   const notices = () => [...dom.window.document.querySelectorAll('[role="alert"]')].map(alert => alert.textContent ?? "");
   assert.ok(notices().some(message => message.includes("Project damaged") && message.includes("fixture decision damaged-decision")));
@@ -1554,7 +1554,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     await eventually(() => selector(detail)?.textContent?.includes(current) === true, detail + " initial read");
     assert.equal(count(route) - beforeOpen, 1, detail + " reads once on opening");
 
+    const collectionRoute = event === "decisions" ? route + "?pending=true" : route;
     const beforeIdle = count(route);
+    const beforeList = count(collectionRoute);
     await advanceRecordClock();
     assert.equal(count(route) - beforeIdle, 0, detail + " has no interval reads on a healthy stream");
 
@@ -1563,7 +1565,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     else decisionQuestion = changed;
     emit(event);
     await eventually(() => selector(detail)?.textContent?.includes(changed) === true, detail + " refreshes on its event");
-    assert.equal(count(route) - beforeIdle, 2, detail + " and its collection each refresh once");
+    assert.equal(count(route) - beforeIdle, route === collectionRoute ? 2 : 1, detail + " refreshes on the event");
+    if (route !== collectionRoute) assert.equal(count(collectionRoute) - beforeList, 1);
   }
 
   let resumeEvents!: () => void;
@@ -1581,13 +1584,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(count(decisionRoute) - beforeFallback, 1);
 
   const beforeRecovery = count(decisionRoute);
+  const beforeListRecovery = count(decisionRoute + "?pending=true");
   decisionQuestion = "Decision detail after reconnect";
   resumeEvents();
   reconnectGate = undefined;
   await eventually(() => Boolean(channel("connected")) && recordTimers.size === 0 &&
     selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
     "stream reconnection refreshes the open decision and stops its fallback timer");
-  assert.equal(count(decisionRoute) - beforeRecovery, 2);
+  assert.equal(count(decisionRoute) - beforeRecovery, 1);
+  assert.equal(count(decisionRoute + "?pending=true") - beforeListRecovery, 1);
 
   const afterRecovery = count(decisionRoute);
   await advanceRecordClock();
