@@ -100,7 +100,9 @@ enabled and no explicit override is set. The builds root must already exist.
 The selector creates its `releases` child if needed. It builds `nucleus` with
 `oxide build --profile release` and publishes the executable, `board-assets/`
 and `skills/nucleus/SKILL.md` together under `<builds-root>/releases/<git-sha>/`.
-It refuses an existing release or a destination that changes during staging.
+Staging requires Git to see all tracked inputs. Index entries marked
+assume-unchanged or skip-worktree prevent publication. It also refuses an
+existing release or a destination that changes during staging.
 
 On macOS, staging uses the installed `Nucleus Local Signing` identity by default.
 Set `NUCLEUS_CODESIGN_IDENTITY` to use another installed identity by name.

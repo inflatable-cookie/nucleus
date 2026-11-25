@@ -10,8 +10,11 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 function cleanRevision() {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   const revision = git('rev-parse', 'HEAD');
-  if (git('status', '--porcelain')) {
+  if (git('status', '--porcelain', '--untracked-files=all')) {
     throw Error('Stage the engine from a clean checkout of the intended release revision.');
+  }
+  if (git('ls-files', '-v', '-z').split('\0').some(entry => entry && !entry.startsWith('H '))) {
+    throw Error('Stage the engine from a checkout with all tracked inputs visible to Git.');
   }
   return revision;
 }
