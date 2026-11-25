@@ -282,7 +282,7 @@ function boardPapercut(item: RustItem, row: ProjectRow) {
           : ("open" as const),
     version: item.version ?? 1,
     taskId: item.state === "promoted" ? (item.taskId ?? null) : null,
-    closedReason: item.state === "dropped" ? ("deprecated" as const) : null,
+    closedReason: item.state === "dropped" ? (item.disposition ?? "deprecated" as const) : null,
     draftId: null,
     note: item.state === "dropped" ? (item.reason ?? null) : null,
     closedAt: null,
@@ -666,9 +666,9 @@ export function createRustPlanning(
       const saved = await rust.dropItem(row.id, input.id, input.reason);
       return boardLeadRecord(saved, row.project);
     },
-    "papercut.close": async (input: { project?: string; id: string; note?: string }) => {
+    "papercut.close": async (input: { project?: string; id: string; reason: "completed" | "deprecated"; note?: string }) => {
       const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.dropItem(row.id, input.id, input.note || null);
+      const saved = await rust.dropItem(row.id, input.id, input.note || null, input.reason);
       return boardPapercut(saved, row);
     },
   };

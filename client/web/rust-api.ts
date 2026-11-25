@@ -227,6 +227,7 @@ export const item = z.object({
   repositories: z.array(z.string()).optional(),
   state: z.enum(["open", "parked", "promoted", "dropped"]),
   reason: z.string().nullable().optional(),
+  disposition: z.enum(["completed", "deprecated"]).optional(),
   revisitAt: z.string().nullable().optional(),
   taskId: z.string().optional(),
 });
@@ -373,11 +374,11 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/park`),
         json("POST", value),
       ),
-    dropItem: (project: string, id: string, reason: string | null) =>
+    dropItem: (project: string, id: string, reason: string | null, disposition?: RustItem["disposition"]) =>
       board.read(
         item,
         planning(project, `/items/${encodeURIComponent(id)}/drop`),
-        json("POST", { reason }),
+        json("POST", { reason, disposition }),
       ),
     promoteItem: (project: string, id: string, value: { repository?: string; complexity?: CapabilityLevel }) =>
       board.read(
