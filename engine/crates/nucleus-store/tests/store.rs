@@ -1496,3 +1496,77 @@ fn retention_partial_batches_survive_restart_and_finish_inside_the_interval() {
             .unwrap()
     );
 }
+
+#[test]
+fn scheduled_backup_restores_the_live_rows_and_rotates_verified_utc_tiers() {
+    use flate2::read::MultiGzDecoder;
+    use std::{fs, io, os::unix::fs::MetadataExt};
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    store
+        .create(&task("kept", "project#1"), &event("created"))
+        .unwrap();
+    let archives = EngineStorage::scheduled_directory(home.path(), storage.backup()).unwrap();
+    archives.ensure().unwrap();
+    let root = archives.path();
+    let list = || {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect::<Vec<_>>()
+    };
+    // Existing TS recovery points participate only in their exact owned filename tiers.
+    for n in 1..=28 {
+        for tier in ["hourly", "daily", "weekly"] {
+            fs::write(root.join(format!("2026-09-{n:02}T00-00-00-000Z-00000000-0000-4000-8000-000000000000.{tier}.sqlite.gz")),b"legacy fixture").unwrap();
+        }
+    }
+    let foreign = root.join("operator.hourly.sqlite.gz");
+    fs::write(&foreign, b"keep").unwrap();
+    let at = 1_795_612_000_000;
+    let capture = |ms| Store::scheduled_backup(storage.database(), &archives, ms).unwrap();
+    capture(at);
+    let files = list();
+    for (tier, keep) in [("hourly", 24), ("daily", 14), ("weekly", 8)] {
+        assert_eq!(
+            files
+                .iter()
+                .filter(|p| p != &&foreign
+                    && p.to_string_lossy().ends_with(&format!(".{tier}.sqlite.gz")))
+                .count(),
+            keep
+        );
+    }
+    let recent: Vec<_> = files
+        .iter()
+        .filter(|p| p.file_name().unwrap().to_string_lossy().contains("-rust-"))
+        .collect();
+    assert_eq!(recent.len(), 3);
+    assert!(
+        recent
+            .iter()
+            .all(|p| p.metadata().unwrap().ino() == recent[0].metadata().unwrap().ino())
+    );
+    let restored = tempfile::NamedTempFile::new_in(home.path()).unwrap();
+    let mut decoder = MultiGzDecoder::new(fs::File::open(recent[0]).unwrap());
+    io::copy(&mut decoder, &mut restored.reopen().unwrap()).unwrap();
+    let copy =
+        Connection::open_with_flags(restored.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    assert_eq!(
+        copy.query_row("select id from tasks", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "kept"
+    );
+    assert_eq!(
+        copy.pragma_query_value(None, "integrity_check", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    capture(at + 6 * 3_600_000 - 1);
+    assert_eq!(list().len(), files.len());
+    capture(at + 6 * 3_600_000);
+    assert_eq!(storage.scheduled_list().unwrap().verified.len(), 2);
+    assert_eq!(fs::read(foreign).unwrap(), b"keep");
+}
