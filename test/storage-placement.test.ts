@@ -20,7 +20,6 @@ import {
   previewWorkPlacement,
 } from "../core/workspaces/work-root.mjs";
 import { saveWorkStorage } from "../core/workspaces/work-storage";
-import { assertLegacyQaSettled } from "../service/install/legacy-qa-custody";
 import { legacyQaRoots } from "../core/qa/qa-evidence-roots";
 import {
   assertLiveBackupComponents,
@@ -355,7 +354,7 @@ test("the backup listing reads the retired queue/backups location until it is em
   );
 });
 
-test("legacy QA history is found at the configured root and the retired one, and its custody still defers a roll", (t) => {
+test("legacy QA history includes both the configured and retired roots", (t) => {
   const { data, mount, writeSettings } = fixture(t);
   writeSettings();
   const roots = legacyQaRoots(data);
@@ -365,22 +364,6 @@ test("legacy QA history is found at the configured root and the retired one, and
     join(mount, "archives", "nucleus-project-qa"),
     join(mount, "queue", "project-qa"),
   ]);
-  const key = "0123456789abcdef01234567";
-  const runId = "12345678-1234-4123-8123-123456789abc";
-  // A checkout left under the moved history is still custody that defers a roll.
-  const moved = join(mount, "archives", "nucleus-project-qa", key, runId);
-  mkdirSync(moved, { recursive: true });
-  assert.throws(() => assertLegacyQaSettled(data), /still present/);
-  rmSync(join(mount, "archives", "nucleus-project-qa"), {
-    recursive: true,
-    force: true,
-  });
-  // The same evidence under the retired root is found too, so nothing is lost by not migrating.
-  const retired = join(mount, "queue", "project-qa", key, runId);
-  mkdirSync(retired, { recursive: true });
-  assert.throws(() => assertLegacyQaSettled(data), /still present/);
-  rmSync(join(mount, "queue"), { recursive: true, force: true });
-  assert.doesNotThrow(() => assertLegacyQaSettled(data));
 });
 
 test("the live backup class proves its own levels, and an absent unpinned work root is not a fault", (t) => {

@@ -14,7 +14,7 @@ export function area(path) {
   if (['bin/host-run-private-server.mjs', 'bin/queue-host-run-supervisor.mjs', 'bin/queue-validation-supervisor.mjs'].includes(path)) return 'service';
   const host = path.match(/^hosts?\/([^/]+)\/(.*)$/);
   if (host) return `${host[2].startsWith('plugin/') ? 'plugin' : host[2].startsWith('client/') ? 'host-client' : 'host'}:${host[1]}`;
-  if (path.startsWith('server/service/') || path.startsWith('service/') || path === 'service/runtime-owner.ts') return 'service';
+  if (path.startsWith('server/service/') || path.startsWith('service/')) return 'service';
   if (path.startsWith('server/') || path.startsWith('core/')) return 'core';
   return path.split('/')[0];
 }
