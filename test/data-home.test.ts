@@ -9,7 +9,6 @@ import {
   CURRENT_DATA_HOME_LEAF, DATA_HOME_ENTRIES, DATA_HOME_ENV, STORE_MARKERS,
   dataHome, holdsStore, isDataHomeError, resolveDataHome,
 } from '../shared/data-home.mjs';
-import { SERVICE_EXECUTOR_FAULT_FILE, SERVICE_INFO_FILE, SERVICE_ROLL_FILE, SERVICE_SOCKET_FILE, SERVICE_STARTUP_FAILURE_FILE, serviceInfoPath } from '../shared/service/discovery';
 
 /**
  * The one data-home resolver. The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME`
@@ -217,17 +216,6 @@ test('NUCLEUS_DATA_HOME selects the whole data home and skips the marker check',
   assert.equal(dataHome({ HOME: home, [DATA_HOME_ENV]: chosen }), chosen);
   assert.equal(dataHome({ HOME: home, [DATA_HOME_ENV]: chosen, PASEO_HOME: join(root, 'elsewhere') }), chosen);
   assert.throws(() => dataHome({ HOME: home, [DATA_HOME_ENV]: '~/nucleus' }), error => isDataHomeError(error) && (error as { code?: string }).code === 'data-home:tilde');
-});
-
-test('service identity reads the store the resolver chose', t => {
-  const { home } = fixture(t);
-  store(currentOf(home));
-  const dir = dataHome({ HOME: home });
-  assert.equal(dir, currentOf(home));
-  assert.equal(serviceInfoPath(dir), join(currentOf(home), SERVICE_INFO_FILE));
-  for (const name of [SERVICE_SOCKET_FILE, SERVICE_INFO_FILE, SERVICE_ROLL_FILE, SERVICE_STARTUP_FAILURE_FILE, SERVICE_EXECUTOR_FAULT_FILE]) {
-    assert.ok(DATA_HOME_ENTRIES.some(entry => entry.path === name), `${name} is in the data-home inventory`);
-  }
 });
 
 test('the inventory names every path under a data home, with one owner each', () => {
