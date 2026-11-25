@@ -231,6 +231,41 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
 });
 
+test("the board identifies malformed projects and profiles without losing healthy siblings", async () => {
+  const fake = engine();
+  let corrupt = true;
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    const path = String(url);
+    if (!corrupt || !path.endsWith("/settings") && !path.endsWith("/settings/projects")) return response;
+    const wire = await response.json();
+    const domain = path.endsWith("/projects") ? wire : wire.projects;
+    domain.settings.value.projects.broken = { name: "Broken", repositories: false, archived: false };
+    domain.settings.value.projects.renamed = { ...domain.settings.value.projects.lantern, name: "" };
+    if (wire.profiles) wire.profiles.value.profiles.push({ name: "Damaged", selection: null });
+    return Response.json(wire);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const read = async () => {
+    const board = await adapter.rpc(api.uiSnapshot, {});
+    assert.ok(!("unchanged" in board));
+    return board;
+  };
+  const board = await read();
+  assert.deepEqual(board.projects.map(row => row.name), ["Orbit", "Lantern"]);
+  assert.deepEqual(board.profiles.map(row => row.name), ["Worker"]);
+  assert.match(board.error, /Project broken: repositories/);
+  assert.match(board.error, /Project renamed: name/);
+  assert.match(board.error, /Profile Damaged: selection/);
+  await assert.rejects(adapter.rpc(rustProjectArchive, { project: "lantern", archived: true }));
+  assert.equal(fake.writes.length, 0);
+  fake.setSession({ id: "restricted", canEditSettings: false, planningProjects: ["lantern"] });
+  await adapter.refreshSession();
+  assert.doesNotMatch((await read()).error, /broken|renamed/);
+  corrupt = false;
+  assert.equal((await read()).error, "");
+});
+
 test("pause, dispatch hold and stop write the Dispatch mode the scheduler reads", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));

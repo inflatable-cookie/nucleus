@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import * as api from "../../shared/contracts";
 import { DEFAULT_HOST_KIND } from "../../shared/host-kind";
 import type { RpcContract } from "../../shared/rpc";
@@ -7,6 +7,8 @@ import {
   createRustApi,
   dispatchSnapshot,
   hostsView,
+  namedProfile,
+  project as rustProject,
   projectsView,
   storageView,
   type RustAllSettings,
@@ -25,6 +27,7 @@ import {
   createRustProfiles,
 } from "./rust-profiles";
 import { createRustPlanning } from "./rust-planning";
+import { errorText } from "../error-text";
 import { generatedProjectBadge } from "../../shared/t3/project-badge";
 
 /**
@@ -192,14 +195,46 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   }
   const profilesAdapter = createRustProfiles(rust);
 
-  let settingsRead: Promise<RustAllSettings> | undefined;
+  async function readSettings() {
+    const all = await rust.settings();
+    const registry = all.projects.settings;
+    keys = projectKeys(Object.keys(registry.value.projects));
+    const projectIssues = new Map<string, string>();
+    const projects = Object.fromEntries(Object.entries(registry.value.projects).flatMap(([id, raw]) => {
+      try {
+        const project = rustProject.parse(raw);
+        const board = boardProject(keys.key(id), project);
+        if (board) api.projectSchema.parse(board);
+        return [[id, project] as const];
+      } catch (error) {
+        projectIssues.set(id, `Project ${id}: ${errorText(error)}`);
+        return [];
+      }
+    }));
+    const profileIssues: string[] = [];
+    const profiles = all.profiles.value.profiles.flatMap((raw, index) => {
+      try {
+        const profile = namedProfile.parse(raw);
+        const { view, pool } = boardProfile(profile, all.profiles.effectiveGroups);
+        api.profileSchema.parse(view);
+        api.poolSchema.parse(pool);
+        return [profile];
+      } catch (error) {
+        const label = z.object({ name: z.string().min(1) }).safeParse(raw).data?.name;
+        profileIssues.push(`Profile ${label ?? `#${index + 1}`}: ${errorText(error)}`);
+        return [];
+      }
+    });
+    return {
+      ...all, projectIssues, profileIssues,
+      projects: { ...all.projects, settings: { ...registry, value: { ...registry.value, projects } } },
+      profiles: { ...all.profiles, value: { ...all.profiles.value, profiles } },
+    };
+  }
+
+  let settingsRead: ReturnType<typeof readSettings> | undefined;
   function settings() {
-    settingsRead ??= rust.settings()
-      .then((all) => {
-        keys = projectKeys(Object.keys(all.projects.settings.value.projects));
-        return all;
-      })
-      .finally(() => { settingsRead = undefined; });
+    settingsRead ??= readSettings().finally(() => { settingsRead = undefined; });
     return settingsRead;
   }
 
@@ -255,7 +290,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       ...modeFlags(dispatch.mode),
       drained: false,
       boundRuns: [],
-      error: "",
+      error: [
+        ...all.profileIssues,
+        ...Array.from(all.projectIssues).flatMap(([id, issue]) =>
+          caller.planningProjects === null || caller.planningProjects.includes(id) ? [issue] : []),
+      ].join("\n"),
       quiet: false,
       activeWorkers: 0,
       unsettled: 0,

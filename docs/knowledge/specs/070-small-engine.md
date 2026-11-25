@@ -967,7 +967,7 @@ needs no planning reads. Lane edits from the board and from an authenticated
 report worker both signal a planning change. Decision changes refresh Needs you
 independently of task activity. The paired board refreshes task cards on
 list-visible changes, and an open task also refreshes on changes to its detail.
-Profiles reads usage on entry and when recorded assignments or timed pauses change. Settings reads
+Profiles reads usage on entry and when recorded assignments or timed pauses change. The snapshot identifies malformed project or profile records and keeps their healthy siblings visible. Project diagnostics follow the paired scope. Settings reads
 backup health with storage, and the board derives project activity from the task
 list it already displays. Reconnects resync active views. Ages and running
 durations advance locally. Screens leave out
