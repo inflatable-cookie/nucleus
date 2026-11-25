@@ -597,6 +597,24 @@ Later decisions carry their own attribution.
     - Task workers and reviewers still reach their task's dispatching planner.
       Replies use the message's reply route (ruling 40).
 
+42. **Completion notices are opt-in.** Tom, 2026-11-25: "Do we have completion
+    notices in rust nucleus? I don't see any planners being notified when a task
+    is completed.. they were opt-in in TS version, can be here too, just want to
+    make sure agents know how to use them". This ports the TypeScript
+    `queue.notifyOriginOnCloseout` field.
+    - A brief sets `queue.notifyOriginOnCloseout: true` at admission or amend.
+      When the task reaches Done or Cancelled, Nucleus sends one notice to the
+      planner thread that dispatched it. The notice reads "#N title is done",
+      followed by the merged PR when there is one, or "#N title was cancelled".
+    - If the dispatching thread is archived or gone, the notice goes to the
+      project's claimed planner, or by fallback to its most recently active
+      planner (ruling 41). The notice is never dropped.
+    - It uses the existing planner-notice delivery: one notice per task, an
+      exact T3 rejection gets one fresh attempt, and uncertain delivery is not
+      resent. It carries a reply route (ruling 40).
+    - The skill shows the field in its admission example. Without the field,
+      nothing is sent.
+
 ## The model
 
 ### Stored state per task
