@@ -42,7 +42,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       "plugin-forwarder",
     ],
     [
-      "bin/host-run-private-server.mjs",
+      "bin/queue-validation-supervisor.mjs",
       "core/store/store.ts",
       "../core/store/store.ts",
       null,
