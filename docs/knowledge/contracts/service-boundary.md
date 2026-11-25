@@ -23,6 +23,8 @@ for making its service and Paseo request rate bounded.
 
 ## Runtime module map
 
+The paths and contexts below describe the retired TypeScript runtime.
+
 `service/runtime-owner.ts` owns construction, startup, bootstrap, drain, health and
 presence. Its extracted methods remain one-line delegates for dispatch and callers.
 `core/runtime/board.ts` owns snapshots, board counters, task pages, detail,
