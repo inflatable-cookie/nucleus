@@ -581,8 +581,7 @@ owner to the rules it enforces.
   only when their host matches the selected host, and otherwise refused. The
   façade provides the typed delegates for origin, observation, timeline, stop,
   archive, usage, messaging and native questions. `shared/profiles.ts` owns
-  Nucleus's own profile records and their per-host availability, and
-  `core/planning/profile-import.ts` makes the one-time copy of a host's profile list
+  TypeScript profile records and their per-host availability
   ([Spec 052](specs/052-usage-level.md)).
 - `hosts/paseo/adapter/host-workspaces.ts` is the Paseo host's workspace calls behind the
   `Host` contract: the complete native inventory, the project lookup, the native

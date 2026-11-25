@@ -1349,7 +1349,7 @@ request identities and stored committed-handoff rows are not rewritten.
   (`shared/profile-vocabulary.ts`, task 1158). `profile.list`, `profile.create`,
   `profile.update`, `profile.remove`, `profile.vocabulary`,
   `profile.compatibility` and `host.catalog` are the surface
-  (`shared/profiles.ts`, `shared/host.ts`, `core/planning/profile-import.ts`). Each host
+  (`shared/profiles.ts`, `shared/host.ts`). Each host
   reports its own catalog in its own spelling, and its adapter owns one
   translation table from the canonical vocabulary (`hosts/<host>/vocabulary.ts`);
   nothing is mapped per profile. Each host's routing snapshot carries the values
