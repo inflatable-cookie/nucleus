@@ -195,11 +195,6 @@ impl ControlDispatch {
     pub const fn binding(&self) -> &Binding {
         &self.binding
     }
-
-    #[must_use]
-    pub fn command_id(&self) -> Option<&str> {
-        self.payload["commandId"].as_str()
-    }
 }
 
 /// A single exact send, scoped to the run and timestamp that authorized it.
@@ -211,7 +206,6 @@ pub struct ReplayAuthorization {
     prior_send: Option<u64>,
     revoked: bool,
     archived: bool,
-    wake: Option<ControlDispatch>,
     parent_row: Option<RowObservation>,
     queued_continuation: bool,
 }
@@ -261,12 +255,6 @@ impl ReplayAuthorization {
             .filter(|_| self.queued_continuation)
     }
 
-    /// Get the explicit wake for continuations using the visibility fence.
-    #[must_use]
-    pub fn unsettle(&self) -> Option<ControlDispatch> {
-        self.wake.clone()
-    }
-
     /// Apply the marker to the exact task used to prepare the authorization.
     /// Persist the resulting task before using the authorization on the wire.
     ///
@@ -275,7 +263,6 @@ impl ReplayAuthorization {
     pub fn record(self, task: &mut nucleus_core::Task) -> Result<RunDispatch, HostError> {
         let run = task.run().ok_or(HostError::Binding)?;
         if self.archived
-            || self.wake.is_some()
             || run.launch().instance != self.instance
             || run.launch().input != self.input
             || run.revoked() != self.revoked
@@ -1096,37 +1083,21 @@ impl TaskHost for T3Pass<'_> {
         {
             return Err(HostError::WorkspaceBusy);
         }
-        let wake = if !worker
+        if !worker
             && continuation
             && let Some(projection) = &thread
             && let Some(observed) = projection.row_observation()?
+            && let Some(until) = observed.visibility.snoozed_until_ms
+            && until > clock_ms()?
         {
-            let now = clock_ms()?;
-            let visibility = observed.visibility;
-            if visibility.snoozed_until_ms.is_some_and(|until| until > now) {
-                // Only the task parent has a snooze we could own.
-                return Err(HostError::Uncertain);
-            }
-            visibility.settled.then(|| {
-                let occurrence = visibility.settled_at_ms.unwrap_or_default();
-                ControlDispatch {
-                    binding: wire.binding.clone(),
-                    payload: json!({
-                        "type":"thread.unsettle", "commandId":format!("{}-unsettle-{occurrence}", run.launch().instance),
-                        "threadId":run.launch().thread, "reason":"user",
-                    }),
-                }
-            })
-        } else {
-            None
-        };
+            return Err(HostError::Uncertain);
+        }
         Ok(ReplayAuthorization {
             instance: run.launch().instance.clone(),
             thread: run.launch().thread.clone(),
             input: run.launch().input.clone(),
             archived: continuation && thread.is_some_and(|thread| thread.archived()),
             wire,
-            wake,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
             parent_row,

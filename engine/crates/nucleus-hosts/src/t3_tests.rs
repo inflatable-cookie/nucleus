@@ -2045,11 +2045,7 @@ fn retained_reviewer(binding: Binding) -> (Task, Observation, String) {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "assert the full unarchive, operator snooze and continuation sequence"
-)]
-async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() {
+async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, mut observation, previous) = retained_reviewer(binding.clone());
@@ -2076,8 +2072,6 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
         (command, Response::Success),
         (probe, Response::Snapshot(operator_snoozed)),
         (probe, Response::Snapshot(settled)),
-        (command, Response::Success),
-        (probe, Response::Snapshot(restored.clone())),
         (command, Response::Success),
     ])
     .await;
@@ -2135,19 +2129,13 @@ async fn next_review_resumes_the_same_thread_after_archival_and_explicit_wake() 
         .authorize_send(task.run().expect("run"))
         .await
         .expect("settled child");
-    let wake = permit.unsettle().expect("explicit wake");
-    assert!(matches!(permit.record(&mut task), Err(HostError::Binding)));
-    pass.write_control(wake).await.expect("unsettled");
-    assert_eq!(
-        send(&pass, &mut task).await.expect("send continuation"),
-        SendOutcome::Sent
-    );
+    let dispatch = permit
+        .record(&mut task)
+        .expect("record settled continuation");
+    assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
     let sent = server.await.expect("scripted host");
     let unarchive: Value = serde_json::from_str(sent[0].payload.get()).expect("unarchive payload");
-    let wake: Value = serde_json::from_str(sent[3].payload.get()).expect("unsettle payload");
-    let message: Value = serde_json::from_str(sent[5].payload.get()).expect("continuation payload");
-    assert_eq!(wake["type"], "thread.unsettle");
-    assert_eq!(wake["reason"], "user");
+    let message: Value = serde_json::from_str(sent[3].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
