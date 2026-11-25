@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ControllerScope, Service, ServiceError, State, event, pass::DispatchTarget};
+use crate::{ControllerScope, Service, ServiceError, State, pass::DispatchTarget};
 use nucleus_core::{
     Authority, Phase, RunState, WaitReason,
     acp::{Binding, InboxBinding, session_id},
@@ -47,15 +47,21 @@ pub(super) fn run_hold_deadline(row: &TaskRow) -> Option<u64> {
 }
 
 pub(super) fn parent_due(record: &ParentDelivery) -> Result<(), ServiceError> {
-    let remaining = record.due_ms.saturating_sub(ms(crate::now_ms()));
-    if record.result == ParentResult::Pending && remaining > 0 {
-        let until = tokio::time::Instant::now()
-            + std::time::Duration::from_millis(remaining.unsigned_abs());
-        return Err(ServiceError::ParentDeliveryUnknown(HostError::Deferred {
-            until,
-        }));
+    if record.result == ParentResult::Pending && record.due_ms > ms(crate::now_ms()) {
+        return Err(parent_delivery_retry(HostError::Uncertain, record.due_ms));
     }
     Ok(())
+}
+
+fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
+    let remaining = due_ms.saturating_sub(ms(crate::now_ms())).max(0);
+    let until =
+        tokio::time::Instant::now() + std::time::Duration::from_millis(remaining.unsigned_abs());
+    let until = match source {
+        HostError::Deferred { until: deferred } => until.max(deferred),
+        _ => until,
+    };
+    ServiceError::ParentDeliveryUnknown { source, until }
 }
 
 pub(super) fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
@@ -234,6 +240,11 @@ impl Service {
         binding: &nucleus_hosts::Binding,
         records: &[ParentDelivery],
     ) -> Result<(), ServiceError> {
+        // A frozen send's deadline paces replay. Capacity release can still
+        // trigger its first receipt read on a replacement runtime.
+        for record in records.iter().filter(|record| record.wire.is_none()) {
+            parent_due(record)?;
+        }
         let before = self.host.verified_runtime_identity();
         let mut accepted = Vec::new();
         if let Some(provider) = self.acp_provider() {
@@ -253,20 +264,37 @@ impl Service {
                 .map(|record| record.command.clone())
                 .collect();
             if !commands.is_empty() {
-                match self
-                    .host
-                    .parent_delivery_receipts(binding, provider, commands)
-                    .await
-                {
-                    Ok(found)
-                        if before.is_some() && self.host.verified_runtime_identity() == before =>
-                    {
+                let receipts = if before.is_some() {
+                    self.host
+                        .parent_delivery_receipts(binding, provider, commands)
+                        .await
+                } else {
+                    Err(HostError::Unavailable)
+                };
+                let unavailable = match receipts {
+                    Ok(found) if self.host.verified_runtime_identity() == before => {
                         accepted = found;
+                        None
                     }
+                    Ok(_) | Err(HostError::Binding | HostError::ParentReceiptInconclusive) => None,
                     Err(error @ HostError::Deferred { .. }) => {
-                        return Err(ServiceError::Host(error));
+                        return Err(parent_delivery_retry(error, 0));
                     }
-                    _ => {}
+                    Err(error) => Some(error),
+                };
+                if let Some(error) = unavailable {
+                    let state = self.state.lock().await;
+                    let due = retry_ms();
+                    for record in records {
+                        state.store.finish_parent_delivery(
+                            &row.task.identity().id,
+                            row.version,
+                            record,
+                            ParentResult::Pending,
+                            due,
+                        )?;
+                    }
+                    return Err(parent_delivery_retry(error, due));
                 }
             }
         }
@@ -289,27 +317,6 @@ impl Service {
             return Err(ServiceError::ParentDeliveryHeld);
         }
         Ok(())
-    }
-
-    pub(super) async fn record_native_turn(
-        &self,
-        row: &TaskRow,
-        kind: &str,
-        session: &str,
-        command: &str,
-    ) -> Result<bool, ServiceError> {
-        let mut intent = event(kind);
-        intent.detail = serde_json::json!({
-            "command":command, "version":row.version, "session":session,
-        })
-        .to_string();
-        let id = &row.task.identity().id;
-        let mut state = self.state.lock().await;
-        let recorded = state.store.claim_task_effect(id, &intent, false)?.is_some();
-        if recorded {
-            self.publish(id, row.version);
-        }
-        Ok(recorded)
     }
 
     pub(super) async fn deliver_parent(
@@ -361,6 +368,7 @@ impl Service {
             None
         };
         let result = self.host.write_parent(write).await;
+        let retry = retry_ms();
         if let Some((record, replay)) = &attempt {
             let (outcome, due) = match &result {
                 Ok(()) => (ParentResult::Accepted, 0),
@@ -369,7 +377,7 @@ impl Service {
                     (ParentResult::Pending, 0)
                 }
                 Err(ParentSendError::NotSent(_)) if !replay => (ParentResult::Refused, 0),
-                Err(_) => (ParentResult::Pending, retry_ms()),
+                Err(_) => (ParentResult::Pending, retry),
             };
             self.finish_parent_delivery(row, record, outcome, due)
                 .await?;
@@ -378,7 +386,7 @@ impl Service {
             Ok(()) => Ok(true),
             Err(ParentSendError::Rejected) => Err(HostError::ParentHoldRejected.into()),
             Err(ParentSendError::Unknown(error)) if attempt.is_some() => {
-                Err(ServiceError::ParentDeliveryUnknown(error))
+                Err(parent_delivery_retry(error, retry))
             }
             Err(ParentSendError::Unknown(error)) => Err(error.into()),
             Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })) => {

@@ -913,21 +913,12 @@ async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
             .allocate(&head)
             .expect("allocate candidate");
     }
-    let parked = service
-        .task(&tasks[0].identity().id)
+    service
+        .state
+        .lock()
         .await
-        .expect("allocated task");
-    assert!(
-        service
-            .record_native_turn(
-                &parked,
-                "native_turn_failed",
-                "fixture/epoch",
-                "fixture-command",
-            )
-            .await
-            .expect("record a definitive failure")
-    );
+        .schedule
+        .park(&tasks[0].identity().id);
     let waiting = service.task("explicit-member").await.expect("third task");
     let identity = waiting.task.identity();
     let route = service.project_for(identity).await.expect("same project");

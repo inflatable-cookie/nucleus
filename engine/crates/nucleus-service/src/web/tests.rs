@@ -937,7 +937,6 @@ async fn persistent_workspace_error_stops_after_one_recheck_and_hold_release_ret
         let mut state = service.state.lock().await;
         let now = tokio::time::Instant::now();
         let due = state.schedule.due("unreadable").unwrap();
-        state.schedule.host_session_changed(now);
         state
             .schedule
             .wake("unreadable", now, crate::schedule::Priority::Wake);
@@ -966,9 +965,6 @@ async fn persistent_workspace_error_stops_after_one_recheck_and_hold_release_ret
     );
     {
         let mut state = service.state.lock().await;
-        state
-            .schedule
-            .host_session_changed(tokio::time::Instant::now());
         state.schedule.wake(
             "unreadable",
             tokio::time::Instant::now(),

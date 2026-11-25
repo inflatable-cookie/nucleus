@@ -79,8 +79,8 @@ pub enum ServiceError {
     },
     #[error("the next task row visibility change is scheduled")]
     RowVisibilityDeferred { until: Instant },
-    #[error("T3 parent message delivery could not be confirmed: {0}")]
-    ParentDeliveryUnknown(HostError),
+    #[error("T3 parent message delivery could not be confirmed: {source}")]
+    ParentDeliveryUnknown { source: HostError, until: Instant },
     #[error(
         "Nucleus couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
     )]
@@ -248,6 +248,7 @@ struct State {
     registry_mode: bool,
     schedule: Schedule,
     last_pass_calls: HostCalls,
+    scheduler_error: Option<&'static str>,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
@@ -416,6 +417,7 @@ impl Service {
                 registry_mode,
                 schedule: Schedule::new(),
                 last_pass_calls: HostCalls::new(),
+                scheduler_error: None,
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
@@ -535,7 +537,15 @@ impl Service {
     ) -> Result<Vec<PassOutcome>, ServiceError> {
         let _cycle = self.pass_lock.lock().await;
         let (result, calls) = T3::count_pass_calls(self.run_batch(host)).await;
-        self.state.lock().await.last_pass_calls = calls;
+        let mut state = self.state.lock().await;
+        state.last_pass_calls = calls;
+        state.scheduler_error = result.as_ref().err().map(|error| match error {
+            ServiceError::Project => "the task is outside this engine's configured project",
+            ServiceError::Settings(_) | ServiceError::Store(_) => {
+                "could not read or update scheduler storage"
+            }
+            _ => "a scheduler pass could not complete",
+        });
         result
     }
 
@@ -550,44 +560,62 @@ impl Service {
         for _ in 0..PASS_BATCH {
             let next = match first.take() {
                 Some(first) => Some(first),
-                None if self.host.request_retry_at().is_some() => None,
                 None => self.state.lock().await.take_ready(Instant::now(), &visited),
             };
             let Some(DueTask { id, priority }) = next else {
                 break;
             };
             visited.insert(id.clone());
-            let row = match self.task(&id).await {
-                Ok(row) => row,
-                Err(ServiceError::Missing) => continue,
-                Err(error) => return Err(error),
-            };
-            let defer_refresh = {
-                let mut state = self.state.lock().await;
-                self.track(&mut state, &row.task);
-                state.group_waits.remove(&id);
-                priority == Priority::Refresh && state.fresh_running_hint(&row.task)
-            };
-            let result = if defer_refresh {
-                Ok(Action::Wait(WaitReason::Running))
-            } else {
-                let scratch = self.existing_run_scratch(&row.task);
-                Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
-            };
-            self.schedule_result(&row, &result, priority).await?;
-            // The commit can wake the watcher while this task's send fence is still held.
-            if matches!(result, Ok(Action::Launch { .. })) {
-                self.title_wake.notify_one();
-            }
-            let result = match result {
-                Err(ServiceError::RowVisibilityDeferred { .. }) => {
-                    Ok(Action::Wait(WaitReason::HostUnknown))
+            match self.run_due_task(&id, priority, host).await {
+                Ok(Some(result)) => results.push(PassOutcome { task: id, result }),
+                Ok(None) => {}
+                Err(error) => {
+                    self.state.lock().await.schedule.wake(
+                        &id,
+                        Instant::now() + schedule::RETRY,
+                        priority,
+                    );
+                    return Err(error);
                 }
-                result => result,
-            };
-            results.push(PassOutcome { task: id, result });
+            }
         }
         Ok(results)
+    }
+
+    async fn run_due_task(
+        &self,
+        id: &str,
+        priority: Priority,
+        host: &nucleus_hosts::T3Pass<'_>,
+    ) -> Result<Option<Result<Action, ServiceError>>, ServiceError> {
+        let row = match self.task(id).await {
+            Ok(row) => row,
+            Err(ServiceError::Missing) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let defer_refresh = {
+            let mut state = self.state.lock().await;
+            self.track(&mut state, &row.task);
+            state.group_waits.remove(id);
+            priority == Priority::Refresh && state.fresh_running_hint(&row.task)
+        };
+        let result = if defer_refresh {
+            Ok(Action::Wait(WaitReason::Running))
+        } else {
+            let scratch = self.existing_run_scratch(&row.task);
+            Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
+        };
+        self.schedule_result(&row, &result, priority).await?;
+        // The commit can wake the watcher while this task's send fence is still held.
+        if matches!(result, Ok(Action::Launch { .. })) {
+            self.title_wake.notify_one();
+        }
+        Ok(Some(match result {
+            Err(ServiceError::RowVisibilityDeferred { .. }) => {
+                Ok(Action::Wait(WaitReason::HostUnknown))
+            }
+            result => result,
+        }))
     }
 
     async fn advance_due_task(
@@ -690,21 +718,8 @@ impl Service {
     }
 
     async fn watch_thread_hints(&self) {
-        let mut prior_session = None;
         loop {
             self.host.wait_for_requests().await;
-            if let Some(session) = self.host.runtime_identity()
-                && prior_session
-                    .replace(session.clone())
-                    .is_some_and(|old| old != session)
-            {
-                self.state
-                    .lock()
-                    .await
-                    .schedule
-                    .host_session_changed(Instant::now());
-                self.wake.notify_one();
-            }
             let (sender, mut hints) = mpsc::channel(128);
             let inbox = self.native_inbox.as_ref();
             let watch = self.host.watch_threads(
@@ -792,9 +807,6 @@ impl Service {
                     && prior != Some(&hint)
                     && !still_snoozed
                 {
-                    if hint.has_delivery_change(prior) {
-                        schedule.resume_on_host_evidence(id);
-                    }
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
@@ -878,7 +890,6 @@ impl Service {
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
-            self.host.wait_for_requests().await;
             let next;
             {
                 let mut state = self.state.lock().await;
@@ -918,21 +929,6 @@ impl Service {
         previous: Priority,
     ) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
-        let wait = match result {
-            Ok(Action::Wait(reason)) => Some(*reason),
-            Err(ServiceError::ArchiveEvidence(_)) => Some(WaitReason::Stopping),
-            Err(ServiceError::ParentDeliveryHeld) => Some(WaitReason::HostObservationBlocked),
-            Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
-                Some(WaitReason::HostUnknown)
-            }
-            Err(ServiceError::Workspace(_)) => Some(WaitReason::WorkspaceUnknown),
-            Err(ServiceError::Forge(_)) => Some(WaitReason::ForgeUnknown),
-            Err(ServiceError::InboxUnavailable { .. }) => Some(WaitReason::Question),
-            Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
-                Some(WaitReason::Capacity)
-            }
-            _ => None,
-        };
         let mut state = self.state.lock().await;
         let mut current = self.lookup(&state, id)?;
         let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
@@ -948,7 +944,7 @@ impl Service {
                 self.title_wake.notify_one();
                 self.publish(id, current.version);
             }
-            state.schedule.reset_recovery(id);
+            state.schedule.reset_workspace(id);
             if state.store.pending_prerequisite_notice(id)?.is_none() {
                 state.planner_notice_waiters.remove(id);
             }
@@ -960,6 +956,7 @@ impl Service {
             }
             return Ok(());
         }
+        let (mut wait, mut detail) = task_wait(&state, row, result);
         if wait == Some(WaitReason::Capacity)
             && current.task.phase() == Phase::Working
             && current.task.first_launch()
@@ -977,34 +974,67 @@ impl Service {
             )?;
         }
         let row = &current;
-        if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
-            return Ok(());
+        if let Err(error @ ServiceError::OperatorSnoozed { thread, until }) = result {
+            return self.schedule_operator_snooze(
+                &mut state,
+                row,
+                thread,
+                *until,
+                error.to_string(),
+            );
         }
-        if wait == Some(WaitReason::HostUnknown) && !archive_due {
-            return self.schedule_host_observation(&mut state, row, result);
-        }
+        record_incomplete_observation(&mut state, row, result)?;
         let now = Instant::now();
         let checking_workspace = wait == Some(WaitReason::WorkspaceUnknown);
-        let wait = if checking_workspace {
+        if checking_workspace {
             if state.schedule.recover_workspace(id, now) {
-                Some(WaitReason::WorkspaceBlocked)
-            } else {
-                wait
+                wait = Some(WaitReason::WorkspaceBlocked);
+                detail = Some(WaitDetail::Workspace(workspace_cause(result)));
             }
         } else {
-            state.schedule.reset_recovery(id);
-            wait
-        };
+            state.schedule.reset_workspace(id);
+        }
+        if archive_due
+            && !checking_workspace
+            && let Err(error) = result
+        {
+            detail = Some(WaitDetail::Archive(error.to_string()));
+        }
         if state.observe_task_allowance(&row.task, wait)? {
             self.publish_detail(id, row.version);
         }
-        if !checking_workspace {
-            let (delay, priority) = schedule::retry(wait);
+        let owner_action = wait == Some(WaitReason::HostObservationBlocked);
+        if owner_action {
+            state.schedule.park(id);
+        } else if !checking_workspace {
+            let (mut delay, priority) = schedule::retry(wait);
+            if matches!(&detail, Some(WaitDetail::Observation(_)))
+                && wait == Some(WaitReason::HostUnknown)
+                && row
+                    .task
+                    .run()
+                    .is_some_and(|run| run.last_send_at_ms().is_some())
+            {
+                delay = schedule::LIVE_CHECK;
+            }
             let due = match result {
-                Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
-                Err(ServiceError::InboxUnavailable { until }) => *until,
+                Err(
+                    ServiceError::Host(HostError::Deferred { until })
+                    | ServiceError::RowVisibilityDeferred { until },
+                ) => (*until).max(now + delay),
+                Err(ServiceError::ParentNotSent { retry_at, .. }) => {
+                    (now + delay).max(retry_at.unwrap_or(now))
+                }
+                Err(
+                    ServiceError::InboxUnavailable { until }
+                    | ServiceError::Host(HostError::RoleReplyPending { until })
+                    | ServiceError::ParentDeliveryUnknown { until, .. },
+                ) => *until,
                 _ if wait == Some(WaitReason::ForgeUnknown) => {
                     now + self.forge_backoff().max(delay)
+                }
+                _ if archive_due || wait == Some(WaitReason::HostUnknown) => {
+                    (now + delay).max(self.host.request_retry_at().unwrap_or(now))
                 }
                 _ => now + delay,
             };
@@ -1014,6 +1044,7 @@ impl Service {
                 .task
                 .run()
                 .is_some_and(|run| run.revoked() || run.last_send_at_ms().is_none())
+                || matches!(result, Err(ServiceError::ParentDeliveryUnknown { .. }))
                 || (previous == Priority::Effect && result.is_err())
                 || (row.task.phase() == Phase::Merging && wait == Some(WaitReason::ForgeUnknown))
             {
@@ -1038,16 +1069,12 @@ impl Service {
                 None => state.schedule.wake(id, due, priority),
             }
         }
-        let detail = match (wait, result) {
-            (Some(WaitReason::WorkspaceBlocked), result) => {
-                Some(WaitDetail::Workspace(workspace_cause(result)))
-            }
-            (_, Err(error)) if archive_due && !checking_workspace => {
-                Some(WaitDetail::Archive(error.to_string()))
-            }
-            _ => None,
-        };
+        let prior_wait = state.wait_reason(id);
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
+        if owner_action && prior_wait != wait {
+            state.wake_capacity(now);
+            self.wake.notify_one();
+        }
         self.desire_title(&state, &row.task, row.number);
         if changed {
             self.title_wake.notify_one();
@@ -1082,190 +1109,6 @@ impl Service {
             message,
         };
         if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), Some(detail))? {
-            self.desire_title(state, &row.task, row.number);
-            self.title_wake.notify_one();
-            self.publish(id, row.version);
-        }
-        Ok(())
-    }
-
-    fn schedule_parent_wait(
-        &self,
-        state: &mut State,
-        row: &TaskRow,
-        result: &Result<Action, ServiceError>,
-        wait: Option<WaitReason>,
-        previous: Priority,
-    ) -> Result<bool, ServiceError> {
-        let id = &row.task.identity().id;
-        if let Err(error @ ServiceError::OperatorSnoozed { thread, until }) = result {
-            self.schedule_operator_snooze(state, row, thread, *until, error.to_string())?;
-            return Ok(true);
-        }
-        if let Err(ServiceError::Host(error)) = result {
-            let checkpoint = match error {
-                HostError::ProcessCoverage(nucleus_hosts::ProcessEvidenceFailure::Cwd { pid }) => {
-                    Some(("cwd_followup", Some(*pid)))
-                }
-                HostError::HeldThreadMissing { .. } => Some(("retained_thread_read", None)),
-                HostError::RetainedIdleCoverage { .. } => Some(("retained_idle_coverage", None)),
-                _ => None,
-            };
-            if let Some((checkpoint, pid)) = checkpoint {
-                let mut audit = event("host_observation_incomplete");
-                audit.detail = serde_json::json!({"version":row.version, "stage":checkpoint,
-                    "pid":pid, "reason":error.to_string()})
-                .to_string();
-                state.store.claim_task_effect(id, &audit, false)?;
-            }
-        }
-        let showing = matches!(
-            state.wait_detail(id),
-            Some(WaitDetail::ShowingForDelivery(_))
-        );
-        let before_send = matches!(
-            result,
-            Err(ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. })
-        ) || (wait == Some(WaitReason::HostUnknown)
-            && !matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-            && (showing
-                || match row.task.run() {
-                    None => matches!(result, Err(ServiceError::Host(_))),
-                    Some(run) => {
-                        !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
-                    }
-                }));
-        let (wait, detail) = if before_send {
-            let now = Instant::now();
-            let backoff = match result {
-                Err(ServiceError::ParentNotSent { retry_at, .. }) => *retry_at,
-                Err(
-                    ServiceError::Host(HostError::Deferred { until })
-                    | ServiceError::RowVisibilityDeferred { until },
-                ) => Some(*until),
-                _ => None,
-            };
-            state.schedule.reset_recovery(id);
-            state.schedule.wake(
-                id,
-                backoff.unwrap_or(now).max(now + T3_RETRY_DELAY),
-                previous,
-            );
-            let cause = match result {
-                Err(ServiceError::Host(HostError::ProcessCoverage(failure))) => {
-                    Some(process_check_detail(*failure, false))
-                }
-                Err(ServiceError::Host(HostError::Unavailable)) => Some("Couldn’t reach T3."),
-                _ => None,
-            };
-            let detail = if showing {
-                WaitDetail::ShowingForDelivery(cause)
-            } else {
-                WaitDetail::BeforeSend(cause)
-            };
-            (Some(WaitReason::HostUnknown), detail)
-        } else if wait == Some(WaitReason::HostObservationBlocked) {
-            state.schedule.block_host_observation(id);
-            let cause = if matches!(result, Err(ServiceError::ParentDeliveryHeld)) {
-                "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
-            } else {
-                "Couldn’t verify the task thread. Open it to check."
-            };
-            (wait, WaitDetail::Observation(cause))
-        } else {
-            return Ok(false);
-        };
-        if state.observe_wait_detail(&row.task, wait, Some(detail))? {
-            self.desire_title(state, &row.task, row.number);
-            self.title_wake.notify_one();
-            self.publish(id, row.version);
-        }
-        Ok(true)
-    }
-
-    fn schedule_host_observation(
-        &self,
-        state: &mut State,
-        row: &TaskRow,
-        result: &Result<Action, ServiceError>,
-    ) -> Result<(), ServiceError> {
-        let id = &row.task.identity().id;
-        let deferred = match result {
-            Err(
-                ServiceError::Host(HostError::Deferred { until })
-                | ServiceError::ParentDeliveryUnknown(HostError::Deferred { until }),
-            ) => Some(*until),
-            _ => None,
-        };
-        let now = Instant::now();
-        let sent = row
-            .task
-            .run()
-            .filter(|run| run.report().is_none())
-            .and_then(nucleus_core::Run::last_send_at_ms);
-        let reply_due = sent.and_then(|sent| {
-            sent.saturating_add(nucleus_hosts::LATE_REPLY_MS)
-                .checked_sub(now_ms())
-                .filter(|&remaining| remaining > 0)
-                .map(|remaining| now + Duration::from_millis(remaining))
-        });
-        let parent_due = if matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
-            state
-                .store
-                .parent_deliveries(id, row.version, None)?
-                .into_iter()
-                .filter(|value| value.result == nucleus_store::ParentResult::Pending)
-                .map(|value| value.due_ms)
-                .min()
-        } else {
-            None
-        };
-        let blocked = if let Some(due) = parent_due {
-            let delay = u64::try_from(due)
-                .unwrap_or_default()
-                .saturating_sub(now_ms());
-            state.schedule.wake(
-                id,
-                (now + Duration::from_millis(delay)).max(deferred.unwrap_or(now)),
-                Priority::Effect,
-            );
-            false
-        } else {
-            state
-                .schedule
-                .recover_host_observation(id, now, deferred.max(reply_due))
-        };
-        let wait = Some(if blocked {
-            WaitReason::HostObservationBlocked
-        } else {
-            WaitReason::HostUnknown
-        });
-        let delivery_pending =
-            sent.is_some() || matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)));
-        let cause = match (blocked, delivery_pending, result) {
-            (_, _, Err(ServiceError::Host(HostError::ProcessCoverage(failure)))) => {
-                process_check_detail(*failure, blocked)
-            }
-            (true, true, _) => "Couldn’t confirm delivery. Open the task thread to check.",
-            (true, false, _) => "Couldn’t verify the task thread. Open it to check.",
-            (false, _, Err(ServiceError::Host(HostError::Unavailable))) => {
-                "Couldn’t reach T3. Checking again."
-            }
-            (false, true, _) => "Waiting for delivery confirmation.",
-            (false, false, _) => "Waiting for T3.",
-        };
-        let prior = state.wait_reason(id);
-        let detail = if !blocked && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
-            WaitDetail::ConfirmingDelivery(cause)
-        } else {
-            WaitDetail::Observation(cause)
-        };
-        let changed = state.observe_wait_detail(&row.task, wait, Some(detail))?;
-        if blocked && prior != wait {
-            state.wake_capacity(Instant::now());
-            self.wake.notify_one();
-        }
-        if state.observe_task_allowance(&row.task, wait)? || changed {
             self.desire_title(state, &row.task, row.number);
             self.title_wake.notify_one();
             self.publish(id, row.version);
@@ -1622,7 +1465,7 @@ impl Service {
             state.role_observations.remove(id);
         }
         self.desire_title(state, task, prior.number);
-        state.schedule.reset_recovery(id);
+        state.schedule.reset_workspace(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
@@ -1761,35 +1604,125 @@ fn workspace_cause(result: &Result<Action, ServiceError>) -> String {
     format!("{cause}. Check the checkout. Hold and release the task to retry.")
 }
 
-fn process_check_detail(
-    failure: nucleus_hosts::ProcessEvidenceFailure,
-    blocked: bool,
-) -> &'static str {
+fn task_wait(
+    state: &State,
+    row: &TaskRow,
+    result: &Result<Action, ServiceError>,
+) -> (Option<WaitReason>, Option<WaitDetail>) {
+    use WaitReason as Wait;
+    let showing = matches!(
+        state.wait_detail(&row.task.identity().id),
+        Some(WaitDetail::ShowingForDelivery(_))
+    );
+    let pre_wire = |cause| {
+        let detail = if showing {
+            WaitDetail::ShowingForDelivery(cause)
+        } else {
+            WaitDetail::BeforeSend(cause)
+        };
+        (Some(Wait::HostUnknown), Some(detail))
+    };
+    let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
+    match result {
+        Err(ServiceError::ArchiveEvidence(_)) => (Some(Wait::Stopping), None),
+        Err(ServiceError::ParentDeliveryHeld) => observation(
+            Wait::HostObservationBlocked,
+            "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery.",
+        ),
+        Ok(Action::Wait(Wait::HostObservationBlocked))
+        | Err(ServiceError::Host(HostError::ParentHoldRejected)) => observation(
+            Wait::HostObservationBlocked,
+            "The T3 task turn failed. Open the task thread to check, then update the task to retry.",
+        ),
+        Err(ServiceError::ParentNotSent { .. } | ServiceError::RowVisibilityDeferred { .. }) => {
+            pre_wire(None)
+        }
+        Err(ServiceError::ParentDeliveryUnknown { .. }) => (
+            Some(Wait::HostUnknown),
+            Some(WaitDetail::ConfirmingDelivery(
+                "Waiting for delivery confirmation.",
+            )),
+        ),
+        Err(ServiceError::Host(error)) => {
+            let cause = match error {
+                HostError::Unavailable => Some("Couldn’t reach T3. Checking again."),
+                HostError::Timeout => Some("T3 didn’t respond in time. Checking again."),
+                HostError::RoleReplyPending { .. } => {
+                    Some("Waiting for T3 to confirm the role assignment.")
+                }
+                HostError::ProcessCoverage(failure) => Some(process_check_detail(*failure)),
+                _ => None,
+            };
+            if showing || row.task.run().is_none_or(unsent) {
+                pre_wire(cause)
+            } else {
+                observation(Wait::HostUnknown, cause.unwrap_or("Waiting for T3."))
+            }
+        }
+        Ok(Action::Wait(Wait::HostUnknown)) if showing || row.task.run().is_some_and(unsent) => {
+            pre_wire(None)
+        }
+        Ok(Action::Wait(Wait::HostUnknown))
+            if row
+                .task
+                .run()
+                .is_some_and(|run| run.report().is_none() && run.last_send_at_ms().is_some()) =>
+        {
+            observation(Wait::HostUnknown, "Waiting for delivery confirmation.")
+        }
+        Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
+        Err(ServiceError::Forge(_)) => (Some(Wait::ForgeUnknown), None),
+        Err(ServiceError::InboxUnavailable { .. }) => (Some(Wait::Question), None),
+        Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
+            (Some(Wait::Capacity), None)
+        }
+        Ok(Action::Wait(reason)) => (Some(*reason), None),
+        _ => (None, None),
+    }
+}
+
+fn unsent(run: &nucleus_core::Run) -> bool {
+    !run.revoked() && run.last_send_at_ms().is_none() && run.report().is_none()
+}
+
+fn record_incomplete_observation(
+    state: &mut State,
+    row: &TaskRow,
+    result: &Result<Action, ServiceError>,
+) -> Result<(), StoreError> {
+    let id = &row.task.identity().id;
+    if let Err(ServiceError::Host(error)) = result {
+        let checkpoint = match error {
+            HostError::ProcessCoverage(nucleus_hosts::ProcessEvidenceFailure::Cwd { pid }) => {
+                Some(("cwd_followup", Some(*pid)))
+            }
+            HostError::HeldThreadMissing { .. } => Some(("retained_thread_read", None)),
+            HostError::RetainedIdleCoverage { .. } => Some(("retained_idle_coverage", None)),
+            _ => None,
+        };
+        if let Some((checkpoint, pid)) = checkpoint {
+            let mut audit = event("host_observation_incomplete");
+            audit.detail = serde_json::json!({"version":row.version, "stage":checkpoint,
+                "pid":pid, "reason":error.to_string()})
+            .to_string();
+            state.store.claim_task_effect(id, &audit, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn process_check_detail(failure: nucleus_hosts::ProcessEvidenceFailure) -> &'static str {
     use nucleus_hosts::ProcessEvidenceFailure;
-    match (failure, blocked) {
-        (ProcessEvidenceFailure::Timeout, false) => {
-            "The local process check timed out. Checking again."
-        }
-        (ProcessEvidenceFailure::Timeout, true) => {
-            "The local process check timed out. Open the task thread to check."
-        }
-        (ProcessEvidenceFailure::Truncated, false) => {
+    match failure {
+        ProcessEvidenceFailure::Timeout => "The local process check timed out. Checking again.",
+        ProcessEvidenceFailure::Truncated => {
             "The local process listing was cut short. Checking again."
         }
-        (ProcessEvidenceFailure::Truncated, true) => {
-            "The local process listing was cut short. Open the task thread to check."
-        }
-        (ProcessEvidenceFailure::Scope, false) => {
+        ProcessEvidenceFailure::Scope => {
             "Couldn’t verify the checkout and scratch paths. Checking again."
         }
-        (ProcessEvidenceFailure::Scope, true) => {
-            "Couldn’t verify the checkout and scratch paths. Open the task thread to check."
-        }
-        (ProcessEvidenceFailure::Incomplete | ProcessEvidenceFailure::Cwd { .. }, false) => {
+        ProcessEvidenceFailure::Incomplete | ProcessEvidenceFailure::Cwd { .. } => {
             "Checking whether the checkout is idle."
-        }
-        (ProcessEvidenceFailure::Incomplete | ProcessEvidenceFailure::Cwd { .. }, true) => {
-            "Couldn’t verify that the checkout is idle. Open the task thread to check."
         }
     }
 }

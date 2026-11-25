@@ -628,7 +628,6 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
         let mut state = service.state.lock().await;
         state.store.create(&task, &event("fixture")).unwrap();
         let row = service.lookup(&state, "unsent").unwrap();
-        state.schedule.block_host_observation("unsent");
         state.set_wait("unsent", Some(WaitReason::HostObservationBlocked));
         row
     };
@@ -689,10 +688,20 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 }
 
 #[tokio::test]
-async fn a_replaced_runtime_has_one_read_and_never_resends() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the receipt and its visible wait in the same fixture"
+)]
+async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
     use nucleus_store::ParentResult;
 
-    for delivered in [false, true] {
+    for (delivered, unfrozen, inconclusive) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, true, true),
+        (false, false, true),
+    ] {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
         let identity = task.identity().clone();
@@ -721,6 +730,11 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
         let (host, native) = native_fixture(move |request| {
         assert_eq!(request["tag"], "orchestration.subscribeThread");
         assert_eq!(request["payload"]["threadId"], parent);
+        if inconclusive {
+            return serde_json::json!({"_tag":"Exit","requestId":request["id"],"exit":{
+                "_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"FixtureUnavailable"}}]
+            }});
+        }
         let messages = if delivered { serde_json::json!([{"id":message,"runId":"exact-run"}]) }
             else { serde_json::json!([{"id":"unrelated-message","runId":"another-run"}]) };
         serde_json::json!({"_tag":"Chunk", "requestId":request["id"], "values":[
@@ -734,7 +748,7 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
             {"kind":"synchronized"}
         ]})
     }).await;
-        service.host = verified_native_fixture(host, home.path());
+        let host = verified_native_fixture(host, home.path());
         service.fixture_mut().acp_provider = Some("fixture-acp".into());
         let row = {
             let mut state = service.state.lock().await;
@@ -749,7 +763,7 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
                         command,
                         refresh: false,
                         runtime: Some("retired-host".into()),
-                        wire: Some(frozen.to_string()),
+                        wire: (!unfrozen).then(|| frozen.to_string()),
                         legacy_prompt: None,
                         due_ms: 0,
                         result: ParentResult::Pending,
@@ -758,12 +772,61 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
                 .unwrap();
             row
         };
+        if unfrozen && !inconclusive {
+            let failed_host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+            let offline_root = home.path().join("offline");
+            std::fs::create_dir(&offline_root).unwrap();
+            service.host = verified_native_fixture(failed_host, &offline_root);
+            let result = service.parent_delivery_fenced(&row).await;
+            assert!(matches!(
+                result,
+                Err(ServiceError::ParentDeliveryUnknown {
+                    source: HostError::Unavailable,
+                    ..
+                })
+            ));
+            service
+                .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
+                .await
+                .unwrap();
+            assert!(matches!(
+                service.parent_delivery_fenced(&row).await,
+                Err(ServiceError::ParentDeliveryUnknown { until, .. }) if until > Instant::now()
+            ));
+            assert!(
+                !service
+                    .host
+                    .host_calls()
+                    .contains_key("orchestration.subscribeThread")
+            );
+            let state = service.state.lock().await;
+            assert!(matches!(
+                state.wait_detail(&identity.id),
+                Some(crate::WaitDetail::ConfirmingDelivery(_))
+            ));
+            let records = state
+                .store
+                .parent_deliveries(&identity.id, row.version, None)
+                .unwrap();
+            let record = &records[0];
+            assert_eq!(record.result, ParentResult::Pending);
+            assert!(record.due_ms > i64::try_from(crate::now_ms()).unwrap());
+            state
+                .store
+                .finish_parent_delivery(&identity.id, row.version, record, ParentResult::Pending, 0)
+                .unwrap();
+        }
+        service.host = host;
         for _ in 0..2 {
             let result = service.parent_delivery_fenced(&row).await;
             if delivered {
                 assert!(result.is_ok());
             } else {
                 assert!(matches!(result, Err(ServiceError::ParentDeliveryHeld)));
+                service
+                    .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
+                    .await
+                    .unwrap();
             }
         }
         let mut calls = service.host.host_calls();
@@ -788,6 +851,25 @@ async fn a_replaced_runtime_has_one_read_and_never_resends() {
             service.task(&identity.id).await.unwrap().version,
             row.version
         );
+        if !delivered {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), service.pass())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                service.host.host_calls()["orchestration.subscribeThread"],
+                1
+            );
+            let state = service.state.lock().await;
+            assert_eq!(
+                state.wait_reason(&identity.id),
+                Some(WaitReason::HostObservationBlocked)
+            );
+            assert!(matches!(state.wait_detail(&identity.id),
+                Some(crate::WaitDetail::Observation(cause)) if cause.contains("use Next")));
+            assert!(state.schedule.due(&identity.id).is_none());
+        }
         native.abort();
     }
 }
@@ -1216,7 +1298,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     if lose_launch_reply {
         assert!(matches!(
             outcomes[0].result,
-            Err(ServiceError::ParentDeliveryUnknown(_))
+            Err(ServiceError::ParentDeliveryUnknown { .. })
         ));
     } else {
         assert!(matches!(
@@ -1661,4 +1743,140 @@ pub(super) async fn native_fixture_with_traffic(
             axum::serve(tcp, app).await.expect("native server");
         }),
     )
+}
+
+#[tokio::test]
+async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (task, _, _) = reservation("bad-scope", Entry::Brief, &service.fixture().start);
+    let mut identity = task.identity().clone();
+    identity.repository = "example/other".into();
+    let task = Task::new(identity, "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .schedule
+            .wake("bad-scope", Instant::now(), Priority::Wake);
+    }
+    assert!(matches!(service.pass().await, Err(ServiceError::Project)));
+    let mut state = service.state.lock().await;
+    let due = state
+        .schedule
+        .due("bad-scope")
+        .expect("failed task has a retry");
+    assert!(due > Instant::now());
+    assert_eq!(
+        state
+            .schedule
+            .take_ready(due, &BTreeSet::new(), None)
+            .unwrap()
+            .id,
+        "bad-scope"
+    );
+    assert_eq!(
+        state.scheduler_error,
+        Some("the task is outside this engine's configured project")
+    );
+    assert!(state.last_pass_calls.is_empty());
+}
+
+#[tokio::test]
+async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (mut task, _, _) = reservation("sent", Entry::Brief, &service.fixture().start);
+    let instance = task.run().unwrap().launch().instance.clone();
+    task.record_send(&instance, now_ms()).unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, "sent").unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_mins(2);
+    for error in [
+        HostError::Unavailable,
+        HostError::Deferred { until: deadline },
+        HostError::RoleReplyPending { until: deadline },
+    ] {
+        service
+            .schedule_result(&row, &Err(ServiceError::Host(error)), Priority::Effect)
+            .await
+            .unwrap();
+        let mut state = service.state.lock().await;
+        let due = state.schedule.due("sent").unwrap();
+        match error {
+            HostError::Unavailable => assert!(due < deadline),
+            _ => assert_eq!(due, deadline),
+        }
+        assert_eq!(
+            state
+                .schedule
+                .take_ready(due, &BTreeSet::new(), None)
+                .unwrap()
+                .id,
+            "sent"
+        );
+    }
+}
+
+#[tokio::test]
+async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (task, _, _) = reservation("archive", Entry::Brief, &service.fixture().start);
+    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
+    let mut snapshot = serde_json::to_value(task).unwrap();
+    snapshot["phase"] = json!("done");
+    let task = serde_json::from_value(snapshot).unwrap();
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, "archive").unwrap()
+    };
+    let until = Instant::now() + Duration::from_mins(1);
+    service
+        .schedule_result(
+            &row,
+            &Err(ServiceError::Host(HostError::Deferred { until })),
+            Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let state = service.state.lock().await;
+    assert_eq!(state.schedule.due("archive"), Some(until));
+    assert!(
+        matches!(state.wait_detail("archive"), Some(WaitDetail::Archive(cause)) if cause.contains("host deferred"))
+    );
+}
+
+#[tokio::test]
+async fn host_backoff_does_not_delay_a_local_task_decision() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let host = service.host.pass(service.storage.scratch().path());
+    assert!(host.profile_catalog().await.is_err());
+    assert!(service.host.request_retry_at().is_some());
+    let (task, _, _) = reservation("local", Entry::Brief, &service.fixture().start);
+    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+    }
+    service
+        .command(
+            "local",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap();
+    let outcomes = tokio::time::timeout(Duration::from_secs(2), service.pass())
+        .await
+        .expect("local work must not wait for T3")
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].task, "local");
+    assert_eq!(outcomes[0].result.as_ref().unwrap(), &Action::Nothing);
+    assert!(service.state.lock().await.last_pass_calls.is_empty());
 }
