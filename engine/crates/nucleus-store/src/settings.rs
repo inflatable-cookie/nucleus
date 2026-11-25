@@ -653,18 +653,20 @@ fn schema_backup(path: &Path) -> bool {
     {
         return false;
     }
-    rusqlite::Connection::open_with_flags(
+    // Inspect only the SQLite header. Opening a WAL-mode file through SQLite can
+    // create sidecars even when the connection is read-only.
+    let Ok(fd) = open(
         path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
-    .and_then(|db| {
-        db.query_row(
-            "SELECT application_id,user_version FROM pragma_application_id, pragma_user_version",
-            [],
-            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
-        )
-    })
-    .is_ok_and(|header| header == (crate::APPLICATION_ID, version))
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) else {
+        return false;
+    };
+    let mut header = [0u8; 72];
+    std::io::Read::read_exact(&mut std::fs::File::from(fd), &mut header).is_ok()
+        && header.starts_with(b"SQLite format 3\0")
+        && header[60..64] == version.to_be_bytes()
+        && header[68..72] == crate::APPLICATION_ID.to_be_bytes()
 }
 
 fn identity() -> Result<StorageIdentity, StorageError> {
