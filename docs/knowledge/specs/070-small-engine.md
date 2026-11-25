@@ -185,7 +185,7 @@ Later decisions carry their own attribution.
 12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
    - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
-   - The offline `project.import` command reads the fenced TypeScript copy. It restores registry membership, plans and lane documents, and moves imported items and their history to the stable project keys. TypeScript slot limits seed projects without a saved Rust limit. The import retains repository membership across projects, including historical repositories in archived scopes, combines compatible edits and links, and reports conflicts before publishing. Repository task numbers keep their assignments. A retry finishes an interrupted Settings publication or leaves a completed import and later edits in place.
+   - During cutover, `project.import` restored registry membership, plans and lane documents from the fenced TypeScript copy. It moved imported items and their history to stable project keys, kept repository task numbers and reported conflicts before publishing. The active CLI retires this command in milestone 4. An interrupted publication still fences startup. If a restored profile holds a pending journal, the operator must authorize forward recovery of the recorded Projects settings before serving it.
    - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
    - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
 
@@ -920,31 +920,9 @@ bound task version, then wakes the ordinary answer path.
 body and commits the task, source link and item history together. If promotion
 is retried, it returns the task already admitted from that item.
 
-The offline `item.import <copy> --repository owner/repo=project` command maps
-legacy leads and papercuts to items. Repeat `--repository` for each origin in
-the copy. Set `NUCLEUS_SCRATCH_ROOT` to the configured scratch volume and put
-a standalone SQLite backup there. The importer opens it read-only, verifies
-the rebuilt lead history, and retains dispositions and task links. By default
-it rehearses and rolls back. `--keep` saves a new Rust database in scratch
-and prints its path. For cutover, `--apply <PROFILE_HOME>` appends to an existing
-Rust profile while holding the same exclusive lock as the service. Stop the
-profile before applying. Planning items commit in one transaction. Existing
-tasks and previously imported items, including their Rust edits and task
-links, survive. A collision with an existing native item aborts the apply.
-
-`--apply` also joins `meta.profiles` and `meta.pool` by stable profile ID and
-saves Profiles through a revision-checked Longhorn edit. It adds new profiles,
-enriches unchanged seed records and skips exact matches. Edited profiles stay
-as saved and appear in the conflict report alongside their source records.
-Profiles without pool entries start disabled. The report includes source rows
-that have no destination and shows the retained notes, scopes, coordinator
-membership and feature options. Resolve reported conflicts and unmapped rows
-before using the imported pool. Settings publish after planning validation and
-before the SQLite commit. If either publication fails, rerunning the same
-backup reconciles the two stores. Before the drain, use
-`item.import <copy> --apply <PROFILE_HOME> --profiles-only` to apply profiles
-without a repository mapping or opening the planning database. Use the combined
-apply on the fresh global snapshot after the drain.
+During cutover, the offline `item.import` command copied the retained Planning
+items and profile settings from a fenced TypeScript backup. The active CLI
+retires this command in milestone 4.
 
 Older Rust Profiles JSON still allows both roles and enables profiles by
 default. Dispatch checks the imported enabled flag and role list for each new
