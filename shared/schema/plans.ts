@@ -3,14 +3,20 @@ import { laneKeySchema } from "../schema/task-primitives";
 import { planningTriageSchema } from "./triage";
 import { laneViewSchema } from "./lanes";
 
-/** Spec 041: `doneWhen` is one line saying what finishes the step; entries saved before it have none. */
-export const planEntrySchema = z.object({ lane: laneKeySchema, note: z.string().default(""), horizon: z.enum(["now", "next", "later"]).default("now"), doneWhen: z.string().max(300).regex(/^[^\r\n]*$/, "doneWhen is one line: no CR or LF (Spec 041, contract 008)").optional() }).strict();
+/** Preserve stored text so a planner can read and correct an older step. */
+export const planEntrySchema = z.object({ lane: laneKeySchema, note: z.string().default(""), horizon: z.enum(["now", "next", "later"]).default("now"), doneWhen: z.string().optional() }).strict();
 
 /** A plan entry whose lane is now done or abandoned, as read from the plan's history (Spec 041 Done band). */
 export const planDoneEntrySchema = planEntrySchema.extend({ status: z.enum(["done", "abandoned"]), closedAt: z.string().nullable() }).strict();
 
-export const planEntriesSchema = z.array(planEntrySchema).max(200)
-  .refine(entries => new Set(entries.map(entry => entry.lane)).size === entries.length, "Duplicate lane key");
+function orderedEntries(entry: typeof planEntrySchema) {
+  return z.array(entry).max(200)
+    .refine(entries => new Set(entries.map(step => step.lane)).size === entries.length, "Duplicate lane key");
+}
+
+export const planEntriesSchema = orderedEntries(planEntrySchema.extend({
+  doneWhen: z.string().max(300).regex(/^[^\r\n]*$/, "doneWhen must fit on one line").optional(),
+}));
 
 /** A project's plan as read: the saved order, then any listing lane it does not name yet. `version` is 0 before the first save. */
 export const projectPlanSchema = z.object({
@@ -24,7 +30,7 @@ export type ProjectPlan = z.infer<typeof projectPlanSchema>;
 
 /** Batched board read includes the immutable saved membership alongside the current lane projection. */
 export const planningPlanSnapshotSchema = projectPlanSchema.extend({
-  savedEntries: planEntriesSchema,
+  savedEntries: orderedEntries(planEntrySchema),
   triage: planningTriageSchema.optional(),
   laneViews: z.array(laneViewSchema).optional(),
 }).strict();

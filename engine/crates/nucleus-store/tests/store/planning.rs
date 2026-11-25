@@ -1,6 +1,7 @@
 use nucleus_store::planning::{
-    DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget, ItemContent,
-    ItemKind, ItemSource, ItemState, RecordKind, WriteAt,
+    DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget, Horizon,
+    ItemContent, ItemKind, ItemSource, ItemState, LaneDocument, Plan, PlanLane, RecordKind,
+    WriteAt,
 };
 
 use super::*;
@@ -9,6 +10,54 @@ const STAMP: WriteAt<'_> = WriteAt {
     actor: "planner",
     at_ms: 10,
 };
+
+#[test]
+fn plan_write_checks_completion_criteria_and_keeps_the_last_valid_order() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut store = Store::open(&fixture_storage(scratch.path())).expect("store");
+    store
+        .put_lane(
+            "project",
+            "delivery",
+            0,
+            LaneDocument {
+                title: "Delivery".into(),
+                aim: "Ship".into(),
+                document: String::new(),
+            },
+            STAMP,
+        )
+        .expect("create lane");
+    let mut plan = Plan {
+        version: 0,
+        lanes: vec![PlanLane {
+            key: "delivery".into(),
+            horizon: Horizon::Now,
+            done_when: String::new(),
+            status_note: "a long status note ".repeat(30),
+        }],
+    };
+    plan = store
+        .set_plan("project", plan, STAMP)
+        .expect("empty criterion");
+    plan.lanes[0].done_when = "📦".repeat(150);
+    let saved = store
+        .set_plan("project", plan, STAMP)
+        .expect("exact boundary");
+    for invalid in [
+        format!("{}x", saved.lanes[0].done_when),
+        "a\rb".into(),
+        "a\nb".into(),
+    ] {
+        let mut changed = saved.clone();
+        changed.lanes[0].done_when = invalid;
+        assert!(matches!(
+            store.set_plan("project", changed, STAMP),
+            Err(StoreError::PlanningInput)
+        ));
+    }
+    assert_eq!(store.plan("project").expect("read back"), saved);
+}
 
 #[test]
 fn schema_seven_migrates_in_place() {
