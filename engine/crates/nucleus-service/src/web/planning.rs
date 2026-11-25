@@ -324,25 +324,43 @@ async fn add_item(
     Ok((StatusCode::CREATED, Json(item)))
 }
 
+#[derive(Deserialize)]
+struct ItemEdit {
+    version: Option<i64>,
+    #[serde(flatten)]
+    content: ItemContent,
+}
+
 async fn edit_item(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
+    session: Option<Extension<super::board::BrowserSession>>,
     ProjectSelector { project }: ProjectSelector,
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
-    input: Result<Json<ItemContent>, JsonRejection>,
-) -> Result<Json<Item>, ApiError> {
+    input: Result<Json<ItemEdit>, JsonRejection>,
+) -> Result<Response, ApiError> {
     let input = body(input)?;
-    let (mut state, project) = api
+    if session.is_some() && input.version.is_none_or(|version| version <= 0) {
+        return Err(ApiError::Invalid);
+    }
+    let (mut state, resolved) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
+    if session.is_some() && project.as_deref() != Some(resolved.as_str()) {
+        return Err(ServiceError::Project.into());
+    }
     let saved = state
         .store
-        .edit_item(&project, &id, input, stamp(&caller))
+        .edit_item(&resolved, &id, input.content, input.version, stamp(&caller))
         .map_err(ServiceError::from)?;
     api.service.planning_changes.send_replace(());
-    Ok(Json(saved))
+    Ok(if input.version.is_some() {
+        Json(saved).into_response()
+    } else {
+        Json(saved.item).into_response()
+    })
 }
 
 #[derive(Deserialize)]

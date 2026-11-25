@@ -937,7 +937,7 @@ Planning is plain record-keeping in the Rust service. It never calls a host (rul
   review. The scheduler reads that exact PR in the configured repository and
   base. A changed head retires the old question, and an external merge of a
   review entry still needs operator acceptance.
-- **Concurrency is checked only where edits collide.** A lane document and the plan carry one version number for optimistic writes. Other records use last write wins, with history kept. There are no digest fences.
+- **Concurrency is checked only where edits collide.** A lane document and the plan carry a version for optimistic writes. The paired board edits a papercut's title and Markdown body at the item history version it opened, preserving its lanes. The engine checks that version in the item edit transaction. Unversioned CLI item edits and other planning writes keep their existing rules and history.
 - **No ceremony records.** Lane keeps, drain prompts and idle marks are gone. The board shows a lane with no open tasks, and a plan with no `now` lane is idle. Notes are short sentences with no hard 200-character cap.
 - **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
 - **Triage and milestone QA records are not ported** (ruling 12).

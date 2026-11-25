@@ -3000,6 +3000,47 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
     assert_eq!(item["title"], "Toast lingers");
     assert!(item["createdAtMs"].is_i64());
     assert_eq!(item["updatedAtMs"], item["createdAtMs"]);
+
+    let id = item["id"].as_str().expect("papercut ID");
+    let path = format!("/api/engine/planning/local-fixture/items/{id}");
+    let wrong_project = format!("/api/engine/planning/other-project/items/{id}");
+    let version = item["version"].as_i64().expect("papercut version");
+    let edit =
+        json!({"version":version,"title":"Toast has lingered","body":"It still stays.","lanes":[]});
+    assert_eq!(
+        browser_request(api, Method::PUT, &wrong_project, cookie, Some(&edit))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST,
+    );
+    let response = browser_request(api, Method::PUT, &path, cookie, Some(&edit)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = json_body(response).await;
+    assert_eq!(saved["title"], edit["title"]);
+    assert_eq!(saved["body"], edit["body"]);
+    assert_eq!(saved["createdAtMs"], item["createdAtMs"]);
+    assert!(saved["version"].as_i64().unwrap() > version);
+    assert_event(events, &["event: planning"]).await;
+
+    let stale = json!({"version":version,"title":"Stale edit","body":"Old text.","lanes":[]});
+    assert_eq!(
+        browser_request(api, Method::PUT, &path, cookie, Some(&stale))
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+    );
+    let listed = json_body(
+        browser_request(
+            api,
+            Method::GET,
+            "/api/engine/planning/local-fixture/items",
+            cookie,
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(listed[0], saved);
 }
 
 async fn assert_board_assets(api: &Router) {

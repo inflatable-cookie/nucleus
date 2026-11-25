@@ -10,7 +10,8 @@ export const papercutList = defineRpc({ name: "papercut.list", input: z.object({
 export const papercutGet = defineRpc({ name: "papercut.get", input: z.object({ id: z.string().min(1) }).strict(), output: papercutSchema });
 
 export const papercutEdit = defineRpc({ name: "papercut.edit", input: z.object({
-  id: z.string().min(1), version: z.number().int().positive(),
+  id: z.string().min(1), version: z.number().int().positive(), project: z.string().min(1).optional(),
+  body: z.string().refine((text) => text.trim().length > 0).optional(),
   title: z.string().trim().min(1).optional(),
   area: z.string().trim().optional(), happened: z.string().trim().min(1).optional(),
   impact: z.string().trim().optional(), fix: z.string().trim().optional(), author: z.string().min(1).default("operator"),

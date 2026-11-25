@@ -171,7 +171,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     }, {
       id: "promoted", kind: "papercut", author: "planner", title: "Fixed", body: "",
       lanes: [], state: "promoted", taskId: "finished", taskLinks: ["finished"],
-      createdAtMs: 100, updatedAtMs: 200,
+      createdAtMs: 100, updatedAtMs: 200, version: 17,
     }]);
     if (collection === "decisions") return json([{
       id: `d-${project}`, projectId: project, author: "planner",
@@ -795,6 +795,23 @@ test("a project refusal settles lists until the paired session changes", async (
   fake.setSession({ id: "new-operator-session", canEditSettings: true, planningProjects: null });
   assert.equal(await adapter.refreshSession(), true);
   assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main", "d-lantern"]);
+});
+
+test("papercut editing refuses ambiguous and out-of-scope records before a write", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  await assert.rejects(adapter.rpc(api.papercutGet, { id: "promoted" }), /ambiguous/);
+  fake.setSession({ id: "planner", canEditSettings: false, planningProjects: ["Orbit_Main"] });
+  await adapter.refreshSession();
+  const scoped = await adapter.rpc(api.papercutGet, { id: "promoted" });
+  assert.equal(scoped.project, "Orbit_Main");
+  await assert.rejects(adapter.rpc(api.papercutEdit, {
+    id: scoped.id, project: "lantern", version: scoped.version, title: "Wrong project",
+  }), /accessible projects/);
+  await assert.rejects(adapter.rpc(api.papercutEdit, {
+    id: "i-Orbit_Main", project: scoped.project, version: scoped.version, title: "Wrong kind",
+  }), /accessible projects/);
+  assert.deepEqual(fake.reads.filter((path) => path.startsWith("PUT /planning/")), []);
 });
 
 test("the paired Profiles panel adds, edits, and duplicates using the shared controls", async (t) => {

@@ -1,4 +1,5 @@
 import type * as api from "../../shared/contracts";
+import type { output } from "zod";
 import type {
   RustApi,
   RustAllSettings,
@@ -250,10 +251,11 @@ function leadDetail(item: RustItem, project: RustProject) {
   };
 }
 
-function boardPapercut(item: RustItem, project: RustProject) {
-  const repo = repositories(project, item.repositories)[0]!;
+function boardPapercut(item: RustItem, row: ProjectRow) {
+  const repo = repositories(row.project, item.repositories)[0]!;
   return {
     id: item.id,
+    project: row.id,
     repository: repo,
     area: null,
     title: item.title,
@@ -261,14 +263,14 @@ function boardPapercut(item: RustItem, project: RustProject) {
     impact: "",
     fix: null,
     filedBy: item.author || "Nucleus",
-    filedAt: "",
+    filedAt: item.createdAtMs == null ? "" : iso(item.createdAtMs),
     state:
       item.state === "promoted"
         ? ("promoted" as const)
         : item.state === "dropped"
           ? ("closed" as const)
           : ("open" as const),
-    version: 1,
+    version: item.version ?? 1,
     taskId: item.state === "promoted" ? (item.taskId ?? null) : null,
     closedReason: item.state === "dropped" ? ("deprecated" as const) : null,
     draftId: null,
@@ -367,6 +369,21 @@ export function createRustPlanning(
       if (item) return { row, item };
     }
     throw new Error(`${id} is not in any project.`);
+  }
+
+  async function papercutOwner(id: string, project?: string) {
+    let match: { row: ProjectRow; item: RustItem } | undefined;
+    for (const row of await projects()) {
+      if (project !== undefined && row.id !== project) continue;
+      const items = await readProject(row, rust.items);
+      const item = items?.find((entry) => entry.id === id && entry.kind === "papercut");
+      if (!item) continue;
+      if (match) throw new Error(`Papercut ${id} is ambiguous across projects.`);
+      match = { row, item };
+    }
+    if (!match)
+      throw new Error(`Could not identify papercut ${id} in the accessible projects.`);
+    return match;
   }
 
   async function promote({ id, repository, complexity }: { id: string; repository?: string; complexity?: api.CapabilityLevel }) {
@@ -540,8 +557,22 @@ export function createRustPlanning(
       return leadDetail(item, row.project);
     },
     "papercut.get": async (input: { id: string }) => {
-      const { row, item } = await itemOwner(input.id);
-      return boardPapercut(item, row.project);
+      const { row, item } = await papercutOwner(input.id);
+      if (item.version === undefined) throw new Error("The engine did not supply the papercut version.");
+      return boardPapercut(item, row);
+    },
+    "papercut.edit": async (input: output<typeof api.papercutEdit.input>) => {
+      const { id, project, version, title, body, happened } = input;
+      if (project === undefined) throw new Error("Reopen the papercut before editing it.");
+      const { row, item } = await papercutOwner(id, project);
+      if (version !== item.version) throw new Error("The papercut changed since you started editing.");
+      const saved = await rust.editItem(row.id, id, {
+        version,
+        title: title ?? item.title,
+        body: body ?? happened ?? item.body,
+        lanes: item.lanes,
+      });
+      return boardPapercut(saved, row);
     },
     "lead.promote-task": promote,
     "papercut.promote-task": promote,
@@ -558,7 +589,7 @@ export function createRustPlanning(
     "papercut.close": async (input: { id: string; note?: string }) => {
       const { row } = await itemOwner(input.id);
       const item = await rust.dropItem(row.id, input.id, input.note || null);
-      return boardPapercut(item, row.project);
+      return boardPapercut(item, row);
     },
   };
 
