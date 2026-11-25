@@ -81,8 +81,10 @@ and [session persistence](../../../engine/crates/nucleus-service/src/web/board/s
 
 The paired API mounts the same planning handlers as the controller API and
 checks session scope. The browser subscribes to scoped engine invalidations and
-re-reads affected data. Reconnection resynchronizes open views. A browser view,
-Settings read or ordinary planning read consumes the store and cached host facts.
+re-reads affected data. Open planning records use periodic reads while the
+stream is disconnected. Reconnection resynchronizes open views and stops
+those periodic reads. A browser view, Settings read or ordinary planning read
+consumes the store and cached host facts.
 Opening a view does not refresh native threads. The typed browser adapter keeps
 shared views behind the Rust boundary. See the [paired planning handlers](../../../engine/crates/nucleus-service/src/web/planning.rs),
 [board adapter](../../../client/web/rust-adapter.ts) and

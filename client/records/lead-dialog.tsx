@@ -1,5 +1,7 @@
+import { useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "../shell";
+import { BoardLiveContext } from "../board-live";
 import { type Colors } from "../controls";
 import { errorText } from "../error-text";
 import * as api from "../../shared/contracts";
@@ -35,6 +37,7 @@ export function LeadDialog({
   onClose: () => void;
   c: Colors;
 }) {
+  const live = useContext(BoardLiveContext);
   const fetchLead = useRpc(api.leadGet),
     dropLead = useRpc(api.leadDrop),
     checkLead = useRpc(api.leadCheck),
@@ -49,7 +52,7 @@ export function LeadDialog({
     queryKey: ["nucleus", "lead", selectedLeadId],
     queryFn: () => fetchLead({ id: selectedLeadId! }),
     enabled: Boolean(selectedLeadId),
-    refetchInterval: 4000,
+    refetchInterval: live ? false : 4000,
   });
   const leadDetail = leadDetailQuery.data;
   /**

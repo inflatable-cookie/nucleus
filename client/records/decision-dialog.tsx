@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "../shell";
+import { BoardLiveContext } from "../board-live";
 import {
   Button,
   ConfirmReplaceAnswer,
@@ -67,6 +68,7 @@ export function DecisionDialog({
   onClose: () => void;
   c: Colors;
 }) {
+  const live = useContext(BoardLiveContext);
   const fetchDecision = useRpc(api.decisionGet),
     answerDecision = useRpc(api.decisionAnswer),
     withdrawDecision = useRpc(api.decisionWithdraw);
@@ -80,7 +82,7 @@ export function DecisionDialog({
     queryKey: ["nucleus", "decision", openDecisionId],
     queryFn: () => fetchDecision({ id: openDecisionId! }),
     enabled: Boolean(openDecisionId),
-    refetchInterval: 4000,
+    refetchInterval: live ? false : 4000,
   });
   const decisionDetail = decisionDetailQuery.data;
   const decisionDetailPresentation = decisionDetail
