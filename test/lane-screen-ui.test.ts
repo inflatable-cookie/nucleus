@@ -648,6 +648,7 @@ test("the header names the horizon, open state and other plans; Mark done asks f
   );
   assert.deepEqual(status, ["show:beta"], "cancel writes nothing");
   ui.press("Mark done Alpha lane");
+  ui.type("Closing note", "Landed.");
   ui.press("Mark Alpha lane done");
   assert.deepEqual(status, ["show:beta", "done"]);
   ui.press("Edit the Alpha lane document");
@@ -711,8 +712,11 @@ test("raw keys, repositories and lane status stay behind Details", async () => {
   assert.ok(ui.get("Lane repositories"));
   assert.match(ui.text(), /owner\/alpha \(\/alpha\)/);
   assert.match(ui.text(), /Key · alpha-lane/);
-  ui.press("Set lane alpha-lane paused");
-  assert.deepEqual(log.status, ["paused"]);
+  assert.equal(ui.query("Set lane alpha-lane paused"), undefined);
+  ui.press("Set lane alpha-lane abandoned");
+  ui.type("Closing note", "Superseded by the release lane.");
+  ui.press("Abandon Alpha lane");
+  assert.deepEqual(log.status, ["abandoned"]);
 });
 
 test("the editor and reader are reachable only with a document the operator can write", async () => {

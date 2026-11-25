@@ -758,9 +758,9 @@ export function MainSurface({
                         if (!laneContext.showProject(project))
                           showLanePlan(project);
                       }}
-                      onSetStatus={(status) =>
+                      onSetStatus={(status, note) =>
                         void act(() =>
-                          changeLaneStatus({ ...planningLaneRef, status }),
+                          changeLaneStatus({ ...planningLaneRef, status, note }),
                         )
                       }
                       c={c}
