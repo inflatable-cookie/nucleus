@@ -4209,11 +4209,10 @@ bundled shell imports to the same host hooks and native stand-ins.
 - Fixtures answer RPCs with the method's real shape, and bundled UI fixtures
   wait for the visible result rather than a fixed tick count. The render harness
   subscribes an external store once per `subscribe` identity.
-- Plain test profiles, adapters, submissions and temporary stores use
-  `test/support/fakes.ts`; scenario-specific behavior stays in overrides.
-  Fake adapters leave optional capabilities absent unless supplied by the test.
-  Git-heavy families use `test/support/git-seed.ts` for repeated setup, with
-  independent copy-on-write repositories and real Git for behavior assertions.
+- Fixtures use scenario-specific overrides. Fake adapters leave optional
+  capabilities absent unless supplied by the test. Git-heavy families use
+  `test/support/git-seed.ts` for repeated setup, with independent copy-on-write
+  repositories and real Git for behavior assertions.
 - Worker readiness uses read-only preflight and disposable lifecycle proof;
   runtime acceptance after review, merge and roll follows the
   [working rules](working-rules.md).
