@@ -113,59 +113,14 @@ and credential rotation remain separate operator decisions.
 
 ## Prepare and publish
 
-`package.json` owns the release version, and the runtime builder copies it into
-the installed package. Keep the lockfile's root version in step. Prepare from a
-clean checkout at the intended commit, with dependencies already installed:
+Prepare the Rust binary and matching browser assets from the intended committed
+revision using the [engine staging command](../../../engine/README.md#stage-an-engine-release).
+Milestone QA pins its checks to the final published main commit
+([milestone QA](milestone-qa.md)). Keep validation evidence and release files in scratch.
 
-```sh
-# Load the ignored local path configuration first.
-set -a
-. ./.agents.local.env
-set +a
-export TMPDIR="$NUCLEUS_SCRATCH_ROOT"
-export TMP="$TMPDIR" TEMP="$TMPDIR"
-effigy check
-effigy qa:docs
-# Use a new output directory under the configured scratch parent.
-effigy release:prepare -- "$TMPDIR/nucleus-0.1.0" HEAD
-effigy proof:installed-daemon -- --release-directory "$TMPDIR/nucleus-0.1.0"
-```
-
-Use the run's recorded scratch root when working in a managed task. The commit
-argument must resolve to checkout HEAD (it defaults to HEAD). Preparation refuses
-dirty sources, an existing output directory and hosts other than macOS arm64.
-It builds `package/`, archives it with `tar --format=ustar` as
-`nucleus-0.1.0-darwin-arm64.tar.gz`, and writes `nucleus-darwin-arm64.json` with
-its GitHub asset URL and archive SHA-256. `release-notes.md` comes from the dated
-changelog section; `release.json` records the revision, paths, checksum and exact
-`gh release create` command. Preparation prints that command and never runs it.
-Builds record their own time and host runtime; repeatable preparation does not
-promise byte-identical archives.
-
-The release-directory proof serves the same archive and a manifest through a
-private loopback HTTPS server. Only the manifest's download URL is rewritten to
-loopback; its checksum is unchanged. A temporary certificate is trusted only by
-the installer subprocess. In a fresh scratch HOME, the proof installs via that
-manifest, checks the version and exact revision, and verifies that `nucleus
-data-home` resolves to that HOME's `~/.nucleus`. It then runs the installed-client
-and private-daemon lifecycle proof below. It never installs over the operator's
-package or connects to the live daemon or data home. Without the argument,
-`proof:installed-daemon` still builds its own local archive.
-
-Retain preparation and proof logs in scratch and link shareable receipts, revision and
-SHA-256 in the PR. After merge, prepare and prove the final main commit again:
-PR artifacts identify the worker commit and are not the final release candidate.
-Milestone QA at the final main commit is an ordinary report-only task pinned
-to that commit ([milestone QA](milestone-qa.md)); the managed launch that used
-to run it is retired.
-
-Publishing is a separate operator action. After the full-history audit is
-resolved and Tom makes the repository public, he (or the planner on his explicit
-word) runs the printed `gh release create` command for the proven main commit.
-It creates `v0.1.0` at that exact target and uploads the archive and platform
-manifest with the curated notes. Never reuse an existing published tag for a
-changed package. No preparation or proof command creates a tag, GitHub Release,
-upload or visibility change.
+Publishing remains a separate operator action. The legacy TypeScript
+`v0.1.0` archive and manifest remain attached to their original tag.
+Never reuse a published tag for a changed package.
 
 Publication route (Tom, 2026-11-10, after the history audit found no secrets but thousands of private
 project names, personal paths, evidence screenshots and 1,370 PR bodies): start clean rather than
@@ -193,16 +148,7 @@ manifest. Run `runtime/node bin/queue-cli.mjs` from
 the package; no source, tsx or dependency installation is needed. This build does
 not install, publish, register or activate anything.
 The generated plugin entry wrappers load their bundles from `server/` and `client/`,
-as required by Paseo’s directory compiler. `effigy proof:installed-daemon` builds
-and installs into a fresh scratch home, disables dictation, and checks the real
-private daemon and service lifecycle. It advances a private repository’s main
-branch to a new commit and proves the daemon plugin builds and rolls it, with
-a working packaged Node and a snapshot after activation. Its reload command
-addresses only the private daemon. It also renders the installed main, settings
-and workspace surfaces in dark theme using real React and React Query with
-stubbed host/native modules. This catches missing QueryClient context and
-first-render failures; it does not prove native layout, interactions, populated
-board states or real host RPC behavior.
+as required by Paseo’s directory compiler.
 
 `build.json` records the exact source revision, input digest, build ID, platform,
 Node version, bundled and external system libraries, size and build time. Builds refuse dirty checkouts or a checkout

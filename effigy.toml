@@ -24,8 +24,6 @@ alias = "nucleus"
 health = [{ task = "qa:docs:agent-defaults" }]
 setup = "npm ci"
 "build:runtime" = "node scripts/build-runtime.mjs {args}"
-"release:prepare" = "npm run release:prepare -- {args}"
-"proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
