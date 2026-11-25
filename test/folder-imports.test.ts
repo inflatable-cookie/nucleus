@@ -48,12 +48,6 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       null,
     ],
     [
-      "bin/nucleus.mjs",
-      "service/transport/index.mjs",
-      "../service/transport/index.mjs",
-      null,
-    ],
-    [
       "core/review/report.ts",
       "service/main.ts",
       "../../service/main",

@@ -19,7 +19,6 @@ import { completionSchema, submissionSchema } from "../shared/contracts";
 import { createHash } from "node:crypto";
 import { startCallbacks } from "../service/callbacks/callback";
 import type { Adapter } from "../core/host";
-import { runPromptContext } from "../core/dispatch/prompt-text/prompt-context";
 
 test("callback socket keeps every refusal status and picks it from the refusal itself", async () => {
   // The socket is the boundary and the statuses are the ones it already answered:
@@ -182,7 +181,7 @@ test("shared callback transport rejects malformed responses and timeouts without
   }
 });
 
-test("generated CLI helper remains standalone and preserves callback identity and credentials", async () => {
+test("generated report helper remains standalone and preserves callback identity and credentials", async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ns-helper-"))),
     socketPath = join(dir, "s");
   const requests: {
@@ -217,20 +216,9 @@ test("generated CLI helper remains standalone and preserves callback identity an
     new Promise<string>((resolve, reject) => {
       const child = spawn(
         process.execPath,
-        [
-          new URL("../bin/nucleus.mjs", import.meta.url).pathname,
-          "helper",
-          "report",
-        ],
+        [helper, ticket],
         {
           stdio: ["pipe", "pipe", "pipe"],
-          env: {
-            ...process.env,
-            NUCLEUS_HELPER: helper,
-            NUCLEUS_TICKET: ticket,
-            NUCLEUS_CONTINUATION_TICKET: "",
-            NUCLEUS_CONTINUATION_RUN_ID: "",
-          },
         },
       );
       let output = "",
@@ -1260,74 +1248,6 @@ test("a BB run ticket reports over loopback to the BB backend, never the sandbox
     assert.equal(received[0]!.body.token, "bb-secret");
     assert.equal(received[0]!.body.payload.status, "blocked");
     assert.match(received[0]!.body.payload.eventId, /^[a-f0-9]{64}$/);
-    // A retained reviewer gets a new run and prompt after the plugin replaces its
-    // helper. Its shell can still carry the old run's ticket and run id.
-    const oldTicket = join(dir, "old-ticket.json");
-    writeFileSync(
-      oldTicket,
-      JSON.stringify({
-        socketPath: join(dir, "absent.sock"),
-        taskId: "task-bb",
-        runId: "old-run",
-        host: "bb:0123456789abcdef0123456789abcdef",
-        token: "old-secret",
-      }),
-    );
-    writeFileSync(helper, `${workerHelper}\n// replacement plugin build\n`);
-    const prompt = runPromptContext(
-      {
-        id: "task-bb",
-        hostId: "bb:0123456789abcdef0123456789abcdef",
-        title: "Review",
-        repoPath: "/synthetic",
-        resolution: {},
-      } as any,
-      {
-        id: "run-bb",
-        role: "reviewer",
-        generation: 1,
-        head: "a".repeat(40),
-      } as any,
-      helper,
-      ticket,
-      false,
-    );
-    const command = prompt.callback
-      .split("\n")
-      .find((line) => line.startsWith("NUCLEUS_CONTINUATION_RUN_ID="))!
-      .split(" <<")[0]!
-      .replace(
-        "nucleus helper report",
-        `"${process.execPath}" "${join(process.cwd(), "bin/nucleus.mjs")}" helper report`,
-      );
-    const rolled = await new Promise<{ code: number | null; err: string }>(
-      (resolve, reject) => {
-        const child = spawn("/bin/sh", ["-c", command], {
-          stdio: ["pipe", "ignore", "pipe"],
-          env: {
-            ...process.env,
-            PATH: `${join(process.cwd(), "bin")}:${process.env.PATH}`,
-            BB_SERVER_URL: base,
-            NUCLEUS_HELPER: helper,
-            NUCLEUS_TICKET: oldTicket,
-            NUCLEUS_CONTINUATION_TICKET: oldTicket,
-            NUCLEUS_CONTINUATION_RUN_ID: "old-run",
-          },
-        });
-        let err = "";
-        child.stderr.on("data", (chunk) => {
-          err += chunk;
-        });
-        child.on("error", reject);
-        child.on("close", (code) => resolve({ code, err }));
-        child.stdin.end(
-          JSON.stringify({ status: "blocked", summary: "Retained reviewer" }),
-        );
-      },
-    );
-    assert.equal(rolled.code, 0, rolled.err);
-    assert.equal(received[1]!.body.runId, "run-bb");
-    assert.equal(received[1]!.body.token, "bb-secret");
     // The backend's refusal is the helper's refusal: same body, non-zero exit.
     server.removeAllListeners("request");
     server.on("request", (_request, response) => {

@@ -247,34 +247,6 @@ test('the inventory names every path under a data home, with one owner each', ()
   for (const path of ['worker-report.mjs', 'oversize-response.json']) assert.equal(kind(path), 'derived', `${path} is derived`);
 });
 
-test('the CLI prints the resolution and the inventory', t => {
-  const { home } = fixture(t);
-  store(currentOf(home));
-  const env = { ...process.env, HOME: home, [DATA_HOME_ENV]: '' };
-  const printed = spawnSync(process.execPath, ['bin/nucleus.mjs', 'data-home'], { env, encoding: 'utf8', cwd: resolve(import.meta.dirname, '..') });
-  assert.equal(printed.status, 0, printed.stderr);
-  const resolution = JSON.parse(printed.stdout);
-  assert.equal(resolution.root, currentOf(home));
-  assert.equal(resolution.source, 'store');
-  assert.equal(resolution.entry, undefined);
-  assert.equal(resolution.legacy, undefined);
-  assert.equal(resolution.stores, undefined);
-  assert.deepEqual(resolution.entries.map((entry: { path: string }) => entry.path), DATA_HOME_ENTRIES.map(entry => entry.path));
-});
-
-test('the CLI names an occupied unrelated ~/.nucleus instead of adopting it', t => {
-  const { home } = fixture(t);
-  const current = currentOf(home);
-  mkdirSync(join(current, 'config'), { recursive: true });
-  writeFileSync(join(current, 'config', 'ui.json'), '{}');
-  const env = { ...process.env, HOME: home, [DATA_HOME_ENV]: '' };
-  const refused = spawnSync(process.execPath, ['bin/nucleus.mjs', 'data-home'], { env, encoding: 'utf8', cwd: resolve(import.meta.dirname, '..') });
-  assert.equal(refused.status, 1);
-  assert.equal(refused.stdout.trim(), '');
-  assert.match(refused.stderr, /exists and is not a Nucleus store/);
-  assert.match(refused.stderr, new RegExp(DATA_HOME_ENV));
-});
-
 test('resolution for process.env is computed once', t => {
   const { home } = fixture(t);
   const current = store(currentOf(home));
