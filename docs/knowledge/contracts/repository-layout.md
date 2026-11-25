@@ -200,8 +200,7 @@ actions stay outside shared. Pure review text lives in
 `shared/review-text.ts`.
 
 The archived Paseo code under `hosts/paseo/` keeps its adapter and client code
-in separate directories. The remaining TypeScript service code contains callbacks,
-executor and standby helpers. Formal-review HTTP lives in the forge client under
+in separate directories. The remaining TypeScript service code contains callbacks and validation helpers. Formal-review HTTP lives in the forge client under
 `core/forge/`.
 
 `core/workspaces/` owns workspace allocation, continuation, retirement, checkout
