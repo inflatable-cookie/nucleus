@@ -38,9 +38,16 @@ intent. Dispatch, scope changes and outward actions require their own authority.
 
   For review entry, add `--review PR_URL HEAD` with the named PR and exact full
   head. Choose the repository explicitly when the project or brief needs it.
-  For milestone QA, set `queue.reportOnly: true`, attach the delivery lane and
-  name it with `queue.reportLane`. Admit it with `--planning-commit HEAD`. Keep
-  the record and runner log keys with that lane.
+  For milestone QA, add these fields under `queue` alongside `complexity`.
+
+  ```yaml
+  lanes: [qa]
+  reportOnly: true
+  reportLane: qa
+  ```
+
+  Use your delivery lane in both places. Pin the published commit with
+  `task.add --planning-commit HEAD` and keep the record and log keys in that lane.
 - Use `tasks`, `task REF` and `history REF` for reads. Start task decisions with
   `next REF`, using the public reference from the board, such as `'repo#42'`.
   Follow its wait and command preflight. With the version from `next`, use

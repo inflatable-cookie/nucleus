@@ -109,9 +109,14 @@ product or test regression at that SHA, naming the SHA, the slice and the log.
 ## Report
 
 Report `report_ready` with `artifact: {key, version, digest}` for the lane
-document version holding the record. The planner accepts it with `complete`, or
-returns it with `move to=work` and an instruction. A report-only task starts no
-reviewer and no blocker escalation. On the Rust engine, task detail shows the
+document version holding the record. The planner accepts it with `complete`.
+To request more work, pass the task reference, the phase `work` and an instruction.
+
+```sh
+nucleus move 'repo#42' work --instruction 'Rerun the incomplete slice and update the lane record.'
+```
+
+A report-only task starts no reviewer and no blocker escalation. On the Rust engine, task detail shows the
 delivered artifact and offers Complete and Return to work. Completion takes
 the exact delivered version even if the lane has since advanced. The engine
 archives the workspace after custody and Git publication checks pass.
