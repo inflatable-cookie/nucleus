@@ -41,6 +41,19 @@ pub enum Answer {
     Accept { head: Head, reason: String },
 }
 
+impl Question {
+    /// The CLI answer accepted for this question, following the task reference.
+    #[must_use]
+    pub const fn answer_form(&self) -> &'static str {
+        match self {
+            Self::Work { .. } | Self::Repair(_) => "work TEXT",
+            Self::Retry { .. } => "retry",
+            Self::Allowance { .. } => "extend",
+            Self::Accept { .. } => "accept HEAD REASON",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandError {
     HeadUnverified,
@@ -48,6 +61,8 @@ pub enum CommandError {
     MergeAuthorityRequired,
     MergedHeadRequired,
     AnswerDoesNotMatch,
+    ExpectedAnswer(&'static str),
+    AcceptanceReasonRequired,
     OperatorRequired,
     BriefVersionsExhausted,
     LaunchSequenceExhausted,
@@ -69,6 +84,13 @@ impl fmt::Display for CommandError {
             Self::MergeAuthorityRequired => "the current PR head needs approval or acceptance",
             Self::MergedHeadRequired => "the current PR head needs a confirmed merge",
             Self::AnswerDoesNotMatch => "the answer does not match the current question",
+            Self::ExpectedAnswer(form) => {
+                return write!(
+                    formatter,
+                    "the answer does not match the current question. Use nucleus answer REF {form}"
+                );
+            }
+            Self::AcceptanceReasonRequired => "accept requires a nonblank reason",
             Self::OperatorRequired => "the operator must accept the head of a review entry",
             Self::BriefVersionsExhausted => "the brief version cannot be incremented",
             Self::LaunchSequenceExhausted => "the launch sequence cannot be incremented",
@@ -874,6 +896,9 @@ impl Task {
                 ) {
                     return Err(CommandError::MergedHeadRequired);
                 }
+                if reason.trim().is_empty() {
+                    return Err(CommandError::AcceptanceReasonRequired);
+                }
                 self.verdict = Some(Verdict::Accepted {
                     head,
                     acceptance: Acceptance {
@@ -882,7 +907,11 @@ impl Task {
                     },
                 });
             }
-            _ => return Err(CommandError::AnswerDoesNotMatch),
+            _ => {
+                return Err(CommandError::ExpectedAnswer(
+                    question.question.answer_form(),
+                ));
+            }
         }
         self.question = None;
         Ok(())

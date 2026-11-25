@@ -70,7 +70,12 @@ impl Service {
         let mut updated = current.task.clone();
         let command = Command::Answer(Answer::Accept {
             head: head.clone(),
-            reason,
+            // Decline uses the same exact-head preflight and discards the prospective acceptance.
+            reason: if declined {
+                "Check the declined head".into()
+            } else {
+                reason
+            },
         });
         let authority = Authority::Operator { actor };
         if !matches!(
