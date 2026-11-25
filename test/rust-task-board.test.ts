@@ -646,6 +646,18 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let decisionQuestion = "Which route should we take?";
   let itemBody = "Fixture body";
   let reconnectGate: Promise<void> | undefined;
+  let answeredOption: string | null = null;
+  const decision = () => ({
+    id: "fixture-decision", projectId: "fixture", author: "Fixture planner",
+    question: decisionQuestion, createdAtMs: now,
+    options: [
+      { id: "first", label: "Same label" }, { id: "second", label: " Same label " },
+      { id: "third", label: "Third" }, { id: "fourth", label: "Fourth" },
+    ],
+    answer: answeredOption === null ? null : {
+      optionId: answeredOption, note: null, author: "Fixture operator", answeredAtMs: now,
+    },
+  });
   let projectArchived = false;
   let projectRemoved = false;
   let removalWrites = 0;
@@ -868,11 +880,14 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       { ...leadItem("second-cut", secondCut, boundRepository), kind: "papercut" },
     ]);
     if (path === "/api/engine/planning/fixture/decisions")
-      return Response.json(decisionOpen ? [{
-        id: "fixture-decision", projectId: "fixture", author: "Fixture planner",
-        question: decisionQuestion, createdAtMs: now,
-        options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }], answer: null,
-      }] : []);
+      return Response.json(decisionOpen ? [decision()] : []);
+    if (path === "/api/engine/planning/fixture/decisions/fixture-decision/answer") {
+      assert.equal(init?.method, "POST");
+      const answer = JSON.parse(String(init.body)) as { optionId: string; note: string | null };
+      assert.deepEqual(answer, { optionId: "second", note: null });
+      answeredOption = answer.optionId;
+      return Response.json(decision());
+    }
     assert.fail("Unexpected standalone route " + path);
   };
   const systemTheme = Object.assign(new dom.window.EventTarget(), { matches: true });
@@ -1323,6 +1338,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const afterRecovery = count(decisionRoute);
   await advanceRecordClock();
   assert.equal(count(decisionRoute) - afterRecovery, 0, "reconnection stops the fallback interval");
+  await click("Use option: Same label (first)");
+  assert.equal(answeredOption, null, "selecting a choice waits for confirmation");
+  await click("Use option: Same label (second)");
+  assert.ok(selector("Use option: Third") && selector("Use option: Fourth"));
+  await click("Answer");
+  await eventually(() => answeredOption === "second", "the board posts the second duplicate's ID");
   await click("Working, 1");
   decisionOpen = false;
   emit("decisions");

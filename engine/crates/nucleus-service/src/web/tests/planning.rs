@@ -272,13 +272,28 @@ async fn planning_decision_history_identifies_authenticated_actors() {
         ],
     );
     let decisions = format!("{PROJECT}/decisions");
+    let duplicate = post_as(
+        &api,
+        &decisions,
+        &PLANNER_KEY,
+        &json!({
+            "question":"Ship?", "options":[{"id":"yes","label":"Ship"},{"id":"no","label":" Ship "}]
+        }),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(duplicate).await["error"],
+        "decision option labels must be distinct"
+    );
     let added = post_as(
         &api,
         &decisions,
         &PLANNER_KEY,
         &json!({
             "question":"Ship?",
-            "options":[{"id":"yes","label":"Ship"},{"id":"no","label":"Hold"}],
+            "options":[{"id":"yes","label":"Ship"},{"id":"no","label":"Hold"},
+                {"id":"revise","label":"Revise"},{"id":"wait","label":"Wait"}],
             "author":"spoofed"
         }),
     )
@@ -286,6 +301,7 @@ async fn planning_decision_history_identifies_authenticated_actors() {
     assert_eq!(added.status(), StatusCode::CREATED);
     let decision = json_body(added).await;
     assert_eq!(decision["author"], "planner");
+    assert_eq!(decision["options"].as_array().unwrap().len(), 4);
     let id = decision["id"].as_str().expect("decision ID");
     let answer = format!("{decisions}/{id}/answer");
     assert_eq!(

@@ -144,6 +144,63 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
 }
 
 #[test]
+fn legacy_duplicate_decision_labels_remain_answerable_by_id() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let storage = fixture_storage(scratch.path());
+    let mut store = Store::open(&storage).expect("store");
+    let input = DecisionInput {
+        question: "Choose a route".into(),
+        options: [
+            ("first", "Same"),
+            ("second", " Same "),
+            ("third", "Third"),
+            ("fourth", "Fourth"),
+        ]
+        .into_iter()
+        .map(|(id, label)| DecisionOption {
+            id: id.into(),
+            label: label.into(),
+        })
+        .collect(),
+    };
+    assert!(matches!(
+        store.add_decision("project", "new".into(), input.clone(), STAMP),
+        Err(StoreError::DuplicateDecisionOptionLabel)
+    ));
+    assert!(store.decisions("project", false).unwrap().is_empty());
+    drop(store);
+    let snapshot = nucleus_store::planning::Decision {
+        id: "legacy".into(),
+        project_id: "project".into(),
+        input: input.clone(),
+        author: "planner".into(),
+        created_at_ms: 10,
+        answer: None,
+        task: None,
+        withdrawn: false,
+    };
+    let db = Connection::open(storage.database().path().join("engine.sqlite"))
+        .expect("fixture database");
+    db.execute(
+        "INSERT INTO planning_decisions (project, id, snapshot) VALUES ('project', 'legacy', ?1)",
+        [serde_json::to_string(&snapshot).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+    let mut store = Store::open(&storage).expect("reopen legacy row");
+    assert_eq!(store.decisions("project", true).unwrap(), [snapshot]);
+    let answer = DecisionAnswerInput {
+        option_id: "second".into(),
+        note: None,
+    };
+    let result = store
+        .answer_decision("project", "legacy", answer.clone(), STAMP)
+        .unwrap();
+    assert_eq!(result.input, input);
+    assert_eq!(result.answer.unwrap().input, answer);
+}
+
+#[test]
 fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
     let scratch = tempfile::tempdir().expect("scratch");
     let storage = fixture_storage(scratch.path());
