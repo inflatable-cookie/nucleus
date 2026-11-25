@@ -238,7 +238,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
   async function snapshot(): Promise<api.UiBoard> {
     const [all, caller] = await Promise.all([settings(), session()]);
     const dispatch = all.dispatch.value;
-    const profiles = all.profiles.value.profiles.map(boardProfile);
+    const effectiveProfileGroups = all.profiles.effectiveGroups;
+    const profiles = all.profiles.value.profiles.map((entry) =>
+      boardProfile(entry, effectiveProfileGroups),
+    );
     const rows = projectRows(all).filter(({ id }) =>
       caller.planningProjects === null || caller.planningProjects.includes(id),
     );
@@ -275,6 +278,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       tasks: [],
       profiles: profiles.map((entry) => entry.view),
       pool: profiles.map((entry) => entry.pool),
+      effectiveProfileGroups,
       availability: boardSubscriptionAvailability(
         all.profiles.value.pausedGroups ?? [],
         {},

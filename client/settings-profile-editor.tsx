@@ -229,7 +229,7 @@ export function ProfileRow({
   busy: boolean;
   canEdit?: boolean;
   editing: boolean;
-  poolSave: (entry: PoolEntry) => Promise<void>;
+  poolSave: (entry: PoolEntry, groupChanged?: boolean) => Promise<void>;
   actionStatus: string;
   onEdit: () => void;
   onCreated: (profile: NucleusProfile) => void;
@@ -244,12 +244,17 @@ export function ProfileRow({
     [saveStatus, setSaveStatus] = useState("");
   const mounted = useRef(true),
     saveRef = useRef(poolSave),
-    entryRef = useRef(entry);
+    entryRef = useRef(entry),
+    savedGroup = useRef(original?.group);
   saveRef.current = poolSave;
   const saver = useRef<AutoSave<PoolEntry> | null>(null);
   if (!saver.current)
     saver.current = createAutoSave(
-      (value) => saveRef.current(value),
+      async (value) => {
+        const group = value.group.trim();
+        await saveRef.current(value, group !== savedGroup.current);
+        savedGroup.current = group;
+      },
       (status) => {
         if (mounted.current)
           setSaveStatus(
@@ -266,6 +271,7 @@ export function ProfileRow({
     ) {
       setEntry(original);
       entryRef.current = original;
+      savedGroup.current = original?.group;
     }
   }, [originalJson]);
   useEffect(() => {

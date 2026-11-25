@@ -382,14 +382,17 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                   : []
               }
               busy={busy}
-              savePool={async (entry) => {
+              savePool={async (entry, groupChanged) => {
                 try {
                   const expected = api.poolSchema.parse({
                     ...entry,
                     group: entry.group.trim(),
                   });
-                  const saved = await setProfile(expected);
-                  if (replaceEqualDeep(expected, saved.entry) !== expected)
+                  const saved = await setProfile(rust ? { ...expected, groupChanged } : expected);
+                  const confirmed = rust && groupChanged === false && saved.entry
+                    ? { ...saved.entry, group: expected.group }
+                    : saved.entry;
+                  if (replaceEqualDeep(expected, confirmed) !== expected)
                     throw new Error("The service could not confirm the profile settings it stored.");
                   setProfileSaveError((current) =>
                     current?.profileId === entry.profileId ? null : current,

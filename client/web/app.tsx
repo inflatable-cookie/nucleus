@@ -133,6 +133,7 @@ export function WebApp() {
         }),
         themeChanged: () => setThemeRevision((value) => value + 1),
         catalogChanged: () => {
+          invalidateBoard({ queryKey: ["nucleus", "state"] });
           invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
           invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
         },

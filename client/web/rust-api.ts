@@ -98,7 +98,9 @@ function snapshot<T>(value: z.ZodType<T>) {
   return z.object({ value, revision: z.string(), configured: z.boolean() });
 }
 
-export const profilesSnapshot = snapshot(profiles);
+export const profilesSnapshot = snapshot(profiles).extend({
+  effectiveGroups: z.record(z.string(), z.string()),
+});
 export const dispatchSnapshot = snapshot(dispatch);
 export const projectsView = z.object({
   settings: snapshot(projects),

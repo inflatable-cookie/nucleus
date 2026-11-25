@@ -99,7 +99,7 @@ export function ProfilesPanel({
   usageError?: unknown;
   repositories: RepositorySettings[];
   busy: boolean;
-  savePool: (entry: PoolEntry) => Promise<void>;
+  savePool: (entry: PoolEntry, groupChanged?: boolean) => Promise<void>;
   savePoolList: (entries: PoolEntry[]) => Promise<boolean>;
   saveAvailability: (
     value: UiQueueState["availability"][number],
@@ -335,7 +335,9 @@ export function ProfilesPanel({
     ? stalePoolEntries(state.pool, state.connected ? state.profiles : [])
     : [];
   const groups = state
-    ? [...new Set(state.pool.map((entry) => entry.group))]
+    ? [...new Set(state.effectiveProfileGroups
+      ? Object.values(state.effectiveProfileGroups)
+      : state.pool.map((entry) => entry.group))]
     : [];
   return (
     <ScrollView

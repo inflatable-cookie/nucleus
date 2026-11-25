@@ -301,7 +301,7 @@ pub(super) async fn all(State(api): State<Api>) -> Result<Json<Value>, ApiError>
     .await
     .map_err(|_| ServiceError::Input)??;
     Ok(Json(json!({
-        "profiles": profiles,
+        "profiles": profiles_view(&service, &profiles),
         "dispatch": dispatch,
         "projects": project_view(&service, projects).await,
         "hosts": host_view(&service, hosts).await,
@@ -316,7 +316,7 @@ pub(super) async fn get(
     let service = api.service;
     let file = &service.settings;
     let view = match domain {
-        Domain::Profiles => json!(read::<Profiles>(file).await?),
+        Domain::Profiles => profiles_view(&service, &read(file).await?),
         Domain::Dispatch => json!(read::<DispatchSettings>(file).await?),
         Domain::Projects => project_view(&service, read(file).await?).await,
         Domain::Hosts => host_view(&service, read(file).await?).await,
@@ -344,6 +344,12 @@ async fn read<S: SettingsValue + Send + 'static>(
     Ok(task::spawn_blocking(move || file.read())
         .await
         .map_err(|_| ServiceError::Input)??)
+}
+
+fn profiles_view(service: &Service, settings: &SettingsSnapshot<Profiles>) -> Value {
+    let mut view = json!(settings);
+    view["effectiveGroups"] = json!(service.effective_profile_groups(&settings.value));
+    view
 }
 
 async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -> Value {
@@ -840,7 +846,7 @@ async fn save_profiles(
                 state.settings.profiles = Some(Arc::new(saved.value.clone()));
                 service.wake_settings_capacity(&mut state);
             }
-            Ok(json!(saved))
+            Ok(profiles_view(service, &saved))
         }
         Err(error) => {
             if error.may_have_published() {

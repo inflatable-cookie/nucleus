@@ -10,7 +10,7 @@ import {
 } from "../client/engine-features";
 import { waitFor, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from "./support/budgets";
 import * as api from "../shared/contracts";
-import { createRustApi } from "../client/web/rust-api";
+import { createRustApi, namedProfile } from "../client/web/rust-api";
 import {
   createRustAdapter,
   projectKeys,
@@ -53,6 +53,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     }],
     pausedGroups: [],
   };
+  let offeredGroups: Record<string, string> = {};
   let projects = { projects: {
     Orbit_Main: { name: "Orbit", archived: false, repositories: [
       { origin: "example/orbit", path: "/work/orbit", base: "main", requiredChecks: ["ci"], hungToolMinutes: 30, hostProjectTitle: "Orbit" },
@@ -73,7 +74,17 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
   const snap = (value: unknown, domain: string) => ({ value, revision: String(revisions[domain] ?? 1), configured: true });
   const views: Record<string, () => unknown> = {
     dispatch: () => snap(dispatch, "dispatch"),
-    profiles: () => snap(profiles, "profiles"),
+    profiles: () => {
+      const groups = new Map(Object.entries(offeredGroups));
+      if (Array.isArray(profiles.profiles)) {
+        for (const entry of profiles.profiles) {
+          const profile = namedProfile.parse(entry);
+          const configured = profile.group ?? profile.providerInstanceId;
+          if (configured) groups.set(profile.selection.id, configured);
+        }
+      }
+      return { ...snap(profiles, "profiles"), effectiveGroups: Object.fromEntries(groups) };
+    },
     projects: () => ({ settings: snap(projects, "projects"), resolvedPlanners: { Orbit_Main: "thread-1" } }),
     hosts: () => ({ settings: snap({ t3: { endpoint: "http://127.0.0.1:3773/", credentialRef: "T3" } }, "hosts"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
     storage: () => ({
@@ -189,6 +200,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     setProfiles: (next: unknown, pausedGroups: string[]) => { profiles = { profiles: next, pausedGroups }; },
     mode: () => dispatch.mode,
     setCatalog: (next: RustCachedCatalog) => { catalog = next; },
+    setOfferedGroups: (next: Record<string, string>) => { offeredGroups = next; },
     setUsage: (next: RustProfileUsage) => { usage = next; },
   };
 }
@@ -518,15 +530,16 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
     { name: "Worker", group: "team", selection: {
       id: "w", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default",
     } },
-    { name: "Reserve", enabled: false, group: "reserve", selection: {
-      id: "r", provider: "codex", model: "m", effort: null, capability: "worker", weight: "default",
+    { name: "Reserve", enabled: false, selection: {
+      id: "r", provider: "codex", model: "team-only", effort: null, capability: "worker", weight: "default",
     } },
   ], ["team"]);
+  fake.setOfferedGroups({ r: "codex-team" });
   const worker = { counts: { w: 50 }, groups: { team: 50 }, sample: 50 };
   fake.setUsage({
     recent: worker, worker, reviewer: { counts: {}, groups: {}, sample: 0 },
     totals: { w: 50 }, groupTotals: { team: 50 },
-    limitedGroups: { reserve: Date.now() + 3_600_000 },
+    limitedGroups: { "codex-team": Date.now() + 3_600_000 },
   });
   useNativeStubs();
   const { ProfilesPanel } = await import("../client/settings-profiles");
@@ -540,11 +553,15 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
     const board = await adapter.rpc(api.uiSnapshot, {});
     assert.ok(!("unchanged" in board));
     const usage = await adapter.rpc(rustProfileUsage, {});
-    const state = { ...board, ...usage, availability: [...board.availability, ...usage.availability] };
+    const state = { ...board, ...usage, availability: [
+      ...board.availability,
+      ...usage.availability.filter(({ group }) => !board.availability.some((row) => row.group === group)),
+    ] };
     assert.equal(state.canEditSettings, canEditSettings);
     assert.deepEqual(state.pool.map(({ enabled }) => enabled), [true, false]);
+    assert.deepEqual(state.pool.map(({ group }) => group), ["team", "codex-team"]);
     assert.deepEqual(state.availability.map(({ group, unavailable }) => [group, unavailable]),
-      [["team", true], ["reserve", true]]);
+      canEditSettings ? [["team", true], ["codex-team", true]] : [["codex-team", true], ["team", true]]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const h = React.createElement;
     const ui = mount(h(QueryClientProvider, { client, children: h(PluginRpcProvider, {
@@ -561,14 +578,31 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
       children: h(ProfilesPanel, {
         c: new Proxy({}, { get: () => "#123" }) as never,
         compact: false, inset: 0, state, repositories: [], busy: false,
-        savePool: async () => {}, savePoolList: async () => true, saveAvailability: async () => {},
+        savePool: async () => {}, savePoolList: async () => true,
+        saveAvailability: async (input) => { await adapter.rpc(api.availabilityControl, input); },
       }),
     }) }) }));
     t.after(() => { ui.update(h(React.Fragment)); client.clear(); });
     assert.ok(ui.query("Worker, all roles: 50 of 50 recent assignments"));
     assert.ok(ui.query("Reserve, all roles: 0 of 50 recent assignments"));
     assert.doesNotMatch(ui.text(), /Reading subscriptions/);
-    assert.match(ui.text(), /Unavailable until/);
+    if (canEditSettings) {
+      assert.match(ui.text(), /Unavailable until/);
+      assert.equal(ui.query("Pause codex"), undefined);
+      ui.press("Edit codex-team");
+      ui.press("Mark codex-team unavailable");
+      await waitFor(() => fake.writes.some(({ domain }) => domain === "profiles"));
+      const saved = await adapter.rust.storedProfiles();
+      assert.deepEqual(saved.value.pausedGroups, ["codex-team", "team"]);
+      const reserve = board.pool.find(({ profileId }) => profileId === "r");
+      assert.ok(reserve);
+      fake.setOfferedGroups({ r: "codex-other" });
+      const updated = await adapter.rpc(api.configureProfile, { ...reserve, weight: "more", groupChanged: false });
+      assert.equal(updated.entry?.group, "codex-other");
+      const edited = await adapter.rust.storedProfiles();
+      assert.equal(edited.value.profiles.find(({ selection }) => selection.id === "r")?.group, undefined);
+      fake.setOfferedGroups({ r: "codex-team" });
+    }
     assert.equal(Boolean(ui.query("Edit Worker")), canEditSettings);
     assert.equal(ui.get(canEditSettings ? "Disable Worker" : "Worker: On").props.disabled, !canEditSettings);
     assert.equal(ui.get(canEditSettings ? "Enable Reserve" : "Reserve: Off").props.disabled, !canEditSettings);
