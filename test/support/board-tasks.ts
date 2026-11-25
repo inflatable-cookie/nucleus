@@ -1,5 +1,5 @@
 import { telemetryStageForTask } from "../../shared/telemetry";
-import { detail, taskDetailView, taskNextSchema, taskSchema, type TaskDetail, type TaskNext, type Task } from "../../shared/contracts";
+import { detail, taskDetailView, taskNextSchema, taskSchema, type TaskDetail, type TaskNext, type Task, type WaitStateContext } from "../../shared/contracts";
 
 /** Numbered board rows, in admission order within each test. */
 export function boardTasks() {
@@ -47,9 +47,9 @@ export function boardTasks() {
   };
 }
 
-export function boardDetailReply(task: Task) {
+export function boardDetailReply(task: Task, context?: WaitStateContext) {
   return detail.output.parse({
-    task: taskDetailView(task),
+    task: taskDetailView(task, context),
     events: [],
     runs: [],
     notices: [],
