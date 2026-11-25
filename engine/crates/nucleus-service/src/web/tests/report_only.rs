@@ -69,6 +69,44 @@ async fn board_and_worker_lane_edits_both_refresh_paired_planning() {
 }
 
 #[tokio::test]
+async fn report_only_admission_refuses_hidden_tracked_edits() {
+    let fixture = ReportFixture::new().await;
+    let repo = &fixture.service.fixture().checkout;
+    let tracked = repo.join("input");
+    std::fs::write(&tracked, "published").unwrap();
+    git(repo, &["add", "input"]);
+    crate::tests::create_fixture_commit(repo, "publish input");
+    let head: Head = git(repo, &["rev-parse", "HEAD"]).parse().unwrap();
+    *fixture.published.lock().unwrap() = Some(head.clone());
+    let route = format!("/v1/planning/{PROJECT}/tasks");
+    let request = json!({"brief":BRIEF, "planningCommit":head});
+    for (hide, show) in [
+        ("--assume-unchanged", "--no-assume-unchanged"),
+        ("--skip-worktree", "--no-skip-worktree"),
+    ] {
+        git(repo, &["update-index", hide, "input"]);
+        std::fs::write(&tracked, "local draft").unwrap();
+        assert!(git(repo, &["status", "--porcelain"]).is_empty());
+        let response = post_as(&fixture.api, &route, &BOARD_KEY, &request).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            json_body(response).await["error"]
+                .as_str()
+                .unwrap()
+                .contains("clean, published")
+        );
+        git(repo, &["update-index", show, "input"]);
+        std::fs::write(&tracked, "published").unwrap();
+    }
+    assert_eq!(
+        post_as(&fixture.api, &route, &BOARD_KEY, &request)
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
 async fn report_only_admits_an_attached_lane_and_proves_the_planning_pin() {
     let fixture = ReportFixture::new().await;
     let tasks = format!("/v1/planning/{PROJECT}/tasks");

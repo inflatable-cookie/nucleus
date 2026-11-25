@@ -268,17 +268,7 @@ impl Checkout<'_> {
             &self.path,
             &["--untracked-files=all", "--ignore-submodules=none"],
         )?;
-        // Flags that hide working-tree changes invalidate ordinary status evidence.
-        // Git uses S for skip-worktree and lowercase tags for assume-unchanged.
-        if !dirty
-            && self
-                .git_named(
-                    &self.path,
-                    &["-c", INDEX_VISIBILITY, "nucleus-index-visibility"],
-                    "git ls-files -v".into(),
-                )?
-                .is_empty()
-        {
+        if !dirty && self.index_visible(&self.path)? {
             Ok(Workspace::Clean(identity.head_oid().parse()?))
         } else {
             Ok(Workspace::Dirty)
@@ -382,7 +372,20 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns an error if Git cannot inspect the checkout.
     pub fn integration_clean(&self) -> Result<bool, WorkError> {
-        Ok(!self.status_dirty(&self.repository, &["--untracked-files=no"])?)
+        Ok(
+            !self.status_dirty(&self.repository, &["--untracked-files=no"])?
+                && self.index_visible(&self.repository)?,
+        )
+    }
+
+    fn index_visible(&self, root: &Path) -> Result<bool, WorkError> {
+        Ok(self
+            .git_named(
+                root,
+                &["-c", INDEX_VISIBILITY, "nucleus-index-visibility"],
+                "git ls-files -v".into(),
+            )?
+            .is_empty())
     }
 
     /// Prove ancestry using the registered Git object store.

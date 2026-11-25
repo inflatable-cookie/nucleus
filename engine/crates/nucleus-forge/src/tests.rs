@@ -99,7 +99,7 @@ fn pull(head: char, merged: bool) -> Value {
 
 fn checks(head: char, state: &str) -> Value {
     json!({"data": {"repository": {"pullRequest": {
-        "headRefOid": sha(head), "baseRefName": "main", "isDraft": false,
+        "headRefOid": sha(head), "baseRefName": "main", "baseRefOid": sha('b'), "isDraft": false,
         "state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
         "reviewDecision": null, "statusCheckRollup": {"state": state, "contexts": {"pageInfo": {"hasNextPage": false}, "nodes": []}},
         "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false}}
@@ -768,6 +768,27 @@ async fn merge_checks_read_the_required_context_on_the_second_page() {
 }
 
 #[tokio::test]
+async fn single_check_page_requires_the_observed_base_commit() {
+    for oid in [None, Some(sha('d'))] {
+        let mut reply = checks('a', "SUCCESS");
+        let page = reply["data"]["repository"]["pullRequest"]
+            .as_object_mut()
+            .unwrap();
+        if let Some(oid) = oid {
+            page.insert("baseRefOid".into(), json!(oid));
+        } else {
+            page.remove("baseRefOid");
+        }
+        let (forge, calls) = server(vec![Some(pull('a', false)), Some(reply)]);
+        let result = forge
+            .observe_for_merge(&branches().target(PR_URL).unwrap())
+            .await;
+        assert!(matches!(result, Err(ForgeError::Incomplete)));
+        assert_eq!(calls.join().unwrap().len(), 2);
+    }
+}
+
+#[tokio::test]
 async fn a_changed_head_base_or_repeated_cursor_cannot_clear_merge_preflight() {
     for (head, base, next) in [
         ('c', 'b', None),
@@ -864,6 +885,7 @@ async fn a_refused_put_uses_positive_same_head_rebase_evidence_from_readback() {
         let mut fresh_pull = pull(head, false);
         fresh_pull["base"]["sha"] = json!(sha(base));
         let mut fresh_checks = checks(head, "SUCCESS");
+        fresh_checks["data"]["repository"]["pullRequest"]["baseRefOid"] = json!(sha(base));
         if conflicting {
             let pr = &mut fresh_checks["data"]["repository"]["pullRequest"];
             pr["mergeable"] = json!("CONFLICTING");
