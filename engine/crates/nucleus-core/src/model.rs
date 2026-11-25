@@ -806,6 +806,15 @@ impl Task {
         }
     }
 
+    /// Open the planner notice for a newly settled revision of the artifact.
+    pub fn reopen_report_notice(&mut self) {
+        if self.phase == Phase::ReportReady
+            && let Some(report) = &mut self.report_state
+        {
+            report.notice_attempted = false;
+        }
+    }
+
     #[must_use]
     pub fn identity(&self) -> &Identity {
         &self.identity

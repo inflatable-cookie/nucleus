@@ -16,17 +16,17 @@ const T3_KEY: [u8; 32] = [8; 32];
 const TELL: &str = "/v1/planning/tell";
 
 #[derive(Default)]
-struct NoticeFixture {
-    sends: Vec<Value>,
+pub(super) struct NoticeFixture {
+    pub(super) sends: Vec<Value>,
     controls: Vec<Value>,
     started: bool,
-    next_reply: NoticeReply,
+    pub(super) next_reply: NoticeReply,
     settled: bool,
     uncertain_planner: bool,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum NoticeReply {
+pub(super) enum NoticeReply {
     #[default]
     Accepted,
     Rejected,
@@ -79,7 +79,7 @@ impl NoticeFixture {
         }
     }
 
-    fn dispatch(&mut self, request: &Value) -> Value {
+    pub(super) fn dispatch(&mut self, request: &Value) -> Value {
         let mut payload = request["payload"].clone();
         let reply = if payload["type"] == "thread.unsettle" {
             self.controls.push(payload);

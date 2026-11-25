@@ -1,3 +1,4 @@
+use nucleus_core::ReportArtifact;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::{EventDraft, Store, StoreError, append, board_state};
@@ -140,7 +141,25 @@ impl Store {
         Ok(true)
     }
 
-    /// Whether the first attempt was rejected for this release or the task's report notice.
+    /// Read the last settled artifact even after the task has returned to work.
+    /// # Errors
+    /// Returns an error if the recorded artifact cannot be read.
+    pub fn last_report_artifact(&self, id: &str) -> Result<Option<ReportArtifact>, StoreError> {
+        let artifact = self
+            .connection
+            .query_row(
+                "SELECT detail -> '$.artifact' FROM events
+                 WHERE task_id = ?1 AND kind IN ('report_ready', 'report_returned_to_work')
+                 AND json_type(CASE WHEN json_valid(detail) THEN detail END, '$.artifact') = 'object'
+                 ORDER BY sequence DESC LIMIT 1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(artifact.as_deref().map(serde_json::from_str).transpose()?)
+    }
+
+    /// Whether the first attempt was rejected for the release or the exact report artifact.
     /// # Errors
     /// Returns an error if the recorded rejection cannot be read.
     pub fn planner_notice_rejected(
@@ -148,10 +167,22 @@ impl Store {
         id: &str,
         release_version: Option<i64>,
     ) -> Result<bool, StoreError> {
+        // The first publication also scopes rejections recorded before revisions
+        // had separate retry allowances. A repeated report keeps that boundary.
         Ok(self.connection.query_row(
             "SELECT EXISTS (
                 SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'planner_notice_rejected'
                 AND detail ->> '$.releaseVersion' IS ?2
+                AND sequence > coalesce((
+                    SELECT min(ready.sequence) FROM events ready
+                    JOIN tasks task ON task.id = ready.task_id
+                    WHERE ready.task_id = ?1 AND ready.kind = 'report_ready' AND ?2 IS NULL
+                    AND CASE WHEN json_valid(ready.detail) THEN
+                        ready.detail ->> '$.artifact.key' = task.report_task ->> '$.delivery.artifact.key'
+                        AND ready.detail -> '$.artifact.version' = task.report_task -> '$.delivery.artifact.version'
+                        AND ready.detail ->> '$.artifact.digest' = task.report_task ->> '$.delivery.artifact.digest'
+                    END
+                ), 0)
             )",
             params![id, release_version],
             |row| row.get(0),
