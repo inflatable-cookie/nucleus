@@ -1,1 +1,1 @@
-Retire the cutover commands for projects, planning items, profiles and task number seeds. The Rust service uses the state already stored in the engine profile.
+Remove the one-time TypeScript importers for projects, planning items, profiles and task numbers. The Rust engine reads the records and counters already saved in its profile.
