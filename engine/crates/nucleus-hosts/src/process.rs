@@ -868,25 +868,45 @@ root 20 1 19 5% /
         assert!(mount_points(&undecodable).is_none());
     }
 
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn internal_directory_witness_sees_one_selector_for_apfs_aliases() {
-        let users = Path::new("/Users");
-        let temporary = tempfile::tempdir().expect("scratch");
-        let witness = Witness::open(users).expect("internal directory witness");
-        let mounts = scoped_mounts(&[witness], temporary.path())
-            .await
-            .expect("internal mount");
-        let device = identity(stat(users).expect("directory facts")).0;
-        assert_eq!(
-            mounts.get(&device).map(PathBuf::as_path),
-            Some(Path::new("/System/Volumes/Data"))
-        );
-        let scan = scoped_activity(users, None, temporary.path()).await;
-        assert!(
-            scan.is_ok(),
-            "the real census should verify its internal directory witness"
-        );
+    #[test]
+    fn directory_witnesses_on_mount_aliases_use_one_selector() {
+        let volume = tempfile::tempdir().expect("scratch volume");
+        let data = volume.path().join("Data");
+        let alias = volume.path().join("logical");
+        std::fs::create_dir_all(data.join("Users")).expect("data directory");
+        std::os::unix::fs::symlink(&data, &alias).expect("mount alias");
+        let logical = alias.join("Users");
+        let physical = data.join("Users");
+        let witnesses = [
+            Witness::open(&logical).expect("logical witness"),
+            Witness::open(&physical).expect("physical witness"),
+        ];
+        let mounts = Listing {
+            exit: Some(0),
+            output: format!(
+                "Filesystem 512-blocks Used Available Capacity Mounted on\nvolume 20 1 19 5% {}\nvolume 20 1 19 5% {}\n",
+                data.display(), alias.display()
+            ).into_bytes(),
+            pid: 0,
+        };
+        let selected = select_mounts(&mounts, &mounts, &witnesses).expect("same device");
+        let device = identity(stat(&physical).unwrap()).0;
+        assert_eq!(selected, HashMap::from([(device, data)]));
+
+        let listing = Listing {
+            exit: Some(0),
+            output: format!(
+                "p{}\0\nf{}\0n{}\0\nf{}\0n{}\0\n",
+                std::process::id(),
+                witnesses[0].fd.as_raw_fd(),
+                logical.display(),
+                witnesses[1].fd.as_raw_fd(),
+                physical.display()
+            )
+            .into_bytes(),
+            pid: 0,
+        };
+        assert!(scoped_listing(&listing, &witnesses).is_some());
     }
 
     #[tokio::test]

@@ -6,7 +6,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { build } from "esbuild";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { boardShellPlugin, mount, useNativeStubs } from "./support/render";
-import { poolSchema, type PoolEntry, type Profile } from "../shared/contracts";
+import {
+  capacitySchema,
+  poolSchema,
+  type PoolEntry,
+  type Profile,
+} from "../shared/contracts";
 
 useNativeStubs();
 
@@ -19,9 +24,11 @@ const load = async () => {
 const loadBundle = async () => {
   const bytes = (
     await build({
-      entryPoints: [
-        new URL("../client/settings-screen.tsx", import.meta.url).pathname,
-      ],
+      stdin: {
+        contents: `export * from "../client/settings-screen.tsx";
+          export { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../client/engine-features";`,
+        resolveDir: import.meta.dirname,
+      },
       bundle: true,
       plugins: [boardShellPlugin],
       platform: "node",
@@ -30,13 +37,19 @@ const loadBundle = async () => {
       write: false,
     })
   ).outputFiles[0]!.text;
-  const compiled = { exports: {} as SettingsModule };
+  type Bundle = SettingsModule &
+    Pick<
+      typeof import("../client/engine-features"),
+      "EngineFeaturesContext" | "RUST_ENGINE_FEATURES"
+    >;
+  const compiled = { exports: {} as Bundle };
   new Function("require", "module", "exports", bytes)(
     createRequire(import.meta.url),
     compiled,
     compiled.exports,
   );
   settings = compiled.exports;
+  return compiled.exports;
 };
 
 const h = React.createElement;
@@ -701,34 +714,22 @@ const saved = (ui: {
   query: (label: string) => { children: unknown[] } | undefined;
 }) => ui.query("Task slots save status")?.children.join("") === "Saved";
 
-test("dark bundled Dispatch limits: three task slots first, Advanced reveals six, autosave keeps the whole state", async () => {
-  await loadBundle();
-  let authority: CapacityView = capacityAuthorityState();
-  let state = board();
-  const writes: Record<string, unknown>[] = [];
+async function mountRevisionedLimits() {
+  const bundle = await loadBundle();
+  let effective = { ...CAPACITY_VALUES, globalLimit: 96 };
+  const writes: unknown[] = [];
+  const revision = () => `limits-${writes.length}`;
   const invoke = async (method: string, input: unknown) => {
-    if (method === "queue.ui-snapshot") return state;
-    if (method === "backup.list") return { snapshots: [], localError: null };
-    if (method === "queue.capacity-state") return authority;
+    if (method === "queue.ui-snapshot") return board();
+    if (method === "queue.capacity-state")
+      return { revision: revision(), effective, changes: [] };
     if (method === "queue.capacity") {
-      writes.push(input as Record<string, unknown>);
-      const after = {
-        ...authority.effective,
-        ...(input as Record<string, unknown>),
-      };
-      authority = {
-        effective: after,
-        changes: [
-          ...authority.changes,
-          {
-            version: authority.changes.length + 1,
-            at: "2026-10-25T09:05:00.000Z",
-            surface: "paseo",
-            before: authority.effective,
-            after,
-          },
-        ],
-      };
+      const patch = capacitySchema.parse(input);
+      assert.ok("revision" in patch);
+      const { revision: displayed, ...fields } = patch;
+      assert.equal(displayed, revision());
+      writes.push(patch);
+      effective = { ...effective, ...fields };
       return { ok: true };
     }
     return {};
@@ -753,312 +754,88 @@ test("dark bundled Dispatch limits: three task slots first, Advanced reveals six
       client,
       children: h(PluginRpcProvider, {
         invoke,
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: dark },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    }),
-  );
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Dispatch limits");
-    await settle(() => ui.text().includes("Task slots"));
-    // Only the three task slots show first; the six secondary limits wait under a collapsed Advanced revealer.
-    for (const [label, value] of [
-      ["Global dispatch limit (slots, 1–64)", "32"],
-      ["Per project dispatch limit (slots, 1–32)", "5"],
-      ["Papercuts dispatch limit (slots, 1–32)", "2"],
-    ])
-      assert.equal(ui.get(label).props.value, value, label);
-    assert.equal(
-      ui.get("Advanced limits").props.accessibilityState.expanded,
-      false,
-      "Advanced starts collapsed",
-    );
-    assert.equal(
-      ui.query("Concurrent host calls dispatch limit (calls, 1–32)"),
-      undefined,
-      "a collapsed Advanced hides its fields",
-    );
-    assert.equal(
-      ui.query("Stall threshold dispatch limit (minutes, 1–240)"),
-      undefined,
-    );
-    assert.equal(
-      /sudo|capacity-authority|capacity\.json/.test(ui.text()),
-      false,
-      "no privileged command or host document is named",
-    );
-    // The change log stays for the CLI: Settings shows no view of it (Tom, 2026-11-08).
-    assert.doesNotMatch(
-      ui.text(),
-      /Recorded changes|Change history|None yet\. The first change/,
-    );
-    assert.equal(
-      ui.query("View change history"),
-      undefined,
-      "no history button",
-    );
-    assert.equal(
-      ui.query("Task slots save status"),
-      undefined,
-      "no idle label: the status element appears only with a real status",
-    );
-
-    // Opening Advanced is local: all eight secondary values, their units and bounds, and no write.
-    ui.press("Advanced limits");
-    assert.equal(
-      ui.get("Advanced limits").props.accessibilityState.expanded,
-      true,
-      "the revealer announces its expanded state",
-    );
-    for (const [label, value] of [
-      ["Concurrent host calls dispatch limit (calls, 1–32)", "6"],
-      ["Stall threshold dispatch limit (minutes, 1–240)", "30"],
-      ["Hold reminder dispatch limit (minutes, 1–10080)", "120"],
-      ["Hold escalation dispatch limit (minutes, 1–10080)", "240"],
-      ["Lane drain dispatch limit (minutes, 1–10080)", "120"],
-      ["Lane drain escalation dispatch limit (minutes, 1–10080)", "1440"],
-      ["Host outage notice dispatch limit (minutes, 1–10080)", "120"],
-      ["Archived thread retention dispatch limit (days, 1–90)", "3"],
-    ])
-      assert.equal(ui.get(label).props.value, value, label);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    assert.equal(writes.length, 0, "opening Advanced writes nothing");
-
-    // Typing saves the whole state once the pause elapses.
-    ui.type("Global dispatch limit (slots, 1–64)", "21");
-    await waitFor(() => writes.length === 1, "the capacity change to autosave");
-    assert.deepEqual(
-      writes[0],
-      { ...CAPACITY_LIMITS, globalLimit: 21 },
-      "the write carries every numeric limit, so no untouched one is reset",
-    );
-    // The save settles visibly; the server records the change, and the screen shows no receipt for it.
-    await settle(() => saved(ui));
-    assert.equal(
-      authority.changes.length,
-      1,
-      "the server still records the applied change",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Version 1 ·|Global 32 → 21|Paseo plugin bridge/,
-    );
-
-    // An advanced limit saves through the same section, and the write still carries the others.
-    ui.type("Stall threshold dispatch limit (minutes, 1–240)", "45");
-    await waitFor(() => writes.length === 2, "the advanced change to autosave");
-    assert.deepEqual(writes[1], {
-      ...CAPACITY_LIMITS,
-      globalLimit: 21,
-      stallThresholdMinutes: 45,
-    });
-    await settle(() => saved(ui));
-
-    // An out-of-range value is never sent while it is typed, and collapsing writes nothing.
-    ui.type("Hold reminder dispatch limit (minutes, 1–10080)", "0");
-    ui.press("Advanced limits");
-    assert.equal(
-      ui.query("Hold reminder dispatch limit (minutes, 1–10080)"),
-      undefined,
-      "collapsed",
-    );
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    assert.equal(
-      writes.length,
-      2,
-      "an out-of-range value writes nothing, even across a collapse",
-    );
-    // A valid value now saves as the third change.
-    ui.press("Advanced limits");
-    ui.type("Hold reminder dispatch limit (minutes, 1–10080)", "60");
-    await waitFor(
-      () => writes.length === 3,
-      "the third advanced change to autosave",
-    );
-    await settle(() => saved(ui));
-    assert.equal(
-      authority.changes.length,
-      3,
-      "every applied change is recorded for queue.capacity-state",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Version \d+ ·|Recorded changes/,
-      "with a full record, still no receipt on screen",
-    );
-    assert.equal(ui.query("View change history"), undefined);
-    assert.ok(ui.text().includes("Project overrides"));
-    assert.ok(ui.text().includes("Usage level"));
-  } finally {
-    ui.update(h("View", null));
-    client.clear();
-  }
-});
-
-test("Dispatch limits steppers: one typeable field between − and +, bounded and validated the same on every host (Tom, 2026-11-08)", async () => {
-  await loadBundle();
-  const dark = {
-    accent: "#1f6feb",
-    accentForeground: "#fff",
-    surface0: "#0d1117",
-    surface1: "#161b22",
-    surface2: "#30363d",
-    border: "#30363d",
-    foreground: "#f0f6fc",
-    foregroundMuted: "#8b949e",
-    statusWarning: "#f0883e",
-    statusDanger: "#f85149",
-  };
-  // A fresh screen with its own capacity record and write log.
-  const harness = () => {
-    let authority: CapacityView = capacityAuthorityState();
-    const writes: Record<string, unknown>[] = [];
-    const invoke = async (method: string, input: unknown) => {
-      if (method === "queue.ui-snapshot") return board();
-      if (method === "backup.list") return { snapshots: [], localError: null };
-      if (method === "queue.capacity-state") return authority;
-      if (method === "queue.capacity") {
-        writes.push(input as Record<string, unknown>);
-        const after = {
-          ...authority.effective,
-          ...(input as Record<string, unknown>),
-        };
-        authority = {
-          effective: after,
-          changes: [
-            ...authority.changes,
-            {
-              version: authority.changes.length + 1,
-              at: "2026-10-25T09:05:00.000Z",
-              surface: "paseo",
-              before: authority.effective,
-              after,
-            },
-          ],
-        };
-        return { ok: true };
-      }
-      return {};
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const ui = mount(
-      h(QueryClientProvider, {
-        client,
-        children: h(PluginRpcProvider, {
-          invoke,
-          children: h(settings.QueueSettingsScreen as never, {
+        children: h(bundle.EngineFeaturesContext.Provider, {
+          value: bundle.RUST_ENGINE_FEATURES,
+          children: h(bundle.QueueSettingsScreen as never, {
             theme: { colors: dark },
             host: { id: "host", label: "Host" },
             layout: { compact: false, platform: "ios" as const },
           }),
         }),
       }),
-    );
-    return { ui, writes, client };
+    }),
+  );
+  await settle(() => ui.text().includes("Profiles"));
+  ui.press("Dispatch limits");
+  await settle(
+    () => ui.query("Global dispatch limit (slots, 1–4294967295)") !== undefined,
+  );
+  return {
+    ui,
+    writes,
+    close() {
+      unmount(ui);
+      client.clear();
+    },
   };
-  // Every host renders the same shared stepper: no DOM input, one typeable field, − and + on each side.
-  const screen = harness();
+}
+
+test("dark bundled Limits saves the edited slot at its displayed revision", async () => {
+  const { ui, writes, close } = await mountRevisionedLimits();
+  const global = "Global dispatch limit (slots, 1–4294967295)";
+  const project = "Per project dispatch limit (slots, 1–32)";
   try {
-    await settle(() => screen.ui.text().includes("Profiles"));
-    screen.ui.press("Dispatch limits");
-    await settle(() => screen.ui.text().includes("Task slots"));
+    assert.equal(ui.get(global).props.value, "96");
+    assert.equal(ui.get(project).props.value, "5");
+    assert.equal(ui.query("Advanced limits"), undefined);
+    assert.equal(ui.query("Task slots save status"), undefined);
+    assert.equal(writes.length, 0);
+    ui.type(project, "6");
+    await waitFor(() => saved(ui));
+    assert.deepEqual(writes, [{ revision: "limits-0", projectLimit: 6 }]);
+    assert.equal(ui.get(global).props.value, "96");
+    ui.type(global, "21");
+    await waitFor(() => writes.length === 2 && saved(ui));
+    assert.deepEqual(writes[1], { revision: "limits-1", globalLimit: 21 });
+    assert.equal(ui.get(project).props.value, "6");
+    assert.equal(ui.query("View change history"), undefined);
+    assert.ok(ui.text().includes("Project overrides"));
+    assert.ok(ui.text().includes("Usage level"));
+  } finally {
+    close();
+  }
+});
+
+test("bundled Limits steppers enforce the Rust slot bounds for typing and buttons", async () => {
+  const { ui, writes, close } = await mountRevisionedLimits();
+  const project = "Per project dispatch limit (slots, 1–32)";
+  try {
+    assert.equal(ui.ofType("input").length, 0);
+    assert.equal(ui.get(project).type, "TextInput");
+    assert.equal(ui.get(project).props.keyboardType, "number-pad");
+    ui.press(`Increase ${project}`);
+    await waitFor(() => writes.length === 1 && saved(ui));
+    assert.deepEqual(writes[0], { revision: "limits-0", projectLimit: 6 });
+    ui.type(project, "abc");
+    assert.equal(ui.get(project).props.value, "");
+    ui.type(project, "33");
+    assert.equal(writes.length, 1);
+    ui.get(project).props.onBlur();
+    await waitFor(() => writes.length === 2 && saved(ui));
+    assert.deepEqual(writes[1], { revision: "limits-1", projectLimit: 32 });
     assert.equal(
-      screen.ui.ofType("input").length,
-      0,
-      "no DOM input: the field is the shared TextInput",
-    );
-    assert.equal(
-      screen.ui.get("Global dispatch limit (slots, 1–64)").type,
-      "TextInput",
-    );
-    assert.equal(
-      screen.ui.get("Global dispatch limit (slots, 1–64)").props.keyboardType,
-      "number-pad",
-    );
-    screen.ui.press("Increase Global dispatch limit (slots, 1–64)");
-    await waitFor(() => screen.writes.length === 1, "the step to autosave");
-    assert.equal(
-      screen.writes[0]!.globalLimit,
-      33,
-      "a step writes the value one above",
-    );
-    screen.ui.type("Global dispatch limit (slots, 1–64)", "21");
-    await waitFor(
-      () => screen.writes.length === 2,
-      "the typed value to autosave",
-    );
-    assert.deepEqual(
-      screen.writes[1],
-      { ...CAPACITY_LIMITS, globalLimit: 21 },
-      "the write carries every numeric limit, so no untouched one is reset",
-    );
-    await settle(() => saved(screen.ui));
-    // The field takes digits only, and an out-of-range value is never sent while it is typed.
-    const global = "Global dispatch limit (slots, 1–64)";
-    screen.ui.type(global, "abc");
-    assert.equal(
-      screen.ui.get(global).props.value,
-      "",
-      "letters never enter the field",
-    );
-    for (const bad of ["0", "65"]) screen.ui.type(global, bad);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    assert.equal(
-      screen.writes.length,
-      2,
-      "out-of-range input writes nothing while typed",
-    );
-    // Ending typing clamps into the range, and that value saves.
-    screen.ui.get(global).props.onBlur();
-    assert.equal(
-      screen.ui.get(global).props.value,
-      "64",
-      "clamped to the ceiling",
-    );
-    await waitFor(
-      () => screen.writes.length === 3,
-      "the clamped value to autosave",
-    );
-    assert.equal(screen.writes[2]!.globalLimit, 64);
-    // The bounds hold the buttons too: the floor and ceiling are valid values that save.
-    assert.equal(
-      screen.ui.get("Increase Global dispatch limit (slots, 1–64)").props
-        .accessibilityState.disabled,
+      ui.get(`Increase ${project}`).props.accessibilityState.disabled,
       true,
-      "Increase stops at the ceiling",
     );
-    screen.ui.type(global, "1");
-    await waitFor(
-      () => screen.writes.length === 4,
-      "the floor value to autosave",
-    );
+    ui.type(project, "1");
+    await waitFor(() => writes.length === 3 && saved(ui));
+    assert.deepEqual(writes[2], { revision: "limits-2", projectLimit: 1 });
     assert.equal(
-      screen.ui.get("Decrease Global dispatch limit (slots, 1–64)").props
-        .accessibilityState.disabled,
+      ui.get(`Decrease ${project}`).props.accessibilityState.disabled,
       true,
-      "Decrease stops at the floor",
-    );
-    // The Advanced timers use the same control; the unit reads after the field.
-    screen.ui.press("Advanced limits");
-    screen.ui.press("Increase Hold reminder dispatch limit (minutes, 1–10080)");
-    await waitFor(
-      () => screen.writes.length === 5,
-      "the advanced step to autosave",
-    );
-    assert.equal(screen.writes.at(-1)!.holdReminderMinutes, 121);
-    assert.ok(
-      screen.ui.text().includes("min"),
-      "timer units stay beside the field",
     );
   } finally {
-    screen.ui.update(h("View", null));
-    screen.client.clear();
+    close();
   }
 });
 
