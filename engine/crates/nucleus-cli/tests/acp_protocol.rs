@@ -107,6 +107,61 @@ impl AgentIo {
 }
 
 #[tokio::test]
+async fn broken_stdout_exits_with_stdin_open() {
+    let mut agent = AgentIo::spawn(None, None);
+    let init = agent
+        .call(1, "initialize", json!({"protocolVersion":1}))
+        .await;
+    assert_eq!(init["result"]["protocolVersion"], 1);
+
+    let AgentIo {
+        mut child,
+        mut input,
+        output,
+    } = agent;
+    drop(output);
+    input
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"authenticate\"}\n")
+        .await
+        .expect("request after closing stdout");
+    let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+        .await
+        .expect("ACP must exit while stdin is open")
+        .expect("wait for ACP exit");
+    assert!(
+        status.code().is_some_and(|code| code != 0),
+        "ACP exit: {status}"
+    );
+    drop(input);
+}
+
+#[tokio::test]
+async fn stdin_eof_drains_queued_replies_and_exits_successfully() {
+    let mut agent = AgentIo::spawn(None, None);
+    for id in 1..=2 {
+        agent
+            .send(json!({"jsonrpc":"2.0","id":id,"method":"authenticate"}))
+            .await;
+    }
+    let AgentIo {
+        mut child,
+        input,
+        mut output,
+    } = agent;
+    drop(input);
+    let status = tokio::time::timeout(Duration::from_secs(5), async {
+        for id in 1..=2 {
+            let line = output.next_line().await.unwrap().expect("queued ACP reply");
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], id);
+        }
+        child.wait().await.expect("wait for ACP exit")
+    })
+    .await
+    .expect("ACP must drain and exit after stdin EOF");
+    assert!(status.success(), "ACP exit: {status}");
+}
+
+#[tokio::test]
 async fn inbox_holds_concurrent_native_forms_and_sends_one_answer_per_live_request() {
     let fixture = Arc::new(Fixture {
         state: AtomicU8::new(0),
