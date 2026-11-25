@@ -1188,6 +1188,63 @@ async fn a_pre_wire_refusal_then_capacity_replan_allows_one_new_snooze() {
     );
 }
 
+#[tokio::test]
+async fn the_next_engine_change_settles_a_reported_worker_despite_a_stale_shell() {
+    use nucleus_core::{Observation, PullRequest, Workspace};
+
+    let head: nucleus_core::Head = "1".repeat(40).parse().unwrap();
+    let (mut task, credential, _) = reservation(ID, Entry::Brief, &head);
+    let launch = task.run().unwrap().launch().clone();
+    task.record_send(&launch.instance, 1).unwrap();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    fixture.child(&launch.thread, true);
+    fixture.publish_shell();
+    let mut changes = service.changes();
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        let row = service.lookup(&state, ID).unwrap();
+        assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, true));
+    }
+    let pr = PullRequest {
+        url: "https://github.com/inflatable-cookie/nucleus-fixture/pull/1".into(),
+        head: head.clone(),
+    };
+    service
+        .report(
+            ID,
+            &launch.instance,
+            credential.as_bytes(),
+            Report::Work(pr.clone().into()),
+        )
+        .await
+        .unwrap();
+    // Drop the report invalidation. No child-completion delta reaches the shell.
+    assert_eq!(changes.recv().await.unwrap().task_id, ID);
+    let mut state = service.state.lock().await;
+    let row = service.lookup(&state, ID).unwrap();
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    let mut next = row.task.clone();
+    let action = next.reconcile(&Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Open {
+            pr,
+            checks: CheckState::Ready,
+        }),
+        workspace: Observed::Known(Workspace::Clean(head)),
+    });
+    assert_eq!(action, Action::Advance(Phase::Reviewing));
+    service
+        .commit(&mut state, &row, &next, &event("phase_reconciled"), None)
+        .unwrap();
+    let change = changes.try_recv().unwrap();
+    let next = service.lookup(&state, &change.task_id).unwrap();
+    assert_eq!(change.version, next.version);
+    assert_eq!(service.acp_turn_view(&state, &next).unwrap(), (None, false));
+    assert!(fixture.commands().is_empty());
+}
+
 async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
     let row = {
         let mut state = fixture.service.state.lock().await;

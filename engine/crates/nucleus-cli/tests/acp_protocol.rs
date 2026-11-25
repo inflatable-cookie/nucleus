@@ -308,7 +308,11 @@ async fn view(
             "pullRequest":reported.then(|| json!({
                 "url":"https://github.com/example/fixture/pull/7","head":format!("{:040x}",1)
             })),
-            "parentHold": (state == 0).then(|| legacy_parent_hold_prompt("fixture-hold")),
+            "parentHold": match state {
+                0 => Some(legacy_parent_hold_prompt("fixture-hold")),
+                10 => Some("Starting reviewer round 1".to_owned()),
+                _ => None,
+            },
             "activeChild": matches!(state, 1 | 2 | 8),
             // Older candidates may still send this presentation hint.
             "transcriptPending":state == 9,
@@ -514,6 +518,44 @@ async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() 
     fixture.state.store(5, Ordering::Relaxed);
     let _ = fixture.changes.send(());
     assert_eq!(agent.response(4).await["result"]["stopReason"], "end_turn");
+    assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_missed_report_wake_releases_the_old_turn_on_the_next_task_change() {
+    let (mut agent, fixture, _home, server) = loopback().await;
+    fixture.state.store(0, Ordering::Relaxed);
+    agent
+        .call(
+            1,
+            "session/load",
+            json!({"sessionId":SESSION,"cwd":"/fixture"}),
+        )
+        .await;
+    agent.update("plan").await;
+    agent
+        .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
+        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
+        .await;
+    fixture.stream_ready.notified().await;
+    fixture.state.store(1, Ordering::Relaxed);
+    fixture.changes.send(()).unwrap();
+    agent.update("tool_call").await;
+    // The authenticated report arrives without an invalidation. Only the
+    // following engine change (the reviewer's preparation) wakes the reader.
+    fixture.state.store(9, Ordering::Relaxed);
+    fixture.state.store(10, Ordering::Relaxed);
+    fixture.changes.send(()).unwrap();
+    assert_eq!(agent.response(2).await["result"]["stopReason"], "end_turn");
+    agent
+        .send(json!({"jsonrpc":"2.0","id":3,"method":"session/prompt",
+        "params":{"sessionId":SESSION,"prompt":"Starting reviewer round 1"}}))
+        .await;
+    fixture.stream_ready.notified().await;
+    fixture.state.store(3, Ordering::Relaxed);
+    fixture.changes.send(()).unwrap();
+    assert_eq!(agent.response(3).await["result"]["stopReason"], "end_turn");
     assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
     server.abort();
 }
