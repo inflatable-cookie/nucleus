@@ -316,12 +316,11 @@ what the observation shows and the verbs that exit it, and the accepting
 restart/move-to-review verbs probe the same lease so their reply names the
 fence instead of reporting success while nothing launches.
 
-`shared/lifecycle-signal.ts` defines the bounded hint shape. The bridge forwards
-only the eight lifecycle event names with the event's agent/workspace identity;
-the service exposes `service.lifecycle-signal`, maps the identity with
-`Store.taskIdsForIdentities` (an exact, read-only SQL lookup that materializes no
-fleet history) and wakes only those task lanes, returning `{ok, matched}`. An
-unknown identity matches nothing.
+The retired TypeScript lifecycle signal carried eight event names and the
+agent/workspace identity. The service's `service.lifecycle-signal` route used
+`Store.taskIdsForIdentities` for an exact, read-only lookup and woke only
+the matched task lanes, returning `{ok, matched}`. An unknown identity
+matched nothing.
 
 ### Single run identity and ownerless attention
 

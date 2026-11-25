@@ -60,10 +60,9 @@ operation, refer to the
 `checks.ts` owns hosted-check evidence, history, checks policy and branch-rule reads;
 and `merge.ts` owns the merge gate, merge execution and integration closeout.
 The modules import downward, never through the entry point.
-`shared/review-text.ts` builds review markers, verdict tables and publication bodies,
-and every caller (review publication and the plugin bridge) imports it directly;
-no review-side shim re-exports it, so the pure text module loads no store or Git
-runtime. Merge gates, error messages and unknown-delivery handling are unchanged.
+The retired TypeScript forge kept review markers, verdict tables and publication
+bodies separate from store and Git code. Review publication and the plugin bridge
+called the same shared helper.
 
 ## Store module map
 

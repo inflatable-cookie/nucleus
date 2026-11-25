@@ -198,8 +198,7 @@ together under `core/verbs/disposition/`.
 
 The framed protocol, socket client, roll recovery, discovery reads and build
 identity live in `shared/service/`. Service identity writes and process launch
-actions stay outside shared. Pure review text lives in
-`shared/review-text.ts`.
+actions stayed outside shared. The retired TypeScript review text lived in shared code.
 
 The archived Paseo code under `hosts/paseo/` keeps its adapter and client code
 in separate directories. The remaining TypeScript service code contains callbacks and validation helpers. Formal-review HTTP lives in the forge client under
@@ -278,6 +277,6 @@ so adapter replacements and method overrides still apply. Terminal archive
 orchestration lives in `core/closeout/workspace-lifecycle.ts`,
 host policy wiring and the host question contract (`core/host/host-ports.ts`) in
 `core/host/`, and the request ledger in `core/runtime/`.
-The pure bounded retry helper lives in `shared/backoff.ts`. The legacy `server/`
+The retired TypeScript runtime used a shared bounded retry helper. The legacy `server/`
 source root and folder-import exception list are empty; layout and import gates
 keep them empty while installed package aliases stay unchanged.
