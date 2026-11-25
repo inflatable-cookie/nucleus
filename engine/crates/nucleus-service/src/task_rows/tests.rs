@@ -1108,7 +1108,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .await
             .unwrap(),
     );
-    service.wake_parent_delivery(&row, &write).await.unwrap();
+    service
+        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
+        .await
+        .unwrap();
     service.host.write_parent(write).await.unwrap();
     assert_eq!(fixture.commands(), ["thread.snooze", "message.dispatch"]);
     drop(fence);
@@ -1130,7 +1133,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     fixture.native.lock().unwrap().until = Value::Null;
     fixture.publish_shell();
     let write = prepare().await.unwrap().unwrap();
-    service.wake_parent_delivery(&row, &write).await.unwrap();
+    service
+        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
+        .await
+        .unwrap();
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
     sent.unwrap();

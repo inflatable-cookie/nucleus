@@ -367,7 +367,10 @@ impl Service {
         if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(&command) {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
-        self.wake_parent_delivery(row, &write).await?;
+        if let Some(parent) = write.delivery_row() {
+            self.check_parent_snooze(row, write.binding(), parent)
+                .await?;
+        }
         if runtime.is_none() {
             runtime = self.host.verified_runtime_identity().await;
         }
