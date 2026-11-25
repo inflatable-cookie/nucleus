@@ -1344,7 +1344,7 @@ async fn flapping_watcher_and_delivery_share_the_durable_visibility_window() {
         assert!(matches!(
             result,
             Err(ServiceError::RowVisibilityDeferred { until })
-                if until.saturating_duration_since(tokio::time::Instant::now()) <= Duration::from_secs(120)
+                if until.saturating_duration_since(tokio::time::Instant::now()) <= Duration::from_mins(2)
         ));
         assert!(calls.is_empty());
     }

@@ -137,6 +137,10 @@ fn confirm_snooze(receipt: &mut RowSnooze, shown: Option<u64>) -> bool {
 }
 
 impl Service {
+    #[cfg_attr(
+        not(test),
+        expect(clippy::unused_self, reason = "tests advance the clock per service")
+    )]
     fn visibility_now(&self) -> u64 {
         let now = now_ms();
         #[cfg(test)]
@@ -223,7 +227,8 @@ impl Service {
         provider: &str,
         thread: &str,
     ) -> Result<Option<u64>, ServiceError> {
-        let retry = Some(self.visibility_now() + RECHECK_MS);
+        let now = self.visibility_now();
+        let retry = Some(now + RECHECK_MS);
         let fence = self.task_fence(id).await;
         let Ok(_fence) = fence.try_lock_owned() else {
             return Ok(retry);
@@ -239,13 +244,7 @@ impl Service {
             };
             let prior = state.store.row_snooze(id, thread)?;
             let children = self.host.row_children(thread, &visibility_roles(&row.task));
-            let plan = plan_row(
-                attention,
-                visibility,
-                prior.clone(),
-                self.visibility_now(),
-                children,
-            );
+            let plan = plan_row(attention, visibility, prior.clone(), now, children);
             (row, prior, plan, attention)
         };
         if let Plan::Idle(deadline) = plan {
