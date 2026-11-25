@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { z } from "zod";
 import {
-  boardThemeSnapshotSchema,
   type BoardAppearance,
   type BoardPalette,
   type BoardThemeSnapshot,
@@ -42,19 +40,8 @@ const defaults: Record<BoardAppearance, BoardTheme> = {
   },
 };
 
-const responseSchema = z.object({ theme: boardThemeSnapshotSchema.nullable() });
-
-/** The TypeScript service's board theme read. */
-async function readServiceTheme(
-  signal: AbortSignal,
-): Promise<BoardThemeSnapshot | null> {
-  const response = await fetch("/api/theme", { signal });
-  if (!response.ok) return null;
-  return responseSchema.safeParse(await response.json()).data?.theme ?? null;
-}
-
 export function useWebTheme(
-  read: (signal: AbortSignal) => Promise<BoardThemeSnapshot | null> = readServiceTheme,
+  read: (signal: AbortSignal) => Promise<BoardThemeSnapshot | null>,
   /** Changes when the host reports a theme change, so the snapshot is read again. */
   revision = 0,
 ): {
