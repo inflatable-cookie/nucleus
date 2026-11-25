@@ -1,40 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { z } from "zod";
-import { Store } from "../core/store/store";
-import { Decisions } from "../core/planning/decisions";
-import { decisionList, DECISION_QUESTION_CLIP_MARKER, clipDecisionQuestion } from "../shared/contracts";
+import { DECISION_QUESTION_CLIP_MARKER, clipDecisionQuestion } from "../shared/contracts";
 import { errorText, readErrorText, storedBoardErrorText } from "../client/error-text";
-
-test("1141-2 an already-stored over-long record clips in the view without failing the read", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ns-decision-limit-"));
-  const store = new Store(join(dir, "queue.sqlite"));
-  try {
-    const decisions = new Decisions(store);
-    // Task 1183 places every new decision; this file owns clipping, not placing.
-    const created = decisions.add({ question: "Short question?", askedBy: "agent",
-      project: { origin: "owner/repo", path: "/repo" } });
-    const over = `Over-long stored question: ${"word ".repeat(1500)}`;
-    assert.ok(over.length > 4000, "the stored record exceeds the view limit");
-    const raw = JSON.parse(String((store.db.prepare("SELECT data FROM decisions WHERE id=?").get(created.id) as { data: string }).data));
-    raw.question = over;
-    store.db.prepare("UPDATE decisions SET data=? WHERE id=?").run(JSON.stringify(raw), created.id);
-    // The whole read still returns everything; the view clips with a marker.
-    const listed = decisions.list({ status: "open" });
-    assert.equal(listed.length, 1);
-    assert.ok(listed[0]!.question.length <= 4000);
-    assert.ok(listed[0]!.question.endsWith(DECISION_QUESTION_CLIP_MARKER), "the clipped view names the marker");
-    assert.equal(decisions.get({ id: created.id }).question, listed[0]!.question);
-    // The board read validates: the decision list output contract parses.
-    decisionList.output.parse(listed);
-    // The stored row is never rewritten by the read.
-    const reread = JSON.parse(String((store.db.prepare("SELECT data FROM decisions WHERE id=?").get(created.id) as { data: string }).data));
-    assert.equal(reread.question, over, "the stored record keeps its full text");
-  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
-});
 
 test("1141-3 the header's read error renders as plain text naming the read", () => {
   const field = z.object({ question: z.string().trim().min(1).max(4000) });

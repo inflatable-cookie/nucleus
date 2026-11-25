@@ -14,8 +14,6 @@ export const syntheticArtifactFixtures = new Set([
 // These exact tests exercise mounted-volume behavior using synthetic labels.
 // An exception permits only that volume prefix, never a whole file or private name.
 export const syntheticVolumeFixtures = {
-  'test/store-backups.test.ts': ['example-volume'],
-  'test/prompts.test.ts': ['retired-volume'],
   'test/settings-pool.test.ts': ['retired-volume'],
   'test/backups-panel-ui.test.ts': ['example-volume'],
 };
