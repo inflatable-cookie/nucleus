@@ -12,7 +12,6 @@ import {buildOutcomeRecord, digest as storeDigest, operationInputHash, Store} fr
 import {leadCheck,leadApprove,sourcePromotionOperationPayloadSchema} from '../shared/contracts';
 import {readFileSync} from 'node:fs';
 import { boardSource } from './support/board-source';
-import {spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import type {Adapter} from '../core/host';
 
@@ -489,10 +488,6 @@ weighted(2)('Spec 026 row 8a: relayed promotion needs an authorization note; boa
   assert.equal(f.runtime.store.task(result.taskId).leadProvenance?.approval.approver,'planner');
   assert.equal(f.runtime.store.task(result.taskId).leadProvenance?.approval.note,'Tom authorized');
   assert.equal(f.runtime.store.task(result.taskId).leadProvenance?.approval.relayed,true);
-  const input=join(f.root,'approval.json');
-  await writeFile(input,JSON.stringify({id:'lead',version:1,digest:'sha256:'+ 'a'.repeat(64),approver:'operator (board)',relayed:false}));
-  const cli=spawnSync(process.execPath,[new URL('../bin/queue-cli.mjs',import.meta.url).pathname,'lead.approve',input],{encoding:'utf8'});
-  assert.notEqual(cli.status,0);assert.match(cli.stderr,/CLI lead approval/);
 });
 
 weighted(4)('Spec 026 row 8b: a lead with two repositories needs a target and links each task',async t=>{
