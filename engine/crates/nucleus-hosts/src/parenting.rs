@@ -57,6 +57,12 @@ impl ActiveChild {
     }
 }
 
+pub struct PruneWrite {
+    pub thread: String,
+    pub archived_ms: i64,
+    inventory: ThreadFence,
+}
+
 pub enum ParentStep {
     Live(ParentRun),
     Failed,
@@ -470,6 +476,103 @@ impl T3 {
             }
             Ok(wait.map_or(DoneArchive::Finished, DoneArchive::Wait))
         })
+    }
+
+    /// Whether background retention can use a synchronized shell now.
+    #[must_use]
+    pub fn can_prune(&self) -> bool {
+        self.request_retry_at().is_none() && self.rpc.with_shell(|shell| shell.is_some())
+    }
+
+    /// Read one native archive inventory against the synchronized shell.
+    ///
+    /// # Errors
+    /// Returns an error if either view is unavailable.
+    pub async fn prune_candidates(
+        &self,
+        owns: impl Fn(&str, i64) -> bool + Send + Sync,
+        cutoff: u64,
+    ) -> Result<(Vec<PruneWrite>, bool), HostError> {
+        let before = self
+            .rpc
+            .with_shell(|shell| shell.map(|s| self.rpc.fence_at("", Some(s))))
+            .ok_or(HostError::Uncertain)?;
+        let Reply::Value(value) = self
+            .rpc
+            .call(
+                "orchestration.getArchivedShellSnapshot",
+                json!({}),
+                Read::Background,
+            )
+            .await?
+        else {
+            return Err(HostError::Uncertain);
+        };
+        let rows = value["threads"].as_array().ok_or(HostError::Protocol)?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let id = row["id"].as_str().ok_or(HostError::Protocol)?;
+            let Some(at) = row["archivedAt"].as_str() else {
+                continue;
+            };
+            let ms = crate::task_row::timestamp_ms(at)?;
+            let stamp = i64::try_from(ms).map_err(|_| HostError::Protocol)?;
+            if ms < cutoff && row.get("deletedAt").is_some_and(Value::is_null) && owns(id, stamp) {
+                candidates.push(PruneWrite {
+                    thread: id.into(),
+                    archived_ms: stamp,
+                    inventory: before.clone(),
+                });
+            }
+        }
+        candidates.sort_by(|a, b| (a.archived_ms, &a.thread).cmp(&(b.archived_ms, &b.thread)));
+        let more = candidates.len() > 32;
+        candidates.truncate(32);
+        Ok((candidates, more))
+    }
+
+    /// Check the archive at the socket before sending its occurrence-specific command.
+    ///
+    /// # Errors
+    /// Returns an error when the native write or its receipt is uncertain.
+    pub async fn prune_thread(
+        &self,
+        write: &PruneWrite,
+        claim: impl FnOnce() -> Result<bool, HostError> + Send,
+    ) -> Result<bool, HostError> {
+        let id = &write.thread;
+        let payload = json!({"type":"thread.delete","threadId":id,"commandId":format!("{id}-delete-{}",write.archived_ms)});
+        let mut sent = false;
+        let reply = self
+            .rpc
+            .call_guarded(
+                "orchestration.dispatchCommand",
+                payload,
+                Read::Background,
+                || {
+                    let same = self.rpc.with_shell(|shell| {
+                        let Some(shell) = shell else { return false };
+                        if let Some(row) = shell.marker(id) {
+                            row.get("deletedAt").is_some_and(Value::is_null)
+                                && row["archivedAt"]
+                                    .as_str()
+                                    .and_then(|at| crate::task_row::timestamp_ms(at).ok())
+                                    == u64::try_from(write.archived_ms).ok()
+                        } else {
+                            // An unlisted row relies on the archive walk. Discard it after a
+                            // shell change or reconnect, including unarchive then rearchive.
+                            self.rpc.fence_at("", Some(shell)).matches(&write.inventory)
+                        }
+                    });
+                    sent = same && claim()?;
+                    Ok(sent)
+                },
+            )
+            .await?;
+        match reply {
+            Reply::Value(_) => Ok(sent),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
     }
 
     /// Archive the prepared thread if its held row still matches at the wire.

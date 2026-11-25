@@ -219,6 +219,7 @@ pub struct Service {
     planner_wake: Notify,
     title_wake: Notify,
     enrollment_wake: Notify,
+    housekeeping_wake: Notify,
     tell_wake: Notify,
     #[cfg(test)]
     visibility_time: AtomicU64,
@@ -462,6 +463,7 @@ impl Service {
             planner_wake: Notify::new(),
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
+            housekeeping_wake: Notify::new(),
             tell_wake: Notify::new(),
             #[cfg(test)]
             visibility_time: AtomicU64::new(0),
@@ -732,6 +734,7 @@ impl Service {
             Box::pin(self.watch_planner_authority()),
             Box::pin(self.watch_titles()),
             Box::pin(self.watch_enrollments()),
+            Box::pin(self.watch_housekeeping()),
             Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())
@@ -919,6 +922,100 @@ impl Service {
             < project_slots)
     }
 
+    async fn watch_housekeeping(&self) {
+        loop {
+            self.housekeeping_wake.notified().await;
+            if let Err(error) = self.prune_archived_threads().await {
+                eprintln!("archived thread housekeeping: {error}");
+            }
+        }
+    }
+
+    async fn prune_archived_threads(&self) -> Result<(), ServiceError> {
+        if !self.host.can_prune() {
+            return Ok(());
+        }
+        let now = now_ms();
+        let (days, owners) = {
+            let state = self.state.lock().await;
+            let settings = state.settings.dispatch.clone().unwrap_or_default();
+            if settings.mode != DispatchMode::Running
+                || !state.store.start_housekeeping(
+                    "archived_threads",
+                    i64::try_from(now).unwrap_or(i64::MAX),
+                    i64::from(settings.thread_retention_interval_hours) * 3_600_000,
+                )?
+            {
+                return Ok(());
+            }
+            (settings.thread_retention_days, state.store.prune_owners()?)
+        };
+        if owners.is_empty() {
+            self.state
+                .lock()
+                .await
+                .store
+                .finish_housekeeping("archived_threads")?;
+            return Ok(());
+        }
+        let eligible = |id: &str, stamp: i64| {
+            owners.get(id).is_some_and(|(_, prior)| {
+                !prior.is_some_and(|(when, attempts)| when == stamp && attempts >= 4)
+            })
+        };
+        let (candidates, mut more) = self
+            .host
+            .prune_candidates(eligible, now.saturating_sub(u64::from(days) * 86_400_000))
+            .await?;
+        for write in candidates {
+            let task = &owners[&write.thread].0;
+            let _fence = self.task_fence(task).await.lock_owned().await;
+            if self
+                .host
+                .prune_thread(&write, || {
+                    let Ok(state) = self.state.try_lock() else {
+                        return Ok(false);
+                    };
+                    if state.settings.dispatch.as_ref().is_some_and(|s| {
+                        s.mode != DispatchMode::Running
+                            || u64::try_from(write.archived_ms).unwrap_or(u64::MAX)
+                                >= now_ms()
+                                    .saturating_sub(u64::from(s.thread_retention_days) * 86_400_000)
+                    }) {
+                        return Ok(false);
+                    }
+                    let row = self
+                        .lookup(&state, task)
+                        .map_err(|_| HostError::Uncertain)?;
+                    if !row.task.phase().is_terminal() || row.task.run().is_some() {
+                        return Ok(false);
+                    }
+                    state
+                        .store
+                        .claim_thread_prune(&write.thread, write.archived_ms)
+                        .map_err(|_| HostError::Uncertain)
+                })
+                .await?
+            {
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .confirm_thread_prune(&write.thread, write.archived_ms)?;
+            } else {
+                more = true;
+            }
+        }
+        if !more {
+            self.state
+                .lock()
+                .await
+                .store
+                .finish_housekeeping("archived_threads")?;
+        }
+        Ok(())
+    }
+
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
             let (ready, next, housekeeping) = {
@@ -945,6 +1042,7 @@ impl Service {
                 (ready, state.schedule.next(), housekeeping)
             };
             if housekeeping {
+                self.housekeeping_wake.notify_one();
                 let scratch = self.storage.scratch().clone();
                 tokio::task::spawn_blocking(move || {
                     if let Err(error) = nucleus_work::prune_quarantines(&scratch, now_ms()) {

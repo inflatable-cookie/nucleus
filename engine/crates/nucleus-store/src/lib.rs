@@ -185,6 +185,8 @@ pub struct TaskAdmissionFacts<'a> {
     pub affected_tests: bool,
 }
 
+pub type PruneOwners = BTreeMap<String, (String, Option<(i64, u32)>)>;
+
 pub struct Store {
     connection: Connection,
 }
@@ -315,6 +317,14 @@ impl Store {
             task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))
         ) STRICT;
         CREATE INDEX IF NOT EXISTS pending_completion_notices ON completion_notices(task_id) WHERE retry IS NOT NULL")?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS housekeeping_runs (
+            name TEXT PRIMARY KEY, started_ms INTEGER NOT NULL, next_batch_ms INTEGER
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS thread_prune_attempts (
+            thread TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL, attempts INTEGER NOT NULL
+        ) STRICT;",
+        )?;
         tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
@@ -514,6 +524,80 @@ impl Store {
             Ok((row.get(0)?, row.get(1)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Claim a periodic service pass, including across restarts.
+    ///
+    /// # Errors
+    /// Returns a database error if the claim cannot be recorded.
+    pub fn start_housekeeping(
+        &self,
+        name: &str,
+        now: i64,
+        interval: i64,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.execute(
+            "INSERT INTO housekeeping_runs VALUES (?1, ?2, ?2+30000)
+            ON CONFLICT(name) DO UPDATE SET started_ms=excluded.started_ms, next_batch_ms=excluded.next_batch_ms
+            WHERE next_batch_ms<=?2 OR (next_batch_ms IS NULL AND started_ms<=?2-?3)",
+            params![name, now, interval],
+        )? == 1)
+    }
+
+    /// End a drained sweep; a partial sweep remains due on the next eligible scheduler scan.
+    ///
+    /// # Errors
+    /// Returns a database error if the cadence cannot be saved.
+    pub fn finish_housekeeping(&self, name: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE housekeeping_runs SET next_batch_ms=NULL WHERE name=?1",
+            [name],
+        )?;
+        Ok(())
+    }
+
+    /// Native thread IDs owned exclusively by finished tasks and their prior prune attempts.
+    ///
+    /// # Errors
+    /// Returns a database error if ownership cannot be read.
+    pub fn prune_owners(&self) -> Result<PruneOwners, StoreError> {
+        let mut query=self.connection.prepare_cached("WITH owned(task,thread,terminal) AS (
+          SELECT id,thread,phase IN ('done','cancelled') AND run IS NULL FROM task_titles JOIN tasks ON tasks.id=task_titles.task_id
+          UNION ALL SELECT id,json_extract(threads,'$.worker'),phase IN ('done','cancelled') AND run IS NULL FROM tasks
+          UNION ALL SELECT id,json_extract(threads,'$.reviewer'),phase IN ('done','cancelled') AND run IS NULL FROM tasks
+          UNION ALL SELECT id,origin_thread,0 FROM tasks
+        ) SELECT o.thread,min(o.task),p.archived_ms,p.attempts FROM owned o
+          LEFT JOIN thread_prune_attempts p ON p.thread=o.thread WHERE o.thread IS NOT NULL
+          GROUP BY o.thread HAVING min(o.terminal)=1 AND count(DISTINCT o.task)=1")?;
+        let rows = query.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                (row.get(1)?, row.get::<_, Option<i64>>(2)?.zip(row.get(3)?)),
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Claim one deletion after a fresh inventory of the exact archive occurrence.
+    ///
+    /// # Errors
+    /// Returns a database error if the attempt cannot be recorded.
+    pub fn claim_thread_prune(&self, thread: &str, archived_ms: i64) -> Result<bool, StoreError> {
+        Ok(self.connection.execute("INSERT INTO thread_prune_attempts VALUES (?1,?2,1)
+           ON CONFLICT(thread) DO UPDATE SET archived_ms=?2, attempts=CASE WHEN archived_ms=?2 THEN attempts+1 ELSE 1 END
+           WHERE archived_ms<>?2 OR attempts<4", params![thread,archived_ms])? == 1)
+    }
+
+    /// Release the prune intent once T3 confirms deletion of this occurrence.
+    ///
+    /// # Errors
+    /// Returns a database error if the intent cannot be cleared.
+    pub fn confirm_thread_prune(&self, thread: &str, archived_ms: i64) -> Result<(), StoreError> {
+        self.connection.execute(
+            "DELETE FROM thread_prune_attempts WHERE thread=?1 AND archived_ms=?2",
+            params![thread, archived_ms],
+        )?;
+        Ok(())
     }
 
     /// Page completed tasks for native thread housekeeping.
