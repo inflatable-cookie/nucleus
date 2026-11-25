@@ -272,7 +272,7 @@ impl Service {
                 .allocate_checkout(task, &checkout, Some((&pr.head, target.number())))
                 .await?
             {
-                observation.workspace = workspace;
+                observation.workspace = Observed::Known(workspace);
             } else if matches!(workspace, Err(WorkError::Initializing)) {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
@@ -538,7 +538,7 @@ impl Service {
         task: &Task,
         checkout: &Checkout<'_>,
         review: Option<(&Head, i32)>,
-    ) -> Result<Option<Observed<Workspace>>, ServiceError> {
+    ) -> Result<Option<Workspace>, ServiceError> {
         let _projects = self.project_writes.read().await;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
@@ -566,7 +566,7 @@ impl Service {
             checkout.quarantine_initialization(now_ms())?;
         }
         let workspace = if let Some((head, pull)) = review {
-            seen(checkout.allocate_review(head, pull))
+            checkout.allocate_review(head, pull)?
         } else {
             let start = task.report_task().map_or_else(
                 || {
@@ -576,7 +576,7 @@ impl Service {
                 },
                 |report| &report.planning_base,
             );
-            Observed::Known(checkout.allocate(start)?)
+            checkout.allocate(start)?
         };
         Ok(Some(workspace))
     }
@@ -748,7 +748,7 @@ impl Service {
             let Some(workspace) = self.allocate_checkout(task, checkout, None).await? else {
                 return Ok(Action::Wait(WaitReason::Capacity));
             };
-            observation.workspace = workspace;
+            observation.workspace = Observed::Known(workspace);
         }
         let instance = task.next_launch_instance()?;
         let pr = match &observation.forge {
@@ -2449,6 +2449,10 @@ mod tests {
     async fn review_recovers_its_checkout_before_creating_a_reservation() {
         for available in [true, false] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            crate::tests::git(
+                &service.fixture().checkout,
+                &["config", "protocol.https.allow", "never"],
+            );
             let head = if available {
                 service.fixture().start.clone()
             } else {
@@ -2473,11 +2477,11 @@ mod tests {
             let row = service.task("reviewer").await.expect("reviewing row");
             assert_eq!(row.task.phase(), Phase::Reviewing);
             let host = service.host.pass(service.storage.scratch().path());
-            let step = Box::pin(service.advance(&row, &host)).await.expect("pass");
+            let step = Box::pin(service.advance(&row, &host)).await;
             let next = service.task("reviewer").await.expect("result row");
             if available {
                 assert_eq!(
-                    step,
+                    step.expect("recover the published checkout"),
                     Action::Launch {
                         role: Role::Reviewer,
                         via: Launch::Create
@@ -2485,7 +2489,18 @@ mod tests {
                 );
                 assert!(next.task.run().is_some());
             } else {
-                assert_eq!(step, Action::Wait(WaitReason::WorkspaceUnknown));
+                assert!(matches!(
+                    step,
+                    Err(ServiceError::Workspace(WorkError::Git {
+                        operation: nucleus_work::GitOperation::Fetch,
+                        ..
+                    }))
+                ));
+                assert_eq!(
+                    crate::task_wait(&row, &step).0,
+                    Some(WaitReason::WorkspaceUnknown)
+                );
+                assert!(crate::workspace_cause(&step).starts_with("git fetch "));
                 assert_eq!(row, next);
             }
             server.abort();

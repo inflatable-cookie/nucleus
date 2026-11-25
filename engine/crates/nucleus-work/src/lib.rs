@@ -86,6 +86,8 @@ pub enum GitOperation {
     Add,
     #[error("git status")]
     Status,
+    #[error("git fetch")]
+    Fetch,
     #[error("the Git checkout operation")]
     Other,
 }
@@ -560,6 +562,7 @@ impl Checkout<'_> {
         command: String,
     ) -> Result<String, WorkError> {
         let (operation, timeout) = match args {
+            ["fetch", ..] => (GitOperation::Fetch, GIT_TIMEOUT),
             ["worktree", "add", ..] => (GitOperation::Add, WORKTREE_TIMEOUT),
             ["--no-optional-locks", "status", ..] => (GitOperation::Status, GIT_TIMEOUT),
             _ => (GitOperation::Other, GIT_TIMEOUT),
