@@ -8,7 +8,7 @@ export const decisionAdd = defineRpc({ name: "decision.add", input: z.object(dec
     ctx.addIssue({ code: "custom", path: ["recommended"], message: "Recommended must match one choice label" });
 }), output: decisionViewSchema });
 
-export const decisionGet = defineRpc({ name: "decision.get", input: z.object({ id: z.string().min(1) }).strict(), output: decisionViewSchema });
+export const decisionGet = defineRpc({ name: "decision.get", input: z.object({ id: z.string().min(1), project: z.string().min(1).optional() }).strict(), output: decisionViewSchema });
 
 /** Task 1183: retarget project-less decisions at the asker's project. The planner runs the real backfill after merge. */
 export const decisionBackfill = defineRpc({ name: "decision.backfill",
@@ -26,6 +26,7 @@ export const decisionList = defineRpc({ name: "decision.list", input: z.object({
 }).strict(), output: z.array(decisionViewSchema) });
 
 const answerFields = {
+  project: z.string().min(1).optional(),
   id: z.string().min(1), version: z.number().int().positive(),
   answeredBy: z.string().min(1).max(240), relayed: z.boolean().default(true), note: z.string().default(""),
   overtakes: z.array(z.string().min(1).max(160)).max(100).default([]),

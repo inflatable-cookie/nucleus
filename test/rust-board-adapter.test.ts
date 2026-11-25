@@ -948,6 +948,32 @@ test("Needs you uses the pending inventory and history retains older task decisi
   assert.ok((await adapter.rpc(api.decisionList, {})).some(row => row.id === "obsolete"));
 });
 
+test("project-scoped decisions address the selected copy and ambiguous bare IDs refuse", async () => {
+  const fake = engine();
+  const writes: string[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    if (path.endsWith("/shared/answer")) {
+      writes.push(path);
+      const response = await fake.fetcher(path.replace("/shared/answer", ""), { headers: init?.headers });
+      const [decision] = await response.json();
+      return Response.json({ ...decision, id: "shared", answer: { optionId: "first", note: null, author: "operator", answeredAtMs: 5 } });
+    }
+    const response = await fake.fetcher(url, init);
+    if (!path.endsWith("/decisions")) return response;
+    const [decision] = await response.json();
+    return Response.json([{ ...decision, id: "shared", question: decision.projectId + " question" }]);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const answer = { id: "shared", optionId: "first", answeredBy: "operator", version: 1 };
+  await assert.rejects(adapter.rpc(api.decisionGet, { id: "shared" }), /ambiguous/);
+  await assert.rejects(adapter.rpc(api.decisionAnswer, answer), /ambiguous/);
+  assert.equal(writes.length, 0);
+  assert.equal((await adapter.rpc(api.decisionGet, { id: "shared", project: "lantern" }))?.question, "lantern question");
+  await adapter.rpc(api.decisionAnswer, { ...answer, project: "lantern" });
+  assert.deepEqual(writes, ["/api/engine/planning/lantern/decisions/shared/answer"]);
+});
+
 test("unreadable planning records leave healthy siblings readable in lists and detail", async () => {
   const fake = engine();
   let badStep = false;

@@ -419,38 +419,23 @@ export function createRustPlanning(
     return { row, lane: lane.parse(raw) };
   }
 
-  async function decisionOwner(id: string) {
+  async function recordOwner<T>(
+    path: string, schema: z.ZodType<T>, id: string, project?: string, matches?: (record: T) => boolean,
+  ) {
+    let match: { row: ProjectRow; record: T } | undefined;
     for (const row of await projects()) {
-      const found = await findRecord(row, "decisions", decision, id);
-      if (found) return { row, decision: found };
+      if (project !== undefined && row.board.key !== project) continue;
+      const record = await findRecord(row, path, schema, id);
+      if (record === undefined || (matches && !matches(record))) continue;
+      if (match) throw new Error(`Record ${id} is ambiguous across projects.`);
+      match = { row, record };
     }
-    throw new Error(`Decision ${id} is not in any project.`);
-  }
-
-  async function itemOwner(id: string) {
-    for (const row of await projects()) {
-      const found = await findRecord(row, "items", item, id);
-      if (found) return { row, item: found };
-    }
-    throw new Error(`${id} is not in any project.`);
-  }
-
-  async function papercutOwner(id: string, project?: string) {
-    let match: { row: ProjectRow; item: RustItem } | undefined;
-    for (const row of await projects()) {
-      if (project !== undefined && row.id !== project) continue;
-      const found = await findRecord(row, "items", item, id);
-      if (found?.kind !== "papercut") continue;
-      if (match) throw new Error(`Papercut ${id} is ambiguous across projects.`);
-      match = { row, item: found };
-    }
-    if (!match)
-      throw new Error(`Could not identify papercut ${id} in the accessible projects.`);
+    if (!match) throw new Error(`Could not identify ${id} in the accessible projects.`);
     return match;
   }
 
   async function promote({ id, repository, complexity }: { id: string; repository?: string; complexity?: api.CapabilityLevel }) {
-    const { row } = await itemOwner(id);
+    const { row } = await recordOwner("items", item, id);
     const task = await rust.promoteItem(row.id, id, { repository, complexity });
     return { taskId: task.identity.id, reference: task.reference };
   }
@@ -597,63 +582,64 @@ export function createRustPlanning(
           api.decisionViewSchema.parse(boardDecision(decision.parse(value), row.board.key, row.project)),
         ).filter(view => !input.status || view.status === input.status);
       }),
-    "decision.get": async (input: { id: string }) => {
-      const { row, decision } = await decisionOwner(input.id);
-      return boardDecision(decision, row.board.key, row.project);
+    "decision.get": async (input: { id: string; project?: string }) => {
+      const { row, record } = await recordOwner("decisions", decision, input.id, input.project);
+      return boardDecision(record, row.board.key, row.project);
     },
     "decision.answer": async (input: {
       id: string;
+      project?: string;
       optionId?: string;
       note?: string;
     }) => {
-      const { row, decision } = await decisionOwner(input.id);
+      const { row, record } = await recordOwner("decisions", decision, input.id, input.project);
       const { optionId } = input;
-      if (!optionId || !decision.options.some((option) => option.id === optionId))
+      if (!optionId || !record.options.some((option) => option.id === optionId))
         throw new Error("Choose one of the decision's options.");
-      const saved = await rust.answerDecision(row.id, decision.id, {
+      const saved = await rust.answerDecision(row.id, record.id, {
         optionId,
         note: input.note || null,
       });
       return boardDecision(saved, row.board.key, row.project);
     },
     "lead.get": async (input: { id: string }) => {
-      const { row, item } = await itemOwner(input.id);
-      return leadDetail(item, row.project);
+      const { row, record } = await recordOwner("items", item, input.id);
+      return leadDetail(record, row.project);
     },
     "papercut.get": async (input: { id: string }) => {
-      const { row, item } = await papercutOwner(input.id);
-      if (item.version === undefined) throw new Error("The engine did not supply the papercut version.");
-      return boardPapercut(item, row);
+      const { row, record } = await recordOwner("items", item, input.id, undefined, value => value.kind === "papercut");
+      if (record.version === undefined) throw new Error("The engine did not supply the papercut version.");
+      return boardPapercut(record, row);
     },
     "papercut.edit": async (input: output<typeof api.papercutEdit.input>) => {
       const { id, project, version, title, body, happened } = input;
       if (project === undefined) throw new Error("Reopen the papercut before editing it.");
-      const { row, item } = await papercutOwner(id, project);
-      if (version !== item.version) throw new Error("The papercut changed since you started editing.");
+      const { row, record } = await recordOwner("items", item, id, keys().key(project), value => value.kind === "papercut");
+      if (version !== record.version) throw new Error("The papercut changed since you started editing.");
       const saved = await rust.editItem(row.id, id, {
         version,
-        title: title ?? item.title,
-        body: body ?? happened ?? item.body,
-        lanes: item.lanes,
+        title: title ?? record.title,
+        body: body ?? happened ?? record.body,
+        lanes: record.lanes,
       });
       return boardPapercut(saved, row);
     },
     "lead.promote-task": promote,
     "papercut.promote-task": promote,
     "lead.park": async (input: { id: string; reason: string; revisitAt?: string | null }) => {
-      const { row } = await itemOwner(input.id);
-      const item = await rust.parkItem(row.id, input.id, { reason: input.reason, revisitAt: input.revisitAt ?? null });
-      return boardLeadRecord(item, row.project);
+      const { row } = await recordOwner("items", item, input.id);
+      const saved = await rust.parkItem(row.id, input.id, { reason: input.reason, revisitAt: input.revisitAt ?? null });
+      return boardLeadRecord(saved, row.project);
     },
     "lead.drop": async (input: { id: string; reason: string }) => {
-      const { row } = await itemOwner(input.id);
-      const item = await rust.dropItem(row.id, input.id, input.reason);
-      return boardLeadRecord(item, row.project);
+      const { row } = await recordOwner("items", item, input.id);
+      const saved = await rust.dropItem(row.id, input.id, input.reason);
+      return boardLeadRecord(saved, row.project);
     },
     "papercut.close": async (input: { id: string; note?: string }) => {
-      const { row } = await itemOwner(input.id);
-      const item = await rust.dropItem(row.id, input.id, input.note || null);
-      return boardPapercut(item, row);
+      const { row } = await recordOwner("items", item, input.id);
+      const saved = await rust.dropItem(row.id, input.id, input.note || null);
+      return boardPapercut(saved, row);
     },
   };
 
