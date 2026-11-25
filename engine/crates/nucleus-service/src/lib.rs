@@ -941,8 +941,13 @@ impl Service {
         if wait == Some(WaitReason::Capacity)
             && current.task.reconcile_capacity() == Action::Advance(Phase::Queued)
         {
-            current.version =
-                self.commit_queue_phase(&mut state, row, &current.task, "queue_capacity")?;
+            current.version = self.commit(
+                &mut state,
+                row,
+                &current.task,
+                &event("queue_capacity"),
+                None,
+            )?;
         }
         let row = &current;
         if self.schedule_parent_wait(&mut state, row, result, wait, previous)? {
@@ -1163,7 +1168,9 @@ impl Service {
             && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
             && let Some(runtime) = self.host.runtime_identity()
         {
-            pass::prior_preparation_command(state, row, &runtime)?
+            state
+                .store
+                .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
                 .as_deref()
                 .is_some_and(nucleus_hosts::is_pinned_parent_hold)
         } else {
@@ -1517,22 +1524,6 @@ impl Service {
         })?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
-    }
-
-    fn commit_queue_phase(
-        &self,
-        state: &mut State,
-        prior: &TaskRow,
-        task: &Task,
-        kind: &str,
-    ) -> Result<i64, ServiceError> {
-        let mut audit = event(kind);
-        let origin = state
-            .store
-            .queue_origin(&task.identity().id, prior.version)?;
-        audit.detail =
-            serde_json::json!({"origin":origin, "version":prior.version + 1}).to_string();
-        self.commit(state, prior, task, &audit, None)
     }
 
     fn commit(

@@ -741,44 +741,6 @@ impl Store {
             .optional()?)
     }
 
-    /// Source version before consecutive queue-only phase changes.
-    ///
-    /// # Errors
-    /// Returns an error if the journal cannot be read.
-    pub fn queue_origin(&self, id: &str, version: i64) -> Result<i64, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT coalesce((SELECT json_extract(detail, '$.origin') FROM events
-             WHERE task_id = ?1 AND kind IN ('queue_admitted', 'queue_capacity') AND json_valid(detail)
-             AND json_extract(detail, '$.version') = ?2 ORDER BY sequence DESC LIMIT 1), ?2)",
-            params![id, version],
-            |row| row.get(0),
-        )?)
-    }
-
-    /// Locate an exact native occurrence through queue-only phase changes.
-    ///
-    /// # Errors
-    /// Returns an error if the journal cannot be read.
-    pub fn queue_parent_intent(
-        &self,
-        id: &str,
-        version: i64,
-        session: &str,
-    ) -> Result<Option<(i64, String)>, StoreError> {
-        let origin = self.queue_origin(id, version)?;
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT json_extract(detail, '$.version'), json_extract(detail, '$.command')
-             FROM events WHERE task_id = ?1 AND kind = 'native_turn_intent' AND json_valid(detail)
-             AND json_extract(detail, '$.version') BETWEEN ?2 AND ?3
-             AND json_extract(detail, '$.session') = ?4 ORDER BY sequence DESC LIMIT 1",
-                params![id, origin, version, session],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?)
-    }
-
     /// Recover the latest parent hold owned by this active child in the native session.
     ///
     /// # Errors

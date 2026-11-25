@@ -327,7 +327,7 @@ impl Service {
                 }
                 let mut admitted = task.clone();
                 admitted.reconcile(&observation);
-                self.commit_queue_phase(&mut state, row, &admitted, "queue_admitted")?;
+                self.commit(&mut state, row, &admitted, &event("queue_admitted"), None)?;
                 Ok(action)
             }
             Action::Wait(WaitReason::HostUnknown) if let Some(error) = host_error => {
@@ -1801,25 +1801,25 @@ impl Service {
     }
 }
 
-pub(super) fn prior_preparation_command(
+fn prior_preparation_command(
     state: &crate::State,
     row: &TaskRow,
     session: &str,
 ) -> Result<Option<String>, ServiceError> {
     let id = &row.task.identity().id;
-    let Some((version, command)) = state.store.queue_parent_intent(id, row.version, session)?
-    else {
-        return Ok(None);
-    };
-    if state.store.task_turn_failed(id, &command)?
-        || state
-            .store
-            .task_turn_attempt(id, "native_turn_intent", version, session, &command)?
-            .is_some_and(|(_, refused)| refused)
+    let prior = state
+        .store
+        .task_turn_command(id, "native_turn_intent", row.version, session)?;
+    if let Some(command) = &prior
+        && (state.store.task_turn_failed(id, command)?
+            || state
+                .store
+                .task_turn_attempt(id, "native_turn_intent", row.version, session, command)?
+                .is_some_and(|(_, refused)| refused))
     {
         return Ok(None);
     }
-    Ok(Some(command))
+    Ok(prior)
 }
 
 fn freeze_launch(

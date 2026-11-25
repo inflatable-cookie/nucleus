@@ -455,7 +455,7 @@ Later decisions carry their own attribution.
     project and checkout capacity under the task fence before entering Working.
     This also applies to report-only work. A first worker without a run or a
     retained role returns to Queued if capacity closes before reservation.
-    Queue-only phase changes preserve the exact native parent intent.
+    A later dispatch reuses an existing native parent row.
     Admission creates no T3 parent. The TypeScript path uses
     `Dispatch.dispatchQueued` and `WorkerLauncher.launchAgentOnce`, then
     `T3Nesting.create` calls `launchParent` during native preparation.
