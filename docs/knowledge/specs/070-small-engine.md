@@ -569,7 +569,10 @@ Later decisions carry their own attribution.
       sender.
     - A reply reaches exactly the sender's thread through the ordinary
       delivery path, which observes the thread first. An archived or gone
-      sender refuses the reply and is not revived.
+      sender is not revived. The reply then falls back to the sender's
+      project, as a fallback delivery under ruling 41 that names the original
+      sender as gone. This is the planner's reading of Tom's "we don't want
+      messages getting lost".
     - A reply is itself a message with a new handle, so a conversation can
       continue. A per-recipient rate limit (the TypeScript limit was 20 an
       hour) keeps two agents from looping.
