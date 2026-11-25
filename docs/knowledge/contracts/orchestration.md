@@ -222,7 +222,9 @@ The board and Next retain the workspace outcome. Before removing a checkout,
 verify idle participants, Dispatch, the Git registration and published head.
 The task and project fences span removal. Clean worktrees use unforced removal.
 Only unstaged deletions of files at that exact published head allow forced
-removal. Modified, added, untracked or uncertain contents retain the checkout.
+removal. Git-ignored output goes with the checkout. Modified, added, non-ignored
+untracked or uncertain contents retain it. A cancelled task retires a clean
+checkout once its HEAD is proved published on an origin branch.
 Already archived, absent and deleted threads count
 as settled. An active thread waits. See [Spec 070 rulings 34 and 35](../specs/070-small-engine.md#rulings)
 and [worktree custody](../../../engine/crates/nucleus-work/src/lib.rs).

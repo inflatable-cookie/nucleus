@@ -124,10 +124,19 @@ impl Service {
             }
         }
         let workspace = checkout.observe()?;
-        if workspace == Workspace::Absent || task.phase() == Phase::Cancelled {
+        if workspace == Workspace::Absent {
             return Ok(Action::Nothing);
         }
-        let head = if task.report_task().is_some() {
+        let head = if task.phase() == Phase::Cancelled {
+            if let Workspace::Clean(head) = &workspace {
+                self.verify_route(identity, &route).await?;
+                self.is_published_checkout(identity, &checkout, head)
+                    .await?
+                    .then(|| head.clone())
+            } else {
+                None
+            }
+        } else if task.report_task().is_some() {
             self.report_archive_head(row, &checkout).await?
         } else if task.phase() == Phase::Done {
             task.pull_request().map(|pr| pr.head.clone())

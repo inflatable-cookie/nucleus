@@ -36,7 +36,7 @@ const INDEX_VISIBILITY: &str = concat!(
 // successful Git completion. Porcelain quotes newlines inside file names.
 const DELETIONS_ONLY: &str = concat!(
     r#"alias.nucleus-deletions-only=! { git ls-files -v --stage && "#,
-    r#"git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none && printf '%s\n' 'Nucleus scan complete'; } | "#,
+    r#"git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none && printf '%s\n' 'Nucleus scan complete'; } | "#,
     r#"awk '$0 == "Nucleus scan complete" { complete=1; next } "#,
     r#"/^H (100644|100755|120000) [0-9a-f]+ 0\t/ { next } "#,
     r#"substr($0,1,3) == " D " { deleted=1; next } { other=1 } "#,
