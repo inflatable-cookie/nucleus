@@ -9,10 +9,9 @@ import { planningEntry } from "./support/inbox";
 import type { BoardTheme } from "../client/shell/types";
 
 /**
- * nucleus#1531: the Planning read view, rendered through the real board from a real stored
- * population (projects, lanes, plans, tasks and leads written through the runtime's store
- * and read back through the board's own reads). Wide has the list and detail panes; medium
- * drills into the roadmap in place and opens the lane page in the modal.
+ * nucleus#1531: Planning reads projects, lanes, plans, tasks and leads from
+ * fixture RPC responses. Wide has separate panes. Medium drills into the
+ * roadmap and opens the lane page in the modal.
  */
 useNativeStubs();
 const h = React.createElement;
@@ -27,7 +26,7 @@ async function mountBoard(
   setup?: (fixture: Awaited<ReturnType<typeof planningFixture>>) => void,
   colors: BoardTheme["colors"] = c,
 ) {
-  const fixture = await planningFixture();
+  const fixture = planningFixture();
   setup?.(fixture);
   const { MainSurface } = await import("../client/queue");
   const client = new QueryClient({
@@ -51,10 +50,9 @@ async function mountBoard(
     ui,
     waitFor,
     fixture,
-    async close() {
+    close() {
       ui.update(h("View"));
       client.clear();
-      await fixture.close();
     },
   };
 }
@@ -179,7 +177,7 @@ test("1531 wide: the list groups projects with a status line in words, and the f
       "Edit plan opens today's editor",
     );
   } finally {
-    await board.close();
+    board.close();
   }
 });
 
@@ -226,14 +224,14 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
       "the search said there is no more",
     );
   } finally {
-    await board.close();
+    board.close();
   }
 });
 
 test("1531 wide: a project whose only record is a new lane shows that lane's time as its last activity", async () => {
   // The no-work project gains a lane and nothing else (review 6010408992).
   const board = await mountBoard(false, (fixture) =>
-    fixture.store.upsertLane({
+    fixture.addLane({
       key: "dormant-lane",
       title: "Dormant lane",
       aim: "A lane for the project with no work.",
@@ -251,7 +249,7 @@ test("1531 wide: a project whose only record is a new lane shows that lane's tim
       "the lane record gives the row an age",
     );
   } finally {
-    await board.close();
+    board.close();
   }
 });
 
@@ -277,7 +275,7 @@ test("1531 wide: an idle project shows its reason instead of a focus, and a dorm
       "no columns for a project with no plan",
     );
   } finally {
-    await board.close();
+    board.close();
   }
 });
 
@@ -350,7 +348,7 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
     assert.ok(ui.get("Plan for roadmap"));
     assert.equal(ui.query("Lane Queue reliability"), undefined);
   } finally {
-    await board.close();
+    board.close();
   }
 });
 
@@ -418,6 +416,6 @@ test("1531 medium: the roadmap opens in place of the list, and the lane page ope
       "the narrow light board keeps the raised lane card when the former list fill equaled the section shade",
     );
   } finally {
-    await board.close();
+    board.close();
   }
 });
