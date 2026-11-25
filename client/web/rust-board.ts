@@ -244,7 +244,7 @@ export type RustCommand =
         | "extend"
         | { accept: { head: string; reason: string } };
     }
-  | { amend: string }
+  | { amend: string; briefVersion: number }
   | { hold: string }
   | "cancel"
   | "release";

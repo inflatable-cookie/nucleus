@@ -322,7 +322,9 @@ export function RustTaskDialog({
                     </>
                   )}
                   {section === "amend" && (
-                    <BriefEditor detail={detail} c={c} submit={submit} />
+                    <BriefEditor detail={detail} c={c} submit={submit}
+                      readBrief={async () => (await task.refetch({ throwOnError: true })).data?.brief}
+                    />
                   )}
                   {section === "hold" && offered("hold") && (
                     <>
@@ -428,21 +430,27 @@ function BriefEditor({
   detail,
   c,
   submit,
+  readBrief,
 }: {
   detail: RustTaskDetail;
   c: Colors;
+  readBrief: () => Promise<RustTaskDetail["brief"] | undefined>;
   submit: (command: RustCommand) => Promise<CommandOutcome>;
 }) {
   const [draft, setDraft] = useState(detail.brief.text);
   const baseline = useRef(detail.brief.version);
   const { invalid, enqueue, status, failed } = useSectionAutoSave(
     async (text: string) => {
-      if (baseline.current < detail.brief.version) {
-        throw new Error(
-          "The brief changed. Reopen Amend to edit the latest version.",
-        );
+      let outcome: CommandOutcome;
+      try {
+        outcome = await submit({ amend: text, briefVersion: baseline.current });
+      } catch (error) {
+        if (typeof error !== "object" || !error || !("status" in error) || error.status !== 409) throw error;
+        const saved = await readBrief();
+        if (!saved || saved.text !== text) throw error;
+        baseline.current = saved.version;
+        return;
       }
-      const outcome = await submit({ amend: text });
       if ("status" in outcome)
         throw new Error(
           "The engine is checking the task. Try again when ready.",

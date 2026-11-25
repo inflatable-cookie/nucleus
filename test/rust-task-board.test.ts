@@ -227,6 +227,9 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   let activity = "Editing the fixture";
   let moveReadiness: "pending" | "ready" = "pending";
   let authorityCold = false;
+  let briefVersion = 3;
+  let briefText = "Fixture brief";
+  let loseAmendReply = false;
   const engine = createServer(async (req, res) => {
     const path = req.url ?? "";
     calls.push({
@@ -298,6 +301,20 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       for await (const part of req) parts.push(part);
       const command: unknown = JSON.parse(Buffer.concat(parts).toString());
       posts.push({ path, command });
+      if (typeof command === "object" && command !== null && "amend" in command &&
+          typeof command.amend === "string" && "briefVersion" in command) {
+        if (command.briefVersion !== briefVersion) {
+          json({ error: "The brief changed. Reopen Amend to edit the latest version." }, 409);
+          return;
+        }
+        briefText = command.amend;
+        briefVersion++;
+        if (loseAmendReply) {
+          loseAmendReply = false;
+          res.destroy();
+          return;
+        }
+      }
       if (
         typeof command === "object" &&
         command !== null &&
@@ -387,7 +404,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     json({
       ...row,
       createdAtMs: 1_700_000_000_000,
-      brief: { text: "Fixture brief", version: 1, digest: Array(32).fill(1) },
+      brief: { text: briefText, version: briefVersion, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
           ? { url: "https://github.com/example/board-fixture/pull/1", head }
@@ -554,6 +571,44 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "move posted",
   );
   assert.deepEqual(posts[1]?.command, { move: "reviewing" });
+  const amendReady = () => {
+    const button = dom.window.document.querySelector('[aria-label="Amend"]');
+    return Boolean(button && button.getAttribute("aria-disabled") !== "true" && !button.hasAttribute("disabled"));
+  };
+  await eventually(amendReady, "the move settled and Amend is available");
+  await click("Amend");
+  const briefField = () => dom.window.document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Brief"]');
+  await eventually(() => Boolean(briefField()), "brief editor opened");
+  briefVersion++; // A second editor committed before this board received an invalidation.
+  const draft = "My unsaved brief";
+  briefText = draft + " "; // Even a trailing space is a different stored brief.
+  const editBrief = (value: string) => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(briefField(), value);
+    briefField()!.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  editBrief(draft);
+  await eventually(() => text().includes("Reopen Amend"), "conflict reaches the editor");
+  assert.deepEqual(posts[2]?.command, { amend: draft, briefVersion: 3 });
+  assert.equal(briefField()?.value, draft);
+  await click("Amend");
+  await eventually(() => !briefField(), "stale editor closed");
+  await click("Amend");
+  await eventually(() => briefField()?.value === briefText, "editor reopened on the current version");
+  const replacement = "Line one\nLine two  ";
+  loseAmendReply = true;
+  editBrief(replacement);
+  await eventually(() => text().includes("Not saved") && briefText === replacement, "save applied before reply loss");
+  await click("Retry");
+  await eventually(() => text().includes("Saved") && !text().includes("Not saved"), "identical fresh readback acknowledges the save");
+  assert.equal(briefField()?.value, replacement);
+  assert.equal(briefVersion, 5);
+  editBrief("Another edit");
+  await eventually(() => briefText === "Another edit" && amendReady(), "editor adopted the readback version");
+  assert.deepEqual(posts.slice(3).map(post => post.command), [
+    { amend: replacement, briefVersion: 4 }, { amend: replacement, briefVersion: 4 },
+    { amend: "Another edit", briefVersion: 5 },
+  ]);
+  await click("Amend");
   await click("Needs you, 1");
   await click("Blocked task, The worker could not finish. Try again?");
   await click("Answer");
@@ -561,14 +616,14 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     () => posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
     "answer posted",
   );
-  assert.deepEqual(posts[2]?.command, { answer: "retry" });
+  assert.deepEqual(posts[6]?.command, { answer: "retry" });
   await click("History, 2");
   await eventually(
     () => /Done/.test(text()) && /Cancelled/.test(text()),
     "only the terminal phases are history",
   );
 
-  assert.equal(posts.length, 3);
+  assert.equal(posts.length, 7);
   authorityCold = true;
   await assert.rejects(
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
@@ -598,7 +653,7 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     { answer: "retry" },
     { answer: { accept: { head, reason: "Manually reviewed" } } },
     "cancel",
-    { amend: "Updated brief" },
+    { amend: "Updated brief", briefVersion: 3 },
     { hold: "Hold for proof" },
     "release",
   ];
