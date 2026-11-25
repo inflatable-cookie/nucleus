@@ -7,8 +7,8 @@ use std::{
 
 use nucleus_core::{
     Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
-    LaunchInputs, Observation, Observed, Phase, Report, RetainedThread, Role, Run, RunState, Task,
-    WaitReason, Workspace, decide,
+    LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, WaitReason,
+    Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -111,40 +111,16 @@ impl Service {
                 ));
             }
             let head = self.report_archive_head(row, &checkout).await?;
-            let parent = nucleus_hosts::parent_thread(checkout.path());
-            #[cfg(test)]
-            let host = self.host.fixture_pass();
-            #[cfg(not(test))]
-            let host = self.host.pass(self.storage.scratch().path());
-            for (role, thread) in [
-                ("reviewer", reviewer),
-                ("worker", worker),
-                ("task", Some(parent.as_str())),
-            ] {
-                if let Some(thread) = thread
-                    && !host.retirement_idle(&binding, thread).await?
-                {
-                    return Err(ServiceError::ArchiveEvidence(format!(
-                        "Waiting for the {role} thread and checkout to be idle before removal."
-                    )));
-                }
-            }
-            let roles: Vec<_> = [reviewer, worker, Some(parent.as_str())]
-                .into_iter()
-                .flatten()
-                .collect();
-            let state = self.state.lock().await;
-            if state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
+            if !self
+                .retire_if_idle(task, &binding, || {
+                    Self::retire_report_checkout(&checkout, head.as_ref())
+                })
+                .await?
             {
-                return Err(ServiceError::ReportCheckout("archival is paused"));
+                return Err(ServiceError::ArchiveEvidence(
+                    "Waiting for the task threads and checkout to be idle before removal.".into(),
+                ));
             }
-            self.host.retire_with_quiet_shell(&parent, &roles, || {
-                Self::retire_report_checkout(&checkout, head.as_ref())
-            })??;
         }
         let step = if parenting {
             self.host.prepare_archive(&binding, reviewer, worker)?
@@ -383,7 +359,8 @@ impl Service {
                 self.merge(row, target, observation, &head).await
             }
             Action::Close { workspace, .. } if let Some(target) = target.as_ref() => {
-                self.close(row, &checkout, target, workspace, host).await
+                self.close(row, &checkout, &binding, target, workspace)
+                    .await
             }
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => Err(error),
             Action::Wait(_) if forge_requested && let Some(error) = forge_error => Err(error),
@@ -1808,13 +1785,48 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
+    // Both callers hold the current task and project fences through Git retirement.
+    async fn retire_if_idle(
+        &self,
+        task: &Task,
+        binding: &Binding,
+        retire: impl FnOnce() -> Result<(), ServiceError>,
+    ) -> Result<bool, ServiceError> {
+        let parent = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
+        let threads = [
+            task.threads().get(Role::Reviewer),
+            task.threads().get(Role::Worker),
+            Some(parent.as_str()),
+        ];
+        let pass = self.host.pass(self.storage.scratch().path());
+        let pass = pass.for_task(task, self.existing_run_scratch(task));
+        let threads: Vec<_> = threads.into_iter().flatten().collect();
+        for thread in &threads {
+            if !pass.retirement_idle(binding, thread).await? {
+                return Ok(false);
+            }
+        }
+        let state = self.state.lock().await;
+        if state
+            .settings
+            .dispatch
+            .as_ref()
+            .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
+        {
+            return Ok(false);
+        }
+        self.host
+            .retire_with_quiet_shell(&parent, &threads, retire)??;
+        Ok(true)
+    }
+
     async fn close(
         &self,
         row: &TaskRow,
         checkout: &Checkout<'_>,
+        binding: &Binding,
         target: &PullTarget,
         workspace: CloseWorkspace,
-        host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         let mut observed = Observation {
@@ -1828,29 +1840,21 @@ impl Service {
             ..
         } = &action
         {
-            let route = self.project_for(task.identity()).await?;
-            let binding = route.binding(checkout)?;
-            for thread in [Role::Worker, Role::Reviewer]
-                .into_iter()
-                .filter_map(|role| task.threads().get(role))
-            {
-                if !matches!(
-                    host.observe_retained(&binding, thread).await,
-                    Ok(Host::Retained {
-                        state: RetainedThread::Idle | RetainedThread::Gone,
-                        ..
-                    })
-                ) {
-                    return Ok(Action::Wait(WaitReason::Stopping));
-                }
-            }
             let _fence = self.effect(row).await?;
             let _projects = self.project_writes.read().await;
             let route = self.project_for(task.identity()).await?;
-            if self.checkout_binding(task.identity(), &route, checkout)? != binding {
+            if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
                 return Err(HostError::Binding.into());
             }
-            let _ = checkout.retire(head)?;
+            if !self
+                .retire_if_idle(task, binding, || {
+                    checkout.retire(head)?;
+                    Ok(())
+                })
+                .await?
+            {
+                return Ok(Action::Wait(WaitReason::Stopping));
+            }
             observed.workspace = seen(checkout.observe());
         }
         let mut updated = task.clone();
@@ -2055,6 +2059,67 @@ mod tests {
         Due, REPOSITORY, code_task_at_merge, fixture, forge_checks, forge_fixture, forge_pull,
         native_fixture, reservation, serve_forge,
     };
+
+    #[tokio::test]
+    async fn unbound_review_checkout_survives_a_local_writer_and_an_active_child() {
+        let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+        let project = service.fixture();
+        let head = &project.start;
+        let task = Task::new(
+            nucleus_core::Identity {
+                id: "unbound".into(),
+                reference: "unbound".into(),
+                repository: REPOSITORY.into(),
+                base: "main".into(),
+                entry: Entry::ReviewEntry,
+                origin_thread: None,
+            },
+            "Review an existing PR".into(),
+            Some(PullRequest {
+                url: format!("https://github.com/{REPOSITORY}/pull/1"),
+                head: head.clone(),
+            }),
+        );
+        let work = service.worktrees().unwrap();
+        let checkout = work
+            .checkout(&project.checkout, REPOSITORY, "unbound")
+            .unwrap();
+        checkout.allocate(head).unwrap();
+        let route = service.project_for(task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+        let parent = nucleus_hosts::parent_thread(checkout.path());
+        let shell = |threads| {
+            service.host.fixture_held_shell(&json!({
+                "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads}
+            }));
+        };
+        shell(json!([]));
+        let retire = || {
+            service.retire_if_idle(&task, &binding, || {
+                checkout.retire(head)?;
+                Ok(())
+            })
+        };
+        let mut writer = tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(checkout.path())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        assert!(!retire().await.unwrap());
+        assert!(checkout.path().exists());
+        writer.kill().await.unwrap();
+        shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));
+        assert!(matches!(
+            retire().await,
+            Err(ServiceError::Host(HostError::RowChildBusy))
+        ));
+        assert!(checkout.path().exists());
+        shell(json!([]));
+        assert!(retire().await.unwrap());
+        assert!(!checkout.path().exists());
+        assert!(service.host.host_calls().is_empty());
+    }
 
     #[tokio::test]
     async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() {
