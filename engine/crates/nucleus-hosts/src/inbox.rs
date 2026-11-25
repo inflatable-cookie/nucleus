@@ -446,8 +446,22 @@ fn reconcile(
             return Err(HostError::Protocol);
         }
         let id = request["id"].as_str().ok_or(HostError::Protocol)?;
+        let compact_items = projection["visibleTurnItems"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| {
+                snapshot["turnItemsOmitLocalVisible"] == true
+                    && entry["visibility"] == "local"
+                    && entry["sourceThreadId"] == INBOX_THREAD
+                    && entry["item"]["threadId"] == INBOX_THREAD
+                    && entry["sourceItemId"].is_string()
+                    && entry["sourceItemId"] == entry["item"]["id"]
+            })
+            .map(|entry| &entry["item"]);
         let item = items
             .iter()
+            .chain(compact_items)
             .find(|item| item["type"] == "user_input_request" && item["requestId"] == id)
             .ok_or(HostError::Protocol)?;
         let Some(field) = item["questions"]

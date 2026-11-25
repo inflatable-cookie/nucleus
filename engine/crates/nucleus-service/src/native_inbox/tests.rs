@@ -598,7 +598,12 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     let root = inbox.root.clone();
     let stage = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&stage);
-    let (host, server) = native_fixture(move |req| native_response(req, &seen, &root)).await;
+    let offered = Arc::new(std::sync::OnceLock::<String>::new());
+    let native_form = Arc::clone(&offered);
+    let (host, server) = native_fixture(move |req| {
+        native_form_response(req, &seen, &root, native_form.get().map(String::as_str))
+    })
+    .await;
     service.host = host;
     let inbox = service.native_inbox.as_ref().unwrap();
     let mut updates = inbox.changes();
@@ -652,6 +657,13 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
         .ok()
         .unwrap();
     assert!(form.offer);
+    offered.set(form.field.clone()).unwrap();
+    inbox.unobserved();
+    service
+        .reconcile_inbox(inbox, &target)
+        .await
+        .expect("observe the compact pinned form");
+    assert!(!service.inbox_snapshot(&key).await.unwrap().pending[0].offer);
     let answer = || InboxAnswer {
         field: form.field.clone(),
         option_id: "continue".into(),
@@ -678,6 +690,32 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     retire(&service, &target).await;
     assert_eq!(stage.load(Ordering::Relaxed), 6);
     server.abort();
+}
+
+fn native_form_response(req: &Value, seen: &AtomicUsize, root: &str, field: Option<&str>) -> Value {
+    let mut reply = native_response(req, seen, root);
+    let Some(field) = field else { return reply };
+    if req["tag"] != "orchestration.subscribeThread" || seen.load(Ordering::Relaxed) != 7 {
+        return reply;
+    }
+    let snapshot = &mut reply["values"][0];
+    snapshot["hasMoreHistory"] = json!(true);
+    snapshot["historyCursor"] = json!("previous-page");
+    snapshot["turnItemsOmitLocalVisible"] = json!(true);
+    let view = &mut snapshot["projection"];
+    view["runtimeRequests"] = json!([{
+        "kind": "user_input", "id": "req", "status": "pending",
+        "responseCapability": {"type": "live"}
+    }]);
+    let item = json!({
+        "id": "form", "threadId": INBOX_THREAD, "runId": "turn",
+        "type": "user_input_request", "requestId": "req", "questions": [{"id": field}]
+    });
+    view["visibleTurnItems"] = json!([{
+        "position": 36, "visibility": "local", "sourceThreadId": INBOX_THREAD,
+        "sourceItemId": "form", "item": item
+    }]);
+    reply
 }
 
 async fn retire(service: &Service, target: &InboxTarget<'_>) {
