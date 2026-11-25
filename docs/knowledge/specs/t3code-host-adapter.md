@@ -2129,8 +2129,8 @@ when readback proves its postcondition; external disappearance without Nucleus's
 own delete does not retire presentation intents. Regression tests instrument
 `readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
-nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
-transcript on the installed nightly: the initial launch, same-state writes, several
+nucleus#1378's pre-cutover held-turn proof ran the parent transcript on the
+installed nightly: the initial launch, same-state writes, several
 milestones within one held turn, the production release and re-entry, the closeout
 through the ordinary host pass, and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
 with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a

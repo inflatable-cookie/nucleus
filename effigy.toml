@@ -37,9 +37,6 @@ setup = "npm ci"
 # nucleus#1407's private proof: a settled inbox wake outside the bounded window (--expect blocked|woken).
 "proof:t3code:window" = "node --import tsx scripts/acceptance/t3code-window-private.ts {args}"
 "proof:t3code:snooze" = "node --import tsx scripts/acceptance/t3code-snooze-private.ts {args}"
-# nucleus#1378's private proof: the parent transcript's held turn on the installed nightly, its
-# release and re-entry, the quiet system re-entry probe and closeout.
-"proof:t3code:held-turn" = "node --import tsx scripts/acceptance/t3code-held-turn-private.ts {args}"
 # nucleus#1459's private proof: a finished task parent archived by the ordinary host pass,
 # with a sibling read fault, a service roll and a mismatched twin.
 "proof:t3code:parent-archive" = "node --import tsx scripts/acceptance/t3code-parent-archive-private.ts {args}"
