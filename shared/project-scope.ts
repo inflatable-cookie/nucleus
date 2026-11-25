@@ -216,7 +216,7 @@ export function projectSelectorRows(
   const missingActivity = Number.NEGATIVE_INFINITY;
   return projects
     .flatMap((project) => {
-      const primary = project.primary.origin ?? project.primary.path;
+      const primary = project.primary?.origin ?? project.primary?.path ?? "";
       if (
         needle &&
         !`${project.name} ${primary}`.toLowerCase().includes(needle)
