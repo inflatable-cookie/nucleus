@@ -37,6 +37,8 @@ and `host-run.board`.
 
 ## Live run presence: a terminal tab and a workspace label (task 530)
 
+This section records the retired TypeScript terminal follower and workspace labels.
+
 **The tab.** Nucleus adds a terminal tab for each live selector in an open
 workspace. A task run uses the task's workspace. Other host runs can use an
 open workspace for their recorded checkout.
