@@ -445,10 +445,11 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
                 {"id":"delegated-child","parentThreadId":parent,"status":status}
             ]
         }}));
-        assert!(matches!(
-            fixture.service.archive_done(&done).await,
-            Err(ServiceError::Host(HostError::RowChildBusy))
-        ));
+        let outcome = fixture.service.archive_done(&done).await;
+        assert!(
+            matches!(outcome, Err(ServiceError::Host(HostError::RowChildBusy))),
+            "delegated child {status}: {outcome:?}"
+        );
         assert!(fixture.checkout.exists());
     }
     host.fixture_held_shell(
@@ -747,7 +748,9 @@ impl ReportFixture {
             };
             json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
         }).await;
-        service.host = host;
+        // The fixture owns all task threads. Its wire snapshots control their activity
+        // independently of unrelated processes on the test machine.
+        service.host = host.with_quiet_fixture_processes();
         let service = Arc::new(service);
         let api = router(
             Arc::clone(&service),
