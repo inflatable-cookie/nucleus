@@ -611,7 +611,9 @@ Later decisions carry their own attribution.
       planner (ruling 41). The notice is never dropped.
     - It uses the existing planner-notice delivery: one notice per task, an
       exact T3 rejection gets one fresh attempt, and uncertain delivery is not
-      resent. It carries a reply route (ruling 40).
+      resent. The engine sends it, so there is no sender to answer and it
+      carries no reply route. The text omits the Reply line. To follow up,
+      the planner uses the task's own commands.
     - The skill shows the field in its admission example. Without the field,
       nothing is sent.
 
