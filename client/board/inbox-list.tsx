@@ -1,3 +1,4 @@
+import { laneProjects } from "../../shared/lane-finder";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -312,7 +313,7 @@ export type InboxListProps = {
   onSelectLead: (id: string, lane: null) => void;
   onSelectPapercut: (id: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
-  onOpenLane: (key: string) => void;
+  onOpenLane: (key: string, project?: string) => void;
   /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
   plans?: ProjectPlan[];
   busy: boolean;
@@ -485,8 +486,17 @@ export function InboxList({
       }),
     );
   // Close finishes the drained step; Keep records the operator's reason and ends the episode.
+  const drainedLaneProject = (lane: LaneView) => {
+    const owners = laneProjects(lane, state?.projects ?? []);
+    return owners.length === 1 ? owners[0]?.key : undefined;
+  };
   const closeDrainedLane = (lane: LaneView) =>
-    void act(() => changeLaneStatus({ key: lane.key, status: "done" }));
+    void act(async () => {
+      const project = drainedLaneProject(lane);
+      if (!project) throw new Error("Select a project before closing this lane.");
+      const input = { key: lane.key, project, status: "done" as const };
+      return changeLaneStatus(input);
+    });
   const keepDrainedLane = (lane: LaneView, reason: string) =>
     void act(() =>
       keepLaneRpc({ key: lane.key, reason, author: "operator (board)" }),
@@ -549,7 +559,7 @@ export function InboxList({
             c={c}
             busy={busy}
             selected={false}
-            onPress={() => onOpenLane(card.value.key)}
+            onPress={() => onOpenLane(card.value.key, drainedLaneProject(card.value))}
             project={
               card.value.repositories.length ? (
                 <LeadProjectEyebrow
