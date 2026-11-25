@@ -41,6 +41,7 @@ import {
  */
 export function DecisionDialog({
   id: openDecisionId,
+  project,
   compact,
   busy,
   act,
@@ -55,6 +56,7 @@ export function DecisionDialog({
 }: {
   inline?: boolean;
   id: string;
+  project?: string;
   /** A linked task's reference, title and project, resolved from the board (nucleus#1515). */ taskLinkLabel?: (
     id: string,
   ) => string | null;
@@ -69,6 +71,7 @@ export function DecisionDialog({
   c: Colors;
 }) {
   const live = useContext(BoardLiveContext);
+  const scope = project ? { project } : {};
   const fetchDecision = useRpc(api.decisionGet),
     answerDecision = useRpc(api.decisionAnswer),
     withdrawDecision = useRpc(api.decisionWithdraw);
@@ -80,8 +83,8 @@ export function DecisionDialog({
     string | null
   >(null);
   const decisionDetailQuery = useQuery({
-    queryKey: ["nucleus", "decision", openDecisionId],
-    queryFn: () => fetchDecision({ id: openDecisionId! }),
+    queryKey: ["nucleus", "decision", openDecisionId, project],
+    queryFn: () => fetchDecision({ ...scope, id: openDecisionId! }),
     enabled: Boolean(openDecisionId),
     refetchInterval: live ? false : 4000,
   });
@@ -472,6 +475,7 @@ export function DecisionDialog({
                   if (!answer) return;
                   void act(async () => {
                     await answerDecision({
+                      ...scope,
                       id: decisionDetail.id,
                       version: decisionDetail.version,
                       ...answer,
