@@ -31,7 +31,6 @@ pub use dependencies::{
     Dependencies, DependencyClock, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
 };
 pub use inbox::InboxBinding;
-pub use numbers::TaskNumberSeed;
 pub use parent_delivery::{ParentDelivery, ParentResult};
 pub use settings::{
     Backups, BargePaths, EngineSettings, EngineStorage, RetentionSettings, SettingsFile,
@@ -97,10 +96,8 @@ pub enum StoreError {
         "the offline project import is pending. Recover the Projects settings before starting this profile"
     )]
     ProjectImportPending,
-    #[error("seed this repository's task numbers from the fenced legacy snapshot")]
+    #[error("this restored repository needs task number recovery before admitting new tasks")]
     NumbersNeedSeed,
-    #[error("the legacy range overlaps a Rust task number")]
-    NumberOverlap,
     #[error("the repository task number counter is exhausted")]
     NumberExhausted,
     #[error("the task allowance is no longer exhausted")]
