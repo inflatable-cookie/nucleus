@@ -457,16 +457,6 @@ fn missing_report(task: &Task, role: Role, state: RunState) -> Signal {
 }
 
 fn unbound(task: &Task, observation: &Observation) -> Signal {
-    if task.phase == Phase::Merging
-        && task.verdict.is_none()
-        && task.pr.as_ref().is_some_and(|cached| {
-            observation
-                .pr()
-                .is_none_or(|current| current.head == cached.head)
-        })
-    {
-        return Signal::Wait(WaitReason::ForgeUnknown);
-    }
     if matches!(
         task.phase,
         Phase::Queued | Phase::Working | Phase::Reviewing | Phase::Merging | Phase::Closing
@@ -536,6 +526,15 @@ fn unbound(task: &Task, observation: &Observation) -> Signal {
 }
 
 fn merge_signal(task: &Task, observation: &Observation) -> Signal {
+    if task.verdict.is_none()
+        && task.pr.as_ref().is_some_and(|cached| {
+            observation
+                .pr()
+                .is_none_or(|current| current.head == cached.head)
+        })
+    {
+        return Signal::Wait(WaitReason::ForgeUnknown);
+    }
     match &observation.forge {
         Observed::Known(Forge::Open { pr, .. }) if !task.approves(&pr.head) => Signal::NeedsReview,
         Observed::Unknown

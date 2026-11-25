@@ -375,9 +375,11 @@ Keep due times and displayed waits in memory. An available slot permits a new
 launch. Waiting for a slot spends no attempt. A fresh pass checks process
 custody after launch.
 
-A definite GitHub head mismatch retires approval and keeps the bound PR in
-Merging until a read shows a new head. A refusal followed by incomplete
-readback waits for fresh evidence and honours any forge retry deadline.
+A definite GitHub head mismatch retires approval. While the PR stays open at
+the refused head, Nucleus waits. A new open head goes to review. If someone
+merges the refused head, Nucleus verifies the merge on the base branch before
+asking for source acceptance. Incomplete readback waits for fresh evidence
+and honours any forge retry deadline.
 A failed forge read keeps its retry and reports the safe failure category to
 the service log.
 A confirmed rejection of a superseded review stays in the revoked run slot
