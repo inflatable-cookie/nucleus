@@ -326,6 +326,13 @@ impl Store {
             thread TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL, attempts INTEGER NOT NULL
         ) STRICT;",
         )?;
+        if !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='planning_record_clocks')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )? {
+            tx.execute_batch(include_str!("planning/clocks.sql"))?;
+        }
         tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
