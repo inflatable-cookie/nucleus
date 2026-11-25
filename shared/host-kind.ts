@@ -45,11 +45,9 @@ export function hostKindOf(hostId: string | null | undefined): HostKind {
 }
 
 /**
- * The caller's identity source for one thread: the native identity, and the host
- * that identity's own source proved (`caller.resolve`, `shared/caller.mjs`). The
- * CLI fills it from the calling thread's resolution, never from a typed name, and
- * the service uses it only as evidence about that same thread — it never grants
- * host attribution to another identity or authority to run anything anywhere.
+ * The caller's identity source records evidence about one thread and its host.
+ * The service uses it only for that thread. Task admission governs execution
+ * authority.
  */
 export const identitySourceSchema = z
   .object({
