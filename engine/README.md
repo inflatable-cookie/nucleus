@@ -546,7 +546,6 @@ nucleus t3 install --t3 http://127.0.0.1:3773 \
   --serve-launcher /absolute/path/serve-engine
 nucleus t3 status --t3 http://127.0.0.1:3773 \
   --control-key-file /absolute/path/controller.key
-nucleus t3 uninstall --t3 http://127.0.0.1:3773
 ```
 
 Use `install --adopt` to take over an existing local `nucleus-rust`
@@ -570,6 +569,14 @@ version, the exact Rust provider and launcher, and native Inbox presence, pin,
 favicon path and session health. Missing credentials or unavailable reads leave the
 corresponding status unknown.
 
+#### Remove the T3 provider
+
+Run this command to retire the Rust Inbox and remove its provider.
+
+```sh
+nucleus t3 uninstall --t3 http://127.0.0.1:3773
+```
+
 Uninstall verifies the Rust registration and its local launcher, unpins and
 archives the verified Rust Inbox, clears its project favicon, and removes `nucleus-rust`. It keeps
 the launcher, engine data and decisions. T3's remove operation takes only an
@@ -579,6 +586,8 @@ reads it back afterward.
 [T3 provider mutation contract](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/contracts/src/providerInstance.ts#L85-L101)
 For offline setup flag details, run
 `nucleus t3 --help`.
+
+### Task parenting
 
 Keep host execution and parenting separate. The engine uses its host interface
 to prepare a launch, observe a run and stop it. A host's parenting adapter
@@ -640,11 +649,10 @@ the feed on attach. Decisions never read these display records.
 Review rounds count applied reviewer verdicts in history. Replays and
 unsuccessful launches stay in the same round.
 
-Axum serves the bundled TypeScript board and its same-origin API. Browser
-sessions carry operator authority for the board. The CLI and task callbacks
-use their own credentials.
+Axum serves the bundled TypeScript board and its same-origin API. Pair a browser
+with `nucleus ui`. A planner's session is scoped to its project. Only an
+operator session can edit Settings. See the [board pairing contract](../docs/knowledge/contracts/service-boundary.md#local-web-board).
 
-On the standalone Rust board, `nucleus ui` pairs a new browser once.
 A paired browser can reopen the plain loopback URL after a service restart.
 Sessions expire after 30 idle days and renew at most once per day. The private
 `web-sessions.json` beside the engine database holds token digests and expiry
@@ -669,7 +677,7 @@ For the live proof, bind a separate key to the idle fixture origin thread with
 `--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. Use that key
 to submit and answer as the bound fixture planner.
 
-## Settings migration
+## Settings
 
 Keep the Settings tabs, shared controls and save feedback. Use one noun per
 control, put explanations in `?` popovers, autosave, prefer dropdowns and put
@@ -695,23 +703,18 @@ exact-head approval still govern the merge.
 On startup both the old explicit `--t3` fixture endpoint and the saved reference
 are supported. Apply saved connection and storage changes on the next start.
 Storage reports the running process's active paths and the verified archive
-inventory separately from saved intent. The paired Settings UI reads and writes these engine domains. The Settings
-domain stores the budget allowance and hung-tool threshold. Applying them to
-run accounting, planner budget questions and native tool termination requires
-scheduler and host follow-up. An exhausted allowance extends automatically once,
-then the planner can choose Extend directly. Backup capture and retention
-execution also belong to that follow-up.
+inventory separately from saved intent.
 
-Port the worker start matrix and the reviewer bracket matrix cell for cell from
-[Spec 052](../docs/knowledge/specs/052-usage-level.md). Preserve the critical
-cases, smoothed Maximum and its one Frontier climb for high-complexity tasks,
-and the step-up after an applied changes-required review. Derive that trigger
-from the existing phase, verdict and attempt facts. Read the retained worker's
-actual profile for the reviewer bracket. Use the existing five-stop demand
-weight slider and [Spec 053](../docs/knowledge/specs/053-demand-based-selection.md)
-to pick within a bracket. Keep the selectors pure and reproduce every worker
-and reviewer case from `test/demand.test.ts` as a table-driven Rust test. The
-retired coordinator has no row.
+The [allowance scheduler](crates/nucleus-service/src/allowance.rs) charges
+active work and extends an exhausted allowance automatically once. If the
+allowance is exhausted again, the planner can approve a further extension
+before the next launch.
+
+The [profile selector](crates/nucleus-core/src/profiles.rs) chooses the worker's
+starting bracket and the reviewer's bracket under [Spec 052](../docs/knowledge/specs/052-usage-level.md).
+[Spec 053](../docs/knowledge/specs/053-demand-based-selection.md) governs
+selection within a bracket. The [Rust profile tests](crates/nucleus-core/tests/profiles.rs)
+cover both matrices and the step-up after a changes-required review.
 
 Profile rotation uses the engine's `SQLite` database. Freezing a profiled launch
 records one assignment for its role, profile and subscription group in the same

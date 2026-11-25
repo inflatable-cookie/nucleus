@@ -62,22 +62,15 @@ dispatch setting, separate from monitoring provider subscription windows.
 
 On T3Code a task is one thread on the Nucleus ACP provider. Its worker and
 reviewer are native subagent children. T3 draws them inside the parent's card,
-so each task has one row. The parent has no model. It shows the
-task's lifecycle text and holds its turn while a role runs, so the row reads as
-working exactly when the task is.
+so each task has one row. The parent has no model. It shows the task's progress
+and holds its turn while a role runs. Follow the [T3 setup guide](engine/README.md#set-up-t3)
+to install the provider and check its status.
 
-Set up the Rust ACP provider with
-`nucleus t3 install --serve-launcher /absolute/path/to/serve-engine`. The engine registers
-`nucleus-rust` and keeps its ACP launcher under the engine home. Check the
-registration with `nucleus t3 status`. See the [T3 setup guide](engine/README.md#set-up-t3)
-for connection and credential setup.
-
-The task's row is snoozed while the task waits on nothing Nucleus is running and
-needs no one — a hold with a release condition, a prerequisite wait, capacity —
-and is shown again as soon as a role runs or a person must act. Nucleus never
-settles a task thread, so its rows stay out of your settle list; a row you settle
-by hand is left alone. A question or permission still belongs to the task's own
-thread (open it from the row) or goes through Nucleus's own routes.
+Nucleus snoozes the parent row while a worker or reviewer runs, and during
+routine waits for capacity or prerequisites. It shows the row when someone
+needs to answer a question, grant approval or supply input. Child threads keep
+their own visibility. Nucleus respects manual snoozes and leaves settling to
+you. See [Spec 070, ruling 22](docs/knowledge/specs/070-small-engine.md#rulings).
 
 ## Development
 

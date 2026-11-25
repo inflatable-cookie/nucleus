@@ -27,8 +27,10 @@ source file opens no write authority. Repository hooks and validation follow
 
 The Rust API listens on loopback. Controller calls authenticate with a local
 credential. A planner call from T3 uses a separate caller credential and names
-its native thread. When its binding is cold, the scheduler verifies the thread and checkout against the
-held host view and repository identity. The service asks the caller to retry.
+its native thread. When its binding is cold, the scheduler verifies the thread
+and checkout against the held host view and repository identity. Concurrent
+requests for that binding share the verification. Each request waits up to
+three seconds and asks the caller to retry if verification is still pending.
 A verified planner's task and planning access stays within the recorded project
 scope. Commands that use operator authority have an explicit operator check.
 See the [controller boundary](../../../engine/crates/nucleus-service/src/web.rs)
