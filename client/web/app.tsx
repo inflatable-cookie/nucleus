@@ -126,7 +126,10 @@ export function WebApp() {
           });
         },
         profileUsageChanged: () => invalidateBoard({ queryKey: RUST_PROFILE_USAGE_KEY }),
-        decisionsChanged: () => invalidateBoard({ queryKey: ["nucleus", "decisions"] }),
+        decisionsChanged: () => invalidateBoard({
+          queryKey: ["nucleus"],
+          predicate: ({ queryKey: [, area] }) => area === "decisions" || area === "decision",
+        }),
         themeChanged: () => setThemeRevision((value) => value + 1),
         catalogChanged: () => {
           invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
