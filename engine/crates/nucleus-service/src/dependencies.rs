@@ -175,41 +175,57 @@ impl DependencyStatus {
         scope: &ControllerScope,
     ) -> Result<Self, ServiceError> {
         let id = &row.task.identity().id;
-        let Dependencies {
-            before_dispatch,
-            wait,
-        } = state.store.dependencies(id)?;
-        let facts = |ids: Vec<String>| -> Result<Vec<_>, ServiceError> {
-            ids.into_iter().map(|id| fact(state, id, scope)).collect()
+        let dependencies = state.store.dependencies(id)?;
+        let blocking = !matches!(
+            row.task.phase(),
+            Phase::Done | Phase::Cancelled | Phase::Closing
+        ) && state.store.dependency_blocked(id)?;
+        Self::from_facts(&dependencies, blocking, |id| {
+            let prerequisite = state.store.row(id)?;
+            Ok(fact(state, id, scope, prerequisite.as_ref()))
+        })
+    }
+
+    pub(super) fn finished(
+        state: &State,
+        scope: &ControllerScope,
+        dependencies: &Dependencies,
+        rows: &std::collections::HashMap<&str, &TaskRow>,
+    ) -> Result<Self, ServiceError> {
+        Self::from_facts(dependencies, false, |id| {
+            Ok(fact(state, id, scope, rows.get(id).copied()))
+        })
+    }
+
+    fn from_facts(
+        dependencies: &Dependencies,
+        blocking: bool,
+        resolve: impl Fn(&str) -> Result<DependencyFact, ServiceError>,
+    ) -> Result<Self, ServiceError> {
+        let facts = |ids: &[String]| -> Result<Vec<_>, ServiceError> {
+            ids.iter().map(|id| resolve(id)).collect()
         };
-        let dependencies = facts(before_dispatch)?;
-        let prerequisite_wait = wait
+        let prerequisite_wait = dependencies
+            .wait
+            .as_ref()
             .map(|wait| -> Result<_, ServiceError> {
                 Ok(PrerequisiteWaitView {
-                    reason: wait.reason,
+                    reason: wait.reason.clone(),
                     released_at_ms: wait.released_at_ms,
-                    prerequisites: facts(wait.ids)?,
+                    prerequisites: facts(&wait.ids)?,
                 })
             })
             .transpose()?;
         Ok(Self {
-            dependencies,
+            dependencies: facts(&dependencies.before_dispatch)?,
             prerequisite_wait,
-            blocking: !matches!(
-                row.task.phase(),
-                Phase::Done | Phase::Cancelled | Phase::Closing
-            ) && state.store.dependency_blocked(id)?,
+            blocking,
         })
     }
 }
 
-fn fact(
-    state: &State,
-    id: String,
-    scope: &ControllerScope,
-) -> Result<DependencyFact, ServiceError> {
-    let row = state.store.row(&id)?;
-    Ok(match row {
+fn fact(state: &State, id: &str, scope: &ControllerScope, row: Option<&TaskRow>) -> DependencyFact {
+    match row {
         Some(row) => {
             let visible = scope.task(state, row.task.identity()).is_ok();
             let phase = row.task.phase();
@@ -220,19 +236,23 @@ fn fact(
                     String::new()
                 },
                 title: visible.then(|| crate::titles::brief(&row.task)),
-                task_id: if visible { id } else { String::new() },
+                task_id: if visible {
+                    id.to_owned()
+                } else {
+                    String::new()
+                },
                 phase: visible.then_some(phase),
                 status: DependencyState::for_phase(phase),
             }
         }
         None => DependencyFact {
-            reference: id.clone(),
-            task_id: id,
+            reference: id.into(),
+            task_id: id.into(),
             title: None,
             phase: None,
             status: DependencyState::Missing,
         },
-    })
+    }
 }
 
 fn require_visible_dependencies(

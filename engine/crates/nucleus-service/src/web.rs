@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     convert::Infallible,
     sync::{
         Arc,
@@ -62,6 +63,7 @@ pub(crate) mod tests;
 
 #[derive(Clone)]
 struct Api {
+    finished_cards: Arc<tokio::sync::Mutex<HashMap<String, FinishedCard>>>,
     service: Arc<Service>,
     controllers: Arc<[ControllerEntry]>,
     t3_caller_key: Option<[u8; 32]>,
@@ -239,6 +241,7 @@ fn routes(
         })
         .collect();
     let api = Api {
+        finished_cards: Arc::default(),
         service,
         controllers: carriers,
         t3_caller_key,
@@ -629,7 +632,7 @@ async fn list(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
     Extension(authority): Extension<Authority>,
-) -> Result<Json<Vec<Summary>>, ApiError> {
+) -> Result<Json<Vec<Summary<Arc<Card>>>>, ApiError> {
     api.service
         .storage
         .database()
@@ -637,14 +640,62 @@ async fn list(
         .map_err(ServiceError::from)?;
     let state = api.service.state.lock().await;
     let tasks = state.store.list().map_err(ServiceError::from)?;
-    Ok(Json(
-        tasks
-            .iter()
-            .filter(|row| api.service.task_scope(row.task.identity()).is_ok())
-            .filter(|row| scope.task(&state, row.task.identity()).is_ok())
-            .map(|row| Summary::read(row, &state, &scope, Some(&authority), None))
-            .collect::<Result<_, _>>()?,
-    ))
+    let revisions = state
+        .store
+        .finished_card_revisions()
+        .map_err(ServiceError::from)?;
+    let by_id = tasks
+        .iter()
+        .map(|row| (row.task.identity().id.as_str(), row))
+        .collect();
+    let mut cache = api.finished_cards.lock().await;
+    cache.retain(|id, _| revisions.contains_key(id));
+    let mut result = Vec::new();
+    for row in &tasks {
+        let identity = row.task.identity();
+        if api.service.task_scope(identity).is_err() || scope.task(&state, identity).is_err() {
+            continue;
+        }
+        let id = identity.id.as_str();
+        if let Some(&revision) = revisions.get(id)
+            && state.wait_detail(id).is_none()
+            && state.wait_reason(id).is_none()
+        {
+            let entry = match cache.entry(identity.id.clone()) {
+                std::collections::hash_map::Entry::Occupied(entry)
+                    if entry.get().revision == revision
+                        && entry.get().card.version == row.version =>
+                {
+                    entry.into_mut()
+                }
+                entry => entry
+                    .insert_entry(FinishedCard {
+                        revision,
+                        card: Arc::new(Card::read(row, &state, false, None)?),
+                        dependencies: state.store.dependencies(id).map_err(ServiceError::from)?,
+                    })
+                    .into_mut(),
+            };
+            result.push(Summary {
+                card: Arc::clone(&entry.card),
+                dependency_status: DependencyStatus::finished(
+                    &state,
+                    &scope,
+                    &entry.dependencies,
+                    &by_id,
+                )?,
+                dependency_edits: DependencyEdits::unavailable(),
+            });
+        } else {
+            let summary = Summary::read(row, &state, &scope, Some(&authority), None)?;
+            result.push(Summary {
+                card: Arc::new(summary.card),
+                dependency_status: summary.dependency_status,
+                dependency_edits: summary.dependency_edits,
+            });
+        }
+    }
+    Ok(Json(result))
 }
 
 async fn detail(
@@ -666,7 +717,7 @@ async fn detail(
                 .map(|activity| activity.label.as_str()),
         });
     let summary = Summary::read(&row, &state, &scope, authority.as_deref(), transcript)?;
-    let run = RunView::read(&row, activity, summary.lifecycle.review_round);
+    let run = RunView::read(&row, activity, summary.card.lifecycle.review_round);
     let (parent_hold, active_child) = if credential.is_some() {
         api.service.acp_turn_view(&state, &row)?
     } else {
@@ -676,7 +727,7 @@ async fn detail(
     let plan_scope_id =
         (credential.is_some() && api.service.acp_provider().is_some()).then_some("task-lifecycle");
     Ok(Json(Detail {
-        created_at_ms: summary.created_at_ms,
+        created_at_ms: summary.card.created_at_ms,
         summary,
         brief: task.brief().clone(),
         operator_inbox: api.service.uses_operator_inbox(),
@@ -746,14 +797,14 @@ async fn next(
     }
     Ok(Json(NextView {
         version: row.version,
-        phase: summary.phase,
-        state_label: summary.state_label,
-        state_since_ms: summary.state_since_ms,
-        wait: summary.wait,
-        wait_detail: summary.wait_detail,
-        attention: summary.attention,
-        next_check_at: summary.next_check_at,
-        question: summary.question,
+        phase: summary.card.phase,
+        state_label: summary.card.state_label,
+        state_since_ms: summary.card.state_since_ms,
+        wait: summary.card.wait,
+        wait_detail: summary.card.wait_detail,
+        attention: summary.card.attention,
+        next_check_at: summary.card.next_check_at,
+        question: summary.card.question,
         critical_review_fallbacks: state
             .store
             .critical_review_fallbacks(&id)
@@ -1080,7 +1131,22 @@ async fn summary_after(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Summary {
+struct Summary<C = Card> {
+    #[serde(flatten)]
+    card: C,
+    dependency_status: DependencyStatus,
+    dependency_edits: DependencyEdits,
+}
+
+struct FinishedCard {
+    revision: (i64, Option<i64>),
+    card: Arc<Card>,
+    dependencies: nucleus_store::Dependencies,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Card {
     identity: Identity,
     title: String,
     number: Option<i64>,
@@ -1099,8 +1165,6 @@ struct Summary {
     next_check_at: Option<u64>,
     question: Option<Question>,
     hold: Option<Hold>,
-    dependency_status: DependencyStatus,
-    dependency_edits: DependencyEdits,
 }
 
 impl Summary {
@@ -1111,15 +1175,31 @@ impl Summary {
         authority: Option<&Authority>,
         transcript: Option<crate::presentation::TranscriptRequest<'_>>,
     ) -> Result<Self, ServiceError> {
+        let dependency_status = DependencyStatus::read(state, row, scope)?;
+        let dependency_edits =
+            DependencyEdits::read(state, &row.task, authority, &dependency_status);
+        Ok(Self {
+            card: Card::read(row, state, dependency_status.blocking, transcript)?,
+            dependency_status,
+            dependency_edits,
+        })
+    }
+}
+
+impl Card {
+    fn read(
+        row: &nucleus_store::TaskRow,
+        state: &EngineState,
+        dependencies_block: bool,
+        transcript: Option<crate::presentation::TranscriptRequest<'_>>,
+    ) -> Result<Self, ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        let dependency_status = DependencyStatus::read(state, row, scope)?;
-        let dependency_edits = DependencyEdits::read(state, task, authority, &dependency_status);
         let wait = state.wait_reason(id);
-        let wait = if dependency_status.blocking && task.run().is_none() {
+        let wait = if dependencies_block && task.run().is_none() {
             Some(WaitReason::Prerequisite)
         } else {
-            wait.filter(|wait| *wait != WaitReason::Prerequisite || dependency_status.blocking)
+            wait.filter(|wait| *wait != WaitReason::Prerequisite || dependencies_block)
         };
         let times = state.store.board_times(id)?;
         let created_at_ms = times.admitted;
@@ -1203,8 +1283,6 @@ impl Summary {
             wait_detail: wait_detail.map(str::to_owned),
             question: task.question().cloned(),
             hold: task.hold().cloned(),
-            dependency_status,
-            dependency_edits,
         })
     }
 }
