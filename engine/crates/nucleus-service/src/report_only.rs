@@ -7,7 +7,7 @@ use nucleus_core::{
     RetainedThread, Role, Task, WaitReason, Workspace,
 };
 use nucleus_forge::Branches;
-use nucleus_hosts::{HostError, NoticeHost, NoticeWrite, T3, TaskHost};
+use nucleus_hosts::{HostError, NoticeHost, NoticeSend, NoticeWrite, T3, TaskHost};
 use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
     planning::{Lane, WriteAt},
@@ -20,6 +20,12 @@ use crate::{
     acp::{self, WriteAccess},
     event, now_ms,
 };
+
+#[derive(Clone, Copy)]
+pub(super) enum PlannerNotice {
+    ReportReady,
+    PrerequisiteRelease(i64),
+}
 
 impl Service {
     pub(super) async fn capture_report_base(
@@ -249,12 +255,7 @@ impl Service {
         else {
             return Ok(Action::Nothing);
         };
-        let _fence = self.effect(row).await?;
-        let Some(thread) = self.planner_notice_target(task).await? else {
-            return Ok(Action::Wait(WaitReason::Question));
-        };
         let artifact = &delivery.artifact;
-        let command = format!("task-{}-report-ready-{}", task.identity().id, row.version);
         let text = format!(
             "Nucleus report ready for {}\n{}\nArtifact: {} v{} ({})\nUse complete with the exact artifact and an acceptance reason, or move to work with an instruction.",
             row.reference(),
@@ -263,27 +264,111 @@ impl Service {
             artifact.version,
             artifact.digest
         );
-        let mut attempt = T3::prepare_notice(thread, command, &text)?;
+        let pending = self
+            .send_planner_notice(row, PlannerNotice::ReportReady, &text)
+            .await?;
+        Ok(if pending {
+            Action::Wait(WaitReason::Question)
+        } else {
+            Action::Nothing
+        })
+    }
+
+    /// Make one attempt at an informational notice, returning whether it remains pending.
+    pub(super) async fn send_planner_notice(
+        &self,
+        row: &TaskRow,
+        notice: PlannerNotice,
+        text: &str,
+    ) -> Result<bool, ServiceError> {
+        let _fence = self.effect(row).await?;
+        let task = &row.task;
+        let Some(thread) = self.planner_notice_target(task).await? else {
+            return Ok(true);
+        };
+        let id = &task.identity().id;
+        let (effect, version, intent, not_sent, release_version) = match notice {
+            PlannerNotice::ReportReady => (
+                "report-ready",
+                row.version,
+                "report_ready_planner_notice_intent",
+                "report_ready_planner_notice_not_sent",
+                None,
+            ),
+            PlannerNotice::PrerequisiteRelease(version) => (
+                "prerequisite-release",
+                version,
+                "prerequisite_notice_intent",
+                "prerequisite_notice_not_sent",
+                Some(version),
+            ),
+        };
+        let retry = self
+            .state
+            .lock()
+            .await
+            .store
+            .planner_notice_rejected(id, release_version)?;
+        let suffix = if retry { "-retry" } else { "" };
+        let command = format!("task-{id}-{effect}-{version}{suffix}");
+        let mut attempt = T3::prepare_notice(thread, command, text)?;
         let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
-            return Ok(Action::Wait(WaitReason::Question));
+            return Ok(true);
         };
         let dispatch = authorization.record(&mut attempt)?;
-        let mut updated = task.clone();
-        updated.mark_report_notice_attempted();
-        let mut audit = event("report_ready_planner_notice_intent");
-        audit.detail =
-            serde_json::json!({ "command": attempt.command, "recipient": attempt.thread })
-                .to_string();
-        let recorded = self.save(row, updated, &audit).await?;
-        // The intent is durable before the write. Unknown delivery grants no retry.
+        let mut audit = event(intent);
+        audit.detail = serde_json::json!({
+            "command": attempt.command, "recipient": attempt.thread, "releaseVersion": release_version
+        })
+        .to_string();
+        let recorded = if let Some(version) = release_version {
+            if !self
+                .state
+                .lock()
+                .await
+                .store
+                .claim_prerequisite_notice(id, version, &audit)?
+            {
+                return Ok(false);
+            }
+            self.publish(id, row.version);
+            None
+        } else {
+            let mut updated = task.clone();
+            updated.mark_report_notice_attempted();
+            Some(self.save(row, updated, &audit).await?)
+        };
+        // The intent is durable before the write. Unknown delivery leaves it closed.
         let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
-        if matches!(send, Err(HostError::Deferred { .. })) {
-            audit.kind = "report_ready_planner_notice_not_sent".into();
-            self.save(&recorded, task.clone(), &audit).await?;
+        let kind = match send {
+            Err(HostError::Deferred { .. }) => not_sent,
+            Ok(NoticeSend::Rejected) if !retry => "planner_notice_rejected",
+            Ok(NoticeSend::Rejected) => {
+                audit.kind = "planner_notice_retry_rejected".into();
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .record_task_effect(id, &audit)?;
+                return Ok(false);
+            }
+            Ok(NoticeSend::Accepted | NoticeSend::Prepared) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        let mut outcome = event(kind);
+        outcome.detail.clone_from(&audit.detail);
+        if let Some(recorded) = recorded {
+            self.save(&recorded, task.clone(), &outcome).await?;
+        } else if let Some(version) = release_version {
+            self.state
+                .lock()
+                .await
+                .store
+                .reopen_prerequisite_notice(id, version, &audit, &outcome)?;
         }
         send?;
-        Ok(Action::Nothing)
+        Ok(true)
     }
 
     pub(super) async fn report_archive_head(

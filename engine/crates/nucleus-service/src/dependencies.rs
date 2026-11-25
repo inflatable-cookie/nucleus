@@ -1,9 +1,11 @@
 use nucleus_core::{Authority, Entry, Phase, Task};
-use nucleus_hosts::{NoticeHost, NoticeWrite, T3};
 use nucleus_store::{Dependencies, DependencyEdit, StoreError, TaskRow};
 use serde::{Deserialize, Serialize};
 
-use crate::{ControllerScope, Service, ServiceError, State, event, schedule::Priority};
+use crate::{
+    ControllerScope, Service, ServiceError, State, event, report_only::PlannerNotice,
+    schedule::Priority,
+};
 
 pub(super) fn checks_prerequisites(task: &Task) -> bool {
     !matches!(
@@ -518,45 +520,17 @@ impl Service {
         let Some((version, release)) = pending else {
             return Ok(false);
         };
-        let _fence = self.effect(row).await?;
-        let Some(thread) = self.planner_notice_target(task).await? else {
-            return Ok(true);
-        };
-        let command = format!("task-{id}-prerequisite-release-{version}");
         let text = format!(
             "Nucleus prerequisite wait cleared for {}\nReason: {}\nCompleted prerequisites: {}",
             row.reference(),
             release.reason,
             release.prerequisites.len(),
         );
-        let mut attempt = T3::prepare_notice(thread.clone(), command.clone(), &text)?;
-        let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
-        else {
+        if self
+            .send_planner_notice(row, PlannerNotice::PrerequisiteRelease(version), &text)
+            .await?
+        {
             return Ok(true);
-        };
-        let dispatch = authorization.record(&mut attempt)?;
-        let mut audit = event("prerequisite_notice_intent");
-        audit.detail = serde_json::json!({ "command": command, "recipient": thread }).to_string();
-        let claimed = self
-            .state
-            .lock()
-            .await
-            .store
-            .claim_prerequisite_notice(id, version, &audit)?;
-        if claimed {
-            self.publish(id, row.version);
-            // The recorded attempt fences unknown delivery across retries and restarts.
-            let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
-            if matches!(send, Err(nucleus_hosts::HostError::Deferred { .. })) {
-                let mut outcome = event("prerequisite_notice_not_sent");
-                outcome.detail.clone_from(&audit.detail);
-                self.state
-                    .lock()
-                    .await
-                    .store
-                    .defer_prerequisite_notice(id, version, &audit, &outcome)?;
-            }
-            send?;
         }
         Ok(self
             .state

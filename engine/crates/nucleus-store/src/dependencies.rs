@@ -140,10 +140,28 @@ impl Store {
         Ok(true)
     }
 
-    /// Re-arm a notice after the host deferred before its command reached the wire.
+    /// Whether the first attempt was rejected for this release or the task's report notice.
+    /// # Errors
+    /// Returns an error if the recorded rejection cannot be read.
+    pub fn planner_notice_rejected(
+        &self,
+        id: &str,
+        release_version: Option<i64>,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'planner_notice_rejected'
+                AND detail ->> '$.releaseVersion' IS ?2
+            )",
+            params![id, release_version],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Re-arm a release notice after a proven non-delivery and record the reason.
     /// # Errors
     /// Returns an error if the exact attempted release cannot be updated.
-    pub fn defer_prerequisite_notice(
+    pub fn reopen_prerequisite_notice(
         &mut self,
         id: &str,
         release_version: i64,

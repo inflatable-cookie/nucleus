@@ -25,11 +25,13 @@ struct NoticeFixture {
     uncertain_planner: bool,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum NoticeReply {
     #[default]
     Accepted,
     Rejected,
+    WrongCommand,
+    Lost,
     Uncertain,
 }
 
@@ -86,18 +88,30 @@ impl NoticeFixture {
         } else {
             assert_eq!(payload["type"], "message.dispatch");
             let reply = std::mem::take(&mut self.next_reply);
-            payload["accepted"] = json!(reply == NoticeReply::Accepted);
+            payload["accepted"] = json!(matches!(reply, NoticeReply::Accepted | NoticeReply::Lost));
+            if reply == NoticeReply::Lost {
+                self.sends.push(payload);
+                // The native host accepted the write, then the connection dropped.
+                return Value::Null;
+            }
             if reply == NoticeReply::Accepted {
                 self.sends.push(payload);
                 json!({"_tag": "Success", "value": {"sequence": 17}})
             } else {
-                let command = payload["commandId"].clone();
+                let command = if reply == NoticeReply::WrongCommand {
+                    json!("another-command")
+                } else {
+                    payload["commandId"].clone()
+                };
                 self.sends.push(payload);
                 json!({"_tag": "Failure", "cause": [{"_tag": "Fail", "error": {
                     "_tag": "OrchestrationV2DispatchCommandError",
                     "commandId": command, "commandType": "message.dispatch",
                     "cause": {
-                        "name": if reply == NoticeReply::Rejected { "OrchestratorCommandPreviouslyRejectedError" } else { "UnknownError" },
+                        "name": if matches!(reply, NoticeReply::Rejected | NoticeReply::WrongCommand) {
+                            "OrchestratorCommandPreviouslyRejectedError"
+                        } else { "UnknownError" },
+                        "commandId": command, "commandType": "message.dispatch",
                         "message": format!("Command {} was previously rejected: fixture", command.as_str().expect("command"))
                     }
                 }}]})
@@ -1248,6 +1262,197 @@ async fn notice_pass(service: &Service) -> Vec<crate::PassOutcome> {
         .await
         .expect("notice task is due")
         .expect("scheduler pass")
+}
+
+#[derive(Clone, Copy)]
+enum TaskNotice {
+    Report,
+    Prerequisite,
+}
+
+impl TaskNotice {
+    async fn fixture(self) -> Registry {
+        let registry = registry().await;
+        registry.enroll("alpha-planner").await;
+        registry.enroll("next-planner").await;
+        seed_ready_report(
+            &registry.service,
+            "notice",
+            matches!(self, Self::Prerequisite),
+        )
+        .await;
+        if matches!(self, Self::Prerequisite) {
+            let mut state = registry.service.state.lock().await;
+            let mut identity = state
+                .store
+                .row("notice")
+                .unwrap()
+                .unwrap()
+                .task
+                .identity()
+                .clone();
+            "finished".clone_into(&mut identity.id);
+            "finished".clone_into(&mut identity.reference);
+            let mut completed =
+                serde_json::to_value(Task::new(identity, "Fixture".into(), None)).unwrap();
+            completed["phase"] = json!("done");
+            state
+                .store
+                .create(
+                    &serde_json::from_value(completed).unwrap(),
+                    &event("fixture"),
+                )
+                .unwrap();
+            drop(state);
+            release_notice(&registry).await;
+        }
+        registry.reopen()
+    }
+
+    async fn pending(self, service: &Service) -> bool {
+        match self {
+            Self::Report => {
+                !service
+                    .task("notice")
+                    .await
+                    .unwrap()
+                    .task
+                    .report_task()
+                    .unwrap()
+                    .notice_attempted
+            }
+            Self::Prerequisite => service
+                .state
+                .lock()
+                .await
+                .store
+                .pending_prerequisite_notice("notice")
+                .unwrap()
+                .is_some(),
+        }
+    }
+}
+
+async fn release_notice(registry: &Registry) {
+    let row = registry.service.task("notice").await.unwrap();
+    assert_eq!(
+        post_json(
+            &registry.api,
+            "/v1/tasks/notice/commands",
+            &BOARD_KEY,
+            &json!({"set_prerequisite_wait": {
+                "version": row.version, "waits_for": ["finished"], "reason": "Frozen fixture reason"
+            }}),
+        )
+        .await,
+        StatusCode::OK
+    );
+    let parked = registry.service.task("notice").await.unwrap();
+    assert!(
+        registry
+            .service
+            .reconcile_prerequisites(&parked)
+            .await
+            .unwrap()
+    );
+}
+
+async fn assert_idle_notice(registry: &Registry) {
+    let service = &registry.service;
+    let prior = service.task("notice").await.unwrap();
+    let history = service.history("notice", None, 30).await.unwrap();
+    let calls = registry.reads.load(Ordering::Relaxed);
+    assert_eq!(
+        service.notify_report_ready(&prior).await.unwrap(),
+        Action::Nothing
+    );
+    assert!(!service.notify_prerequisite_release(&prior).await.unwrap());
+    assert_eq!(registry.reads.load(Ordering::Relaxed), calls);
+    assert_eq!(service.task("notice").await.unwrap(), prior);
+    assert_eq!(service.history("notice", None, 30).await.unwrap(), history);
+}
+
+async fn advance_task_notice(registry: &Registry) -> Result<Action, ServiceError> {
+    notice_pass(&registry.service)
+        .await
+        .into_iter()
+        .find(|outcome| outcome.task == "notice")
+        .expect("the scheduler processed the notice")
+        .result
+}
+
+#[tokio::test]
+async fn exact_task_notice_rejection_allows_one_fresh_attempt_after_restart() {
+    for kind in [TaskNotice::Report, TaskNotice::Prerequisite] {
+        let registry = kind.fixture().await;
+        registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+        advance_task_notice(&registry).await.unwrap();
+        assert!(kind.pending(&registry.service).await);
+        assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+
+        registry.archived.store(true, Ordering::Relaxed);
+        let registry = registry.reopen();
+        registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+        assert_eq!(
+            advance_task_notice(&registry).await.unwrap(),
+            Action::Nothing
+        );
+        assert!(!kind.pending(&registry.service).await);
+        {
+            let fixture = registry.notices.lock().unwrap();
+            let [original, retry] = fixture.sends.as_slice() else {
+                panic!("expected exactly two native sends");
+            };
+            assert_eq!(original["threadId"], "alpha-planner");
+            assert_eq!(retry["threadId"], "next-planner");
+            assert_ne!(original["commandId"], retry["commandId"]);
+            assert_ne!(original["messageId"], retry["messageId"]);
+            assert_eq!(original["text"], retry["text"]);
+            assert_eq!(original["accepted"], false);
+            assert_eq!(retry["accepted"], false);
+        }
+        let registry = registry.reopen();
+        assert_idle_notice(&registry).await;
+
+        if matches!(kind, TaskNotice::Prerequisite) {
+            // A separate release starts with its own retry allowance.
+            release_notice(&registry).await;
+            registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+            advance_task_notice(&registry).await.unwrap();
+            assert!(kind.pending(&registry.service).await);
+            let registry = registry.reopen();
+            advance_task_notice(&registry).await.unwrap();
+            assert!(!kind.pending(&registry.service).await);
+            let fixture = registry.notices.lock().unwrap();
+            assert_eq!(fixture.sends.len(), 4);
+            assert_ne!(fixture.sends[0]["commandId"], fixture.sends[2]["commandId"]);
+            assert_eq!(fixture.sends[3]["accepted"], true);
+        }
+    }
+}
+
+#[tokio::test]
+async fn lost_reply_or_rejection_for_another_command_keeps_both_task_notices_closed() {
+    for kind in [TaskNotice::Report, TaskNotice::Prerequisite] {
+        for reply in [NoticeReply::Lost, NoticeReply::WrongCommand] {
+            let registry = kind.fixture().await;
+            registry.notices.lock().unwrap().next_reply = reply;
+            let result = advance_task_notice(&registry).await;
+            if matches!(kind, TaskNotice::Report) {
+                assert!(matches!(result, Err(ServiceError::Host(_))));
+            } else {
+                assert_eq!(result.unwrap(), Action::Nothing);
+            }
+            assert!(!kind.pending(&registry.service).await);
+            registry.archived.store(true, Ordering::Relaxed);
+            let registry = registry.reopen();
+            assert_idle_notice(&registry).await;
+            let fixture = registry.notices.lock().unwrap();
+            assert_eq!(fixture.sends.len(), 1);
+            assert_eq!(fixture.sends[0]["threadId"], "alpha-planner");
+            assert_eq!(fixture.sends[0]["accepted"], reply == NoticeReply::Lost);
+        }
+    }
 }
 
 #[tokio::test]
