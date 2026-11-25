@@ -275,14 +275,6 @@ impl SettingsFile {
         Ok((snapshot(value, was_configured || changed)?, changed))
     }
 
-    pub(crate) fn rewrite_legacy_projects(&self) -> Result<(), StorageError> {
-        if self.read::<Projects>()?.configured {
-            self.store
-                .mutate(&SettingsDomain::<Projects>::new()?, MUTATION, |_| Ok(()))?;
-        }
-        Ok(())
-    }
-
     /// Read the storage settings. A missing domain uses the disabled default.
     ///
     /// # Errors
@@ -788,6 +780,10 @@ mod tests {
                 "maxLoad": 18.0,
                 "hostConcurrency": 8,
                 "allowanceMinutes": 30,
+                "projectDefaultSlots": 4,
+                "projectSlotOverrides": {"product": 8},
+                "mode": "paused",
+                "legacyLimitsImported": true,
             }
         });
         std::fs::write(config.join(DispatchSettings::FILE), document.to_string())
@@ -798,10 +794,14 @@ mod tests {
             .expect("decode legacy settings");
         assert!(saved.configured);
         assert_eq!(saved.value.global_slots, 3);
+        assert_eq!(saved.value.project_slots("fixture"), 4);
+        assert_eq!(saved.value.project_slots("product"), 8);
+        assert_eq!(saved.value.mode, crate::DispatchMode::Paused);
         let saved = serde_json::to_value(saved.value).expect("current settings");
         assert!(saved.get("maxLoad").is_none());
         assert!(saved.get("allowanceMinutes").is_none());
         assert!(saved.get("hostConcurrency").is_none());
+        assert!(saved.get("legacyLimitsImported").is_none());
     }
 
     #[test]

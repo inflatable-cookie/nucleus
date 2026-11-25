@@ -134,8 +134,6 @@ pub struct DispatchSettings {
     pub thread_retention_days: u32,
     #[serde(default = "default_thread_retention_interval_hours")]
     pub thread_retention_interval_hours: u32,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub(crate) legacy_limits_imported: bool,
     #[serde(default = "default_provider_limit_cooldown_seconds")]
     pub provider_limit_cooldown_seconds: u32,
     #[serde(default)]
@@ -196,7 +194,6 @@ impl Default for DispatchSettings {
             project_slot_overrides: BTreeMap::new(),
             thread_retention_days: default_thread_retention_days(),
             thread_retention_interval_hours: default_thread_retention_interval_hours(),
-            legacy_limits_imported: false,
             provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
             mode: DispatchMode::Running,
         }
@@ -233,6 +230,7 @@ impl SettingsValue for DispatchSettings {
         "allowance_minutes",
         "hostConcurrency",
         "host_concurrency",
+        "legacyLimitsImported",
     ];
 
     fn validate(&self) -> Result<(), DomainIssue> {
