@@ -247,7 +247,7 @@ Later decisions carry their own attribution.
       through the TypeScript decision store. Both pins could coexist during
       cutover. Each active Rust bridge version had to return a recorded answer
       or confirm withdrawal before the scheduler could offer it in Rust.
-    - Milestone 4 retires the Rust client for the TypeScript decision bridge.
+    - Milestone 4 retires the TypeScript decision bridge and its Rust client.
       A restored profile that still holds a legacy decision binding keeps its
       native offer fenced until the operator authorizes forward recovery.
 

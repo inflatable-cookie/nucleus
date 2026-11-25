@@ -48,8 +48,6 @@ import {
 import { boardThemeSnapshotSchema } from "../../shared/web-theme";
 import { sourcePathFromModule } from "../../shared/service/build";
 import { RustBoardProxy, rustBoardRoute } from "./rust-board";
-import type { RustInboxBridge } from "./rust-inbox";
-import { RUST_INBOX_PATH } from "../../shared/rust-inbox";
 
 const LOOPBACK = "127.0.0.1";
 /** The board bundle directory, relative to the checkout root, served when present. */
@@ -237,7 +235,6 @@ export interface WebBoardHost {
 export interface WebBoardOptions {
   host: WebBoardHost;
   rustBoard?: RustBoardProxy | null;
-  rustInbox?: RustInboxBridge | null;
   /** A built bundle to serve; null serves the minimal "not built yet" page. */
   bundleDir?: string | null;
   /** Fixture clock for token expiry; production reads the wall clock. */
@@ -379,7 +376,6 @@ export class WebBoard {
   /** Stop publishing, end live streams and release the port. */
   async close(): Promise<void> {
     this.options.rustBoard?.close();
-    this.options.rustInbox?.close();
     this.unsubscribe?.();
     this.unsubscribe = null;
     if (this.tokenTimer) clearInterval(this.tokenTimer);
@@ -442,7 +438,6 @@ export class WebBoard {
       );
       return;
     }
-    if (url.pathname === RUST_INBOX_PATH) return this.rustInbox(request, response);
     if (url.pathname === "/api/pair") return this.pair(request, response);
     if (url.pathname === "/api/session") return this.session(request, response);
     if (url.pathname === "/api/theme") return this.theme(request, response);
@@ -498,40 +493,6 @@ export class WebBoard {
       return;
     }
     return this.serveStatic(response, url.pathname);
-  }
-
-  private async rustInbox(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const bridge = this.options.rustInbox;
-    if (!bridge) {
-      sendJson(response, 404, refusal("not_found", "The Rust Inbox bridge is disabled."));
-      return;
-    }
-    if (request.method !== "POST" || request.headers.origin !== undefined ||
-        request.headersDistinct.host?.length !== 1) {
-      sendJson(response, 403, refusal("refused", "The bridge serves local POST requests."));
-      return;
-    }
-    if (request.headersDistinct.authorization?.length !== 1 ||
-        !bridge.authorization(request.headers.authorization)) {
-      sendJson(response, 401, refusal("unauthenticated", "The Rust Inbox key is required."));
-      return;
-    }
-    let input: unknown;
-    try {
-      input = JSON.parse(await readBody(request, 4096));
-    } catch {
-      sendJson(response, 400, refusal("invalid_input", "Invalid Rust Inbox request."));
-      return;
-    }
-    try {
-      sendJson(response, 200, await bridge.call(input));
-    } catch (error) {
-      if (error instanceof ZodError) {
-        sendJson(response, 400, refusal("invalid_input", "Invalid Rust Inbox request."));
-      } else {
-        sendJson(response, 503, refusal("unavailable", "The Rust Inbox decision could not be synchronized."));
-      }
-    }
   }
 
   private async serveStatic(

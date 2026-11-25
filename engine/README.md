@@ -633,10 +633,10 @@ times. An operator can revoke all browser sessions and pending links with
 The TypeScript service reads an owner-only `rust-engine-pilot.json` beside its
 own settings at startup. Set `"drain": true` to send all new work to Rust.
 The single-repository pilot accepts its existing `repository` setting until
-the global switch. Set `endpoint` to the Rust loopback HTTP origin,
-`boardKeyFile` and `inboxKeyFile` to the absolute paths to their separate
-owner-only keys, and `inboxEngine` to the engine's Inbox namespace. The Rust
-service needs the same Inbox key file and namespace.
+the global switch. The transition board uses the Rust loopback HTTP origin
+from `endpoint` and the owner-only `boardKeyFile`. The pilot manifest still
+validates `inboxKeyFile` and `inboxEngine` as compatibility fields after the
+TypeScript decision bridge retires.
 
 After the global switch, fresh TypeScript admissions direct the planner to
 `nucleus task.add`.
