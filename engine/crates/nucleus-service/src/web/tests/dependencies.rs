@@ -31,6 +31,71 @@ async fn add(service: &Service, id: &str, brief: &str) -> TaskRow {
 }
 
 #[tokio::test]
+async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_siblings() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = controller(Arc::clone(&service));
+    add(&service, "damaged", ADMIT).await;
+    add(&service, "healthy", ADMIT).await;
+    add(&service, "dependent", "---\nqueue:\n  complexity: medium\n  dependsOn: [inflatable-cookie/nucleus-fixture#1]\n---\n\n# Dependent").await;
+    add(&service, "foreign", ADMIT).await;
+    let db = rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
+        .unwrap();
+    db.execute(
+        "UPDATE tasks SET brief=json_set(brief, '$.text', 'Changed') WHERE id='damaged'",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE tasks SET repository='example/foreign', brief=json_set(brief, '$.text', 'Changed') WHERE id='foreign'",
+        [],
+    ).unwrap();
+    let cards = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    assert!(
+        cards
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["identity"]["id"] != "foreign")
+    );
+    let card = |id: &str| {
+        cards
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["identity"]["id"] == id)
+            .unwrap()
+    };
+    assert_eq!(card("damaged")["phase"], "error");
+    assert_eq!(card("damaged")["attention"], "attention");
+    assert_eq!(card("damaged")["reference"], "nucleus-fixture#1");
+    assert_eq!(card("healthy")["title"], "Fixture");
+    assert_eq!(
+        card("dependent")["dependencyStatus"]["dependencies"][0]["phase"],
+        "error"
+    );
+    let host = service.host.pass(service.storage.scratch().path());
+    let outcome = service
+        .run_due_task("damaged", crate::schedule::Priority::Decision, &host)
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        Some(Err(ServiceError::Store(
+            nucleus_store::StoreError::UnreadableTask(_)
+        )))
+    ));
+    let next = service
+        .run_due_task("dependent", crate::schedule::Priority::Decision, &host)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(next, Action::Wait(WaitReason::Prerequisite));
+    assert!(service.task("healthy").await.is_ok());
+}
+
+#[tokio::test]
 async fn dependencies_admit_resolve_and_edit_without_host_reads() {
     let (_home, service) = fixture(GitHub::new("fixture").unwrap());
     let service = Arc::new(service);

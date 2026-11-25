@@ -1112,6 +1112,39 @@ fn an_audit_insert_failure_rolls_back_the_task_update() {
 }
 
 #[test]
+fn restore_checks_the_digest_of_each_stored_brief() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    let healthy = task("healthy", "fixture#1");
+    store.create(&healthy, &event("admitted")).unwrap();
+    store
+        .create(&task("damaged", "fixture#2"), &event("admitted"))
+        .unwrap();
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute(
+        "UPDATE tasks SET brief=json_set(brief, '$.text', 'Different text') WHERE id='damaged'",
+        [],
+    )
+    .unwrap();
+    drop(db);
+    let reopened = Store::open(&storage).unwrap();
+    let listing = reopened.list().unwrap();
+    assert_eq!(listing.readable[0].task, healthy);
+    assert_eq!(listing.unreadable[0].identity.id, "damaged");
+    assert_eq!(reopened.get("healthy").unwrap(), Some(healthy));
+    let Err(StoreError::UnreadableTask(error)) = reopened.get("damaged") else {
+        panic!("expected a brief integrity error");
+    };
+    assert!(
+        error
+            .cause
+            .contains("stored brief digest does not match the text for task damaged")
+    );
+}
+
+#[test]
 fn restoring_a_review_entry_with_planner_acceptance_is_refused() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
@@ -1151,12 +1184,7 @@ fn restoring_a_review_entry_with_planner_acceptance_is_refused() {
         .expect("fixture connection");
     db.execute("UPDATE tasks SET entry='review_entry'", [])
         .expect("inject invalid restored state");
-    assert!(matches!(
-        store.get("1"),
-        Err(StoreError::Sqlite(
-            rusqlite::Error::FromSqlConversionFailure(..)
-        ))
-    ));
+    assert!(matches!(store.get("1"), Err(StoreError::UnreadableTask(_))));
 }
 
 #[test]
