@@ -50,6 +50,7 @@ import { StoragePanel } from "./storage-settings";
 import { DispatchLimits, type PendingOverrideRemovalPhase } from "./limits";
 import { HostsPanel } from "./hosts-settings";
 import { ProjectsSection } from "./projects-settings";
+import { GitHubReviewerSettings } from "./web/github-reviewer-settings";
 /** A board from a service that predates Spec 052 carries no dispatch routing policy. */
 
 /**
@@ -70,6 +71,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const compact = width > 0 && width < 700;
   const inset = compact ? 16 : 24;
   const { stateQuery, state } = useBoardState();
+  const canManageGitHub = rust && state?.canEditSettings === true;
   const fetchRepositories = useRpc(api.repositories);
   const fetchProjectSettings = useRpc(api.projectSettings),
     upsertProject = useRpc(api.projectUpsert);
@@ -329,7 +331,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
             // Rust engine (Spec 070 rulings 16 and 17): no Telemetry, backups live in Storage.
             (tab) =>
               (tab.id !== "backups" || features.backupsTab) &&
-              (tab.id !== "telemetry" || features.telemetry),
+              (tab.id !== "telemetry" || features.telemetry) &&
+              (tab.id !== "github-accounts" || canManageGitHub),
           )}
           value={settingsTab}
           onChange={setSettingsTab}
@@ -586,6 +589,9 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 })
               }
             />
+          )}
+          {settingsTab === "github-accounts" && canManageGitHub && (
+            <GitHubReviewerSettings c={c} inset={inset} />
           )}
           {settingsTab === "telemetry" && (
             <SettingsTelemetry c={c} compact={compact} />

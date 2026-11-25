@@ -709,6 +709,31 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   ] });
   const scratchOverride = "/custom/run-scratch";
   let activePlacement: "internal" | "barge" = "internal";
+  const githubPath = "/settings/github-accounts";
+  const reviewer = { host: "github.com", userId: "27", login: "fixture-reviewer" };
+  const reviewerId = "github.com:27";
+  const githubCalls: Array<{ method: string; route: string; body?: unknown }> = [];
+  let githubSettings = {
+    revision: "github-1",
+    accounts: [] as Array<typeof reviewer & { presence: "present" | "missing" | "unavailable" }>,
+    reviewerAccountId: null as string | null,
+    workerAccountId: null as string | null,
+    canSignIn: false,
+    canImportReviewer: false,
+  };
+  let githubFlow: "starting" | "waiting" | "confirm" | "failed" = "starting";
+  let githubFlowCount = 0;
+  let invalidGitHubResponse = false;
+  const githubFlowView = () => {
+    const id = `fixture-flow-${githubFlowCount}`;
+    switch (githubFlow) {
+      case "starting": return { id, status: githubFlow };
+      case "waiting": return { id, status: githubFlow, verificationUri: "https://github.com/login/device",
+        userCode: "ABCD-EFGH", expiresAtMs: now + 60_000 };
+      case "confirm": return { id, status: githubFlow, account: reviewer };
+      case "failed": return { id, status: githubFlow, message: "GitHub sign-in expired. Start again." };
+    }
+  };
   let storage: ReturnType<typeof storageView.parse>["settings"]["value"] = {
     enabled: true,
     placement: "internal",
@@ -858,6 +883,55 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
         removedAtMs: now,
       });
+    }
+    if (path.startsWith("/api/engine" + githubPath)) {
+      assert.ok(operator, "planner sessions make no GitHub settings requests");
+      const route = path.slice(("/api/engine" + githubPath).length);
+      const method = init?.method ?? "GET";
+      const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
+      githubCalls.push({ method, route, body });
+      if (method === "GET" && route === "")
+        return Response.json(invalidGitHubResponse
+          ? { ...githubSettings, refreshToken: "fixture-unexpected-secret" }
+          : githubSettings);
+      if (method === "POST" && route === "/sign-in") {
+        assert.deepEqual(body, {});
+        githubFlowCount += 1;
+        githubFlow = "starting";
+        return Response.json(githubFlowView());
+      }
+      if (method === "POST" && route === "/import-reviewer") {
+        assert.deepEqual(body, { organization: "fixture-org" });
+        githubFlowCount += 1;
+        githubFlow = "confirm";
+        return Response.json(githubFlowView());
+      }
+      if (method === "PUT" && route === "/reviewer") {
+        const next = githubSettings.reviewerAccountId === null ? reviewerId : null;
+        assert.deepEqual(body, { revision: githubSettings.revision, accountId: next });
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-changed", reviewerAccountId: next };
+        return Response.json(githubSettings);
+      }
+      if (method === "POST" && route === "/accounts/github.com%3A27/sign-out") {
+        assert.deepEqual(body, { revision: githubSettings.revision });
+        assert.equal(githubSettings.workerAccountId, null);
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-signed-out",
+          accounts: [], reviewerAccountId: null };
+        return Response.json(githubSettings);
+      }
+      if (method === "GET" && route === `/flows/fixture-flow-${githubFlowCount}`)
+        return Response.json(githubFlowView());
+      if (method === "DELETE" && route === `/flows/fixture-flow-${githubFlowCount}`) {
+        assert.equal(body, undefined);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST" && route === `/flows/fixture-flow-${githubFlowCount}/confirm`) {
+        assert.deepEqual(body, { revision: githubSettings.revision });
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-confirmed",
+          accounts: [{ ...reviewer, presence: "present" }], reviewerAccountId: reviewerId };
+        return Response.json(githubSettings);
+      }
+      assert.fail("Unexpected GitHub settings request " + method + " " + route);
     }
     if (path === "/api/engine/settings")
       return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
@@ -1267,6 +1341,110 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(pathField("Run scratch").value, scratchOverride);
   t.diagnostic("Storage help covered Internal defaults, saved and active Barge placement, and the retained scratch override.");
 
+  assert.equal(githubCalls.length, 0, "GitHub account status is read only when its settings open");
+  await click("GitHub");
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "the default reviewer uses Installed gh");
+  assert.match(text(), /GitHub sign-in is unavailable/);
+  assert.equal(selector("Sign in"), null);
+  assert.equal(selector("Import existing reviewer"), null);
+
+  const refreshGitHub = async () => {
+    await click("Storage");
+    await click("GitHub");
+  };
+  githubSettings = { ...githubSettings, canSignIn: true, canImportReviewer: true };
+  await refreshGitHub();
+  await click("Sign in");
+  await eventually(() => text().includes("Starting GitHub sign-in"), "sign-in shows progress before the code arrives");
+  githubFlow = "waiting";
+  await eventually(() => selector("GitHub device code")?.textContent === "ABCD-EFGH", "the device code arrives");
+  const verificationLink = dom.window.document.querySelector<HTMLAnchorElement>('a[href="https://github.com/login/device"]');
+  assert.equal(verificationLink?.target, "_blank");
+  assert.equal(verificationLink?.rel, "noreferrer");
+  assert.match(text(), /Expires at/);
+  await click("Cancel");
+  await eventually(() => !selector("GitHub device code") && Boolean(selector("Sign in")), "cancellation clears the code");
+  assert.equal(githubCalls.filter(({ method }) => method === "DELETE").length, 1);
+  assert.equal(githubSettings.reviewerAccountId, null);
+
+  await click("Sign in");
+  await eventually(() => githubFlowCount === 2, "the second sign-in starts");
+  githubFlow = "failed";
+  await eventually(() => text().includes("GitHub sign-in expired."), "expired sign-in is actionable");
+  assert.equal(selector("GitHub device code"), null);
+  await click("Dismiss");
+
+  await click("Sign in");
+  await eventually(() => githubFlowCount === 3, "the third sign-in starts");
+  githubFlow = "confirm";
+  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "confirmation names the verified account");
+  assert.equal(githubSettings.reviewerAccountId, null, "sign-in does not select until confirmed");
+  await click("Use account");
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed reviewer is connected");
+  assert.equal(githubSettings.reviewerAccountId, reviewerId);
+  await click("Reviewer, @fixture-reviewer, Saved sign-in");
+  await click("Reviewer: Installed gh");
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "Installed gh unlinks reviewer selection");
+  assert.equal(githubSettings.accounts.length, 1, "unlink keeps the saved account");
+
+  githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "missing" }] };
+  await refreshGitHub();
+  await click("Reviewer, Installed gh");
+  await click("Reviewer: @fixture-reviewer, Sign-in required");
+  await eventually(() => Boolean(selector("Reconnect")), "missing credentials offer reconnect for the selected reviewer");
+  await click("Reconnect");
+  await eventually(() => githubFlowCount === 4, "reconnect starts a new sign-in");
+  await click("Cancel");
+  await eventually(() => Boolean(selector("Import existing reviewer")), "cancel returns to accounts");
+
+  githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "unavailable" }] };
+  await refreshGitHub();
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Account storage unavailable")),
+    "an unavailable grant keeps its selected reviewer visible");
+  assert.ok(selector("Reconnect"), "unavailable credentials offer an explicit reconnect");
+  assert.equal(selector("Reviewer, Installed gh"), null, "unavailable credentials never select Installed gh");
+
+  await click("Import existing reviewer");
+  await eventually(() => Boolean(selector("Organization")), "legacy import asks for an organization");
+  assert.equal(githubCalls.filter(({ route }) => route === "/import-reviewer").length, 0,
+    "opening the import form does not look up a legacy item");
+  const organization = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="Organization"]');
+  assert.ok(organization);
+  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set?.call(organization, "fixture-org");
+  organization.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  await eventually(() => selector("Look up reviewer")?.getAttribute("aria-disabled") !== "true", "organization enables lookup");
+  await click("Look up reviewer");
+  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "legacy import shows the verified login before saving");
+  await click("Use account");
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed import reconnects the reviewer");
+  assert.ok(githubCalls.every(({ body }) => !JSON.stringify(body)?.includes("fixture-unexpected-secret")));
+
+  invalidGitHubResponse = true;
+  await refreshGitHub();
+  await eventually(() => text().includes("The task engine returned an invalid response."), "the browser rejects a response outside the public shape");
+  assert.ok(!text().includes("fixture-unexpected-secret"));
+  assert.equal(selector("Reviewer, @fixture-reviewer, Saved sign-in"), null);
+  invalidGitHubResponse = false;
+  await click("Retry GitHub accounts");
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "the public response restores Settings");
+  const githubReads = () => githubCalls.filter(({ method, route }) => method === "GET" && route === "").length;
+  const priorReads = githubReads();
+  githubSettings = { ...githubSettings, workerAccountId: reviewerId };
+  await refreshGitHub();
+  await eventually(() => githubReads() > priorReads && Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")) && !selector("Sign out"),
+    "an account still selected by the worker cannot be signed out");
+  githubSettings = { ...githubSettings, workerAccountId: null };
+  await refreshGitHub();
+  await click("Sign out");
+  await eventually(() => text().includes("Sign out of @fixture-reviewer and use Installed gh for reviews?"), "sign-out confirms the named account");
+  assert.ok(!githubCalls.some(({ route }) => route.endsWith("/sign-out")));
+  assert.equal(githubSettings.reviewerAccountId, reviewerId);
+  assert.equal(selector("Reviewer, Installed gh"), null, "the UI waits for confirmed sign-out");
+  await click("Sign out");
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "sign-out clears the reviewer selection");
+  assert.equal(githubSettings.accounts.length, 0);
+  t.diagnostic("GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, import, explicit sign-out and public fields.");
+
   await click("Profiles");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
   const toggle = selector("Disable Fixture worker");
@@ -1484,6 +1662,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Profiles");
   await eventually(() => Boolean(selector("Fixture worker: On")), "the scoped planner sees the stored profile");
   assert.equal(selector("Fixture worker: On")?.getAttribute("aria-disabled"), "true");
+  assert.equal(selector("GitHub"), null, "a planner session never has the GitHub Settings tab");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
   assert.equal(planningReads().length, afterProjectSettings);
 
