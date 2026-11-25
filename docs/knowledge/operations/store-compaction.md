@@ -1,5 +1,7 @@
 # Compact the Nucleus store
 
+This runbook records compaction of the retired TypeScript store. For current storage, see the [Rust engine](../../../engine/README.md).
+
 Owns the operator and root procedure for the one-shot conversion of a pre-change
 store to incremental auto-vacuum, and for reading what the bounded maintenance
 did. The behaviour is Spec [028](../specs/028-store-backups.md#delivered-how-the-store-compacts-audit-b9);

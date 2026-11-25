@@ -221,6 +221,8 @@ rotation counts are unchanged.
 
 ### Delivered: how the store compacts (audit B9)
 
+The behavior below describes the retired TypeScript store.
+
 **A new store starts incremental.** The store opens with
 `PRAGMA auto_vacuum=INCREMENTAL` on a file with no tables yet, so from this build
 on a store can give freed pages back. Every open also sets
