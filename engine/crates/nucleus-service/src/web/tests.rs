@@ -2424,6 +2424,12 @@ async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
     let api = settings_api(&service);
     let path = "/v1/settings/storage";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(original["backups"]["verified"], json!([]));
+    assert!(original["configBackups"]["verified"].is_array());
+    service.backup_failed.store(true, Ordering::Release);
+    let failed = json_body(get_as(&api, path, &BOARD_KEY).await).await;
+    assert_eq!(failed["backups"]["issues"], 1);
+    assert_eq!(failed["configBackups"], original["configBackups"]);
     assert_eq!(original["active"]["placement"], "internal");
     assert_eq!(original["active"]["bargePaths"], json!({}));
     assert!(original["settings"]["value"].get("workVolume").is_none());
