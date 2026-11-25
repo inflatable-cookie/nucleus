@@ -2266,10 +2266,6 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
             "orchestration.subscribeThread",
             Response::Snapshot(window.clone()),
         ),
-        (
-            "orchestration.subscribeThread",
-            Response::Snapshot(window.clone()),
-        ),
         ("orchestration.subscribeThread", Response::Snapshot(window)),
         ("orchestration.dispatchCommand", Response::Success),
     ])

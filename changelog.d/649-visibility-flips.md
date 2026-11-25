@@ -1,1 +1,1 @@
-Retained reviewers can start across a Nucleus-owned parent snooze. Task rows stay visible through send preflight, and repeated snooze or clear attempts are limited to one per two minutes.
+Retained reviewers can start across a Nucleus-owned parent snooze. Rows stay visible through send preflight. A snooze can clear immediately when work resumes, with a limit of two visibility writes per row in any two minutes.
