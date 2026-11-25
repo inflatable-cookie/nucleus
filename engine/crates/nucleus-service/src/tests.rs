@@ -934,7 +934,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
                 let stage = progress.load(Ordering::Relaxed);
                 if let Some(parent) = launches.first().filter(|launch| stage > 0 && launch["threadId"] == thread) {
                     let mut runs = vec![json!({
-                        "id":"old-run","status":if stage == 1 {"running"} else {"completed"},
+                        "id":"old-run","status":if stage == 2 {"completed"} else {"running"},
                         "rootNodeId":"old-node","userMessageId":
                             if stage == 3 { json!("different-message") } else { parent["initialMessage"]["messageId"].clone() },
                     })];

@@ -133,6 +133,7 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         "legacy_without_claim",
         "legacy_unresolved",
         "legacy_refused",
+        "failed",
         "no_attempt",
         "refused",
         "replacement_observed",
@@ -147,7 +148,7 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         assert_eq!(
             store.task_delivery_fence(id, version, "runtime").unwrap(),
             match id {
-                "ambiguous" | "legacy_unresolved" | "replacement_observed" => {
+                "ambiguous" | "legacy_unresolved" | "replacement_observed" | "failed" => {
                     Some(vec!["thread-hold-1".into()])
                 }
                 "later_send" => Some(vec!["thread-hold-3".into()]),
@@ -187,6 +188,7 @@ fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
             | "legacy_unresolved"
             | "legacy_refused"
             | "replacement_observed"
+            | "failed"
     )
     .then(|| {
         append(
@@ -255,6 +257,20 @@ fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
         append(
             "native_turn_observed",
             serde_json::json!({"version":version,"session":"replacement","command":"thread-hold-1"}),
+        );
+        append(
+            "native_turn_failed",
+            serde_json::json!({"version":version,"session":"replacement/scope","command":"thread-hold-1"}),
+        );
+    }
+    if id == "failed" {
+        append(
+            "native_turn_replay",
+            serde_json::json!({"version":version,"session":"runtime/previous-engine","command":"thread-hold-1"}),
+        );
+        append(
+            "native_turn_failed",
+            serde_json::json!({"version":version,"session":"runtime/current-engine","command":"thread-hold-1"}),
         );
     }
 }

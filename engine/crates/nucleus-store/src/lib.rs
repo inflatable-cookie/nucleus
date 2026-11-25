@@ -860,7 +860,7 @@ impl Store {
                  FROM events WHERE task_id = ?1 AND json_valid(detail)
                    AND json_extract(detail, '$.version') = ?2
                    AND kind IN ('native_turn_intent', 'native_turn_replay',
-                                'native_turn_observed', 'native_turn_not_sent')
+                                'native_turn_observed', 'native_turn_not_sent', 'native_turn_failed')
              )
              SELECT EXISTS(SELECT 1 FROM journal intent
                WHERE intent.kind IN ('native_turn_intent', 'native_turn_replay')
@@ -868,6 +868,13 @@ impl Store {
                    AND ((proof.kind = 'native_turn_observed'
                          AND (proof.session = intent.session
                               OR instr(intent.session, proof.session || '/') = 1))
+                     OR (proof.kind = 'native_turn_failed' AND EXISTS (
+                         SELECT 1 FROM journal origin WHERE origin.kind = 'native_turn_intent'
+                           AND origin.command = intent.command
+                           AND (origin.session = intent.session
+                                OR instr(intent.session, origin.session || '/') = 1)
+                           AND (origin.session = proof.session
+                                OR instr(proof.session, origin.session || '/') = 1)))
                      OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
                          AND (proof.attempt = intent.sequence
                               OR (proof.attempt IS NULL AND proof.session = intent.session))))))",
