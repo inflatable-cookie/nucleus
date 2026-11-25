@@ -22,7 +22,7 @@ mod volume;
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Phase, Role, Task, profiles::RotationCounts};
+use nucleus_core::{Identity, Phase, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -83,6 +83,8 @@ pub enum StoreError {
     UpgradeBackup,
     #[error("the report-task migration found a missing database reference")]
     ReportMigrationReferences,
+    #[error("stored task {} could not be restored: {}", .0.identity.id, .0.cause)]
+    UnreadableTask(Box<UnreadableTask>),
     #[error("task identity is immutable")]
     IdentityChanged,
     #[error("task changed since it was read")]
@@ -146,6 +148,22 @@ pub struct CriticalReviewFallback {
     pub worker_profile_id: String,
     pub reviewer_profile_id: String,
     pub reason: String,
+}
+
+/// Identity and revision remain available when the execution snapshot cannot be restored.
+#[derive(Debug)]
+pub struct UnreadableTask {
+    pub identity: Identity,
+    pub number: Option<i64>,
+    pub version: i64,
+    pub reference: String,
+    pub cause: String,
+}
+
+#[derive(Default)]
+pub struct TaskList {
+    pub readable: Vec<TaskRow>,
+    pub unreadable: Vec<UnreadableTask>,
 }
 
 /// A task's execution snapshot plus its public number. Equality fences the
@@ -439,7 +457,17 @@ impl Store {
     /// # Errors
     /// Returns an error if the row cannot be read or decoded.
     pub fn row(&self, id: &str) -> Result<Option<TaskRow>, StoreError> {
-        Ok(load(&self.connection, id)?)
+        self.connection
+            .query_row(
+                &format!(
+                    "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks WHERE id = ?1"
+                ),
+                [id],
+                decode_listed_row,
+            )
+            .optional()?
+            .transpose()
+            .map_err(StoreError::UnreadableTask)
     }
 
     /// Read active task IDs in admission order, with the ordinal for first workers.
@@ -745,26 +773,35 @@ impl Store {
     /// Read all tasks for the board, including terminal rows.
     /// # Errors
     /// Returns an error if the database cannot read or decode the rows.
-    pub fn list(&self) -> Result<Vec<TaskRow>, StoreError> {
-        let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks ORDER BY id"
-        ))?;
-        let rows = query.query_map([], decode_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+    pub fn list(&self) -> Result<TaskList, StoreError> {
+        self.list_rows("ORDER BY id")
     }
 
-    /// Read existing active rows that predate their native presentation binding.
+    /// Read restorable active rows that predate their native presentation binding.
     ///
     /// # Errors
-    /// Returns an error if the task rows cannot be read.
+    /// Returns an error if the database cannot read the task listing.
     pub fn tasks_without_titles(&self) -> Result<Vec<TaskRow>, StoreError> {
+        Ok(self
+            .list_rows(
+                "WHERE phase NOT IN ('done','cancelled')
+             AND NOT EXISTS (SELECT 1 FROM task_titles WHERE task_id = tasks.id)",
+            )?
+            .readable)
+    }
+
+    fn list_rows(&self, clause: &str) -> Result<TaskList, StoreError> {
         let mut query = self.connection.prepare_cached(&format!(
-            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks
-             WHERE phase NOT IN ('done','cancelled')
-             AND NOT EXISTS (SELECT 1 FROM task_titles WHERE task_id = tasks.id)"
+            "SELECT {TASK_COLUMNS}, version, {PUBLIC_NUMBER} FROM tasks {clause}"
         ))?;
-        let rows = query.query_map([], decode_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let mut tasks = TaskList::default();
+        for row in query.query_map([], decode_listed_row)? {
+            match row? {
+                Ok(row) => tasks.readable.push(row),
+                Err(damaged) => tasks.unreadable.push(*damaged),
+            }
+        }
+        Ok(tasks)
     }
 
     fn tasks(&self, statement: &str) -> Result<Vec<Task>, StoreError> {
@@ -1170,16 +1207,43 @@ fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     })
 }
 
+fn decode_listed_row(row: &Row<'_>) -> rusqlite::Result<Result<TaskRow, Box<UnreadableTask>>> {
+    match decode_row(row) {
+        Ok(task) => Ok(Ok(task)),
+        Err(rusqlite::Error::FromSqlConversionFailure(_, _, cause)) => {
+            let identity: Identity = serde_json::from_value(identity_columns(row)?)
+                .map_err(|error| decode_error(0, error))?;
+            let number: Option<i64> = row.get(18)?;
+            let reference = number.map_or_else(
+                || identity.reference.clone(),
+                |n| numbers::reference(&identity.repository, n),
+            );
+            Ok(Err(Box::new(UnreadableTask {
+                identity,
+                number,
+                reference,
+                version: row.get(17)?,
+                cause: cause.to_string(),
+            })))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn identity_columns(row: &Row<'_>) -> rusqlite::Result<Value> {
+    Ok(json!({
+        "id": row.get::<_, String>(0)?,
+        "reference": row.get::<_, String>(1)?,
+        "repository": row.get::<_, String>(2)?,
+        "base": row.get::<_, String>(3)?,
+        "entry": row.get::<_, String>(4)?,
+        "origin_thread": row.get::<_, Option<String>>(14)?,
+    }))
+}
+
 fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let value = json!({
-        "identity": {
-            "id": row.get::<_, String>(0)?,
-            "reference": row.get::<_, String>(1)?,
-            "repository": row.get::<_, String>(2)?,
-            "base": row.get::<_, String>(3)?,
-            "entry": row.get::<_, String>(4)?,
-            "origin_thread": row.get::<_, Option<String>>(14)?,
-        },
+        "identity": identity_columns(row)?,
         "brief": json_column(row, 5)?,
         "phase": row.get::<_, String>(6)?,
         "threads": json_column(row, 7)?,

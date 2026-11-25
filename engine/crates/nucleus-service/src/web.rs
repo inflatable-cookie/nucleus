@@ -639,7 +639,8 @@ async fn list(
         .verify()
         .map_err(ServiceError::from)?;
     let state = api.service.state.lock().await;
-    let tasks = state.store.list().map_err(ServiceError::from)?;
+    let listing = state.store.list().map_err(ServiceError::from)?;
+    let tasks = listing.readable;
     let revisions = state
         .store
         .finished_card_revisions()
@@ -692,6 +693,17 @@ async fn list(
                 card: Arc::new(summary.card),
                 dependency_status: summary.dependency_status,
                 dependency_edits: summary.dependency_edits,
+            });
+        }
+    }
+    for damaged in listing.unreadable {
+        if api.service.task_scope(&damaged.identity).is_ok()
+            && scope.task(&state, &damaged.identity).is_ok()
+        {
+            result.push(Summary {
+                card: Arc::new(Card::unreadable(damaged)),
+                dependency_status: DependencyStatus::default(),
+                dependency_edits: DependencyEdits::unavailable(),
             });
         }
     }
@@ -1187,6 +1199,38 @@ impl Summary {
 }
 
 impl Card {
+    fn unreadable(row: nucleus_store::UnreadableTask) -> Self {
+        Self {
+            identity: row.identity,
+            number: row.number,
+            reference: row.reference,
+            version: row.version,
+            phase: Phase::Error,
+            title: "Unreadable task".into(),
+            state_label: "Error".into(),
+            attention: crate::attention::TaskAttention::Attention,
+            wait_detail: Some(
+                "Stored task failed validation. Restore it from a verified backup.".into(),
+            ),
+            wait: None,
+            state_since_ms: None,
+            latest_event_at_ms: None,
+            created_at_ms: None,
+            lifecycle: nucleus_core::acp::lifecycle::Lifecycle {
+                steps: Vec::new(),
+                admitted_at_ms: None,
+                finished_at_ms: None,
+                review_round: None,
+                worker: None,
+                reviewer: None,
+                transcript: None,
+            },
+            question: None,
+            hold: None,
+            next_check_at: None,
+        }
+    }
+
     fn read(
         row: &nucleus_store::TaskRow,
         state: &EngineState,

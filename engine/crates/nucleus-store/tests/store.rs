@@ -1130,8 +1130,11 @@ fn restore_checks_the_digest_of_each_stored_brief() {
     .unwrap();
     drop(db);
     let reopened = Store::open(&storage).unwrap();
+    let listing = reopened.list().unwrap();
+    assert_eq!(listing.readable[0].task, healthy);
+    assert_eq!(listing.unreadable[0].identity.id, "damaged");
     assert_eq!(reopened.get("healthy").unwrap(), Some(healthy));
-    let Err(StoreError::Sqlite(error)) = reopened.get("damaged") else {
+    let Err(error @ StoreError::UnreadableTask(_)) = reopened.get("damaged") else {
         panic!("expected a brief integrity error");
     };
     assert!(

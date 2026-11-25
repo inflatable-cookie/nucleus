@@ -606,6 +606,10 @@ impl Service {
         let row = match self.task(id).await {
             Ok(row) => row,
             Err(ServiceError::Missing) => return Ok(None),
+            Err(error @ ServiceError::Store(StoreError::UnreadableTask(_))) => {
+                self.state.lock().await.set_wait(id, None);
+                return Ok(Some(Err(error)));
+            }
             Err(error) => return Err(error),
         };
         let defer_refresh = {
