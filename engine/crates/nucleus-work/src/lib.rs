@@ -471,7 +471,20 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns an error if the checkout cannot be verified or Git refuses removal.
     pub fn retire(&self, published: &Head) -> Result<Retirement, WorkError> {
-        match self.observe()? {
+        self.prepare_retirement(published)?()
+    }
+
+    /// Observe cleanliness outside the writer fence. The admitted operation rechecks the
+    /// owned branch and exact head immediately before unforced removal.
+    ///
+    /// # Errors
+    /// Returns an error if either observation fails or Git refuses removal.
+    pub fn prepare_retirement<'a>(
+        &'a self,
+        published: &'a Head,
+    ) -> Result<impl FnOnce() -> Result<Retirement, WorkError> + 'a, WorkError> {
+        let workspace = self.observe()?;
+        Ok(move || match workspace {
             Workspace::Absent => Ok(Retirement::Absent),
             Workspace::Clean(head) if &head == published => {
                 if self.owned_identity()?.head_oid() != published.as_str() {
@@ -481,7 +494,7 @@ impl Checkout<'_> {
                 Ok(Retirement::Removed)
             }
             Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
-        }
+        })
     }
 
     fn remove(&self, flags: &[&str]) -> Result<(), WorkError> {

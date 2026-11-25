@@ -12,7 +12,7 @@ use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
     planning::{Lane, WriteAt},
 };
-use nucleus_work::{Checkout, Retirement};
+use nucleus_work::Checkout;
 use tokio::sync::MutexGuard;
 
 use crate::{
@@ -491,20 +491,6 @@ impl Service {
         Err(ServiceError::ReportCheckout(
             "the source is not proved published on origin",
         ))
-    }
-
-    pub(super) fn retire_report_checkout(
-        checkout: &Checkout<'_>,
-        head: Option<&Head>,
-    ) -> Result<(), ServiceError> {
-        if let Some(head) = head
-            && checkout.retire(head)? == Retirement::Retained
-        {
-            return Err(ServiceError::ReportCheckout(
-                "the checkout changed after publication was proved",
-            ));
-        }
-        Ok(())
     }
 }
 

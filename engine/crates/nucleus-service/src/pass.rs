@@ -17,7 +17,7 @@ use nucleus_hosts::{
     StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, TaskRow};
-use nucleus_work::{Checkout, WorkError};
+use nucleus_work::{Checkout, Retirement, WorkError};
 use tokio::sync::RwLockReadGuard;
 
 use crate::{
@@ -111,15 +111,22 @@ impl Service {
                 ));
             }
             let head = self.report_archive_head(row, &checkout).await?;
-            if !self
-                .retire_if_idle(task, &binding, || {
-                    Self::retire_report_checkout(&checkout, head.as_ref())
-                })
+            match self
+                .retire_if_idle(task, &binding, &checkout, head.as_ref())
                 .await?
             {
-                return Err(ServiceError::ArchiveEvidence(
-                    "Waiting for the task threads and checkout to be idle before removal.".into(),
-                ));
+                Some(Retirement::Retained) => {
+                    return Err(ServiceError::ReportCheckout(
+                        "the checkout changed after publication was proved",
+                    ));
+                }
+                None => {
+                    return Err(ServiceError::ArchiveEvidence(
+                        "Waiting for the task threads and checkout to be idle before removal."
+                            .into(),
+                    ));
+                }
+                Some(Retirement::Removed | Retirement::Absent) => {}
             }
         }
         let step = if parenting {
@@ -1825,8 +1832,9 @@ impl Service {
         &self,
         task: &Task,
         binding: &Binding,
-        retire: impl FnOnce() -> Result<(), ServiceError>,
-    ) -> Result<bool, ServiceError> {
+        checkout: &Checkout<'_>,
+        head: Option<&Head>,
+    ) -> Result<Option<Retirement>, ServiceError> {
         let parent = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
         let threads = [
             task.threads().get(Role::Reviewer),
@@ -1838,9 +1846,12 @@ impl Service {
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         for thread in &threads {
             if !pass.retirement_idle(binding, thread).await? {
-                return Ok(false);
+                return Ok(None);
             }
         }
+        let remove = head
+            .map(|head| checkout.prepare_retirement(head))
+            .transpose()?;
         let state = self.state.lock().await;
         if state
             .settings
@@ -1848,11 +1859,17 @@ impl Service {
             .as_ref()
             .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
         {
-            return Ok(false);
+            return Ok(None);
         }
-        self.host
-            .retire_with_quiet_shell(&parent, &threads, retire)??;
-        Ok(true)
+        // Admit the prepared operation against the current shell and dispatch mode together.
+        let remove = self
+            .host
+            .retire_with_quiet_shell(&parent, &threads, || remove)?;
+        drop(state);
+        Ok(Some(match remove {
+            Some(remove) => remove()?,
+            None => Retirement::Absent,
+        }))
     }
 
     async fn close(
@@ -1884,12 +1901,10 @@ impl Service {
             if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
                 return Err(HostError::Binding.into());
             }
-            if !self
-                .retire_if_idle(task, binding, || {
-                    checkout.retire(head)?;
-                    Ok(())
-                })
+            if self
+                .retire_if_idle(task, binding, checkout, Some(head))
                 .await?
+                .is_none()
             {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
@@ -2143,19 +2158,14 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let retire = || {
-            service.retire_if_idle(&task, &binding, || {
-                checkout.retire(head)?;
-                Ok(())
-            })
-        };
+        let retire = || service.retire_if_idle(&task, &binding, &checkout, Some(head));
         let mut writer = tokio::process::Command::new("/bin/sleep")
             .arg("60")
             .current_dir(checkout.path())
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        assert!(!retire().await.unwrap());
+        assert_eq!(retire().await.unwrap(), None);
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();
         shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));
@@ -2165,7 +2175,7 @@ mod tests {
         ));
         assert!(checkout.path().exists());
         shell(json!([]));
-        assert!(retire().await.unwrap());
+        assert_eq!(retire().await.unwrap(), Some(Retirement::Removed));
         assert!(!checkout.path().exists());
         assert!(service.host.host_calls().is_empty());
     }

@@ -458,6 +458,23 @@ fn quarantine_retention_expires_only_old_owned_directories() {
 }
 
 #[test]
+fn an_admitted_retirement_preserves_a_new_checkout_head() {
+    let root = tempfile::tempdir().expect("scratch");
+    let repo = root.path().join("repository");
+    let head = repository(&repo);
+    let work = worktrees(root.path());
+    let checkout = work.checkout(&repo, "example/fixture", "task-1").unwrap();
+    checkout.allocate(&head).unwrap();
+    let retire = checkout.prepare_retirement(&head).unwrap();
+    git(
+        checkout.path(),
+        &["commit", "--allow-empty", "-m", "new work"],
+    );
+    assert_eq!(retire().unwrap(), Retirement::Retained);
+    assert!(checkout.path().is_dir());
+}
+
+#[test]
 fn retirement_keeps_edits_hidden_by_index_flags() {
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository");
