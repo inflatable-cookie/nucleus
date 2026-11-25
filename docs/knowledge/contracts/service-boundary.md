@@ -118,6 +118,9 @@ and the [pre-cutover service contract](https://github.com/inflatable-cookie/nucl
 
 ## Responsiveness
 
+The scheduler advances its active and archive scan cursors only after reading
+both pages. A failed read leaves both pages eligible for the next pass.
+
 Read and render from local state. The scheduler owns bounded calls to T3 and
 GitHub. Per host, it shares a held shell and cached observations across tasks,
 reads a precise thread only for a due decision or safety fence, and keeps an

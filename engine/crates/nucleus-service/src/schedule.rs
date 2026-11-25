@@ -157,11 +157,11 @@ impl Schedule {
             return Ok(());
         }
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
-        let more = ids.len() == SCAN_PAGE as usize;
-        self.cursor = ids.last().filter(|_| more).map(|(id, _)| id.clone());
         let archival =
             store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
+        let more = ids.len() == SCAN_PAGE as usize;
         let more_archival = archival.len() == SCAN_PAGE as usize;
+        self.cursor = ids.last().filter(|_| more).map(|(id, _)| id.clone());
         self.archive_cursor = archival.last().filter(|_| more_archival).cloned();
         self.scan_at = now
             + if more || more_archival {
@@ -242,7 +242,68 @@ impl Schedule {
 
 #[cfg(test)]
 mod tests {
+    use nucleus_store::SettingsFile;
+    use rusqlite::Connection;
+
     use super::*;
+
+    #[test]
+    fn archive_read_failure_preserves_the_first_active_page_for_retry() {
+        let home = tempfile::tempdir().expect("isolated database home");
+        let storage = SettingsFile::open(&home.path().canonicalize().unwrap())
+            .unwrap()
+            .configured_storage()
+            .unwrap();
+        let store = Store::open(&storage).unwrap();
+        let database = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+        let insert =
+            "INSERT INTO tasks (id, reference, repository, base, entry, brief, phase, threads)
+            VALUES (?1, ?1, 'example/fixture', 'main', 'brief', '\"fixture\"', ?2, '{}')";
+        for number in 0..=SCAN_PAGE {
+            database
+                .execute(insert, [format!("active-{number:02}"), "queued".into()])
+                .unwrap();
+        }
+        database.execute(insert, ["archival", "done"]).unwrap();
+        // Only the archive page decodes this finished task's invalid UTF-8 ID.
+        database
+            .execute(
+                "UPDATE tasks SET id = CAST(X'80' AS TEXT) WHERE id = 'archival'",
+                [],
+            )
+            .unwrap();
+        let active = store.active_ids(None, SCAN_PAGE).unwrap();
+        assert_eq!(active.len(), SCAN_PAGE as usize);
+        assert!(store.archive_due_ids(None, SCAN_PAGE, true).is_err());
+
+        let mut schedule = Schedule::new();
+        let now = schedule.next();
+        let mut capacity_waiters = BTreeSet::new();
+        assert!(
+            schedule
+                .seed(&store, now, true, &mut capacity_waiters)
+                .is_err()
+        );
+        assert_eq!(schedule.depth(), 0);
+        assert!(capacity_waiters.is_empty());
+        assert_eq!(schedule.next(), now);
+
+        database
+            .execute(
+                "UPDATE tasks SET id = reference WHERE reference = 'archival'",
+                [],
+            )
+            .unwrap();
+        schedule
+            .seed(&store, now, true, &mut capacity_waiters)
+            .unwrap();
+        for (id, admitted) in active {
+            assert_eq!(schedule.due(&id), Some(now), "missing active task {id}");
+            assert!(capacity_waiters.contains(&(admitted.expect("admission order"), id)));
+        }
+        assert!(schedule.effect_ready("archival", now));
+        assert_eq!(schedule.due(&format!("active-{SCAN_PAGE:02}")), None);
+    }
 
     #[test]
     fn earlier_due_tasks_win_over_more_recent_wakes() {

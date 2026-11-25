@@ -31,6 +31,7 @@ tokio = { version = "1", features = ["macros", "process", "sync", "time"] }
 axum = { version = "0.8.9", features = ["ws"] }
 nucleus-forge = { path = "../nucleus-forge", features = ["loopback-fixture"] }
 nucleus-hosts = { path = "../nucleus-hosts", features = ["loopback-fixture"] }
+rusqlite = "0.41"
 tokio = { version = "1", features = ["macros", "rt"] }
 tower = { version = "0.5", features = ["util"] }
 

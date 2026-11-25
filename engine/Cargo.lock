@@ -1284,6 +1284,7 @@ dependencies = [
  "nucleus-hosts",
  "nucleus-store",
  "nucleus-work",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
