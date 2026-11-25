@@ -14,11 +14,18 @@ import {
   listenForRustChanges,
   isRustHttpError,
 } from "./rust-board";
+import { listenForPlanningIssues } from "./rust-planning";
 import { createRustAdapter } from "./rust-adapter";
 import { boardThemeFromT3 } from "../../hosts/t3code/board-theme";
 
 export function WebApp() {
+  const [planningIssues, setPlanningIssues] = useState<Record<string, string>>({});
   const adapter = useMemo(() => createRustAdapter(), []);
+  useEffect(() => listenForPlanningIssues(adapter.rust, (collection, issues) => {
+    const message = issues.join("\n");
+    setPlanningIssues(previous => (previous[collection] ?? "") === message
+      ? previous : { ...previous, [collection]: message });
+  }), [adapter]);
   const [themeRevision, setThemeRevision] = useState(0);
   const readRustTheme = useCallback(
     async (signal: AbortSignal) => {
@@ -105,7 +112,10 @@ export function WebApp() {
           invalidateRust();
           void adapter.refreshSession().then((changed) => {
             if (controller.signal.aborted) return;
-            if (changed) setSessionEpoch((value) => value + 1);
+            if (changed) {
+              setPlanningIssues({});
+              setSessionEpoch((value) => value + 1);
+            }
             else refreshBoard();
           }).catch(refreshBoard);
         },
@@ -204,6 +214,7 @@ export function WebApp() {
                     theme={theme}
                     layout={{ compact: false }}
                     rustBoard={invalidateRust}
+                    planningIssues={Object.values(planningIssues).filter(Boolean).join("\n")}
                   />
                 )}
               </div>

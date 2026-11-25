@@ -644,6 +644,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let usageCount = 49;
   let resetAt: number | undefined;
   let decisionOpen = true;
+  let damagedDecision = true;
   let decisionQuestion = "Which route should we take?";
   let itemBody = "Fixture body";
   let reconnectGate: Promise<void> | undefined;
@@ -702,7 +703,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closeStream: (() => void) | undefined;
-  const snap = (value: unknown, revision: string) => ({ value, revision, configured: true });
+  const snap = <T>(value: T, revision: string) => ({ value, revision, configured: true });
   const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
     { origin: "example/board-fixture", path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
     { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
@@ -936,8 +937,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       }
       assert.fail("Unexpected GitHub settings request " + method + " " + route);
     }
-    if (path === "/api/engine/settings")
-      return Response.json(Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()])));
+    if (path === "/api/engine/settings") {
+      const settings = Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()]));
+      const projects = views.projects();
+      return Response.json({ ...settings, projects: {
+        ...projects, settings: { ...projects.settings, value: {
+          ...projects.settings.value, projects: { ...projects.settings.value.projects, damaged: {} },
+        } },
+      } });
+    }
     const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
     if (domain) {
       if (init?.method === "PUT") {
@@ -975,7 +983,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       return Response.json(editableCut);
     }
     if (path === "/api/engine/planning/fixture/decisions")
-      return Response.json(decisionOpen ? [decision()] : []);
+      return Response.json([...(decisionOpen ? [decision()] : []), ...(damagedDecision ? [{ id: "damaged-decision" }] : [])]);
     if (path === "/api/engine/planning/fixture/decisions/fixture-decision/answer") {
       assert.equal(init?.method, "POST");
       const answer = JSON.parse(String(init.body)) as { optionId: string; note: string | null };
@@ -1018,6 +1026,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(stream, "the board subscribed to engine changes");
   const initialPlanningReads = ["decisions", "items", "plan"].map((key) => `/api/engine/planning/fixture/${key}`);
   assert.deepEqual(planningReads().sort(), initialPlanningReads, "one store read per collection in scope");
+  const notices = () => [...dom.window.document.querySelectorAll('[role="alert"]')].map(alert => alert.textContent ?? "");
+  assert.ok(notices().some(message => message.includes("Project damaged") && message.includes("fixture decision damaged-decision")));
   const taskReads = () => count("/tasks");
   // Let the startup resync settle before observing the steady-state window.
   await wait(150);
@@ -1037,7 +1047,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 2");
   decisionOpen = false;
+  damagedDecision = false;
   emit("decisions");
+  await eventually(() => !text().includes("damaged-decision"), "a successful read clears the record warning");
+  assert.ok(notices().some(message => message.includes("Project damaged")));
   await eventually(() => Boolean(selector("Needs you, 0")), "a decision change updates the menu outside Needs you");
   assert.deepEqual(planningReads().slice(3), [initialPlanningReads[0]]);
   emit("planning");

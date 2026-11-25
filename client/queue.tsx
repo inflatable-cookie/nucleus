@@ -104,7 +104,8 @@ export function MainSurface({
   navigation,
   workspaceBoard,
   rustBoard,
-}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation }) {
+  planningIssues,
+}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation; planningIssues?: string }) {
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
   const mode = inboxLayout(panelWidth, layout.compact);
@@ -535,7 +536,7 @@ export function MainSurface({
           act={act}
           error={error}
           onDismissError={() => setError("")}
-          readError={readError}
+          readError={[readError, planningIssues].filter(Boolean).join("\n") || null}
           staleRead={staleRead}
           inset={inset}
           settingsOpener={settingsOpener}

@@ -984,7 +984,7 @@ The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. The session response
 reports the engine's current project scope. On entry, the board reads scoped
 plans, items and decisions from the store to populate the menu counts. It caches
-the collections across views, refreshes them from engine events, and stops
+the collections across views and identifies unreadable items, decisions and lane documents beside their healthy siblings. A malformed saved step withholds its project’s versioned plan so the board cannot edit a partial order. The board refreshes collections from engine events and stops
 requesting a denied project until the session or its scope changes. Settings
 needs no planning reads. Lane edits from the board and from an authenticated
 report worker both signal a planning change. Decision changes refresh Needs you
