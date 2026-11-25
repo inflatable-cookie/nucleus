@@ -403,13 +403,8 @@ Later decisions carry their own attribution.
     reminder does not extend that hold.
     Local process custody is checked at checkout removal.
 
-    The planner also ruled that a task row snoozes only when the held shell
-    shows its retained and sent role children quiet. An unsent reservation adds no
-    required native thread. The shell still checks every attached child. A sent
-    thread missing from the shell, or a listed thread with incomplete activity
-    data, defers the snooze. A live turn, pending request or
-    background writer keeps the row visible, including after a report. Positive
-    child activity clears an owned snooze. Operator snoozes keep their horizon.
+    Child activity remains evidence for checkout custody and parent release.
+    Task-row visibility follows ruling 22. Operator snoozes keep their horizon.
 
 31. **The TypeScript engine is stopped.** Tom, 2026-11-24: "I'm not using
     legacy TS nucleus now so should we start taking it down? Keep the code
@@ -455,7 +450,7 @@ Later decisions carry their own attribution.
     - An operator-owned future snooze is the delivery exception carried forward from #1445 and the TypeScript `wakeBeforeDelivery`. T3's ordinary message dispatch clears its destination's snooze. Before a parent hold or retained continuation enters the wire, the synchronized shell's future horizon must be absent or match the existing Nucleus ownership record. The operator's horizon stays visible as a timed wait outside **Needs you**. A shell wake or horizon expiry resumes the same command.
     - When an exact role run is active and its task parent has no pending or active turn, the first re-entry hold keys on the role launch instance. After that hold ends, the next occurrence also keys on the exact ended native parent run. Recheck on role activity and on engine startup. An uncertain reply retries the existing intent and command. An authenticated report still permits re-entry while the bound role has an active run or positively observed background work. A stopped role does not request re-entry.
     - An authenticated report or an observed terminal role releases its ACP hold. The next engine change for that task rechecks the current hold even if the completion notification was missed. A queued successor owns its own prompt.
-    - A reserved send stays visible through preflight. A pinned role can send across its own parent snooze. Operator snoozes still defer delivery. Nucleus permits two explicit visibility writes per row in a rolling two-minute window. A snooze can clear as soon as work resumes. A third flip waits until the oldest write leaves the window, with one recorded deferral.
+    - A parent send that explicitly wakes its row can finish before the watcher restores its snooze. A pinned role can send across its own parent snooze. Operator snoozes still defer delivery. Nucleus permits two explicit visibility writes per row in a rolling two-minute window. A snooze can clear as soon as work resumes. A third flip waits until the oldest write leaves the window, with one recorded deferral.
     - A report-ready or prerequisite-release notice can make one fresh attempt
       after T3 proves it rejected the exact command. See [Commands](#commands).
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
@@ -468,8 +463,7 @@ Later decisions carry their own attribution.
       concrete operator action need the operator. Planner questions, including
       an Inbox decline handed to the planner, wait for the planner. Scheduled
       rechecks, unexpired deadlines, capacity and dependencies are waiting.
-      T3 snoozes quiet waiting rows under the rules in ruling 30.
-      A non-revoked role reservation is active for native row visibility from reservation through send.
+      The board can show an active role while its parent row stays snoozed. T3 row visibility follows ruling 22.
     - Already done counts as done. A step never fails because the world is already in the state it wanted.
     - A stall audit inventories every wait, fence, receipt and proof state in the engine against these rules, and the reduction pass applies its verdicts.
 

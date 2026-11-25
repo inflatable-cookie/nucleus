@@ -772,19 +772,6 @@ impl Rpc {
         })
     }
 
-    pub(crate) fn row_children(
-        &self,
-        parent: &str,
-        roles: &[&str],
-    ) -> crate::task_row::RowChildren {
-        use crate::task_row::RowChildren;
-        self.with_shell(|shell| {
-            shell.map_or(RowChildren::Unknown, |shell| {
-                shell.row_children(parent, roles)
-            })
-        })
-    }
-
     pub(crate) fn same_thread(&self, id: &str, fence: &ThreadFence) -> bool {
         self.with_shell(|shell| {
             (shell.is_some() || !self.uses_held_shell()) && self.fence_at(id, shell).matches(fence)

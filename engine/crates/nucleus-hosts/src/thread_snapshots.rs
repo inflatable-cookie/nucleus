@@ -219,20 +219,6 @@ impl ThreadSnapshots {
         })
     }
 
-    pub(crate) fn row_children(&self, parent: &str, roles: &[&str]) -> RowChildren {
-        roles
-            .iter()
-            .copied()
-            .chain(self.children(parent))
-            .map(|id| {
-                self.rows
-                    .get(id)
-                    .map_or(RowChildren::Unknown, |row| row_activity(row))
-            })
-            .max()
-            .unwrap_or(RowChildren::Quiet)
-    }
-
     pub(crate) fn project(&self, id: &str) -> Option<RegisteredProject> {
         RegisteredProject::read(self.projects.get(id)?)
     }
