@@ -1199,6 +1199,8 @@ async fn the_next_engine_change_settles_a_reported_worker_despite_a_stale_shell(
     let fixture = Fixture::new(&task).await;
     let service = &fixture.service;
     fixture.child(&launch.thread, true);
+    fixture.native.lock().unwrap().child.as_mut().unwrap()["worktreePath"] =
+        json!(fixture.binding.worktree_path);
     fixture.publish_shell();
     let mut changes = service.changes();
     {
