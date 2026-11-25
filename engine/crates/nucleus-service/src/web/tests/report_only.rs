@@ -467,6 +467,53 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
 }
 
 #[tokio::test]
+async fn cancelled_checkout_only_retires_clean_published_work() {
+    let fixture = ReportFixture::new().await;
+    fixture.admit().await;
+    let worktrees = fixture.service.worktrees().unwrap();
+    let checkout = worktrees
+        .checkout(&fixture.service.fixture().checkout, REPOSITORY, TASK)
+        .unwrap();
+    checkout.allocate(&fixture.head).unwrap();
+    fixture
+        .service
+        .command(
+            TASK,
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap();
+    let cancelled = fixture.service.task(TASK).await.unwrap();
+    assert_eq!(cancelled.task.phase(), Phase::Cancelled);
+    fixture.service.host.fixture_held_shell(
+        &json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}),
+    );
+    let draft = fixture.checkout.join("draft");
+    std::fs::write(&draft, "unpublished").unwrap();
+    assert!(matches!(
+        fixture.service.archive_done(&cancelled).await,
+        Err(ServiceError::ArchiveEvidence(_))
+    ));
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "unpublished");
+    std::fs::remove_file(draft).unwrap();
+    *fixture.published.lock().unwrap() = None;
+    assert!(matches!(
+        fixture.service.archive_done(&cancelled).await,
+        Err(ServiceError::ArchiveEvidence(_))
+    ));
+    assert!(fixture.checkout.is_dir());
+    *fixture.published.lock().unwrap() = Some(fixture.head.clone());
+    assert_eq!(
+        fixture.service.archive_done(&cancelled).await.unwrap(),
+        Action::Nothing
+    );
+    assert!(!fixture.checkout.exists());
+}
+
+#[tokio::test]
 async fn revised_report_opens_its_own_planner_notice() {
     let fixture = ReportFixture::new().await;
     fixture.admit().await;

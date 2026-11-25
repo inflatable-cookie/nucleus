@@ -847,7 +847,8 @@ There are only two:
    task (Tom, 2026-11-23). For a `review_entry`, only the operator can accept it.
 2. **A worktree with uncommitted work is never deleted.** Tracked changes and
    non-ignored untracked files keep the worktree. Git-ignored output goes with
-   the worktree when unforced removal succeeds.
+   the worktree, including when the only tracked changes are deletions at the
+   exact published head. A clean cancelled checkout can retire after proof of publication.
 
 ## Engine shape
 

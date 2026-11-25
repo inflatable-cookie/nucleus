@@ -533,6 +533,24 @@ impl Service {
                 ));
             }
         }
+        if self
+            .is_published_checkout(identity, checkout, &head)
+            .await?
+        {
+            Ok(Some(head))
+        } else {
+            Err(ServiceError::ReportCheckout(
+                "the source is not proved published on origin",
+            ))
+        }
+    }
+
+    pub(super) async fn is_published_checkout(
+        &self,
+        identity: &Identity,
+        checkout: &Checkout<'_>,
+        head: &Head,
+    ) -> Result<bool, ServiceError> {
         let branches = report_branches(identity, checkout)?;
         let mut advertised = self.forge.published_branches(&branches).await?;
         advertised.sort_by_key(|(branch, _)| {
@@ -545,21 +563,15 @@ impl Service {
             }
         });
         for (branch, tip) in advertised {
-            let contained = match checkout.contains(&head, &tip) {
+            let contained = match checkout.contains(head, &tip) {
                 Ok(contained) => contained,
-                Err(_) => self
-                    .forge
-                    .contains(&branches, &head, &tip)
-                    .await
-                    .unwrap_or(false),
+                Err(_) => self.forge.contains(&branches, head, &tip).await?,
             };
             if contained && self.forge.branch_head(&branches, &branch).await? == tip {
-                return Ok(Some(head));
+                return Ok(true);
             }
         }
-        Err(ServiceError::ReportCheckout(
-            "the source is not proved published on origin",
-        ))
+        Ok(false)
     }
 }
 

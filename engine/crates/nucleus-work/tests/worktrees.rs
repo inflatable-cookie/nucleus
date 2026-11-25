@@ -584,7 +584,8 @@ fn retire_only_tracked_deletions_at_the_published_head() {
     for i in 0..1401 {
         fs::write(repo.join(format!("tracked/{i}")), "published").unwrap();
     }
-    git(&repo, &["add", "tracked"]);
+    fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
+    git(&repo, &["add", "tracked", ".gitignore"]);
     git(&repo, &["commit", "-qm", "Publish tracked inputs"]);
     let published: Head = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
     let worktrees = worktrees(root.path());
@@ -593,15 +594,15 @@ fn retire_only_tracked_deletions_at_the_published_head() {
         .unwrap();
     checkout.allocate(&published).unwrap();
     fs::remove_dir_all(checkout.path().join("tracked")).unwrap();
-    for name in ["draft", "local.settings"] {
-        fs::write(checkout.path().join(name), "keep").unwrap();
-        assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
-        assert_eq!(
-            fs::read_to_string(checkout.path().join(name)).unwrap(),
-            "keep"
-        );
-        fs::remove_file(checkout.path().join(name)).unwrap();
-    }
+    fs::create_dir(checkout.path().join("node_modules")).unwrap();
+    fs::write(checkout.path().join("node_modules/dependency"), "generated").unwrap();
+    let draft = checkout.path().join("draft");
+    fs::write(&draft, "keep").unwrap();
+    assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+    git(checkout.path(), &["add", "draft"]);
+    assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+    assert_eq!(fs::read_to_string(&draft).unwrap(), "keep");
+    git(checkout.path(), &["rm", "-f", "--", "draft"]);
     assert_eq!(checkout.retire(&published).unwrap(), Retirement::Removed);
     assert!(!checkout.path().exists());
 }
