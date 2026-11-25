@@ -681,6 +681,7 @@ async fn list(
                     .insert_entry(FinishedCard {
                         revision,
                         card: Arc::new(Card::read(row, &state, false, None)?),
+                        brief_lanes: brief_lanes(&row.task),
                         dependencies: state.store.dependencies(id).map_err(ServiceError::from)?,
                     })
                     .into_mut(),
@@ -716,8 +717,8 @@ async fn list(
             });
         }
     }
+    let mut lanes = task_lanes(&state, &tasks, &cache)?;
     drop(cache);
-    let mut lanes = active_task_lanes(&state, &tasks)?;
     Ok(Json(
         result
             .into_iter()
@@ -729,32 +730,39 @@ async fn list(
     ))
 }
 
-fn active_task_lanes(
+fn brief_lanes(task: &Task) -> Vec<String> {
+    nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
+        .map(|policy| policy.lanes().to_vec())
+        .unwrap_or_default()
+}
+
+fn task_lanes(
     state: &EngineState,
     rows: &[nucleus_store::TaskRow],
+    finished: &HashMap<String, FinishedCard>,
 ) -> Result<HashMap<String, Vec<String>>, ServiceError> {
     let mut sources = HashMap::<String, Vec<(String, String)>>::new();
-    for (id, project, lane) in state.store.live_source_lanes()? {
+    for (id, project, lane) in state.store.source_lanes()? {
         sources.entry(id).or_default().push((project, lane));
     }
     let mut result = HashMap::new();
-    for row in rows.iter().filter(|row| !row.task.phase().is_terminal()) {
+    for row in rows {
         let task = &row.task;
         let id = &task.identity().id;
         let project = state
             .settings
             .project_for_origin(&task.identity().repository)
             .map(|(id, _, _)| id);
-        let mut lanes = Vec::new();
+        let mut lanes = finished
+            .get(id)
+            .filter(|cached| cached.card.version == row.version)
+            .map_or_else(|| brief_lanes(task), |cached| cached.brief_lanes.clone());
         if let Some(items) = sources.remove(id) {
             lanes.extend(
                 items
                     .into_iter()
                     .filter_map(|(owner, lane)| (Some(owner.as_str()) == project).then_some(lane)),
             );
-        }
-        if let Ok(policy) = nucleus_core::profiles::BriefPolicy::parse(&task.brief().text) {
-            lanes.extend_from_slice(policy.lanes());
         }
         if let Some(report) = task.report_task()
             && Some(report.project.as_str()) == project
@@ -1238,6 +1246,7 @@ struct Summary<C = Card> {
 }
 
 struct FinishedCard {
+    brief_lanes: Vec<String>,
     revision: (i64, Option<i64>),
     card: Arc<Card>,
     dependencies: nucleus_store::Dependencies,

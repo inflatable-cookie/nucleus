@@ -1178,6 +1178,30 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
     assert_eq!(retried["identity"]["id"], created["identity"]["id"]);
     assert_eq!(retried["reference"], "second#1");
 
+    let task_id = created["identity"]["id"].as_str().unwrap();
+    registry
+        .service
+        .command(
+            task_id,
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let cards = read_paired_task(&api, "/api/engine/tasks", &operator).await;
+        let row = cards
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["identity"]["id"] == task_id)
+            .unwrap();
+        assert_eq!(row["phase"], "cancelled");
+        assert_eq!(row["lanes"], json!(["delivery", "release", "shared"]));
+    }
+
     let added = caller_request(
         &api,
         Method::POST,
