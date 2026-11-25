@@ -6,7 +6,6 @@ import type { Store } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
 import { gitFastForward, gitRun, formatGitError } from "../git/git-command";
 import { fastForwardIntegrationBase, withIntegrationCheckout, type IntegrationFastForwardObserver } from "../git/index";
-import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
 import { removeTree } from "../workspaces/tree-removal";
 import { WARM_CANDIDATE_NAME, isolationDataDirFor, isolationPathFor, isOwnedIsolationPath } from "./hook-isolation";
 
@@ -123,8 +122,6 @@ export class HookCheckouts {
       observe?.({ from: head, to: remote });
       if (await gitText(checkout, "rev-parse", "HEAD") !== remote || (await statusEntries(checkout, false)).length)
         throw new Error("Integration synchronization did not leave a clean expected head");
-      // A direct update of the registered checkout is the same main change the post-merge sync announces.
-      if (checkout === task.repoPath) requestServiceRollAfterRepositorySync(task.repoPath);
       return remote;
     });
   }

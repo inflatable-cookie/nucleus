@@ -9,7 +9,6 @@ import { verifyUnreviewedMergeSource, type UnreviewedMergeRoute } from '../../sh
 import type { VerifiedPr } from '../host/types';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
 import { api, repo } from './github-client';
-import { requestServiceRollAfterRepositorySync } from './roll-request';
 import { gitFastForward, requireGitAncestry } from '../git/git-command';
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
@@ -233,11 +232,7 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
   return matches[0]?.split(' ')[0]??null;
 }
 export async function syncMain(t: Task, allowed: () => boolean = () => true, observeFastForward?: IntegrationFastForwardObserver, beforeFastForward?: IntegrationFastForwardObserver) {
-  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward, beforeFastForward));
-  if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
-    requestServiceRollAfterRepositorySync(t.repoPath);
-  }
-  return commit;
+  return withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward, beforeFastForward));
 }
 async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>, observeFastForward?: IntegrationFastForwardObserver, beforeFastForward?: IntegrationFastForwardObserver) {
   if (!t.resolution.mergedCommit) throw new Error('Merge has not been verified');
