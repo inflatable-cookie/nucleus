@@ -2,7 +2,6 @@
 export * from "./schema/task-primitives";
 export * from "./schema/task-view";
 export * from "./schema/task-activity";
-export * from "./schema/bb-sidebar";
 export * from "./holds";
 export * from "./retained-profile";
 export * from "./disposition";

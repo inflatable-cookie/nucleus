@@ -1177,8 +1177,8 @@ replacement). `test/bb-host-presence.test.ts` proves an executor failure's own c
 wire as a refusal. `test/bb-worker-runs.test.ts` retains the phase-3 archive proof with the phase-4
 cascade rule.
 
-Evidence: `interactionQuestion` and `interactionApproval` in `test/fixtures/bb-0.49-wire.json` are real
-provider rows recorded from the isolated BB 0.49 server by the opt-in pass
+The [archived BB wire fixture](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/test/fixtures/bb-0.49-wire.json) preserves
+`interactionQuestion` and `interactionApproval` provider rows recorded from the isolated BB 0.49 server by the opt-in pass
 `effigy proof:bb -- --record-interactions` (synthetic identities): a claude-code probe thread raises a
 native question and a plan approval, the plugin lists them, answers the label by the option's wire value,
 and the recording keeps the raw SDK rows and both resolutions. That pass needs an authenticated provider
