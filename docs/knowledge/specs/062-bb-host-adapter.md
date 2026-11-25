@@ -1278,7 +1278,7 @@ handles and task records phases 0–4 landed:
   returns to its phase-prefixed title.
 
 Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
-in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
+in the fork's historical sidebar suite: the collapsed default with number, title, shared
 state label, recorded wait and PR state; upstream's header and one read for every other group; one
 call for many groups plus the refetch on the board signal; an explicit expand written to
 `expandedTaskGroups` with `collapsedEnvironments` never written for a task group; the stored

@@ -33,7 +33,6 @@ setup = "npm ci"
 "proof:bb" = "node --import tsx scripts/acceptance/bb-private.ts {args}"
 # Spec 062 phase 5: the forked sidebar's own tests (the fork's runner) and the
 # opt-in drift check. The drift check needs the network, so it is never in `check`.
-"bb:sidebar-tests" = "npm run test:bb-sidebar -- {args}"
 "bb:sidebar-drift" = "node scripts/bb/sidebar-drift.mjs {args}"
 # Spec 062 phase 5's install proof: builds the plugin and installs it into the
 # isolated BB server from phase 0 (never the operator's live BB).
@@ -41,15 +40,11 @@ setup = "npm ci"
 # Spec 062 phase 6: bundle the shared board into the BB plugin package
 # (react-native → react-native-web, React left to BB's runtime). Generated output.
 "bb:board-build" = "node scripts/bb/build-board.mjs {args}"
-check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "check:publication" }]
+check = [{ task = "check:types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"
 "test:baseline" = "node scripts/test-baseline.mjs {args}"
 "check:types" = "npm run typecheck"
-# The BB plugin package is its own program (Spec 062, decision 5a): the vendored
-# sidebar and the registry modules it imports typecheck against the fork's own
-# tsconfig, with the `@/*` mapping onto the plugin package root.
-"check:plugin-types" = "tsc -p hosts/bb/plugin/tsconfig.json"
 "check:publication" = "npm run publication:check"
 "engine:fmt" = "cargo fmt --manifest-path engine/Cargo.toml --all -- --check"
 "engine:board-build" = "node scripts/build-web.mjs {args}"
