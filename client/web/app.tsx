@@ -129,6 +129,7 @@ export function WebApp() {
         decisionsChanged: () => invalidateBoard({ queryKey: ["nucleus", "decisions"] }),
         themeChanged: () => setThemeRevision((value) => value + 1),
         catalogChanged: () => {
+          invalidateBoard({ queryKey: ["nucleus", "state"] });
           invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
           invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
         },
