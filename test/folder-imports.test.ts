@@ -42,12 +42,6 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       "plugin-forwarder",
     ],
     [
-      "bin/queue-validation-supervisor.mjs",
-      "core/store/store.ts",
-      "../core/store/store.ts",
-      null,
-    ],
-    [
       "core/review/report.ts",
       "service/main.ts",
       "../../service/main",
@@ -68,15 +62,9 @@ test("folder rules cover processes, public host indexes and host SDK confinement
     ],
     [
       "hosts/paseo/adapter/client.ts",
-      "core/host/adapter.ts",
-      "../../../core/host/adapter",
+      "core/example.ts",
+      "../../../core/example",
       "host-interface",
-    ],
-    [
-      "hosts/paseo/adapter/client.ts",
-      "core/host/index.ts",
-      "../../../core/host",
-      null,
     ],
     [
       "service/runtime/index.ts",
@@ -173,7 +161,7 @@ test("declaration modules enforce type boundaries and resolve declaration target
   ]);
 });
 
-test("host environment debt contains only the published hook protocol exceptions", () => {
+test("production host environment follows the published rules", () => {
   assert.deepEqual(checkHostEnvironment(root), []);
 });
 

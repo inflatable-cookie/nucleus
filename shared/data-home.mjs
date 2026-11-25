@@ -62,7 +62,7 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: "queue-hooks/", kind: "durable", owner: "retired TypeScript repository hooks" },
   { path: "project-qa/", kind: "durable", owner: "legacy milestone QA evidence; the TypeScript service used the configured projectQaRoot" },
   { path: ".external-backups/", kind: "durable", owner: "retired TypeScript external backup migration copy" },
-  { path: "project-validation/", kind: "durable", owner: "core/qa/project-validation-supervisor.ts" },
+  { path: "project-validation/", kind: "durable", owner: "retired TypeScript project-validation supervisor records" },
   { path: "callback.sock", kind: "ephemeral", owner: "server/callback.ts" },
   { path: "worker-report.mjs", kind: "derived", owner: "retired TypeScript runtime" },
   { path: "queue-service.sock", kind: "ephemeral", owner: "retired TypeScript service identity" },
