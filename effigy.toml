@@ -61,11 +61,3 @@ qa = [
 # `--` preserves Effigy's passthrough; the runner places options before files.
 [test.suites.unit]
 run = "npm test --"
-
-# Opt-in snapshot comparison: inert archived sources, no live provider or task execution.
-[tasks."bench:service-hot-paths"]
-run = "node scripts/bench-service-hot-paths.mjs"
-
-# Private active git and supervisor probes; no live execution or store writes.
-[tasks."bench:git-file-facts"]
-run = "node scripts/bench-git-file-facts.mjs"

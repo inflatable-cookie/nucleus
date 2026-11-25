@@ -1810,10 +1810,8 @@ liveness never proves death. Parsed supervision files are reused only while thei
 file identity, size, timestamps and ownership remain unchanged. Output attachment
 polls back off while idle, bounded at 500 ms, and return to 40 ms when bytes arrive.
 
-The opt-in effigy bench:service-hot-paths snapshot comparison and its limits
-are recorded in the performance receipt (`evidence/1010-service-hot-paths.md` in Git history).
-Active Git and supervision probe measurements and their limits are in the
-fact-cache receipt (`evidence/1024-git-file-facts.md` in Git history).
+The retired TypeScript engine’s benchmark results are preserved in Git history
+in `evidence/1010-service-hot-paths.md` and `evidence/1024-git-file-facts.md`.
 
 ### Completed host attribution migrations
 
