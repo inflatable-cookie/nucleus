@@ -4,15 +4,13 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
-import { Store } from "../core/store/store";
 import {
-  submissionSchema,
+  detail,
   taskNextSchema,
   taskNextVerbSchema,
   taskSummarySchema,
   type TaskNext,
 } from "../shared/contracts";
-import { createTaskDetailCache } from "../core/telemetry/task-detail";
 
 // Task Overview (UI lane step 3, redesigned in nucleus#1537): what is happening, who acts
 // next and the owner verbs that apply; refusals sit with the full verb list in Details. The
@@ -224,41 +222,89 @@ function mountBoard(
   );
 }
 
-/** A parked task on the board, opened on its Overview tab through the real detail read. */
+/** A parked task and the queue.detail reply served by the test RPC. */
 function setup(readNext: (taskId: string) => Promise<unknown>) {
-  const store = new Store(":memory:");
-  store.setMeta("paused", false);
-  const inserted = store.insert(
-    submissionSchema.parse({
+  const taskId = "task";
+  const detailReply = detail.output.parse({
+    task: {
+      id: taskId,
+      hostId: "host",
+      createdAt: at,
+      updatedAt: at,
+      version: 2,
       submissionId: "overview",
       title: TITLE,
       repoPath: "/app",
       planningCommit: head,
       handoffPath: "overview.md",
       originAgentId: "origin",
-    }),
-    "host",
-    "handoff",
-    head,
-  );
-  const task = store.update(inserted.id, {
-    phase: "needs_attention",
-    reason: "Waiting for the operator",
+      phase: "needs_attention",
+      reason: "Waiting for the operator",
+      held: false,
+      handoffText: "handoff",
+      planningBase: head,
+      workspaceId: null,
+      directory: null,
+      branch: "ns-task",
+      agentId: null,
+      runId: null,
+      profile: null,
+      workspaceIntent: false,
+      agentIntent: false,
+      lastAgentStatus: null,
+      idleSince: null,
+      completion: null,
+      agentActive: null,
+      lastObservedAt: null,
+      prUrl: null,
+      prHead: null,
+      coordinatorGeneration: 1,
+    },
+    events: [],
+    runs: [],
+    notices: [],
+    dependencies: [],
+    hooks: [],
+    telemetry: {
+      taskId,
+      generatedAt: at,
+      evidence: "exact",
+      totalElapsedMs: 0,
+      waitingMs: 0,
+      activeMs: 0,
+      interventionMs: 0,
+      currentStage: "attention",
+      currentStageAgeMs: 0,
+      closeoutAuthority: "pending",
+      stages: [],
+      interventions: {
+        recoveryRuns: 0,
+        recoveries: [],
+        uncertainCreations: 0,
+        absentCreations: 0,
+        attentionNotices: 0,
+        escalations: 0,
+        hookHolds: 0,
+        hookRetries: 0,
+        revisions: 0,
+        replacements: 0,
+        operatorActions: [],
+      },
+    },
   });
-  const read = createTaskDetailCache(store);
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot")
       return board([
         summaryOf({
-          id: task.id,
+          id: taskId,
           phase: "needs_attention",
           parked: true,
           resolution: { attention: true, mergedCommit: null },
         }),
       ]);
     if (method === "queue.service-state") return serviceState;
-    if (method === "queue.detail") return read(task.id);
-    if (method === "task.next") return readNext(task.id);
+    if (method === "queue.detail") return detailReply;
+    if (method === "task.next") return readNext(taskId);
     if (method === "project.qa.list" || method === "host.run.list") return [];
     if (method === "host.run.board")
       return {
@@ -277,7 +323,7 @@ function setup(readNext: (taskId: string) => Promise<unknown>) {
     void input;
     return {};
   };
-  return { store, task, invoke };
+  return invoke;
 }
 
 async function openOverview(tree: ReturnType<typeof mountBoard>) {
@@ -291,7 +337,7 @@ for (const compact of [false, true]) {
   test(`the Overview leads with what is happening, who acts next and the owner verbs that apply at a ${layout} layout`, async () => {
     await load();
     let mounted: ReturnType<typeof mountBoard> | undefined;
-    const { store, invoke } = setup(async (taskId) => waitingNext(taskId));
+    const invoke = setup(async (taskId) => waitingNext(taskId));
     try {
       mounted = mountBoard(invoke, compact);
       await openOverview(mounted);
@@ -346,7 +392,6 @@ for (const compact of [false, true]) {
       );
     } finally {
       mounted?.update(h("View", null));
-      store.close();
     }
   });
 }
@@ -354,7 +399,7 @@ for (const compact of [false, true]) {
 test("while the owner verbs are being read, the Overview keeps the wait it already knows and says the verbs are loading", async () => {
   await load();
   let mounted: ReturnType<typeof mountBoard> | undefined;
-  const { store, invoke } = setup(() => new Promise(() => undefined));
+  const invoke = setup(() => new Promise(() => undefined));
   try {
     mounted = mountBoard(invoke, false);
     await openOverview(mounted);
@@ -376,7 +421,6 @@ test("while the owner verbs are being read, the Overview keeps the wait it alrea
     );
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
 
@@ -385,7 +429,7 @@ test("a failed read names the failure and retries from the same control", async 
   let mounted: ReturnType<typeof mountBoard> | undefined;
   let reads = 0;
   let fail = true;
-  const { store, invoke } = setup(async (taskId) => {
+  const invoke = setup(async (taskId) => {
     reads++;
     if (fail) throw new Error("Queue did not answer the owner-verb read");
     return waitingNext(taskId);
@@ -417,6 +461,5 @@ test("a failed read names the failure and retries from the same control", async 
     assert.equal(mounted.all("Retry reading owner verbs").length, 0);
   } finally {
     mounted?.update(h("View", null));
-    store.close();
   }
 });
