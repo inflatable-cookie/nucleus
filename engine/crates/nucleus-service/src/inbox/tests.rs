@@ -1,12 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use axum::{Json, Router, http::HeaderMap, routing::post};
 use nucleus_core::{
     Entry, Forge, Identity, Observation, Observed, OperatorDecline, PullRequest, Task,
 };
 use nucleus_forge::GitHub;
+use nucleus_store::InboxBinding;
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
 
 use super::*;
 use crate::{
@@ -51,103 +50,59 @@ async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
     (service.task(id).await.unwrap(), forge)
 }
 
-async fn bridge_fixture(
-    answer: Value,
-) -> (Inbox, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
-    let observed = Arc::clone(&requests);
-    let app = Router::new().route(
-        "/api/internal/rust-inbox",
-        post(
-            move |headers: HeaderMap, Json(input): Json<Value>| async move {
-                assert_eq!(
-                    headers["authorization"],
-                    format!("Bearer {}", "a".repeat(64))
-                );
-                let result = if input["operation"] == "withdraw" {
-                    json!({"state":"withdrawn"})
-                } else {
-                    answer
-                };
-                observed.lock().unwrap().push(input);
-                Json(result)
-            },
-        ),
-    );
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (
-        Inbox::new(&endpoint, "test-engine".into(), "a".repeat(64)).unwrap(),
-        requests,
-        server,
-    )
-}
-
 #[tokio::test]
-async fn acceptance_waits_for_forge_evidence_and_withdraws_its_old_binding() {
-    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    let (inbox, requests, bridge) = bridge_fixture(json!({
-        "state":"accepted","actor":"operator (t3code:fixture)","reason":"Checked the merge."
-    }))
-    .await;
-    service.inbox = Some(inbox);
+async fn acceptance_waits_for_evidence_of_the_exact_external_merge() {
+    let (_home, service) = fixture(GitHub::new("unused").unwrap());
     let (row, forge) = seed(&service, "accepted").await;
-    service.operator_decision(&row).await.unwrap();
-    assert_eq!(service.task("accepted").await.unwrap(), row);
-    service.observe_commands(&row, &forge).await.unwrap();
-    service.operator_decision(&row).await.unwrap();
-    let revised = service.task("accepted").await.unwrap();
-    assert!(revised.task.question().is_none());
-    assert!(revised.task.verdict().is_some());
-    service.clear_stale_inbox(&revised).await.unwrap();
-    let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 3);
-    assert_eq!(requests[0], requests[1]);
-    assert_eq!(requests[2]["operation"], "withdraw");
-    assert_eq!(requests[2]["id"], requests[0]["id"]);
-    bridge.abort();
+    for observe in [false, true] {
+        if observe {
+            service.observe_commands(&row, &forge).await.unwrap();
+        }
+        service
+            .apply_operator_answer(&row, "operator".into(), "Checked the merge.".into(), false)
+            .await
+            .unwrap();
+        let current = service.task("accepted").await.unwrap();
+        assert_eq!(current.task.verdict().is_some(), observe);
+        assert_eq!(current.task.question().is_none(), observe);
+    }
 }
 
 #[tokio::test]
-async fn cutover_fences_the_legacy_version_before_it_can_appear_in_rust() {
+async fn restored_bridge_binding_keeps_the_native_offer_fenced() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    let (legacy, first, pending) = bridge_fixture(json!({"state":"pending"})).await;
-    service.inbox = Some(legacy);
     let (row, _) = seed(&service, "handoff").await;
-    service.operator_decision(&row).await.unwrap();
+    let binding = InboxBinding {
+        task_version: row.version,
+        decision_id: "rust-inbox:fixture:handoff:1".into(),
+        head: row.task.operator_question().unwrap().as_str().into(),
+    };
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .bind_inbox("handoff", &binding)
+        .unwrap();
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
-    service.operator_decision(&row).await.unwrap();
+    assert!(matches!(
+        service.operator_decision(&row).await,
+        Err(ServiceError::InboxUnavailable { .. })
+    ));
+    let state = service.state.lock().await;
+    assert!(state.store.inbox_binding("handoff").unwrap().is_some());
     assert!(
-        service
-            .state
-            .lock()
-            .await
+        state
             .store
             .decisions("local-fixture", true)
             .unwrap()
             .is_empty()
     );
-    assert_eq!(first.lock().unwrap()[1]["operation"], "handoff");
-    pending.abort();
-
-    let (legacy, second, fenced) = bridge_fixture(json!({"state":"withdrawn"})).await;
-    service.inbox = Some(legacy);
-    service.operator_decision(&row).await.unwrap();
-    let state = service.state.lock().await;
-    assert!(state.store.inbox_binding("handoff").unwrap().is_none());
-    let pending = state.store.decisions("local-fixture", true).unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].task.as_ref().unwrap().task_version, row.version);
-    assert_eq!(second.lock().unwrap()[0]["operation"], "handoff");
-    fenced.abort();
 }
 
 #[tokio::test]
 async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    let (inbox, requests, bridge) = bridge_fixture(json!({"state":"declined"})).await;
-    service.inbox = Some(inbox);
     let root = service.fixture().checkout.clone();
     let notices = Arc::new(Mutex::new(Vec::<Value>::new()));
     let delivered = Arc::clone(&notices);
@@ -184,7 +139,10 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
         );
     }
     service.observe_commands(&row, &forge).await.unwrap();
-    service.notify_question(&row).await.unwrap();
+    service
+        .apply_operator_answer(&row, "operator".into(), String::new(), true)
+        .await
+        .unwrap();
     let declined = service.task("declined").await.unwrap();
     assert_eq!(
         declined.task.operator_decline(),
@@ -198,7 +156,6 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
             crate::attention::TaskAttention::Waiting
         );
     }
-    service.clear_stale_inbox(&declined).await.unwrap();
     service.notify_question(&declined).await.unwrap();
     let sent = service.task("declined").await.unwrap();
     service.notify_question(&sent).await.unwrap();
@@ -209,7 +166,6 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
     );
     assert!(!crate::active(&parked.task));
     service.notify_question(&parked).await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 2);
     let notices = notices.lock().unwrap();
     assert_eq!(notices.len(), 1);
     assert!(
@@ -219,5 +175,4 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
             .contains("Move or cancel")
     );
     native.abort();
-    bridge.abort();
 }

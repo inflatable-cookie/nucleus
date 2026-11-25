@@ -421,9 +421,10 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
     let brief = "---\nqueue:\n  complexity: high\n---\nFixture task.";
     {
         let mut state = service.state.lock().await;
-        let mut dispatch = DispatchSettings::default();
-        dispatch.usage = UsageLevel::Low;
-        state.settings.dispatch = Some(dispatch);
+        state.settings.dispatch = Some(DispatchSettings {
+            usage: UsageLevel::Low,
+            ..DispatchSettings::default()
+        });
     }
     for id in ["approved", "declined", "amended"] {
         service

@@ -65,9 +65,10 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
         service.acp_turn_view(&state, &row).expect("reserved view"),
         (None, true)
     );
-    let mut dispatch = nucleus_store::DispatchSettings::default();
-    dispatch.mode = nucleus_store::DispatchMode::Paused;
-    state.settings.dispatch = Some(dispatch);
+    state.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        mode: nucleus_store::DispatchMode::Paused,
+        ..nucleus_store::DispatchSettings::default()
+    });
     state.set_wait("worker", Some(WaitReason::Capacity));
     assert_eq!(
         service

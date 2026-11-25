@@ -236,9 +236,10 @@ async fn wake(service: &Service, ids: &[&str]) {
 async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<String> {
     {
         let mut state = service.state.lock().await;
-        let mut dispatch = DispatchSettings::default();
-        dispatch.global_slots = 3;
-        state.settings.dispatch = Some(dispatch);
+        state.settings.dispatch = Some(DispatchSettings {
+            global_slots: 3,
+            ..DispatchSettings::default()
+        });
         state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
             "pausedGroups":["claudeAgent"],
             "profiles":[

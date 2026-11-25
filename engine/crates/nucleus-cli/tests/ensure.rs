@@ -84,7 +84,6 @@ exec "$NUCLEUS_FIXTURE_BINARY" --endpoint "$NUCLEUS_FIXTURE_ENDPOINT" serve \
             .env("NUCLEUS_FIXTURE_BINARY", CLI)
             .env("NUCLEUS_FIXTURE_ENDPOINT", &endpoint)
             .env_remove("NUCLEUS_RUST_NATIVE_INBOX")
-            .env_remove("NUCLEUS_RUST_INBOX_URL")
             .env_remove("NUCLEUS_ENGINE_LEGACY_NUMBERS_COPY")
             .kill_on_drop(true);
         command
