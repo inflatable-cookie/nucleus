@@ -1,3 +1,4 @@
+import { projectNameProblem } from "../shared/project-scope";
 import { errorText } from "./error-text";
 import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useRef, useState } from "react";
@@ -297,7 +298,7 @@ function OpenedProject({
     const trimmed = nextName.trim();
     return {
       key: project.key,
-      name: trimmed && trimmed.length <= 200 ? trimmed : storedName.current,
+      name: projectNameProblem(trimmed) ? storedName.current : trimmed,
       repositories: list,
       ...(list.length > 1 ? { primary: list[0] } : {}),
     };
@@ -311,12 +312,9 @@ function OpenedProject({
   const rename = (text: string) => {
     setName(text);
     // Held under "name", not "project": a repository change queues "project" and must not clear the name's reason.
-    if (!text.trim()) {
-      saves.hold("name", "Name is empty");
-      return;
-    }
-    if (text.trim().length > 200) {
-      saves.hold("name", "Name is over 200 characters");
+    const problem = projectNameProblem(text);
+    if (problem) {
+      saves.hold("name", problem);
       return;
     }
     saves.release("name");
