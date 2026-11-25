@@ -1375,6 +1375,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     {
         let state = fixture.service.state.lock().await;
         let title = state.store.pending_title(&fixture.thread).unwrap().unwrap();
+        assert_eq!(fixture.service.working_row_count(&state).unwrap(), 1);
         assert!(title.desired.starts_with("Waiting:"));
         assert_eq!(
             fixture.service.acp_turn_view(&state, &row).unwrap(),
@@ -1413,6 +1414,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
     let state = fixture.service.state.lock().await;
     let title = state.store.pending_title(&fixture.thread).unwrap().unwrap();
+    assert_eq!(fixture.service.working_row_count(&state).unwrap(), 0);
     assert!(
         title
             .desired

@@ -398,11 +398,11 @@ impl Service {
             return Ok(None);
         }
         let decisions = crate::native_inbox::pending(state, self)?.len();
-        let running = state
-            .waits
-            .values()
-            .filter(|wait| wait.reason == Some(WaitReason::Running))
-            .count();
+        let running = if decisions == 0 {
+            self.working_row_count(state)?
+        } else {
+            0
+        };
         let mode = state
             .settings
             .dispatch
@@ -684,6 +684,40 @@ mod tests {
         }
     }
 
+    async fn running_review_threads(service: &Service, provider: &str) -> [serde_json::Value; 2] {
+        let (task, _, _) = crate::tests::reserved_reviewer("fixture", &service.fixture().start);
+        assert_eq!(task.phase(), Phase::Reviewing);
+        let parent = "fixture-parent";
+        {
+            let mut state = service.state.lock().await;
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .desire_title(&task.identity().id, parent, "Reviewing")
+                .unwrap();
+            state.set_wait(&task.identity().id, Some(WaitReason::ForgeUnknown));
+        }
+        [
+            json!({"id":parent,"projectId":"project:nucleus-rust-inbox","providerInstanceId":provider}),
+            json!({"id":task.run().unwrap().launch().thread,"parentThreadId":parent,
+                   "projectId":"project:nucleus-rust-inbox","status":"running","activeRunId":"fixture-review"}),
+        ]
+    }
+
+    fn inbox_shell(
+        root: &str,
+        provider: &str,
+        title: &str,
+        children: &[serde_json::Value],
+    ) -> serde_json::Value {
+        let mut threads = vec![
+            json!({"id": INBOX_THREAD, "projectId": "project:nucleus-rust-inbox",
+            "providerInstanceId": provider, "worktreePath": null, "title": title, "pinnedAt": "now"}),
+        ];
+        threads.extend_from_slice(children);
+        json!({"projects":[{"id":"project:nucleus-rust-inbox", "workspaceRoot": root}], "threads": threads})
+    }
+
     #[tokio::test]
     async fn inbox_status_titles_only_write_changed_metadata_under_a_fresh_generation() {
         use nucleus_store::planning::WriteAt;
@@ -692,7 +726,7 @@ mod tests {
         let provider = "fixture-acp";
         service.fixture_mut().acp_provider = Some(provider.into());
         service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
-        let root = &service.native_inbox.as_ref().unwrap().root;
+        let root = service.native_inbox.as_ref().unwrap().root.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&requests);
         let (host, server) = native_fixture(move |req| {
@@ -703,23 +737,20 @@ mod tests {
             json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
         })
         .await;
-        let shell = |title| {
-            json!({"projects":[{"id":"project:nucleus-rust-inbox","workspaceRoot":root}],
-            "threads":[{"id":INBOX_THREAD,"projectId":"project:nucleus-rust-inbox",
-            "providerInstanceId":provider,"worktreePath":null,"title":title,"pinnedAt":"now"}]})
+        let shell = |title: &str, children: &[serde_json::Value]| {
+            inbox_shell(&root, provider, title, children)
         };
-        host.fixture_project_shell(&shell("All quiet"), provider);
+        host.fixture_project_shell(&shell("All quiet", &[]), provider);
         service.host = host;
         let inbox = [INBOX_THREAD.to_owned()];
         let first = service.title_work(provider, &inbox).await.unwrap().unwrap();
         service.apply_title(provider, &first, 0).await.unwrap();
         assert!(requests.lock().unwrap().is_empty());
 
+        let threads = running_review_threads(&service, provider).await;
         service
-            .state
-            .lock()
-            .await
-            .set_wait("fixture", Some(WaitReason::Running));
+            .host
+            .fixture_project_shell(&shell("All quiet", &threads), provider);
         let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
         service.apply_title(provider, &running, 0).await.unwrap();
         assert_eq!(running.desired, "1 task running");
@@ -732,7 +763,7 @@ mod tests {
         );
         service
             .host
-            .fixture_project_shell(&shell("1 task running"), provider);
+            .fixture_project_shell(&shell("1 task running", &threads), provider);
 
         let project = service.fixture().host_project.clone();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
@@ -758,10 +789,9 @@ mod tests {
         assert_eq!(decision.desired, "Paused: 1 decision to answer");
         service
             .host
-            .fixture_project_shell(&shell(&decision.desired), provider);
+            .fixture_project_shell(&shell(&decision.desired, &[]), provider);
         {
             let mut state = service.state.lock().await;
-            state.set_wait("fixture", None);
             state.settings.dispatch = None;
             state
                 .store
