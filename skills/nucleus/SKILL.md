@@ -29,7 +29,6 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   ---
   queue:
     complexity: medium
-    notifyOriginOnCloseout: true
   ---
 
   # Brief title

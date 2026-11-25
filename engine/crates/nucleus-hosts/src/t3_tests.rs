@@ -1,8 +1,8 @@
 use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use crate::{
-    Binding, Dispatch, HostError, NoticeHost, NoticeWrite, RoleProfile, RunRequest, SendOutcome,
-    StopProgress, T3, T3Pass, TaskHost,
+    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
+    TaskHost,
 };
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
@@ -1638,24 +1638,11 @@ async fn ready_notice(
     client: &T3,
     notice: &nucleus_core::QuestionDelivery,
 ) -> crate::NoticeAuthorization {
-    let permit = client
+    client
         .authorize_notice(notice)
         .await
         .expect("read planner")
-        .expect("authorized");
-    if permit.needs_unsettle() {
-        client
-            .deliver_notice(NoticeWrite::Prepare(&permit))
-            .await
-            .expect("wake planner");
-        client
-            .authorize_notice(notice)
-            .await
-            .expect("read back wake")
-            .expect("ready")
-    } else {
-        permit
-    }
+        .expect("authorized")
 }
 
 #[tokio::test]
@@ -2648,8 +2635,8 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
 }
 
 #[tokio::test]
-async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
-    use crate::{NoticeSend, NoticeState};
+async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
+    use crate::{NoticeOutcome, NoticeState};
 
     let directory = checkout_fixture();
     let binding = binding(directory.path());
@@ -2665,35 +2652,39 @@ async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
     settled["projection"]["runs"] = json!([]);
     settled["projection"]["thread"]["settledOverride"] = json!("settled");
     settled["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
-    let mut unsettled = settled.clone();
-    unsettled["projection"]["thread"]["settledOverride"] = json!("active");
-    unsettled["projection"]["thread"]["settledAt"] = Value::Null;
-    unsettled["snapshotSequence"] = json!(17);
+    let mut snoozed = settled.clone();
+    snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-11-25T16:00:00Z");
+    queued["projection"]["thread"]["settledAt"] = json!("2026-11-25T16:00:00Z");
     let mut started = interrupted.clone();
     started["projection"]["runs"][0]["startedAt"] = json!("2026-11-23T16:01:00Z");
     let (client, server) = server(vec![
+        (probe, Response::Snapshot(snoozed)),
         (probe, Response::Snapshot(settled)),
-        (command, Response::Success),
-        (probe, Response::Snapshot(unsettled)),
         (command, Response::Success),
         (probe, Response::Snapshot(queued)),
         (probe, Response::Snapshot(interrupted)),
         (probe, Response::Snapshot(started)),
     ])
     .await;
+    assert!(
+        client.authorize_notice(&notice).await.unwrap().is_none(),
+        "operator snooze"
+    );
     let permit = ready_notice(&client, &notice).await;
     assert_eq!(notice.last_send_at_ms, None);
     let dispatch = permit.record(&mut notice).expect("persist native marker");
     assert_eq!(
         client
-            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .send_notice(dispatch)
             .await
             .expect("queue planner notice"),
-        NoticeSend::Accepted
+        NoticeOutcome::Accepted
     );
-    assert_eq!(
-        client.notice_state(&notice).await.expect("queued"),
-        NoticeState::Queued
+    let observed = client.observe_notice(&notice).await.unwrap();
+    assert_eq!(observed.state, NoticeState::Queued);
+    assert!(
+        observed.authorization.is_none(),
+        "settling after acceptance permits no write"
     );
     assert_eq!(
         client
@@ -2707,17 +2698,14 @@ async fn planner_notice_unsettles_and_queue_acceptance_is_not_delivery() {
         NoticeState::Started
     );
     let frames = server.await.expect("fixture trace");
-    let wake: Value = serde_json::from_str(frames[1].payload.get()).expect("unsettle wire");
-    assert_eq!(wake["type"], "thread.unsettle");
-    assert_eq!(wake["threadId"], THREAD);
-    assert_eq!(frames[3].payload.get(), notice.payload.as_str());
+    assert_eq!(frames[2].payload.get(), notice.payload.as_str());
     let payload: Value = serde_json::from_str(&notice.payload).expect("message wire");
     assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
 }
 
 #[tokio::test]
-async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wire() {
-    use crate::NoticeSend;
+async fn a_settled_recipient_gets_only_the_exact_recorded_notice() {
+    use crate::NoticeOutcome;
 
     let directory = checkout_fixture();
     let binding = binding(directory.path());
@@ -2729,12 +2717,6 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
     idle["projection"]["runs"] = json!([]);
     let mut first = idle.clone();
     first["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
-    let mut second = first.clone();
-    second["snapshotSequence"] = json!(18);
-    second["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:02:00Z");
-    let mut active_first = idle.clone();
-    active_first["snapshotSequence"] = json!(17);
-    idle["snapshotSequence"] = json!(19);
     let rejected = json!([{"_tag":"Fail","error":{
         "_tag":"OrchestrationV2DispatchCommandError",
         "commandId":notice.command,
@@ -2745,12 +2727,8 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         },
     }}]);
     let (client, server) = server(vec![
+        (probe, Response::Snapshot(first.clone())),
         (probe, Response::Snapshot(first)),
-        (command, Response::Success),
-        (probe, Response::Snapshot(active_first)),
-        (probe, Response::Snapshot(second)),
-        (command, Response::Success),
-        (probe, Response::Snapshot(idle)),
         (command, Response::Failure(rejected)),
     ])
     .await;
@@ -2768,26 +2746,13 @@ async fn a_new_settlement_gets_a_new_wake_id_and_rejection_settles_the_exact_wir
         .expect("record the original bytes");
     assert_eq!(
         client
-            .deliver_notice(NoticeWrite::Queue(dispatch))
+            .send_notice(dispatch)
             .await
             .expect("confirmed outcome"),
-        NoticeSend::Rejected
+        NoticeOutcome::Rejected
     );
     let frames = server.await.expect("fixture trace");
-    let wake_id = |index: usize| {
-        let wire: Value = serde_json::from_str(frames[index].payload.get()).expect("unsettle wire");
-        assert_eq!(wire["type"], "thread.unsettle");
-        wire["commandId"].as_str().expect("wake ID").to_owned()
-    };
-    assert_eq!(
-        wake_id(1),
-        format!("unsettle:{THREAD}:2026-11-23T16:00:00Z")
-    );
-    assert_eq!(
-        wake_id(4),
-        format!("unsettle:{THREAD}:2026-11-23T16:02:00Z")
-    );
-    assert_eq!(frames[6].payload.get(), notice.payload);
+    assert_eq!(frames[2].payload.get(), notice.payload);
 }
 
 #[tokio::test]
