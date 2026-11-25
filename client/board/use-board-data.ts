@@ -11,11 +11,13 @@ import {
   effectiveSelection,
   planningLaneLeads,
   planningScopeLanes,
+  projectHasRepository,
   scopedProjects,
   type ProjectScope,
 } from "../../shared/project-scope";
 import { lanePlaces, laneProjects } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
+import type { RustTask } from "../web/rust-board";
 import { useEngineFeatures } from "../engine-features";
 import { domainRevision, useBoardState } from "../board-state";
 import { useRetainedRead } from "../retained-read";
@@ -139,24 +141,47 @@ export function usePlanningData({
   state,
   tab,
   records,
+  rustTasks,
   onLeaveLane,
 }: {
   scope: ProjectScope;
   state: UiQueueState | undefined;
   tab: BoardTab;
   records: RecordQueries;
+  rustTasks?: RustTask[];
   onLeaveLane: () => void;
 }) {
   const rust = useEngineFeatures().engine === "rust";
   const fetchLaneDocument = useRpc(api.laneDocumentGet);
   const fetchLaneTaskPage = useRpc(api.laneTaskPage);
   const { planQuery, boardLeads } = records;
-  const lanes = useMemo(
-    () => rust
-      ? (planQuery.data ?? []).flatMap((plan) => plan.laneViews ?? [])
-      : state?.lanes ?? [],
-    [rust, planQuery.data, state?.lanes],
-  );
+  const { lanes, members } = useMemo(() => {
+    const members = new Map<api.LaneView, RustTask[]>();
+    if (!rust) return { lanes: state?.lanes ?? [], members };
+    const lanes = (planQuery.data ?? []).flatMap(plan => {
+      const project = state?.projects.find(candidate => candidate.key === plan.project);
+      const byLane = new Map<string, RustTask[]>();
+      for (const task of rustTasks ?? []) {
+        const origin = task.identity.repository;
+        if (!project || task.phase === "done" || task.phase === "cancelled" ||
+            !projectHasRepository(project, origin, origin)) continue;
+        for (const key of task.lanes ?? []) {
+          const rows = byLane.get(key);
+          if (rows) rows.push(task);
+          else byLane.set(key, [task]);
+        }
+      }
+      return (plan.laneViews ?? []).map(lane => {
+        const rows = byLane.get(lane.key) ?? [];
+        const liveByPhase: Record<string, number> = {};
+        for (const { phase } of rows) liveByPhase[phase] = (liveByPhase[phase] ?? 0) + 1;
+        const view = { ...lane, liveByPhase };
+        if (rustTasks) members.set(view, rows);
+        return view;
+      });
+    });
+    return { lanes, members };
+  }, [rust, planQuery.data, state?.lanes, state?.projects, rustTasks]);
   const [laneTaskOffset, setLaneTaskOffset] = useState(0);
   // A lane opened from Planning keeps the project context it was found in (#866): the
   // search reaches past the chosen project, so the open lane stays in scope.
@@ -253,6 +278,7 @@ export function usePlanningData({
     laneTaskOffset,
     setLaneTaskOffset,
     planningLaneRecord,
+    rustLaneTasks: planningLaneRecord && members.get(planningLaneRecord),
     planningLeads,
     fetchLaneDocument,
   };

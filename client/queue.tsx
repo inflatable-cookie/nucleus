@@ -260,6 +260,7 @@ export function MainSurface({
     laneTaskOffset,
     setLaneTaskOffset,
     planningLaneRecord,
+    rustLaneTasks,
     planningLeads,
     fetchLaneDocument,
   } = usePlanningData({
@@ -267,6 +268,7 @@ export function MainSurface({
     state,
     tab,
     records,
+    rustTasks: rustTasks.data,
     onLeaveLane: () => setLaneDraft(null),
   });
   const laneCards = new Set(planningLeads);
@@ -318,13 +320,6 @@ export function MainSurface({
       };
     },
   };
-  const laneProject = state?.projects.find(({ key }) => key === planningLaneRef?.project);
-  const rustLaneTasks = rustBoard && laneProject && planningLaneRef
-    ? rustTasks.data?.filter((task) =>
-        task.phase !== "done" && task.phase !== "cancelled" &&
-        task.lanes?.includes(planningLaneRef.key) &&
-        projectHasRepository(laneProject, task.identity.repository, task.identity.repository))
-    : undefined;
   const queuedCounts = (state?.queuedCounts ?? []).filter((item) =>
     belongs(item.repoPath),
   );
@@ -646,9 +641,10 @@ export function MainSurface({
                 selection={scope.projects}
                 plans={planQuery.data ?? []}
                 plansError={planMessage(planQuery.error)}
-                lanesLoading={planQuery.isLoading || (!state && !stateQuery.error)}
-                lanesError={planMessage(stateQuery.error)}
+                lanesLoading={planQuery.isLoading || (!state && !stateQuery.error) || Boolean(rustBoard && rustTasks.isLoading)}
+                lanesError={planMessage(stateQuery.error ?? (rustBoard && !rustTasks.data ? rustTasks.error : null))}
                 onRetryLanes={() => {
+                  if (rustBoard && !rustTasks.data) void rustTasks.refetch();
                   void stateQuery.refetch();
                   void planQuery.refetch();
                 }}
@@ -700,7 +696,9 @@ export function MainSurface({
                   readPlan({ project, version })
                 }
                 lanePanel={(laneContext) =>
-                  planningLaneRecord && planningLaneRef ? (
+                  rustBoard && !rustTasks.data ? (
+                    <RustListRows c={c} view="working" rust={{ ...rustListProps, tasks: undefined }} />
+                  ) : planningLaneRecord && planningLaneRef ? (
                     <LaneScreen
                       key={JSON.stringify([planningLaneRef.project, planningLaneRef.key])}
                       lane={planningLaneRecord}
