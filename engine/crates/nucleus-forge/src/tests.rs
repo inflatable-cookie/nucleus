@@ -733,7 +733,7 @@ async fn classifies_only_positive_rebase_or_required_failure_evidence() {
         wire["statusCheckRollup"]["contexts"] = if nodes.is_null() {
             nodes
         } else {
-            json!({"pageInfo":{"hasNextPage":incomplete},"nodes":nodes})
+            json!({"pageInfo":{"hasNextPage":incomplete,"endCursor":null},"nodes":nodes})
         };
         let (forge, server) = server(vec![Some(pull('a', false)), Some(response)]);
         assert!(
