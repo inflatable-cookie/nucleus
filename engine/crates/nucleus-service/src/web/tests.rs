@@ -2532,9 +2532,11 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
         let work = service.worktrees().unwrap();
         let project = service.fixture();
         let identity = second.task.identity();
-        let checkout = work.checkout(&project.checkout,&identity.repository,&identity.id).unwrap();
+        let checkout = work
+            .checkout(&project.checkout, &identity.repository, &identity.id)
+            .unwrap();
         checkout.allocate(&project.start).unwrap();
-        let draft=checkout.path().join("unfinished-draft");
+        let draft = checkout.path().join("unfinished-draft");
         std::fs::write(&draft, "keep this draft").unwrap();
         draft
     };
@@ -2546,8 +2548,10 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
         ));
     }
     publish(&service.host, None);
-    assert!(matches!(service.archive_done(&second).await,Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained")));
-    assert_eq!(std::fs::read_to_string(draft).unwrap(),"keep this draft");
+    assert!(
+        matches!(service.archive_done(&second).await,Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained"))
+    );
+    assert_eq!(std::fs::read_to_string(draft).unwrap(), "keep this draft");
     assert_eq!(
         *archived.lock().expect("archive writes"),
         [child, parent.as_str()]

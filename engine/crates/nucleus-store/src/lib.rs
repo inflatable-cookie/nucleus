@@ -629,8 +629,8 @@ impl Store {
         parenting: bool,
     ) -> Result<Vec<String>, StoreError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT id FROM tasks WHERE id > ?1 AND phase = 'done' AND run IS NULL
-             AND (?3 OR report_task IS NOT NULL)
+            "SELECT id FROM tasks WHERE id > ?1 AND phase IN ('done','cancelled') AND run IS NULL
+             AND (?3 OR (phase='done' AND report_task IS NOT NULL))
              UNION SELECT n.task_id FROM completion_notices n JOIN tasks t ON t.id=n.task_id
              WHERE n.task_id > ?1 AND n.retry IS NOT NULL AND t.phase IN ('done','cancelled') AND t.run IS NULL
              ORDER BY 1 LIMIT ?2",

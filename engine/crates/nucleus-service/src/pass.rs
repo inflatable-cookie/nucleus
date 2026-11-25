@@ -139,7 +139,9 @@ impl Service {
                 "The task checkout was retained. Inspect its local changes.".into(),
             )
         };
-        let Some(head) = head else { return Err(retained()); };
+        let Some(head) = head else {
+            return Err(retained());
+        };
         if workspace == Workspace::Dirty && checkout.deletion_only_head()?.as_ref() != Some(&head) {
             return Err(retained());
         }
