@@ -453,6 +453,7 @@ test("041-3 rendered: Next to Now writes a new plan version through Save; unplan
   assert.equal(ui.query("Mark Title unplanned done"), undefined);
   assert.deepEqual(log.closed, [], "cancel writes nothing");
   ui.press("Mark done Title unplanned");
+  ui.type("Closing note", "Landed.");
   ui.press("Mark Title unplanned done");
   assert.deepEqual(log.closed, ["unplanned"]);
   ui.press("Add unplanned to alpha plan");

@@ -6,6 +6,7 @@ import { horizonTitle } from "../shared/planning-read";
 import {
   Button,
   Dialog,
+  Field,
   HelpPopover,
   HelpTip,
   row,
@@ -38,6 +39,7 @@ export function MarkDoneConfirm({
   projects,
   plans,
   busy = false,
+  disposition = "done",
   onConfirm,
   onCancel,
 }: {
@@ -46,9 +48,12 @@ export function MarkDoneConfirm({
   projects: readonly Project[];
   plans: readonly ProjectPlan[];
   busy?: boolean;
-  onConfirm: () => void;
+  disposition?: "done" | "abandoned";
+  onConfirm: (note: string) => void;
   onCancel: () => void;
 }) {
+  const [note, setNote] = useState("");
+  const title = disposition === "done" ? `Mark ${lane.title} done` : `Abandon ${lane.title}`;
   const r = roles(c);
   const body = {
     color: r.foreground,
@@ -62,27 +67,27 @@ export function MarkDoneConfirm({
   return (
     <Dialog
       c={c}
-      title={`Mark ${lane.title} done?`}
-      label={`Mark ${lane.title} done confirmation`}
+      title={`${title}?`}
+      label={`${title} confirmation`}
       closeLabel="Close confirmation"
       onClose={onCancel}
-      bodyLabel={`Mark ${lane.title} done confirmation`}
+      bodyLabel={`${title} confirmation`}
       footer={
         <View style={row}>
           <Button
             small
             danger
             c={c}
-            text="Mark done"
-            label={`Mark ${lane.title} done`}
-            disabled={busy}
-            onPress={onConfirm}
+            text={disposition === "done" ? "Mark done" : "Abandon"}
+            label={title}
+            disabled={busy || !note.trim()}
+            onPress={() => onConfirm(note.trim())}
           />
           <Button
             small
             c={c}
             text="Cancel"
-            label={`Cancel marking ${lane.title} done`}
+            label={disposition === "done" ? `Cancel marking ${lane.title} done` : `Cancel abandoning ${lane.title}`}
             onPress={onCancel}
           />
         </View>
@@ -101,6 +106,7 @@ export function MarkDoneConfirm({
               .join(", ")}.`
           : "No plan lists this lane yet."}
       </Text>
+      <Field c={c} label="Closing note" value={note} onChange={setNote} />
       {live > 0 && (
         <Text style={body}>
           {live} {live === 1 ? "live task" : "live tasks"}.

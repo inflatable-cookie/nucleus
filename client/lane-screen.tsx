@@ -285,7 +285,7 @@ export function LaneScreen({
   onLoadPreviousTasks?: () => void;
   onRetryTasks?: () => void;
   onSelectProject?: (key: string) => void;
-  onSetStatus?: (status: LaneView["status"]) => void;
+  onSetStatus?: (status: "active" | "done" | "abandoned", note?: string) => void;
   /** One page of the lane's finished work, newest first (`queue.outcome-search` by lane). */
   readFinished?: (cursor: string | null) => Promise<{
     results: Array<
@@ -312,7 +312,7 @@ export function LaneScreen({
   const [saveError, setSaveError] = useState("");
   const [details, setDetails] = useState(false);
   // Marking the lane done always asks first (nucleus#1536); closing the dialog cancels.
-  const [confirmingDone, setConfirmingDone] = useState(false);
+  const [closing, setClosing] = useState<"done" | "abandoned" | null>(null);
   // See all's read of the lane's finished work: the rows so far and the next page's cursor.
   const [allFinished, setAllFinished] = useState<{
     rows: Array<
@@ -1213,7 +1213,7 @@ export function LaneScreen({
               text="Mark done"
               label={`Mark done ${name}`}
               disabled={busy}
-              onPress={() => setConfirmingDone(true)}
+              onPress={() => setClosing("done")}
             />
           )}
           {!open && onSetStatus && (
@@ -1315,18 +1315,19 @@ export function LaneScreen({
           answered the close-out prompt
         </Text>
       )}
-      {confirmingDone && onSetStatus && (
+      {closing && onSetStatus && (
         <MarkDoneConfirm
           c={c}
           lane={lane}
           projects={projects}
           plans={plans}
           busy={busy}
-          onConfirm={() => {
-            setConfirmingDone(false);
-            onSetStatus("done");
+          disposition={closing}
+          onConfirm={(note) => {
+            onSetStatus(closing, note);
+            setClosing(null);
           }}
-          onCancel={() => setConfirmingDone(false)}
+          onCancel={() => setClosing(null)}
         />
       )}
       {shown === "preview" && (
@@ -1423,7 +1424,7 @@ export function LaneScreen({
             )}
             {onSetStatus && (
               <View style={row}>
-                {(["active", "paused", "done", "abandoned"] as const)
+                {(["active", "done", "abandoned"] as const)
                   .filter((status) => status !== lane.status)
                   .map((status) => (
                     <Button
@@ -1433,7 +1434,7 @@ export function LaneScreen({
                       text={statusWord[status]}
                       label={`Set lane ${lane.key} ${status}`}
                       disabled={busy}
-                      onPress={() => onSetStatus(status)}
+                      onPress={() => status === "active" ? onSetStatus(status) : setClosing(status)}
                     />
                   ))}
               </View>

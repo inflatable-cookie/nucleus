@@ -1199,6 +1199,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
     ...missing, project: "lantern", version: 1, text: "Stale", author: "fixture",
   }), /Lane version changed/);
   ui.press("Mark done Lantern delivery");
+  ui.type("Closing note", "Landed.");
   ui.press("Mark Lantern delivery done");
   await waitFor(() => lanes.lantern.status === "done", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, "Lantern lane closes");
   assert.deepEqual(lanes.Orbit_Main, lane("Orbit"));
