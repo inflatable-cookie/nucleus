@@ -449,3 +449,16 @@ conversion and the bounded freed-page maintenance have their own runbook:
 | 12 | The hourly and daily prune passes | Freed pages are returned in bounded passes inside their page and time budget, the WAL is bounded, and an idle pass writes nothing |
 | 18 | A migration with the backup volume away | The migration proceeds, no snapshot or fallback copy is written, and the outage is recorded durably |
 | 19 | A snapshot on the new location | It is listed by `backup.list`, named by the board's snapshot health, and restores through the runbook |
+
+## Rust engine capture
+
+The live engine resolves Barge’s archives class for the `nucleus-backups`
+project. Settings → Storage shows the archive location and any capture or volume
+failure. An isolated engine profile uses its own backup directory. Schema
+upgrades still take their separate verified copy.
+
+Scheduled captures use SQLite’s online backup API, check database identity and
+integrity, and compare the decompressed SHA-256 with the verified database.
+Rust filenames include `-rust-`. The 24 six-hourly, 14 daily and eight weekly
+slots include matching legacy archives. Rotation leaves unrelated files alone.
+These database quotas are independent of the generic settings retention count.

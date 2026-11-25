@@ -323,14 +323,29 @@ pub(super) async fn get(
         Domain::Storage => {
             let settings = read(file).await?;
             let engine = Arc::clone(&service);
-            let backups = task::spawn_blocking(move || engine.storage.backups())
-                .await
-                .map_err(|_| ServiceError::Input)?;
+            let backups = task::spawn_blocking(move || {
+                let mut scheduled = engine.storage.scheduled_list()?;
+                if let Ok(config) = engine.storage.backups() {
+                    scheduled.verified.extend(config.verified);
+                    scheduled.issues += config.issues;
+                }
+                scheduled.issues += usize::from(
+                    engine
+                        .backup_failed
+                        .load(std::sync::atomic::Ordering::Acquire),
+                );
+                Ok::<_, StorageError>(scheduled)
+            })
+            .await
+            .map_err(|_| ServiceError::Input)?;
             let mut view = storage_view(&service, &settings);
-            view["backups"] = match backups {
-                Ok(backups) => json!(backups),
-                Err(_) => json!({"complete": false, "verified": [], "issues": 1}),
-            };
+            if let Ok(backups) = backups {
+                view["active"]["backupRoot"] = json!(backups.root);
+                view["backups"] = json!(backups);
+            } else {
+                view["active"]["backupRoot"] = json!("Scheduled archives unavailable");
+                view["backups"] = json!({"complete":false,"verified":[],"issues":1});
+            }
             view
         }
     };

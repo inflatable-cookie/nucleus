@@ -1,8 +1,8 @@
 //! The Rust engine's independent `SQLite` database.
 
 mod allowance;
-mod barge;
 mod backups;
+mod barge;
 mod board_state;
 pub use board_state::BoardTimes;
 mod dependencies;
