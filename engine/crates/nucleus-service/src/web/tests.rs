@@ -760,6 +760,19 @@ async fn next_and_owner_commands_agree_on_code_recovery() {
         let instruction = "Rebase the same PR branch";
         let command = if answer {
             expect_command(&view, "answer", None, "ready");
+            assert_eq!(view["answerForm"], "work TEXT");
+            let refused = post_as(
+                &api,
+                &format!("/v1/tasks/{id}/commands"),
+                &BOARD_KEY,
+                &json!({"answer": "retry"}),
+            )
+            .await;
+            assert_eq!(refused.status(), StatusCode::CONFLICT);
+            assert_eq!(
+                json_body(refused).await["error"],
+                "the answer does not match the current question. Use nucleus answer REF work TEXT"
+            );
             json!({"answer":{"work":instruction}})
         } else {
             json!({"move_work":{"instruction":instruction}})

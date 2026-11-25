@@ -804,6 +804,10 @@ async fn next(
         wait_detail: summary.card.wait_detail,
         attention: summary.card.attention,
         next_check_at: summary.card.next_check_at,
+        answer_form: task
+            .question()
+            .filter(|_| commands.iter().any(|command| command.name == "answer"))
+            .map(Question::answer_form),
         question: summary.card.question,
         critical_review_fallbacks: state
             .store
@@ -842,7 +846,7 @@ fn command_options(
             Question::Allowance { .. } => Answer::Extend,
             Question::Accept { head } => Answer::Accept {
                 head: head.clone(),
-                reason: String::new(),
+                reason: "Accept verified source".into(),
             },
         };
         commands.push(("answer", Command::Answer(answer)));
@@ -1349,6 +1353,8 @@ struct NextView {
     attention: crate::attention::TaskAttention,
     next_check_at: Option<u64>,
     question: Option<Question>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answer_form: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
     dependency_status: DependencyStatus,
