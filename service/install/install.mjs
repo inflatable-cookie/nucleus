@@ -254,11 +254,7 @@ export async function integrate(host, ...args) {
     const report = await runIntegrationEntry(join(packageRoot, 'bin', 'nucleus-t3.mjs'), t3Args);
     return { host: 't3code', ...report };
   }
-  if (host === 'bb') {
-    const report = await runIntegrationEntry(join(packageRoot, 'bin', 'nucleus-bb.mjs'), ['install', ...args]);
-    return { host: 'bb', ...report };
-  }
-  throw Error('Supported integrations: paseo, t3code (or t3), bb. Run nucleus integrate <paseo|t3code|bb>');
+  throw Error('Supported integrations: paseo, t3code (or t3). Run nucleus integrate <paseo|t3code>');
 }
 
 // Only verified, immutable versions may enter the installed roll path.

@@ -79,9 +79,7 @@ try {
     await import('./nucleus-t3.mjs');
   }
   else if (command === 'bb') {
-    // The BB host's operator install route (Spec 062, phase 7): install, report and
-    // remove this integration's BB plugin, and nothing else in the operator's BB.
-    await import('./nucleus-bb.mjs');
+    throw Error('The Nucleus BB integration has been retired');
   }
   else {
     // Delegate the complete catalogue, payload handling and output contract.
