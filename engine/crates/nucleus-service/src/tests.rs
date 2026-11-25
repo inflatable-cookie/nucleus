@@ -883,12 +883,12 @@ pub(super) async fn native_fixture(
 
 #[tokio::test]
 async fn a_bounced_worker_keeps_admission_order_and_its_native_parent() {
-    exercise_queue_parent(false).await;
+    Box::pin(exercise_queue_parent(false)).await;
 }
 
 #[tokio::test]
 async fn a_lost_parent_reply_keeps_one_native_launch_across_capacity() {
-    exercise_queue_parent(true).await;
+    Box::pin(exercise_queue_parent(true)).await;
 }
 
 #[expect(
