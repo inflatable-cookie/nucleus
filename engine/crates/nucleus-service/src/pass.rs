@@ -98,13 +98,23 @@ impl Service {
             return None;
         }
         let (instance, recorded) = task.settled_scratch()?;
+        self.retained_scratch_path(id, &instance, recorded)
+    }
+
+    fn retained_scratch_path(
+        &self,
+        id: &str,
+        instance: &str,
+        recorded: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let root = self.storage.scratch().path();
         let path = if let Some(path) = recorded {
             path.to_owned()
         } else {
             // Pre-upgrade settled rows retain the sequence but omit the absolute path.
-            let short = root.join(scratch::relative_path(&instance));
+            let short = root.join(scratch::relative_path(instance));
             if matches!(short.try_exists(), Ok(false)) {
-                scratch::bound_path(root, id, &instance, None)
+                scratch::bound_path(root, id, instance, None)
             } else {
                 short
             }
@@ -1890,6 +1900,13 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
+    fn earlier_scratch_roots<'a>(&'a self, task: &'a Task) -> impl Iterator<Item = PathBuf> + 'a {
+        task.earlier_run_scratch()
+            .filter_map(|(instance, recorded)| {
+                self.retained_scratch_path(&task.identity().id, &instance, recorded)
+            })
+    }
+
     // Both callers hold the task and project fences and have inspected this owned checkout.
     async fn stop_checkout_orphans(
         &self,
@@ -1899,12 +1916,14 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
         let run_scratch = self.existing_run_scratch(task);
-        let mut roots = std::iter::once(checkout.path()).chain(run_scratch.as_deref());
+        let mut roots = std::iter::once(checkout.path().to_owned())
+            .chain(run_scratch)
+            .chain(self.earlier_scratch_roots(task));
         let (root, mut targets) = loop {
             let Some(root) = roots.next() else {
                 return Ok(());
             };
-            let targets = host.terminal_orphans(root, scratch).await?;
+            let targets = host.terminal_orphans(&root, scratch).await?;
             if !targets.is_empty() {
                 break (root, targets);
             }
@@ -1940,7 +1959,7 @@ impl Service {
                     .to_string();
             state.store.claim_task_effect(id, &intent, false)?;
             drop(state);
-            targets = nucleus_hosts::verify_orphans(&targets, root, scratch, force).await?;
+            targets = nucleus_hosts::verify_orphans(&targets, &root, scratch, force).await?;
             if targets.is_empty() {
                 break;
             }
@@ -1997,10 +2016,15 @@ impl Service {
             Some(parent.as_str()),
         ];
         let threads: Vec<_> = threads.into_iter().flatten().collect();
-        if let Some(pid) = host.retirement_writer(checkout.path()).await? {
-            return Err(ServiceError::ArchiveEvidence(format!(
-                "PID {pid} has its working directory in the task checkout or run scratch."
-            )));
+        // Each lookup uses the pass's shared process census.
+        for root in
+            std::iter::once(checkout.path().to_owned()).chain(self.earlier_scratch_roots(task))
+        {
+            if let Some(pid) = host.retirement_writer(&root).await? {
+                return Err(ServiceError::ArchiveEvidence(format!(
+                    "PID {pid} has its working directory in the task checkout or run scratch."
+                )));
+            }
         }
         let remove = head
             .map(|head| checkout.prepare_retirement(head))
@@ -2311,6 +2335,46 @@ mod tests {
         service.task(id).await.unwrap()
     }
 
+    fn settle_both_reviewers(
+        task: &mut Task,
+        observation: &mut Observation,
+        head: &Head,
+        credential: &[u8; 32],
+        scratch: &Path,
+    ) {
+        // A task upgraded during this reviewer carries the old worker path in settled_scratch.
+        let mut saved = serde_json::to_value(&*task).unwrap();
+        saved["threads"]
+            .as_object_mut()
+            .unwrap()
+            .remove("earlier_scratch");
+        saved["threads"]["settled_scratch"] = serde_json::json!(scratch);
+        let mut upgraded: Task = serde_json::from_value(saved).unwrap();
+        let instance = task.run().unwrap().launch().instance.clone();
+        observation.host = Observed::Known(Host::Current {
+            instance: instance.clone(),
+            state: RunState::Ended,
+        });
+        for row in [&mut *task, &mut upgraded] {
+            row.record_report(
+                &instance,
+                credential,
+                Report::Review {
+                    head: head.clone(),
+                    decision: nucleus_core::Review::Approve,
+                    summary: "Reviewed".into(),
+                    finding_titles: vec![],
+                },
+            )
+            .unwrap();
+            assert_eq!(row.reconcile(observation), Action::Advance(Phase::Merging));
+        }
+        assert_eq!(
+            upgraded.earlier_run_scratch().collect::<Vec<_>>(),
+            task.earlier_run_scratch().collect::<Vec<_>>()
+        );
+    }
+
     async fn settled_cleanup_task(service: &Service, home: &Path) -> (TaskRow, PathBuf) {
         use std::os::unix::fs::DirBuilderExt as _;
 
@@ -2359,6 +2423,25 @@ mod tests {
             task.reconcile(&observation),
             Action::Advance(Phase::Reviewing)
         );
+        observation.host = Observed::Unknown;
+        let reviewer_scratch = home.canonicalize().unwrap().join("reviewer-scratch");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&reviewer_scratch)
+            .unwrap();
+        let key = task
+            .reserve_launch(
+                &observation,
+                LaunchInputs {
+                    thread: "reviewer".into(),
+                    started_at: 2,
+                    input: "fixture".into(),
+                    scratch: Some(reviewer_scratch),
+                },
+                &[9; 32],
+            )
+            .unwrap();
+        settle_both_reviewers(&mut task, &mut observation, &head, key.as_bytes(), &scratch);
         task.command(
             Command::Cancel,
             &Authority::Operator {
@@ -2386,7 +2469,12 @@ mod tests {
         let id = &row.task.identity().id;
         let head = service.fixture().start.clone();
         let bound = service.existing_run_scratch(&row.task);
-        assert_eq!(bound.as_deref(), Some(scratch.as_path()));
+        assert_ne!(bound.as_deref(), Some(scratch.as_path()));
+        assert!(
+            service
+                .earlier_scratch_roots(&row.task)
+                .any(|path| path == scratch)
+        );
         let work = service.worktrees().unwrap();
         let route = service.project_for(row.task.identity()).await.unwrap();
         let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();

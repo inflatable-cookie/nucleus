@@ -253,6 +253,20 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
+        // An older writer kept the preceding settled path while the next role ran.
+        // Its one report reminder, if any, also consumed a launch sequence.
+        if let Some(previous) = self.threads.settled_scratch.take()
+            && let Some(sequence) = self
+                .threads
+                .launch_sequence
+                .checked_sub(1 + u64::from(run.report_reminder_for.is_some()))
+            && sequence > 0
+        {
+            self.threads
+                .earlier_scratch
+                .entry(sequence)
+                .or_insert(previous);
+        }
         self.threads.settled_scratch.clone_from(&run.launch.scratch);
         if let Some(state) = &mut self.report_state
             && let Some(head) = run.report.as_ref().and_then(Report::source_head)
@@ -391,6 +405,11 @@ impl Task {
         let head = observation.pr().map_or("none", |pr| pr.head.as_str());
         let label = format!("task-{id}-{phase}-{head}-{}", self.attempts);
         let bearer = launch_credential(seed, &instance);
+        if let Some(path) = self.threads.settled_scratch.take() {
+            self.threads
+                .earlier_scratch
+                .insert(self.threads.launch_sequence, path);
+        }
         self.threads.launch_sequence = sequence;
         self.run = Some(Run {
             launch: PreparedLaunch {
@@ -446,6 +465,11 @@ impl Task {
         launch.input = inputs.input;
         launch.scratch = inputs.scratch;
         self.threads.bind(&launch);
+        if let Some(path) = &prior.launch.scratch {
+            self.threads
+                .earlier_scratch
+                .insert(self.threads.launch_sequence, path.clone());
+        }
         self.threads.launch_sequence = sequence;
         self.run = Some(Run {
             launch,
@@ -479,6 +503,19 @@ impl Task {
     /// Returns an error when the launch sequence is exhausted.
     pub fn next_launch_instance(&self) -> Result<String, CommandError> {
         Ok(self.launch_instance(self.next_launch_sequence()?))
+    }
+
+    /// Earlier run instances and their durable scratch bindings, newest first.
+    pub fn earlier_run_scratch(&self) -> impl Iterator<Item = (String, Option<&std::path::Path>)> {
+        (1..self.threads.launch_sequence).rev().map(|sequence| {
+            (
+                self.launch_instance(sequence),
+                self.threads
+                    .earlier_scratch
+                    .get(&sequence)
+                    .map(std::path::PathBuf::as_path),
+            )
+        })
     }
 
     /// Last run and its recorded scratch directory for checkout retirement.
