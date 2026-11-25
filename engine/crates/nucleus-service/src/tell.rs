@@ -6,7 +6,7 @@ use std::{
 
 use nucleus_core::QuestionDelivery;
 use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeHost, NoticeSend, NoticeState, NoticeWrite, T3,
+    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, T3,
 };
 use nucleus_store::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
@@ -503,12 +503,6 @@ impl Service {
         if !self.tell_notice_allowed(row, &authorization).await? {
             return self.save_tell(rows, TellDispatch::Defer).await;
         }
-        if authorization.needs_unsettle() {
-            self.host
-                .deliver_notice(NoticeWrite::Prepare(&authorization))
-                .await?;
-            return self.save_tell(rows, TellDispatch::Defer).await;
-        }
         let dispatch = authorization.record(&mut attempt)?;
         let saved = self
             .save_tell(
@@ -528,16 +522,15 @@ impl Service {
             return Ok(());
         }
         saved?;
-        let result = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        let result = self.host.send_notice(dispatch).await;
         if matches!(result, Err(HostError::Deferred { .. })) {
             return self
                 .save_tell(rows, TellDispatch::Advance(TellState::Pending))
                 .await;
         }
         let next = match result? {
-            NoticeSend::Accepted => TellState::Accepted(attempt),
-            NoticeSend::Rejected => TellState::Pending,
-            NoticeSend::Prepared => return Err(HostError::Protocol.into()),
+            NoticeOutcome::Accepted => TellState::Accepted(attempt),
+            NoticeOutcome::Rejected => TellState::Pending,
         };
         self.save_tell(rows, TellDispatch::Advance(next)).await
     }
@@ -625,14 +618,6 @@ impl Service {
             },
             NoticeState::Undelivered => TellState::Pending,
             NoticeState::Queued => {
-                if let Some(permit) = observed.authorization {
-                    let _projects = self.project_writes.read().await;
-                    if self.tell_notice_allowed(row, &permit).await? {
-                        self.host
-                            .deliver_notice(NoticeWrite::Prepare(&permit))
-                            .await?;
-                    }
-                }
                 if matches!(row.state, TellState::Accepted(_)) {
                     return Ok(TellDispatch::Defer);
                 }

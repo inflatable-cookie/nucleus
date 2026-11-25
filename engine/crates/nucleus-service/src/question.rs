@@ -2,7 +2,7 @@ use std::{cmp::Reverse, path::Path};
 
 use nucleus_core::{Action, OperatorDecline, Question, QuestionDelivery, Task, WaitReason};
 use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeHost, NoticeSend, NoticeState, NoticeWrite,
+    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, 
     PlannerIdentity, PlannerThread, T3, ThreadHint,
 };
 use nucleus_store::{TaskRow, ThreadProvenance};
@@ -119,7 +119,7 @@ impl Service {
         self.responsible_planner(task, prefer_claim).await
     }
 
-    /// A settled destination needs a separate write and a fresh read before any send intent.
+    /// Check the recipient and dispatch gate before recording a send intent.
     pub(super) async fn prepare_planner_notice(
         &self,
         row: &TaskRow,
@@ -128,16 +128,6 @@ impl Service {
         let Some(authorization) = self.host.authorize_notice(attempt).await? else {
             return Ok(None);
         };
-        self.permit_planner_notice(row, attempt, authorization)
-            .await
-    }
-
-    async fn permit_planner_notice(
-        &self,
-        row: &TaskRow,
-        attempt: &QuestionDelivery,
-        authorization: NoticeAuthorization,
-    ) -> Result<Option<(NoticeAuthorization, DispatchPermit<'_>)>, ServiceError> {
         let target = DispatchTarget::Planner(&authorization);
         let Some(permit) = self.dispatch_gate(&row.task, target).await? else {
             return Ok(None);
@@ -151,13 +141,6 @@ impl Service {
                 .get(&attempt.thread)
                 .is_some_and(|proof| authorization.matches_planner(&proof.identity))
         {
-            return Ok(None);
-        }
-        if authorization.needs_unsettle() {
-            self.host
-                .deliver_notice(NoticeWrite::Prepare(&authorization))
-                .await?;
-            self.recheck_effect(row, WaitReason::Question).await;
             return Ok(None);
         }
         Ok(Some((authorization, permit)))
@@ -194,19 +177,7 @@ impl Service {
                 NoticeState::Undelivered => {}
                 // Neither absence nor a vanished thread disproves a recorded send.
                 NoticeState::Absent | NoticeState::Gone => return Ok(wait),
-                NoticeState::Queued => {
-                    if self.project.is_none()
-                        && !self.check_registered_planner(&delivery.thread).await?
-                    {
-                        return Ok(wait);
-                    }
-                    if let Some(authorization) = observation.authorization {
-                        let _fence = self.effect(row).await?;
-                        self.permit_planner_notice(row, delivery, authorization)
-                            .await?;
-                    }
-                    return Ok(wait);
-                }
+                NoticeState::Queued => return Ok(wait),
             }
         }
         let Some(thread) = self.planner_notice_target(&row.task, false).await? else {
@@ -235,9 +206,9 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        let result = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        let result = self.host.send_notice(dispatch).await;
         let not_sent = matches!(result, Err(HostError::Deferred { .. }));
-        if not_sent || matches!(result, Ok(NoticeSend::Rejected)) {
+        if not_sent || matches!(result, Ok(NoticeOutcome::Rejected)) {
             let mut pending = sent.task.clone();
             if !pending.clear_question_delivery(&command) {
                 return Err(ServiceError::Input);

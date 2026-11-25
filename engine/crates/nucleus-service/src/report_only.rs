@@ -7,7 +7,7 @@ use nucleus_core::{
     RetainedThread, Role, Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError};
-use nucleus_hosts::{HostError, NoticeHost, NoticeSend, NoticeWrite, T3, TaskHost};
+use nucleus_hosts::{HostError, NoticeOutcome, T3, TaskHost};
 use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
     planning::{Lane, WriteAt},
@@ -448,13 +448,13 @@ impl Service {
             Some(self.save(row, updated, &audit).await?)
         };
         // The intent is durable before the write. Unknown delivery leaves it closed.
-        let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
+        let send = self.host.send_notice(dispatch).await;
         let kind = match send {
             Err(HostError::Deferred { .. }) => not_sent,
-            Ok(NoticeSend::Rejected) if !retry && completion => "completion_notice_rejected",
-            Ok(NoticeSend::Rejected) if !retry && parent => "parent_recovery_notice_rejected",
-            Ok(NoticeSend::Rejected) if !retry => "planner_notice_rejected",
-            Ok(NoticeSend::Rejected) => {
+            Ok(NoticeOutcome::Rejected) if !retry && completion => "completion_notice_rejected",
+            Ok(NoticeOutcome::Rejected) if !retry && parent => "parent_recovery_notice_rejected",
+            Ok(NoticeOutcome::Rejected) if !retry => "planner_notice_rejected",
+            Ok(NoticeOutcome::Rejected) => {
                 audit.kind = "planner_notice_retry_rejected".into();
                 self.state
                     .lock()
@@ -463,7 +463,7 @@ impl Service {
                     .record_task_effect(id, &audit)?;
                 return Ok(Spent);
             }
-            Ok(NoticeSend::Accepted | NoticeSend::Prepared) => return Ok(Spent),
+            Ok(NoticeOutcome::Accepted) => return Ok(Spent),
             Err(_) if parent || completion => return Ok(Spent),
             Err(error) => return Err(error.into()),
         };
