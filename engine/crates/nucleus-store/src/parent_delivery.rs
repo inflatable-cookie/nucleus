@@ -1,4 +1,4 @@
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 
 use crate::{Store, StoreError};
 
@@ -88,6 +88,30 @@ impl Store {
             params![task, version],
             |row| row.get(0),
         )?)
+    }
+
+    /// Return whether the next recovery notice uses the retry ID, or none if spent.
+    ///
+    /// # Errors
+    /// Returns an error if the task effect journal cannot be read.
+    pub fn parent_recovery_notice_retry(
+        &self,
+        task: &str,
+        version: i64,
+    ) -> Result<Option<bool>, StoreError> {
+        let prior = self.connection.query_row(
+            "SELECT CASE kind
+                 WHEN 'parent_recovery_notice_rejected' THEN 1
+                 WHEN 'parent_recovery_notice_not_sent' THEN coalesce(detail ->> '$.retry', 0)
+                 ELSE NULL END
+             FROM events WHERE task_id=?1
+               AND kind IN ('parent_recovery_notice_intent', 'parent_recovery_notice_not_sent', 'parent_recovery_notice_rejected')
+               AND detail ->> '$.version' = ?2
+             ORDER BY sequence DESC LIMIT 1",
+            params![task, version],
+            |row| row.get::<_, Option<bool>>(0),
+        ).optional()?;
+        Ok(prior.unwrap_or(Some(false)))
     }
 
     /// Freeze one native delivery before crossing the wire, under the task version fence.
