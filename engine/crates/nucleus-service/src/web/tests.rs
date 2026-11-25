@@ -3011,7 +3011,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
         browser_request(api, Method::PUT, &wrong_project, cookie, Some(&edit))
             .await
             .status(),
-        StatusCode::NOT_FOUND,
+        StatusCode::BAD_REQUEST,
     );
     let response = browser_request(api, Method::PUT, &path, cookie, Some(&edit)).await;
     assert_eq!(response.status(), StatusCode::OK);
