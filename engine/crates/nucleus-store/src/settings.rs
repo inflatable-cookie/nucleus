@@ -201,6 +201,7 @@ impl SettingsFile {
         register::<DispatchSettings>(&mut store)?;
         register::<Projects>(&mut store)?;
         register::<Hosts>(&mut store)?;
+        register::<crate::GitHubAccountSettings>(&mut store)?;
         Ok(Self {
             home: base.to_path_buf(),
             layout,

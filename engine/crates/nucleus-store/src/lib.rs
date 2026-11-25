@@ -5,6 +5,7 @@ mod barge;
 mod board_state;
 pub use board_state::BoardTimes;
 mod dependencies;
+mod github_accounts;
 mod inbox;
 mod numbers;
 mod parent_delivery;
@@ -30,6 +31,7 @@ pub use allowance::{Allowance, AllowanceExtension, AllowanceObservation, Allowan
 pub use dependencies::{
     Dependencies, DependencyClock, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
 };
+pub use github_accounts::{GITHUB_HOST, GitHubAccount, GitHubAccountSettings};
 pub use inbox::InboxBinding;
 pub use parent_delivery::{ParentDelivery, ParentResult};
 pub use settings::{
