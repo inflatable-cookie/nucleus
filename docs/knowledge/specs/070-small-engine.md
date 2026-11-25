@@ -552,6 +552,29 @@ Later decisions carry their own attribution.
       (QA, dependency checks, docs QA) and stops for operator approval before
       it tags or publishes.
 
+40. **Every delivered message carries its own reply route.** Tom, 2026-11-25:
+    "In the TS version, we provided a reply route in messages from which you
+    would expect a reply back to the originating thread. We should bring that
+    over". Today a reply goes to project `{from}`, which reaches that project's
+    most recently verified planner, often not the sender. The TypeScript design
+    (nucleus#1387, `core/questions/agent-messages.ts` at `737246d22`) carries over:
+    - Each delivered message gets an opaque reply handle (`nreply_` and random
+      bytes), never derived from a thread or agent ID. The handle is bound to
+      the sender's verified thread at send time.
+    - The delivered text ends with the exact reply command, for example
+      `Reply: nucleus tell {to:{reply:"nreply_…"}}`, and says the handle
+      reaches this sender, belongs to this recipient and expires after 7 days.
+    - Only that message's recipient thread can use the handle. An unknown,
+      expired or foreign handle sends nothing and reveals nothing about the
+      sender.
+    - A reply reaches exactly the sender's thread through the ordinary
+      delivery path, which observes the thread first. An archived or gone
+      sender refuses the reply and is not revived.
+    - A reply is itself a message with a new handle, so a conversation can
+      continue. A per-recipient rate limit (the TypeScript limit was 20 an
+      hour) keeps two agents from looping.
+    - Messages still carry information only.
+
 ## The model
 
 ### Stored state per task
