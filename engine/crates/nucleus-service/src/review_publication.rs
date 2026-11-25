@@ -500,3 +500,6 @@ fn verified_review_error(error: ReviewError) -> ServiceError {
         error => error.into(),
     }
 }
+
+#[cfg(test)]
+mod tests;

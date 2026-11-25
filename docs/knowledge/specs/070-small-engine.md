@@ -518,6 +518,12 @@ Later decisions carry their own attribution.
       review (approve or request changes) at the exact reviewed head, using the
       reviewer account. A reviewer account distinct from the PR author lets a
       review approve.
+    - Nucleus records one publication intent for the authenticated reviewer run,
+      with the PR, head, verdict, findings digest and effective GitHub user ID.
+      An uncertain POST is reconciled from the original marker by the operator
+      credential. Nucleus verifies the review ID, author, head, state and body
+      before applying the verdict, and rechecks a published approval before
+      merging. Previously applied approvals keep their original exact-head gate.
     - An account is added through an OAuth sign-in from Settings, and its token
       is stored in the platform keychain through Longhorn's credential store.
       Tokens never appear in settings files, logs or prompts.

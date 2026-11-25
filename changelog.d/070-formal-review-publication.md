@@ -1,0 +1,1 @@
+Nucleus publishes formal GitHub approvals and change requests at the exact reviewed commit using the configured reviewer account or installed gh. It checks GitHub for the original review when delivery is uncertain.
