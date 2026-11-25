@@ -64,7 +64,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `hosts/paseo/` | Public service index; adapter implementation stays behind it. | Paseo |
 | `hosts/paseo/adapter/` | SDK adapter, asks, messages, questions, workspace and workspace-id mapping. | Paseo, service process |
 | `hosts/paseo/vocabulary.ts` | Paseo's translation table from the canonical profile vocabulary. | Paseo, service process |
-| `hosts/t3code/` | Public service index, native thread adapter, minimal RPC client, durable intent state and the profile vocabulary table. | T3Code, service process |
+| `hosts/t3code/` | Browser theme conversion, profile catalog and vocabulary. | T3Code, browser |
 | `client/` | Host-neutral board UI, controls, settings and planning surfaces. | Neutral, browser/native UI |
 | `client/board/` | Board cards, pipeline, header and data subscriptions. | Neutral |
 | `client/task/` | Task detail and activity. | Neutral |
@@ -77,16 +77,9 @@ The web shell stays in `client/web/`: a browser transport does not implement an
 agent-host adapter. A future agent app gets its own `hosts/<app>/` subtree;
 adding it must not make core or board code depend on its SDK.
 
-The T3Code adapter lives behind `hosts/t3code/index.ts`, with its
-minimal private-protocol client and adapter modules inside that host subtree:
-`adapter.ts` is the Host surface alone, `reads.ts` owns the shell and thread
-reads, `intents.ts` the durable intent ledger, `presentation.ts` titles and
-settle state, and `state.ts` the typed state file.
-It has no plugin-backend or client contribution entry. Service composition
-reaches only the public index; no T3 protocol type enters core or shared.
-The [adapter contract](../specs/t3code-host-adapter.md) owns its nightly protocol
-mapping and private-server proof surface. `service/t3code-host.ts` registers its
-independent connection and admission state alongside Paseo.
+The Rust engine owns native T3 calls in `engine/crates/nucleus-hosts/`.
+The board uses `hosts/t3code/` to map the engine’s cached settings and provider
+catalog into browser themes and profile controls.
 
 Host-specific environment names belong under their own `hosts/<host>/` integration.
 The publication gate and folder-import tests enforce this for runtime roots,
