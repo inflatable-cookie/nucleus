@@ -518,6 +518,7 @@ impl T3 {
         provider: &str,
         commands: Vec<String>,
     ) -> Result<Vec<String>, HostError> {
+        let before = self.parent_runtime_hint().ok_or(HostError::Unavailable)?;
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let mut attempted = false;
         let observed = self
@@ -530,6 +531,9 @@ impl T3 {
                 error
             }
         })?;
+        if self.parent_runtime_hint().as_ref() != Some(&before) {
+            return Err(HostError::ParentReceiptInconclusive);
+        }
         let Some(projection) = projection else {
             return Ok(Vec::new());
         };
@@ -859,9 +863,10 @@ impl T3 {
                 write.wire.method.rpc(),
                 write.wire.payload,
                 Read::One,
+                write.runtime.as_deref(),
                 || {
                     if let Some(runtime) = &write.runtime
-                        && self.verified_runtime_identity().as_ref() != Some(runtime)
+                        && self.parent_runtime_hint().as_ref() != Some(runtime)
                     {
                         return Err(HostError::Uncertain);
                     }

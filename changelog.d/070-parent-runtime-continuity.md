@@ -1,0 +1,1 @@
+Verify the native process on the open T3 connection before replaying an uncertain parent message. If T3 changes while its descriptor stays behind, look for the exact delivery receipt and hold the task if delivery remains uncertain.

@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::Read,
+    net::SocketAddr,
     path::Path,
 };
 use time::{
@@ -27,6 +28,10 @@ pub(crate) struct ServerRuntime {
 impl ServerRuntime {
     pub(crate) fn identity(&self) -> String {
         format!("{}:{}", self.pid, self.started.unix_timestamp_nanos())
+    }
+
+    pub(crate) fn replay_identity(&self) -> String {
+        format!("socket:{}", self.identity())
     }
 
     pub(crate) fn read(path: &Path, endpoint: &Url) -> Option<Self> {
@@ -71,6 +76,32 @@ impl ServerRuntime {
             pid: descriptor.pid,
             started,
         })
+    }
+
+    pub(crate) async fn owns_connection(&self, local: SocketAddr, peer: SocketAddr) -> bool {
+        let Ok((output, _)) = capture(
+            "/usr/sbin/lsof",
+            &[
+                "-a",
+                "-p",
+                &self.pid.to_string(),
+                "-iTCP",
+                "-sTCP:ESTABLISHED",
+                "-n",
+                "-P",
+                "-Fn",
+            ],
+            None,
+        )
+        .await
+        else {
+            return false;
+        };
+        let reverse = format!("n{peer}->{local}");
+        output
+            .split(|&byte| byte == b'\n')
+            .any(|line| line == reverse.as_bytes())
+            && self.still_current(None).await
     }
 
     pub(crate) async fn still_current(&self, scratch: Option<&Path>) -> bool {

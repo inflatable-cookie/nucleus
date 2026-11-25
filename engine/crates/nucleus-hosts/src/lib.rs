@@ -463,19 +463,27 @@ impl T3 {
     #[must_use]
     pub fn runtime_identity(&self) -> Option<String> {
         match self.runtime_descriptor.as_deref() {
-            Some(descriptor) => {
-                ServerRuntime::read(descriptor, self.rpc.endpoint()).map(|server| server.identity())
-            }
+            Some(_) => self.described_runtime().map(|server| server.identity()),
             None => Some(self.endpoint().to_owned()),
         }
     }
 
-    /// Identify the running native process that owns this store's receipts.
+    /// Identify the descriptor's process after it proves ownership of the RPC socket.
+    pub async fn verified_runtime_identity(&self) -> Option<String> {
+        let server = self.described_runtime()?;
+        let identity = Box::pin(self.rpc.verify_runtime(&server)).await?;
+        (self.parent_runtime_hint().as_ref() == Some(&identity)).then_some(identity)
+    }
+
+    fn described_runtime(&self) -> Option<ServerRuntime> {
+        ServerRuntime::read(self.runtime_descriptor.as_deref()?, self.rpc.endpoint())
+    }
+
+    /// Read the candidate replay key without connecting or proving socket ownership.
     #[must_use]
-    pub fn verified_runtime_identity(&self) -> Option<String> {
-        self.runtime_descriptor.as_deref().and_then(|descriptor| {
-            ServerRuntime::read(descriptor, self.rpc.endpoint()).map(|server| server.identity())
-        })
+    pub fn parent_runtime_hint(&self) -> Option<String> {
+        self.described_runtime()
+            .map(|server| server.replay_identity())
     }
 
     /// Use the connected T3 server's own runtime descriptor for custody checks.

@@ -747,8 +747,12 @@ time and result per occurrence. The engine persists the exact method, wire
 payload, binding and verified native runtime before sending. An accepted reply
 or exact command-linked evidence settles that occurrence. The task version,
 current destination, role and operator snooze still authorize the wire. A
-pending command can replay only in the verified same native runtime. A new or
-unverified native runtime gets one bounded opportunity to confirm delivery
+pending command can replay only in the same native runtime. On a due send,
+the engine checks the descriptor PID and process start against the exact RPC
+socket. The socket carries that proof until it closes. A replacement connection
+must prove ownership again, even if the descriptor survives. Earlier records
+that only store the descriptor key also require readback. A new or unverified
+native runtime gets one bounded opportunity to confirm delivery
 from exact positive evidence. A missing or inconclusive result parks the
 occurrence and directs the operator to open the thread and use Next. A
 replacement store may advertise the same environment ID and sequence, so those

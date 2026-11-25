@@ -174,6 +174,7 @@ impl T3 {
                 } else {
                     crate::rpc::Read::One
                 },
+                None,
                 || {
                     self.rpc.with_shell(|view| {
                         if matches!(change, RowChange::SnoozeUntil(_))
