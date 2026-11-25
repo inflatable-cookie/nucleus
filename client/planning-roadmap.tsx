@@ -1015,15 +1015,15 @@ export function ProjectRoadmapView({
           project={project}
           latest={latest}
           saved={section.saved}
-          lanes={lanes}
+          lanes={scopedLanes}
           unplanned={unplanned}
           readPlanVersion={readPlanVersion}
           c={c}
         />
       )}
-      {latest && <Banner plan={latest} lanes={lanes} group={group} c={c} />}
+      {latest && <Banner plan={latest} lanes={scopedLanes} group={group} c={c} />}
       {!latest && group === "dormant" && (
-        <Banner lanes={lanes} group={group} c={c} />
+        <Banner lanes={scopedLanes} group={group} c={c} />
       )}
       {latest && Boolean(latest.entries.length) && (
         <View

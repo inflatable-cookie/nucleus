@@ -1351,9 +1351,10 @@ export function PlanningTab({
     setChosen(null);
     onStep("plan");
   };
-  const laneTitle =
-    lanes.find((lane) => lane.key === selectedLane && lane.project === selectedLaneProject)?.title ??
-    selectedLane;
+  const laneTitle = lanes.find((lane) =>
+    lane.key === selectedLane &&
+    (!lane.project || lane.project === selectedLaneProject),
+  )?.title ?? selectedLane;
   const laneCrumb = (
     <Breadcrumb
       c={c}

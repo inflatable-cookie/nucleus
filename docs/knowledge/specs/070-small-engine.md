@@ -914,9 +914,10 @@ under `/v1/planning-current` with an optional `project` query parameter.
 
 `plan.get` returns the order and lane documents. Use version zero for a new
 plan or lane and the returned version for the next edit. `lane.status` updates
-the disposition independently. `item.list` and `decision.list` read the current
-records. Answering a decision requires an operator binding and an explicit
-project. A decision that belongs to a task question accepts one answer for the
+the disposition independently. The browser keeps the selected project with the
+lane key on document reads, edits and status actions. Lane keys can repeat
+across projects. `item.list` and `decision.list` read the current records.
+Answering a decision requires an operator binding and an explicit project. A decision that belongs to a task question accepts one answer for the
 bound task version, then wakes the ordinary answer path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item

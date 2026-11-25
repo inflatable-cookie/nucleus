@@ -568,16 +568,10 @@ export function MainSurface({
                 }}
                 leads={boardLeads}
                 onCloseLane={(key, project) =>
-                  void act(() => {
-                    const input = { key, project, status: "done" as const };
-                    return changeLaneStatus(input);
-                  })
+                  void act(() => changeLaneStatus({ key, project, status: "done" }))
                 }
                 onReopenLane={(key, project) =>
-                  void act(() => {
-                    const input = { key, project, status: "active" as const };
-                    return changeLaneStatus(input);
-                  })
+                  void act(() => changeLaneStatus({ key, project, status: "active" }))
                 }
                 busy={busy}
                 step={planningStep}
@@ -652,7 +646,11 @@ export function MainSurface({
                       project={planningLaneRef.project}
                       compact={compact}
                       projects={state?.projects ?? []}
-                      plans={planQuery.data ?? []}
+                      plans={
+                        (planQuery.data ?? []).filter(
+                          ({ project }) => !planningLaneRecord.project || project === planningLaneRef.project,
+                        )
+                      }
                       busy={busy}
                       canEdit
                       doc={{
