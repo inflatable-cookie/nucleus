@@ -101,7 +101,6 @@ import {
   type WebBoardOptions,
 } from "../web/web-board";
 import { configuredRustBoard, RustBoardProxy } from "../web/rust-board";
-import { configuredRustInbox, type RustInboxBridge } from "../web/rust-inbox";
 import { readPrivateKey, type RustPilot } from "../web/rust-pilot";
 
 export {
@@ -466,18 +465,6 @@ export class QueueService {
     await this.migrateWebSessions(sessionFile);
     const pilot = this.options.rustPilot;
     const rustEnv = pilot === null ? {} : process.env;
-    let rustInbox: RustInboxBridge | null = null;
-    try {
-      const inboxEnv = pilot ? {
-        NUCLEUS_RUST_INBOX_ENGINE: pilot.inboxEngine,
-        NUCLEUS_RUST_INBOX_KEY_FILE: pilot.inboxKeyFile,
-      } : rustEnv;
-      rustInbox = configuredRustInbox(inboxEnv, (input) =>
-        this.executor.callHandler("rustInboxDecision", input),
-      );
-    } catch {
-      console.error("Invalid Rust Inbox bridge configuration. The bridge is disabled.");
-    }
     let rustBoard: RustBoardProxy | null = null;
     try {
       const engine = pilot
@@ -490,7 +477,6 @@ export class QueueService {
     const web = new WebBoard({
       host: this.webHost(),
       rustBoard,
-      rustInbox,
       bundleDir: defaultWebBundleDir(),
       ...this.options.webBoard,
       port: configuredPort,
