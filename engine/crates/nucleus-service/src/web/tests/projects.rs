@@ -191,6 +191,20 @@ impl Registry {
         self.take_requested(actor).await;
     }
 
+    async fn inline_command<F: std::future::Future>(&self, actor: &str, command: F) -> F::Output {
+        tokio::pin!(command);
+        // Poll the request until it queues proof. Complete the real checkout and
+        // host proof before polling the request again, even on a loaded runner.
+        tokio::select! {
+            biased;
+            () = self.service.enrollment_wake.notified() => {}
+            _ = &mut command => panic!("cold request completed before it queued enrollment"),
+        }
+        self.take_requested(actor).await;
+        self.service.complete_enrollment(actor).await;
+        command.await
+    }
+
     async fn finish_requested(&self, actor: &str) {
         self.service.enrollment_wake.notified().await;
         self.take_requested(actor).await;
@@ -492,11 +506,9 @@ async fn submit(api: &Router, actor: &str, id: &str, repo: Option<&str>) -> Resp
 async fn first_contact_enrolls_two_exact_routes_inline_and_scoped_reads() {
     let registry = registry().await;
     let api = &registry.api;
-    let (created, ()) = tokio::join!(
-        biased;
-        submit(api, "alpha-planner", "first", None),
-        registry.finish_requested("alpha-planner")
-    );
+    let created = registry
+        .inline_command("alpha-planner", submit(api, "alpha-planner", "first", None))
+        .await;
     assert_eq!(created.status(), StatusCode::CREATED);
     registry.enroll("beta-planner").await;
     let alpha = registry.service.task("first").await.unwrap().task;
@@ -569,12 +581,20 @@ async fn cold_task_reads_request_one_check_then_return_the_saved_tasks() {
     registry.task(actor, "first").await;
     let registry = registry.reopen();
     let reads = registry.reads.load(Ordering::Relaxed);
-    let (tasks, detail, ()) = tokio::join!(
-        biased;
-        caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null),
-        caller_request(&registry.api, Method::GET, "/v1/tasks/first", actor, Value::Null),
-        registry.finish_requested(actor)
-    );
+    let (tasks, detail) = registry
+        .inline_command(actor, async {
+            tokio::join!(
+                caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null),
+                caller_request(
+                    &registry.api,
+                    Method::GET,
+                    "/v1/tasks/first",
+                    actor,
+                    Value::Null
+                )
+            )
+        })
+        .await;
     assert_eq!(tasks.status(), StatusCode::OK);
     assert_eq!(detail.status(), StatusCode::OK);
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads + 1);
