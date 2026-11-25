@@ -297,7 +297,7 @@ async fn authorize(
     let supplied = credential(request.headers())?;
     let caller =
         request_controller(&api, &supplied, request.headers()).ok_or(ApiError::Unauthorized)?;
-    reauthorize_known(&api, &caller.scope, request.method()).await?;
+    reauthorize_known(&api, &caller.scope).await?;
     caller.extend(&mut request);
     Ok(next.run(request).await)
 }
@@ -334,14 +334,8 @@ fn request_controller(
     Some(ControllerEntry::t3(actor, key))
 }
 
-async fn reauthorize_known(
-    api: &Api,
-    scope: &ControllerScope,
-    method: &Method,
-) -> Result<(), ServiceError> {
-    if !method.is_safe()
-        && let Some(actor) = scope.actor()
-    {
+async fn reauthorize_known(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
+    if let Some(actor) = scope.actor() {
         let mut state = api.service.state.lock().await;
         if state.settings.planner_route(actor).is_some()
             && state.live_planner_project(actor).is_none()
@@ -414,7 +408,7 @@ async fn authorize_task(
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
     if let Some(caller) = request_controller(&api, &supplied, request.headers()) {
-        reauthorize_known(&api, &caller.scope, request.method()).await?;
+        reauthorize_known(&api, &caller.scope).await?;
         caller.extend(&mut request);
         return Ok(next.run(request).await);
     }

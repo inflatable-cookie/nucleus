@@ -557,6 +557,27 @@ async fn first_contact_enrolls_two_exact_routes_with_local_retries_and_scoped_re
 }
 
 #[tokio::test]
+async fn cold_task_reads_request_one_check_then_return_the_saved_tasks() {
+    let registry = registry().await;
+    let actor = "alpha-planner";
+    registry.enroll(actor).await;
+    registry.task(actor, "first").await;
+    let registry = registry.reopen();
+    for path in ["/v1/tasks", "/v1/tasks/first"] {
+        let result = caller_request(&registry.api, Method::GET, path, actor, Value::Null).await;
+        assert_eq!(result.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert_eq!(
+        registry.service.take_enrollment().await.as_deref(),
+        Some(actor)
+    );
+    assert!(registry.service.take_enrollment().await.is_none());
+    registry.service.complete_enrollment(actor).await;
+    let tasks = caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null).await;
+    assert_eq!(json_body(tasks).await[0]["identity"]["id"], "first");
+}
+
+#[tokio::test]
 async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
     const PLAN: &str = "/v1/planning-current/plan";
     const ITEMS: &str = "/v1/planning-current/items";

@@ -755,7 +755,8 @@ and the local default branch via
 together. The retry derives its repository and base from that binding.
 The service logs the result of each check. While a check runs, a shell event
 can revoke its proof if the caller's identity changes or the thread closes.
-Run activity alone leaves the proof intact. If verification fails, the next
+A healthy shell stream keeps the proof across run activity. After a disconnect,
+a registered planner’s next task read or write requests one fresh check. If verification fails, the next
 request returns the reason, such as a missing checkout or a remote mismatch.
 Further admissions, task commands and settings reads use local state. Each
 verified planner has its own project binding. A closed thread loses its cached
@@ -769,7 +770,9 @@ ID for an exact matching route.
 
 Projects settings edits cover the project name, slot limit, archive state and
 repository checks. The Dispatch domain sets the service-wide slot limit. The
-logical project's limit covers all its routed repositories. A non-fixture
+logical project's limit covers all its routed repositories. New and amended briefs reject the retired
+`queue.preferredProfileId` key. Use `queue.profileRequests.worker` with a
+profile ID, reason and `required: true` for a required worker profile. A non-fixture
 launch uses the Profiles domain and the head of the verified local base.
 
 For single-repository pilot and fixture compatibility, `serve --project` pins

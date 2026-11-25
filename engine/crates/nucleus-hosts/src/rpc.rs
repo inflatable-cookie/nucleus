@@ -846,10 +846,6 @@ impl Rpc {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep shell synchronization and its ordered deltas together"
-    )]
     pub(crate) async fn watch_threads(
         &self,
         hints: &mpsc::Sender<ThreadHint>,
@@ -864,21 +860,16 @@ impl Rpc {
             "payload":{"requestCompletionMarker":true}})).await?;
         drop(admission);
         let mut initial_snapshots = None;
-        let expires = time::Instant::now() + Duration::from_mins(15);
         let synchronize_by = time::Instant::now() + DEADLINE;
         let mut synchronized = false;
         loop {
-            if synchronized && time::Instant::now() >= expires {
-                return Ok(());
-            }
             let due = if synchronized {
-                expires.min(time::Instant::now() + Duration::from_mins(5))
+                time::Instant::now() + Duration::from_mins(5)
             } else {
                 synchronize_by
             };
             let frames = match time::timeout_at(due, connection.frames()).await {
                 Ok(result) => result?,
-                Err(_) if synchronized && due == expires => return Ok(()),
                 Err(_) => return Err(HostError::Timeout),
             };
             for frame in frames {
