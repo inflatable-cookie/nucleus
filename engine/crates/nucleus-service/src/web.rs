@@ -628,11 +628,19 @@ async fn admit(
     ))
 }
 
+#[derive(Serialize)]
+struct ListedTask {
+    #[serde(flatten)]
+    summary: Summary<Arc<Card>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    lanes: Vec<String>,
+}
+
 async fn list(
     State(api): State<Api>,
     Extension(scope): Extension<ControllerScope>,
     Extension(authority): Extension<Authority>,
-) -> Result<Json<Vec<Summary<Arc<Card>>>>, ApiError> {
+) -> Result<Json<Vec<ListedTask>>, ApiError> {
     api.service
         .storage
         .database()
@@ -708,7 +716,58 @@ async fn list(
             });
         }
     }
-    Ok(Json(result))
+    drop(cache);
+    let mut lanes = active_task_lanes(&state, &tasks)?;
+    Ok(Json(
+        result
+            .into_iter()
+            .map(|summary| ListedTask {
+                lanes: lanes.remove(&summary.card.identity.id).unwrap_or_default(),
+                summary,
+            })
+            .collect(),
+    ))
+}
+
+fn active_task_lanes(
+    state: &EngineState,
+    rows: &[nucleus_store::TaskRow],
+) -> Result<HashMap<String, Vec<String>>, ServiceError> {
+    let mut sources = HashMap::<String, Vec<(String, String)>>::new();
+    for (id, project, lane) in state.store.live_source_lanes()? {
+        sources.entry(id).or_default().push((project, lane));
+    }
+    let mut result = HashMap::new();
+    for row in rows.iter().filter(|row| !row.task.phase().is_terminal()) {
+        let task = &row.task;
+        let id = &task.identity().id;
+        let project = state
+            .settings
+            .project_for_origin(&task.identity().repository)
+            .map(|(id, _, _)| id);
+        let mut lanes = Vec::new();
+        if let Some(items) = sources.remove(id) {
+            lanes.extend(
+                items
+                    .into_iter()
+                    .filter_map(|(owner, lane)| (Some(owner.as_str()) == project).then_some(lane)),
+            );
+        }
+        if let Ok(policy) = nucleus_core::profiles::BriefPolicy::parse(&task.brief().text) {
+            lanes.extend_from_slice(policy.lanes());
+        }
+        if let Some(report) = task.report_task()
+            && Some(report.project.as_str()) == project
+        {
+            lanes.push(report.lane.clone());
+        }
+        if !lanes.is_empty() {
+            lanes.sort_unstable();
+            lanes.dedup();
+            result.insert(id.clone(), lanes);
+        }
+    }
+    Ok(result)
 }
 
 async fn detail(

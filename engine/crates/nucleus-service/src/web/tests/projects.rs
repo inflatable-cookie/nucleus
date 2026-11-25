@@ -1139,8 +1139,8 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
     let api = registry_board_api(&registry);
     let operator = pair_board(&api, &BOARD_KEY).await;
     let items = "/api/engine/planning/product/items";
-    let add = json!({"kind":"lead", "title":"Fixture idea", "lanes":[],
-        "body":"---\nqueue:\n  complexity: low\n---\nUse the selected repository."});
+    let add = json!({"kind":"lead", "title":"Fixture idea", "lanes":["delivery","shared"],
+        "body":"---\nqueue:\n  complexity: low\n  lanes: [shared, release]\n  laneDocuments: [guide]\n---\nUse the selected repository."});
     let added = browser_request(&api, Method::POST, items, Some(&operator), Some(&add)).await;
     assert_eq!(added.status(), StatusCode::CREATED);
     let item = json_body(added).await;
@@ -1163,6 +1163,15 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
     assert_eq!(created["reference"], "second#1");
     assert_eq!(created["identity"]["repository"], BETA_REPO);
     assert_eq!(created["identity"]["base"], "trunk");
+    let cards = read_paired_task(&api, "/api/engine/tasks", &operator).await;
+    let promoted = cards
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|card| card["identity"]["id"] == created["identity"]["id"])
+        .unwrap();
+    assert_eq!(promoted["lanes"], json!(["delivery", "release", "shared"]));
+
     let retried = promote().await;
     assert_eq!(retried.status(), StatusCode::OK);
     let retried = json_body(retried).await;

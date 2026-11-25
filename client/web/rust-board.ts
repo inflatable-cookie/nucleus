@@ -84,6 +84,7 @@ const lifecycle = z.object({
   reviewer: participant.nullable(),
 });
 const summary = current.extend({
+  lanes: z.array(z.string()).optional(),
   lifecycle,
   latestEventAtMs: timestamp.nullish(),
   title: z.string().optional(),
