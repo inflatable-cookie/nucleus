@@ -99,6 +99,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     storage: () => ({
       settings: snap({ enabled: true, workRoot: null, scratchRoot: null, logRoot: null, retention: { keepNewest: 5, maxAgeDays: null } }, "storage"),
       active: { databaseRoot: "/e/db", workRoot: "/e/work", backupRoot: "/e/backups", scratchRoot: "/e/scratch", logRoot: "/e/logs" },
+      configBackups: { complete: true, issues: 1, verified: [{ id: "c1", createdAt: "2026-11-25T09:00:00Z" }] },
       backups: { complete: true, issues: 0, verified: [{ id: "b1", createdAt: "2026-11-24T08:00:00Z" }] },
     }),
   };
@@ -242,7 +243,8 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.deepEqual(board.pool.map((entry) => [entry.profileId, entry.group, entry.roles]), [["w", "team", ["worker", "reviewer"]]]);
   assert.deepEqual(fake.reads, ["GET /settings", "GET /session"]);
   const storage = await adapter.rpc(api.workStorage, {});
-  assert.equal(storage.backups?.newestAt, "2026-11-24T08:00:00Z");
+  assert.deepEqual(storage.backups, { newestAt: "2026-11-24T08:00:00Z", verified: 1, issues: 0 });
+  assert.deepEqual(storage.configBackups, { newestAt: "2026-11-25T09:00:00Z", verified: 1, issues: 1 });
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
 });
 

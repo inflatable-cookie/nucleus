@@ -335,20 +335,21 @@ export function StoragePanel({
                 .join(" · ")}
             </Text>
           )}
-          {state.backups && (
-            <Text style={muted(c)} accessibilityLabel="Backups">
+          {([
+            ["Database backups", state.backups, "24 six-hourly · 14 daily · 8 weekly"],
+            ["Configuration backups", state.configBackups, state.retention
+              ? `keeps the newest ${state.retention.keepNewest}${state.retention.maxAgeDays === null ? "" : `, up to ${state.retention.maxAgeDays} days old`}`
+              : null],
+          ] as const).map(([label, copies, policy]) => copies && (
+            <Text key={label} style={muted(c)} accessibilityLabel={label}>
               {[
-                `Backups: ${state.backups.verified} verified`,
-                state.backups.newestAt ? `newest ${state.backups.newestAt}` : null,
-                state.backups.issues ? `${state.backups.issues} could not be verified` : null,
-                state.retention
-                  ? `keeps the newest ${state.retention.keepNewest}${state.retention.maxAgeDays === null ? "" : `, up to ${state.retention.maxAgeDays} days old`}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+                `${label}: ${copies.verified} verified`,
+                copies.newestAt && `newest ${copies.newestAt}`,
+                copies.issues ? `${copies.issues} could not be verified` : null,
+                policy,
+              ].filter(Boolean).join(" · ")}
             </Text>
-          )}
+          ))}
           {state.retired && <View style={{ marginTop: space.sm, gap: space.xxs }}>
             <Text style={muted(c)}>Retired locations still read</Text>
             <Text
