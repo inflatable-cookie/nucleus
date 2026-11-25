@@ -11,9 +11,10 @@ use crate::{Brief, Role};
 pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
     pub critical: bool,
+    pub notify_origin_on_closeout: bool,
     profile_requests: Requests,
     #[serde(default, deserialize_with = "present")]
-    preferred_profile_id: bool,
+    preferred_profile_id: Option<()>,
     #[serde(default, deserialize_with = "optional_bool")]
     pub report_only: Option<bool>,
     #[serde(default, deserialize_with = "optional_text")]
@@ -35,8 +36,8 @@ enum LaneSelection {
     Keys(#[serde(deserialize_with = "lane_keys")] Vec<String>),
 }
 
-fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
-    de::IgnoredAny::deserialize(deserializer).map(|_| true)
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<()>, D::Error> {
+    de::IgnoredAny::deserialize(deserializer).map(|_| Some(()))
 }
 
 fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -127,7 +128,7 @@ impl BriefPolicy {
     /// Returns a replacement for the retired profile selector.
     pub fn submitted(brief: &str) -> Result<Self, BriefPolicyError> {
         let policy = Self::parse(brief)?;
-        if policy.preferred_profile_id {
+        if policy.preferred_profile_id.is_some() {
             return Err(BriefPolicyError::RetiredProfile);
         }
         Ok(policy)
