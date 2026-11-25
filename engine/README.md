@@ -181,7 +181,7 @@ GitHub transport and server failures pause requests across all tasks for 30
 seconds, doubling up to four minutes until a read succeeds. Rate limits retain
 their supplied deadline. A settled run that held a launch slot wakes the oldest
 capacity waiter. Capacity also has a 60-second backstop. Slot limits take effect
-when a Dispatch or Projects edit commits. The API serves task views from the
+when a Limits edit commits to Dispatch. The API serves task views from the
 store and memory and pushes invalidations.
 
 Normalize the relevant observations to one signal per phase. The bound run
@@ -202,6 +202,7 @@ match (phase, run_state, observation) {
     (_, Bound(_), Starting | Running | IdleWithoutTerminalRun) => Wait(reason, retry_at),
     (Reviewing, Bound(Reviewer), PreparedInvalidAfterPossibleSend) => Revoke,
     (_, Bound(_), ExactTerminalWithoutReport) => RemindReport,
+    (_, Bound(ReportOnlyWorker), TerminalReminderWithoutReport) => Block(move_to_work),
     (_, Bound(_), TerminalReminderWithoutReport) => Ask(owner_question),
     (Working | Reviewing, Bound(role), Failed(Remaining)) => Relaunch(role),
     (Working | Reviewing, Bound(_), Failed(Last)) => Ask(retry_question),
