@@ -557,10 +557,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
         .unwrap();
     assert!(service.operator_snooze_wait(&row).await.is_some());
     let board = fixture.board_task().await;
-    assert_eq!(
-        board["stateLabel"],
-        "Queued · you snoozed this thread until 2099-06-01 12:00 UTC"
-    );
+    assert_eq!(board["stateLabel"], "Queued");
     assert!(board["waitDetail"].as_str().unwrap().contains("until"));
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert!(service.state.lock().await.schedule.due(ID).unwrap() > tokio::time::Instant::now());
@@ -722,14 +719,14 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         service.lookup(&state, ID).unwrap()
     };
     let board = fixture.board_task().await;
-    assert_eq!(board["stateLabel"], "Working · waiting for T3");
+    assert_eq!(board["stateLabel"], "Working · T3");
     assert!(board["waitDetail"].is_null());
     assert!(
         board["lifecycle"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step["note"] == "Working · waiting for T3")
+            .any(|step| step["note"] == "Working · T3")
     );
     let ready = Observed::Known(Host::Current {
         instance: launch.instance.clone(),
@@ -831,7 +828,7 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         .await
         .unwrap();
     let card = fixture.board_task().await;
-    assert_eq!(card["stateLabel"], "Reviewing · waiting for capacity");
+    assert_eq!(card["stateLabel"], "Reviewing · capacity");
     assert_eq!(card["attention"], "waiting");
     fixture
         .native
@@ -950,7 +947,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
             .unwrap();
     }
     let card = fixture.board_task().await;
-    assert_eq!(card["stateLabel"], "Working · waiting for the planner");
+    assert_eq!(card["stateLabel"], "Working · planner");
     assert_eq!(card["attention"], "waiting");
     fixture.sync().await;
     assert_eq!(
@@ -1010,7 +1007,7 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
     let card = fixture.board_task().await;
     assert_eq!(card["phase"], "merging");
     assert_eq!(card["attention"], "waiting");
-    assert_eq!(card["stateLabel"], "Merging · waiting for the planner");
+    assert_eq!(card["stateLabel"], "Merging · planner");
     fixture.child(&run.thread, true);
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
@@ -1290,14 +1287,8 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
         prior.generation
     };
     for (result, delay) in [
-        (
-            Err(service.parent_not_sent("waiting for the host")),
-            "waiting for T3",
-        ),
-        (
-            Ok(Action::Wait(WaitReason::ForgeUnknown)),
-            "waiting for GitHub",
-        ),
+        (Err(service.parent_not_sent("waiting for the host")), "T3"),
+        (Ok(Action::Wait(WaitReason::ForgeUnknown)), "GitHub"),
     ] {
         fixture.publish_shell();
         service
@@ -1350,6 +1341,68 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
             "thread.metadata.update"
         ]
     );
+}
+
+#[tokio::test]
+async fn active_child_keeps_ownership_until_the_shell_observes_the_clear() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (task, _, _) = crate::tests::reserved_reviewer(ID, &service.fixture().start);
+    let row = create_visibility_row(&fixture, &task).await;
+    let owned = fixture.observed_snooze().await;
+    fixture.child("reviewer", true);
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    let prior = service.host.row_visibility_hint(&fixture.thread).unwrap();
+    assert_eq!(prior.snoozed_until_ms, Some(owned.until_ms));
+    assert_eq!(fixture.native.lock().unwrap().until, Value::Null);
+    let receipt = fixture.observed_snooze().await;
+    assert_eq!(receipt.clear_attempted_for, Some(owned.until_ms));
+    assert!(receipt.owns(prior.snoozed_until_ms));
+    service
+        .check_parent_snooze(
+            &row,
+            &fixture.binding,
+            RowObservation {
+                sequence: 1,
+                visibility: prior,
+            },
+        )
+        .await
+        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        service
+            .schedule_operator_snooze(
+                &mut state,
+                &row,
+                &fixture.thread,
+                owned.until_ms,
+                "stale delivery observation".into(),
+            )
+            .unwrap();
+        assert!(state.wait_detail(ID).is_none());
+    }
+    service
+        .reconcile_task_row(ID, PROVIDER, &fixture.thread)
+        .await
+        .unwrap();
+    assert_eq!(fixture.commands().len(), 2);
+    fixture.sync().await;
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .row_snooze(ID, &fixture.thread)
+            .unwrap()
+            .is_none()
+    );
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.sync().await;
+    assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
+    assert_eq!(fixture.commands().len(), 2);
 }
 
 #[tokio::test]
@@ -1415,11 +1468,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     let state = fixture.service.state.lock().await;
     let title = state.store.pending_title(&fixture.thread).unwrap().unwrap();
     assert_eq!(fixture.service.working_row_count(&state).unwrap(), 0);
-    assert!(
-        title
-            .desired
-            .starts_with("Reviewing · you snoozed this thread until 2099-06-01 12:00 UTC:")
-    );
+    assert!(title.desired.starts_with("Reviewing:"));
     assert_eq!(fixture.commands().len(), 3);
 }
 

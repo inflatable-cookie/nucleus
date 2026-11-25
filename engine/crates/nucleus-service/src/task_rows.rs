@@ -58,6 +58,10 @@ fn plan_row(
         if receipt.owns(shown)
             && let Some(until) = shown
         {
+            if receipt.ended && receipt.clear_attempted_for == Some(until) {
+                return Plan::Idle(None);
+            }
+            receipt.ended = false;
             receipt.clear_attempted_for = Some(until);
             return Plan::Write(RowChange::Unsnooze, receipt);
         }
@@ -390,7 +394,9 @@ impl Service {
         mut receipt: RowSnooze,
     ) -> Result<(), ServiceError> {
         if change == RowChange::Unsnooze {
-            self.restore_row_snooze(id, thread, None).await?;
+            // The command has settled. Its old horizon is still ours until shell readback changes.
+            receipt.ended = true;
+            self.restore_row_snooze(id, thread, Some(&receipt)).await?;
         } else if outcome == SendOutcome::Rejected {
             receipt.outcome = SnoozeOutcome::Refused;
             self.restore_row_snooze(id, thread, Some(&receipt)).await?;
