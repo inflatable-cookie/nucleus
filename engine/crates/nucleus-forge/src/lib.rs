@@ -54,6 +54,12 @@ const MERGE_COMMIT_QUERY: &str = "
 pub enum ForgeError {
     #[error("pull request identity does not match the configured repository and branches")]
     Identity,
+    #[error("the external merge commit is no longer on the task’s base branch")]
+    UnpublishedMerge,
+    #[error(
+        "the merged pull request source could not be verified against the task’s recorded head"
+    )]
+    UnverifiedSource,
     #[error("GitHub reported a different pull request base")]
     BaseChanged,
     #[error("GitHub refused the original head and the readback still shows it")]
@@ -378,6 +384,23 @@ impl GitHub {
             return Err(ForgeError::Deferred { until: deadline });
         }
         graph.has_open_branch_pr()
+    }
+
+    /// Verify that the merge commit belongs to the current base of this exact pull request.
+    ///
+    /// # Errors
+    /// Returns an error if publication cannot be confirmed.
+    pub async fn verify_merge_base(
+        &self,
+        target: &PullTarget,
+        commit: &Head,
+    ) -> Result<(), ForgeError> {
+        let branches = &target.branches;
+        let tip = self.branch_head(branches, &branches.base).await?;
+        if &tip != commit && !self.contains(branches, commit, &tip).await? {
+            return Err(ForgeError::UnpublishedMerge);
+        }
+        Ok(())
     }
 
     /// Read a branch head through the authenticated canonical repository.

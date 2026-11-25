@@ -161,6 +161,10 @@ async fn create_service(
     let pr_path = format!("/repos/{REPOSITORY}/pulls/1");
     let router = Router::new()
         .route(
+            &format!("/repos/{REPOSITORY}/branches/main"),
+            get(|| async { Json(json!({"name":"main","commit":{"sha":"f".repeat(40)}})) }),
+        )
+        .route(
             "/user",
             get(|headers: HeaderMap| async move {
                 Json(json!({"id": reviewer_id(&headers), "login": "review-fixture"}))

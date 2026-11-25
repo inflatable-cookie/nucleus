@@ -110,6 +110,53 @@ fn review_allocation_can_fetch_a_pull_head_missing_from_the_registered_checkout(
 }
 
 #[test]
+fn external_source_requires_the_exact_pull_ref_and_a_descendant() {
+    let home = tempfile::tempdir().unwrap();
+    let upstream = home.path().join("origin");
+    let root = repository(&upstream);
+    let registered = home.path().join("registered");
+    git(
+        home.path(),
+        &[
+            "clone",
+            upstream.to_str().unwrap(),
+            registered.to_str().unwrap(),
+        ],
+    );
+    let commit = |name| {
+        git(&upstream, &["commit", "--allow-empty", "-m", name]);
+        git(&upstream, &["rev-parse", "HEAD"])
+            .trim()
+            .parse::<Head>()
+            .unwrap()
+    };
+    let recorded = commit("recorded");
+    let merged = commit("merged descendant");
+    git(
+        &upstream,
+        &["update-ref", "refs/pull/7/head", merged.as_str()],
+    );
+    let work = worktrees(home.path());
+    let checkout = work
+        .checkout(&registered, "example/project", "review")
+        .unwrap();
+    assert!(checkout.pull_descends_from(7, &recorded, &merged).unwrap());
+    git(&upstream, &["checkout", "--detach", root.as_str()]);
+    let rewritten = commit("rewritten");
+    git(
+        &upstream,
+        &["update-ref", "refs/pull/7/head", rewritten.as_str()],
+    );
+    assert!(!checkout.pull_descends_from(7, &recorded, &merged).unwrap());
+    assert!(
+        !checkout
+            .pull_descends_from(7, &recorded, &rewritten)
+            .unwrap()
+    );
+    assert!(!checkout.path().exists());
+}
+
+#[test]
 fn successful_status_overflow_is_dirty_and_retained() {
     let home = tempfile::tempdir().unwrap();
     let repo = home.path().join("repository");

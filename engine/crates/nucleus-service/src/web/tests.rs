@@ -787,7 +787,7 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let head = service.fixture().start.clone();
     seed_held_acceptance(&service, &head).await;
-    let (forge, readable, reads, server) = serve_merged_forge(&head).await;
+    let (forge, readable, _published, reads, server) = serve_merged_forge(&head).await;
     service.forge = forge;
     let service = Arc::new(service);
     let api = router(
@@ -1065,7 +1065,7 @@ async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics(
 async fn queued_external_merge_acceptance_bypasses_saturation() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
-    let (forge, readable, reads, server) = serve_merged_forge(&head).await;
+    let (forge, readable, published, reads, server) = serve_merged_forge(&head).await;
     readable.store(true, Ordering::Relaxed);
     service.forge = forge;
     let (mut holder, _, _) = reservation("holder", Entry::Brief, &head);
@@ -1111,6 +1111,25 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
             .unwrap(),
         crate::CommandOutcome::Pending { .. }
     ));
+    published.store(false, Ordering::Relaxed);
+    service.pass().await.unwrap();
+    assert!(matches!(
+        service
+            .command("reviewer", &operator, answer.clone())
+            .await
+            .unwrap(),
+        crate::CommandOutcome::Pending { .. }
+    ));
+    assert!(
+        service
+            .task("reviewer")
+            .await
+            .unwrap()
+            .task
+            .verdict()
+            .is_none()
+    );
+    published.store(true, Ordering::Relaxed);
     service.pass().await.unwrap();
     assert!(matches!(
         service
@@ -1131,7 +1150,7 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
     let row = service.task("reviewer").await.unwrap();
     assert_eq!(row.task.phase(), Phase::Closing);
     assert!(row.task.run().is_none());
-    assert_eq!(reads.load(Ordering::Relaxed), 3);
+    assert_eq!(reads.load(Ordering::Relaxed), 4);
     assert_eq!(
         service.state.lock().await.store.occupied_slots("").unwrap(),
         1
@@ -1292,6 +1311,7 @@ async fn serve_merged_forge(
 ) -> (
     GitHub,
     Arc<AtomicBool>,
+    Arc<AtomicBool>,
     Arc<AtomicUsize>,
     tokio::task::JoinHandle<()>,
 ) {
@@ -1303,19 +1323,47 @@ async fn serve_merged_forge(
     let forge_ready = Arc::clone(&readable);
     let reads = Arc::new(AtomicUsize::new(0));
     let requests = Arc::clone(&reads);
-    let (forge, server) = serve_forge(Router::new().route(
-        &format!("/repos/{REPOSITORY}/pulls/1"),
-        get(move || async move {
-            requests.fetch_add(1, Ordering::Relaxed);
-            if forge_ready.load(Ordering::Relaxed) {
-                Json(pull).into_response()
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE.into_response()
-            }
-        }),
-    ))
+    let published = Arc::new(AtomicBool::new(true));
+    let on_base = Arc::clone(&published);
+    let tip = "c".repeat(40);
+    let descendant = format!("/repos/{REPOSITORY}/compare/{head}...{tip}");
+    let other = "b".repeat(40);
+    let compare_path = format!("/repos/{REPOSITORY}/compare/{head}...{other}");
+    let (forge, server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    requests.fetch_add(1, Ordering::Relaxed);
+                    if forge_ready.load(Ordering::Relaxed) {
+                        Json(pull).into_response()
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    }
+                }),
+            )
+            .route(
+                &format!("/repos/{REPOSITORY}/branches/main"),
+                get(move || async move {
+                    let sha = if on_base.load(Ordering::Relaxed) {
+                        tip
+                    } else {
+                        other
+                    };
+                    Json(json!({"name":"main","commit":{"sha":sha}}))
+                }),
+            )
+            .route(
+                &descendant,
+                get(|| async { Json(json!({"status":"ahead"})) }),
+            )
+            .route(
+                &compare_path,
+                get(|| async { Json(json!({"status":"diverged"})) }),
+            ),
+    )
     .await;
-    (forge, readable, reads, server)
+    (forge, readable, published, reads, server)
 }
 
 #[tokio::test]
