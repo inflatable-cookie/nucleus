@@ -4,6 +4,9 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
+import { boardDetailReply, boardNext, boardTasks } from "./support/board-tasks";
+import { formatAgentId } from "../shared/agent-identity";
+import { summarizeTask } from "../shared/task-view";
 import {
   detail,
   taskNextSchema,
@@ -461,5 +464,68 @@ test("a failed read names the failure and retries from the same control", async 
     assert.equal(mounted.all("Retry reading owner verbs").length, 0);
   } finally {
     mounted?.update(h("View", null));
+  }
+});
+
+
+test("task detail submits the host-qualified native question to its web answer connection", async () => {
+  await load();
+  const { bindWebQuestions, updateWebQuestions } = await import("../client/native-questions");
+  const task = boardTasks()("question-task", {
+    title: "Question task",
+    phase: "needs_attention",
+    reason: "Waiting for the operator",
+    agentId: "worker",
+    workspaceId: "workspace",
+  });
+  const reply = boardDetailReply(task);
+  const surroundingReads = setup(async (taskId) => waitingNext(taskId));
+  const agentRef = formatAgentId(task.hostId, "worker");
+  const otherAgentRef = formatAgentId("other-host", "worker");
+  const sent: Array<[string, string, Record<string, string>]> = [];
+  const unbind = bindWebQuestions(async (agent, request, answers) => {
+    sent.push([agent, request, answers]);
+    updateWebQuestions(agent, []);
+  });
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    updateWebQuestions(otherAgentRef, [{
+      id: "permission-1",
+      questions: [{ header: "Other host", question: "Another worker asked", options: ["Ignore"] }],
+    }]);
+    updateWebQuestions(agentRef, [{
+      id: "permission-1",
+      questions: [{
+        header: "Approach",
+        question: "Which approach should the worker take?",
+        options: ["Rewrite the parser", "Patch the parser"],
+      }],
+    }]);
+    const ui = mountBoard(async (method, input) => {
+      if (method === "queue.ui-snapshot") return board([summarizeTask(task)]);
+      if (method === "queue.detail") return reply;
+      if (method === "task.next") return boardNext(reply.task);
+      return surroundingReads(method, input);
+    }, false);
+    mounted = ui;
+    await settle(() => ui.text().includes(task.title));
+    ui.press(/Question task/);
+    await settle(() => ui.text().includes("Waiting for your answer"));
+    assert.match(ui.text(), /worker asked/);
+    assert.match(ui.text(), /Which approach should the worker take\?/);
+    assert.doesNotMatch(ui.text(), /Another worker asked/);
+    assert.equal(ui.get("Submit answer").props.accessibilityState.disabled, true);
+    ui.press("Details");
+    ui.press("Answer Approach: Patch the parser");
+    assert.equal(ui.get("Submit answer").props.accessibilityState.disabled, false);
+    ui.press("Submit answer");
+    await settle(() => !ui.query("Submit answer"));
+    assert.deepEqual(sent, [[agentRef, "permission-1", { Approach: "Patch the parser" }]]);
+    assert.equal(ui.get("Details").props.accessibilityState.selected, true);
+  } finally {
+    mounted?.update(h("View", null));
+    updateWebQuestions(agentRef, []);
+    updateWebQuestions(otherAgentRef, []);
+    unbind();
   }
 });
