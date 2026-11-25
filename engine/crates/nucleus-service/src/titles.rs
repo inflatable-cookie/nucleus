@@ -398,11 +398,11 @@ impl Service {
             return Ok(None);
         }
         let decisions = crate::native_inbox::pending(state, self)?.len();
-        let running = state
-            .waits
-            .values()
-            .filter(|wait| wait.reason == Some(WaitReason::Running))
-            .count();
+        let running = if decisions == 0 {
+            self.working_row_count(state)?
+        } else {
+            0
+        };
         let mode = state
             .settings
             .dispatch
@@ -692,7 +692,7 @@ mod tests {
         let provider = "fixture-acp";
         service.fixture_mut().acp_provider = Some(provider.into());
         service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
-        let root = &service.native_inbox.as_ref().unwrap().root;
+        let root = service.native_inbox.as_ref().unwrap().root.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&requests);
         let (host, server) = native_fixture(move |req| {
@@ -715,11 +715,30 @@ mod tests {
         service.apply_title(provider, &first, 0).await.unwrap();
         assert!(requests.lock().unwrap().is_empty());
 
+        let (task, _, _) = crate::tests::reserved_reviewer("fixture", &service.fixture().start);
+        assert_eq!(task.phase(), Phase::Reviewing);
+        let parent = "fixture-parent";
+        {
+            let mut state = service.state.lock().await;
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .desire_title(&task.identity().id, parent, "Reviewing")
+                .unwrap();
+            state.set_wait(&task.identity().id, Some(WaitReason::ForgeUnknown));
+        }
+        let working_shell = |title| {
+            let mut snapshot = shell(title);
+            snapshot["threads"].as_array_mut().unwrap().extend([
+                json!({"id":parent,"projectId":"project:nucleus-rust-inbox","providerInstanceId":provider}),
+                json!({"id":task.run().unwrap().launch().thread, "parentThreadId":parent,
+                       "status":"running","activeRunId":"fixture-review"}),
+            ]);
+            snapshot
+        };
         service
-            .state
-            .lock()
-            .await
-            .set_wait("fixture", Some(WaitReason::Running));
+            .host
+            .fixture_project_shell(&working_shell("All quiet"), provider);
         let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
         service.apply_title(provider, &running, 0).await.unwrap();
         assert_eq!(running.desired, "1 task running");
@@ -732,7 +751,7 @@ mod tests {
         );
         service
             .host
-            .fixture_project_shell(&shell("1 task running"), provider);
+            .fixture_project_shell(&working_shell("1 task running"), provider);
 
         let project = service.fixture().host_project.clone();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
@@ -761,7 +780,6 @@ mod tests {
             .fixture_project_shell(&shell(&decision.desired), provider);
         {
             let mut state = service.state.lock().await;
-            state.set_wait("fixture", None);
             state.settings.dispatch = None;
             state
                 .store

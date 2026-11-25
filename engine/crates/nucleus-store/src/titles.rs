@@ -69,6 +69,26 @@ impl Store {
             .optional()?)
     }
 
+    /// Parent and role thread IDs for non-terminal task rows. This projection
+    /// does not load briefs or replay task history.
+    /// # Errors
+    /// Returns an error when the bindings cannot be read.
+    pub fn active_title_threads(&self) -> Result<Vec<(String, Vec<String>)>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT title.thread, json_extract(t.threads, '$.worker'),
+                    json_extract(t.threads, '$.reviewer'),
+                    CASE WHEN json_extract(t.run, '$.last_send_at_ms') IS NOT NULL
+                         THEN json_extract(t.run, '$.launch.thread') END
+             FROM tasks t JOIN task_titles title ON title.task_id=t.id
+             WHERE t.phase NOT IN ('done','cancelled')",
+        )?;
+        let rows = query.query_map([], |row| {
+            let roles: [Option<String>; 3] = [row.get(1)?, row.get(2)?, row.get(3)?];
+            Ok((row.get(0)?, roles.into_iter().flatten().collect()))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Read outstanding presentation work for one observed native thread.
     /// # Errors
     /// Returns an error if the receipt cannot be read.

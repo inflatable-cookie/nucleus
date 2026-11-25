@@ -147,12 +147,37 @@ impl Service {
     }
 
     pub(super) fn role_window(&self, parent: &str, task: &Task) -> (RowChildren, u64, Option<u64>) {
-        let (activity, ended) = self.host.row_children(parent, &visibility_roles(task));
+        self.child_window(parent, &visibility_roles(task))
+    }
+
+    fn child_window(&self, parent: &str, roles: &[&str]) -> (RowChildren, u64, Option<u64>) {
+        let (activity, ended) = self.host.row_children(parent, roles);
         let until = ended.saturating_add(HANDOVER_MS);
         let handover =
             (activity == RowChildren::Quiet && ended != 0 && self.visibility_now() < until)
                 .then_some(until);
         (activity, ended, handover)
+    }
+
+    pub(super) fn working_row_count(&self, state: &State) -> Result<usize, ServiceError> {
+        let now = self.visibility_now();
+        let rows = state.store.active_title_threads()?;
+        Ok(rows
+            .into_iter()
+            .filter(|(parent, roles)| {
+                let Some(visibility) = self.host.row_visibility_hint(parent) else {
+                    return false;
+                };
+                if visibility.settled
+                    || visibility.snoozed_until_ms.is_some_and(|until| until > now)
+                {
+                    return false;
+                }
+                let roles = roles.iter().map(String::as_str).collect::<Vec<_>>();
+                let (activity, _, handover) = self.child_window(parent, &roles);
+                in_working_group(activity, handover)
+            })
+            .count())
     }
 
     pub(super) async fn operator_snooze_wait(&self, row: &TaskRow) -> Option<ServiceError> {
@@ -241,7 +266,7 @@ impl Service {
         if activity == RowChildren::Unknown && !question {
             return Ok((Plan::Idle(None), ended, None));
         }
-        let visible = question || activity == RowChildren::Active || handover.is_some();
+        let visible = question || in_working_group(activity, handover);
         Ok((
             plan_row(
                 visible,
@@ -435,6 +460,10 @@ impl Service {
         }
         Ok(())
     }
+}
+
+fn in_working_group(activity: RowChildren, handover: Option<u64>) -> bool {
+    activity == RowChildren::Active || handover.is_some()
 }
 
 pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
