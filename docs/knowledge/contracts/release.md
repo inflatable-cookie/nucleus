@@ -12,13 +12,12 @@ contending on the shared changelog.
 
 Owner: Nucleus maintainers
 
-Nucleus runs from the standalone package under `~/.local/share/nucleus/current`.
-Paseo loads plugin `nucleus` there; the bridge starts the service with
-that package’s `runtime/node` ([service boundary](service-boundary.md)).
-The local main channel is opt-in; release installs stay pinned. Linked-checkout
+The archived TypeScript package ran from `~/.local/share/nucleus/current`.
+Its Paseo bridge loaded the package’s `runtime/node` ([service boundary](service-boundary.md)).
+The local main channel was opt-in, and release installs stayed pinned. Linked-checkout
 rolling and `nucleus link` are retired (Tom, 2026-11-09).
 
-## Rolling the main channel
+## Historical TypeScript main-channel rolls
 
 The roll owner (`service/roll/owner.ts`) checks the configured main channel every
 30 seconds and on an own-repository sync hint. It is a separate detached process,
@@ -134,21 +133,13 @@ repository name; old commit SHAs and PR links in records stay historical, readab
 The new repository goes public at the 0.1.0 release. Renaming, creating, pushing and switching
 visibility are his steps.
 
-## Compiled runtime package
+## Historical TypeScript runtime package
 
-From a clean committed checkout, `effigy build:runtime -- /absolute/new/package-directory`
-produces a standalone package for the build host's platform and architecture. It
-includes that host's Node executable in `runtime/node`, bundled service and CLI
-entries, workers and detached helpers. The build inspects Node’s shared-library
-dependencies with `otool` (macOS) or `ldd` (Linux), copies non-system libraries
-recursively into `runtime/`, and rewrites their load paths to use that directory.
-Unresolved libraries fail the build by name; Linux rewriting requires `patchelf`.
-System libraries remain external. All copied libraries are covered by the package
-manifest. Run `runtime/node bin/queue-cli.mjs` from
-the package; no source, tsx or dependency installation is needed. This build does
-not install, publish, register or activate anything.
-The generated plugin entry wrappers load their bundles from `server/` and `client/`,
-as required by Paseo’s directory compiler.
+The archived TypeScript package included a bundled Node runtime, service and CLI
+entries, workers and detached helpers for its build platform. The build packaged
+non-system shared libraries and covered them in the package manifest. The Paseo
+registration loaded its server and client bundles through generated wrappers.
+The current release route is [engine staging](../../../engine/README.md#stage-an-engine-release).
 
 `build.json` records the exact source revision, input digest, build ID, platform,
 Node version, bundled and external system libraries, size and build time. Builds refuse dirty checkouts or a checkout
@@ -168,9 +159,7 @@ workers, backups and the host-run live comparison. `nucleus data-home` prints
 the resolution and the path inventory. The bridge pins the data directory it
 resolved for the service it spawns (`--data-dir`), so the child serves the store
 the bridge resolved. Checkout CLI runs retain the source
-snapshot fence; compiled runs use their embedded identity. The relocated-package
-proof is `effigy test unit -- test/compiled-runtime.test.ts`; it starts a private
-fixture service, both worker types and a detached validation helper.
+snapshot fence; compiled runs use their embedded identity.
 
 ## Historical TypeScript installation and commands
 

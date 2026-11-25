@@ -23,7 +23,6 @@ alias = "nucleus"
 # Never alias health to qa (or any aggregate that expands into the full suite).
 health = [{ task = "qa:docs:agent-defaults" }]
 setup = "npm ci"
-"build:runtime" = "node scripts/build-runtime.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 # Spec 062 phase 5's install proof: builds the plugin and installs it into the

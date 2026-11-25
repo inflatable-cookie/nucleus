@@ -45,26 +45,11 @@ operations, legacy QA history and host-run reads and accounting through
 it uses. Startup and active host access stay lazy.
 These modules never import or receive `QueueRuntime`.
 
-`service/roll/` owns the main-channel roll (nucleus#1454): `roll.ts` is the roll state
-machine, `owner.ts` the detached roll owner, and `bb-plugin-roll.ts` the BB plugin step.
-The spawn claim, warm standby, drain and readiness waits, the roll session, the
-options and the startup-output capture live in `shared/service/roll/`, which the
-Paseo bridge and the owner both import, so the bridge graph reaches no service
-module. The environment a spawned service reads from its host is composed once in
-`service/host-environment.mjs`: the standalone entry, the roll owner, the spawner
-and the installer's isolated startup proof ask it instead of naming a host
-variable, and `hostHome` pins a private host home for a fixture or proof. Each host integration keeps its own names: Paseo's bridge supplies its own home
-override. The archived TypeScript package used `nucleus integrate` for host
-registration. The remaining legacy BB host channel and
-Paseo bridge can start the TypeScript daemon. The Paseo bridge starts its roll
-owner through an injected process binding. The TypeScript ACP entrypoint
-serves the protocol for fixtures.
-The service serves `queue.service-state` itself over both the socket and the local
-web board (`BRIDGE_CATALOGUE` is retired), while host bridges may augment it with
-local plugin build state. The
-owner connects without a presence claim, so it is never a host and never keeps a
-host-less service alive. The Paseo bridge forwards calls, reports state and reloads
-its plugin after a landed roll; it runs no roll of its own.
+The TypeScript main-channel package roll is retired. The remaining legacy
+standalone environment is composed in `service/host-environment.mjs`. Shared
+roll helpers under `shared/service/roll/` keep the spawner's process options
+and host integration separate. The stopped TypeScript service state handler and
+Paseo forwarding code still share these contracts while their source is removed.
 
 ## Forge module map
 

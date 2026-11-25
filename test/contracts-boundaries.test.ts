@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkBridgeImports } from '../scripts/check-bridge-imports.mjs';
 import ts from 'typescript';
 import * as contracts from '../shared/contracts';
 import * as holds from '../shared/holds';
@@ -95,8 +94,4 @@ test('contracts preserves the domain re-exports and keeps direct-only values in 
       assert.equal(contracts[name as keyof typeof contracts], value, `${path}: ${name} must remain a re-export`);
     }
   }
-});
-
-test('the bridge import gate passes through the split contracts', () => {
-  assert.doesNotThrow(() => checkBridgeImports(resolve(root, '..')));
 });

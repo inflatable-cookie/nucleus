@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 // No native stubs here: this is the deployed board path, where `react-native`
-// resolves to `react-native-web` (see scripts/build-runtime.mjs and
-// scripts/bb/build-board.mjs). Importing `react-native-web` directly exercises the
-// same `normalizeColor` the bundle runs.
+// resolves to `react-native-web` through scripts/build-web.mjs. The direct
+// import exercises the same `normalizeColor` that the browser bundle runs.
 // @ts-expect-error react-native-web ships no types; the test reads its runtime only.
 import normalizeColor from "react-native-web/dist/exports/StyleSheet/compiler/normalizeColor.js";
 // @ts-expect-error react-native-web ships no types; the test reads its runtime only.
