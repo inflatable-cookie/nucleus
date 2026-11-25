@@ -507,6 +507,7 @@ async fn revised_report_opens_its_own_planner_notice() {
         !revised_ready.task.report_task().unwrap().notice_attempted,
         "a changed, authenticated lane artifact must open a new planner notice"
     );
+    fixture.service.host.wait_for_requests().await;
     assert_eq!(fixture.notice_pass().await.unwrap(), Action::Nothing);
     let messages = &fixture.notices.lock().unwrap().sends;
     assert_eq!(messages.len(), 2);
