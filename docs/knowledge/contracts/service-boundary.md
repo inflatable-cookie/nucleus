@@ -45,8 +45,8 @@ operations, legacy QA history and host-run reads and accounting through
 it uses. Startup and active host access stay lazy.
 These modules never import or receive `QueueRuntime`.
 
-The TypeScript runtime owner, native host channel bindings and main-channel
-roll are retired. For service operation, refer to the
+The TypeScript runtime owner and main-channel roll are retired. For service
+operation, refer to the
 [Rust service](../../../engine/README.md#service-pass).
 
 ## Forge module map

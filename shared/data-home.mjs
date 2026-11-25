@@ -48,11 +48,11 @@ export const STORE_MARKERS = ["queue.sqlite", "settings.json", "queue-service.js
  * and keep their exact existing values.
  */
 export const DATA_HOME_ENTRIES = Object.freeze([
-  { path: "queue.sqlite", kind: "durable", owner: "server/runtime-owner.ts" },
-  { path: "queue.sqlite-wal", kind: "durable", owner: "server/runtime-owner.ts" },
-  { path: "queue.sqlite-shm", kind: "durable", owner: "server/runtime-owner.ts" },
-  { path: "settings.json", kind: "durable", owner: "server/runtime-owner.ts" },
-  { path: "profiles/", kind: "durable", owner: "server/runtime-owner.ts" },
+  { path: "queue.sqlite", kind: "durable", owner: "retired TypeScript runtime" },
+  { path: "queue.sqlite-wal", kind: "durable", owner: "retired TypeScript runtime" },
+  { path: "queue.sqlite-shm", kind: "durable", owner: "retired TypeScript runtime" },
+  { path: "settings.json", kind: "durable", owner: "retired TypeScript runtime" },
+  { path: "profiles/", kind: "durable", owner: "retired TypeScript runtime" },
   { path: "tickets/", kind: "durable", owner: "server/callback.ts" },
   { path: "acp/", kind: "durable", owner: "core/acp/binding.ts (Spec 065 session records and checkout bindings)" },
   { path: "backups/", kind: "durable", owner: "core/store/backup-worker.mjs (fixtures and a non-live store's own set); core/store/data-home-retention.ts (live stale copies)" },
@@ -64,7 +64,7 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: ".external-backups/", kind: "durable", owner: "core/store/data-home-retention.ts (migration copy; live data home only)" },
   { path: "project-validation/", kind: "durable", owner: "core/qa/project-validation-supervisor.ts" },
   { path: "callback.sock", kind: "ephemeral", owner: "server/callback.ts" },
-  { path: "worker-report.mjs", kind: "derived", owner: "server/runtime-owner.ts" },
+  { path: "worker-report.mjs", kind: "derived", owner: "retired TypeScript runtime" },
   { path: "queue-service.sock", kind: "ephemeral", owner: "server/service/identity.ts" },
   { path: "queue-service.json", kind: "durable", owner: "server/service/identity.ts" },
   { path: "queue-service-roll.json", kind: "durable", owner: "server/service/identity.ts" },
