@@ -1124,6 +1124,7 @@ export function PlanningTab({
   repositoryBadges,
   tasks = [],
   queuedCounts = [],
+  taskCounts,
   readPlanVersion,
   c,
 }: {
@@ -1146,6 +1147,7 @@ export function PlanningTab({
   /** The board's live tasks and its held-back queued counts: a project row counts each task once (Spec 019). */
   tasks?: TaskSummary[];
   queuedCounts?: readonly { repoPath: string; count: number }[];
+  taskCounts?: ReadonlyMap<string, { live: number; attention: number }>;
   /** Reads one saved version of a project's plan (`plan.get`), for History. */
   readPlanVersion?: (project: string, version: number) => Promise<ProjectPlan>;
   /** Every project and its plan, so the chooser and the lane search see past the tab's own scope. */
@@ -1266,12 +1268,12 @@ export function PlanningTab({
     const parts = projectStatusParts(
       group,
       section.latest,
-      projectStatus({
+      { ...projectStatus({
         project: section.project,
         plan: section.latest,
         tasks,
         queuedCounts,
-      }),
+      }), ...taskCounts?.get(section.project.key) },
     );
     return { ...base, state: { kind: "ready", ...parts } };
   };
