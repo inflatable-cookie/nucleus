@@ -28,6 +28,7 @@ export type LanePlace = {
 
 export type LaneFinderRow = {
   key: string;
+  project?: string;
   title: string;
   aim: string;
   status: LaneView["status"];
@@ -55,9 +56,10 @@ const sameRepository = (a: RepositoryHint, b: RepositoryHint) =>
 
 /** Every project that lists one of the lane's repositories. */
 export function laneProjects(
-  lane: { repositories: RepositoryHint[] },
+  lane: { project?: string; repositories: RepositoryHint[] },
   projects: readonly Project[],
 ): Project[] {
+  if (lane.project) return projects.filter((project) => project.key === lane.project);
   return projects.filter((project) =>
     project.repositories.some((repo) =>
       lane.repositories.some((listed) => sameRepository(repo, listed)),
@@ -83,7 +85,7 @@ export function planPosition(
 
 /** The lane's places across projects, in project-name order. A project whose plan does not list the lane still appears, without a position. */
 export function lanePlaces(
-  lane: Pick<LaneView, "key" | "repositories">,
+  lane: Pick<LaneView, "key" | "project" | "repositories">,
   projects: readonly Project[],
   plans: readonly ProjectPlan[],
 ): LanePlace[] {
@@ -144,6 +146,7 @@ export function laneFinderRows(input: {
       const places = lanePlaces(lane, input.projects, input.plans);
       return {
         key: lane.key,
+        project: lane.project ?? (places.length === 1 ? places[0]?.key : undefined),
         title: lane.title,
         aim: lane.aim,
         status: lane.status,
