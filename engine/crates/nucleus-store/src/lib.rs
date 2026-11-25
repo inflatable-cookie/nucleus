@@ -358,12 +358,11 @@ impl Store {
     // Rebuild with the expanded phase constraint. Foreign keys are checked
     // after the table has its original name again, inside the migration transaction.
     fn migrate_report_tasks(tx: &Transaction<'_>) -> Result<(), StoreError> {
+        // Keep the source projection fixed to the schema before report tasks.
+        const OLD_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, version";
         tx.execute_batch(&TASK_SCHEMA.replacen("CREATE TABLE tasks", "CREATE TABLE tasks_v10", 1))?;
-        let columns = TASK_COLUMNS
-            .strip_suffix(", report_task, work_continuation")
-            .expect("task columns before schema ten");
         tx.execute_batch(&format!(
-            "INSERT INTO tasks_v10 ({columns}, version) SELECT {columns}, version FROM tasks;
+            "INSERT INTO tasks_v10 ({OLD_COLUMNS}) SELECT {OLD_COLUMNS} FROM tasks;
              DROP TABLE tasks;
              ALTER TABLE tasks_v10 RENAME TO tasks;
              CREATE INDEX active_tasks ON tasks (id)
