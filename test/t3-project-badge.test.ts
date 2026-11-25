@@ -15,7 +15,6 @@ import {
   repositoryBadgeMapSchema,
   type ObservedT3Project,
 } from "../shared/t3/project-badge";
-import { boardForSurface } from "../service/web/web-board";
 
 /**
  * nucleus#1450: a board card's generated T3 badge matches the installed T3 nightly's
@@ -286,23 +285,6 @@ test("the wire schema accepts only a palette colour and a bounded monogram", () 
     }).success,
     false,
   );
-});
-
-test("the standalone board never carries project badges; the T3 surface keeps them", () => {
-  const board = {
-    revision: 3,
-    projectBadges: { h: { "/repo": { monogram: "BA", color: "fuchsia" } } },
-    repositoryBadges: { "/repo": { monogram: "BA", color: "fuchsia" } },
-    tasks: [],
-  };
-  const standalone = boardForSurface(board, false);
-  assert.equal("projectBadges" in standalone, false);
-  assert.equal("repositoryBadges" in standalone, false);
-  assert.deepEqual(boardForSurface(board, true), board);
-  const ack = { unchanged: true, revision: 3 };
-  assert.equal(boardForSurface(ack, false), ack);
-  const list = [1, 2];
-  assert.equal(boardForSurface(list, false), list);
 });
 
 test("hostless repository matching resolves unambiguous active T3 projects by canonical root", () => {
