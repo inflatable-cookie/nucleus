@@ -348,3 +348,28 @@ async fn a_legacy_copy_is_verified_before_settings_commit_and_confirmation_is_ex
             .is_none()
     );
 }
+
+#[test]
+fn legacy_only_falls_back_for_an_absent_current_item() {
+    let mut services = Vec::new();
+    let recovered = read_legacy("fixture-org", |service, org| {
+        assert_eq!(org, "fixture-org");
+        services.push(service.to_owned());
+        Ok((service == "paseo-queue.github-reviewer").then(|| b"fixture-legacy".to_vec()))
+    })
+    .expect("older slot");
+    assert_eq!(recovered.expose_secret(), "fixture-legacy");
+    assert_eq!(
+        services,
+        ["nucleus.github-reviewer", "paseo-queue.github-reviewer"]
+    );
+    let mut count = 0;
+    assert!(matches!(
+        read_legacy("fixture-org", |_, _| {
+            count += 1;
+            Err(AccountError::Keychain)
+        }),
+        Err(AccountError::Keychain)
+    ));
+    assert_eq!(count, 1);
+}

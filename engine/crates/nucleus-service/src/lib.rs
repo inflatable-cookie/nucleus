@@ -307,6 +307,12 @@ pub struct PassOutcome {
     pub result: Result<Action, ServiceError>,
 }
 
+impl Drop for Service {
+    fn drop(&mut self) {
+        self.github_accounts.cancel_pending();
+    }
+}
+
 impl Service {
     /// Open the enabled engine on its pinned volume and claim its write lock.
     ///

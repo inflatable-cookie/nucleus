@@ -600,6 +600,13 @@ impl GitHubAccounts {
         Ok(flow.view())
     }
 
+    pub(crate) fn cancel_pending(&self) {
+        let mut guard = lock(&self.flow);
+        if let Some(flow) = guard.take() {
+            flow.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn cancel(&self, id: &str) -> Result<(), AccountError> {
         let mut guard = lock(&self.flow);
         let flow = guard
@@ -775,33 +782,34 @@ const LEGACY_READER: Option<LegacyReader> = None;
 
 #[cfg(target_os = "macos")]
 fn read_macos_legacy(organisation: &str) -> Result<SecretString, AccountError> {
-    // Longhorn's consumer slots cannot address the historical bare organisation key.
-    // Only this legacy read uses macOS security. New grants use Longhorn for every operation.
+    // Longhorn consumer slots cannot address the original bare organisation key.
+    // Use the existing Security.framework dependency for this exact read only.
+    read_legacy(organisation, |service, account| {
+        match security_framework::passwords::get_generic_password(service, account) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.code() == -25_300 => Ok(None), // errSecItemNotFound
+            Err(_) => Err(AccountError::Keychain),
+        }
+    })
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn read_legacy(
+    organisation: &str,
+    mut read: impl FnMut(&str, &str) -> Result<Option<Vec<u8>>, AccountError>,
+) -> Result<SecretString, AccountError> {
     for service in ["nucleus.github-reviewer", "paseo-queue.github-reviewer"] {
-        let output = std::process::Command::new("/usr/bin/security")
-            .env_clear()
-            .args([
-                "find-generic-password",
-                "-s",
-                service,
-                "-a",
-                organisation,
-                "-w",
-            ])
-            .output()
-            .map_err(|_| AccountError::Keychain)?;
-        match output.status.code() {
-            Some(0) => {
-                let token = String::from_utf8(output.stdout).map_err(|_| AccountError::Identity)?;
-                let secret = SecretString::from(token.trim().to_owned());
-                if secret.expose_secret().is_empty() {
-                    return Err(AccountError::Identity);
-                }
+        if let Some(bytes) = read(service, organisation)? {
+            let token = String::from_utf8(bytes).map_err(|_| AccountError::Identity)?;
+            let secret = SecretString::from(token);
+            let trimmed = secret.expose_secret().trim();
+            if trimmed.is_empty() {
+                return Err(AccountError::Identity);
+            }
+            if trimmed.len() == secret.expose_secret().len() {
                 return Ok(secret);
             }
-            // The command returns errSecItemNotFound (-25300) as an 8-bit status.
-            Some(44) => {}
-            _ => return Err(AccountError::Keychain),
+            return Ok(SecretString::from(trimmed.to_owned()));
         }
     }
     Err(AccountError::NoLegacyGrant)
