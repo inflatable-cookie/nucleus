@@ -614,6 +614,25 @@ Later decisions carry their own attribution.
     - The skill shows the field in its admission example. Without the field,
       nothing is sent.
 
+43. **Storage stays bounded.** Tom, 2026-11-25: "What's the current state of
+    pruning the database and T3 archived threads? They will grow really big if
+    we don't deal with them". He approved the planner's proposals in the same
+    exchange.
+    - Archived Nucleus task threads are pruned under the Dispatch thread
+      retention settings, defaulting to 3 days and a 12-hour sweep, as ruled on
+      2026-11-19. Only the engine's recorded task parents, workers and
+      reviewers are deleted. Your own threads are never touched.
+    - The 1,500 archived threads left by the stopped TypeScript engine, each
+      matched to its recorded task agents or parent bindings, are deleted once
+      in bounded batches.
+    - Planning history keeps every version from the last 30 days plus the
+      newest 20 versions of each record. Older versions are compacted after a
+      verified backup. Existing backups keep the full history until they age
+      out.
+    - The engine takes scheduled tiered backups of its database (hourly, daily
+      and weekly, as in Spec 028) under the retention settings, not only before
+      upgrades and rolls.
+
 ## The model
 
 ### Stored state per task
