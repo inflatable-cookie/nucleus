@@ -18,9 +18,6 @@ import { writeOwnedJson } from '../machine/owned-file.mjs';
  * An install that still has data in the retired `<workRoot>/queue/...` locations
  * keeps working: `retiredWorkPlacement` names those paths so readers can find
  * existing data, and nothing here writes to them.
- *
- * `test/work-root-settings.test.ts` proves the defaults, overrides and refusals;
- * `test/storage-placement.test.ts` proves the Storage page's write path.
  */
 const CLASSES = [
   // Projects the class default, its settings key and environment override, and

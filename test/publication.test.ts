@@ -183,19 +183,19 @@ test('publication loads local configuration, honors environment precedence and f
 
 test('publication synthetic volume exceptions apply only to the exact file and prefix', () => {
   const sample = join('/', 'Volumes', 'example-volume', 'queue');
-  const root = fixture({ 'test/store-backups.test.ts': sample });
+  const root = fixture({ 'test/backups-panel-ui.test.ts': sample });
   assert.deepEqual(checkPublication(root, { env }), []);
-  write(root, 'test/store-backups.test.ts', sample.replace('example-volume', 'example-volume-other'));
+  write(root, 'test/backups-panel-ui.test.ts', sample.replace('example-volume', 'example-volume-other'));
   assert.match(checkPublication(root, { env }).join('\n'), /absolute home or volume path/);
-  write(root, 'test/store-backups.test.ts', `${sample}/../../other-volume/file`);
+  write(root, 'test/backups-panel-ui.test.ts', `${sample}/../../other-volume/file`);
   assert.match(checkPublication(root, { env }).join('\n'), /absolute home or volume path/);
-  write(root, 'test/store-backups.test.ts', sample);
+  write(root, 'test/backups-panel-ui.test.ts', sample);
   write(root, 'test/unlisted.test.ts', sample);
   execFileSync('git', ['add', '--all'], { cwd: root });
   assert.match(checkPublication(root, { env }).join('\n'), /unlisted.test.ts: absolute home or volume path/);
-  write(root, 'test/store-backups.test.ts', `${sample} private-consumer`);
+  write(root, 'test/backups-panel-ui.test.ts', `${sample} private-consumer`);
   write(root, '.publication-denylist', 'private-consumer');
-  assert.match(checkPublication(root, { env }).join('\n'), /store-backups.test.ts: private name/);
+  assert.match(checkPublication(root, { env }).join('\n'), /backups-panel-ui.test.ts: private name/);
 });
 
 test('publication scans symlink targets without reading through them', () => {
