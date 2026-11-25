@@ -88,6 +88,8 @@ pub enum StoreError {
     PlanningMissing,
     #[error("planning input is invalid")]
     PlanningInput,
+    #[error("decision option labels must be distinct")]
+    DuplicateDecisionOptionLabel,
     #[error("planning record conflicts with the current state")]
     PlanningConflict,
     #[error("project {0:?} has already received 20 tells in the last hour. Send later.")]

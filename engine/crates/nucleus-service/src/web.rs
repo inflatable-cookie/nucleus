@@ -1301,7 +1301,10 @@ impl IntoResponse for ApiError {
                     | ServiceError::DependencyInput(_)
                     | ServiceError::TaskReferenceAmbiguous
                     | ServiceError::TaskReferenceNeedsRepository
-                    | ServiceError::Store(nucleus_store::StoreError::PlanningInput)
+                    | ServiceError::Store(
+                        nucleus_store::StoreError::PlanningInput
+                        | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
+                    )
                     | ServiceError::Project
                     | ServiceError::Settings(
                         nucleus_store::StorageError::InvalidSettings(_)

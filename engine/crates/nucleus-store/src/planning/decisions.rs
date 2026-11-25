@@ -21,6 +21,33 @@ pub struct UsagePermission<'a> {
     pub at_ms: u64,
 }
 
+impl DecisionInput {
+    /// Validate a new decision, including the identity and labels of its choices.
+    ///
+    /// # Errors
+    /// Returns an error for invalid fields or repeated option labels after trimming.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        let mut ids = BTreeSet::new();
+        if self.question.trim().is_empty()
+            || self.options.len() < 2
+            || !self.options.iter().all(|option| {
+                valid_key(&option.id) && !option.label.trim().is_empty() && ids.insert(&option.id)
+            })
+        {
+            return Err(StoreError::PlanningInput);
+        }
+        let mut labels = BTreeSet::new();
+        if !self
+            .options
+            .iter()
+            .all(|option| labels.insert(option.label.trim()))
+        {
+            return Err(StoreError::DuplicateDecisionOptionLabel);
+        }
+        Ok(())
+    }
+}
+
 impl Store {
     /// Read the project's decisions, optionally limited to those awaiting answers.
     ///
@@ -277,15 +304,7 @@ fn new_decision(
     stamp: WriteAt<'_>,
     task: Option<DecisionTarget>,
 ) -> Result<Decision, StoreError> {
-    let mut ids = BTreeSet::new();
-    if input.question.trim().is_empty()
-        || input.options.len() < 2
-        || !input.options.iter().all(|option| {
-            valid_key(&option.id) && !option.label.trim().is_empty() && ids.insert(&option.id)
-        })
-    {
-        return Err(StoreError::PlanningInput);
-    }
+    input.validate()?;
     Ok(Decision {
         id,
         project_id: project.into(),
