@@ -72,11 +72,11 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: "queue-service-executor-fault.json", kind: "durable", owner: "server/service/identity.ts" },
   { path: "web-sessions.json", kind: "durable", owner: "retired TypeScript web board" },
   { path: "queue-service.claim.json", kind: "ephemeral", owner: "legacy TypeScript service launcher" },
-  { path: "queue-service-<pid>.maintenance", kind: "ephemeral", owner: "server/service/standby.ts" },
-  { path: "queue-standby-<pid>.ready", kind: "ephemeral", owner: "server/service/standby.ts" },
+  { path: "queue-service-<pid>.maintenance", kind: "ephemeral", owner: "retired TypeScript standby" },
+  { path: "queue-standby-<pid>.ready", kind: "ephemeral", owner: "retired TypeScript standby" },
   { path: "oversize-response.json", kind: "derived", owner: "server/service/server.ts" },
-  { path: "host-run/", kind: "ephemeral", owner: "service/callbacks/host-run-endpoint.ts" },
-  { path: "run/", kind: "ephemeral", owner: "service/callbacks/host-run-endpoint.ts" },
+  { path: "host-run/", kind: "ephemeral", owner: "retired TypeScript host-run endpoint" },
+  { path: "run/", kind: "ephemeral", owner: "retired TypeScript host-run endpoint" },
 ]);
 
 /** The refusal names the path it compared, so the caller never has to go looking. */
