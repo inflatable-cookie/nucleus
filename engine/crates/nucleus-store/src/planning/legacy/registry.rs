@@ -152,12 +152,10 @@ fn apply(source: &Connection, settings: &SettingsFile) -> Result<ProjectImportRe
     let storage = settings.storage()?;
     storage.database().verify()?;
     let _lock = storage.lock_profile()?;
-    let mut connection = Store::connect_database(
-        &storage.database().path().join(DATABASE_FILE),
-        OpenFlags::empty(),
-    )?;
+    let database = storage.database().path().join(DATABASE_FILE);
+    let mut connection = Store::connect_database(&database, OpenFlags::empty())?;
     let schema = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    Store::prepare_schema(&schema, false)?;
+    Store::prepare_schema(&schema, false, &database, Some(storage.backup()))?;
     schema.commit()?;
     connection.pragma_update(None, "foreign_keys", true)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;

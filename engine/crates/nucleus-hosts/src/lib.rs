@@ -43,8 +43,9 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ActiveChild, ArchiveWrite, DoneArchive, ParentAttempt, ParentRun, ParentSendError, ParentStep,
-    ParentWrite, is_parent_reentry, is_pinned_parent_hold, parent_thread,
+    ActiveChild, ArchiveWrite, DoneArchive, FrozenParentWrite, ParentAttempt, ParentRun,
+    ParentSendError, ParentStep, ParentWrite, is_parent_reentry, is_pinned_parent_hold,
+    parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -139,14 +140,6 @@ pub enum HostError {
     },
     #[error("parent row is snoozed until {until} ms (verified revision {revision})")]
     ParentSnoozed { until: u64, revision: u64 },
-    #[error(
-        "parent ACP binding changed (prepared revision {prepared}, observed revision {observed}; root, provider and model matches expected [true, true, true], observed {matches:?})"
-    )]
-    ParentBindingMismatch {
-        prepared: u64,
-        observed: u64,
-        matches: [bool; 3],
-    },
     #[error(
         "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, custody before {activity_before:?}, custody now {activity_now:?}; values are fingerprints)"
     )]
@@ -471,6 +464,14 @@ impl T3 {
             }
             None => Some(self.endpoint().to_owned()),
         }
+    }
+
+    /// Identify the running native process that owns this store's receipts.
+    #[must_use]
+    pub fn verified_runtime_identity(&self) -> Option<String> {
+        self.runtime_descriptor.as_deref().and_then(|descriptor| {
+            ServerRuntime::read(descriptor, self.rpc.endpoint()).map(|server| server.identity())
+        })
     }
 
     /// Use the connected T3 server's own runtime descriptor for custody checks.

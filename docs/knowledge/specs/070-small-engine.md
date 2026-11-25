@@ -458,7 +458,9 @@ Later decisions carry their own attribution.
     This also applies to report-only work. A first worker without a run or a
     retained role returns to Queued if capacity closes before reservation.
     An unresolved parent attempt keeps its task version and waits for capacity.
-    It keeps its original admission order and reuses its native parent row
+    Schema 12 reads that decision from the current delivery occurrence. Exact
+    acceptance, refusal before send or failure releases that occurrence's guard.
+    The task keeps its original admission order and reuses its native parent row
     on a later dispatch.
     Admission creates no T3 parent. The TypeScript path uses
     `Dispatch.dispatchQueued` and `WorkerLauncher.launchAgentOnce`, then
@@ -717,6 +719,36 @@ Cargo builds" rule for the `engine/` workspace only:
   board into a revision directory under the configured builds root, outside Oxide storage.
   The current and rollback launchers use these release copies. See
   [engine release staging](../../../engine/README.md#stage-an-engine-release).
+
+### Parent delivery storage and upgrade
+
+Planner ruling, 2026-11-24. Schema 12 stores one frozen parent command, due
+time and result per occurrence. The engine persists the exact method, wire
+payload, binding and verified native runtime before sending. An accepted reply
+or exact command-linked evidence settles that occurrence. The task version,
+current destination, role and operator snooze still authorize the wire. A
+pending command can replay only in the verified same native runtime. A new or
+unverified native runtime gets one bounded opportunity to confirm delivery
+from exact positive evidence. A missing or inconclusive result parks the
+occurrence and directs the operator to open the thread and use Next. A
+replacement store may advertise the same environment ID and sequence, so those
+values do not establish continuity.
+
+Before a schema upgrade the engine copies the committed database into its
+configured backup root and verifies the copy read-only. Schema 12 decodes
+schema 10 and 11 parent history once. Historical events remain readable as
+history. New parent delivery does not write a compatibility ledger. Installed
+releases move forward. Earlier engines reject schema 12, and restoring an older
+backup is an explicit operator-directed recovery with dispatch held until
+native effects after that backup are reconciled. Ship schema 12 as a
+standalone release after project removal (#642). The planner approved the
+measured 76-line production Rust increase for this scoped change.
+
+The shared role and parent wire is a separate reduction after scheduler
+retry deadlines (#644). Consolidate common command construction, frozen
+payload and receipt handling while keeping each role's authorization.
+Limit each review unit to three production modules and report its measured
+production Rust delta.
 
 ## Migration
 

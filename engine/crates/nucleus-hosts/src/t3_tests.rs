@@ -841,7 +841,7 @@ async fn parent_reentry_ignores_unrelated_completed_revisions_but_keeps_the_wire
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
     assert!(matches!(
-        host.write_verified_parent(check_pending).await,
+        host.write_parent(check_pending).await,
         Err(crate::ParentSendError::NotSent(_))
     ));
     row["pendingRuntimeRequest"] = Value::Null;
@@ -851,13 +851,13 @@ async fn parent_reentry_ignores_unrelated_completed_revisions_but_keeps_the_wire
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":23,"thread":worker}));
     assert!(matches!(
-        host.write_verified_parent(check_child).await,
+        host.write_parent(check_child).await,
         Err(crate::ParentSendError::NotSent(_))
     ));
     worker["activeRunId"] = json!("native-worker-run");
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":24,"thread":worker}));
-    host.write_verified_parent(replay).await.unwrap();
+    host.write_parent(replay).await.unwrap();
     let seen = native.await.unwrap();
     assert_thread_subscription(&seen[0], &parent);
     assert_eq!(seen.len(), 2);
@@ -880,6 +880,7 @@ async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
         Some(crate::ParentAttempt {
             command: "fixture-parent-command",
             released: false,
+            replay_launch: false,
         }),
         quiet_pass(&client).profile_catalog(),
     ))
@@ -912,6 +913,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
         Some(crate::ParentAttempt {
             command: "fixture-parent-command",
             released: true,
+            replay_launch: false,
         }),
         quiet_pass(&client).profile_catalog(),
     ))
@@ -948,32 +950,17 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
 }
 
 #[tokio::test]
-async fn missing_parent_send_reuses_its_id_while_its_idle_marker_holds() {
+async fn an_unpinned_parent_intent_without_a_frozen_wire_is_not_replayed() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let thread = crate::parent_thread(checkout.path());
     let command = format!("{thread}-hold-12");
-    let mut compact = parent_snapshot(&binding, "completed", false);
-    compact["hasMoreHistory"] = json!(false);
-    compact["turnItemsOmitLocalVisible"] = json!(true);
-    compact["projection"]["turnItems"] = json!([]);
-    compact["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:11:15Z");
-    let mut row = compact["projection"]["thread"].clone();
-    row["latestRunId"] = json!(NATIVE_RUN);
-    row["status"] = json!("completed");
-    row["pendingBackgroundTasks"] = json!([]);
-    let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(compact),
-        ),
-        ("orchestration.dispatchCommand", Response::Success),
-    ])
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::ParentSnapshot(parent_snapshot(&binding, "completed", false)),
+    )])
     .await;
-    host.rpc.use_held_shell();
-    host.rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{"threads":[row],"projects":[]}}));
-    let crate::ParentStep::Write(write) = Box::pin(host.prepare_parent(
+    let step = Box::pin(host.prepare_parent(
         &binding,
         "fixture-acp",
         "Fixture",
@@ -981,19 +968,14 @@ async fn missing_parent_send_reuses_its_id_while_its_idle_marker_holds() {
         Some(crate::ParentAttempt {
             command: &command,
             released: false,
+            replay_launch: false,
         }),
         quiet_pass(&host).profile_catalog(),
     ))
     .await
-    .unwrap() else {
-        panic!("the unsent intent should become dispatchable");
-    };
-    assert_eq!(write.command_id(), Some(command.as_str()));
-    host.write_parent(write).await.unwrap();
-    let sent = native.await.unwrap();
-    assert_eq!(sent.len(), 2);
-    let payload: Value = serde_json::from_str(sent[1].payload.get()).unwrap();
-    assert_eq!(payload["commandId"], command);
+    .unwrap();
+    assert!(matches!(step, crate::ParentStep::DeliveryUnknown));
+    assert_eq!(native.await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -1017,6 +999,7 @@ async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() 
         Some(crate::ParentAttempt {
             command: "ambiguous-command",
             released: false,
+            replay_launch: false,
         }),
         quiet_pass(&host).profile_catalog(),
     ))
@@ -1024,6 +1007,69 @@ async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() 
     .unwrap();
     assert!(matches!(step, crate::ParentStep::DeliveryUnknown));
     assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn parent_launch_replay_keeps_the_original_wire() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let command = format!("{thread}-launch");
+    let read = "orchestration.subscribeThread";
+    let launch = "orchestration.launchThread";
+    let (host, native) = server(vec![
+        (read, missing_thread(&thread)),
+        (
+            "server.getConfig",
+            setup_config(Some(setup_instance(RUST_LAUNCHER)), true),
+        ),
+        (launch, Response::Success),
+        (read, missing_thread(&thread)),
+        (launch, Response::Success),
+    ])
+    .await;
+    let pass = quiet_pass(&host);
+    let prepare = |title, prompt, prior| {
+        Box::pin(host.prepare_parent(
+            &binding,
+            "nucleus-rust",
+            title,
+            prompt,
+            prior,
+            pass.profile_catalog(),
+        ))
+    };
+    let crate::ParentStep::Write(first) = prepare("Original task", "Original prompt", None)
+        .await
+        .unwrap()
+    else {
+        panic!("prepare the original parent");
+    };
+    let frozen = serde_json::to_string(first.freeze()).unwrap();
+    host.write_parent(first).await.unwrap();
+
+    let crate::ParentStep::Write(mut replay) = prepare(
+        "Edited task",
+        "Edited prompt",
+        Some(crate::ParentAttempt {
+            command: &command,
+            released: false,
+            replay_launch: true,
+        }),
+    )
+    .await
+    .unwrap() else {
+        panic!("prepare the original launch after a lost reply");
+    };
+    replay
+        .use_frozen(serde_json::from_str(&frozen).unwrap())
+        .unwrap();
+    host.write_parent(replay).await.unwrap();
+    let sent = native.await.unwrap();
+    assert_eq!(sent[2].payload.get(), sent[4].payload.get());
+    let payload: Value = serde_json::from_str(sent[4].payload.get()).unwrap();
+    assert_eq!(payload["commandId"], command);
+    assert_eq!(payload["initialMessage"]["text"], "Original prompt");
 }
 
 #[tokio::test]
@@ -1076,7 +1122,7 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
     assert!(matches!(
-        host.write_verified_parent(changed).await,
+        host.write_parent(changed).await,
         Err(crate::ParentSendError::NotSent(HostError::Binding))
     ));
     row["providerInstanceId"] = json!("fixture-acp");
@@ -1084,7 +1130,7 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
     assert!(matches!(
-        host.write_verified_parent(refused).await,
+        host.write_parent(refused).await,
         Err(crate::ParentSendError::NotSent(
             HostError::OperatorSnoozed { .. }
         ))
@@ -1096,6 +1142,7 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
     let crate::ParentStep::Write(replay) = prepare(Some(crate::ParentAttempt {
         command: &command,
         released: false,
+        replay_launch: false,
     }))
     .await
     .unwrap() else {
@@ -1201,128 +1248,63 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":19,"thread":child_row}));
     assert!(matches!(
-        host.write_verified_parent(next).await,
+        host.write_parent(next).await,
         Err(crate::ParentSendError::NotSent(HostError::Uncertain))
     ));
     assert_eq!(native.await.unwrap().len(), 3);
 }
 
 #[tokio::test]
-async fn bounded_parent_custody_converges_after_visibility_changes() {
+async fn bounded_parent_refresh_keeps_the_held_custody_fence() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
-    let thread = crate::parent_thread(checkout.path());
-    let command = format!("{thread}-hold-16");
-    let mut prepared = parent_snapshot(&binding, "completed", false);
-    prepared["hasMoreHistory"] = json!(true);
-    prepared["historyCursor"] = json!("older-turns");
-    prepared["turnItemsOmitLocalVisible"] = json!(true);
-    prepared["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
-    let mut fresh = prepared.clone();
+    let mut first = parent_snapshot(&binding, "completed", false);
+    first["hasMoreHistory"] = json!(true);
+    first["historyCursor"] = json!("older-turns");
+    first["turnItemsOmitLocalVisible"] = json!(true);
+    first["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
+    let mut fresh = first.clone();
     fresh["snapshotSequence"] = json!(18);
     fresh["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:39:00Z");
-    let mut row = prepared["projection"]["thread"].clone();
+    let mut row = first["projection"]["thread"].clone();
     row["latestRunId"] = json!(NATIVE_RUN);
     row["status"] = json!("completed");
     row["pendingBackgroundTasks"] = json!([]);
-    let mut changed = fresh.clone();
-    changed["snapshotSequence"] = json!(19);
-    changed["projection"]["runtimeRequests"] = json!([{"kind":"approval","status":"pending"}]);
     let read = "orchestration.subscribeThread";
     let (host, native) = server(vec![
-        (read, Response::ParentSnapshot(prepared)),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(changed)),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(fresh.clone())),
-        (read, Response::ParentSnapshot(fresh.clone())),
+        (read, Response::ParentSnapshot(first)),
         (read, Response::ParentSnapshot(fresh)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
     .await;
+    host.rpc.use_held_shell();
     host.rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{
             "snapshotSequence":16, "threads":[row], "projects":[]
         }}));
-    let pass = quiet_pass(&host);
-    let prepare = || {
-        Box::pin(host.prepare_parent(
-            &binding,
-            "fixture-acp",
-            "Fixture",
-            "Preparing the task thread.",
-            Some(crate::ParentAttempt {
-                command: &command,
-                released: false,
-            }),
-            pass.profile_catalog(),
-        ))
-    };
-    let crate::ParentStep::Write(mut first) = prepare().await.unwrap() else {
-        panic!("idle parent should prepare a message");
-    };
-    assert_stale_shell_refusal(&host, &mut first).await;
-
-    row["title"] = json!("Updated title");
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
-    let crate::ParentStep::Write(mut second) = prepare().await.unwrap() else {
-        panic!("fresh held-shell revision covers the compact snapshot");
-    };
-    let error = host
-        .verify_parent_write(&mut second)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("active run or runtime request"), "{error}");
+    let prepare = || host.prepare_parent_refresh(&binding, "fixture-acp");
     let mut verified = Vec::new();
     for _ in 0..2 {
-        let crate::ParentStep::Write(mut write) = prepare().await.unwrap() else {
-            panic!("prepare an idle parent message");
-        };
-        host.verify_parent_write(&mut write).await.unwrap();
-        verified.push(write);
+        verified.push(prepare().await.unwrap().unwrap());
     }
     row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
     host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
     assert_repeat_custody_refusal(&host, verified).await;
     row["pendingBackgroundTasks"] = json!([]);
     row["updatedAt"] = json!("2026-11-24T17:39:00Z");
     host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
-    let crate::ParentStep::Write(last) = prepare().await.unwrap() else {
-        panic!("the task can replan once custody converges");
-    };
-    assert_eq!(last.command_id(), Some(command.as_str()));
-    host.write_parent(last).await.unwrap();
-    assert_eq!(native.await.unwrap().len(), 11);
-}
-
-async fn assert_stale_shell_refusal(host: &T3, write: &mut crate::ParentWrite) {
-    let error = host
-        .verify_parent_write(write)
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    host.write_parent(prepare().await.unwrap().unwrap())
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("matching shell background coverage missing"),
-        "{error}"
-    );
-    assert!(
-        error.contains("prepared revision 16, observed revision Some(18)"),
-        "{error}"
-    );
+        .unwrap();
+    assert_eq!(native.await.unwrap().len(), 3);
 }
 
 async fn assert_repeat_custody_refusal(host: &T3, verified: Vec<crate::ParentWrite>) {
     let mut refusals = Vec::new();
     for write in verified {
-        let Err(crate::ParentSendError::NotSent(error)) = host.write_verified_parent(write).await
-        else {
+        let Err(crate::ParentSendError::NotSent(error)) = host.write_parent(write).await else {
             panic!("new background work must refuse the write before the wire");
         };
         refusals.push(error.to_string());

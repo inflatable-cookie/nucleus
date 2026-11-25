@@ -7,6 +7,7 @@ pub use board_state::BoardTimes;
 mod dependencies;
 mod inbox;
 mod numbers;
+mod parent_delivery;
 pub mod planning;
 mod settings;
 mod settings_domains;
@@ -31,6 +32,7 @@ pub use dependencies::{
 };
 pub use inbox::InboxBinding;
 pub use numbers::TaskNumberSeed;
+pub use parent_delivery::{ParentDelivery, ParentResult};
 pub use settings::{
     Backups, BargePaths, EngineSettings, EngineStorage, RetentionSettings, SettingsFile,
     SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
@@ -48,7 +50,7 @@ pub use usage::{ProfileUsage, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation";
@@ -68,6 +70,8 @@ pub enum StoreError {
     Storage(#[from] StorageError),
     #[error("unsupported engine database (application {application}, version {version})")]
     Incompatible { application: i32, version: i32 },
+    #[error("could not verify the pre-upgrade engine database backup")]
+    UpgradeBackup,
     #[error("the report-task migration found a missing database reference")]
     ReportMigrationReferences,
     #[error("task identity is immutable")]
@@ -184,13 +188,23 @@ impl Store {
     pub fn open(storage: &EngineStorage) -> Result<Self, StoreError> {
         let directory = storage.database();
         directory.ensure()?;
-        Self::open_database(&directory.path().join(DATABASE_FILE))
+        Self::open_database_with_backup(
+            &directory.path().join(DATABASE_FILE),
+            Some(storage.backup()),
+        )
     }
 
     fn open_database(path: &Path) -> Result<Self, StoreError> {
+        Self::open_database_with_backup(path, None)
+    }
+
+    fn open_database_with_backup(
+        path: &Path,
+        backup: Option<&StorageDirectory>,
+    ) -> Result<Self, StoreError> {
         let mut connection = Self::connect_database(path, OpenFlags::SQLITE_OPEN_CREATE)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Self::prepare_schema(&tx, true)?;
+        Self::prepare_schema(&tx, true, path, backup)?;
         Self::check_legacy_project_import(&tx)?;
         tx.commit()?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -210,7 +224,12 @@ impl Store {
         Ok(connection)
     }
 
-    fn prepare_schema(tx: &Transaction<'_>, may_initialize: bool) -> Result<(), StoreError> {
+    fn prepare_schema(
+        tx: &Transaction<'_>,
+        may_initialize: bool,
+        path: &Path,
+        backup: Option<&StorageDirectory>,
+    ) -> Result<(), StoreError> {
         let application = tx.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match (application, version) {
@@ -229,11 +248,17 @@ impl Store {
                 tx.execute(titles::SCHEMA, [])?;
                 tx.execute_batch(planning::SCHEMA)?;
                 tx.execute_batch(numbers::SCHEMA)?;
+                tx.execute_batch(include_str!("parent_delivery.sql"))?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
             (APPLICATION_ID, 1..SCHEMA_VERSION) => {
+                Self::backup_before_upgrade(
+                    path,
+                    backup.ok_or(StoreError::UpgradeBackup)?,
+                    version,
+                )?;
                 if version == 1 {
                     tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
                     tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
@@ -261,12 +286,14 @@ impl Store {
                 }
                 if version < 10 {
                     Self::migrate_report_tasks(tx)?;
-                } else {
+                } else if version == 10 {
                     tx.execute(
                         "ALTER TABLE tasks ADD COLUMN work_continuation TEXT CHECK (json_valid(work_continuation))",
                         [],
                     )?;
                 }
+                tx.execute_batch(include_str!("parent_delivery.sql"))?;
+                tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -287,6 +314,54 @@ impl Store {
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
         tx.execute(board_state::SCHEMA, [])?;
+        Ok(())
+    }
+
+    fn backup_before_upgrade(
+        path: &Path,
+        directory: &StorageDirectory,
+        version: i32,
+    ) -> Result<(), StoreError> {
+        directory.ensure()?;
+        let backup = tempfile::Builder::new()
+            .prefix(&format!(".engine-before-v{version}-"))
+            .suffix(".sqlite")
+            .tempfile_in(directory.path())
+            .map_err(StorageError::from)?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let source = Connection::open_with_flags(path, flags)?;
+        {
+            let mut output = Connection::open_with_flags(
+                backup.path(),
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            )?;
+            rusqlite::backup::Backup::new(&source, &mut output)?.run_to_completion(
+                256,
+                Duration::from_millis(10),
+                None,
+            )?;
+            output.pragma_update(None, "journal_mode", "DELETE")?;
+        }
+        let copy = Connection::open_with_flags(backup.path(), flags)?;
+        if copy.pragma_query_value(None, "application_id", |row| row.get::<_, i32>(0))?
+            != APPLICATION_ID
+            || copy.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))? != version
+            || copy.pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0))? != "ok"
+        {
+            return Err(StoreError::UpgradeBackup);
+        }
+        backup.as_file().sync_all().map_err(StorageError::from)?;
+        let name = backup.path().file_name().and_then(|name| name.to_str());
+        let published = directory.path().join(
+            name.and_then(|name| name.strip_prefix('.'))
+                .ok_or(StoreError::UpgradeBackup)?,
+        );
+        backup
+            .persist_noclobber(published)
+            .map_err(|error| StorageError::from(error.error))?;
+        std::fs::File::open(directory.path())
+            .and_then(|root| root.sync_all())
+            .map_err(StorageError::from)?;
         Ok(())
     }
 
@@ -726,219 +801,6 @@ impl Store {
         };
         tx.commit()?;
         Ok(sequence)
-    }
-
-    /// Read a native turn intent for the current task state and host session.
-    ///
-    /// # Errors
-    /// Returns an error if the journal is unreadable.
-    pub fn task_turn_command(
-        &self,
-        id: &str,
-        kind: &str,
-        version: i64,
-        session: &str,
-    ) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT json_extract(detail, '$.command') FROM events
-             WHERE task_id = ?1 AND kind = ?2 AND json_valid(detail)
-             AND json_extract(detail, '$.version') = ?3
-             AND json_extract(detail, '$.session') = ?4
-             ORDER BY sequence DESC LIMIT 1",
-                params![id, kind, version, session],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    /// Recover the latest parent hold owned by this active child in the native session.
-    ///
-    /// # Errors
-    /// Returns an error if the turn journal cannot be queried.
-    pub fn task_turn_with_prefix(
-        &self,
-        id: &str,
-        session: &str,
-        prefix: &str,
-    ) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .connection
-            .prepare_cached(
-                "SELECT json_extract(detail, '$.command') FROM events
-             WHERE task_id = ?1 AND kind IN ('native_turn_intent', 'native_turn_replay')
-             AND json_valid(detail)
-             AND (json_extract(detail, '$.session') = ?2
-                  OR instr(json_extract(detail, '$.session'), ?2 || '/') = 1)
-             AND substr(json_extract(detail, '$.command'), 1, length(?3)) = ?3
-             ORDER BY sequence DESC LIMIT 1",
-            )?
-            .query_row(params![id, session, prefix], |row| row.get(0))
-            .optional()?)
-    }
-
-    /// Recover the exact text attached to a native command before it could be sent.
-    ///
-    /// # Errors
-    /// Returns an error if the turn journal is unreadable.
-    pub fn task_turn_prompt(&self, id: &str, command: &str) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .connection
-            .prepare_cached(
-                "SELECT COALESCE(json_extract(detail, '$.prompt'), ?3) FROM events
-             WHERE task_id = ?1 AND kind IN ('native_turn_intent', 'native_turn_replay')
-             AND json_valid(detail) AND json_extract(detail, '$.command') = ?2
-             ORDER BY sequence LIMIT 1",
-            )?
-            .query_row(
-                params![
-                    id,
-                    command,
-                    nucleus_core::acp::legacy_parent_hold_prompt(command)
-                ],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    /// Check whether an exact turn intent has a known failure, even after restart.
-    /// # Errors
-    /// Returns an error if the journal is unreadable.
-    pub fn task_turn_failed(&self, id: &str, command: &str) -> Result<bool, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM events WHERE task_id = ?1 AND kind = 'native_turn_failed'
-             AND json_valid(detail) AND json_extract(detail, '$.command') = ?2)",
-            params![id, command],
-            |row| row.get(0),
-        )?)
-    }
-
-    /// Read the latest exact turn attempt and whether it is proven unsent.
-    ///
-    /// # Errors
-    /// Returns an error if the turn journal is unreadable.
-    pub fn task_turn_attempt(
-        &self,
-        id: &str,
-        kind: &str,
-        version: i64,
-        session: &str,
-        command: &str,
-    ) -> Result<Option<(i64, bool)>, StoreError> {
-        Ok(self
-            .connection
-            .prepare_cached(
-                "SELECT sequence, (kind = 'native_turn_not_sent') FROM events
-             WHERE task_id = ?1 AND kind IN (?2, 'native_turn_not_sent', 'native_turn_replay')
-             AND json_valid(detail) AND json_extract(detail, '$.version') = ?3
-             AND json_extract(detail, '$.command') = ?5
-             AND (json_extract(detail, '$.session') = ?4 OR
-                  (kind = 'native_turn_replay' AND
-                   instr(json_extract(detail, '$.session'), ?4 || '/') = 1))
-             ORDER BY sequence DESC LIMIT 1",
-            )?
-            .query_row(params![id, kind, version, session, command], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .optional()?)
-    }
-
-    /// Check every exact parent attempt before giving up the version that owns it.
-    /// A disconnected or replaced host cannot settle an attempt in the journal.
-    ///
-    /// # Errors
-    /// Returns an error if the turn journal is unreadable.
-    pub fn pending_parent_preparation(&self, id: &str, version: i64) -> Result<bool, StoreError> {
-        Ok(self
-            .connection
-            .prepare_cached(
-                "WITH journal AS (
-                 SELECT sequence, kind, json_extract(detail, '$.command') AS command,
-                        json_extract(detail, '$.session') AS session,
-                        json_extract(detail, '$.attempt') AS attempt
-                 FROM events WHERE task_id = ?1 AND json_valid(detail)
-                   AND json_extract(detail, '$.version') = ?2
-                   AND kind IN ('native_turn_intent', 'native_turn_replay',
-                                'native_turn_observed', 'native_turn_not_sent', 'native_turn_failed')
-             )
-             SELECT EXISTS(SELECT 1 FROM journal intent
-               WHERE intent.kind IN ('native_turn_intent', 'native_turn_replay')
-                 AND NOT EXISTS (SELECT 1 FROM journal proof WHERE proof.command = intent.command
-                   AND ((proof.kind = 'native_turn_observed'
-                         AND (proof.session = intent.session
-                              OR instr(intent.session, proof.session || '/') = 1))
-                     OR (proof.kind = 'native_turn_failed' AND EXISTS (
-                         SELECT 1 FROM journal origin WHERE origin.kind = 'native_turn_intent'
-                           AND origin.command = intent.command
-                           AND (origin.session = intent.session
-                                OR instr(intent.session, origin.session || '/') = 1)
-                           AND (origin.session = proof.session
-                                OR instr(proof.session, origin.session || '/') = 1)))
-                     OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
-                         AND (proof.attempt = intent.sequence
-                              OR (proof.attempt IS NULL AND proof.session = intent.session))))))",
-            )?
-            .query_row(params![id, version], |row| row.get(0))?)
-    }
-
-    /// Find same-version native sends whose outcome a delivery fence could still protect.
-    /// An empty list inside Some represents a typed uncertain send with no usable command.
-    ///
-    /// # Errors
-    /// Returns an error if the task's delivery history is unreadable.
-    pub fn task_delivery_fence(
-        &self,
-        id: &str,
-        version: i64,
-        runtime: &str,
-    ) -> Result<Option<Vec<String>>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "WITH blocked AS (
-                 SELECT MAX(COALESCE(json_extract(detail, '$.deliveryPending'), 0)) AS explicit
-                 FROM events
-                 WHERE task_id = ?1 AND kind = 'host_observation_blocked' AND json_valid(detail)
-                   AND json_extract(detail, '$.version') = ?2
-                   AND instr(json_extract(detail, '$.session'), ?3 || '/') = 1
-             ), attempts AS (
-                 SELECT DISTINCT json_extract(intent.detail, '$.command') AS command, EXISTS (
-                     SELECT 1 FROM events AS proof
-                     WHERE proof.task_id = intent.task_id
-                       AND proof.kind IN ('native_turn_observed', 'native_turn_not_sent')
-                       AND json_valid(proof.detail) AND json_extract(proof.detail, '$.version') = ?2
-                       AND json_extract(proof.detail, '$.command') = json_extract(intent.detail, '$.command')
-                       AND ((proof.kind = 'native_turn_observed' AND json_extract(proof.detail, '$.session') = ?3)
-                         OR (proof.kind = 'native_turn_not_sent' AND proof.sequence > intent.sequence
-                           AND (json_extract(proof.detail, '$.attempt') = intent.sequence
-                             OR (json_type(proof.detail, '$.attempt') IS NULL
-                               AND json_extract(proof.detail, '$.session') = json_extract(intent.detail, '$.session')))))
-                 ) AS observed FROM events AS intent
-                 WHERE intent.task_id = ?1 AND intent.kind IN ('native_turn_intent', 'native_turn_replay', 'acp_row_refresh_intent')
-                   AND EXISTS (SELECT 1 FROM blocked WHERE explicit IS NOT NULL)
-                   AND json_valid(intent.detail) AND json_extract(intent.detail, '$.version') = ?2
-                   AND (json_extract(intent.detail, '$.session') = ?3
-                     OR instr(json_extract(intent.detail, '$.session'), ?3 || '/') = 1)
-                   AND json_type(intent.detail, '$.command') = 'text'
-             )
-             SELECT explicit, command, COALESCE(observed, 0)
-             FROM blocked LEFT JOIN attempts ON TRUE WHERE explicit IS NOT NULL",
-        )?;
-        let mut pending = Vec::new();
-        let mut without_command = false;
-        for row in query.query_map(params![id, version, runtime], |row| {
-            Ok((
-                row.get::<_, bool>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, bool>(2)?,
-            ))
-        })? {
-            match row? {
-                (_, Some(command), false) => pending.push(command),
-                (explicit, None, _) => without_command = explicit,
-                (_, Some(_), true) => {}
-            }
-        }
-        Ok((without_command || !pending.is_empty()).then_some(pending))
     }
 
     /// Read all subscription groups with a deadline in the future.

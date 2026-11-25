@@ -16,7 +16,7 @@ use nucleus_hosts::{
     NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
     StopProgress, T3, TaskHost, launch_diagnostic,
 };
-use nucleus_store::{CriticalReviewFallback, DispatchMode, TaskRow};
+use nucleus_store::{CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, TaskRow};
 use nucleus_work::{Checkout, WorkError};
 use tokio::sync::RwLockReadGuard;
 
@@ -933,43 +933,68 @@ impl Service {
         if !self.dispatch_mode().await.allows_launch(false) {
             return Ok(());
         }
-        let Some(session) = self.host.runtime_identity() else {
-            return Ok(());
-        };
         let identity = task.identity();
-        let (prior, current, start_line) = {
+        let prefix = child.parent_command_prefix();
+        let (prior, start_line) = {
             let state = self.state.lock().await;
             (
-                state.store.task_turn_with_prefix(
-                    &identity.id,
-                    &session,
-                    &child.parent_command_prefix(),
-                )?,
-                prior_preparation_command(&state, row, &session)?,
+                state
+                    .store
+                    .parent_deliveries(&identity.id, row.version, Some(&prefix))?
+                    .into_iter()
+                    .find(|value| {
+                        value.command.strip_prefix(&prefix).is_some_and(|tail| {
+                            tail.starts_with(':') || tail.starts_with("-after-")
+                        })
+                    }),
                 crate::presentation::role_start_line(task, &state.store),
             )
         };
+        if let Some(record) = &prior {
+            match record.result {
+                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
+                ParentResult::Failed => return Ok(()),
+                ParentResult::Pending
+                    if !crate::acp::can_replay(
+                        record,
+                        self.host.verified_runtime_identity().as_deref(),
+                    ) =>
+                {
+                    return self
+                        .resolve_parent_deliveries(
+                            row,
+                            child.binding(),
+                            std::slice::from_ref(record),
+                        )
+                        .await;
+                }
+                _ => crate::acp::parent_due(record)?,
+            }
+        }
         let Some(write) = self
             .host
-            .prepare_parent_reentry(child, provider, &start_line, prior.as_deref())
+            .prepare_parent_reentry(
+                child,
+                provider,
+                &start_line,
+                prior
+                    .as_ref()
+                    .filter(|value| value.result != ParentResult::Refused)
+                    .map(|value| value.command.as_str()),
+            )
             .await?
         else {
             return Ok(());
         };
-        if self
-            .state
-            .lock()
-            .await
-            .store
-            .task_turn_failed(&identity.id, write.command_id().ok_or(ServiceError::Input)?)?
+        if prior
+            .as_ref()
+            .is_some_and(|record| Some(record.command.as_str()) != write.command_id())
         {
-            return Ok(());
+            self.accept_parent_readback(row, prior.as_ref()).await?;
         }
         let worktrees = self.worktrees()?;
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let _ = self
-            .send_run_parent(row, &checkout, write, &session, current.as_deref())
-            .await?;
+        let _ = self.send_run_parent(row, &checkout, write, prior).await?;
         Ok(())
     }
 
@@ -989,79 +1014,89 @@ impl Service {
         if !self.launch_capacity(identity, false).await? {
             return Ok(ControlFlow::Break(WaitReason::Capacity));
         }
-        let session = self.host.runtime_identity().ok_or(HostError::Uncertain)?;
-        let failed_scope = self.turn_failure_scope(&session);
-        let (prior_turn, released_at, start_line) = {
+        let (prior, released_at, start_line) = {
             let state = self.state.lock().await;
-            if state
-                .store
-                .task_turn_command(
-                    &identity.id,
-                    "native_turn_failed",
-                    row.version,
-                    &failed_scope,
-                )?
-                .is_some()
-            {
-                return Ok(ControlFlow::Break(WaitReason::HostUnknown));
-            }
             (
-                prior_preparation_command(&state, row, &session)?,
+                state
+                    .store
+                    .parent_deliveries(&identity.id, row.version, None)?
+                    .into_iter()
+                    .find(|value| !value.refresh && !value.command.is_empty()),
                 state.wait_reason(&identity.id).filter(|reason| {
                     !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
                 }),
                 crate::presentation::role_start_line(task, &state.store),
             )
         };
-        match self
+        if let Some(record) = &prior {
+            match record.result {
+                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
+                ParentResult::Failed => {
+                    return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
+                }
+                _ => crate::acp::parent_due(record)?,
+            }
+        }
+        let attempt = prior
+            .as_ref()
+            .filter(|value| value.result != ParentResult::Refused);
+        let replay_launch = attempt.is_some_and(|value| {
+            value.result == ParentResult::Pending
+                && value.command.ends_with("-launch")
+                && crate::acp::can_replay(value, self.host.verified_runtime_identity().as_deref())
+        });
+        let step = self
             .host
             .prepare_parent(
                 binding,
                 provider,
                 &identity.reference,
                 &start_line,
-                prior_turn.as_deref().map(|command| ParentAttempt {
-                    command,
+                attempt.map(|value| ParentAttempt {
+                    command: &value.command,
                     released: released_at.is_some(),
+                    replay_launch,
                 }),
                 host.profile_catalog(),
             )
             .await
-            .map_err(|error| {
-                if prior_turn.is_some() && !matches!(error, HostError::ParentPreflight { .. }) {
-                    ServiceError::ParentDeliveryUnknown(error)
-                } else {
-                    self.parent_not_sent(error)
-                }
-            })? {
-            ParentStep::Live(parent) => {
-                // The native run matched the frozen command's message ID.
-                if task.first_launch()
-                    && let Some(command) = &prior_turn
-                {
-                    self.record_native_turn(row, "native_turn_observed", &session, command)
-                        .await?;
-                }
-                Ok(ControlFlow::Continue(Some(parent)))
-            }
-            ParentStep::DeliveryUnknown => {
-                Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain))
-            }
+            .map_err(|error| self.parent_not_sent(error))?;
+        if matches!(
+            step,
+            ParentStep::Live(_) | ParentStep::Delivered | ParentStep::AfterDelivery(_)
+        ) {
+            self.accept_parent_readback(row, attempt).await?;
+        }
+        match step {
+            ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            ParentStep::Delivered => Ok(ControlFlow::Break(WaitReason::Starting)),
+            ParentStep::DeliveryUnknown => Err(ServiceError::ParentDeliveryHeld),
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
             )),
             ParentStep::Failed => {
-                if let Some(command) = prior_turn {
-                    self.record_failed_parent_turn(row, &session, &command)
+                if let Some(record) = &prior {
+                    self.finish_parent_delivery(row, record, ParentResult::Failed, 0)
                         .await?;
                 }
                 Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
             }
-            ParentStep::Write(write) => {
-                self.send_run_parent(row, checkout, write, &session, prior_turn.as_deref())
-                    .await
+            ParentStep::Write(write) | ParentStep::AfterDelivery(write) => {
+                self.send_run_parent(row, checkout, write, prior).await
             }
         }
+    }
+
+    async fn accept_parent_readback(
+        &self,
+        row: &TaskRow,
+        record: Option<&ParentDelivery>,
+    ) -> Result<(), ServiceError> {
+        if let Some(record) = record.filter(|record| record.result == ParentResult::Pending) {
+            self.finish_parent_delivery(row, record, ParentResult::Accepted, 0)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn send_run_parent(
@@ -1069,8 +1104,7 @@ impl Service {
         row: &TaskRow,
         checkout: &Checkout<'_>,
         write: nucleus_hosts::ParentWrite,
-        session: &str,
-        prior_turn: Option<&str>,
+        prior: Option<ParentDelivery>,
     ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
         let Some(_permit) = self
             .dispatch_gate(
@@ -1087,31 +1121,17 @@ impl Service {
         };
         self.ensure_parent_reader(&row.task.identity().id, checkout.path())
             .await?;
-        let command = write.command_id().ok_or(ServiceError::Input)?;
-        let (scope, kind) =
-            if prior_turn == Some(command) && !nucleus_hosts::is_pinned_parent_hold(command) {
-                (self.turn_failure_scope(session), "native_turn_replay")
-            } else {
-                (session.to_owned(), "native_turn_intent")
-            };
-        let intent = write.starts_turn().then_some(kind);
-        let command = command.to_owned();
-        match self.deliver_parent(row, write, &scope, intent).await {
-            Ok(true) => {
-                if intent.is_some() && row.task.first_launch() {
-                    self.record_native_turn(row, "native_turn_observed", session, &command)
-                        .await?;
-                }
-            }
-            Ok(false) => return Err(ServiceError::ParentDeliveryUnknown(HostError::Uncertain)),
+        let reentry = write
+            .command_id()
+            .is_some_and(nucleus_hosts::is_parent_reentry);
+        match self.deliver_parent(row, write, prior, false).await {
+            Ok(_) => {}
             Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
-                self.record_failed_parent_turn(row, session, &command)
-                    .await?;
                 return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
             }
             Err(error) => return Err(error),
         }
-        if row.task.run().is_none() && !nucleus_hosts::is_parent_reentry(&command) {
+        if row.task.run().is_none() && !reentry {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
         }
         Ok(ControlFlow::Break(WaitReason::Starting))
@@ -1381,10 +1401,6 @@ impl Service {
                 .wake_task_parent(row, authorization.binding(), provider, parent)
                 .await
         {
-            if let ServiceError::ParentNotSent { reason, .. } = &error {
-                self.record_parent_refusal(row, &run.launch().instance, "role-wake", None, reason)
-                    .await?;
-            }
             return Err(error);
         }
         let queued_parent = authorization.queued_parent().map(str::to_owned);
@@ -1858,27 +1874,6 @@ impl Service {
         self.save(row, updated, &audit).await?;
         Ok(action)
     }
-}
-
-fn prior_preparation_command(
-    state: &crate::State,
-    row: &TaskRow,
-    session: &str,
-) -> Result<Option<String>, ServiceError> {
-    let id = &row.task.identity().id;
-    let prior = state
-        .store
-        .task_turn_command(id, "native_turn_intent", row.version, session)?;
-    if let Some(command) = &prior
-        && (state.store.task_turn_failed(id, command)?
-            || state
-                .store
-                .task_turn_attempt(id, "native_turn_intent", row.version, session, command)?
-                .is_some_and(|(_, refused)| refused))
-    {
-        return Ok(None);
-    }
-    Ok(prior)
 }
 
 fn freeze_launch(

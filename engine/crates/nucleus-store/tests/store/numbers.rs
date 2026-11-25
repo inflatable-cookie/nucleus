@@ -53,7 +53,7 @@ fn task_number_seed_backfills_three_tasks_in_order_and_preserves_run_wires_on_re
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
     db.execute_batch(
-        "DROP TABLE task_numbers; DROP TABLE task_number_counters; PRAGMA user_version = 8;",
+        "DROP TABLE task_numbers; DROP TABLE task_number_counters; DROP TABLE parent_deliveries; PRAGMA user_version = 8;",
     )
     .expect("recreate version eight");
     let snapshot = || {

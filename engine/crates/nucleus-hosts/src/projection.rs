@@ -151,12 +151,6 @@ struct TurnItem {
     started_at: Option<Value>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ParentCustody {
-    latest_run: Option<(String, Status)>,
-    active_provider_thread: Option<String>,
-}
-
 /// A display-only summary of a running item on the launch's exact native run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -467,7 +461,7 @@ impl Projection {
         }
     }
 
-    pub(crate) fn delivery_custody(&self) -> Result<ParentCustody, &'static str> {
+    pub(crate) fn delivery_custody(&self) -> Result<(), &'static str> {
         if self.archived() || self.thread.deleted_at.is_some() {
             return Err("parent is archived or deleted");
         }
@@ -491,10 +485,7 @@ impl Projection {
                 _ => return Err("delegated child status is missing or unknown"),
             }
         }
-        Ok(ParentCustody {
-            latest_run: self.runs.last().map(|run| (run.id.clone(), run.status)),
-            active_provider_thread: self.thread.active_provider_thread_id.clone(),
-        })
+        Ok(())
     }
 
     pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {

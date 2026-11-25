@@ -81,6 +81,10 @@ pub enum ServiceError {
     RowVisibilityDeferred { until: Instant },
     #[error("T3 parent message delivery could not be confirmed: {0}")]
     ParentDeliveryUnknown(HostError),
+    #[error(
+        "Nucleus couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
+    )]
+    ParentDeliveryHeld,
     #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
     OperatorSnoozed { thread: String, until: u64 },
     #[error("run scratch is already reserved for another run")]
@@ -188,7 +192,6 @@ pub struct Service {
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
-    turn_epoch: String,
     state: Mutex<State>,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
@@ -393,8 +396,6 @@ impl Service {
             host.use_held_shell();
         }
         let (changes, _) = broadcast::channel(64);
-        let mut turn_epoch = [0; 16];
-        getrandom::fill(&mut turn_epoch).map_err(|_| ServiceError::AcpBinding)?;
         Ok(Self {
             storage,
             git,
@@ -408,7 +409,6 @@ impl Service {
             board: std::sync::OnceLock::new(),
             callback,
             report_command,
-            turn_epoch: hex::encode(turn_epoch),
             state: Mutex::new(State {
                 store,
                 allowance_clock,
@@ -611,8 +611,8 @@ impl Service {
             return Err(snoozed);
         }
         self.reenter_retained_parent(row).await?;
-        if task.run().is_none() && self.parent_delivery_fenced(row).await? {
-            return Ok(Action::Wait(WaitReason::HostObservationBlocked));
+        if task.run().is_none() {
+            self.parent_delivery_fenced(row).await?;
         }
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
@@ -921,6 +921,7 @@ impl Service {
         let wait = match result {
             Ok(Action::Wait(reason)) => Some(*reason),
             Err(ServiceError::ArchiveEvidence(_)) => Some(WaitReason::Stopping),
+            Err(ServiceError::ParentDeliveryHeld) => Some(WaitReason::HostObservationBlocked),
             Err(ServiceError::Host(_) | ServiceError::ParentDeliveryUnknown(_)) => {
                 Some(WaitReason::HostUnknown)
             }
@@ -1165,13 +1166,12 @@ impl Service {
             (Some(WaitReason::HostUnknown), detail)
         } else if wait == Some(WaitReason::HostObservationBlocked) {
             state.schedule.block_host_observation(id);
-            if state.wait_reason(id) == wait {
-                return Ok(true);
-            }
-            (
-                wait,
-                WaitDetail::Observation("Couldn’t verify the task thread. Open it to check."),
-            )
+            let cause = if matches!(result, Err(ServiceError::ParentDeliveryHeld)) {
+                "Couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
+            } else {
+                "Couldn’t verify the task thread. Open it to check."
+            };
+            (wait, WaitDetail::Observation(cause))
         } else {
             return Ok(false);
         };
@@ -1209,21 +1209,26 @@ impl Service {
                 .filter(|&remaining| remaining > 0)
                 .map(|remaining| now + Duration::from_millis(remaining))
         });
-        let queue_replay = if row.task.run().is_none()
-            && matches!(result, Err(ServiceError::ParentDeliveryUnknown(_)))
-            && let Some(runtime) = self.host.runtime_identity()
-        {
+        let parent_due = if matches!(result, Err(ServiceError::ParentDeliveryUnknown(_))) {
             state
                 .store
-                .task_turn_command(id, "native_turn_intent", row.version, &runtime)?
-                .as_deref()
-                .is_some_and(nucleus_hosts::is_pinned_parent_hold)
+                .parent_deliveries(id, row.version, None)?
+                .into_iter()
+                .filter(|value| value.result == nucleus_store::ParentResult::Pending)
+                .map(|value| value.due_ms)
+                .min()
         } else {
-            false
+            None
         };
-        let blocked = if queue_replay {
-            let due = (now + T3_RETRY_DELAY).max(deferred.unwrap_or(now));
-            state.schedule.wake(id, due, Priority::Effect);
+        let blocked = if let Some(due) = parent_due {
+            let delay = u64::try_from(due)
+                .unwrap_or_default()
+                .saturating_sub(now_ms());
+            state.schedule.wake(
+                id,
+                (now + Duration::from_millis(delay)).max(deferred.unwrap_or(now)),
+                Priority::Effect,
+            );
             false
         } else {
             state
@@ -1257,12 +1262,6 @@ impl Service {
         };
         let changed = state.observe_wait_detail(&row.task, wait, Some(detail))?;
         if blocked && prior != wait {
-            let mut audit = event("host_observation_blocked");
-            audit.detail = serde_json::json!({"version": row.version,
-                "session": self.host.runtime_identity().map(|session| self.turn_failure_scope(&session)),
-                "reason": result.as_ref().err().map(ToString::to_string),
-                "deliveryPending": delivery_pending}).to_string();
-            state.store.claim_task_effect(id, &audit, false)?;
             state.wake_capacity(Instant::now());
             self.wake.notify_one();
         }
