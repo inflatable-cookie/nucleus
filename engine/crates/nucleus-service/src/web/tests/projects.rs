@@ -1619,7 +1619,7 @@ async fn project_tell_refuses_unverified_and_ambiguous_requests_without_host_rea
 }
 
 #[tokio::test]
-async fn project_tell_lists_projects_without_live_planners_and_preserves_the_broadcast_snapshot() {
+async fn project_tell_retries_an_empty_snapshot_and_reuses_real_receipts() {
     let registry = registry().await;
     let source = "alpha-planner";
     registry.enroll(source).await;
@@ -1659,9 +1659,16 @@ async fn project_tell_lists_projects_without_live_planners_and_preserves_the_bro
             .await,
     )
     .await;
+    assert_eq!(replay["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(replay["noLivePlanners"], pending["noLivePlanners"]);
     assert_eq!(
-        pending, replay,
-        "broadcast retry keeps its original project set"
+        json_body(
+            registry
+                .tell(source, json!("all"), "Will wait for a planner")
+                .await
+        )
+        .await,
+        replay
     );
     let unbound = json_body(
         registry
@@ -1683,6 +1690,110 @@ async fn project_tell_lists_projects_without_live_planners_and_preserves_the_bro
             .store
             .next_tell()
             .unwrap()
+            .is_some()
+    );
+    assert!(registry.notices.lock().unwrap().sends.is_empty());
+}
+
+#[tokio::test]
+async fn project_tell_rechecks_only_saved_cold_recipients_before_admitting_a_request() {
+    let registry = registry().await;
+    registry.enroll("beta-planner").await;
+    registry.enroll("alpha-planner").await;
+    let registry = registry.reopen();
+    registry.enroll("beta-planner").await;
+    let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "After restart");
+    let reads = registry.reads.load(Ordering::Relaxed);
+    for _ in 0..2 {
+        assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    let actor = registry
+        .service
+        .take_enrollment()
+        .await
+        .expect("scheduled proof");
+    assert_eq!(actor, "alpha-planner");
+    assert!(registry.service.take_enrollment().await.is_none());
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_none()
+    );
+    registry.service.complete_enrollment(&actor).await;
+    let result = json_body(send().await).await;
+    assert_eq!(result["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(result["noLivePlanners"], json!([]));
+    let reads = registry.reads.load(Ordering::Relaxed);
+    assert_eq!(result, json_body(send().await).await);
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    assert!(registry.notices.lock().unwrap().sends.is_empty());
+}
+
+#[tokio::test]
+async fn project_tell_routes_the_verified_subset_after_one_uncertain_recipient_check() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    registry.enroll("beta-planner").await;
+    let registry = registry.reopen();
+    registry.enroll("next-planner").await;
+    registry.enroll("beta-planner").await;
+    let send = || registry.tell("next-planner", json!("all"), "Cold recipient");
+    assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let actor = registry.service.take_enrollment().await.unwrap();
+    assert_eq!(actor, "alpha-planner");
+    registry.notices.lock().unwrap().uncertain_planner = true;
+    registry.service.complete_enrollment(&actor).await;
+    let result = json_body(send().await).await;
+    assert_eq!(result["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(result["noLivePlanners"][0]["name"], "Exact T3 Alpha");
+    assert_eq!(result, json_body(send().await).await);
+    let state = registry.service.state.lock().await;
+    assert!(state.settings.planner_route(&actor).is_some());
+    assert!(state.live_planner_project(&actor).is_none());
+    assert_eq!(
+        result["deliveries"][0]["to"].as_str(),
+        state.live_planner_project("beta-planner")
+    );
+}
+
+#[tokio::test]
+async fn project_tell_cannot_reenroll_a_removed_recipient_route() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let registry = registry.reopen();
+    registry.enroll("beta-planner").await;
+    let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "Cold recipient");
+    assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let actor = registry.service.take_enrollment().await.unwrap();
+    // Settings can remove the binding between the request and its scheduled check.
+    {
+        let mut state = registry.service.state.lock().await;
+        let projects = &mut state.settings.projects.as_mut().unwrap().projects;
+        for repository in projects.values_mut().flat_map(|p| &mut p.repositories) {
+            repository.planner_threads.retain(|thread| thread != &actor);
+        }
+    }
+    registry.service.complete_enrollment(&actor).await;
+    let result = json_body(send().await).await;
+    assert_eq!(result["deliveries"], json!([]));
+    assert_eq!(result["noLivePlanners"][0]["name"], "Exact T3 Alpha");
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .settings
+            .planner_route(&actor)
             .is_none()
     );
     assert!(registry.notices.lock().unwrap().sends.is_empty());

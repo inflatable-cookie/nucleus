@@ -16,8 +16,11 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 pub(super) struct Enrollments(BTreeMap<String, Contact>);
 
 enum Contact {
-    Requested,
-    Checking(Option<Box<ThreadHint>>),
+    Requested(Option<Box<PlannerBinding>>),
+    Checking {
+        binding: Option<Box<PlannerBinding>>,
+        observed: Option<Box<ThreadHint>>,
+    },
     Refused {
         until: Instant,
         failure: EnrollmentFailure,
@@ -126,7 +129,7 @@ impl State {
             self.enrolled_planners.remove(&hint.thread);
             self.planner_authority_epoch += 1;
         }
-        if let Some(Contact::Checking(observed)) = self.enrollments.0.get_mut(&hint.thread) {
+        if let Some(Contact::Checking { observed, .. }) = self.enrollments.0.get_mut(&hint.thread) {
             // Compare the shell identity to the exact read before publishing.
             // Keep a closure even if a later update arrives during this attempt.
             if hint.is_identity_change(None) && !observed.as_ref().is_some_and(|hint| hint.closed())
@@ -261,18 +264,34 @@ impl Service {
         })
     }
 
+    /// A completed negative check can settle this recipient while a later demand
+    /// refreshes its saved binding on the enrollment worker's retry cadence.
+    pub(super) fn request_tell_enrollment(
+        &self,
+        state: &mut State,
+        actor: &str,
+    ) -> Option<ServiceError> {
+        let checked = matches!(
+            state.enrollments.0.get(actor),
+            Some(Contact::Refused { .. })
+        );
+        let result = self.request_enrollment(state, actor);
+        (!checked).then_some(result)
+    }
+
     pub(super) fn request_enrollment(&self, state: &mut State, actor: &str) -> ServiceError {
+        let binding = state.planner_binding(actor).map(Box::new);
         let contacts = &mut state.enrollments.0;
         let now = Instant::now();
         match contacts.get(actor) {
             Some(&Contact::Refused { until, failure }) => {
                 if now >= until {
-                    contacts.insert(actor.into(), Contact::Requested);
+                    contacts.insert(actor.into(), Contact::Requested(binding));
                     self.enrollment_wake.notify_one();
                 }
                 failure.into()
             }
-            Some(Contact::Requested | Contact::Checking(_)) => {
+            Some(Contact::Requested(_) | Contact::Checking { .. }) => {
                 ServiceError::PlannerEnrollmentPending
             }
             None => {
@@ -286,7 +305,7 @@ impl Service {
                         "The T3 enrollment queue is full. Retry shortly.",
                     );
                 }
-                contacts.insert(actor.into(), Contact::Requested);
+                contacts.insert(actor.into(), Contact::Requested(binding));
                 self.enrollment_wake.notify_one();
                 ServiceError::PlannerEnrollmentPending
             }
@@ -312,14 +331,28 @@ impl Service {
             .enrollments
             .0
             .iter_mut()
-            .find(|(_, contact)| matches!(contact, Contact::Requested))?;
-        *contact = Contact::Checking(None);
+            .find(|(_, contact)| matches!(contact, Contact::Requested(_)))?;
+        let Contact::Requested(binding) = contact else {
+            return None;
+        };
+        *contact = Contact::Checking {
+            binding: binding.take(),
+            observed: None,
+        };
         Some(actor.clone())
     }
 
     pub(super) async fn complete_enrollment(&self, actor: &str) {
-        let binding = self.state.lock().await.planner_binding(actor);
-        let result = self.verify_enrollment(actor, binding.as_ref()).await;
+        let binding = {
+            let state = self.state.lock().await;
+            let Some(Contact::Checking { binding, .. }) = state.enrollments.0.get(actor) else {
+                return;
+            };
+            binding
+                .clone()
+                .or_else(|| state.planner_binding(actor).map(Box::new))
+        };
+        let result = self.verify_enrollment(actor, binding.as_deref()).await;
         let mut state = self.state.lock().await;
         let failure = match result {
             Ok(()) => {
@@ -364,14 +397,17 @@ impl Service {
             };
             if matches!(
                 state.enrollments.0.get(actor),
-                Some(Contact::Requested | Contact::Checking(_))
+                Some(Contact::Requested(_) | Contact::Checking { .. })
             ) {
                 return Err(HostError::Uncertain.into());
             }
-            state
-                .enrollments
-                .0
-                .insert(actor.into(), Contact::Checking(None));
+            state.enrollments.0.insert(
+                actor.into(),
+                Contact::Checking {
+                    binding: None,
+                    observed: None,
+                },
+            );
             binding
         };
         let result = self.verify_enrollment(actor, Some(&binding)).await;
@@ -480,7 +516,11 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let _projects = self.project_writes.write().await;
         let mut state = self.state.lock().await;
-        if let Some(Contact::Checking(Some(hint))) = state.enrollments.0.get(&planner.id) {
+        if let Some(Contact::Checking {
+            observed: Some(hint),
+            ..
+        }) = state.enrollments.0.get(&planner.id)
+        {
             if hint.closed() {
                 return Err(ServiceError::PlannerEnrollmentRefused(
                     "The T3 planner thread is archived or gone.",
@@ -585,7 +625,10 @@ impl Service {
             || state.planner_binding(actor).as_ref() != Some(binding)
             || matches!(
                 state.enrollments.0.get(actor),
-                Some(Contact::Checking(Some(_)))
+                Some(Contact::Checking {
+                    observed: Some(_),
+                    ..
+                })
             )
         {
             return Err(HostError::Uncertain.into());
