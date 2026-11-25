@@ -523,6 +523,8 @@ Later decisions carry their own attribution.
       the engine may claim a third and final attempt on the same binding.
       The earliest verified matching review wins. If the third attempt remains
       unconfirmed, ReviewPublicationBlocked names the cause and offers Move to review.
+      The journal retains the review POST’s HTTP status and bounded GitHub error
+      message when available. A marker check on a responsive forge reads “confirming review”.
       A definite throttle preserves the attempt and deadline across restarts.
       Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before

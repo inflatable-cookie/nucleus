@@ -30,7 +30,7 @@ const REPLACEMENT: &str = "Bearer replacement-reviewer";
 enum Delivery {
     Saved,
     Lost,
-    Denied,
+    Denied(StatusCode),
     StopAtUnauthorized,
     MissingById,
     Throttle(&'static str),
@@ -42,6 +42,7 @@ struct ForgeFixture {
     delivery: Delivery,
     merged: AtomicBool,
     visible: AtomicBool,
+    visible_at_inventory: AtomicUsize,
     dismissed: AtomicBool,
     posted: Notify,
     respond: Notify,
@@ -59,6 +60,7 @@ impl ForgeFixture {
             delivery,
             merged: AtomicBool::new(false),
             visible: AtomicBool::new(true),
+            visible_at_inventory: AtomicUsize::new(usize::MAX),
             dismissed: AtomicBool::new(false),
             posted: Notify::new(),
             respond: Notify::new(),
@@ -108,8 +110,12 @@ async fn post_review(
         )
             .into_response();
     }
-    if matches!(remote.delivery, Delivery::Denied) {
-        return StatusCode::FORBIDDEN.into_response();
+    if let Delivery::Denied(status) = remote.delivery {
+        return (
+            status,
+            Json(json!({"message": "Review publication refused by repository policy"})),
+        )
+            .into_response();
     }
     if matches!(remote.delivery, Delivery::StopAtUnauthorized) {
         remote.posted.notify_one();
@@ -137,7 +143,7 @@ async fn post_review(
         Delivery::Lost => {
             (StatusCode::BAD_GATEWAY, [("x-ratelimit-remaining", "0")]).into_response()
         }
-        Delivery::Denied | Delivery::StopAtUnauthorized => unreachable!(),
+        Delivery::Denied(_) | Delivery::StopAtUnauthorized => unreachable!(),
     }
 }
 
@@ -146,8 +152,9 @@ async fn list_reviews(
     headers: HeaderMap,
 ) -> Json<Vec<Value>> {
     assert_eq!(bearer(&headers), OPERATOR);
-    remote.reads.fetch_add(1, Ordering::Relaxed);
-    let visible = remote.visible.load(Ordering::Relaxed);
+    let inventory = remote.reads.fetch_add(1, Ordering::Relaxed) + 1;
+    let visible = remote.visible.load(Ordering::Relaxed)
+        || inventory >= remote.visible_at_inventory.load(Ordering::Relaxed);
     let review = remote.remote.lock().unwrap();
     Json(review.iter().filter(|_| visible).cloned().collect())
 }
@@ -318,6 +325,18 @@ async fn formal_review_reconciles_once_under_the_original_account_and_fences_mer
     let store = Store::open(&service.storage).unwrap();
     let retained = store.review_publication(TASK, &instance).unwrap().unwrap();
     assert_eq!(retained.outcome, ReviewPublicationOutcome::Pending);
+    assert_eq!(retained.response.as_deref(), Some("GitHub HTTP 502"));
+    let row = service.task(TASK).await.unwrap();
+    let (wait, detail) = crate::task_wait(&row, &Err(PublicationError::UnknownDelivery.into()));
+    assert_eq!(
+        crate::titles::task_state_label(&row.task, wait, detail.as_ref()),
+        "Reviewing · confirming review"
+    );
+    let (wait, detail) = crate::task_wait(&row, &Err(ForgeError::Incomplete.into()));
+    assert_eq!(
+        crate::titles::task_state_label(&row.task, wait, detail.as_ref()),
+        "Reviewing · waiting for GitHub"
+    );
     assert_eq!(retained.intent.author.get(), 42);
     assert_eq!(retained.intent.head, service.fixture().start);
     assert!(service.task(TASK).await.unwrap().task.verdict().is_none());
@@ -372,7 +391,12 @@ async fn formal_changes_use_installed_gh_when_unset_and_keep_findings() {
 
 #[tokio::test]
 async fn formal_approval_refuses_the_same_author_and_inaccessible_role() {
-    for (author, delivery) in [(42, Delivery::Saved), (10, Delivery::Denied)] {
+    for (author, delivery) in [
+        (42, Delivery::Saved),
+        (10, Delivery::Denied(StatusCode::FORBIDDEN)),
+        (10, Delivery::Denied(StatusCode::NOT_FOUND)),
+        (10, Delivery::Denied(StatusCode::UNPROCESSABLE_ENTITY)),
+    ] {
         let remote = ForgeFixture::new(author, delivery);
         let (_home, service, server) = create_service(&remote).await;
         select_reviewer(&service, 42, "selected-reviewer");
@@ -390,10 +414,28 @@ async fn formal_approval_refuses_the_same_author_and_inaccessible_role() {
             assert!(record.is_none());
             assert!(posts.is_empty());
         } else {
-            assert!(matches!(error, PublicationError::AccessRefused));
+            let Delivery::Denied(status) = delivery else {
+                unreachable!()
+            };
+            let record = record.unwrap();
             assert_eq!(
-                record.unwrap().outcome,
-                ReviewPublicationOutcome::AccessRefused
+                record.outcome,
+                if status == StatusCode::UNPROCESSABLE_ENTITY {
+                    ReviewPublicationOutcome::Refused
+                } else {
+                    ReviewPublicationOutcome::AccessRefused
+                }
+            );
+            let receipt = format!(
+                "GitHub HTTP {}: Review publication refused by repository policy",
+                status.as_u16()
+            );
+            assert_eq!(record.response.as_deref(), Some(receipt.as_str()));
+            let cause = error.wait().1;
+            assert!(
+                cause.contains(&receipt)
+                    && cause.contains(&record.intent.pull_url)
+                    && cause.contains("Move to review")
             );
             assert_eq!(posts.len(), 1);
             assert_eq!(posts[0].0, REVIEWER);
@@ -470,7 +512,7 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
         assert_eq!(record.intent, intent);
         assert_eq!(record.outcome, ReviewPublicationOutcome::Resubmitted);
     }
-    assert_eq!(remote.reads.load(Ordering::Relaxed), 2);
+    assert_eq!(remote.reads.load(Ordering::Relaxed), 3);
     remote.visible.store(true, Ordering::Relaxed);
     assert_eq!(
         advance(&service).await.unwrap(),
@@ -483,6 +525,33 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
         posts[0].1,
         json!({"body":body.text, "event":"APPROVE","commit_id":intent.head})
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn late_marker_at_claim_time_settles_the_original_without_another_post() {
+    let remote = ForgeFixture::new(10, Delivery::Saved);
+    remote.visible.store(false, Ordering::Relaxed);
+    remote.visible_at_inventory.store(2, Ordering::Relaxed);
+    let (_home, service, server) = create_service(&remote).await;
+    let instance = record_report(&service, Review::Approve).await;
+    let (intent, body) = aged_claim(&service, &instance).await;
+    *remote.remote.lock().unwrap() = Some(json!({
+        "id": 17, "user": {"id": intent.author, "login": "fixture-reviewer"},
+        "commit_id": intent.head, "state": "APPROVED", "body": body.text
+    }));
+    assert_eq!(
+        advance(&service).await.unwrap(),
+        Action::Advance(Phase::Merging)
+    );
+    assert!(remote.posts.lock().unwrap().is_empty());
+    let state = service.state.lock().await;
+    let record = state
+        .store
+        .review_publication(TASK, &instance)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(record.outcome, ReviewPublicationOutcome::Verified(id) if id.get() == 17));
     server.abort();
 }
 
@@ -525,20 +594,18 @@ async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
             assert_eq!(result.unwrap(), Action::Advance(Phase::Merging));
         } else {
             let error = result.unwrap_err();
-            assert!(matches!(
-                error,
-                ServiceError::ReviewPublication(PublicationError::AttemptsExhausted)
-            ));
-            let (wait, cause) = PublicationError::AttemptsExhausted.wait();
+            let ServiceError::ReviewPublication(blocked) = error else {
+                panic!("expected owner action")
+            };
+            let (wait, cause) = blocked.wait();
+            assert!(cause.contains("GitHub HTTP 502") && cause.contains(&intent.pull_url));
             assert_eq!(wait, WaitReason::ReviewPublicationBlocked);
             assert!(cause.contains("Move to review"));
             service = restart_service(service, &remote);
-            assert!(matches!(
-                advance(&service).await,
-                Err(ServiceError::ReviewPublication(
-                    PublicationError::AttemptsExhausted
-                ))
-            ));
+            assert_eq!(
+                advance(&service).await.unwrap_err().to_string(),
+                blocked.to_string()
+            );
             remote.visible.store(true, Ordering::Relaxed);
             assert_eq!(
                 advance(&service).await.unwrap(),
@@ -675,7 +742,7 @@ async fn assert_throttled_publication(resubmission: bool) {
     // Each resubmission reconciles the original, including after the successful POST.
     assert_eq!(
         remote.reads.load(Ordering::Relaxed),
-        if resubmission { 4 } else { 3 }
+        if resubmission { 7 } else { 5 }
     );
     assert!(posts.iter().all(|post| post == &posts[0]));
     server.abort();

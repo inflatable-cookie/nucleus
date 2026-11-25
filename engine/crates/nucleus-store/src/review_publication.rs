@@ -39,6 +39,8 @@ pub enum ReviewPublicationOutcome {
 pub struct ReviewPublication {
     pub intent: ReviewIntent,
     pub outcome: ReviewPublicationOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<String>,
     #[serde(skip)]
     pub recorded_at: i64,
 }
@@ -92,6 +94,7 @@ impl Store {
         let pending = ReviewPublication {
             intent: intent.clone(),
             outcome,
+            response: None,
             recorded_at: at,
         };
         append(&tx, task, &audit(&pending, at)?)?;
@@ -108,6 +111,7 @@ impl Store {
         task: &str,
         intent: &ReviewIntent,
         outcome: ReviewPublicationOutcome,
+        response: Option<&str>,
         at: i64,
     ) -> Result<(), StoreError> {
         use ReviewPublicationOutcome::{
@@ -121,10 +125,14 @@ impl Store {
         let recorded = read(&tx, task, &intent.instance)?
             .filter(|recorded| recorded.intent == *intent)
             .ok_or(StoreError::ReviewPublicationConflict)?;
-        if recorded.outcome == outcome {
+        if recorded.outcome == outcome
+            && (response.is_none() || recorded.response.as_deref() == response)
+        {
             return Ok(());
         }
         match (recorded.outcome, outcome) {
+            (prior, next)
+                if prior == next && matches!(next, Pending | Resubmitted | FinalAttempt) => {}
             (
                 Pending | Resubmitted | FinalAttempt,
                 Submitted(_) | Verified(_) | AccessRefused | Refused,
@@ -143,6 +151,7 @@ impl Store {
                 &ReviewPublication {
                     intent: intent.clone(),
                     outcome,
+                    response: response.map(str::to_owned),
                     recorded_at: at,
                 },
                 at,

@@ -954,7 +954,7 @@ async fn reviewer_posts_once_and_operator_reconciles_the_lost_response() {
         .unwrap();
     assert!(matches!(
         reviewer.submit_review(&target, &binding, &body).await,
-        ReviewWrite::Unknown
+        ReviewWrite::Unknown(_)
     ));
     let recovered = operator
         .find_review(&target, &binding, marker, &body)
