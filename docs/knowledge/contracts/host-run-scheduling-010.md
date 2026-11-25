@@ -1,7 +1,10 @@
 # Host run scheduling (contract 010, imported)
 
-Status: active until the R2 cutover ([vision](../vision.md#simplification-rulings-2026-10-31))
-Imported: 2026-11-02 from nucleus `16fcb59` `docs/knowledge/contracts/010-host-run-scheduling.md`, when Tom retired the Nucleus repository. Nucleus implements this contract for Effigy v0.14 clients (`core/host-runs/host-run-*.ts`, [Spec 035](../specs/035-host-run-scheduler.md)); the historical text below is unchanged: “Queue” names this product before its rename, and “Nucleus” names the separate retired system.
+Contract 010 assigns heavy-workload admission to Nucleus. Installed Effigy
+calls the hook supplied by its launcher. The retired TypeScript launcher set
+`EFFIGY_ADMISSION_HOOK`. The Rust launcher starts workers without that hook.
+The historical text below records the protocol and its original names.
+[Spec 035](../specs/035-host-run-scheduler.md) describes the previous implementation.
 
 ---
 
