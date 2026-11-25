@@ -5,7 +5,6 @@ import {
   SERVICE_ALIVE_INTERVAL_MS,
 } from "../core/scheduling/service-downtime";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
-import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
 import { HostCatalogueSettings } from "./host-settings";
 import { RuntimeQuestions } from "../core/runtime/questions";
@@ -531,7 +530,6 @@ export class QueueRuntime {
   }
 
   constructor(options: RuntimeOwnerOptions = {}) {
-    registerServiceRollRequest();
     this.hostRunReady = new Promise<void>((resolve) => {
       this.resolveHostRunReady = resolve;
     });
