@@ -575,6 +575,28 @@ Later decisions carry their own attribution.
       hour) keeps two agents from looping.
     - Messages still carry information only.
 
+41. **A thread opts in as a project's planner.** Tom, 2026-11-25, after a
+    Bovine planner's new message reached the engine build thread because that
+    thread was the most recently active in the Nucleus checkout: "I don't
+    really want messages going to the build thread unless they're meant for
+    it." On the planner's proposal to queue messages when no planner is live,
+    Tom answered: "we don't want messages getting lost. If the planner is
+    archived then you would _expect_ messages to go to the build thread".
+    - Running planner commands still needs no setup. Any thread in a project
+      checkout can plan and dispatch, as ruled on 2026-11-19.
+    - One command (planner reading: `nucleus planner.claim`) makes the calling
+      thread the project's claimed planner. A project has at most one claimed
+      planner. A new claim replaces the old one, and Nucleus tells the
+      previous thread it was replaced.
+    - Project messages go to the claimed planner while its thread is live.
+      With no claimed planner, or an archived or gone one, delivery falls back
+      to the most recently active thread working in the project. A fallback
+      delivery says it is a fallback, so the recipient can claim the project or
+      pass the message on. Messages are never dropped.
+    - Settings → Projects shows each project's claimed planner and can clear it.
+    - Task workers and reviewers still reach their task's dispatching planner.
+      Replies use the message's reply route (ruling 40).
+
 ## The model
 
 ### Stored state per task
