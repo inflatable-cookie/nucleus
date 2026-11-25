@@ -90,6 +90,32 @@ export function registerSettingsOpener(
   settingsOpener = open;
 }
 
+/** Old filters hold allocated slugs. Bind them once, using the full registry's
+ * ownership check. A later registration cannot claim an unresolved slug. */
+function useSavedScope(projects: api.Project[] | undefined, rust: boolean) {
+  const [stored, save] = useProjectScope();
+  const bindings = useMemo(() => {
+    if (!rust || !projects) return stored.projects;
+    return stored.projects.map(key => {
+      if (key.includes(":")) return key;
+      const owner = projects.find(project => project.legacyScopeKey === key);
+      return owner ? "rust:" + owner.key : "unresolved:" + key;
+    });
+  }, [rust, projects, stored]);
+  useEffect(() => {
+    if (bindings.some((key, index) => key !== stored.projects[index])) save({ projects: bindings });
+  }, [bindings, stored, save]);
+  const surfaceScope = useMemo(() => rust
+    ? { projects: bindings.filter(key => key.startsWith("rust:")).map(key => key.slice(5)) }
+    : stored, [bindings, rust, stored]);
+  return {
+    surfaceScope,
+    unresolvedScope: rust && surfaceScope.projects.length !== bindings.length,
+    saveSurfaceScope: (value: { projects: string[] }) =>
+      save(rust ? { projects: value.projects.map(key => "rust:" + key) } : value),
+  };
+}
+
 /**
  * The board shell (Tom, 2026-11-21: an inbox, not kanban columns): the menu on the
  * left, the open view's list in the middle and the open record on the right. A
@@ -127,16 +153,16 @@ export function MainSurface({
   const [menuOpen, setMenuOpen] = useState(false);
   // The reads still key on the two data shapes: Planning's, and the card lists'.
   const tab: BoardTab = view === "planning" ? "planning" : "queue";
-  const [surfaceScope, setSurfaceScope] = useProjectScope();
-  // Spec 026 row 14c: the workspace panel's selection is preset to the workspace's
-  // project and lives in the panel, never in the main surface's persisted scope.
-  const [panelScope, setPanelScope] = usePanelScope(
-    workspaceBoard?.key ?? null,
-  );
-  const scope = workspaceBoard
-    ? (panelScope ?? { projects: [workspaceBoard.key] })
-    : surfaceScope;
-  const setScope = workspaceBoard ? setPanelScope : setSurfaceScope;
+  // The revisioned board read (Contract 007) lives in the shared board-state
+  // hook, so every surface hydrates from one projection and panel mounts never
+  // wait for their own poll.
+  const { stateQuery, state } = useBoardState();
+  const features = useEngineFeatures();
+  const { surfaceScope, saveSurfaceScope, unresolvedScope } =
+    useSavedScope(state?.projects, features.engine === "rust" && !workspaceBoard);
+  const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
+  const scope = workspaceBoard ? (panelScope ?? { projects: [workspaceBoard.key] }) : surfaceScope;
+  const setScope = workspaceBoard ? setPanelScope : saveSurfaceScope;
   const [scopeOpen, setScopeOpen] = useState(false);
   const {
     selected,
@@ -169,10 +195,6 @@ export function MainSurface({
   const [recordNotice, setRecordNotice] = useState<RecordNoticeValue | null>(
     null,
   );
-  // The revisioned board read (Contract 007) lives in the shared board-state
-  // hook, so every surface hydrates from one projection and panel mounts never
-  // wait for their own poll.
-  const { stateQuery, state } = useBoardState();
   const rustTasks = useRustTasks(Boolean(rustBoard));
   const rustColumns = useMemo(() => {
     if (!rustTasks.data) return undefined;
@@ -182,7 +204,6 @@ export function MainSurface({
     ));
   }, [rustTasks.data, state?.projects, scope.projects]);
   const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
-  const features = useEngineFeatures();
   // On the Rust engine every task is a Rust task. The project selector counts
   // each project's open tasks through its hidden-count input, keyed by checkout.
   const selectorCounts = useMemo(() => {
@@ -514,6 +535,14 @@ export function MainSurface({
       compact={narrow}
       c={c}
     />
+  );
+  if (unresolvedScope) return (
+    <PopoverHost>
+      <BoardNotice c={c} text={state
+        ? "The saved project filter has no unique match. Choose its project again or clear the selection."
+        : stateQuery.error ? readErrorText("Board state", stateQuery.error) : "Reading the saved project filter…"} />
+      {state && filter}
+    </PopoverHost>
   );
   // Every popover on the board renders in this host's layer, above the panes (Tom, 2026-11-08).
   return (
