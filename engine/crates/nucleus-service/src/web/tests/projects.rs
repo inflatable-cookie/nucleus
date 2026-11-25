@@ -3014,7 +3014,7 @@ async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
 }
 
 #[tokio::test]
-async fn project_tell_archived_claim_falls_back_but_reply_refuses_archived_sender() {
+async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
     claim(&registry, "alpha-planner").await;
@@ -3031,7 +3031,8 @@ async fn project_tell_archived_claim_falls_back_but_reply_refuses_archived_sende
     let (_, _, handle) = received_notice(&registry);
     registry.notices.lock().unwrap().started = true;
     registry.advance_tell().await.unwrap();
-    registry.archived.store(true, Ordering::Relaxed);
+    let registry = registry.reopen();
+    registry.enroll("beta-planner").await;
     let route = json!({"reply":handle});
     assert_eq!(
         registry
@@ -3040,18 +3041,46 @@ async fn project_tell_archived_claim_falls_back_but_reply_refuses_archived_sende
             .status(),
         StatusCode::OK
     );
-    registry.advance_tell().await.unwrap();
-    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
-    assert!(
+    // An outstanding proof keeps the reply addressed to the original thread.
+    {
+        let mut state = registry.service.state.lock().await;
         registry
             .service
-            .state
-            .lock()
-            .await
-            .store
-            .next_tell()
-            .unwrap()
-            .is_none()
+            .request_enrollment(&mut state, "alpha-planner");
+    }
+    assert!(registry.advance_tell().await.is_err());
+    let actor = registry.service.take_enrollment().await.unwrap();
+    assert_eq!(actor, "alpha-planner");
+    registry.archived.store(true, Ordering::Relaxed);
+    registry.service.complete_enrollment(&actor).await;
+    let pending = registry
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .next_tell()
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.direct.as_deref(), Some("alpha-planner"));
+    registry.advance_tell().await.unwrap();
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+    let registry = registry.reopen();
+    registry.advance_tell().await.unwrap();
+    let (thread, text, new_handle) = received_notice(&registry);
+    assert_eq!(thread, "next-planner");
+    assert!(text.contains("Fallback delivery"));
+    assert!(text.contains("original sender (alpha-planner) is gone"));
+    assert!(text.contains("After closure"));
+    assert_ne!(handle, new_handle);
+    registry.advance_tell().await.unwrap();
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 2);
+    assert!(registry.notices.lock().unwrap().controls.is_empty());
+    registry.enroll("beta-planner").await;
+    let replay = registry.tell("beta-planner", route, "After closure").await;
+    assert_eq!(
+        json_body(replay).await["deliveries"][0]["status"],
+        "delivered"
     );
     assert_eq!(
         registry

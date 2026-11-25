@@ -151,13 +151,6 @@ impl Service {
                 .store
                 .tell_reply_route(reply, actor, now)?
                 .ok_or(ServiceError::TellReply)?;
-            if state
-                .settings
-                .planner_route(&thread)
-                .is_none_or(|(id, _)| id != project)
-            {
-                return Err(ServiceError::TellReply);
-            }
             Some((project, thread))
         } else {
             None
@@ -224,7 +217,7 @@ impl Service {
         let (routed, unrouted): (Vec<_>, Vec<_>) = tell_projects(state, selectors)?
             .into_iter()
             .map(str::to_owned)
-            .partition(|project| tell_planner(state, project, actor).is_some());
+            .partition(|project| tell_planner(state, project, actor, None).is_some());
         // A stored route whose process-local proof expired is still a candidate.
         // Ask the enrollment worker before freezing the broadcast's recipient set.
         let candidates: BTreeSet<_> = unrouted
@@ -405,6 +398,14 @@ impl Service {
 
     async fn resolve_tell(&self, row: &TellDelivery) -> Result<Option<PlannedTell>, ServiceError> {
         let candidates = if let Some(target) = &row.direct {
+            let state = self.state.lock().await;
+            if state
+                .settings
+                .planner_route(target)
+                .is_none_or(|(project, _)| project != row.to_project)
+            {
+                return Ok(None);
+            }
             vec![target.clone()]
         } else {
             let state = self.state.lock().await;
@@ -414,12 +415,25 @@ impl Service {
             });
             choices
         };
-        for actor in candidates.into_iter().filter(|actor| actor != &row.sender) {
+        for actor in candidates
+            .into_iter()
+            .filter(|actor| actor != &row.sender && Some(actor) != row.gone_sender.as_ref())
+        {
             if self.check_registered_planner(&actor).await? {
                 break;
             }
         }
         let state = self.state.lock().await;
+        // Losing the in-memory proof while a binding still exists requires another observation.
+        if let Some(thread) = &row.direct
+            && state
+                .settings
+                .planner_route(thread)
+                .is_some_and(|(id, _)| id == row.to_project)
+            && target_planner(&state, row).is_none()
+        {
+            return Err(HostError::Uncertain.into());
+        }
         target_planner(&state, row)
             .map(|proof| Self::plan_tell(&state, row, proof))
             .transpose()
@@ -514,6 +528,11 @@ impl Service {
     }
 
     async fn unavailable_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
+        if row.direct.is_some() && !row.request_key.starts_with("claim-") {
+            self.storage.database().verify()?;
+            self.state.lock().await.store.fallback_reply(&row.id)?;
+            return Ok(());
+        }
         let outcome = if row.direct.is_some() {
             TellDispatch::Advance(TellState::Refused)
         } else {
@@ -559,7 +578,14 @@ impl Service {
             member.direct.is_none()
                 && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
         });
-        let text = notice_text(&row.from_project, &names, &row.text, &handle, fallback);
+        let text = notice_text(
+            &row.from_project,
+            &names,
+            &row.text,
+            &handle,
+            fallback,
+            row.gone_sender.as_deref(),
+        );
         Ok(PlannedTell {
             handle,
             planner: planner.clone(),
@@ -672,7 +698,12 @@ fn target_planner<'a>(state: &'a State, row: &TellDelivery) -> Option<&'a Enroll
             .get(thread)
             .filter(|_| state.live_planner_project(thread) == Some(&row.to_project));
     }
-    tell_planner(state, &row.to_project, &row.sender)
+    tell_planner(
+        state,
+        &row.to_project,
+        &row.sender,
+        row.gone_sender.as_deref(),
+    )
 }
 
 fn claimed_thread<'a>(state: &'a State, project: &str) -> Option<&'a str> {
@@ -687,12 +718,18 @@ fn claimed_thread<'a>(state: &'a State, project: &str) -> Option<&'a str> {
         .map(|claim| claim.thread.as_str())
 }
 
-fn tell_planner<'a>(state: &'a State, project: &str, sender: &str) -> Option<&'a EnrolledPlanner> {
+fn tell_planner<'a>(
+    state: &'a State,
+    project: &str,
+    sender: &str,
+    gone: Option<&str>,
+) -> Option<&'a EnrolledPlanner> {
     state
         .enrolled_planners
         .values()
         .filter(|proof| {
             proof.identity.id != sender
+                && Some(proof.identity.id.as_str()) != gone
                 && state.live_planner_project(&proof.identity.id) == Some(project)
         })
         .max_by_key(|proof| {
@@ -734,11 +771,16 @@ fn notice_text(
     text: &str,
     handle: &str,
     fallback: bool,
+    gone: Option<&str>,
 ) -> String {
-    let routing = if fallback {
-        "\nFallback delivery. Use nucleus planner.claim to receive project messages, or pass this on.\n"
+    let routing = if let Some(sender) = gone {
+        format!(
+            "\nFallback delivery. The original sender ({sender}) is gone from this project. This reply goes to its project planner.\n"
+        )
+    } else if fallback {
+        "\nFallback delivery. Use nucleus planner.claim to receive project messages, or pass this on.\n".into()
     } else {
-        ""
+        String::new()
     };
     let recipients = if project_names.len() > 1 {
         format!(" for {}", project_names.join(", "))
@@ -746,7 +788,7 @@ fn notice_text(
         String::new()
     };
     format!(
-        "Nucleus message from project {from}{recipients}\n\n{text}\n{routing}\nInformation only. This reply reaches the sender and belongs to this thread for seven days.\nReply: nucleus tell '{{\"to\":{{\"reply\":\"{handle}\"}}}}' 'YOUR MESSAGE'"
+        "Nucleus message from project {from}{recipients}\n\n{text}\n{routing}\nInformation only. Only this thread can use the reply route for seven days. It reaches the sender, or their project planner if the sender is gone.\nReply: nucleus tell '{{\"to\":{{\"reply\":\"{handle}\"}}}}' 'YOUR MESSAGE'"
     )
 }
 
@@ -813,7 +855,14 @@ mod tests {
             .map(|(thread, names)| {
                 (
                     thread,
-                    notice_text("sender", &names, "One update", "nreply_fixture", false),
+                    notice_text(
+                        "sender",
+                        &names,
+                        "One update",
+                        "nreply_fixture",
+                        false,
+                        None,
+                    ),
                 )
             })
             .collect();

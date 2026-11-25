@@ -58,7 +58,8 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   decisions. Inbox requests and operator decisions belong to the operator.
   A verified planner can send an informational notice with `tell PROJECT TEXT`
   or `tell all TEXT`. Run `nucleus planner.claim` to receive project messages
-  here. Replacing a claim notifies the previous planner. To answer the sender, copy the delivered `Reply:` command
+  here. Replacing a claim notifies the previous planner. If the sender is gone,
+  their project planner receives the reply. Copy the delivered `Reply:` command
   and replace its message. The handle belongs to your thread for seven days.
 
 ## Run protocol
