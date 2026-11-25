@@ -54,12 +54,14 @@ function repositories(project: RustProject, members?: readonly string[]) {
 export function boardLane(
   lane: RustLane,
   project: RustProject,
+  projectKey: string,
 ): api.LaneView | null {
   const repos = repositories(project);
   if (!repos.length || !lane.title.trim() || !lane.aim.trim()) return null;
   return {
     id: lane.key,
     key: lane.key,
+    project: projectKey,
     title: lane.title,
     aim: lane.aim,
     status: laneStatus[lane.status],
@@ -383,7 +385,7 @@ export function createRustPlanning(
         if (!current) return [];
         const plan = boardPlan(row.board.key, current);
         const laneViews = current.documents.flatMap((lane) => {
-          const view = boardLane(lane, row.project);
+          const view = boardLane(lane, row.project, row.board.key);
           if (!view) return [];
           if (!row.scope.laneProjects.has(lane.key)) row.scope.laneProjects.set(lane.key, row.id);
           return [view];
@@ -471,10 +473,10 @@ export function createRustPlanning(
             ? { status: "dropped" as const, note: input.note ?? "" }
             : { status: "open" as const };
       const saved = await rust.laneStatus(row.id, input.key, status);
-      const view = boardLane(saved, row.project);
+      const view = boardLane(saved, row.project, row.board.key);
       if (!view) throw new Error(`Lane ${input.key} needs a title and aim.`);
-      const { liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes, ...lane } = view;
-      void [liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes];
+      const { project, liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes, ...lane } = view;
+      void [project, liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes];
       return lane;
     },
     "lead.board": async () => {
