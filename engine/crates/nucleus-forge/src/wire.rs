@@ -90,6 +90,8 @@ pub(crate) struct Checks {
     mergeable: String,
     merge_state_status: String,
     review_decision: Option<String>,
+    // GitHub may return null. Omitting a selected field is incomplete evidence.
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     status_check_rollup: Option<Rollup>,
 }
 

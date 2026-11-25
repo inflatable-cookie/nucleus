@@ -372,10 +372,10 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns an error if Git cannot inspect the checkout.
     pub fn integration_clean(&self) -> Result<bool, WorkError> {
-        Ok(
-            !self.status_dirty(&self.repository, &["--untracked-files=no"])?
-                && self.index_visible(&self.repository)?,
-        )
+        Ok(!self.status_dirty(
+            &self.repository,
+            &["--untracked-files=no", "--ignore-submodules=none"],
+        )? && self.index_visible(&self.repository)?)
     }
 
     fn index_visible(&self, root: &Path) -> Result<bool, WorkError> {
