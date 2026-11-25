@@ -60,11 +60,6 @@ export function edgeRule(from, target, specifier) {
   if (a === 'client') return b === 'shared' || b === 'client' ? null : 'client-neutral';
   if (a === 'service') return b.startsWith('host:') && !/^hosts?\/[^/]+\/index\.(?:ts|mjs)$/.test(target) ? 'host-public-index' : b.startsWith('plugin:') || b.startsWith('host-client:') || b === 'client' ? 'service-process' : null;
   if (from === 'bin/queue-client.mjs' && ['hosts/paseo/cli/index.mjs', 'hosts/t3code/cli/index.mjs'].includes(target)) return null;
-  // The T3Code operator install route (nucleus#1330) drives the running server
-  // through the same authenticated RPC client the adapter uses, so it imports the
-  // host's public index instead of duplicating the nightly's wire client. No other
-  // host, service or core module is in reach from `bin/`.
-  if (from === 'bin/t3-install.ts' && target === 'hosts/t3code/index.ts') return null;
   if (a === 'bin') return b === 'bin' || b === 'shared' || /^service\/transport\/index\.(?:ts|mjs|js)$/.test(target) ? null : 'cli-transport';
   return null;
 }

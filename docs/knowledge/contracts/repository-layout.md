@@ -161,10 +161,6 @@ retains its existing owner and is outside relocation scope.
   shell entry cannot re-export a concrete implementation.
 - CLI code uses the shared catalogue and service client. Cross-process modules
   communicate through contracts; they cannot import another process's owner.
-- The one exception is a host's own operator install route: `bin/t3-install.ts`
-  drives T3Code through `hosts/t3code/index.ts`, the host's public index, rather
-  than duplicating the nightly's wire client (`nucleus t3 install`, nucleus#1330).
-  It reaches no other host, service or core module.
 
 The `test/folder-imports.test.ts` gate scans runtime and type imports, re-exports,
 literal dynamic imports and `require` calls. It retains current violating edges

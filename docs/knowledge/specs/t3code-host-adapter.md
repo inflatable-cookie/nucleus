@@ -1919,10 +1919,10 @@ One command connects an environment, and the same route reports and removes it
 (Tom, 2026-11-18: "We'd need a way to automate installation - I don't want to
 require people using this to set up the nucleus acp directly.. can we build a
 `nucleus t3 install` / `status` / `uninstall` suite like for bb?"). The three
-commands are `nucleus t3 install`, `nucleus t3 status` and `nucleus t3 uninstall`
-(`bin/t3-install.ts`, beside the BB route this one mirrors). They are the only
-writers of T3 settings anywhere in Nucleus: the adapter and the service still
-never write one.
+commands are `nucleus t3 install`, `nucleus t3 status` and `nucleus t3 uninstall`.
+The [host setup ruling in Spec 070](070-small-engine.md#rulings) covers the
+installed Rust commands. The protocol below records the earlier TypeScript
+install route.
 
 **Finding the server.** The running server's own descriptor,
 `<base>/userdata/server-runtime.json`, names its `origin`; `--base-dir` selects
