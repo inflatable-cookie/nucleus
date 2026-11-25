@@ -452,6 +452,8 @@ Later decisions carry their own attribution.
     - When an exact role run is active and its task parent has no pending or active turn, the first re-entry hold keys on the role launch instance. After that hold ends, the next occurrence also keys on the exact ended native parent run. Recheck on role activity and on engine startup. An uncertain reply retries the existing intent and command. An authenticated report still permits re-entry while the bound role has an active run or positively observed background work. A stopped role does not request re-entry.
     - An authenticated report or an observed terminal role releases its ACP hold. The next engine change for that task rechecks the current hold even if the completion notification was missed. A queued successor owns its own prompt.
     - A reserved send stays visible through preflight. A pinned role can send across its own parent snooze. Operator snoozes still defer delivery. Nucleus permits two explicit visibility writes per row in a rolling two-minute window. A snooze can clear as soon as work resumes. A third flip waits until the oldest write leaves the window, with one recorded deferral.
+    - A report-ready or prerequisite-release notice can make one fresh attempt
+      after T3 proves it rejected the exact command. See [Commands](#commands).
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
       T3 backoff delays native requests while local decisions continue. A retryable preflight or unavailable observation has a due time.
       Only a non-queueable, possibly sent role uses the late-reply grace, after a successful read found no receipt.
@@ -620,9 +622,12 @@ Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
 waiting notice, and the next due pass can also retry routing. The scheduler
 unsettles a settled planner and reads it again before recording a concrete send
-intent. An uncertain send keeps its exact attempt. Legacy report notices marked
-attempted, including `report_ready_planner_unavailable`, stay closed because a
-planner may already have delivered them manually.
+intent. An uncertain question or operator-decline send keeps its exact attempt.
+For report-ready and prerequisite-release notices, a structured T3 rejection
+of the exact command reopens the notice once. The fresh attempt uses a new
+command ID, the stored report or release data and a currently verified planner.
+A second rejection spends the retry. Uncertain replies and previously spent
+notices stay closed, including legacy `report_ready_planner_unavailable` records.
 
 Task cards, details and `next` return `dependencyStatus` and caller-specific
 `dependencyEdits` from local state. The `next` command list includes
