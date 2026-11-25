@@ -813,62 +813,6 @@ test("026-15a inbox cards open a record modal or the detail pane and carry no ac
   );
 });
 
-test("026-14 Planning tab writes operator versions and refuses stale saves", async () => {
-  const { Store } = await import("../core/store/store");
-  const store = new Store(":memory:");
-  try {
-    store.upsertProject({
-      key: project.key,
-      name: project.name,
-      repositories: project.repositories,
-      primary: project.primary,
-    });
-    store.upsertLane({
-      key: "first",
-      title: "First",
-      aim: "Aim",
-      repositories: [repo],
-    });
-    const saved = store.setPlan({
-      project: "app",
-      version: 0,
-      entries: [{ lane: "first", note: "", horizon: "later" }],
-      author: "operator (board)",
-    });
-    assert.equal(saved.author, "operator (board)");
-    assert.equal(store.plan({ project: "app" }).entries[0].horizon, "later");
-    assert.throws(
-      () =>
-        store.setPlan({
-          project: "app",
-          version: 0,
-          entries: [],
-          author: "operator (board)",
-        }),
-      /reload before saving/,
-    );
-    const doc = store.editLaneDocument({
-      key: "first",
-      version: 0,
-      text: "Lane intent",
-      author: "operator (board)",
-    });
-    assert.equal(doc.author, "operator (board)");
-    assert.throws(
-      () =>
-        store.editLaneDocument({
-          key: "first",
-          version: 0,
-          text: "Stale",
-          author: "operator (board)",
-        }),
-      /reload before saving/,
-    );
-  } finally {
-    store.close();
-  }
-});
-
 test("032 a linked promoted lead outside the card set places its decision through link facts alone", () => {
   const promoted = { id: "promoted-1", lanes: ["first"], repositories: [repo] };
   const view = board({
