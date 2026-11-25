@@ -54,10 +54,9 @@ through a Nucleus task and its PR. Briefs start as checked, approved leads. Neve
 edit a submitted brief: clarify in the owning spec, or resubmit and supersede
 the task.
 
-Record recurring solvable friction as a Nucleus papercut (`papercut.add`) without
+Record recurring solvable friction as a Nucleus papercut (`nucleus item.add [PROJECT] papercut TITLE`) without
 making it an unplanned implementation task. Validate through Effigy; keep npm
-scripts for existing package-native commands. Node remains the runtime for the
-Paseo SDK, SQLite and reporting bridge. No CI or release mutations are implied
+scripts for existing package-native commands. Node builds and tests the browser board. The Rust CLI owns task reporting. No CI or release mutations are implied
 by routine work.
 
 ## Automatic review loops retired

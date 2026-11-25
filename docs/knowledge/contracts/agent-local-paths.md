@@ -22,6 +22,7 @@ than in tracked docs, shell history, or ad hoc prompts.
 | Key | Required when | Meaning |
 | --- | --- | --- |
 | `AGENTS_WORKTREE_CONTAINER_DIR` | a manual worktree is required | Absolute directory under which agent-created worktrees live. |
+| `NUCLEUS_SCRATCH_ROOT` | new Nucleus scratch and test directories | Use the configured volume and export `TMPDIR`, `TMP` and `TEMP` under that root. |
 | `AGENTS_SCRATCH_DIR` | shared scratch is useful | Optional absolute directory for temporary reports and scratch files. |
 | `AGENTS_ARTIFACT_DIR` | large local outputs stay outside the repo | Optional absolute directory for generated local artifacts. |
 

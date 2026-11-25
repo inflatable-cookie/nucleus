@@ -19,7 +19,7 @@ See [Spec 067](docs/knowledge/specs/067-explicit-resolution.md#external-merge-so
 
 The plan (lanes, their documents and their order), leads, papercuts, brief
 drafts, tasks and status live in Nucleus, never in this repository. Read what's
-next with `plan.get` (see the Nucleus skill, `nucleus`).
+next with `nucleus plan.get` (see the Nucleus skill, `nucleus`).
 
 ## Commands
 
@@ -52,8 +52,7 @@ all fragments into the changelog and removes the folded files.
 - Preserve task identity, callback authentication, exact-head review and merge
   gates, provider independence and durable side-effect intent. Unknown delivery
   is not permission to retry blindly.
-- Keep Northstar independent of Paseo: the Nucleus skill belongs here, not in
-  Northstar core.
+- Keep the Nucleus skill here so Northstar stays independent of the agent host.
 - Tasks needing attention stay owned until resolved or explicitly disposed of.
   Read the current wait, question and available commands with `nucleus next <id>`.
   A planner ruling is required for decisions about the work.
@@ -91,8 +90,8 @@ all fragments into the changelog and removes the folded files.
 
 ## Papercuts
 
-File small, recurring friction in Nucleus with `papercut.add` (see the
-Nucleus skill, `nucleus`). There is no `PAPERCUTS.md`.
+File recurring friction with `nucleus item.add [PROJECT] papercut TITLE`.
+Pass the description on stdin. There is no `PAPERCUTS.md`.
 
 No Nucleus task may fix a single stuck state (Tom, 2026-10-14). A papercut
 describes the stuck shape. Use the same engine decision for every task with that shape.
