@@ -1916,7 +1916,16 @@ fn task_wait(
         Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
         Err(ServiceError::ReviewPublication(error)) => {
             let (wait, cause) = error.wait();
-            observation(wait, cause)
+            let detail = match error {
+                PublicationError::UnknownDelivery => {
+                    WaitDetail::ConfirmingDelivery("Checking GitHub for the original review.")
+                }
+                PublicationError::StaleHead => {
+                    WaitDetail::Observation("Checking the current pull request head.")
+                }
+                _ => WaitDetail::Blocked(cause.to_owned()),
+            };
+            (Some(wait), Some(detail))
         }
         Err(ServiceError::Forge(
             error @ (ForgeError::UnpublishedMerge | ForgeError::UnverifiedSource),
