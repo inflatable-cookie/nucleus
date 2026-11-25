@@ -164,6 +164,9 @@ impl Board {
             .route("/api/engine/tasks/{id}/commands", post(super::command))
             .route("/api/engine/events", get(events))
             .route("/api/engine/settings", get(settings::all))
+            .merge(super::github_accounts::routes(
+                "/api/engine/settings/github-accounts",
+            ))
             .nest(
                 "/api/engine/planning/{project}",
                 super::planning::project_routes(),

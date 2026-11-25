@@ -5,6 +5,7 @@ mod allowance;
 mod attention;
 mod dependencies;
 mod enrollment;
+pub mod github_accounts;
 mod inbox;
 mod native_inbox;
 mod numbers;
@@ -189,6 +190,8 @@ pub struct Service {
     registry_provider: Option<String>,
     host: T3,
     forge: GitHub,
+    pub(crate) github_accounts: Arc<github_accounts::GitHubAccounts>,
+    _github_account_lifetime: github_accounts::AccountLifetime,
     native_inbox: Option<native_inbox::NativeInbox>,
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
@@ -398,6 +401,7 @@ impl Service {
             host.use_held_shell();
         }
         let (changes, _) = broadcast::channel(64);
+        let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
         Ok(Self {
             storage,
             git,
@@ -406,6 +410,8 @@ impl Service {
             registry_provider,
             host,
             forge,
+            _github_account_lifetime: github_accounts.lifetime(),
+            github_accounts,
             native_inbox: None,
             board: std::sync::OnceLock::new(),
             callback,

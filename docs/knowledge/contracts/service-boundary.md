@@ -92,6 +92,21 @@ shared views behind the Rust boundary. See the [paired planning handlers](../../
 [engine board guide](../../../engine/README.md#board) and
 [shipped board Settings and reconnect proof](../../../test/rust-task-board.test.ts).
 
+GitHub Accounts is an operator-only settings domain. It stores GitHub host,
+user ID, login and the role selections. Each saved account's grant stays in
+the local keychain for that engine profile. An unset role uses installed
+`gh`. A selected reviewer with an inaccessible or expired grant needs
+attention before a review can publish. The existing operator forge credential
+still owns PR reads and merges.
+
+Sign-in uses the public [Nucleus Agents GitHub App](https://github.com/apps/nucleus-agents)
+with client ID `Iv23liRsqJ59EsNDdtiu`. Device-issued grants refresh with that
+public ID. Repository access is limited to the permissions shared by the
+app installation and the signed-in user. Phase 1 applies account selection to
+formal reviews. The worker account stays inactive until the per-role
+credential handoff is verified. See [Spec 070](../specs/070-small-engine.md#rulings)
+and [GitHub's device-flow and access rules](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
+
 ## Process and data ownership
 
 One process owns each Rust profile and opens its store before publishing the

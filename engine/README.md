@@ -29,7 +29,8 @@ dependencies land. The planner arranges independent review and merges. Run
 formatting, check, strict Clippy and nextest for changed crates through Effigy.
 Oxide manages Cargo storage for `engine:check`, `engine:clippy`,
 `engine:deny` and `engine:nextest`. Run `effigy engine:deny` for RustSec
-advisories, duplicate versions, licenses and sources in the locked workspace
+advisories, duplicate versions, licenses and sources separately for each supported
+target in the locked workspace
 graph. Set `TMPDIR`, `TMP` and `TEMP` for tests as described in
 [AGENTS.md](../AGENTS.md). The [milestone QA checklist](../docs/knowledge/contracts/milestone-qa.md#run-each-slice-under-a-durable-run-key)
 lists the selectors declared in `effigy qa`. The fixture exercises success, a

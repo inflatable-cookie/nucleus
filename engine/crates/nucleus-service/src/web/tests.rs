@@ -24,6 +24,8 @@ use crate::{
 mod briefs;
 #[path = "tests/dependencies.rs"]
 mod dependencies;
+#[path = "tests/github_accounts.rs"]
+mod github_accounts;
 #[path = "tests/planning.rs"]
 mod planning;
 #[path = "tests/projects.rs"]

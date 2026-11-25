@@ -1,3 +1,9 @@
+# The engine:deny selector passes one supported target per invocation.
+# Longhorn enables keyring on macOS and Windows. Its zbus dependency applies
+# to other Unix targets. Checking these targets together joins incompatible edges.
+[advisories]
+ignore = []
+
 [bans]
 # Transitive consumers still require different versions of some crates.
 multiple-versions = "warn"
