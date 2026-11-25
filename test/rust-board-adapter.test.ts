@@ -859,6 +859,28 @@ test("Rust board loads scoped collections on entry and shares them across views"
   assert.deepEqual(fake.planningReads().slice(4).sort(), scopedReads);
 });
 
+test("a stored Rust plan note survives the aggregate board read in full", async () => {
+  const fake = engine();
+  // Serialized from the store's PlanLane with a note longer than 200 characters.
+  const step = {
+    "key": "delivery",
+    "horizon": "now",
+    "doneWhen": "",
+    "statusNote": "The intake is open for the next group. Reviewers have checked the first delivery and recorded the remaining dependencies. The project will keep the current order while the last two submissions are reviewed, and the planner will update this note when they are ready."
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    if (!String(url).endsWith("/planning/lantern/plan")) return response;
+    const plan = await response.json();
+    return Response.json({ ...plan, lanes: [step] });
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const plans = await adapter.rpc(api.plans, {});
+  assert.equal(plans.length, 2);
+  const plan = plans.find(row => row.project === "lantern");
+  assert.equal(plan?.savedEntries?.[0]?.note, step.statusNote);
+});
+
 test("long Rust decision questions retain their full detail and their healthy siblings", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
