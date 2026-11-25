@@ -2335,6 +2335,46 @@ mod tests {
         service.task(id).await.unwrap()
     }
 
+    fn settle_both_reviewers(
+        task: &mut Task,
+        observation: &mut Observation,
+        head: &Head,
+        credential: &[u8; 32],
+        scratch: &Path,
+    ) {
+        // A task upgraded during this reviewer carries the old worker path in settled_scratch.
+        let mut saved = serde_json::to_value(&*task).unwrap();
+        saved["threads"]
+            .as_object_mut()
+            .unwrap()
+            .remove("earlier_scratch");
+        saved["threads"]["settled_scratch"] = serde_json::json!(scratch);
+        let mut upgraded: Task = serde_json::from_value(saved).unwrap();
+        let instance = task.run().unwrap().launch().instance.clone();
+        observation.host = Observed::Known(Host::Current {
+            instance: instance.clone(),
+            state: RunState::Ended,
+        });
+        for row in [&mut *task, &mut upgraded] {
+            row.record_report(
+                &instance,
+                credential,
+                Report::Review {
+                    head: head.clone(),
+                    decision: nucleus_core::Review::Approve,
+                    summary: "Reviewed".into(),
+                    finding_titles: vec![],
+                },
+            )
+            .unwrap();
+            assert_eq!(row.reconcile(observation), Action::Advance(Phase::Merging));
+        }
+        assert_eq!(
+            upgraded.earlier_run_scratch().collect::<Vec<_>>(),
+            task.earlier_run_scratch().collect::<Vec<_>>()
+        );
+    }
+
     async fn settled_cleanup_task(service: &Service, home: &Path) -> (TaskRow, PathBuf) {
         use std::os::unix::fs::DirBuilderExt as _;
 
@@ -2401,26 +2441,7 @@ mod tests {
                 &[9; 32],
             )
             .unwrap();
-        let instance = task.run().unwrap().launch().instance.clone();
-        task.record_report(
-            &instance,
-            key.as_bytes(),
-            Report::Review {
-                head: head.clone(),
-                decision: nucleus_core::Review::Approve,
-                summary: "Reviewed".into(),
-                finding_titles: vec![],
-            },
-        )
-        .unwrap();
-        observation.host = Observed::Known(Host::Current {
-            instance,
-            state: RunState::Ended,
-        });
-        assert_eq!(
-            task.reconcile(&observation),
-            Action::Advance(Phase::Merging)
-        );
+        settle_both_reviewers(&mut task, &mut observation, &head, key.as_bytes(), &scratch);
         task.command(
             Command::Cancel,
             &Authority::Operator {

@@ -253,6 +253,20 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
+        // An older writer kept the preceding settled path while the next role ran.
+        // Its one report reminder, if any, also consumed a launch sequence.
+        if let Some(previous) = self.threads.settled_scratch.take()
+            && let Some(sequence) = self
+                .threads
+                .launch_sequence
+                .checked_sub(1 + u64::from(run.report_reminder_for.is_some()))
+            && sequence > 0
+        {
+            self.threads
+                .earlier_scratch
+                .entry(sequence)
+                .or_insert(previous);
+        }
         self.threads.settled_scratch.clone_from(&run.launch.scratch);
         if let Some(state) = &mut self.report_state
             && let Some(head) = run.report.as_ref().and_then(Report::source_head)
