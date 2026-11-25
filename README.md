@@ -8,11 +8,9 @@ never retried blindly. Nucleus carries out approved work; it doesn't plan it,
 and nothing merges without review of the exact head (or the
 operator's recorded acceptance of it).
 
-Agent apps connect through a host interface. Paseo, T3Code and BB are supported
-hosts, and T3Code is the current operating host. The board runs as a plugin
-screen in a host's own sidebar where that host has one; a host without a plugin
-UI uses the local web board. Nucleus is trusted local software, not a sandbox
-between agents.
+T3Code connects to the engine through its host interface, and the board runs in
+a local browser. Nucleus is trusted local software with access to the agent's
+work environment.
 
 Subscription usage displays belong to each host app and its plugins. Nucleus
 keeps the separate dispatch usage level in Settings → Dispatch limits because
@@ -20,42 +18,17 @@ that setting controls where runs start and which profiles need the operator's pe
 
 ## Install
 
-The first release is **0.1.0** for **macOS on Apple silicon**. These commands
-become available when the public GitHub Release is published. With the
-`nucleus` command already installed:
-
-```sh
-nucleus install inflatable-cookie/nucleus@v0.1.0
-nucleus version
-```
-
-On a machine without `nucleus`, download the standalone package. It bundles
-Node, so no npm install or source checkout is needed:
-
-```sh
-bootstrap_dir=$(mktemp -d)
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://github.com/inflatable-cookie/nucleus/releases/download/v0.1.0/nucleus-0.1.0-darwin-arm64.tar.gz \
-  -o "$bootstrap_dir/nucleus.tar.gz"
-tar -xzf "$bootstrap_dir/nucleus.tar.gz" -C "$bootstrap_dir"
-"$bootstrap_dir/runtime/node" "$bootstrap_dir/bin/nucleus.mjs" install inflatable-cookie/nucleus@v0.1.0
-export PATH="$HOME/.local/bin:$PATH"
-nucleus version
-```
-
-The installer checks the download against the release manifest's SHA-256 and
-package inventory before activating it. Add `~/.local/bin` to your `PATH` for
-future sessions. Nucleus keeps its data in `~/.nucleus` (`NUCLEUS_DATA_HOME`
-overrides it; `nucleus data-home` prints the resolution). Release preparation,
-proof and publishing follow the
-[release contract](docs/knowledge/contracts/release.md).
+Follow the [engine staging instructions](engine/README.md#stage-an-engine-release)
+for the current Rust executable and local web board. See the
+[release contract](docs/knowledge/contracts/release.md) for publication.
+The [0.1.0 download](https://github.com/inflatable-cookie/nucleus/releases/tag/v0.1.0)
+is the archived TypeScript release for macOS on Apple silicon.
 
 ## Getting started
 
-1. **Connect a host.** Connect any supported host (no Paseo required):
-   - **T3Code:** `nucleus integrate t3code` (or `nucleus t3 install`) registers the `nucleus` ACP provider; T3Code starts the daemon automatically on launch.
-   - **Paseo:** `nucleus integrate paseo` registers the installed package; then reload the `nucleus` plugin and open **Nucleus** in the sidebar.
-   On a host without a plugin UI, `nucleus ui` prints a localhost link that opens the same board in a browser, and `nucleus service-state` reads service state directly over the local socket.
+1. **Connect T3Code.** Follow the [T3 setup](engine/README.md#set-up-t3) to register
+   the `nucleus-rust` ACP provider. Open the [local web board](engine/README.md#board)
+   with `nucleus ui`.
 2. **Configure.** New installations start paused with an empty worker pool. In
    Settings, add worker and reviewer profiles and set dispatch limits. Paused
    state survives restarts.

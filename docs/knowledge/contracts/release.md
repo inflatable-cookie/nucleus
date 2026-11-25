@@ -172,7 +172,10 @@ snapshot fence; compiled runs use their embedded identity. The relocated-package
 proof is `effigy test unit -- test/compiled-runtime.test.ts`; it starts a private
 fixture service, both worker types and a detached validation helper.
 
-## Scratch installation and command
+## Historical TypeScript installation and commands
+
+This records the commands shipped in the TypeScript package. For current
+installations, use the [engine staging instructions](../../../engine/README.md#stage-an-engine-release).
 
 The installed `nucleus` skill is the only skill the package ships, and its link
 follows `current`. The installer links only `nucleus`; on install or roll it
@@ -249,7 +252,7 @@ unrelated config and refuses to replace a different existing registration. It
 never reloads Paseo. This scratch-tested installer does not change the live
 data home, plugin registration or release policy above.
 
-## Opt-in local main channel
+## Historical TypeScript main channel
 
 The installer and channel helpers live under `service/install/` (installed aliases stay under `server/service/`); shared modules
 loaded by the plugin must stay free of Node imports.
