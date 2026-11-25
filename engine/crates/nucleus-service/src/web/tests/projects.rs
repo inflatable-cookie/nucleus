@@ -1174,7 +1174,7 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
         Method::POST,
         "/v1/planning/product/items",
         "alpha-planner",
-        add,
+        json!({"kind":"papercut","title":"Fixture issue","body":"Use the selected repository.","lanes":[]}),
     )
     .await;
     assert_eq!(added.status(), StatusCode::CREATED);
@@ -1185,7 +1185,7 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
         Method::POST,
         &format!("/v1/planning/product/items/{id}/promote"),
         "alpha-planner",
-        selected,
+        json!({"complexity":"medium","repository":BETA_REPO}),
     )
     .await;
     assert_eq!(promoted.status(), StatusCode::CREATED);
