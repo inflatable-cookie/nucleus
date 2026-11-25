@@ -672,6 +672,7 @@ impl Service {
             if task.run().is_some() {
                 return self.advance(row, host).await;
             }
+            Box::pin(self.notify_completion(row)).await?;
             if task.phase() == Phase::Done
                 && (self.acp_provider().is_some() || task.report_task().is_some())
             {
@@ -999,7 +1000,9 @@ impl Service {
                 self.publish(id, current.version);
             }
             state.schedule.reset_workspace(id);
-            if state.store.pending_prerequisite_notice(id)?.is_none() {
+            if state.store.pending_prerequisite_notice(id)?.is_none()
+                && state.store.completion_notice(id)?.is_none()
+            {
                 state.planner_notice_waiters.remove(id);
             }
             return Ok(());

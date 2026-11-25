@@ -109,13 +109,14 @@ impl Service {
     pub(super) async fn planner_notice_target(
         &self,
         task: &Task,
+        prefer_claim: bool,
     ) -> Result<Option<String>, ServiceError> {
         self.state
             .lock()
             .await
             .planner_notice_waiters
             .insert(task.identity().id.clone());
-        self.responsible_planner(task).await
+        self.responsible_planner(task, prefer_claim).await
     }
 
     /// A settled destination needs a separate write and a fresh read before any send intent.
@@ -208,7 +209,7 @@ impl Service {
                 }
             }
         }
-        let Some(thread) = self.planner_notice_target(&row.task).await? else {
+        let Some(thread) = self.planner_notice_target(&row.task, false).await? else {
             return Ok(wait);
         };
         let question = row.task.question().ok_or(ServiceError::Input)?;
@@ -338,10 +339,11 @@ impl Service {
     pub(super) async fn responsible_planner(
         &self,
         task: &Task,
+        prefer_claim: bool,
     ) -> Result<Option<String>, ServiceError> {
         let route = self.project_for(task.identity()).await?;
         if self.project.is_none() {
-            return self.registered_planner(task, &route).await;
+            return self.registered_planner(task, &route, prefer_claim).await;
         }
         if let Some(origin) = &task.identity().origin_thread
             && self.host.planner_routable(origin).await?
@@ -364,6 +366,7 @@ impl Service {
         &self,
         task: &Task,
         route: &ProjectRoute,
+        prefer_claim: bool,
     ) -> Result<Option<String>, ServiceError> {
         let origin = task.identity().origin_thread.as_deref();
         let Some(project) = route.project_id.as_deref() else {
@@ -371,7 +374,17 @@ impl Service {
         };
         let mut candidates = {
             let state = self.state.lock().await;
-            state.planner_candidates_for(project)
+            let mut candidates = state.planner_candidates_for(project);
+            if prefer_claim {
+                let claimed = state
+                    .settings
+                    .projects
+                    .as_ref()
+                    .and_then(|registry| registry.projects.get(project))
+                    .and_then(|project| project.planner_claim.as_ref());
+                candidates.sort_by_key(|id| claimed.is_none_or(|claim| claim.thread != *id));
+            }
+            candidates
         };
         if let Some(index) = candidates
             .iter()
@@ -589,7 +602,7 @@ mod tests {
                 "fixture brief".into(),
                 None,
             );
-            let result = service.responsible_planner(&task).await;
+            let result = service.responsible_planner(&task, false).await;
             if let Some(expected) = expected {
                 assert_eq!(result.expect("exact routing").as_deref(), Some(expected));
             } else {

@@ -1204,7 +1204,7 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
     assert_eq!(
         registry
             .service
-            .responsible_planner(&task)
+            .responsible_planner(&task, false)
             .await
             .expect("delivery route")
             .as_deref(),
@@ -1251,7 +1251,7 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
     assert_eq!(
         registry
             .service
-            .responsible_planner(&task)
+            .responsible_planner(&task, false)
             .await
             .expect("fallback planner")
             .as_deref(),
@@ -3072,4 +3072,132 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     let (thread, text, _) = received_notice(&registry);
     assert_eq!(thread, "next-planner");
     assert!(text.contains("Fallback delivery"));
+}
+
+#[tokio::test]
+async fn opted_in_completion_survives_restart_and_retries_once_to_the_claimed_planner() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    claim(&registry, "next-planner").await;
+    registry.enroll("recent-planner").await;
+    let brief =
+        "---\nqueue:\n  complexity: low\n  notifyOriginOnCloseout: true\n---\n# Fix rounding";
+    assert_eq!(
+        submit(&registry.api, "alpha-planner", "notice", None)
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    let commands = "/v1/tasks/notice/commands";
+    for command in [json!({"amend": brief}), json!("cancel")] {
+        assert_eq!(
+            caller_request(
+                &registry.api,
+                Method::POST,
+                commands,
+                "alpha-planner",
+                command
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+    }
+
+    let registry = registry.reopen();
+    registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
+    advance_task_notice(&registry).await.unwrap();
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .completion_notice("notice")
+            .unwrap(),
+        Some(true)
+    );
+    registry.archived.store(true, Ordering::Relaxed);
+    let registry = registry.reopen();
+    registry.notices.lock().unwrap().next_reply = NoticeReply::Lost;
+    advance_task_notice(&registry).await.unwrap();
+    let row = registry.service.task("notice").await.unwrap();
+    let text = format!("#{} Fix rounding was cancelled", row.number.unwrap());
+    {
+        let fixture = registry.notices.lock().unwrap();
+        let [first, retry] = fixture.sends.as_slice() else {
+            panic!("expected exactly two attempts")
+        };
+        assert_eq!(first["threadId"], "alpha-planner");
+        assert_eq!(retry["threadId"], "next-planner");
+        assert_ne!(first["commandId"], retry["commandId"]);
+        assert_eq!(first["text"], text);
+        assert_eq!(retry["text"], text);
+    }
+    let registry = registry.reopen();
+    let reads = registry.reads.load(Ordering::Relaxed);
+    registry.service.notify_completion(&row).await.unwrap();
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 2);
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .archive_due_ids(None, 32, false)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn done_completion_names_the_pull_and_an_omitted_opt_in_stays_silent() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    for (id, opt) in [("quiet", ""), ("done", "  notifyOriginOnCloseout: true\n")] {
+        let brief = format!("---\nqueue:\n  complexity: low\n{opt}---\n# Ship correction");
+        assert_eq!(
+            caller_request(
+                &registry.api,
+                Method::POST,
+                "/v1/planning/tasks",
+                "alpha-planner",
+                json!({"id":id,"reference":id,"brief":brief})
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+        let row = registry.service.task(id).await.unwrap();
+        let mut settled = serde_json::to_value(&row.task).unwrap();
+        settled["phase"] = json!("done");
+        settled["pr"] = json!({"url":PR,"head":"a".repeat(40)});
+        registry
+            .service
+            .save(
+                &row,
+                serde_json::from_value(settled).unwrap(),
+                &event("closed_checkout_removed"),
+            )
+            .await
+            .unwrap();
+        let row = registry.service.task(id).await.unwrap();
+        let reads = registry.reads.load(Ordering::Relaxed);
+        registry.service.notify_completion(&row).await.unwrap();
+        let notices = registry.notices.lock().unwrap();
+        if id == "quiet" {
+            assert!(notices.sends.is_empty());
+            assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+        } else {
+            assert_eq!(notices.sends.len(), 1);
+            assert_eq!(
+                notices.sends[0]["text"],
+                format!("#{} Ship correction is done · {PR}", row.number.unwrap())
+            );
+        }
+    }
 }

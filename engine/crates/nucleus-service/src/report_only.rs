@@ -26,14 +26,37 @@ pub(super) enum PlannerNotice {
     ReportReady,
     PrerequisiteRelease(i64),
     ParentRecovery,
+    Completion,
 }
 
 impl PlannerNotice {
+    fn retry(
+        self,
+        store: &nucleus_store::Store,
+        task: &str,
+        version: i64,
+    ) -> Result<Option<bool>, StoreError> {
+        match self {
+            Self::Completion => store.completion_notice(task),
+            Self::ParentRecovery => store.parent_recovery_notice_retry(task, version),
+            Self::ReportReady => Ok(Some(store.planner_notice_rejected(task, None)?)),
+            Self::PrerequisiteRelease(release) => {
+                Ok(Some(store.planner_notice_rejected(task, Some(release))?))
+            }
+        }
+    }
     fn effect(
         self,
         row_version: i64,
     ) -> (&'static str, i64, &'static str, &'static str, Option<i64>) {
         match self {
+            Self::Completion => (
+                "completion",
+                0,
+                "completion_notice_intent",
+                "completion_notice_not_sent",
+                None,
+            ),
             Self::ReportReady => (
                 "report-ready",
                 row_version,
@@ -312,6 +335,45 @@ impl Service {
         })
     }
 
+    pub(super) async fn notify_completion(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
+        if self
+            .state
+            .lock()
+            .await
+            .store
+            .completion_notice(id)?
+            .is_none()
+        {
+            return Ok(());
+        }
+        let name = row
+            .number
+            .map_or_else(|| row.reference().into_owned(), |n| format!("#{n}"));
+        let title = crate::titles::brief_title(&row.task);
+        let text = if row.task.phase() == Phase::Cancelled {
+            format!("{name} {title} was cancelled")
+        } else {
+            let mut text = format!("{name} {title} is done");
+            if let Some(pr) = row.task.pull_request() {
+                text.push_str(" · ");
+                text.push_str(&pr.url);
+            }
+            text
+        };
+        match self
+            .advance_planner_notice(row, PlannerNotice::Completion, &text)
+            .await
+        {
+            Ok(NoticeProgress::Pending) | Err(ServiceError::Host(_)) => {
+                self.recheck_effect(row, WaitReason::Question).await;
+            }
+            Ok(NoticeProgress::Spent | NoticeProgress::NoPlanner) => {}
+            Err(error) => return Err(error),
+        }
+        Ok(())
+    }
+
     /// Make one attempt at an informational notice, returning whether it remains pending.
     pub(super) async fn send_planner_notice(
         &self,
@@ -336,20 +398,13 @@ impl Service {
         let _fence = self.effect(row).await?;
         let task = &row.task;
         let id = &task.identity().id;
+        let completion = matches!(notice, PlannerNotice::Completion);
         let parent = matches!(notice, PlannerNotice::ParentRecovery);
         let (effect, version, intent, not_sent, release_version) = notice.effect(row.version);
-        let retry = {
-            let state = self.state.lock().await;
-            if parent {
-                let Some(retry) = state.store.parent_recovery_notice_retry(id, version)? else {
-                    return Ok(Spent);
-                };
-                retry
-            } else {
-                state.store.planner_notice_rejected(id, release_version)?
-            }
+        let Some(retry) = notice.retry(&self.state.lock().await.store, id, version)? else {
+            return Ok(Spent);
         };
-        let Some(thread) = self.planner_notice_target(task).await? else {
+        let Some(thread) = self.planner_notice_target(task, completion).await? else {
             return Ok(NoPlanner);
         };
         let suffix = if retry { "-retry" } else { "" };
@@ -361,14 +416,18 @@ impl Service {
         };
         let dispatch = authorization.record(&mut attempt)?;
         let mut audit = event(intent);
-        audit.detail = serde_json::json!({
-            "command": attempt.command, "recipient": attempt.thread, "releaseVersion": release_version,
-            "version": version, "retry": retry
-        })
+        audit.detail = serde_json::json!({"command": attempt.command, "recipient": attempt.thread,
+            "releaseVersion": release_version, "version": version, "retry": retry})
         .to_string();
-        let recorded = if parent {
+        let recorded = if parent || completion {
             let mut state = self.state.lock().await;
-            state.store.record_task_effect(id, &audit)?;
+            if completion {
+                state
+                    .store
+                    .set_completion_notice(id, Some(retry), None, &audit)?;
+            } else {
+                state.store.record_task_effect(id, &audit)?;
+            }
             state.planner_notice_waiters.remove(id);
             None
         } else if let Some(version) = release_version {
@@ -392,6 +451,7 @@ impl Service {
         let send = self.host.deliver_notice(NoticeWrite::Queue(dispatch)).await;
         let kind = match send {
             Err(HostError::Deferred { .. }) => not_sent,
+            Ok(NoticeSend::Rejected) if !retry && completion => "completion_notice_rejected",
             Ok(NoticeSend::Rejected) if !retry && parent => "parent_recovery_notice_rejected",
             Ok(NoticeSend::Rejected) if !retry => "planner_notice_rejected",
             Ok(NoticeSend::Rejected) => {
@@ -404,12 +464,19 @@ impl Service {
                 return Ok(Spent);
             }
             Ok(NoticeSend::Accepted | NoticeSend::Prepared) => return Ok(Spent),
-            Err(_) if parent => return Ok(Spent),
+            Err(_) if parent || completion => return Ok(Spent),
             Err(error) => return Err(error.into()),
         };
         let mut outcome = event(kind);
         outcome.detail.clone_from(&audit.detail);
-        if parent {
+        if completion {
+            self.state.lock().await.store.set_completion_notice(
+                id,
+                None,
+                Some(retry || kind == "completion_notice_rejected"),
+                &outcome,
+            )?;
+        } else if parent {
             self.state
                 .lock()
                 .await

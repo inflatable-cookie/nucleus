@@ -29,12 +29,16 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   ---
   queue:
     complexity: medium
+    notifyOriginOnCloseout: true
   ---
 
   # Brief title
 
   State the change and its acceptance checks.
   ```
+
+  Set `queue.notifyOriginOnCloseout: true` on admission or amend to hear when
+  the task finishes or is cancelled. Omit it for silent closeout.
 
   For review entry, add `--review PR_URL HEAD` with the named PR and exact full
   head. Choose the repository explicitly when the project or brief needs it.

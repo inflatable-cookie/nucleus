@@ -311,6 +311,10 @@ impl Store {
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS completion_notices (
+            task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS pending_completion_notices ON completion_notices(task_id) WHERE retry IS NOT NULL")?;
         tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
@@ -523,13 +527,54 @@ impl Store {
     ) -> Result<Vec<String>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "SELECT id FROM tasks WHERE id > ?1 AND phase = 'done' AND run IS NULL
-             AND (?3 OR report_task IS NOT NULL) ORDER BY id LIMIT ?2",
+             AND (?3 OR report_task IS NOT NULL)
+             UNION SELECT n.task_id FROM completion_notices n JOIN tasks t ON t.id=n.task_id
+             WHERE n.task_id > ?1 AND n.retry IS NOT NULL AND t.phase IN ('done','cancelled') AND t.run IS NULL
+             ORDER BY 1 LIMIT ?2",
         )?;
         let rows = query.query_map(
             params![after.unwrap_or_default(), limit, parenting],
             |row| row.get(0),
         )?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// First attempt (false), sole retry (true), or no pending closeout notice.
+    ///
+    /// # Errors
+    /// Returns an error if the notice cannot be read.
+    pub fn completion_notice(&self, id: &str) -> Result<Option<bool>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT retry FROM completion_notices WHERE task_id=?1 AND retry IS NOT NULL",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Claim or reopen the exact pending attempt together with its native evidence.
+    ///
+    /// # Errors
+    /// Returns an error if the occurrence changed or the evidence cannot be saved.
+    pub fn set_completion_notice(
+        &mut self,
+        id: &str,
+        expected: Option<bool>,
+        next: Option<bool>,
+        audit: &EventDraft,
+    ) -> Result<(), StoreError> {
+        let tx = self.connection.transaction()?;
+        if tx.execute(
+            "UPDATE completion_notices SET retry=?3 WHERE task_id=?1 AND retry IS ?2",
+            params![id, expected, next],
+        )? != 1
+        {
+            return Err(StoreError::StaleTask);
+        }
+        append(&tx, id, audit)?;
+        Ok(tx.commit()?)
     }
 
     /// Append a task effect observation without changing the task version.
@@ -838,6 +883,15 @@ impl Store {
         persist(&tx, task, true)?;
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
+            if !row.task.phase().is_terminal()
+                && nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
+                    .is_ok_and(|policy| policy.notify_origin_on_closeout)
+            {
+                tx.execute(
+                    "INSERT OR IGNORE INTO completion_notices (task_id, retry) VALUES (?1, 0)",
+                    [&task.identity().id],
+                )?;
+            }
         }
         if let Some((prerequisites, clock)) = prerequisites {
             let id = &task.identity().id;
