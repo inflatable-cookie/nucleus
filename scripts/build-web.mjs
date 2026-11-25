@@ -7,10 +7,11 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 export async function buildEngineBoard(out) {
   await mkdir(out, { recursive: true });
-  await build({
+  const bundle = await build({
     absWorkingDir: root,
     entryPoints: ['client/web/engine-index.tsx'],
-    outfile: resolve(out, 'app.js'),
+    outfile: 'app.js',
+    write: false,
     bundle: true,
     platform: 'browser',
     format: 'esm',
@@ -30,6 +31,7 @@ export async function buildEngineBoard(out) {
     }],
     minify: true,
   });
+  await writeFile(join(out, 'app.js'), bundle.outputFiles[0].contents);
   await writeFile(join(out, 'index.html'), '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nucleus</title><style>html,body,#root{height:100%;margin:0}</style></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>');
 }
 

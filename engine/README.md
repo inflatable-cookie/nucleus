@@ -88,10 +88,11 @@ temporary files under scratch.
 From a clean checkout of the intended revision with the web dependencies
 installed, run `effigy engine:stage -- /absolute/builds-root`. Pass the active
 builds root shown in Storage. This is the Barge builds class when placement is
-enabled and no explicit override is set. The selector builds `nucleus` with
-`oxide build --profile release` and stages the executable, `board-assets/`
+enabled and no explicit override is set. The builds root must already exist.
+The selector creates its `releases` child if needed. It builds `nucleus` with
+`oxide build --profile release` and publishes the executable, `board-assets/`
 and `skills/nucleus/SKILL.md` together under `<builds-root>/releases/<git-sha>/`.
-It refuses an existing release directory.
+It refuses an existing release or a destination that changes during staging.
 
 At activation, point the CLI runtime link and the service and ACP launchers
 at the staged `nucleus`. Pass its `board-assets/` to the service. The managed
