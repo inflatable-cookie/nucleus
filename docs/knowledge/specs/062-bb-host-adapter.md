@@ -1401,7 +1401,7 @@ connection, sidebar read and board signal phases 0–5 landed:
   ran there. A fixed `Board` tab shows on exactly those
   threads and renders `MainSurface` preset to the project — every repository the project lists. A
   fixed `Task` tab shows on a task's recorded role threads only and renders the board's task detail
-  in place (`client/task/task-panel.tsx`, `TaskDialog` with `inline`); a prerequisite link opens that
+  in place ([the archived BB task panel](https://github.com/inflatable-cookie/nucleus/blob/737246d22bcb7590e5819da41449d28131ed1b3d/client/task/task-panel.tsx) used `TaskDialog` with `inline`); a prerequisite link opens that
   task in the tab and Back returns to the thread's own task. The forked sidebar's project
   rows carry one "Board" menu item linking to the route when the read names their BB project (patch
   0001 plus the fork's own `NucleusProjectBoardMenuItem`), and planner and named-agent rows carry a
