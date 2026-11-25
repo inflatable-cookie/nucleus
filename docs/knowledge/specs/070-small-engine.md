@@ -301,7 +301,7 @@ Later decisions carry their own attribution.
     - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
     - Task commands accept any live planner binding for the project. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
-    - Projects settings edit slots and lanes and show the live planners. Dispatch uses the verified repository route automatically.
+    - Limits edits slot counts in Dispatch. Planning edits lanes. Projects shows the live planners. Dispatch uses the verified repository route automatically.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
 24. **Host setup commands.** Tom, 2026-11-24: "we'll need the `nucleus t3 install/uninstall/status` surface for setting up the ACP, etc".
     - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.
@@ -647,9 +647,9 @@ Later decisions carry their own attribution.
       available. Item timestamps, edit revisions and artifacts awaiting
       acceptance survive compaction. Existing backups keep the full history until they age
       out.
-    - The engine takes scheduled tiered backups of its database (hourly, daily
-      and weekly, as in Spec 028) under the retention settings, not only before
-      upgrades and rolls.
+    - Scheduled database backups retain 24 six-hourly copies, 14 daily copies
+      and eight weekly copies. These quotas are fixed. See
+      [Rust engine capture](028-store-backups.md#rust-engine-capture).
 
 44. **GitHub requests are throttled.** Tom, 2026-11-25, after a burst of
     closing tasks tripped GitHub's secondary rate limit: "We need to throttle
@@ -681,7 +681,7 @@ Later decisions carry their own attribution.
     question. Each case cost a planner round trip, and the second run finished
     the work. Planner ruling, following ruling 28 ("Context gets compacted and
     it just continues"):
-    - When a worker's turn ends without an authenticated report, its one
+    - When a code worker's turn ends without an authenticated report, its one
       follow-up turn tells it to continue the assignment in the same checkout
       and report when done.
     - The worker asks the planner only about a concrete impediment: a failure
@@ -689,8 +689,10 @@ Later decisions carry their own attribution.
       not an impediment.
     - A reviewer's follow-up still asks it to report the review it performed,
       so a review never repeats.
-    - The follow-up stays a single turn. If it also ends without a report, the
-      existing missing-report question applies.
+    - If the code worker or reviewer finishes that turn without reporting, the
+      planner gets the missing-report question. A report-only worker instead
+      gets one reminder to report its existing delivery or impediment. If it
+      still sends no report, the task is Blocked. Use **Move to work** to resume.
 
 46. **Reviewer report reminders and recovery.** On 2026-11-25 Tom ruled
     “Keep Rust behaviour.” When a reviewer ends without an authenticated
