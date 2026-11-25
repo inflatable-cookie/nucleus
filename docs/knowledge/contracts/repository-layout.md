@@ -198,8 +198,7 @@ together under `core/verbs/disposition/`.
 
 The framed protocol, socket client, roll recovery, discovery reads and build
 identity live in `shared/service/`. Service identity writes and process launch
-actions stay outside shared. Pure review text lives in
-`shared/review-text.ts`.
+actions stayed outside shared. The retired TypeScript review text lived in shared code.
 
 The archived Paseo code under `hosts/paseo/` keeps its adapter and client code
 in separate directories. The remaining TypeScript service code contains callbacks and validation helpers. Formal-review HTTP lives in the forge client under

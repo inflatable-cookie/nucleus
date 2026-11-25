@@ -626,8 +626,7 @@ unpublished ordinary reviewer verdict. Enforces
 reviewer opt-in and the review requirement it decides, continued PR identity
 binding, the ordinary review round's custody proof, and the transitions out of
 reviewing (source-approval proof wait, changes-requested revision, skipped
-review). The requirement itself is `shared/review-requirement.ts`' pure rule,
-which the merge gate reads for the same answer. Resolution supplies narrow live
+review). The retired TypeScript merge gate used the same pure rule. Resolution supplied narrow live
 contexts to these owners, ReviewContinuations, ReviewPublication and PrAdoption;
 compatibility delegates preserve caller overrides and return promises without an
 async wrapper.

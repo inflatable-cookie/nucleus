@@ -420,7 +420,7 @@ The TypeScript engine and its runtime are retired. This section records their fo
 - `core/review/reviewer-setting.ts`, `core/review/continued-pr.ts`,
   `core/review/ordinary-custody.ts` and `core/review/review-advances.ts` own the
   review phase's other mechanisms: the repository reviewer opt-in (with the
-  shared review requirement in `shared/review-requirement.ts`), continued PR
+  retired TypeScript review requirement), continued PR
   identity, the ordinary round's custody proof, and the transitions out of
   reviewing.
 - `core/intake/checkpoint.ts` delivers each persisted worker checkpoint continuation
