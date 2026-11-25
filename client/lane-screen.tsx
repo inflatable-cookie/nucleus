@@ -276,7 +276,7 @@ export function LaneScreen({
   onSaveDocument: (input: { version: number; text: string }) => Promise<void>;
   onRetryDocument: () => void;
   readVersion: (version: number) => Promise<LaneDocumentVersion | null>;
-  tasks: LaneListRead<TaskSummary>;
+  tasks: LaneListRead<TaskSummary> & { rows?: React.ReactNode };
   leads: LaneListRead<BoardLead>;
   onOpenTask: (id: string) => void;
   onOpenLead: (lead: BoardLead) => void;
@@ -524,7 +524,7 @@ export function LaneScreen({
           )}
         </View>
       )}
-      {tasks.items === undefined && !tasks.error && (
+      {tasks.rows === undefined && tasks.items === undefined && !tasks.error && (
         <Text style={meta}>Loading work…</Text>
       )}
       {tasks.items && workTotal > tasks.items.length && (
@@ -535,7 +535,7 @@ export function LaneScreen({
       )}
       <BoardCardVariantContext.Provider value="row">
         <View style={{ marginHorizontal: -space.xs }}>
-          {tasks.items?.map((task) => {
+          {tasks.rows ?? tasks.items?.map((task) => {
             const signal = task.held
               ? `Held${task.hold?.reason ? ` · ${task.hold.reason}` : ""}`
               : (task.waitState?.nextAction ??
@@ -561,7 +561,7 @@ export function LaneScreen({
           })}
         </View>
       </BoardCardVariantContext.Provider>
-      {tasks.items && !tasks.items.length && workTotal === 0 && (
+      {(tasks.total === 0 || tasks.items?.length === 0) && workTotal === 0 && (
         <View style={{ ...box, alignItems: "center" }}>
           <Text style={meta}>No tasks running in this lane</Text>
         </View>

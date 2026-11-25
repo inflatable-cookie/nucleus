@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
+import { createRustBoardTransport, createRustInvalidator } from "../client/web/rust-board";
+import { rustTaskCard } from "./support/rust-task-card";
 import { useNativeStubs, mount } from "./support/render";
 import {
   EngineFeaturesContext,
@@ -1231,6 +1233,14 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   const web = await import("../client/web/shell");
   bindBoardShell({ ...web, Icon: () => null });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const rows = [
+    { ...rustTaskCard("orbit-live", "queued", "orbit#1", "example/orbit-docs"), title: "Orbit work", lanes: ["Delivery_Q4"] },
+    { ...rustTaskCard("lantern-live", "working", "lantern#2", "example/lantern"), title: "Lantern work", lanes: ["Delivery_Q4"] },
+    { ...rustTaskCard("other-lane", "queued", "lantern#3", "example/lantern"), title: "Different lane", lanes: ["elsewhere"] },
+    { ...rustTaskCard("finished", "done", "lantern#4", "example/lantern"), title: "Finished work" },
+  ];
+  const transport = createRustBoardTransport(async () => Response.json(rows));
+  client.setQueryData(["rust-board", "list"], await transport.list(new AbortController().signal));
   const h = React.createElement;
   const ui = mount(h(QueryClientProvider, {
     client,
@@ -1240,7 +1250,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
         value: RUST_ENGINE_FEATURES,
         children: h(MainSurface, {
           theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
-          layout: { compact: false },
+          layout: { compact: false }, rustBoard: createRustInvalidator(client),
         }),
       }),
     }),
@@ -1263,6 +1273,8 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   ui.press("Open lane Orbit delivery");
   await visible("Read full document for Orbit delivery");
   assert.match(ui.text(), /Orbit document/);
+  await visible("orbit#1, Orbit work");
+  assert.equal(ui.query("lantern#2, Lantern work"), undefined);
 
   ui.press("Project row Lantern");
   await visible("Open lane Lantern delivery");
@@ -1274,6 +1286,16 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   assert.deepEqual(fake.reads.slice(beforeOpen).filter(path => path.includes("/planning/")), [
     "GET /planning/lantern/plan",
   ]);
+
+  await visible("lantern#2, Lantern work");
+  assert.equal(ui.query("orbit#1, Orbit work"), undefined);
+  assert.doesNotMatch(ui.text(), /Different lane|Finished work|Couldn’t load work/);
+  ui.press("lantern#2, Lantern work");
+  await visible("Task detail");
+  assert.match(ui.text(), /lantern#2 · Lantern work/);
+  ui.query("Close task")!.props.onPress();
+  const laneQueries = client.getQueryCache().findAll({ queryKey: ["nucleus", "lane-tasks"] });
+  assert.ok(laneQueries.every((query) => query.state.fetchFailureCount === 0 && query.state.dataUpdateCount === 0));
 
   ui.press("Edit the Lantern delivery document");
   await visible("Lane document text");

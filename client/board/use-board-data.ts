@@ -216,7 +216,7 @@ export function usePlanningData({
         offset: laneTaskOffset,
         limit: 25,
       }),
-    enabled: tab === "planning" && Boolean(planningLane),
+    enabled: !rust && tab === "planning" && Boolean(planningLane),
     refetchInterval: rust ? false : 4000,
     staleTime: rust ? Infinity : 0,
   });
