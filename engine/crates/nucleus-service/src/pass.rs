@@ -446,18 +446,22 @@ impl Service {
         Ok((state, error))
     }
 
+    pub(super) fn check_forge_ready(&self) -> Result<(), ForgeError> {
+        let deadline = self.forge_until.load(Ordering::Relaxed);
+        if now_ms() < deadline {
+            return Err(ForgeError::Deferred {
+                until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
+            });
+        }
+        Ok(())
+    }
+
     async fn read_forge(
         &self,
         task: &Task,
         checkout: &Checkout<'_>,
     ) -> Result<(Forge, Option<PullTarget>), ServiceError> {
-        let deadline = self.forge_until.load(Ordering::Relaxed);
-        if now_ms() < deadline {
-            return Err(ForgeError::Deferred {
-                until: UNIX_EPOCH + std::time::Duration::from_millis(deadline),
-            }
-            .into());
-        }
+        self.check_forge_ready()?;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
         route.binding(checkout)?;
@@ -2048,7 +2052,7 @@ fn capture_forge<T>(service: &Service, result: Result<T, ForgeError>) -> Result<
     result
 }
 
-fn record_forge_failure(service: &Service, error: &ForgeError) {
+pub(super) fn record_forge_failure(service: &Service, error: &ForgeError) {
     if let ForgeError::Deferred { until } = error {
         defer(service, *until);
     } else if matches!(error, ForgeError::Http(_))

@@ -582,7 +582,7 @@ impl GitHub {
             let mut cursors = std::collections::BTreeSet::new();
             while let Some(cursor) = checks.next_cursor() {
                 if cursors.len() + 1 >= MAX_CHECK_PAGES || !cursors.insert(cursor.to_owned()) {
-                    break;
+                    return pull.forge(CheckState::Unknown);
                 }
                 let page = self
                     .query_pull(target, CHECKS_QUERY, true, Some(cursor))

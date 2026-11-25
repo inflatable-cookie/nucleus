@@ -795,6 +795,38 @@ async fn a_changed_head_base_or_repeated_cursor_cannot_clear_merge_preflight() {
 }
 
 #[tokio::test]
+async fn a_successful_partial_inventory_stays_unknown_at_either_paging_bound() {
+    let success = json!([{"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "isRequired": true}]);
+    for repeat in [false, true] {
+        let count = if repeat { 2 } else { 10 };
+        let mut replies = vec![Some(pull('a', false))];
+        for page in 0..count {
+            let cursor = if repeat {
+                "same".into()
+            } else {
+                page.to_string()
+            };
+            replies.push(Some(check_page('a', 'b', Some(&cursor), &success)));
+        }
+        let (forge, calls) = server(replies);
+        let mut branches = branches();
+        branches.required_checks = vec!["ci".into()];
+        let observed = forge
+            .observe_for_merge(&branches.target(PR_URL).unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(
+            observed,
+            Forge::Open {
+                checks: CheckState::Unknown,
+                ..
+            }
+        ));
+        assert_eq!(calls.join().unwrap().len(), count + 1);
+    }
+}
+
+#[tokio::test]
 async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
     let task = task_with_approval();
     let mut moved = pull('a', false);
