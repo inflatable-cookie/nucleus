@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import type { LeadDetail } from "../shared/contracts";
-import { leadActions } from "../core/planning/lead-actions";
+import { leadActionHints } from "./support/lead-actions";
 import type { LeadActions } from "../client/lead-screen";
 
 /** Nucleus#1543: the lead screen shows a park's reason and recheck day, and Park and Unpark call their actions. */
@@ -13,7 +13,11 @@ const c = new Proxy({}, { get: () => "#000" }) as never;
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const repo = { origin: "owner/alpha", path: "/alpha" };
 
-function lead(over: Partial<LeadDetail> = {}): LeadDetail {
+type LeadPatch = Omit<Partial<LeadDetail>, "actions"> & {
+  actions?: Partial<LeadDetail["actions"]>;
+};
+
+function lead({ actions, ...over }: LeadPatch = {}): LeadDetail {
   const base = {
     id: "3d55a901-0000-0000-0000-000000000000",
     title: "Open the T3 Inbox board in the maximized right panel",
@@ -44,7 +48,14 @@ function lead(over: Partial<LeadDetail> = {}): LeadDetail {
     versions: [],
     ...over,
   } as unknown as LeadDetail;
-  return { ...base, actions: leadActions(base) } as LeadDetail;
+  return {
+    ...base,
+    actions: leadActionHints(base.repositories, {
+      check: "Lead has no brief to check",
+      approve: "Lead has no brief to approve",
+      ...actions,
+    }),
+  };
 }
 
 async function mountLead(detail: LeadDetail) {
@@ -84,6 +95,7 @@ test("1543-9 a parked lead shows its reason and recheck day, and Unpark returns 
   const revisitAt = new Date(Date.now() + 86_400_000).toISOString();
   const { ui, calls } = await mountLead(
     lead({
+      actions: { unpark: null },
       parked: {
         reason: "Waits on a T3 capability",
         revisitAt,

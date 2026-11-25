@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import type { LeadDetail, LeadVersion } from "../shared/contracts";
-import { leadActions } from "../core/planning/lead-actions";
+import { leadActionHints } from "./support/lead-actions";
 import type { LeadActions, LeadRead } from "../client/lead-screen";
 
 useNativeStubs();
@@ -36,7 +36,11 @@ const version = (
     ...over,
   }) as unknown as LeadVersion;
 
-function lead(over: Partial<LeadDetail> = {}): LeadDetail {
+type LeadPatch = Omit<Partial<LeadDetail>, "actions"> & {
+  actions?: Partial<LeadDetail["actions"]>;
+};
+
+function lead({ actions, ...over }: LeadPatch = {}): LeadDetail {
   const base = {
     id: "6a84e627-0000-0000-0000-000000000000",
     title: "Ledger reads",
@@ -65,7 +69,7 @@ function lead(over: Partial<LeadDetail> = {}): LeadDetail {
     versions: [version(2), version(1)],
     ...over,
   } as unknown as LeadDetail;
-  return { ...base, actions: leadActions(base) };
+  return { ...base, actions: leadActionHints(base.repositories, actions) };
 }
 const approved = (forVersion = 2) => ({
   version: forVersion,
@@ -186,7 +190,12 @@ test("loading, failed and stale reads are distinct from an empty record", async 
 test("an empty record says what is absent and refuses every action with the reason", async () => {
   const { ui } = await mountScreen({
     read: {
-      data: lead({ body: "", digest: undefined, versions: [version(2)] }),
+      data: lead({
+        body: "",
+        digest: undefined,
+        versions: [version(2)],
+        actions: { check: "Lead has no brief to check", approve: "Lead has no brief to approve" },
+      }),
     },
   });
   assert.match(ui.text(), /No brief written yet\./);
@@ -206,6 +215,10 @@ test("the checked version sits beside its result and the approver is named", asy
         check: check(true),
         digest: digest(2),
         approval: approved(2),
+        actions: {
+          approve: "Approved",
+          promote: [{ origin: repo.origin, reason: null }],
+        },
       }),
     },
   });
@@ -231,6 +244,10 @@ test("a relayed approval says so instead of implying the operator pressed it", a
     read: {
       data: lead({
         check: check(true),
+        actions: {
+          approve: "Approved",
+          promote: [{ origin: repo.origin, reason: null }],
+        },
         approval: {
           ...approved(2),
           approver: "nucleus#864",
@@ -256,6 +273,7 @@ test("a changed version shows the check as stale and asks for the existing reche
         check: null,
         approval: null,
         versions: [version(3), version(2, { check: check(true) }), version(1)],
+        actions: { approve: "The check is for version 2; check version 3 first" },
       }),
     },
   });
@@ -290,6 +308,7 @@ test("an out-of-date check can show the brief that was actually checked", async 
       check: null,
       approval: null,
       versions: [version(3), version(2, { check: check(true) }), version(1)],
+      actions: { approve: "The check is for version 2; check version 3 first" },
     });
   const { ui, log } = await mountScreen({ read: { data: stale() } });
   assert.equal(
@@ -342,6 +361,10 @@ test("a normal edit keeps the earlier approval visible as out of date", async ()
       version(3),
       version(2, { check: check(true), approval: approved(2) }),
     ],
+    actions: {
+      approve: "The check is for version 2; check version 3 first",
+      promote: [{ origin: repo.origin, reason: "The approval is for version 2; approve version 3 first" }],
+    },
   });
   assert.deepEqual(
     leadApprovalView(edited),
@@ -369,6 +392,10 @@ test("an approval for another version is named stale, never shown as this versio
         digest: digest(3),
         check: check(true),
         approval: approved(2),
+        actions: {
+          approve: null,
+          promote: [{ origin: repo.origin, reason: "The approval is for version 2; approve version 3 first" }],
+        },
       }),
     },
   });
@@ -404,7 +431,7 @@ test("every lead action reports its own result or refusal beside its own control
   );
 
   const ok = await mountScreen({
-    read: { data: lead({ check: check(true) }) },
+    read: { data: lead({ check: check(true), actions: { approve: null } }) },
   });
   ok.ui.press("Approve the checked version");
   await settle();
@@ -441,6 +468,7 @@ test("promotion names the repository when a lead lists more than one", async () 
             at: "2026-11-06T11:00:00Z",
           },
         ],
+        actions: { promote: [{ origin: repo.origin, reason: "Already promoted to a task in owner/alpha" }] },
       }),
     },
   });
@@ -453,7 +481,13 @@ test("promotion names the repository when a lead lists more than one", async () 
 
 test("drop, reopen and the question or knowledge promotion sit in a secondary menu with their reasons", async () => {
   const open = await mountScreen({
-    read: { data: lead({ check: check(true), approval: approved(2) }) },
+    read: {
+      data: lead({
+        check: check(true),
+        approval: approved(2),
+        actions: { approve: "Approved", promote: [{ origin: repo.origin, reason: null }] },
+      }),
+    },
   });
   assert.equal(
     open.ui.query("Drop the lead"),
@@ -498,7 +532,21 @@ test("drop, reopen and the question or knowledge promotion sit in a secondary me
   assert.match(open.ui.text(), /Recorded as a knowledge change\./);
 
   const dropped = await mountScreen({
-    read: { data: lead({ state: "dropped", dropReason: "Mistake" }) },
+    read: {
+      data: lead({
+        state: "dropped",
+        dropReason: "Mistake",
+        actions: {
+          check: "Only open leads can be checked; this lead is dropped",
+          approve: "Only open leads can be approved; this lead is dropped",
+          drop: "Only open leads can be dropped; this lead is dropped",
+          reopen: null,
+          park: "Only open leads can be parked; this lead is dropped",
+          promoteTo: "A dropped lead cannot be promoted",
+          promote: [{ origin: repo.origin, reason: "A dropped lead cannot be promoted" }],
+        },
+      }),
+    },
   });
   dropped.ui.press("More actions");
   assert.equal(dropped.ui.get("Drop the lead").props.disabled, true);
@@ -649,7 +697,7 @@ test("a long version list pages honestly instead of rendering every version", as
 test("a busy board disables the actions so one record cannot take two writes at once", async () => {
   const { ui } = await mountScreen({
     busy: true,
-    read: { data: lead({ check: check(true) }) },
+    read: { data: lead({ check: check(true), actions: { approve: null } }) },
   });
   assert.equal(ui.get("Check the brief").props.disabled, true);
   assert.equal(ui.get("Approve the checked version").props.disabled, true);
