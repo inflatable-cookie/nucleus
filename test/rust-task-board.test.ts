@@ -1398,9 +1398,9 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("Import existing reviewer")), "cancel returns to accounts");
 
   githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "unavailable" }] };
-  await refreshGitHub();
+  emit("settings");
   await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Account storage unavailable")),
-    "an unavailable grant keeps its selected reviewer visible");
+    "a settings push refreshes credential status and preserves the selected reviewer");
   assert.ok(selector("Reconnect"), "unavailable credentials offer an explicit reconnect");
   assert.equal(selector("Reviewer, Installed gh"), null, "unavailable credentials never select Installed gh");
 

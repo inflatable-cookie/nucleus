@@ -163,33 +163,30 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
     });
   }
 
+  async function writeSettings(path: string, method: "POST" | "PUT", body: object) {
+    const next = await board.read(settingsView, path, json(method, body));
+    await queryClient.cancelQueries({ queryKey: settingsKey, exact: true });
+    queryClient.setQueryData(settingsKey, next);
+  }
+
   function chooseReviewer(revision: string, id: string) {
-    return perform(async () => {
-      const next = await board.read(
-        settingsView,
-        settingsPath + "/reviewer",
-        json("PUT", { revision, accountId: id || null }),
-      );
-      queryClient.setQueryData(settingsKey, next);
-    });
+    return perform(() => writeSettings(settingsPath + "/reviewer", "PUT", { revision, accountId: id || null }));
   }
 
   function confirmReviewer(revision: string, id: string) {
     return perform(async () => {
-      const next = await board.read(settingsView, flowPath(id) + "/confirm", json("POST", { revision }));
-      queryClient.setQueryData(settingsKey, next);
+      await writeSettings(flowPath(id) + "/confirm", "POST", { revision });
       clearFlow();
     });
   }
 
   function disconnectReviewer(revision: string, id: string) {
     return perform(async () => {
-      const next = await board.read(
-        settingsView,
+      await writeSettings(
         `${settingsPath}/accounts/${encodeURIComponent(id)}/sign-out`,
-        json("POST", { revision }),
+        "POST",
+        { revision },
       );
-      queryClient.setQueryData(settingsKey, next);
       setForm(null);
     });
   }
