@@ -1,22 +1,17 @@
 /**
  * The Nucleus build this plugin package came from (Spec 062, phase 7).
  *
- * The release build writes `nucleus-build.json` beside the built plugin it ships
- * under `bb-plugin/`, recording the Nucleus build id. The plugin reads it from its
- * own install and announces it on the executor declaration; the service refuses a
- * plugin from another build with a message that names both and the fix. A plugin
- * installed from a source checkout carries no such file, announces nothing, and is
- * exactly what the private proofs install.
+ * Historical installed packages carried a build identity. The plugin announces
+ * it on the executor declaration so the old service can reject another build.
+ * The private sidebar proof installs from source and announces no build.
  *
- * The file name and the accepted shape are pinned against `shared/bb-plugin-build.ts`
- * by `test/bb-plugin-install.test.ts`: this package builds from its own directory
- * alone, so it cannot import the shared module across a copy.
+ * The file name and accepted shape match the old package's build record.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The file the release build writes into the packaged plugin. */
+/** The build record written into historical packaged plugins. */
 export const NUCLEUS_BUILD_FILE = "nucleus-build.json";
 
 // The packaged build's full SHA-256, or a source service's shorter identity; the
