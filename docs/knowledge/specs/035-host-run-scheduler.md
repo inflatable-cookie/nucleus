@@ -1,6 +1,7 @@
 # 035 — Host run scheduler (Nucleus's side)
 
-Status: implemented; the Effigy v2 custody protocol is approved, not implemented
+Status: historical TypeScript implementation. The detached endpoint and
+supervisor were retired with the TypeScript service under [Spec 070](070-small-engine.md).
 Owner: Nucleus runtime maintainers
 Created: 2026-09-30
 Decision owner: Tom
