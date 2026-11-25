@@ -11,6 +11,7 @@ export const papercutStateSchema = z.enum(["open", "promoted", "closed"]);
 export const papercutSchema = z
   .object({
     id: z.string(),
+    project: z.string().min(1).optional(),
     repository: papercutRepositorySchema,
     area: z.string().nullable(),
     title: z.string(),

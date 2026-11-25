@@ -91,6 +91,7 @@ pub struct Item {
 pub struct ItemWithTimes {
     #[serde(flatten)]
     pub item: Item,
+    pub version: i64,
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
 }

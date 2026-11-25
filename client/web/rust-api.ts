@@ -204,6 +204,7 @@ export const item = z.object({
   title: z.string(),
   createdAtMs: integer.nullish(),
   updatedAtMs: integer.nullish(),
+  version: z.number().int().positive().optional(),
   body: z.string(),
   lanes: z.array(z.string()),
   /** Imported items name their member repositories within the project, by origin. */
@@ -337,10 +338,10 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     editItem: (
       project: string,
       id: string,
-      value: { title: string; body: string; lanes: string[] },
+      value: { version: number; title: string; body: string; lanes: string[] },
     ) =>
       board.read(
-        item,
+        item.extend({ version: z.number().int().positive() }),
         planning(project, `/items/${encodeURIComponent(id)}`),
         json("PUT", value),
       ),

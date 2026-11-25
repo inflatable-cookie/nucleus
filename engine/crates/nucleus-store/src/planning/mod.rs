@@ -25,6 +25,15 @@ use RecordKind::{
     Decision as DecisionRecord, Item as ItemRecord, Lane as LaneRecord, Plan as PlanRecord,
 };
 
+const ITEM_VIEW: &str = "SELECT i.snapshot,
+    (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
+        AND id = i.id ORDER BY sequence LIMIT 1),
+    h.at_ms, h.sequence
+    FROM planning_items i JOIN planning_history h ON h.sequence = (
+        SELECT sequence FROM planning_history WHERE project = i.project AND kind = 'item'
+        AND id = i.id ORDER BY sequence DESC LIMIT 1
+    )";
+
 impl Store {
     /// Read the project's ordered plan. An unset plan has version zero.
     ///
@@ -191,26 +200,15 @@ impl Store {
         list(&self.connection, ItemRecord, project)
     }
 
-    /// Read item snapshots with their first and latest recorded times.
+    /// Read item snapshots with their recorded times and latest history sequence.
     ///
     /// # Errors
     /// Returns an error if the items or timestamps cannot be read.
     pub fn items_with_times(&self, project: &str) -> Result<Vec<ItemWithTimes>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "SELECT i.snapshot,
-                (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
-                    AND id = i.id ORDER BY sequence LIMIT 1),
-                (SELECT at_ms FROM planning_history WHERE project = i.project AND kind = 'item'
-                    AND id = i.id ORDER BY sequence DESC LIMIT 1)
-             FROM planning_items i WHERE i.project = ?1 ORDER BY i.id",
-        )?;
-        let rows = query.query_map([project], |row| {
-            Ok(ItemWithTimes {
-                item: decode(row, 0)?,
-                created_at_ms: row.get(1)?,
-                updated_at_ms: row.get(2)?,
-            })
-        })?;
+        let mut query = self
+            .connection
+            .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 ORDER BY i.id"))?;
+        let rows = query.query_map([project], item_view)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -251,23 +249,37 @@ impl Store {
     }
 
     /// Replace the item content, retaining the original author and its prior history.
+    /// An expected version restricts the edit to that exact papercut snapshot.
     ///
     /// # Errors
-    /// Returns an error if the item is missing, the content is invalid, or the write fails.
+    /// Returns an error for a missing item, wrong kind or version, invalid content, or database failure.
     pub fn edit_item(
         &mut self,
         project: &str,
         id: &str,
         content: ItemContent,
+        expected_version: Option<i64>,
         stamp: WriteAt<'_>,
-    ) -> Result<Item, StoreError> {
+    ) -> Result<ItemWithTimes, StoreError> {
         validate_item(&content)?;
         let tx = self.planning_write()?;
-        let mut item: Item = required(&tx, ItemRecord, project, id)?;
-        item.content = content;
-        save(&tx, ItemRecord, project, id, "edit", &item, stamp)?;
+        let mut saved = tx
+            .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 AND i.id = ?2"))?
+            .query_row([project, id], item_view)
+            .optional()?
+            .ok_or(StoreError::PlanningMissing)?;
+        if expected_version.is_some_and(|version| {
+            saved.item.kind != ItemKind::Papercut || version != saved.version
+        }) {
+            return Err(StoreError::PlanningConflict);
+        }
+        saved.item.content = content;
+        save(&tx, ItemRecord, project, id, "edit", &saved.item, stamp)?;
+        // save inserts the planning history row last, within this transaction.
+        saved.version = tx.last_insert_rowid();
+        saved.updated_at_ms = i64::try_from(stamp.at_ms).ok();
         tx.commit()?;
-        Ok(item)
+        Ok(saved)
     }
 
     /// Park or drop an item. Promoted items retain their source link.
@@ -471,6 +483,15 @@ fn list<T: DeserializeOwned>(
 fn decode<T: DeserializeOwned>(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<T> {
     let json = row.get_ref(column)?.as_str()?;
     serde_json::from_str(json).map_err(|error| decode_error(column, error))
+}
+
+fn item_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<ItemWithTimes> {
+    Ok(ItemWithTimes {
+        item: decode(row, 0)?,
+        created_at_ms: row.get(1)?,
+        updated_at_ms: row.get(2)?,
+        version: row.get(3)?,
+    })
 }
 
 fn insert<T: Serialize>(

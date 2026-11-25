@@ -70,7 +70,9 @@ export function PapercutDialog({
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
   const [papercutComplexity, setPapercutComplexity] =
     useState<CapabilityLevel | null>(null);
-  const [papercutEditing, setPapercutEditing] = useState(false);
+  const [editBase, setEditBase] = useState<
+    Pick<Papercut, "id" | "project" | "version"> | null
+  >(null);
   const [papercutEdit, setPapercutEdit] = useState({
     title: "",
     area: "",
@@ -85,21 +87,7 @@ export function PapercutDialog({
     refetchInterval: live ? false : 4000,
   });
   const papercutDetail = papercutDetailQuery.data;
-  useEffect(() => {
-    if (papercutDetail && !papercutEditing)
-      setPapercutEdit({
-        title: papercutDetail.title,
-        area: papercutDetail.area ?? "",
-        happened: papercutDetail.happened,
-        impact: papercutDetail.impact,
-        fix: papercutDetail.fix ?? "",
-      });
-  }, [
-    papercutDetail?.id,
-    papercutDetail?.version,
-    papercutEditing,
-    openPapercutId,
-  ]);
+  const editsMarkdown = editBase?.project !== undefined;
   // Each papercut starts with no complexity chosen.
   useEffect(() => {
     setPapercutComplexity(null);
@@ -137,7 +125,7 @@ export function PapercutDialog({
       {papercutDetail && (
         <>
           <RecordNotice notice={recordNotice} c={c} />
-          {papercutEditing ? (
+          {editBase ? (
             <DetailSection title="Edit papercut" c={c}>
               <Field
                 c={c}
@@ -147,14 +135,16 @@ export function PapercutDialog({
                   setPapercutEdit((value) => ({ ...value, title }))
                 }
               />
-              <Field
-                c={c}
-                label="Area"
-                value={papercutEdit.area}
-                onChange={(area) =>
-                  setPapercutEdit((value) => ({ ...value, area }))
-                }
-              />
+              {!editsMarkdown && (
+                <Field
+                  c={c}
+                  label="Area"
+                  value={papercutEdit.area}
+                  onChange={(area) =>
+                    setPapercutEdit((value) => ({ ...value, area }))
+                  }
+                />
+              )}
               <Field
                 c={c}
                 label="What happened"
@@ -164,24 +154,28 @@ export function PapercutDialog({
                   setPapercutEdit((value) => ({ ...value, happened }))
                 }
               />
-              <Field
-                c={c}
-                label="Impact"
-                value={papercutEdit.impact}
-                multiline
-                onChange={(impact) =>
-                  setPapercutEdit((value) => ({ ...value, impact }))
-                }
-              />
-              <Field
-                c={c}
-                label="Suggested fix"
-                value={papercutEdit.fix}
-                multiline
-                onChange={(fix) =>
-                  setPapercutEdit((value) => ({ ...value, fix }))
-                }
-              />
+              {!editsMarkdown && (
+                <>
+                  <Field
+                    c={c}
+                    label="Impact"
+                    value={papercutEdit.impact}
+                    multiline
+                    onChange={(impact) =>
+                      setPapercutEdit((value) => ({ ...value, impact }))
+                    }
+                  />
+                  <Field
+                    c={c}
+                    label="Suggested fix"
+                    value={papercutEdit.fix}
+                    multiline
+                    onChange={(fix) =>
+                      setPapercutEdit((value) => ({ ...value, fix }))
+                    }
+                  />
+                </>
+              )}
               <View style={row}>
                 <ModalAction
                   text="Save changes"
@@ -193,12 +187,13 @@ export function PapercutDialog({
                   onPress={() =>
                     void act(async () => {
                       const saved = await editPapercut({
-                        id: papercutDetail.id,
-                        version: papercutDetail.version,
-                        ...papercutEdit,
+                        ...editBase,
+                        ...(editsMarkdown
+                          ? { title: papercutEdit.title, body: papercutEdit.happened }
+                          : papercutEdit),
                         author: "operator (board)",
                       });
-                      setPapercutEditing(false);
+                      setEditBase(null);
                       setRecordNotice({
                         kind: "ok",
                         text: `Saved version ${saved.version}`,
@@ -210,16 +205,7 @@ export function PapercutDialog({
                   text="Cancel"
                   busy={busy}
                   c={c}
-                  onPress={() => {
-                    setPapercutEdit({
-                      title: papercutDetail.title,
-                      area: papercutDetail.area ?? "",
-                      happened: papercutDetail.happened,
-                      impact: papercutDetail.impact,
-                      fix: papercutDetail.fix ?? "",
-                    });
-                    setPapercutEditing(false);
-                  }}
+                  onPress={() => setEditBase(null)}
                 />
               </View>
             </DetailSection>
@@ -309,7 +295,12 @@ export function PapercutDialog({
                         impact: papercutDetail.impact,
                         fix: papercutDetail.fix ?? "",
                       });
-                      setPapercutEditing(true);
+                    setRecordNotice(null);
+                    setEditBase({
+                      id: papercutDetail.id,
+                      project: papercutDetail.project,
+                      version: papercutDetail.version,
+                    });
                     }}
                   />
                   <ModalAction
