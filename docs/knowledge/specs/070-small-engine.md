@@ -491,8 +491,12 @@ Later decisions carry their own attribution.
     beyond the capture limit proves the checkout is dirty.
     Before any role has been dispatched or a worker bound, the engine can
     recover an owned Git initialization with no published index. Under the
-    task fence it removes the registration, compares the branch against its
-    observed head before deleting it, and allocates at the verified start.
+    task fence it renames the checkout into configured scratch, retires only
+    its Git registration, and deletes the branch at the original observed
+    head before allocating at the verified start. After a partial failure,
+    ordinary allocation can reuse a branch at its verified start. The
+    original attempt is the only one authorized to delete its observed tip.
+    A failed rename, including a cross-volume move, leaves the directory in place.
     Linked worktree creation follows the ten-minute `gitBulk` timeout from
     `core/git/git-command.ts` and `core/workspaces/workspace-lifecycle.ts`.
 

@@ -890,8 +890,7 @@ impl Service {
 
     async fn wait_due_task(&self) -> Result<DueTask, ServiceError> {
         loop {
-            let next;
-            {
+            let (ready, next, housekeeping) = {
                 let mut state = self.state.lock().await;
                 let now = Instant::now();
                 let State {
@@ -905,11 +904,28 @@ impl Service {
                 if !thread_tasks.is_empty() {
                     allowance_clock.checkpoint(store, now)?;
                 }
-                schedule.seed(store, now, self.acp_provider().is_some(), capacity_waiters)?;
-                if let Some(ready) = state.take_ready(now, &BTreeSet::new()) {
-                    return Ok(ready);
-                }
-                next = state.schedule.next();
+                let housekeeping =
+                    schedule.seed(store, now, self.acp_provider().is_some(), capacity_waiters)?;
+                let ready = if housekeeping {
+                    None
+                } else {
+                    state.take_ready(now, &BTreeSet::new())
+                };
+                (ready, state.schedule.next(), housekeeping)
+            };
+            if housekeeping {
+                let scratch = self.storage.scratch().clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(error) = nucleus_work::prune_quarantines(&scratch, now_ms()) {
+                        eprintln!("checkout quarantine housekeeping: {error}");
+                    }
+                })
+                .await
+                .ok();
+                continue;
+            }
+            if let Some(ready) = ready {
+                return Ok(ready);
             }
             tokio::select! {
                 () = self.wake.notified() => {},

@@ -520,7 +520,7 @@ impl Service {
             {
                 return Ok(None);
             }
-            checkout.remove_initialization()?;
+            checkout.quarantine_initialization(now_ms())?;
         }
         let workspace = if let Some((head, pull)) = review {
             seen(checkout.allocate_review(head, pull))

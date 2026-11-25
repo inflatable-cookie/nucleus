@@ -1090,7 +1090,14 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     std::fs::remove_file(admin.join("index")).unwrap();
     std::fs::write(admin.join("index.lock"), "").unwrap();
     std::fs::write(admin.join("locked"), "initializing").unwrap();
-    std::fs::write(path.join("partial-file"), "interrupted").unwrap();
+    std::fs::write(path.join("draft.md"), "untracked draft").unwrap();
+    let sibling = worktrees.checkout(&repo, REPOSITORY, "sibling").unwrap();
+    sibling.allocate(&old_head).unwrap();
+    let sibling_path = sibling.path().to_str().unwrap();
+    let sibling_admin =
+        std::path::PathBuf::from(git(sibling.path(), &["rev-parse", "--absolute-git-dir"]));
+    // A repository-wide prune would remove this unrelated stale registration.
+    std::fs::rename(sibling_path, repo.parent().unwrap().join("sibling-moved")).unwrap();
     drop(worktrees);
     git(
         &repo,
@@ -1165,7 +1172,13 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(admin.join("index").is_file());
     assert!(!admin.join("locked").exists());
     assert!(!admin.join("index.lock").exists());
-    assert!(!path.join("partial-file").exists());
+    assert!(!path.join("draft.md").exists());
+    let quarantine = service.storage.scratch().path().join("quarantine");
+    let saved = std::fs::read_dir(quarantine)
+        .unwrap()
+        .find_map(|entry| std::fs::read_to_string(entry.unwrap().path().join("draft.md")).ok());
+    assert_eq!(saved.as_deref(), Some("untracked draft"));
+    assert!(sibling_admin.is_dir());
     assert!(service.host.host_calls().is_empty());
     forge_server.abort();
 }

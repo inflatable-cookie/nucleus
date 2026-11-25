@@ -10,6 +10,7 @@ longhorn-git-workspace.workspace = true
 longhorn-redact.workspace = true
 nucleus-core = { path = "../nucleus-core" }
 nucleus-store = { path = "../nucleus-store" }
+rustix = { version = "1", features = ["fs"] }
 sha2 = "0.10"
 thiserror = "2"
 

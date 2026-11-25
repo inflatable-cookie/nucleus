@@ -86,6 +86,11 @@ The engine creates task checkouts under its work root and sets `TMPDIR`, `TMP` a
 `TEMP` for local commands. The task launch tells the role to keep command
 temporary files under scratch.
 
+Before any role is sent, interrupted checkout recovery can quarantine the
+directory in `<scratch-root>/quarantine/<task>-<timestamp>`. The existing
+scheduler archive scan removes engine-owned quarantines seven days after the
+timestamp in their name. Unverified entries stay in place.
+
 ### Stage an engine release
 
 From a clean checkout of the intended revision with the web dependencies

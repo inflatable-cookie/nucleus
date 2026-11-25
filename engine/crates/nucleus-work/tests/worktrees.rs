@@ -290,6 +290,116 @@ fn a_different_checkout_is_never_adopted_or_removed() {
 }
 
 #[test]
+fn a_partial_quarantine_retry_cannot_adopt_a_changed_branch_tip() {
+    let root = tempfile::tempdir().expect("private fixture");
+    let repo = root.path().join("repository");
+    let old = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "partial")
+        .unwrap();
+    checkout.allocate(&old).unwrap();
+    let admin = std::path::PathBuf::from(
+        git(checkout.path(), &["rev-parse", "--absolute-git-dir"]).trim_end_matches('\n'),
+    );
+    fs::remove_file(admin.join("index")).unwrap();
+    fs::write(admin.join("locked"), "initializing").unwrap();
+    fs::write(checkout.path().join("draft"), "keep the draft").unwrap();
+    git(&repo, &["commit", "--allow-empty", "-m", "New base"]);
+    let new: Head = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+    let reference = "refs/heads/ns-partial";
+    let lock = repo.join(".git").join(format!("{reference}.lock"));
+    fs::write(&lock, "").unwrap();
+    assert!(matches!(
+        checkout.quarantine_initialization(1000),
+        Err(WorkError::Git { .. })
+    ));
+    assert_eq!(checkout.observe().unwrap(), Workspace::Absent);
+    assert!(!checkout.path().exists());
+    assert!(!admin.exists());
+
+    fs::remove_file(lock).unwrap();
+    fs::create_dir(checkout.path()).unwrap();
+    fs::write(checkout.path().join("foreign"), "do not remove").unwrap();
+    assert!(matches!(
+        checkout.quarantine_initialization(1500),
+        Err(WorkError::QuarantinePending)
+    ));
+    assert!(checkout.path().join("foreign").is_file());
+    fs::rename(checkout.path(), root.path().join("foreign")).unwrap();
+    git(
+        &repo,
+        &["update-ref", reference, new.as_str(), old.as_str()],
+    );
+    assert!(matches!(
+        checkout.allocate(&old),
+        Err(WorkError::WrongBranchHead)
+    ));
+    assert_eq!(git(&repo, &["rev-parse", reference]).trim(), new.as_str());
+
+    git(
+        &repo,
+        &["update-ref", reference, old.as_str(), new.as_str()],
+    );
+    assert_eq!(checkout.allocate(&old).unwrap(), Workspace::Clean(old));
+}
+
+#[test]
+fn quarantine_retention_expires_only_old_owned_directories() {
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+    let home = tempfile::tempdir().expect("private fixture");
+    let repo = home.path().join("repository");
+    let head = repository(&repo);
+    let worktrees = worktrees(home.path());
+    let storage = SettingsFile::open(home.path()).unwrap().storage().unwrap();
+    let root = storage.scratch().path().join("quarantine");
+    for (task, time) in [
+        ("expired", 1),
+        ("young", 2 * DAY),
+        ("replaced", 1),
+        ("linked", 1),
+        ("pending", 1),
+    ] {
+        let checkout = worktrees.checkout(&repo, "example/fixture", task).unwrap();
+        checkout.allocate(&head).unwrap();
+        let admin = git(checkout.path(), &["rev-parse", "--absolute-git-dir"]);
+        let admin = Path::new(admin.trim_end_matches('\n'));
+        fs::remove_file(admin.join("index")).unwrap();
+        fs::write(admin.join("locked"), "initializing").unwrap();
+        fs::write(checkout.path().join("draft"), "preserved draft").unwrap();
+        if task == "pending" {
+            fs::write(repo.join(".git/refs/heads/ns-pending.lock"), "").unwrap();
+            assert!(checkout.quarantine_initialization(time).is_err());
+        } else {
+            checkout.quarantine_initialization(time).unwrap();
+        }
+    }
+    // Recent payload timestamps cannot extend quarantine retention.
+    fs::write(root.join("expired-1/recent"), "new filesystem timestamp").unwrap();
+    fs::create_dir(root.join("foreign-1")).unwrap();
+    fs::write(root.join("foreign-1/.nucleus-quarantine"), "unknown").unwrap();
+    let replaced = root.join("replaced-1");
+    fs::rename(&replaced, home.path().join("moved-aside")).unwrap();
+    fs::create_dir(&replaced).unwrap();
+    fs::write(replaced.join("foreign"), "keep").unwrap();
+    let linked = root.join("linked-1");
+    let target = home.path().join("link-target");
+    fs::rename(&linked, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &linked).unwrap();
+
+    nucleus_work::prune_quarantines(storage.scratch(), 8 * DAY).unwrap();
+
+    assert!(!root.join("expired-1").exists());
+    assert!(root.join(format!("young-{}/draft", 2 * DAY)).is_file());
+    assert!(!root.join("pending-1").exists());
+    assert!(root.join("foreign-1").is_dir());
+    assert!(replaced.join("foreign").is_file());
+    assert!(linked.is_symlink());
+    assert!(target.join("draft").is_file());
+}
+
+#[test]
 fn retirement_keeps_edits_hidden_by_index_flags() {
     let root = tempfile::tempdir().expect("scratch");
     let repo = root.path().join("repository");
