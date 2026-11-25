@@ -178,7 +178,7 @@ test('the graph covers the source trees and the test tree only', () => {
   assert.equal(isGraphNode('docs/knowledge/vision.md'), false);
   assert.equal(isGraphNode('core/data.json'), false);
   assert.equal(isTestFile('test/a.test.ts'), true);
-  assert.equal(isTestFile('test/store-compaction-bench.test.ts'), false);
+  assert.equal(isTestFile('test/fixture.cases.ts'), false);
   assert.equal(isTestFile('test/support/a.test.ts'), true);
 });
 

@@ -45,10 +45,10 @@ test("the default TypeScript suite retains board coverage", () => {
 test("npm test uses explicitly supplied files without expanding the suite", () => {
   assert.deepEqual(
     selectTestFiles(
-      ["test/prompts.test.ts"],
-      ["alpha.test.ts", "prompts.test.ts"],
+      ["test/selected.test.ts"],
+      ["alpha.test.ts", "selected.test.ts"],
     ),
-    ["test/prompts.test.ts"],
+    ["test/selected.test.ts"],
   );
 });
 
@@ -58,16 +58,15 @@ test("npm test orders measured files longest first and unknown files alphabetica
       [],
       [
         "z.test.ts",
-        "retained-external-merge.test.ts",
-        "data-migration-stage.test.ts",
+        "board-card-ui.test.ts",
+        "settings-pool.test.ts",
         "notes.md",
         "a.test.ts",
-        "store-compaction-bench.test.ts",
       ],
     ),
     [
-      "test/retained-external-merge.test.ts",
-      "test/data-migration-stage.test.ts",
+      "test/settings-pool.test.ts",
+      "test/board-card-ui.test.ts",
       "test/a.test.ts",
       "test/z.test.ts",
     ],
@@ -510,18 +509,15 @@ test("an unwritable duration file never fails the reporter", async () => {
   }
 });
 
-test("the timing lane discovers oracles but runs the compaction benchmark only on request", () => {
-  const read = () => "import './support/timing';";
+test("the timing lane discovers marked oracles and accepts explicit files", () => {
+  const read = (file: string) =>
+    file === "test/oracle.test.ts" ? "import './support/timing';" : "";
   assert.deepEqual(
-    selectTimingFiles(
-      [],
-      ["oracle.test.ts", "store-compaction-bench.test.ts", "notes.md"],
-      read,
-    ),
+    selectTimingFiles([], ["oracle.test.ts", "parallel.test.ts", "notes.md"], read),
     ["test/oracle.test.ts"],
   );
   assert.deepEqual(
-    selectTimingFiles(["test/store-compaction-bench.test.ts"], [], read),
-    ["test/store-compaction-bench.test.ts"],
+    selectTimingFiles(["test/explicit.test.ts"], ["oracle.test.ts"], read),
+    ["test/explicit.test.ts"],
   );
 });

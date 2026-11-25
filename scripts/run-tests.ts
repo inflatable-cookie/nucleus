@@ -67,7 +67,7 @@ export function splitRunnerArgs(argv: string[]): RunnerArgs {
 export function selectTestFiles(requestedFiles: string[], availableFiles: string[]) {
   if (requestedFiles.length) return [...requestedFiles];
   return availableFiles
-    .filter(file => file.endsWith('.test.ts') && file !== 'store-compaction-bench.test.ts')
+    .filter(file => file.endsWith('.test.ts'))
     .sort((a, b) => ((durations as Record<string, number>)[b] ?? 0) - ((durations as Record<string, number>)[a] ?? 0) || a.localeCompare(b))
     .map(file => `test/${file}`);
 }
