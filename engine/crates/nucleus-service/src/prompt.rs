@@ -368,7 +368,7 @@ impl Prompt<'_> {
                 let _ = writeln!(text, "Ready for review: {example}");
             }
             Role::Reviewer => {
-                text.push_str("Report the verdict and complete findings here. Nucleus publishes the formal GitHub review.\n");
+                text.push_str("Report the verdict and complete findings here. Nucleus publishes your summary on GitHub. Cite command results and omit local paths.\n");
                 // The launcher already requires an observed open PR for a review.
                 let head = self.pr.map_or("FULL_SHA", |pr| pr.head.as_str());
                 for (label, decision) in [
