@@ -135,6 +135,28 @@ console.log(JSON.stringify({
     ]);
   });
 
+  await t.test("rejects a tracked skill hidden from status before starting the build", async () => {
+    const builds = join(directory, "masked-builds");
+    const input = "skills/nucleus/SKILL.md";
+    await mkdir(builds);
+    for (const [hide, show] of [
+      ["--assume-unchanged", "--no-assume-unchanged"],
+      ["--skip-worktree", "--no-skip-worktree"],
+    ] as const) {
+      await git("update-index", hide, input);
+      try {
+        await writeFile(join(source, input), "uncommitted skill");
+        assert.equal((await git("status", "--porcelain")).stdout, "");
+        await assert.rejects(stageRelease(builds, "masked-input"), /all tracked inputs visible/);
+        await assert.rejects(access(join(directory, "masked-input")), { code: "ENOENT" });
+        assert.deepEqual(await readdir(builds), []);
+      } finally {
+        await git("update-index", show, input);
+        await git("restore", "--", input);
+      }
+    }
+  });
+
   await t.test("rejects an absent builds root before starting Oxide", async () => {
     const mount = join(directory, "absent-volume");
     await assert.rejects(stageRelease(join(mount, "builds"), "missing"), /existing engine builds root/);
