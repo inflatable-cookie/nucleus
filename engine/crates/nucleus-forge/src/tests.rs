@@ -724,6 +724,76 @@ async fn classifies_only_positive_rebase_or_required_failure_evidence() {
     }
 }
 
+fn check_page(head: char, base: char, cursor: Option<&str>, nodes: &Value) -> Value {
+    let mut reply = checks(head, "SUCCESS");
+    let pr = &mut reply["data"]["repository"]["pullRequest"];
+    pr["baseRefOid"] = json!(sha(base));
+    pr["statusCheckRollup"]["contexts"] = json!({
+        "pageInfo": { "hasNextPage": cursor.is_some(), "endCursor": cursor }, "nodes": nodes,
+    });
+    reply
+}
+
+#[tokio::test]
+async fn merge_checks_read_the_required_context_on_the_second_page() {
+    let first: Vec<_> = (0..100)
+        .map(|i| {
+            json!({"__typename": "StatusContext", "context": format!("optional-{i}"),
+        "state": "SUCCESS", "isRequired": false})
+        })
+        .collect();
+    let second = json!([{"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "isRequired": true}]);
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(check_page('a', 'b', Some("page-two"), &json!(first))),
+        Some(check_page('a', 'b', None, &second)),
+        Some(pull('a', false)),
+        Some(json!({"merged": true, "sha": sha('f')})),
+        Some(pull('a', true)),
+    ]);
+    let mut branches = branches();
+    branches.required_checks = vec!["ci".into()];
+    let result = forge
+        .merge(&task_with_approval(), &branches.target(PR_URL).unwrap())
+        .await
+        .expect("merge");
+    assert!(matches!(result.observed, Ok(Forge::Merged { .. })));
+    let calls = calls.join().unwrap();
+    assert_eq!(
+        calls[2].body.as_ref().unwrap()["variables"]["after"],
+        "page-two"
+    );
+    assert!(calls[4].method_and_path.starts_with("PUT "));
+    assert_eq!(calls[4].body.as_ref().unwrap()["sha"], json!(sha('a')));
+}
+
+#[tokio::test]
+async fn a_changed_head_base_or_repeated_cursor_cannot_clear_merge_preflight() {
+    for (head, base, next) in [
+        ('c', 'b', None),
+        ('a', 'd', None),
+        ('a', 'b', Some("again")),
+    ] {
+        let (forge, calls) = server(vec![
+            Some(pull('a', false)),
+            Some(check_page('a', 'b', Some("again"), &json!([]))),
+            Some(check_page(head, base, next, &json!([]))),
+        ]);
+        let result = forge
+            .observe_for_merge(&branches().target(PR_URL).unwrap())
+            .await;
+        assert!(matches!(
+            result,
+            Err(ForgeError::Incomplete)
+                | Ok(Forge::Open {
+                    checks: CheckState::Unknown,
+                    ..
+                })
+        ));
+        assert_eq!(calls.join().unwrap().len(), 3);
+    }
+}
+
 #[tokio::test]
 async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
     let task = task_with_approval();
