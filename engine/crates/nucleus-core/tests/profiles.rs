@@ -361,6 +361,28 @@ fn a_paused_mechanical_reviewer_steps_up_to_an_independent_worker() {
         assert_eq!(ordinary.profile(), &muse);
         assert_eq!(ordinary.step_up_from(), None);
     }
+
+    review_changes(&mut task, &obs, &muse);
+    let obs = role_thread(obs, "reviewer-1", RetainedThread::Idle);
+    task.command(
+        Command::Move(Phase::Reviewing),
+        &Authority::Planner {
+            actor: "fixture-planner".into(),
+        },
+        &obs,
+    )
+    .unwrap();
+    assert!(matches!(
+        pick(&task, &obs, Normal, &pool).via(),
+        Launch::Continue { .. }
+    ));
+
+    pool[1].group_available = false;
+    let replacement = pick(&task, &obs, Normal, &pool);
+    assert_eq!(replacement.profile(), &peer);
+    assert_eq!(replacement.step_up_from(), Some(Mechanical));
+    assert_eq!(replacement.via(), &Launch::Create);
+    assert_eq!(replacement.replaced_thread(), Some("reviewer-1"));
 }
 
 #[test]
@@ -1062,4 +1084,59 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
         decide_profile_launch(&task, &observation, &policy),
         Err(ProfileLaunchError::RequiredProfileUnavailable { role: Role::Worker, id }) if id == "retained"
     ));
+}
+
+#[test]
+fn a_paused_instructed_revision_reselects_unless_the_brief_requires_its_profile() {
+    let retained = profile("retained", Mechanical);
+    let alternative = profile("alternative", Worker);
+    let reviewer = profile("reviewer", Mechanical);
+    let pool = [
+        Candidate {
+            group_available: false,
+            ..candidate(&retained)
+        },
+        candidate(&reviewer),
+        candidate(&alternative),
+    ];
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    for required in [false, true] {
+        let brief = if required {
+            "---\nqueue: {complexity: low, profileRequests: {worker: {profileId: retained, reason: fixture, required: true}}}\n---\nFix the issue."
+        } else {
+            "---\nqueue: {complexity: low}\n---\nFix the issue."
+        };
+        let mut task = working(brief);
+        finish_worker(&mut task, &retained);
+        review_changes(&mut task, &open('a'), &reviewer);
+        task.command(
+            Command::MoveWork {
+                instruction: "Rebase the task branch".into(),
+            },
+            &Authority::Planner {
+                actor: "fixture-planner".into(),
+            },
+            &observation,
+        )
+        .unwrap();
+
+        let result = select(&task, &observation, Normal, &pool);
+        if required {
+            assert!(matches!(
+                result,
+                Err(ProfileLaunchError::RequiredProfileUnavailable { role: Role::Worker, id })
+                    if id == retained.id
+            ));
+        } else {
+            let replacement = result.unwrap().unwrap();
+            assert_eq!(replacement.profile(), &alternative);
+            assert_eq!(replacement.via(), &Launch::Create);
+            assert_eq!(replacement.replaced_thread(), Some("worker-1"));
+            assert_eq!(replacement.step_up_from(), Some(Mechanical));
+            assert_eq!(
+                replacement.findings(),
+                Some("Fix the race in the revision path.")
+            );
+        }
+    }
 }

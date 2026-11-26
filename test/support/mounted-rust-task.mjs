@@ -42,17 +42,13 @@ try {
   await click('#1, Standalone task');
   await eventually(() => control('Task detail'), 'task opens');
   const detail = control('Task detail');
-  await eventually(() => detail.querySelector('[role="tablist"][aria-label="Task detail sections"]'), "task sections load");
-  const tabs = detail.querySelector('[role="tablist"][aria-label="Task detail sections"]');
-  assert.ok(tabs);
-  assert.deepEqual(Array.from(tabs.querySelectorAll('[role="tab"]'), tab => tab.getAttribute('aria-label')), ['Overview', 'Activity', 'Details']);
+  await eventually(() => detail.querySelector('[aria-label="Progress"]'), 'one scrolling view loads');
+  assert.equal(detail.querySelector('[role="tablist"]'), null, 'the view has no tabs');
   await eventually(() => control('Hold'), 'available Hold action');
   assert.equal(control('Release'), null, 'unavailable Release action is absent');
-  await click('Activity');
   const detailText = () => detail.textContent ?? '';
-  await eventually(() => detailText().includes('No activity yet.'), 'stored admission has no presented activity');
-  await click('Details');
-  await eventually(() => detailText().includes('complexity: low'), 'brief is visible in Details');
+  await click('Brief, collapsed');
+  await eventually(() => detailText().includes('complexity: low'), 'brief opens in place');
   const before = await (await fetcher('/api/engine/tasks/board-task')).json();
   const updatedBrief = '---\nqueue:\n  complexity: low\n---\n# Updated from another session';
   const amended = await fetcher('/api/engine/tasks/board-task/commands', {
@@ -60,16 +56,13 @@ try {
     body: JSON.stringify({ amend: updatedBrief, briefVersion: before.brief.version }),
   });
   assert.equal(amended.status, 200);
-  await eventually(() => detailText().includes(updatedBrief), 'details update on invalidation');
-  assert.ok(!control('Hold'), 'refresh keeps Details selected');
-  await click('Overview');
+  await eventually(() => detailText().includes(updatedBrief), 'the open brief updates on invalidation');
   await click('Hold');
   const reason = control('Reason');
   assert.ok(reason);
   Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(reason, 'Wait for fixture');
   reason.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  const buttons = dom.window.document.querySelectorAll('[aria-label="Hold"]');
-  buttons[buttons.length - 1].click();
+  await click('Hold task');
   await eventually(() => detailText().includes('Wait for fixture'), 'hold is stored and displayed');
   const held = await (await fetcher('/api/engine/tasks/board-task')).json();
   assert.equal(held.hold.reason, 'Wait for fixture');
