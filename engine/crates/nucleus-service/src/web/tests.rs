@@ -722,6 +722,35 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
 }
 
 #[tokio::test]
+async fn next_shows_the_settled_reviewers_provider_reset() {
+    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (mut task, _, mut observation) =
+        reservation("reviewer", Entry::ReviewEntry, &service.fixture().start);
+    let cause =
+        "Provider usage limit for subscription group shared. Reset at 2099-01-01 00:00 UTC.";
+    observation.host = Observed::Known(Host::ProviderLimited {
+        instance: task.run().unwrap().launch().instance.clone(),
+        cause: cause.into(),
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Relaunch(nucleus_core::Role::Reviewer)
+    );
+    seed_task(&service, &task).await;
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+    );
+    let next = json_body(get_as(&api, "/v1/tasks/reviewer/next", &BOARD_KEY).await).await;
+    assert_eq!(next["lastProviderLimit"], cause);
+}
+
+#[tokio::test]
 async fn next_and_owner_commands_agree_on_code_recovery() {
     let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
     let service = Arc::new(service);

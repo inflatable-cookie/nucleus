@@ -190,7 +190,11 @@ impl Service {
                 row.reference()
             )
         } else {
-            notice_text(row.reference().as_ref(), question)
+            notice_text(
+                row.reference().as_ref(),
+                question,
+                row.task.threads().last_provider_limit.as_deref(),
+            )
         };
         let mut attempt = T3::prepare_notice(thread, command, &text)?;
         let _fence = self.effect(row).await?;
@@ -453,15 +457,16 @@ impl Service {
     }
 }
 
-fn notice_text(reference: &str, question: &Question) -> String {
+fn notice_text(reference: &str, question: &Question, limit: Option<&str>) -> String {
     let request = match question {
         Question::Work { prompt, options } if !options.is_empty() => {
             format!("{prompt}\n\nOptions\n- {}", options.join("\n- "))
         }
         Question::Work { prompt, .. } => prompt.clone(),
-        Question::Retry { role } => {
-            format!("The {role:?} stopped three times. Decide whether to retry.")
-        }
+        Question::Retry { role } => limit.map_or_else(
+            || format!("The {role:?} stopped three times. Decide whether to retry."),
+            |cause| format!("{cause} The role reached its attempt limit. Decide whether to retry."),
+        ),
         Question::Accept { head } => format!(
             "The PR was merged externally. Decide whether to accept closeout at commit {head}."
         ),

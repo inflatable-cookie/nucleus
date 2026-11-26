@@ -885,6 +885,7 @@ async fn next(
         }
     }
     Ok(Json(NextView {
+        last_provider_limit: task.threads().last_provider_limit.clone(),
         version: row.version,
         phase: summary.card.phase,
         state_label: summary.card.state_label,
@@ -1501,6 +1502,8 @@ impl From<&ReportTask> for ReportView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NextView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_provider_limit: Option<String>,
     version: i64,
     phase: Phase,
     state_label: String,
