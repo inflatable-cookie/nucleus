@@ -14,7 +14,7 @@ use nucleus_hosts::{
     HostError, ProfileCatalog, ProfileOffer, ProviderLimit, RoleProfile, TaskHost,
     launch_provider_instance,
 };
-use nucleus_store::{DispatchMode, DispatchSettings, NamedProfile, PoolRole, Profiles, TaskRow};
+use nucleus_store::{DispatchMode, NamedProfile, PoolRole, Profiles, SubscriptionPause, TaskRow};
 
 use crate::{ProjectMode, Service, ServiceError, State, now_ms};
 
@@ -295,7 +295,7 @@ impl Service {
         row: &TaskRow,
         run: &Run,
         limit: &ProviderLimit,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<String, ServiceError> {
         let state = self.state.lock().await;
         if self.lookup(&state, &row.task.identity().id)? != *row {
             return Err(nucleus_store::StoreError::StaleTask.into());
@@ -307,12 +307,18 @@ impl Service {
             // A native provider switch cannot exhaust the originally selected subscription.
             &limit.instance
         };
-        let cooldown = state.settings.dispatch.as_ref().map_or_else(
-            || DispatchSettings::default().provider_limit_cooldown_seconds,
-            |settings| settings.provider_limit_cooldown_seconds,
-        );
-        self.record_subscription_pause(&state, group, limit_deadline(limit, cooldown), now_ms())?;
-        Ok(())
+        let requested = limit_pause(limit);
+        let pause = self
+            .save_subscription_pause(&state, group, requested, now_ms())?
+            .unwrap_or(requested);
+        let horizon = nucleus_hosts::snooze_deadline(pause.until_ms);
+        Ok(if pause.fallback {
+            format!(
+                "Provider usage limit for subscription group {group}. Reset unknown, clear in Profiles after topping up. Automatic retry at {horizon}."
+            )
+        } else {
+            format!("Provider usage limit for subscription group {group}. Reset at {horizon}.")
+        })
     }
 
     pub(super) fn record_subscription_pause(
@@ -322,13 +328,31 @@ impl Service {
         deadline: u64,
         now: u64,
     ) -> Result<Option<u64>, ServiceError> {
-        let current = state.store.provider_pause(group, now)?;
-        if deadline <= now || current.is_some_and(|until| until >= deadline) {
-            return Ok(current);
+        Ok(self
+            .save_subscription_pause(
+                state,
+                group,
+                SubscriptionPause {
+                    until_ms: deadline,
+                    fallback: false,
+                },
+                now,
+            )?
+            .map(|pause| pause.until_ms))
+    }
+
+    fn save_subscription_pause(
+        &self,
+        state: &State,
+        group: &str,
+        pause: SubscriptionPause,
+        now: u64,
+    ) -> Result<Option<SubscriptionPause>, ServiceError> {
+        if state.store.set_subscription_pause(group, pause, now)? {
+            self.profile_usage_changes.send_replace(());
+            return Ok(Some(pause));
         }
-        state.store.record_provider_pause(group, deadline, now)?;
-        self.profile_usage_changes.send_replace(());
-        Ok(Some(deadline))
+        Ok(state.store.subscription_pause(group, now)?)
     }
 
     pub(super) async fn pause_prepared(
@@ -359,15 +383,12 @@ impl Service {
     }
 }
 
-fn limit_deadline(limit: &ProviderLimit, cooldown_seconds: u32) -> u64 {
-    limit
-        .reset_at_ms
-        .filter(|reset| *reset > limit.ended_at_ms)
-        .unwrap_or_else(|| {
-            limit
-                .ended_at_ms
-                .saturating_add(u64::from(cooldown_seconds) * 1_000)
-        })
+fn limit_pause(limit: &ProviderLimit) -> SubscriptionPause {
+    let reset = limit.reset_at_ms.filter(|reset| *reset > limit.ended_at_ms);
+    SubscriptionPause {
+        until_ms: reset.unwrap_or_else(|| limit.ended_at_ms.saturating_add(86_400_000)),
+        fallback: reset.is_none(),
+    }
 }
 
 impl State {

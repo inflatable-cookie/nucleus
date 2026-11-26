@@ -471,6 +471,7 @@ impl Service {
         host: &impl TaskHost,
         route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
+        let mut limited = None;
         let (state, activity, error, active_child) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
                 if run.launch().role == Role::Worker
@@ -479,7 +480,17 @@ impl Service {
                     self.observe_run_routing(row, run, routing).await?;
                 }
                 if let Some(limit) = &seen.provider_limit {
-                    self.record_provider_limit(row, run, limit).await?;
+                    let cause = self.record_provider_limit(row, run, limit).await?;
+                    if let Host::Current {
+                        instance,
+                        state: RunState::UsageLimited,
+                    } = &seen.host
+                    {
+                        limited = Some(Observed::Known(Host::ProviderLimited {
+                            instance: instance.clone(),
+                            cause,
+                        }));
+                    }
                 }
                 (
                     Observed::Known(seen.host),
@@ -504,7 +515,7 @@ impl Service {
         if let Some(child) = active_child {
             self.reenter_active_parent(row, route, &child).await?;
         }
-        Ok((state, error))
+        Ok((limited.unwrap_or(state), error))
     }
 
     pub(super) fn check_forge_ready(&self) -> Result<(), ForgeError> {
@@ -699,14 +710,14 @@ impl Service {
             {
                 "assignment_input_rejected"
             }
-            Action::Advance(_)
+            Action::Advance(_) | Action::Relaunch(_) | Action::Ask(_)
                 if matches!(
                     observation.host,
-                    Observed::Known(Host::Current {
-                        state: RunState::UsageLimited,
-                        ..
-                    })
-                ) =>
+                    Observed::Known(Host::ProviderLimited { .. })
+                ) && row
+                    .task
+                    .run()
+                    .is_some_and(|run| !run.revoked() && run.report().is_none()) =>
             {
                 "provider_limit"
             }
@@ -735,6 +746,10 @@ impl Service {
         let mut updated = row.task.clone();
         let _ = updated.reconcile(observation);
         let mut audit = event(kind);
+        if kind == "provider_limit" {
+            audit.detail =
+                serde_json::json!({"cause": updated.threads().last_provider_limit}).to_string();
+        }
         if kind == "merge_returned_to_work" {
             audit.detail = serde_json::json!({
                 "instruction": updated.work_instruction(),
