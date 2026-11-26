@@ -158,6 +158,7 @@ const commandName = z.enum([
   "amend",
   "hold",
   "release",
+  "recheck",
   "complete",
   "move_work",
   "set_dependencies",
@@ -247,6 +248,7 @@ export type RustCommand =
         | { accept: { head: string; reason: string } };
     }
   | { amend: string; briefVersion: number }
+  | { recheck: number }
   | { hold: string }
   | "cancel"
   | "release";

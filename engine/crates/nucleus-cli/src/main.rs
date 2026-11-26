@@ -159,6 +159,12 @@ enum Action {
     Amend { id: String },
     /// Hold the task for a reason.
     Hold { id: String, reason: String },
+    /// Recheck a repaired task at the version shown by Next.
+    Recheck {
+        id: String,
+        #[arg(long)]
+        version: i64,
+    },
     /// Release the task hold.
     Release { id: String },
     /// Replace the prerequisites of a task before dispatch.
@@ -653,6 +659,7 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Cancel { id } => command_path(&id, Command::Cancel)?,
         A::Amend { id } => command_path(&id, Command::Amend(stdin_brief()?))?,
         A::Hold { id, reason } => command_path(&id, Command::Hold(reason))?,
+        A::Recheck { id, version } => command_path(&id, json!({ "recheck": version }))?,
         A::Release { id } => command_path(&id, Command::Release)?,
         A::SetDependencies(args) => args.request()?,
         A::SetPrerequisiteWait(args) => args.request()?,

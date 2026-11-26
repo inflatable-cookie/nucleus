@@ -96,6 +96,7 @@ test("Rust task detail keeps Answer available alongside unknown command names", 
   const commands = [
     { name: "move", phase: "working", preflight: "ready" },
     { name: "answer", preflight: "ready" },
+    { name: "recheck", preflight: "ready" },
     { name: "set_dependencies", preflight: "unavailable" },
     { name: "set_prerequisite_wait", preflight: "ready" },
   ];
@@ -181,7 +182,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     blocked,
     task("reviewing", "reviewing"),
     task("merging", "merging"),
-    task("closing", "closing"),
+    { ...task("closing", "closing"), wait: "workspace_blocked", attention: "attention" as const },
     { ...task("history-oldest", "done"), stateSinceMs: 1_790_000_000_000, latestEventAtMs: 1_799_000_000_000 },
     { ...task("history-middle", "cancelled"), latestEventAtMs: 1_795_000_000_000 },
     ...Array.from({ length: 23 }, (_, i) => task(`past-${String(i).padStart(2, "0")}`, "done")),
@@ -334,6 +335,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
+          ...(row.wait === "workspace_blocked" ? [{ name: "recheck", preflight: "ready" }] : []),
           { name: "cancel", preflight: "ready" },
           { name: "amend", preflight: "ready" },
           { name: "hold", preflight: "ready" },
@@ -582,7 +584,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     { amend: "Another edit", briefVersion: 5 },
   ]);
   await click("Amend");
-  await click("Needs you, 1");
+  await click("Needs you, 2");
   await click("Blocked task, The worker could not finish. Try again?");
   await click("Answer");
   await eventually(
@@ -590,6 +592,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "answer posted",
   );
   assert.deepEqual(posts[6]?.command, { answer: "retry" });
+  await click("Closing, 1");
+  await click("closing");
+  await click("Recheck");
+  await eventually(() => posts.length === 8, "the owner requested a recheck");
+  assert.deepEqual(posts[7], { path: "/api/engine/tasks/closing/commands", command: { recheck: 7 } });
   await click("History, 26");
   const historyCards = () => Array.from(
     dom.window.document.querySelectorAll('[aria-label^="history-"], [aria-label^="past-"]'),
@@ -605,7 +612,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   ]);
   assert.equal(historyCards().at(-1), "history-oldest");
 
-  assert.equal(posts.length, 7);
+  assert.equal(posts.length, 8);
   authorityCold = true;
   await assert.rejects(
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
@@ -636,6 +643,7 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     { answer: { accept: { head, reason: "Manually reviewed" } } },
     "cancel",
     { amend: "Updated brief", briefVersion: 3 },
+    { recheck: 7 },
     { hold: "Hold for proof" },
     "release",
   ];
