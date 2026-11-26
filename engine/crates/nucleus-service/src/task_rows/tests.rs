@@ -1693,7 +1693,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
         &json!({"kind":"thread.updated", "sequence":1, "location":"active", "thread":child}),
     );
     let calls = fixture.sync_held().await;
-    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
     assert!(fixture.sync().await.is_empty());
     fixture.elapse_visibility_ms(120_001);
@@ -1713,7 +1713,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
         &json!({"kind":"thread.updated", "sequence":2, "location":"active", "thread":child}),
     );
     let calls = fixture.sync_held().await;
-    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
     assert_eq!(
         fixture.commands(),
         ["thread.snooze", "thread.unsnooze", "thread.snooze"]
@@ -1736,7 +1736,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
         &json!({"kind":"thread.updated", "sequence":3, "location":"active", "thread":child}),
     );
     let calls = fixture.sync_held().await;
-    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
     assert_eq!(
         fixture.commands(),
         [
