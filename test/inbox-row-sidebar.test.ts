@@ -173,6 +173,106 @@ for (const [name, c] of [
   });
 }
 
+test("menu text follows card-title color at rest, hover and selection without an indicator bar", async () => {
+  await load();
+  const counts = {
+    needs: 2,
+    planning: 1,
+    leads: 0,
+    papercuts: 0,
+    queue: 1,
+    working: 1,
+    review: 0,
+    closing: 0,
+  };
+  const renderMenu = (view: "needs" | "queue") =>
+    mount(
+      h(menu.InboxMenu, {
+        c: dark,
+        view,
+        counts,
+        loaded: true,
+        onSelect: () => {},
+      }),
+    );
+  const ui = renderMenu("queue");
+  try {
+    const entry = ui.get("Needs you, 2");
+    const label = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "Needs you");
+    const count = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "2");
+    assert.ok(label);
+    assert.ok(count);
+    assert.equal(
+      label.props.style.color,
+      design.cardTitleColor(dark as never, false),
+      "the resting menu label uses the card title tint",
+    );
+    assert.equal(
+      count.props.style.color,
+      design.cardTitleColor(dark as never, false),
+      "the regular count uses the card title tint",
+    );
+    const icon = ui
+      .ofType("Icon")
+      .find((node) => node.props.name === "TriangleAlert");
+    assert.equal(
+      icon?.props.color,
+      design.cardTitleColor(dark as never, false),
+    );
+
+    entry.props.onHoverIn();
+    const hovered = ui.get("Needs you, 2");
+    const hoveredLabel = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "Needs you");
+    assert.equal(
+      hoveredLabel?.props.style.color,
+      (dark as { foreground: string }).foreground,
+    );
+    assert.equal(
+      hovered.props.style.backgroundColor,
+      design.hoverSurface(dark as never),
+    );
+    hovered.props.onHoverOut();
+    ui.get("Needs you, 2").props.onFocus();
+    assert.equal(
+      ui.ofType("Text").find((node) => node.children.join("") === "Needs you")
+        ?.props.style.color,
+      (dark as { foreground: string }).foreground,
+      "keyboard focus uses full foreground",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+
+  const selected = renderMenu("needs");
+  try {
+    const entry = selected.get("Needs you, 2");
+    assert.equal(entry.props.accessibilityState.selected, true);
+    assert.equal(
+      selected
+        .ofType("Text")
+        .find((node) => node.children.join("") === "Needs you")?.props.style
+        .color,
+      (dark as { foreground: string }).foreground,
+      "the selected label is full foreground",
+    );
+    assert.equal(
+      selected
+        .ofType("View")
+        .some((node) => node.props.style?.position === "absolute"),
+      false,
+      "selection has no indicator bar",
+    );
+  } finally {
+    selected.update(h("View", null));
+  }
+});
+
 for (const [name, c, titleColor] of [
   ["dark", dark, "rgba(240, 246, 252, 0.75)"],
   ["light", light, "rgba(31, 35, 40, 0.75)"],
@@ -339,7 +439,7 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
   }
 });
 
-test("the themed menu places a foreground selection bar on the selected row only", async () => {
+test("the themed menu keeps a selected surface without a foreground bar", async () => {
   await load();
   const c = {
     accent: "#346bf1",
@@ -358,18 +458,65 @@ test("the themed menu places a foreground selection bar on the selected row only
   const ui = mountMenu(c);
   try {
     const selectionMark = (label: string) =>
-      ui.get(label).children.find(
-        (child) =>
-          typeof child !== "string" &&
-          child.type === "View" &&
-          child.props.pointerEvents === "none" &&
-          child.props.style.backgroundColor === c.foreground,
-      );
-    assert.ok(selectionMark("Working, 3"));
+      ui
+        .get(label)
+        .children.some(
+          (child) =>
+            typeof child !== "string" &&
+            child.props.pointerEvents === "none" &&
+            child.props.style?.position === "absolute",
+        );
+    assert.equal(selectionMark("Working, 3"), false);
     const papercuts = ui.get("Papercuts, 2");
     papercuts.props.onHoverIn();
-    assert.equal(selectionMark("Papercuts, 2"), undefined);
-    assert.ok(selectionMark("Working, 3"));
+    assert.equal(selectionMark("Papercuts, 2"), false);
+    assert.equal(selectionMark("Working, 3"), false);
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+test("themed zero-count entries quiet only their resting text", async () => {
+  await load();
+  const c = {
+    accent: "#346bf1",
+    accentForeground: "#ffffff",
+    surface0: "#000000",
+    surface1: "#111111",
+    surface2: "#111111",
+    surfaceNavigation: "#0f0f0f",
+    border: "#191919",
+    foreground: "#f5f5f5",
+    foregroundMuted: "#818181",
+    statusSuccess: "#2aa56d",
+    statusWarning: "#fe9a00",
+    statusDanger: "#fb414a",
+  };
+  const ui = mountMenu(c);
+  try {
+    const entry = ui.get("Leads, 0");
+    const label = () =>
+      ui.ofType("Text").find((node) => node.children.join("") === "Leads");
+    const count = () =>
+      ui.ofType("Text").find((node) => node.children.join("") === "0");
+    const icon = () =>
+      ui.ofType("Icon").find((node) => node.props.name === "Lightbulb");
+    const restingTint = design.toneSurface(
+      c.foreground,
+      c.foreground,
+      design.navigationTextOpacity.dimmed,
+    );
+    assert.equal(entry.props.style.opacity, 1);
+    assert.equal(label()?.props.style.color, restingTint);
+    assert.equal(count()?.props.style.color, restingTint);
+    assert.equal(icon()?.props.color, restingTint);
+
+    entry.props.onHoverIn();
+    const hovered = ui.get("Leads, 0");
+    assert.equal(hovered.props.style.opacity, 1);
+    assert.equal(label()?.props.style.color, c.foreground);
+    assert.equal(count()?.props.style.color, c.foreground);
+    assert.equal(icon()?.props.color, c.foreground);
   } finally {
     ui.update(h("View", null));
   }

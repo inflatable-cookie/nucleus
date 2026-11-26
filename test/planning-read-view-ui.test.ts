@@ -228,6 +228,36 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
   }
 });
 
+test("1616 mounted: board pane dividers appear at wide widths and disappear when narrow", async () => {
+  const board = await mountBoard(false);
+  const { ui, waitFor } = board;
+  try {
+    await waitFor("Nucleus navigation");
+    const panel = ui.ofType("View").find(
+      (node) =>
+        typeof node.props.onLayout === "function" &&
+        node.props.style?.flex === 1 &&
+        node.props.style?.backgroundColor === "#000",
+    );
+    assert.ok(panel, "the board panel reports its measured width");
+    panel.props.onLayout({ nativeEvent: { layout: { width: 1280, height: 900 } } });
+    assert.equal(
+      ui.ofType("View").filter((node) => node.props.style?.borderRightWidth === 1).length,
+      2,
+      "wide menu/list/detail panes have both dividers",
+    );
+
+    panel.props.onLayout({ nativeEvent: { layout: { width: 600, height: 900 } } });
+    assert.equal(
+      ui.ofType("View").some((node) => node.props.style?.borderRightWidth === 1),
+      false,
+      "narrow stacked navigation and list have no vertical dividers",
+    );
+  } finally {
+    board.close();
+  }
+});
+
 test("1531 wide: a project whose only record is a new lane shows that lane's time as its last activity", async () => {
   // The no-work project gains a lane and nothing else (review 6010408992).
   const board = await mountBoard(false, (fixture) =>

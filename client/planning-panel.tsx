@@ -1525,6 +1525,8 @@ export function PlanningTab({
         width: inbox.listWidth,
         minHeight: 0,
         backgroundColor: inbox.listFill,
+        borderRightWidth: 1,
+        borderColor: roles(c).hairline,
       }
     : { flex: 1, minHeight: 0, backgroundColor: inbox.listFill };
   return (

@@ -1,0 +1,1 @@
+The board now uses faint dividers between wide panes and roadmap columns, and menu entries use the card title text treatment without a selected indicator bar. The Needs you count follows that text treatment in place of its accent pill.
