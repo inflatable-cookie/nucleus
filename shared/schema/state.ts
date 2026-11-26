@@ -31,6 +31,7 @@ export const eventSchema = z
 
 /** A subscription group's availability. A set/reset payload keeps its historical tolerance: unknown keys are stripped (contract, see `availabilityMarkSchema`). */
 export const availabilitySchema = z.object({
+  resetUnknown: z.literal(true).optional(),
   group: z.string(),
   unavailable: z.boolean(),
   reason: z.string(),

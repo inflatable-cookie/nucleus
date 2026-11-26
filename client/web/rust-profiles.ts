@@ -123,6 +123,7 @@ export function boardProfileUsage(usage: RustProfileUsage) {
 export function boardSubscriptionAvailability(
   paused: readonly string[],
   limited: Record<string, number>,
+  fallbackGroups: readonly string[] = [],
 ): api.UiQueueState["availability"] {
   const groups = new Set([...paused, ...Object.keys(limited)]);
   return [...groups].map((group) => {
@@ -130,6 +131,7 @@ export function boardSubscriptionAvailability(
     return {
       group,
       unavailable: true,
+      ...(!manual && fallbackGroups.includes(group) ? { resetUnknown: true as const } : {}),
       reason: manual ? "Paused in Settings" : "Provider usage limit",
       retryAt: manual ? null : new Date(limited[group]!).toISOString(),
     };
@@ -368,9 +370,13 @@ export function createRustProfiles(rust: RustApi) {
     },
     "queue.availability": async (
       input:
-        | { group: string; unavailable?: boolean }
+        | { group: string; unavailable?: boolean; retryAt?: string | null; resetUnknown?: true }
         | { action: "remove"; group: string },
     ) => {
+      if (!("action" in input) && input.unavailable === false && input.resetUnknown) {
+        if (!input.retryAt) throw new Error("Refresh Profiles to read the current pause.");
+        return rust.clearFallbackPause(input.group, Date.parse(input.retryAt));
+      }
       const pause = !("action" in input) && input.unavailable !== false;
       await editProfiles((value) => {
         const groups = new Set(value.pausedGroups ?? []);
