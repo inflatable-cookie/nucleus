@@ -442,72 +442,79 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
 }
 
 #[tokio::test]
-async fn a_fully_paused_bracket_steps_up_one_tier_until_its_group_unpauses() {
-    let (forge, forge_server) = serve_forge(Router::new()).await;
+async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reason() {
+    let (forge, forge_server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(Vec::<Value>::new()) }),
+    ))
+    .await;
     let (_home, mut service) = fixture(forge);
+    let root = service.fixture().checkout.clone();
     let (host, native_server) = native_fixture_with_traffic(
-        |request| {
-            native_response(
-                request,
-                std::path::Path::new("/fixture"),
-                &mut NativeRuns::default(),
-            )
-        },
+        move |request| native_response(request, &root, &mut NativeRuns::default()),
         None,
     )
     .await;
     service.host = host;
-    service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
-        "pausedGroups": ["paused"],
-        "profiles": [
-            {"name":"Mechanic","group":"paused","selection":{"id":"mechanic","provider":"codex","model":"first","capability":"mechanical"}},
-            {"name":"Worker","selection":{"id":"worker","provider":"codex","model":"second","capability":"worker"}}
-        ]
-    })).expect("profile settings")));
-    let observation = Observation {
-        host: Observed::Unknown,
-        forge: Observed::Known(Forge::Absent),
-        workspace: Observed::Known(Workspace::Absent),
-    };
-    let mut task = Task::new(
-        Identity {
-            id: "fixture".into(),
-            reference: "fixture".into(),
-            repository: REPOSITORY.into(),
-            base: "main".into(),
-            entry: Entry::Brief,
-            origin_thread: None,
-        },
-        "---\nqueue: {complexity: low}\n---\nFix a typo.".into(),
-        None,
-    );
-    assert_eq!(
-        task.reconcile(&observation),
-        Action::Advance(Phase::Working)
-    );
-    let host = service.host.fixture_pass();
-    let Ok(LaunchSelection::Profile(stepped)) = service
-        .select_launch(&task, &observation, Role::Worker, &host)
-        .await
-    else {
-        panic!("the stepped worker should launch");
-    };
-    assert_eq!(stepped.intent.profile().id, "worker");
-    assert_eq!(stepped.intent.step_up(), 1);
-
+    let id = "paused-mechanic";
     {
         let mut state = service.state.lock().await;
-        let profiles = Arc::make_mut(state.settings.profiles.as_mut().expect("profiles"));
-        profiles.paused_groups.clear();
+        state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
+            "profiles": [
+                {"name":"Mechanic","group":"shared","selection":{"id":"mechanic","provider":"codex","model":"first","capability":"mechanical"}},
+                {"name":"Reviewer","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+                {"name":"Worker","group":"other","selection":{"id":"worker","provider":"claude","model":"other","capability":"worker"}}
+            ]
+        })).expect("profile settings")));
+        assert_eq!(
+            service
+                .record_subscription_pause(&state, "shared", RESET_MS, now_ms())
+                .unwrap(),
+            Some(RESET_MS)
+        );
     }
-    let Ok(LaunchSelection::Profile(ordinary)) = service
-        .select_launch(&task, &observation, Role::Worker, &host)
+    service
+        .admit(
+            id.into(),
+            id.into(),
+            "---\nqueue: {complexity: low}\n---\nFix a typo.".into(),
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+        )
         .await
-    else {
-        panic!("the ordinary mechanic should launch");
-    };
-    assert_eq!(ordinary.intent.profile().id, "mechanic");
-    assert_eq!(ordinary.intent.step_up(), 0);
+        .expect("admit task");
+    assert_eq!(
+        pass(&service).await[0].result.as_ref().unwrap(),
+        &Action::Advance(Phase::Working)
+    );
+    assert_eq!(
+        pass(&service).await[0].result.as_ref().unwrap(),
+        &Action::Launch {
+            role: Role::Worker,
+            via: Launch::Create
+        },
+    );
+    let row = service.task(id).await.expect("stored task");
+    let run = row.task.run().expect("stored reservation");
+    assert!(run.last_send_at_ms().is_none());
+    assert_eq!(run.launch().profile().unwrap().id, "worker");
+    assert_eq!(run.launch().subscription_group(), Some("other"));
+    let state = service.state.lock().await;
+    let events = state.store.history(id, None, 10).unwrap();
+    let reservation = events
+        .iter()
+        .find(|event| event.content.kind == "run_reserved")
+        .unwrap();
+    let detail: Value = serde_json::from_str(&reservation.content.detail).unwrap();
+    assert_eq!(
+        detail["profileStepUp"],
+        json!({
+            "ordinaryCeiling": "mechanical",
+            "selectedCapability": "worker",
+            "reason": "Every eligible profile within the ordinary ceiling is paused."
+        })
+    );
     native_server.abort();
     forge_server.abort();
 }

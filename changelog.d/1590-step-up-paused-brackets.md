@@ -1,1 +1,1 @@
-When every eligible profile for a role is in a paused subscription group, Nucleus launches the role on the next tier up instead of waiting for the reset. The launch returns to its ordinary tier once the group unpauses.
+When subscription pauses block every eligible profile, Nucleus uses the nearest higher tier allowed by the usage level. After the pause clears, the next launch uses the ordinary selection rules.
