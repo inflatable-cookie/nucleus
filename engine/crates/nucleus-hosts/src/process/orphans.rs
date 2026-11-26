@@ -112,6 +112,11 @@ impl Inventory {
 /// could share an old one's start time; this margin rules that out.
 const SETTLE_SECONDS: i64 = 2;
 
+/// Month abbreviations as `ps` prints them in lstart.
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 fn settled(started: &str, observed: i64) -> bool {
     start_epoch(started).is_some_and(|start| start + SETTLE_SECONDS <= observed)
 }
@@ -129,12 +134,7 @@ fn start_epoch(started: &str) -> Option<i64> {
     let [_weekday, month, day, clock, year] = words.as_slice() else {
         return None;
     };
-    let month = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-    .iter()
-    .position(|name| name == month)? as i64
-        + 1;
+    let month = i64::try_from(MONTHS.iter().position(|name| name == month)?).ok()? + 1;
     let day: i64 = day.parse().ok()?;
     let year: i64 = year.parse().ok()?;
     let mut clock = clock.split(':').map(|part| part.parse::<i64>().ok());
