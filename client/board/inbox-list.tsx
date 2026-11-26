@@ -51,6 +51,7 @@ import {
   LaneDrainCard,
 } from "./cards";
 import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
+import { PageSentinel, pageLabel } from "./page-sentinel";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
@@ -395,11 +396,6 @@ export function InboxList({
   const sections = legacyView
     ? inboxSections(board, legacyView, triageView ? triageFilters[triageView] : undefined)
     : [];
-  const listMeasurements = useRef<{
-    view: typeof view;
-    viewportHeight: number;
-    contentHeight: number | null;
-  }>({ view, viewportHeight: 0, contentHeight: null });
   const loadedPage = useRef({ view, count: triagePageSize });
   const isTriageList = triageView !== null;
   const shown = view === "papercuts" ? papercutShown : triageShown;
@@ -436,20 +432,17 @@ export function InboxList({
       const read = queuedPages.data?.[item.repoPath];
       return read ? read.nextOffset !== null : false;
     });
+  /** Held-back queued cards not yet drawn, for the next page's name. */
+  const queuedLeft = Math.max(
+    0,
+    queuedHidden.reduce((total, item) => total + item.hidden, 0) - heldShown,
+  );
   /** A page on its way: the list says so at its end rather than going quiet. */
   const queuedPending =
     view === "queue" &&
     queuedPages.isFetching &&
     heldShown < queuedHidden.reduce((total, item) => total + item.hidden, 0);
   useEffect(() => {
-    // Switching views keeps the measured viewport height: the ScrollView does
-    // not resize, so its layout event never refires and only a content-size
-    // change can fill a short list. Only the content height resets.
-    listMeasurements.current = {
-      view,
-      viewportHeight: listMeasurements.current.viewportHeight,
-      contentHeight: null,
-    };
     loadedPage.current = { view, count: triagePageSize };
     setTriageShown(triagePageSize);
     setPapercutShown(triagePageSize);
@@ -468,14 +461,6 @@ export function InboxList({
     const next = Math.min(current.count + triagePageSize, totalInList);
     current.count = next;
     setShown(next);
-  };
-  const fillIfNotScrollable = (
-    viewportHeight: number,
-    contentHeight: number,
-  ) => {
-    if (viewportHeight <= 0 || contentHeight > viewportHeight) return;
-    // A short list keeps loading until it scrolls or every card shows.
-    if (isTriageList ? shown < totalInList : queuedMore) loadNextPage();
   };
   const boardRead = state ? "loaded" : stateError ? "failed" : "loading";
   const releaseHold = (task: TaskSummary) =>
@@ -764,7 +749,6 @@ export function InboxList({
                   setTriageFilters((current) => ({ ...current, [triageView]: filter }));
                   setShown(triagePageSize);
                   loadedPage.current = { view, count: triagePageSize };
-                  listMeasurements.current.contentHeight = null;
                 }}
                 minWidth={80}
               />
@@ -780,7 +764,6 @@ export function InboxList({
                   setTriageTag(value || null);
                   setTriageShown(triagePageSize);
                   loadedPage.current = { view: "leads", count: triagePageSize };
-                  listMeasurements.current.contentHeight = null;
                 }}
                 minWidth={110}
               />
@@ -791,40 +774,6 @@ export function InboxList({
       <ScrollView
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{ paddingVertical: space.xs }}
-        onLayout={(event) => {
-          const height = event.nativeEvent.layout.height;
-          const current = listMeasurements.current;
-          listMeasurements.current = {
-            ...current,
-            view,
-            viewportHeight: height,
-          };
-          if (current.view === view && current.contentHeight !== null)
-            fillIfNotScrollable(height, current.contentHeight);
-        }}
-        onContentSizeChange={(_width, height) => {
-          const current = listMeasurements.current;
-          listMeasurements.current = {
-            ...current,
-            view,
-            contentHeight: height,
-          };
-          fillIfNotScrollable(
-            current.view === view ? current.viewportHeight : 0,
-            height,
-          );
-        }}
-        onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } =
-            event.nativeEvent;
-          if (
-            contentOffset.y + layoutMeasurement.height <
-            contentSize.height - layoutMeasurement.height
-          )
-            return;
-          if (isTriageList || (view === "queue" && queuedMore)) loadNextPage();
-        }}
-        scrollEventThrottle={16}
       >
         <BoardCardVariantContext.Provider value="row">
           {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
@@ -843,12 +792,33 @@ export function InboxList({
               );
             })
           )}
+          {isTriageList && (
+            <PageSentinel
+              c={c}
+              more={shown < totalInList}
+              page={shown}
+              label={pageLabel(
+                Math.min(triagePageSize, totalInList - shown),
+                view === "papercuts" ? "papercut" : "lead",
+              )}
+              onMore={loadNextPage}
+            />
+          )}
           {queuedPending && (
             <Text
               style={{ ...muted(c), textAlign: "center", padding: space.md }}
             >
               Loading queued tasks…
             </Text>
+          )}
+          {view === "queue" && (
+            <PageSentinel
+              c={c}
+              more={queuedMore}
+              page={heldShown}
+              label={pageLabel(Math.min(queuedPageSize, queuedLeft), "queued task")}
+              onMore={loadNextPage}
+            />
           )}
           {/* A failed page read never stops the list silently: the end asks to try again.
               While the retry's own read is on its way, the loading row speaks for it. */}
@@ -935,8 +905,9 @@ export function RustListRows({ c, rust, view }: {
         progress={<RustTaskProgress progress={task.lifecycle} c={c} compact barsOnly />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
-    {remaining > 0 && <BoardCard c={c} selected={false} title={`${remaining} more`}
-      label={`Show ${remaining} more task${remaining === 1 ? "" : "s"}`} onPress={() => setLimit((current) => current + rustPageSize)} />}
+    <PageSentinel c={c} more={remaining > 0} page={limit}
+      label={pageLabel(Math.min(rustPageSize, remaining), "task")}
+      onMore={() => setLimit((current) => current + rustPageSize)} />
     {Boolean(rust.error) && <BoardCard c={c} selected={false} title="Could not load engine tasks"
       label="Retry loading engine tasks" onPress={rust.retry}
       status={{ state: "Retry", tone: "warning" }} />}
